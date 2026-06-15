@@ -1427,37 +1427,35 @@ func (b *Binder) recordFallbackSkip(reason string) {
 // (a session that ends in failure or a crash always retires its pod).
 const dispositionFailed = "failed"
 
-// Release tears down a session that Bind placed on a pod: it shuts the pod's
-// runtime down through the adapter, closes the adapter connection, releases
-// the session's §4.9 credential leases, and then applies the §3.4 disposition.
-// disposition is the session-terminal outcome the session reached (completed,
-// failed, cancelled, or expired); the fine session-terminal states and the
-// Terminated session-condition fact are recorded on the Postgres session model
-// (§7.2 / §8.8), so Release writes no Sandbox.status field — the WarmPoolController
-// is the sole writer of Sandbox.status (§4.6.3).
+// Release tears down a session that Bind placed on a pod: it releases the
+// session's §4.9 credential leases, then applies the §3.4 disposition by either
+// recycling the pod (patch the claim bound → recycling, then signal the
+// whole-pod scrub) or draining it (signal the adapter shutdown, then delete the
+// claim). disposition is the session-terminal outcome the session reached
+// (completed, failed, cancelled, or expired); the fine session-terminal states
+// and the Terminated session-condition fact are recorded on the Postgres
+// session model (§7.2 / §8.8), so Release writes no Sandbox.status field — the
+// WarmPoolController is the sole writer of Sandbox.status (§4.6.3).
 //
 // On a recycling pool (BindResult.Recycle, maxConcurrentSessions: 1) a clean
-// terminal (anything but "failed") brings occupancy to zero, so Release patches
-// the per-pod claim bound → recycling (podclaim.WriteRecyclingStatus) and lets
-// the adapter's whole-pod scrub run; the §4.7 ReportPodScrub report then drives
-// the recycle-vs-retire disposition on the claim binding state. The adapter
-// Shutdown above is the occupancy-zero signal that triggers the scrub. A
+// terminal (anything but "failed") brings occupancy to zero. The §3.4 recycle
+// disposition orders the two steps patch-then-scrub: Release first patches the
+// per-pod claim bound → recycling (podclaim.WriteRecyclingStatus), then signals
+// the adapter so the whole-pod scrub runs while the pod projects `claimed`. The
+// claim must be in `recycling` before any §4.7 ReportPodScrub can arrive,
+// because the claim state machine admits only recycling → reserved/released/failed,
+// not bound → reserved (§3.2); the ReportPodScrub report then drives the
+// recycle-vs-retire disposition off the `recycling` binding state. A
 // non-recycling pool, or a failed/crashed session, takes the drain path: the
-// per-pod claim is deleted, which the WarmPoolController projects as
-// draining → terminated (§4.6.1). The adapter Shutdown and the recycling-status
-// patch are best-effort — a lost recycling patch is reclaimed by the §4.6.1
-// orphan GC, which drains a stuck `bound`/`recycling` claim — so Release returns
-// only an error from the disposition write. spec: §3.1, §3.4 (recycle on
-// occupancy-zero); §4.6.1; §4.6.3; §7.2 / §8.8.
+// adapter is signaled to tear the session down and the per-pod claim is deleted,
+// which the WarmPoolController projects as draining → terminated (§4.6.1). The
+// recycling patch is durable and ordered first; the adapter Shutdown is
+// best-effort — a coordinating-gateway crash after the patch leaves the claim in
+// `recycling` and the §4.6.1 orphan GC drains the stuck pod — so on the recycle
+// path Release returns only an error from the recycling patch. spec: §3.1, §3.2,
+// §3.4 (recycle on occupancy-zero, patch-then-scrub ordering); §4.6.1; §4.6.3;
+// §7.2 / §8.8.
 func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
-	if result.Adapter != nil {
-		// On a recycling pool this Shutdown is the occupancy-zero signal: the
-		// adapter tears the session's processes down and runs the whole-pod
-		// scrub it reports via ReportPodScrub. spec: §3.1 (uniform scrub model).
-		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
-		result.Adapter.Close()
-	}
-
 	// spec: §7.1 line 52 (step 23) — release the session's §4.9 credential
 	// leases back to the pool. Done before the disposition so the credential's
 	// active-session counter is decremented on the way out; without it the
@@ -1465,25 +1463,48 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	// select.go eventually reports exhaustion for idle credentials.
 	b.releaseCredentials(result.SessionID)
 
-	// spec: §3.4 / §6.2 lines 24, 105, 157 — a recycling pool recycles the pod
-	// across whole sessions of the same tenant when occupancy reaches zero
-	// after a clean session termination; a failed/crashed session always
+	// spec: §3.2 / §3.4 / §6.2 lines 24, 105, 157 — a recycling pool recycles
+	// the pod across whole sessions of the same tenant when occupancy reaches
+	// zero after a clean session termination; a failed/crashed session always
 	// retires the pod. On the recycle path Release patches the claim
-	// bound → recycling and the adapter-executed whole-pod scrub (reported via
-	// §4.7 ReportPodScrub) takes over the disposition; on the retire path it
-	// deletes the claim so the WarmPoolController drains the pod.
+	// bound → recycling FIRST, then signals the adapter scrub: the claim must be
+	// in `recycling` before any ReportPodScrub arrives, because the claim state
+	// machine admits recycling → reserved/released/failed but not bound →
+	// reserved (§3.2). On the retire path it tears the session down and deletes
+	// the claim so the WarmPoolController drains the pod.
 	if result.Recycle && disposition != dispositionFailed {
 		if err := podclaim.WriteRecyclingStatus(ctx, b.Client, b.Namespace, podclaim.ClaimName(result.SandboxName), nil); err != nil {
 			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.SandboxName, err)
 		}
+		// The claim now projects `recycling`. This Shutdown is the
+		// occupancy-zero signal that runs the whole-pod scrub the adapter
+		// reports via §4.7 ReportPodScrub, which drives the disposition off the
+		// `recycling` binding state. spec: §3.1, §3.4 (whole-pod scrub on the
+		// occupancy-zero recycle edge).
+		b.shutdownAdapter(ctx, result)
 		return nil
 	}
 
+	// Retire path: tear the session's processes down, then drain the pod.
+	b.shutdownAdapter(ctx, result)
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {
 		return fmt.Errorf("podsession: get sandbox %s: %w", result.SandboxName, err)
 	}
 	return b.drain(ctx, &sb)
+}
+
+// shutdownAdapter shuts the pod's runtime down through the adapter and closes
+// the connection. The Shutdown call is best-effort: on the recycle path it is
+// the occupancy-zero signal that triggers the whole-pod scrub, and on the retire
+// path it tears the session's processes down before the pod drains. A nil
+// Adapter (a BindSlot result or a re-resolved release) is a no-op.
+func (b *Binder) shutdownAdapter(ctx context.Context, result *BindResult) {
+	if result.Adapter == nil {
+		return
+	}
+	_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
+	result.Adapter.Close()
 }
 
 // resolveSandbox reads the claimed Sandbox and verifies it carries a pod

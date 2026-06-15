@@ -68,6 +68,11 @@ const (
 // the binder's StartSession call drives.
 type fakeRuntime struct {
 	started string
+	// onClose, when set, runs at the moment the adapter Shutdown RPC closes
+	// the runtime. A recycle-ordering test reads the claim binding state from
+	// it to assert the claim is already `recycling` when the whole-pod scrub
+	// signal arrives.
+	onClose func()
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -76,7 +81,12 @@ func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
 }
 func (f *fakeRuntime) WriteEnvelope(string, []byte) error            { return nil }
 func (f *fakeRuntime) Interrupt(context.Context, string, bool) error { return nil }
-func (f *fakeRuntime) Close(context.Context, string) error           { return nil }
+func (f *fakeRuntime) Close(context.Context, string) error {
+	if f.onClose != nil {
+		f.onClose()
+	}
+	return nil
+}
 
 func (f *fakeRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	ch := make(chan []byte)
@@ -1014,6 +1024,52 @@ func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
 	}
 	if len(sb.Status.Conditions) != 0 {
 		t.Errorf("gateway must write no Sandbox condition on recycle Release; got %+v", sb.Status.Conditions)
+	}
+}
+
+// TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2 pins the §3.4
+// patch-then-scrub ordering: on the recycle path the claim is patched
+// bound → recycling BEFORE the adapter is signaled to run the whole-pod scrub.
+// The claim state machine admits recycling → reserved/released/failed but not
+// bound → reserved (§3.2), so the claim must already project `recycling` when
+// any ReportPodScrub arrives. The fakeRuntime's onClose hook runs inside the
+// adapter Shutdown RPC, which is the occupancy-zero scrub signal; reading the
+// claim binding state there observes the state at the moment the signal fires.
+// spec: §3.2 (claim state machine), §3.4 (recycle disposition, patch-then-scrub).
+func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+
+	// stateAtScrubSignal captures the claim binding state read at the moment
+	// the adapter Shutdown (the scrub signal) closes the runtime.
+	var stateAtScrubSignal string
+	rt := &fakeRuntime{}
+	rt.onClose = func() {
+		var claim lennyv1.SandboxClaim
+		if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+			stateAtScrubSignal = "get-error:" + err.Error()
+			return
+		}
+		stateAtScrubSignal = claim.Status.Phase
+	}
+	srv.Runtime = rt
+
+	binder := newBinder(c, adapterDialer(t, srv))
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	if stateAtScrubSignal != string(claimstate.Recycling) {
+		t.Errorf("claim binding state at the scrub signal = %q, want %q (the claim must be patched bound → recycling before the whole-pod scrub is signaled, §3.2/§3.4)",
+			stateAtScrubSignal, claimstate.Recycling)
 	}
 }
 
