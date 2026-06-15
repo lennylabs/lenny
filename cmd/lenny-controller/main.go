@@ -501,6 +501,22 @@ func main() {
 		log.Fatalf("lenny-controller: set up per-pod reconciler: %v", err)
 	}
 
+	// §4.6.1 claim-driven occupancy projection: the WarmPoolController is the
+	// sole writer of the coarse Sandbox.status.phase and projects the
+	// occupied phases (claimed, reserved, the recycle sdk_connecting re-warm
+	// leg, and the claim-DELETE return to idle or draining) as a
+	// level-triggered function of the per-pod SandboxClaim binding state. It
+	// watches Sandboxes and SandboxClaims (mapping each claim to its owning
+	// Sandbox) so a gateway binding-state transition re-projects the pod
+	// phase within one reconcile cycle.
+	if err := (&warmpool.OccupancyReconciler{
+		Client:                  mgr.GetClient(),
+		MaxConcurrentReconciles: maxConcurrentReconciles,
+		QueueFactory:            queueFactory,
+	}).SetupWithManager(mgr); err != nil {
+		log.Fatalf("lenny-controller: set up occupancy-projection reconciler: %v", err)
+	}
+
 	// §5.1 RuntimeReconciler: mirror declarative Runtime CRDs into the
 	// gateway runtime registry and set each one's Registered condition.
 	// The reconciler needs the Postgres registry, so it is registered
