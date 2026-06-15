@@ -138,8 +138,12 @@ const (
 	// pod on a scrub failure. spec: §6.2 line 156.
 	ReasonCleanupFailPolicy RetireReason = "cleanup_fail_policy"
 	// ReasonScrubFailuresExhausted: the cumulative scrub-failure count
-	// reached maxScrubFailures. spec: §6.2 line 149.
-	ReasonScrubFailuresExhausted RetireReason = "scrub_failures_exhausted"
+	// reached maxScrubFailures. The emitted lenny_pod_retirement_total
+	// {reason} value is the scrub_failure_limit trigger from the spec/16
+	// retirement-reason vocabulary, so the counter and its emitter agree.
+	// spec: spec/06 §6.2 line 149 (scrub-failure limit retire), spec/16
+	// §16.1 (retirement reason vocabulary).
+	ReasonScrubFailuresExhausted RetireReason = "scrub_failure_limit"
 	// ReasonSessionCountLimit: the pod's served-session count reached
 	// recycle.maxSessionsPerPod. The emitted lenny_pod_retirement_total
 	// {reason} value is the session_count_limit trigger from the spec/16
@@ -147,8 +151,11 @@ const (
 	// disposition), spec/16 §16.1 (retirement reason vocabulary).
 	ReasonSessionCountLimit RetireReason = "session_count_limit"
 	// ReasonMaxUptimeExceeded: pod uptime reached maxPodUptimeSeconds.
-	// spec: §6.2 line 151.
-	ReasonMaxUptimeExceeded RetireReason = "max_uptime_exceeded"
+	// The emitted lenny_pod_retirement_total{reason} value is the
+	// uptime_limit trigger from the spec/16 retirement-reason vocabulary,
+	// so the counter and its emitter agree. spec: §6.2 line 151, spec/16
+	// §16.1 (retirement reason vocabulary).
+	ReasonMaxUptimeExceeded RetireReason = "uptime_limit"
 	// ReasonHostUnschedulable: the pod's host node is cordoned, so the
 	// recycle disposition retires it instead of producing a
 	// soon-to-be-evicted reserved or re-warmed pod. The trigger applies to

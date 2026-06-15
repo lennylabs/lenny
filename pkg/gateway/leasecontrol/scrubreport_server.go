@@ -219,6 +219,15 @@ type PodRecyclePolicy struct {
 	// PodUptimeSeconds is the pod's wall-clock uptime in whole seconds,
 	// floored at zero. spec: §6.2 (maxPodUptimeSeconds retire).
 	PodUptimeSeconds int64
+	// Pool is the pod's pool name, the pool dimension on the §16.1
+	// recycle metrics (lenny_pod_scrub_failure_total,
+	// lenny_pod_scrub_failure_count, lenny_pod_retirement_total). spec:
+	// §16.1 (pool label).
+	Pool string
+	// RuntimeClass is the pod's Kubernetes RuntimeClass name, the
+	// runtime_class dimension on the §16.1 recycle metrics. spec: §16.1
+	// (runtime_class label).
+	RuntimeClass string
 }
 
 // PodInspector resolves the §5.2 recycle policy and §6.39 host-node
@@ -253,21 +262,40 @@ type ClaimDispositionDriver interface {
 	// Retire writes the terminal disposition on the claim so the projection
 	// drains the pod. failed selects the claim's `failed` terminal (an
 	// onScrubFailure: fail termination) versus its `released` terminal (a
-	// limit-reached or §6.39 unschedulable-host retire). reason is the stable
-	// observability label. spec: §3.4 (retire disposition), §6.39.
-	Retire(ctx context.Context, podID string, failed bool, reason taskcleanup.RetireReason) error
+	// limit-reached or §6.39 unschedulable-host retire). scrubWarning stamps
+	// the scrub_warning audit annotation onto the retire, set only on the
+	// §6.39 cordon-drain-under-warn path where the disposition retains the
+	// residual-state marker (the package doc's `draining [scrub_warning]`
+	// case); the limit-reached and fail-policy retires clear it. reason is
+	// the stable observability label, and detail is the optional
+	// adapter-side failure description retained in the audit trail on a
+	// FAILED outcome. spec: §3.4 (retire disposition), §6.39, §5.2 (audit
+	// retention of the failed pod's metadata).
+	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason taskcleanup.RetireReason, detail string) error
 }
 
 // RetirementMetrics records the §16.1 pod-retirement and scrub-failure
-// metrics the recycle disposition emits. A nil sink discards them.
-// spec: §16.1 (lenny_pod_retirement_total, lenny_pod_scrub_failure_count).
+// metrics the recycle disposition emits. A nil sink discards them. Every
+// method carries the pool and runtime_class dimensions the §16.1 inventory
+// mandates on these series so a concrete sink can emit them at the required
+// label cardinality. spec: §16.1 (lenny_pod_scrub_failure_total,
+// lenny_pod_scrub_failure_count, lenny_pod_retirement_total — labeled by
+// pool, runtime_class), §5.2 (onScrubFailure: warn increments both
+// scrub-failure series on every failure).
 type RetirementMetrics interface {
+	// IncScrubFailureTotal increments the aggregate scrub-failure counter
+	// (lenny_pod_scrub_failure_total) on every failed whole-pod scrub,
+	// independent of whether the failure retires the pod. spec: §5.2
+	// (lenny_pod_scrub_failure_total aggregate counter).
+	IncScrubFailureTotal(pool, runtimeClass string)
 	// SetScrubFailureCount reports the pod's cumulative scrub-failure count
-	// (lenny_pod_scrub_failure_count gauge).
-	SetScrubFailureCount(podID string, count int)
+	// (lenny_pod_scrub_failure_count gauge, labeled by k8s_pod_name, pool,
+	// runtime_class). spec: §16.1 (lenny_pod_scrub_failure_count).
+	SetScrubFailureCount(podID, pool, runtimeClass string, count int)
 	// IncRetirement records one pod retirement by reason
-	// (lenny_pod_retirement_total{reason}).
-	IncRetirement(reason taskcleanup.RetireReason)
+	// (lenny_pod_retirement_total{reason, pool, runtime_class}). spec:
+	// §16.1 (lenny_pod_retirement_total).
+	IncRetirement(reason taskcleanup.RetireReason, pool, runtimeClass string)
 }
 
 // ErrPodNotInMirror is returned by the ScrubReporter when a scrub report
@@ -365,22 +393,27 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ stri
 // the §3.4 / §6.39 recycle disposition through taskcleanup.Decide against
 // the pod's recycle counters, sessionPolicy, uptime, and host-node
 // schedulability, and drives the resulting disposition onto the claim
-// binding state. spec: §4.7; §3.4; §5.2; §6.39.
-func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed bool, _ string) error {
-	scrubFailureCount, sessionsServed, err := r.advanceScrubCounters(ctx, podID, failed)
-	if err != nil {
-		return err
-	}
-
+// binding state. detail carries an optional adapter-side failure
+// description that the retire path retains in the audit trail on a FAILED
+// outcome. spec: §4.7; §3.4; §5.2; §6.39.
+func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error {
+	// Resolve the recycle policy first: it carries the pool and
+	// runtime_class dimensions the §16.1 scrub-failure and retirement
+	// metrics require, so the counter advance below can emit them. A pod or
+	// claim that is already gone (a concurrent retirement, a crashed session
+	// that already retired the pod, or the orphan GC reclaiming it) leaves
+	// nothing to recycle; the report is a no-op.
 	policy, found, err := r.inspect.InspectForRecycle(ctx, podID)
 	if err != nil {
 		return fmt.Errorf("inspect pod %s for recycle: %w", podID, err)
 	}
 	if !found {
-		// The pod or its claim is gone (a concurrent retirement, a crashed
-		// session that already retired the pod, or the orphan GC reclaimed
-		// it). There is nothing left to recycle; the report is a no-op.
 		return nil
+	}
+
+	scrubFailureCount, sessionsServed, err := r.advanceScrubCounters(ctx, podID, failed, policy.Pool, policy.RuntimeClass)
+	if err != nil {
+		return err
 	}
 
 	d := taskcleanup.Decide(taskcleanup.Inputs{
@@ -395,16 +428,19 @@ func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed
 		MaxPodUptimeSeconds: policy.MaxPodUptimeSeconds,
 		HostSchedulable:     policy.HostSchedulable,
 	})
-	return r.applyDisposition(ctx, podID, policy.PreConnect, d)
+	return r.applyDisposition(ctx, podID, policy.Pool, policy.RuntimeClass, detail, policy.PreConnect, d)
 }
 
 // advanceScrubCounters increments the scrub-failure counter on a failed
-// scrub (emitting the gauge) and returns the post-report scrub-failure and
-// sessions-served counts the disposition reads. The sessions-served count
-// was already advanced by the preceding ReportSessionScrub at the
-// occupancy-zero boundary, so RecordPodScrub reads it back rather than
-// re-incrementing it.
-func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, failed bool) (scrubFailureCount, sessionsServed int, err error) {
+// scrub (emitting the aggregate lenny_pod_scrub_failure_total counter and
+// the per-pod lenny_pod_scrub_failure_count gauge) and returns the
+// post-report scrub-failure and sessions-served counts the disposition
+// reads. The sessions-served count was already advanced by the preceding
+// ReportSessionScrub at the occupancy-zero boundary, so RecordPodScrub reads
+// it back rather than re-incrementing it. pool and runtimeClass label the
+// §16.1 scrub-failure metrics. spec: §5.2 (both scrub-failure series
+// increment on every failure), §16.1.
+func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, failed bool, pool, runtimeClass string) (scrubFailureCount, sessionsServed int, err error) {
 	if failed {
 		count, found, incErr := r.counters.IncrementScrubFailureCount(ctx, podID)
 		if incErr != nil {
@@ -413,7 +449,11 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 		if !found {
 			return 0, 0, fmt.Errorf("%w: pod %s", ErrPodNotInMirror, podID)
 		}
-		r.metrics.SetScrubFailureCount(podID, count)
+		// §5.2: a failed whole-pod scrub increments BOTH the aggregate
+		// counter and the per-pod gauge, independent of whether the failure
+		// goes on to retire the pod.
+		r.metrics.IncScrubFailureTotal(pool, runtimeClass)
+		r.metrics.SetScrubFailureCount(podID, pool, runtimeClass, count)
 		scrubFailureCount = count
 	}
 	served, scrub, found, readErr := r.counters.RecycleCounters(ctx, podID)
@@ -433,14 +473,21 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 
 // applyDisposition drives a resolved disposition onto the claim binding
 // state and emits the retirement metric. A retire writes the terminal
-// disposition (failed vs released); a reuse drives the recycle path.
-func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, preConnect bool, d taskcleanup.Disposition) error {
+// disposition (failed vs released), carrying the scrub_warning the §6.39
+// cordon-drain-under-warn path computes and the adapter-supplied failure
+// detail for the audit trail; a reuse drives the recycle path. pool and
+// runtimeClass label lenny_pod_retirement_total. spec: §3.4, §6.39, §16.1.
+func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runtimeClass, detail string, preConnect bool, d taskcleanup.Disposition) error {
 	if d.Retire {
-		r.metrics.IncRetirement(d.Reason)
+		r.metrics.IncRetirement(d.Reason, pool, runtimeClass)
 		// state.Failed is the onScrubFailure: fail termination → claim
 		// `failed`; every other retire (limit reached or §6.39 unschedulable
-		// host) is a drain → claim `released`.
-		if err := r.driver.Retire(ctx, podID, d.NextPhase == state.Failed, d.Reason); err != nil {
+		// host) is a drain → claim `released`. d.ScrubWarning is set only on
+		// the §6.39 cordon-drain-under-warn path; it stamps the scrub_warning
+		// audit annotation onto the retire so the residual-state marker the
+		// disposition computed is retained. detail carries the adapter-side
+		// failure description for the audit trail on a FAILED outcome.
+		if err := r.driver.Retire(ctx, podID, d.NextPhase == state.Failed, d.ScrubWarning, d.Reason, detail); err != nil {
 			return fmt.Errorf("retire pod %s (%s): %w", podID, d.Reason, err)
 		}
 		return nil
@@ -465,8 +512,10 @@ func scrubInput(failed bool) taskcleanup.ScrubResult {
 // when no RetirementMetrics is supplied.
 type noopRetirementMetrics struct{}
 
-func (noopRetirementMetrics) SetScrubFailureCount(string, int)       {}
-func (noopRetirementMetrics) IncRetirement(taskcleanup.RetireReason) {}
+func (noopRetirementMetrics) IncScrubFailureTotal(string, string)              {}
+func (noopRetirementMetrics) SetScrubFailureCount(string, string, string, int) {}
+func (noopRetirementMetrics) IncRetirement(taskcleanup.RetireReason, string, string) {
+}
 
 // Compile-time assertion that ScrubReporter satisfies the service seam.
 var _ ScrubReportService = (*ScrubReporter)(nil)

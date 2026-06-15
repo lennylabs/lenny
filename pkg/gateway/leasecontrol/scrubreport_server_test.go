@@ -305,9 +305,11 @@ type recycleCall struct {
 }
 
 type retireCall struct {
-	podID  string
-	failed bool
-	reason taskcleanup.RetireReason
+	podID        string
+	failed       bool
+	scrubWarning bool
+	reason       taskcleanup.RetireReason
+	detail       string
 }
 
 type fakeDriver struct {
@@ -322,29 +324,58 @@ func (f *fakeDriver) Recycle(_ context.Context, podID string, preConnect, scrubW
 	return f.recycleErr
 }
 
-func (f *fakeDriver) Retire(_ context.Context, podID string, failed bool, reason taskcleanup.RetireReason) error {
-	f.retires = append(f.retires, retireCall{podID, failed, reason})
+func (f *fakeDriver) Retire(_ context.Context, podID string, failed, scrubWarning bool, reason taskcleanup.RetireReason, detail string) error {
+	f.retires = append(f.retires, retireCall{podID, failed, scrubWarning, reason, detail})
 	return f.retireErr
 }
 
-// recordingRetireMetrics is a RetirementMetrics double that records the gauge
-// and retirement counter emissions so the disposition's §16.1 side effects
-// can be asserted.
+// retirementCall records one lenny_pod_retirement_total emission with its
+// §16.1 reason, pool, and runtime_class labels.
+type retirementCall struct {
+	reason       taskcleanup.RetireReason
+	pool         string
+	runtimeClass string
+}
+
+// scrubGauge records one lenny_pod_scrub_failure_count gauge emission with
+// its §16.1 pool and runtime_class labels and the cumulative count.
+type scrubGauge struct {
+	pool         string
+	runtimeClass string
+	count        int
+}
+
+// scrubTotal records one lenny_pod_scrub_failure_total aggregate-counter
+// emission with its §16.1 pool and runtime_class labels.
+type scrubTotal struct {
+	pool         string
+	runtimeClass string
+}
+
+// recordingRetireMetrics is a RetirementMetrics double that records the
+// aggregate scrub-failure counter, the per-pod gauge, and the retirement
+// counter emissions (with their §16.1 pool/runtime_class labels) so the
+// disposition's metric side effects can be asserted.
 type recordingRetireMetrics struct {
-	gauges      map[string]int
-	retirements []taskcleanup.RetireReason
+	totals      []scrubTotal
+	gauges      map[string]scrubGauge
+	retirements []retirementCall
 }
 
 func newRecordingRetireMetrics() *recordingRetireMetrics {
-	return &recordingRetireMetrics{gauges: map[string]int{}}
+	return &recordingRetireMetrics{gauges: map[string]scrubGauge{}}
 }
 
-func (m *recordingRetireMetrics) SetScrubFailureCount(podID string, count int) {
-	m.gauges[podID] = count
+func (m *recordingRetireMetrics) IncScrubFailureTotal(pool, runtimeClass string) {
+	m.totals = append(m.totals, scrubTotal{pool, runtimeClass})
 }
 
-func (m *recordingRetireMetrics) IncRetirement(r taskcleanup.RetireReason) {
-	m.retirements = append(m.retirements, r)
+func (m *recordingRetireMetrics) SetScrubFailureCount(podID, pool, runtimeClass string, count int) {
+	m.gauges[podID] = scrubGauge{pool, runtimeClass, count}
+}
+
+func (m *recordingRetireMetrics) IncRetirement(r taskcleanup.RetireReason, pool, runtimeClass string) {
+	m.retirements = append(m.retirements, retirementCall{r, pool, runtimeClass})
 }
 
 func newReporter(t *testing.T, c *fakeCounters, l *fakeLedger, i *fakeInspector, d *fakeDriver) *leasecontrol.ScrubReporter {
@@ -501,12 +532,15 @@ func TestReporterPodScrubScrubFailuresExhaustedRetires_spec_5_2(t *testing.T) {
 }
 
 // TestReporterPodScrubFailPolicyTerminates verifies onScrubFailure: fail
-// terminates the pod with a failed terminal on any scrub failure.
-// spec: 3.4 (retire disposition), 5.2 (onScrubFailure fail)
+// terminates the pod with a failed terminal on any scrub failure, threading
+// the adapter-supplied failure detail to the retire path for the audit trail
+// and clearing the scrub_warning (the pod leaves the pool for cause).
+// spec: 3.4 (retire disposition), 5.2 (onScrubFailure fail; audit retention of the failed pod's metadata)
 //
 // diagnosis: a failure means a fail-policy pool reuses a pod after a failed
-// scrub instead of terminating it, defeating the strict-isolation posture the
-// deployer selected.
+// scrub instead of terminating it, or the adapter-side failure description is
+// dropped before the audit write, leaving the terminated pod's audit record
+// without the reason it failed.
 func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
@@ -515,11 +549,60 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "shred timed out on /tmp"); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
-	if len(d.retires) != 1 || !d.retires[0].failed || d.retires[0].reason != taskcleanup.ReasonCleanupFailPolicy {
-		t.Errorf("retires = %+v, want one failed terminal for fail policy", d.retires)
+	if len(d.retires) != 1 {
+		t.Fatalf("retires = %+v, want one failed terminal for fail policy", d.retires)
+	}
+	got := d.retires[0]
+	if !got.failed || got.reason != taskcleanup.ReasonCleanupFailPolicy {
+		t.Errorf("retire = %+v, want failed terminal for fail policy", got)
+	}
+	if got.detail != "shred timed out on /tmp" {
+		t.Errorf("retire detail = %q, want the adapter failure description threaded through", got.detail)
+	}
+	if got.scrubWarning {
+		t.Errorf("retire scrubWarning = true, want false (fail-policy termination clears it)")
+	}
+}
+
+// TestReporterPodScrubWarnFailedCordonDrainCarriesWarning verifies the §6.39
+// cordon-drain-under-warn path stamps the scrub_warning audit annotation onto
+// the retire: a warn-policy scrub failure that retires because the host node
+// is cordoned retains the residual-state marker the disposition computed (the
+// `draining [scrub_warning]` case). The adapter-supplied detail is threaded
+// to the audit trail.
+// spec: 6.39 (host-node schedulability retire, the draining [scrub_warning] cordon-drain), 5.2 (onScrubFailure warn marker persists; audit retention)
+//
+// diagnosis: a failure means a warn-policy scrub failure that retires on a
+// cordoned node writes the released terminal with no scrub_warning, losing the
+// residual-state audit marker §6.39/§5.2 retain, or drops the failure detail.
+func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure:   taskcleanup.OnCleanupWarn,
+		MaxScrubFailures: 3, MaxSessionsPerPod: 100,
+		HostSchedulable: false, // cordoned host, warn policy
+		Pool:            "agents-pool", RuntimeClass: "gvisor",
+	}}
+	r := newReporter(t, c, l, i, d)
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "in-place residue"); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	if len(d.retires) != 1 {
+		t.Fatalf("retires = %+v, want one cordon-drain retire", d.retires)
+	}
+	got := d.retires[0]
+	if got.failed || got.reason != taskcleanup.ReasonHostUnschedulable {
+		t.Errorf("retire = %+v, want released retire for host_unschedulable", got)
+	}
+	if !got.scrubWarning {
+		t.Errorf("retire scrubWarning = false, want true (cordon-drain retains the warn marker)")
+	}
+	if got.detail != "in-place residue" {
+		t.Errorf("retire detail = %q, want the adapter failure description threaded through", got.detail)
 	}
 }
 
@@ -601,12 +684,17 @@ func TestNewScrubReporterRequiresDeps_spec_4_7(t *testing.T) {
 }
 
 // TestReporterPodScrubEmitsMetrics verifies the §16.1 retirement and
-// scrub-failure-count metrics are emitted on a failed scrub that retires.
-// spec: 16.1 (lenny_pod_retirement_total, lenny_pod_scrub_failure_count)
+// scrub-failure metrics are emitted on a failed scrub that retires, carrying
+// their mandated pool and runtime_class label dimensions. The aggregate
+// lenny_pod_scrub_failure_total counter increments alongside the per-pod
+// lenny_pod_scrub_failure_count gauge.
+// spec: 16.1 (lenny_pod_scrub_failure_total, lenny_pod_scrub_failure_count, lenny_pod_retirement_total labeled by pool, runtime_class), 5.2 (both scrub-failure series increment on failure)
 //
 // diagnosis: a failure means the operator-facing recycle observability is
-// missing — a retiring pod's reason is not counted, or the per-pod
-// scrub-failure gauge does not track the cumulative count.
+// missing — the aggregate scrub-failure counter is not emitted, a retiring
+// pod's reason is not counted, the per-pod scrub-failure gauge does not track
+// the cumulative count, or the pool/runtime_class dimensions the §16.1
+// inventory mandates are dropped.
 func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
@@ -614,6 +702,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
 		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxScrubFailures: 3,
 		MaxSessionsPerPod: 100, HostSchedulable: true,
+		Pool: "agents-pool", RuntimeClass: "gvisor",
 	}}
 	m := newRecordingRetireMetrics()
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
@@ -625,11 +714,52 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	if err := r.RecordPodScrub(context.Background(), "pod-1", true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
-	if m.gauges["pod-1"] != 3 {
-		t.Errorf("scrub-failure gauge = %d, want 3", m.gauges["pod-1"])
+	if len(m.totals) != 1 || m.totals[0].pool != "agents-pool" || m.totals[0].runtimeClass != "gvisor" {
+		t.Errorf("scrub-failure total = %+v, want one agents-pool/gvisor increment", m.totals)
 	}
-	if len(m.retirements) != 1 || m.retirements[0] != taskcleanup.ReasonScrubFailuresExhausted {
-		t.Errorf("retirements = %v, want one scrub_failures_exhausted", m.retirements)
+	g := m.gauges["pod-1"]
+	if g.count != 3 || g.pool != "agents-pool" || g.runtimeClass != "gvisor" {
+		t.Errorf("scrub-failure gauge = %+v, want count 3 labeled agents-pool/gvisor", g)
+	}
+	if len(m.retirements) != 1 {
+		t.Fatalf("retirements = %v, want one", m.retirements)
+	}
+	if got := m.retirements[0]; got.reason != taskcleanup.ReasonScrubFailuresExhausted || got.pool != "agents-pool" || got.runtimeClass != "gvisor" {
+		t.Errorf("retirement = %+v, want scrub_failure_limit labeled agents-pool/gvisor", got)
+	}
+}
+
+// TestReporterPodScrubSuccessEmitsNoScrubFailureMetrics verifies a clean
+// whole-pod scrub increments neither the aggregate lenny_pod_scrub_failure_total
+// counter nor the per-pod gauge, so a healthy reuse does not pollute the
+// scrub-failure series.
+// spec: 5.2 (both scrub-failure series increment only on a FAILED outcome)
+//
+// diagnosis: a failure means a successful scrub is being counted as a scrub
+// failure, inflating the aggregate counter and the per-pod gauge and
+// triggering the maxScrubFailures retire prematurely.
+func TestReporterPodScrubSuccessEmitsNoScrubFailureMetrics_spec_5_2(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxSessionsPerPod: 100,
+		HostSchedulable: true, Pool: "agents-pool", RuntimeClass: "runc",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	if len(m.totals) != 0 {
+		t.Errorf("scrub-failure totals = %+v, want none on a clean scrub", m.totals)
+	}
+	if _, ok := m.gauges["pod-1"]; ok {
+		t.Errorf("scrub-failure gauge emitted on a clean scrub: %+v", m.gauges)
 	}
 }
 
