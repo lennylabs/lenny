@@ -137,7 +137,7 @@ export interface AdapterManifest {
   // taskId is the root task identifier for this session. Each session
   // has exactly one execution, so the manifest is per-session and taskId
   // is frozen for the session's lifetime.
-  // spec: §15.7 (manifest TaskID), §7.1 (one execution per session)
+  // spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
   taskId?: string;
   // mcpNonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
   // SDK injects it as params._lennyNonce on every MCP initialize.
@@ -188,7 +188,7 @@ export interface CreateRequest {
   // taskId is the root task identifier for this session. Each session
   // has exactly one execution, so taskId is frozen for the session's
   // lifetime and onCreate is invoked once with this value.
-  // spec: §15.7 (TaskID frozen, OnCreate once), §7.1 (one execution per session)
+  // spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
   taskId: string;
   // runtimeOptions is the effective caller options map.
   runtimeOptions?: Record<string, unknown>;
@@ -214,7 +214,7 @@ export interface Message {
   // taskId is the root task identifier of the session the message belongs
   // to. It always equals CreateRequest.taskId, which is frozen for the
   // session's lifetime.
-  // spec: §15.7 (TaskID frozen), §7.1 (one execution per session)
+  // spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
   taskId: string;
   // sequence is a monotonic, SDK-assigned per-task counter ordering
   // messages as the SDK observed them on stdin. It is local to this

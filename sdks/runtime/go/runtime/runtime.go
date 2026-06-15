@@ -76,11 +76,11 @@ import (
 // inbound §15.4.1 message frame, and OnTerminate once when the adapter
 // closes stdin or sends a shutdown frame.
 //
-// Each session has exactly one execution (§5.2, §7.1), so OnCreate is
+// Each session has exactly one execution (§5.2, §7.2), so OnCreate is
 // invoked once per pod occupancy with the session's frozen TaskID and is
 // not re-invoked mid-session. A recycling pool serves the next session
 // in a fresh OnCreate invocation after the runtime exits.
-// spec: §15.7 (single OnCreate per session), §7.1 (one execution per session)
+// spec: §15.7 (single OnCreate per session), §7.2 (one execution per session)
 type Handler interface {
 	// OnCreate receives the session-scoped context snapshot before the
 	// first Message is delivered. A non-nil error aborts the runtime.
