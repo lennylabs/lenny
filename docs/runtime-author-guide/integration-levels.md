@@ -21,12 +21,12 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 | **Simple response shorthand** (`{"type":"response","text":"..."}`) | Yes | Yes | Yes |
 | **Minimal output part fields** (only `type` + `inline` required) | Yes | Yes | Yes |
 | **Minimal message fields** (only `type`, `id`, `input` needed) | Yes | Yes | Yes |
-| **Platform tool server** (delegation, discovery, user input, streaming output, memory, messaging) | -- | Yes | Yes |
+| **Platform tool server** (delegation, discovery, user input, streaming output, memory, messaging, tracing-context propagation) | -- | Yes | Yes |
 | **Connector tool servers** (GitHub, Jira, Slack, etc.) | -- | Yes | Yes |
 | **Lifecycle channel** | -- | -- | Yes |
 | **Checkpoint and restore** | None -- pod failure loses context | Best-effort -- minor inconsistencies possible | Cooperative handshake -- consistent snapshots |
 | **Interrupt** | SIGTERM only, no safe stop point | SIGTERM only | Clean `interrupt_request` / `interrupt_acknowledged` |
-| **Credential rotation** | Pod restart, context lost unless checkpointed | Pod restart, brief pause | Rotated in place, no interruption |
+| **Credential rotation** | Pod restart, in-flight context lost (no checkpoint) | Pod restart, brief pause (best-effort checkpoint) | Rotated in place, no interruption |
 | **Advance deadline warning** | `shutdown` only, no advance notice | `shutdown` only | `deadline_approaching` signal before expiry |
 | **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | Coordinated via the lifecycle channel |
 | **Pod recycling (`recycle.enabled`)** | Yes -- adapter-executed, no runtime cooperation | Yes | Yes |
@@ -115,14 +115,15 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
 | `lenny/request_input` | Block until the user answers |
 | `lenny/send_message` | Send a message to any task by task ID |
 | `lenny/get_task_tree` | Get the task hierarchy with current states |
+| `lenny/set_tracing_context` | Register tracing identifiers the gateway propagates to child tasks, so delegated spans link back to the parent's trace |
 
 ### What happens if the pod dies
 
 At Standard, Lenny takes **best-effort snapshots** without pausing your runtime. The workspace is tarred up while your binary is still running, so files written during the snapshot can end up in an inconsistent state. On resume, you may see minor workspace drift. For most workloads that's fine.
 
-### A note on macOS
+### A note on the local socket transport
 
-Standard and Full use Linux abstract Unix sockets (names that start with `@`), which only exist on Linux. If you're developing on macOS, run your runtime inside `docker compose up` -- that gives you a Linux environment. `make run` works on macOS for Basic-level runtimes, since those only use stdin/stdout.
+Standard and Full use Linux abstract Unix sockets (names that start with `@`), which exist only on Linux. Where this matters is the local-development mode you run under. Under `lenny up` and `docker compose up`, your runtime runs in a Linux pod or container, so the sockets work whatever your host OS is. Under `make run`, your runtime runs as a plain host process, which can host those sockets only when the host itself is Linux. On a non-Linux host, use `make run` for Basic-level runtimes, which need only stdin/stdout, and `lenny up` or `docker compose up` for Standard and Full. See [Local Development](local-development.md) for the development modes.
 
 ### How much code
 
@@ -220,7 +221,7 @@ When an LLM provider rate-limits or revokes a credential, Lenny rotates it. What
 |-------|---------------------|----------------------|
 | Full | The platform sends `credentials_rotated` on the lifecycle channel; your runtime rebinds in place. | Nothing -- the session keeps running. |
 | Standard | The platform checkpoints, terminates the pod, allocates a new one, assigns new credentials, and resumes. | A brief pause; the client sees a reconnect. |
-| Basic | Same as Standard, but if there's no checkpoint, the in-flight context is lost. | A pause, and potentially some lost context. |
+| Basic | The platform terminates the pod, allocates a new one, assigns new credentials, and restarts the session. There is no checkpoint at this level, so any in-flight context is lost. | A pause, and the loss of in-flight context. |
 
 The platform picks the right strategy automatically -- based on the capabilities you declared in `lifecycle_support`, or the absence of a lifecycle channel.
 

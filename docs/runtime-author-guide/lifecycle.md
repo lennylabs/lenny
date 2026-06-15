@@ -7,7 +7,9 @@ nav_order: 5
 
 # Pod Lifecycle
 
-This page covers the complete lifecycle of a Lenny agent pod --- from pre-warming through session execution to termination. Understanding these states helps you write runtimes that handle startup, checkpointing, interrupts, and shutdown correctly.
+This page covers the lifecycle of a Lenny agent pod, from pre-warming through session execution to termination. The states described here apply to `type: agent` runtimes, which hold a workspace and run a session or task. `type: mcp` runtimes have no session or task lifecycle and follow a different model; see [Integration Levels](integration-levels.md#type-mcp-runtimes). Understanding these states helps you write a runtime that handles startup, checkpointing, interrupts, and shutdown correctly.
+
+Several capabilities on this page depend on the runtime's integration level. Basic, Standard, and Full are defined in [Integration Levels](integration-levels.md); each section notes which level it requires.
 
 ---
 
@@ -230,8 +232,10 @@ After a successful resume, the client receives a `session.resumed` event:
 }
 ```
 
-- `resumeMode`: `full` (workspace restored from checkpoint) or `conversation_only` (workspace could not be restored).
+- `resumeMode`: how much state was restored. Common values are `full` (workspace restored from the latest checkpoint) and `conversation_only` (no workspace; conversation context only). The gateway emits additional values for partial-workspace and coordinator-handoff recoveries. The client reads this field; your runtime does not act on it.
 - `workspaceLost`: `true` if the workspace snapshot was unavailable or corrupt.
+
+The client receives this event. Your runtime does not emit or handle it; from the runtime's perspective, a resumed session starts fresh on the new pod, as described above.
 
 ---
 
@@ -263,13 +267,13 @@ At the Basic and Standard levels, interrupt is SIGTERM-based --- there is no cle
 
 ## Credential Rotation
 
-When an LLM provider rate-limits or revokes a credential, the platform rotates it. The behavior depends on your integration level:
+When a provider credential is rate-limited, expires, or is revoked, the platform rotates it. The behavior depends on your integration level:
 
 | Level | Method | Session Impact |
 |------|--------|----------------|
 | **Full** | `credentials_rotated` on lifecycle channel; runtime rebinds in-place | No session interruption |
-| **Standard** | Gateway triggers checkpoint, terminates pod, resumes on new pod with new credentials | Brief pause; client sees a reconnect |
-| **Basic** | Same as Standard. If no checkpoint support, in-flight context is lost | Pause; potential context loss |
+| **Standard** | Gateway triggers a best-effort checkpoint, terminates the pod, and resumes on a new pod with the new credential | Brief pause; client sees a reconnect |
+| **Basic** | Pod restart with the new credential. Basic has no checkpoint, so in-flight context is lost and the session restarts from the last gateway-persisted state | Pause and loss of in-flight context |
 
 ### Full-level credential rotation
 
@@ -277,7 +281,7 @@ When an LLM provider rate-limits or revokes a credential, the platform rotates i
 1. Adapter sends on lifecycle channel:
    {"type":"credentials_rotated","provider":"anthropic","credentialsPath":"/run/lenny/credentials.json","leaseId":"lease_xyz"}
 
-2. Your runtime re-reads the credentials file and rebinds the LLM client.
+2. Your runtime re-reads the credentials file and rebinds the provider client to the new credential.
 
 3. Your runtime replies:
    {"type":"credentials_acknowledged","leaseId":"lease_xyz","provider":"anthropic"}
@@ -301,7 +305,7 @@ At the Basic and Standard levels, you receive only a `shutdown` message when the
 
 ## Terminate Signal (Full level)
 
-Full-level runtimes receive a `terminate` message on the lifecycle channel as the preferred shutdown path, instead of the stdin `shutdown` message. This is distinct from stdin `shutdown` --- `terminate` arrives on the lifecycle channel and is the primary graceful shutdown mechanism for Full-level runtimes.
+Full-level runtimes receive a `terminate` message on the lifecycle channel as the primary graceful shutdown path. It arrives on the lifecycle channel rather than as the stdin `shutdown` message that Basic and Standard runtimes receive.
 
 ```json
 {"type":"terminate","deadlineMs":10000,"reason":"session_complete"}
@@ -443,7 +447,7 @@ The termination sequence:
 Before a pod is released, the gateway always exports the final workspace snapshot to durable storage (MinIO):
 
 1. Workspace files are sealed and uploaded.
-2. If export fails, the pod is held and retried with exponential backoff.
-3. After `maxWorkspaceSealDurationSeconds` (default: 300s), the gateway gives up and terminates the pod anyway.
+2. If export fails, the pod is held in `draining` and the upload is retried with exponential backoff.
+3. After `maxWorkspaceSealDurationSeconds` (default: 300s), the gateway stops retrying, marks the session `failed` with reason `workspace_seal_timeout`, and terminates the pod.
 
-This ensures session output is preserved for the client to download after the session ends.
+The seal preserves session output for the client to download after the session ends, except when the retry window is exhausted by a sustained storage outage.

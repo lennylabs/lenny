@@ -24,7 +24,7 @@ Lenny's test surface follows a strict tier model. Tier 0 (static) runs first; ea
 | 7 | Load: k6 scenarios against the cluster with SLO baselines | per-phase |
 | 8 | Chaos: fault injection via toxiproxy or chaos-mesh | nightly subset |
 | 9 | Security: tenant isolation, TLS enforcement, admission policies, OWASP ZAP fuzz, kube-bench, cosign + SBOM | per release |
-| 10 | Conformance: runtime adapter validation against the published contracts (`lenny-compliance`) | per release |
+| 10 | Conformance: runtime adapter validation against the published contracts (`lenny runtime validate`) | per release |
 | 11 | Documentation: link-check, code-block parse, runbook structure, ADR continuity | < 60s |
 
 ## Writing your first test

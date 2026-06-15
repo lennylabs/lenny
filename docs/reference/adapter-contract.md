@@ -1,8 +1,8 @@
 ---
 layout: default
 title: "Adapter Contract"
-parent: "Runtime Author Guide"
-nav_order: 1
+parent: Reference
+nav_order: 9
 ---
 
 # Adapter Contract

@@ -336,7 +336,7 @@ func truncate(s string, n int) string {
 
 - **Sequential file reading:** Files are read one at a time via `tool_call`/`tool_result` to keep the state machine simple. A production runtime could use multiple outstanding tool calls for parallel reads.
 - **Atomic tool call IDs:** The `toolCallCounter` uses `atomic.Int64` for thread-safe ID generation, even though the main loop is single-threaded (future-proofing).
-- **Truncation:** File contents are truncated to 500 characters per file. A real summarizer would pass the full content to an LLM.
+- **Truncation:** File contents are truncated to 500 characters per file. A production summarizer would pass the full content to an LLM.
 - **Heartbeat interleaving:** Heartbeats may arrive between tool calls. The main loop handles them regardless of the current `phase`.
 
 ---
@@ -446,7 +446,7 @@ func readManifest() (*AdapterManifest, error) {
 }
 ```
 
-### 3. Connect to Lenny's local tool server
+### 3. Connect to the platform MCP server
 
 ```go
 import "github.com/mark3labs/mcp-go/client"

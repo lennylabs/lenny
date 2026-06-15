@@ -367,13 +367,13 @@ def read_manifest():
         return json.load(f)
 ```
 
-### 3. Connect to Lenny's local tool server
+### 3. Connect to the platform MCP server
 
 ```python
 from mcp import Client
 
 async def connect_mcp(manifest):
-    """Connect to Lenny's local tool server via abstract Unix socket."""
+    """Connect to the platform MCP server via abstract Unix socket."""
     socket_path = manifest["platformMcpServer"]["socket"]
     nonce = manifest["mcpNonce"]
 

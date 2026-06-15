@@ -7,15 +7,17 @@ nav_order: 4
 
 # Local Development
 
-There are three ways to run Lenny locally while you work on a runtime. Pick whichever matches what you're doing:
+To develop a runtime, use `lenny up`. It runs the full Lenny platform from a single binary on your machine, against the same Kubernetes code path production uses, with the reference runtimes pre-installed. Build your image, register it, and start a session.
 
-| Command | What it is | Best for |
-|---------|------------|----------|
-| **`lenny up`** | The whole platform running in a single binary. The default. | Testing your runtime against the real platform; end-to-end demos; anything you don't specifically need a different mode for. |
-| **`make run`** | The gateway running as a single Go process with an in-memory backend and a lightweight controller that spawns one agent process. | Contributors iterating on the gateway or adapter source code; Basic-level runtimes on macOS. |
-| **`docker compose up`** | Real Postgres, Redis, and artifact storage running in containers, plus Docker containers for the gateway and your agent. | Standard- and Full-level runtimes on macOS; exercising the real credential code path; integration CI. |
+Two other local modes exist mainly for contributors working on Lenny itself. A runtime author rarely needs them, but each gives a tighter loop in a specific case, so all three are documented here.
 
-`lenny up` is the fastest path to seeing your runtime in context -- it runs the same code as production with nothing else to set up. `make run` and `docker compose up` exist mainly so contributors modifying core Lenny components get a tighter iteration loop.
+| Mode | What it runs | Use it to | Limitations |
+|------|--------------|-----------|-------------|
+| **`lenny up`** (recommended) | The whole platform from one binary: embedded k3s, Postgres, Redis, key management, identity, the gateway, the controllers, and the reference runtime catalog. Your runtime runs in a real Kubernetes pod. | Develop and test your runtime against the real platform, and run end-to-end demos. | Local only, with insecure development credentials and keys. Not for production. |
+| **`make run`** | The Lenny source tree with Kubernetes stubbed out: the gateway, an in-process controller, and one agent, all as goroutines in a single process, backed by SQLite and in-memory stores. Your agent runs as a host process rather than in a pod. | Iterate on the gateway or controller source, or run a Basic-level runtime through a fast host-process loop. | No real pod lifecycle, scaling, or isolation. Standard- and Full-level runtimes connect over Linux abstract Unix sockets, so under `make run` they work only on a Linux host. |
+| **`docker compose up`** | The gateway, a controller, and one agent container, plus Postgres, Redis, and MinIO as containers. | Iterate on gateway or controller logic against real storage backends, or run integration tests in CI. | Plain HTTP by default; enable TLS before configuring real credentials. A single agent container, with no scaling. |
+
+The difference between the first two is what runs underneath. `lenny up` is a released binary that starts a real single-node Kubernetes (k3s) and runs your runtime in an actual pod, so it exercises the production code path. `make run` runs the source tree with no Kubernetes at all and launches your agent as a plain host process, which rebuilds faster but does not reproduce pod scheduling, isolation, or scaling.
 
 ---
 
@@ -25,9 +27,9 @@ There are three ways to run Lenny locally while you work on a runtime. Pick whic
 lenny up
 ```
 
-Starts everything in-process: an embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the full reference runtime catalog. The first run downloads k3s to `~/.lenny/k3s/`; every run after that starts in seconds.
+`lenny up` starts everything in-process: an embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The first run downloads k3s to `~/.lenny/k3s/`; every run after that starts in seconds.
 
-**What you need:** the `lenny` binary. Nothing else.
+**What you need:** the `lenny` binary, and nothing else.
 
 **Use it for:**
 
@@ -62,17 +64,17 @@ lenny down --purge     # also wipe ~/.lenny/ for a fresh start
 
 ### Not for production
 
-Every `lenny up` prints a banner you can't suppress: "Local mode. NOT for production use. Credentials, master keys, and identities are insecure." The embedded identity provider refuses any audience claim that isn't `dev.local`, and any attempt to expose the gateway beyond localhost fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+`lenny up` is for local development only. Its credentials, master keys, and identities are insecure. The embedded identity provider accepts only the `dev.local` audience, and the gateway fails closed with `EMBEDDED_MODE_LOCAL_ONLY` if you try to expose it beyond localhost.
 
 ---
 
-## `make run` -- zero dependencies, for gateway contributors
+## `make run` -- zero dependencies, for platform contributors
 
 ```bash
 make run
 ```
 
-A single binary that embeds everything the gateway would normally talk to:
+Unlike `lenny up`, which runs the released binary against a real Kubernetes cluster, `make run` runs the Lenny source tree in a single process with Kubernetes left out entirely. Everything the gateway would normally talk to is replaced by an embedded equivalent:
 
 | Component | What it's replaced with |
 |-----------|-------------------------|
@@ -88,10 +90,9 @@ A single binary that embeds everything the gateway would normally talk to:
 
 **Use it for:**
 
-- Iterating on runtime code against the gateway's contract
+- Iterating on the gateway or controller source while running a runtime against it
+- A fast host-process loop on a Basic-level agent binary
 - Getting oriented as a first-time Lenny contributor
-- Quick demos
-- Fast local iteration on an agent binary
 
 ### Using your own agent binary
 
@@ -99,7 +100,7 @@ A single binary that embeds everything the gateway would normally talk to:
 make run LENNY_AGENT_BINARY=/path/to/my-agent-binary
 ```
 
-The in-process controller spawns your binary directly. It has to speak the stdin/stdout JSON-lines contract. There's no runtime registration step -- the binary is used as-is.
+The in-process controller spawns your binary directly. The binary must speak the stdin/stdout JSON Lines contract. There is no runtime registration step under `make run`; the binary is used as-is.
 
 ### The default runtime
 
@@ -111,15 +112,15 @@ Without `LENNY_AGENT_BINARY`, `make run` uses a built-in echo runtime. It replay
 make test-smoke
 ```
 
-Creates a session with the echo runtime, sends a prompt, checks the response, and exits. Validates the whole pipeline end-to-end in under 10 seconds.
+It creates a session with the echo runtime, sends a prompt, checks the response, and exits. The run validates the pipeline from gateway to agent binary in under 10 seconds.
 
 ### Observability
 
 Traces go to stdout; Prometheus metrics are exposed on `:9090/metrics`.
 
-### macOS
+### Limitations
 
-`make run` works on macOS for **Basic-level runtimes** -- those that only use stdin/stdout. Standard and Full runtimes need Linux abstract Unix sockets, which macOS doesn't have, so use `docker compose up` for those.
+`make run` has no Kubernetes underneath, so it does not reproduce pod scheduling, isolation, scaling, or the warm pool. It runs your agent as a host process, which connects over Linux abstract Unix sockets for Standard- and Full-level features. Those sockets exist only on Linux, so on macOS or Windows use `make run` for Basic-level runtimes and `lenny up` (or `docker compose up`) for Standard and Full.
 
 ---
 
@@ -198,11 +199,11 @@ Grafana is at `http://localhost:3000`, Jaeger at `http://localhost:16686`.
 
 ### Plain HTTP by default
 
-With `docker compose up`, traffic between the gateway and agent containers goes over plain HTTP. **Don't configure real LLM credentials in this mode -- turn on TLS first.**
+With `docker compose up`, traffic between the gateway and agent containers goes over plain HTTP. **Turn on TLS before you configure live LLM credentials in this mode.**
 
 ### Credential testing
 
-When you want to test real LLM credentials or the mTLS code path:
+To test live LLM credentials or the mTLS code path:
 
 ```bash
 make compose-tls
@@ -254,7 +255,7 @@ Certificates are regenerated if deleted; no manual key management is required.
 make run LENNY_AGENT_BINARY=./my-agent
 ```
 
-The in-process controller starts with your updated binary right away. Session state doesn't survive a restart -- this is development mode.
+The in-process controller starts with your updated binary right away. Session state does not survive a restart in this mode.
 
 ### Standard and Full runtimes (Docker)
 
@@ -327,7 +328,7 @@ docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Session hangs after your binary writes a response | stdout not flushed | Flush explicitly after every write (see your language's guidance in the Adapter Contract) |
+| Session hangs after your binary writes a response | stdout not flushed | Flush explicitly after every write (see your language's guidance in the [Adapter Contract](../reference/adapter-contract.md)) |
 | Your binary gets SIGTERM after 10 seconds | Heartbeat wasn't acknowledged | Handle `heartbeat` by immediately writing `heartbeat_ack` |
 | `tool_result` never arrives | `tool_call` referenced an invalid tool | Stick to `read_file`, `write_file`, `list_dir`, `delete_file` at the Basic level |
 | MCP connection refused (Standard level) | You're on macOS with `make run` | Use `docker compose up` -- abstract Unix sockets only exist on Linux |
@@ -394,7 +395,7 @@ curl http://localhost:8080/v1/admin/pools/echo-pool
 Dev mode relaxes security defaults so you can iterate locally, but guardrails keep it from leaking into production:
 
 1. **Hard startup assertion.** The gateway refuses to start with TLS off unless `LENNY_DEV_MODE=true` is set explicitly.
-2. **Loud warning.** When dev mode is on, the gateway logs `"WARNING: TLS disabled -- dev mode active. Do not use in production."` on startup and every 60 seconds.
+2. **Loud warning.** When dev mode is on, the gateway logs a warning that TLS is disabled and the deployment is not for production, on startup and every 60 seconds.
 3. **One switch for everything.** `LENNY_DEV_MODE` gates every security relaxation. You can't disable individual security features one at a time.
 
 ---

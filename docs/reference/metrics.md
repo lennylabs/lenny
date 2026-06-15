@@ -516,7 +516,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `WorkspaceSealStuck` | Seal operation retrying beyond `maxWorkspaceSealDurationSeconds` | Warning |
 | `CoordinatorHandoffSlow` | P95 handoff duration > 5s for > 5 min | Warning |
 | `StorageQuotaHigh` | Artifact storage > 80% of tenant quota | Warning |
-| `LegalHoldCheckpointAccumulationProjectedBreach` | `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * lenny_tenant_storage_quota_bytes and on(tenant_id) lenny_tenant_legal_hold_active_count > 0` — predictive alert that a tenant's projected 24-hour legal-hold checkpoint growth plus current usage will cross 90% of the tenant's configured `storageQuotaBytes` bucket; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html). | Warning |
+| `LegalHoldCheckpointAccumulationProjectedBreach` | `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * lenny_tenant_storage_quota_bytes and on(tenant_id) lenny_tenant_legal_hold_active_count > 0` — predictive alert that a tenant's projected 24-hour legal-hold checkpoint growth plus current usage will cross 90% of the tenant's configured `storageQuotaBytes` bucket; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.md). | Warning |
 | `ErasureJobFailed` | Erasure job failed | Warning |
 | `TenantDeletionOverdue` | Deletion exceeds 80% of the deployment size's SLA | Warning |
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |

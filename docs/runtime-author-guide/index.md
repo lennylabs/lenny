@@ -3,23 +3,20 @@ layout: default
 title: "Runtime Author Guide"
 nav_order: 4
 has_children: true
-description: Build your own agent runtime — the adapter protocol, the three integration levels (Basic, Standard, Full), the Go/Python/TypeScript SDKs, and publishing.
+description: Build your own agent runtime — the adapter protocol, the integration levels (Basic, Standard, Full), the Go/Python/TypeScript SDKs, and publishing.
 ---
 
 # Runtime Author Guide
 
 ## Who this guide is for
 
-You're writing a program that Lenny will run as an agent. That could be:
+A runtime is a program Lenny runs on your behalf inside a sandboxed pod. This guide is for anyone writing one. Lenny runs two kinds of runtime: an **agent runtime** that participates in the session and task lifecycle, and an **MCP server runtime** that Lenny hosts and isolates. Common starting points:
 
-- A custom agent you want to host inside Lenny's sandboxed pods.
-- An adapter that wraps an existing framework -- LangChain, CrewAI, AutoGen -- and lets it run under Lenny.
-- A specialized worker that processes tasks without calling an LLM at all (file processing, code analysis, test running).
-- A small variation on one of the reference runtimes that changes configuration or wraps a different CLI.
+- A specialized worker, AI or not, that defines a protocol or syntax on top of Lenny's messages API. It can call an LLM, or it can do deterministic work (file processing, code analysis, test running) and return structured results and errors to the client.
+- An adapter that wraps an existing harness such as Claude Code, Cursor CLI, Gemini CLI, or Codex, or an agent framework such as LangGraph, CrewAI, or Mastra, and runs it under Lenny.
+- An MCP server you want Lenny to host so it gets pod isolation, credential management, and pool scaling without knowing anything about Lenny.
 
-Any of those, and this is the right guide.
-
-If you're deploying Lenny to a cluster, calling its API from an application, or adding a connector to an external tool, you want the Operator Guide, the Client Guide, or the connector documentation instead.
+If you are deploying Lenny to a cluster, calling its API from an application, or adding a connector to an external tool, see the Operator Guide, the Client Guide, or the connector documentation instead.
 
 ---
 
@@ -29,19 +26,25 @@ Before you read the whole guide, pick the shortcut that matches what you're buil
 
 | If you're… | Do this |
 |:---|:---|
-| **Wrapping an existing CLI** (a Claude Code-style coding agent, a shell tool you want to sandbox) | Fork one of the four reference CLI wrappers — `claude-code`, `gemini-cli`, `codex`, `cursor-cli`. They share a Dockerfile skeleton, workspace layout, and sandbox profile; only the image, credential, and launch command differ. Read [Pod Lifecycle](lifecycle.md), run the [compliance suite](testing.md) against your image, then follow [Publishing](publishing.md). |
-| **Wrapping an existing framework** (LangGraph, Mastra, CrewAI, OpenAI Assistants) | Fork the corresponding reference runtime — `langgraph`, `mastra`, `crewai`, `openai-assistants`. These are Full-integration adapters so you get checkpoints, interrupts, and credential rotation without writing them. Validate with the [compliance suite](testing.md) before publishing. |
+| **Wrapping an existing CLI** (a Claude Code-style coding agent, a shell tool you want to sandbox) | Fork one of the reference CLI wrappers (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`). They share a Dockerfile skeleton, workspace layout, and sandbox profile; only the image, credential, and launch command differ. Read [Pod Lifecycle](lifecycle.md), run the [conformance suite](testing.md) against your image, then follow [Publishing](publishing.md). |
+| **Wrapping an existing framework** (LangGraph, Mastra, CrewAI, OpenAI Assistants) | Fork the corresponding reference runtime — `langgraph`, `mastra`, `crewai`, `openai-assistants`. These are Full-integration adapters so you get checkpoints, interrupts, and credential rotation without writing them. Validate with the [conformance suite](testing.md) before publishing. |
 | **Building a net-new agent** | Scaffold with `lenny runtime init my-agent --language <go|python|typescript> --template <minimal|chat|coding>`, read the [Echo Runtime Sample](echo-runtime.md), then continue with the full reading order below. |
-| **Writing a specialized worker** (no LLM calls — file processing, code analysis) | Scaffold with `--template minimal` and stay at the Basic integration level. About 50 lines. |
-| **Just want to understand the wire format** | Read the [Echo Runtime Sample](echo-runtime.md) and [Adapter Contract](adapter-contract.md). |
+| **Writing a specialized worker** (no LLM calls — file processing, code analysis) | Scaffold with `--template minimal` and stay at the Basic integration level, which takes roughly 50 lines. |
+| **Just want to understand the wire format** | Read the [Echo Runtime Sample](echo-runtime.md) and [Adapter Contract](../reference/adapter-contract.md). |
 
 ---
 
 ## What "runtime" means in Lenny
 
-A runtime is a program that reads JSON lines from standard input and writes JSON lines to standard output. That's the whole contract.
+Lenny runs two kinds of runtime.
 
-Your program runs inside a Kubernetes pod next to a small sidecar that Lenny provides. The sidecar takes care of all the platform plumbing: the connection back to the gateway, delivering the session's files into the pod, managing credentials, answering health checks. Messages from the user arrive on your program's stdin as JSON; your replies go to stdout.
+An **agent runtime** (`type: agent`) participates in the session and task lifecycle. It receives messages, holds a workspace, can delegate to other runtimes, and can ask the user questions. Most of this guide covers agent runtimes.
+
+An **MCP server runtime** (`type: mcp`) is an MCP server that Lenny hosts behind its pod isolation, credential management, and pool scaling. It has no session or task lifecycle and needs to know nothing about Lenny. [Integration Levels](integration-levels.md#type-mcp-runtimes) describes it; the rest of this guide is about agent runtimes.
+
+### The standard model: an adapter sidecar
+
+In the standard model, your agent runtime runs inside a Kubernetes pod next to a small adapter sidecar that Lenny provides. The sidecar handles the platform plumbing: the connection back to the gateway, delivering the session's files into the pod, managing credentials, and answering health checks. Your program reads messages as JSON lines on stdin and writes replies as JSON lines on stdout. That stdin/stdout JSON-lines exchange is the whole contract you implement.
 
 ![Runtime pod: an adapter sidecar (Lenny-provided) and your program (any language) communicate over stdin and stdout. The adapter sends encrypted traffic back to the gateway.](../assets/diagrams/runtime-pod-simple.svg)
 
@@ -64,13 +67,19 @@ ASCII fallback for the diagram above (runtime-pod-simple):
 -->
 
 
-A few consequences of this design:
+A few consequences:
 
 - **Any language works.** If it can read and write JSON lines, it can be a Lenny runtime.
 - **You don't need a Lenny dependency.** The simplest integration has zero imports from Lenny. If you'd like more ergonomic code, official SDKs are available for Go, Python, and TypeScript (covered below).
 - **You integrate deeper only when you need to.** The basic integration is about 50 lines. More capabilities are available when you want them, without rewriting what you have.
 - **Sessions are isolated by default.** Every session gets its own pod with its own filesystem and network namespace. Depending on the pool's configuration, it can also be sandboxed under gVisor or run in a microVM via Kata Containers. Sessions never share memory or state.
-- **Delegation is backstopped.** When your runtime calls `lenny/delegate_task`, the gateway enforces the child's budget, scope, and isolation bounds. You don't have to trust other runtimes — or your own code — to honor them.
+- **Delegation is backstopped.** When your runtime calls `lenny/delegate_task`, the gateway enforces the child's budget, scope, and isolation bounds. You don't have to trust other runtimes, or your own code, to honor them.
+
+### The embedded alternative
+
+A runtime can instead embed the adapter and speak the gateway's gRPC contract directly, with no separate sidecar container. This replaces the stdin/stdout JSON-lines protocol with the full gRPC contract, so it is limited to Go (or another language with gRPC support) and is more work to implement. It is intended for first-party, latency-sensitive runtimes where the adapter and the agent are developed together.
+
+Use the sidecar model unless you have a specific reason not to. Everything in this guide assumes it.
 
 ---
 
@@ -105,14 +114,14 @@ The three templates cover the common starting points:
 Validate and publish:
 
 ```bash
-lenny runtime validate                                    # checks your manifest and adapter compliance
+lenny runtime validate                                    # checks your manifest and adapter conformance
 lenny runtime publish my-agent \
   --image ghcr.io/my-org/my-agent:0.1.0                   # pushes the image and registers it
 ```
 
 ### Reference runtimes you can learn from (or fork)
 
-Lenny ships with nine built-in runtimes. Read the source, fork one, or register them as-is:
+Lenny ships with built-in runtimes. Read the source, fork one, or register them as-is:
 
 | Runtime | Category | Integration level |
 |---|---|---|
@@ -120,13 +129,13 @@ Lenny ships with nine built-in runtimes. Read the source, fork one, or register 
 | `chat` | General-purpose LLM | Standard |
 | `langgraph`, `mastra`, `openai-assistants`, `crewai` | Framework adapters | Full |
 
-The four coding agents are nearly identical -- same workspace layout, same pre-installed toolchains, same sandbox profile. They differ only in the image, the LLM credential, and the command the container runs. If you're wrapping a CLI, start there.
+The coding-agent runtimes are nearly identical: same workspace layout, same pre-installed toolchains, same sandbox profile. They differ only in the image, the LLM credential, and the command the container runs. If you're wrapping a CLI, start there.
 
 ---
 
-## The three integration levels
+## The integration levels
 
-There are three levels of integration. Each adds capabilities on top of the previous one. Start at the level that covers what you need; you can always move up later.
+Lenny's integration levels are Basic, Standard, and Full. Each adds capabilities on top of the previous one. Start at the level that covers what you need; you can always move up later.
 
 ### Basic
 
@@ -186,10 +195,10 @@ Use this level for agents that need to survive pod failures, handle interrupts, 
 
 1. Scaffold a runtime: `lenny runtime init <name> --language <lang> --template minimal`.
 2. Read the [Echo Runtime Sample](echo-runtime.md) for a complete working example you can copy.
-3. Skim the [Adapter Contract](adapter-contract.md) for the exact message formats.
+3. Skim the [Adapter Contract](../reference/adapter-contract.md) for the exact message formats.
 4. Use the [Integration Levels](integration-levels.md) reference to confirm what you can ignore at this level.
 5. Use [Local Development](local-development.md) to run your runtime against `lenny up`.
-6. Run the [compliance tests](testing.md) before you publish.
+6. Run the [conformance suite](testing.md) before you publish.
 
 ### To add delegation, connectors, or mid-session prompts (Standard level)
 
@@ -204,11 +213,11 @@ Read everything above, then:
 Read everything above, then revisit:
 
 10. [Pod Lifecycle](lifecycle.md) -- this time with attention to checkpoints, interrupts, and credential rotation.
-11. [Adapter Contract](adapter-contract.md) -- the lifecycle channel message formats.
+11. [Adapter Contract](../reference/adapter-contract.md) -- the lifecycle channel message formats.
 
 ### When you're ready to ship
 
-12. [Testing](testing.md) -- the full compliance suite for your integration level.
+12. [Testing](testing.md) -- the full conformance suite for your integration level.
 13. [Publishing](publishing.md) -- packaging the container, registering the runtime, and Helm integration.
 
 ---
@@ -236,4 +245,4 @@ lenny runtime publish my-agent --image my-agent:dev
 lenny session new --runtime my-agent --message "Hello"
 ```
 
-Want to see the raw protocol first? The [Echo Runtime Sample](echo-runtime.md) is an ~80-line Go program that implements the Basic level with zero Lenny dependencies. Read it before picking up the SDK if you like understanding the wire format up front.
+If you want to see the raw protocol first, the [Echo Runtime Sample](echo-runtime.md) is an annotated Go program that implements the Basic level with zero Lenny dependencies. Read it before picking up the SDK to understand the wire format up front.

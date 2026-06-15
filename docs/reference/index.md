@@ -3,7 +3,7 @@ layout: default
 title: Reference
 nav_order: 7
 has_children: true
-description: Lookup tables and schemas — error catalog, metrics, state machines, configuration, CloudEvents catalog, WorkspacePlan schema, and glossary.
+description: Lookup tables and schemas — error catalog, metrics, state machines, configuration, CloudEvents catalog, WorkspacePlan schema, the adapter contract, and glossary.
 ---
 
 # Reference
@@ -23,6 +23,7 @@ This section contains lookup tables, schemas, and diagrams for cross-cutting con
 | [Configuration Reference](configuration) | Complete `values.yaml` field reference organized by component, with types, defaults, and validation rules. |
 | [CloudEvents Catalog](cloudevents-catalog) | All CloudEvents types emitted by the platform (`dev.lenny.*`) with envelope, subject, and data-field schemas. |
 | [WorkspacePlan Schema](workspace-plan) | Session workspace declarative spec: sources, setup commands, env, timeouts, retries, callbacks, delegation lease. |
+| [Adapter Contract](adapter-contract) | The protocol between the Lenny adapter sidecar and a runtime binary: the gateway-to-adapter gRPC RPCs, the stdin/stdout JSON Lines frames, and the lifecycle channel. |
 | [Glossary](glossary) | Alphabetical definitions of all Lenny-specific terms and concepts. |
 
 ---
@@ -35,4 +36,5 @@ This section contains lookup tables, schemas, and diagrams for cross-cutting con
 - **Configuring a deployment?** Go to the [Configuration Reference](configuration) for the full Helm values schema with types, defaults, and validation constraints.
 - **Wiring up a webhook receiver?** Go to the [CloudEvents Catalog](cloudevents-catalog) for the envelope shape and the per-type `data` schemas.
 - **Composing a WorkspacePlan?** Go to the [WorkspacePlan Schema](workspace-plan) for the session-creation payload reference.
+- **Implementing a runtime against the wire format?** Go to the [Adapter Contract](adapter-contract) for the exact frame and RPC definitions. The [Runtime Author Guide](../runtime-author-guide/) explains how to use them.
 - **Unfamiliar with a term?** Go to the [Glossary](glossary) for concise definitions and cross-references to the relevant documentation pages.

@@ -466,7 +466,7 @@ function readManifest(): AdapterManifest {
 }
 ```
 
-### 3. Connect to Lenny's local tool server
+### 3. Connect to the platform MCP server
 
 ```typescript
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

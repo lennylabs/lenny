@@ -7,7 +7,11 @@ nav_order: 3
 
 # Echo Runtime Sample
 
-This page presents a complete, runnable echo runtime in Go. It implements the Basic level of the Lenny adapter contract: reads messages from stdin, echoes them back with a sequence number, handles heartbeats, and shuts down cleanly. Use it as a starting point for your own runtime.
+This page presents a complete, runnable echo runtime in Go and walks through it line by line. It is for a runtime author who wants to see the Basic level of the Lenny adapter contract in working code before reaching for the SDK.
+
+At the Basic level, the runtime binary speaks newline-delimited JSON over stdin and stdout and uses no platform MCP tools. The echo runtime reads each message from stdin, echoes its text back with a sequence number, acknowledges heartbeats, and exits cleanly on shutdown. Copy it as the starting point for your own runtime, then replace the `message` handler with your logic.
+
+The sections below follow the source in order: a line-by-line walkthrough of each handler, how the adapter wraps the binary on stdin and stdout, the commands to build and run it locally, and the changes that turn the sample into a working runtime. For the message contract in full, see the [Adapter Contract](../reference/adapter-contract.md).
 
 ---
 
@@ -257,11 +261,13 @@ When the pod starts, the adapter:
 9. Sends periodic `heartbeat` messages.
 10. On session end, sends `shutdown` and waits for your binary to exit.
 
-Your binary does not need to know about any of this. It just reads from stdin and writes to stdout.
+Your binary does not handle any of these steps. It reads from stdin and writes to stdout, and the adapter does the rest.
 
 ---
 
 ## How to Build and Run
+
+Lenny runs locally in several modes. The recommended path is `lenny up`, which runs the echo runtime in a real Kubernetes pod against the production code path. The `make run` and `docker compose up` modes give a tighter loop in specific cases. The [Local Development](local-development.md) page covers each mode in full.
 
 ### Build
 
@@ -271,16 +277,28 @@ cd examples/runtimes/echo
 go build -o echo-runtime .
 ```
 
-### Run locally with `make run` (in-process, no dependencies)
+### Run with `lenny up` (recommended, end-to-end in a pod)
+
+```bash
+# Build the container image and register the runtime against a running gateway
+docker build -t echo-runtime:dev -f examples/runtimes/echo/Dockerfile .
+lenny up
+lenny runtime publish echo --image echo-runtime:dev
+lenny session new --runtime echo --message "Hello"
+```
+
+`lenny up` starts the whole platform from one binary, including an embedded Kubernetes, and runs your runtime in an actual pod. Use it to exercise the same code path production uses and to run end-to-end demos.
+
+### Run with `make run` (host process, no dependencies)
 
 ```bash
 # From the project root
 make run LENNY_AGENT_BINARY=examples/runtimes/echo/echo-runtime
 ```
 
-This starts the gateway + controller-sim + your binary in a single process. No Postgres, Redis, MinIO, or Docker needed.
+This starts the gateway, an in-process controller, and your binary as goroutines in a single process, with no Postgres, Redis, MinIO, or Docker needed. The binary runs as a host process rather than in a pod, which rebuilds fast. A Basic-level runtime such as the echo runtime works here on any host. Use `make run` for a fast host-process loop while iterating on the binary.
 
-### Run locally with `docker compose up`
+### Run with `docker compose up` (production-like stack)
 
 ```bash
 # Build a container image
@@ -290,7 +308,11 @@ docker build -t echo-runtime:dev -f examples/runtimes/echo/Dockerfile .
 LENNY_AGENT_RUNTIME=echo docker compose up
 ```
 
+This runs the gateway, a controller, and your agent container alongside Postgres, Redis, and MinIO as containers. Use it to test against real storage backends or to run integration tests in CI.
+
 ### Run the smoke test
+
+The smoke test creates a session, sends a prompt, checks the response, and exits.
 
 ```bash
 # With `make run`
@@ -299,8 +321,6 @@ make test-smoke
 # With `docker compose up`
 docker compose run smoke-test
 ```
-
-The smoke test creates a session, sends a prompt, verifies a response, and exits.
 
 ---
 

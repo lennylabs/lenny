@@ -414,7 +414,7 @@ Lenny routes external variant-assignment lookups through the OpenFeature Go SDK 
 
 ## Web Playground configuration
 
-The web playground is an optional browser-based UI for testing runtimes. It is gated behind `playground.enabled` and is `false` by default. See [§27 Web Playground](../developer-guide/web-playground.md) for protocol details.
+The web playground is an optional browser-based UI for testing runtimes. It is gated behind `playground.enabled` and is `false` by default. See [Web Playground](../operator-guide/web-playground.md) for protocol details.
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|

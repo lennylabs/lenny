@@ -7,13 +7,15 @@ nav_order: 7
 
 # Delegation
 
-Recursive delegation is implemented by the gateway. Your runtime decides whether and how to use it. This page covers the delegation model in detail: how to spawn child tasks, manage budgets, handle results, and build reliable orchestration patterns.
+Your runtime can delegate tasks to any other runtime, including another instance of the same runtime. This page covers the delegation model in detail: how to spawn child tasks, manage budgets, handle results, and build reliable orchestration patterns.
 
----
+Delegation is a platform MCP capability, so it is available to runtimes at the Standard and Full integration levels. Basic-level runtimes use only the stdin/stdout protocol and cannot delegate. See [Integration Levels](integration-levels.md) for what each level provides and [Platform Tools](platform-tools.md) for the parameter-by-parameter tool reference.
+
+The targets you can delegate to are other agent runtimes (`type: agent`). An MCP server runtime (`type: mcp`) has no task lifecycle and is not a delegation target; `lenny/delegate_task` rejects it with `target_not_an_agent`.
 
 ## How Delegation Works
 
-When your runtime needs another agent to perform a subtask, it calls `lenny/delegate_task` on the platform MCP server. The gateway handles everything: pod allocation, file delivery, credential assignment, and session lifecycle. Your runtime interacts with the child through a gateway-hosted virtual interface.
+When your runtime needs another agent to perform a subtask, it calls `lenny/delegate_task` on the platform MCP server. The gateway handles pod allocation, file delivery, credential assignment, and session lifecycle. Your runtime interacts with the child through a gateway-hosted virtual interface.
 
 ### The Delegation Flow
 
@@ -29,9 +31,7 @@ When your runtime needs another agent to perform a subtask, it calls `lenny/dele
 9. Your runtime interacts with the child through this interface
 ```
 
-**What you see:** Task status/result, elicitation forwarding, cancellation, and message delivery.
-
-**What you never see:** Pod addresses, internal endpoints, or raw credentials.
+Through the virtual interface, your runtime observes task status and results, elicitation forwarding, cancellation, and message delivery. It never observes the child's pod addresses, internal endpoints, or raw credentials.
 
 ---
 
@@ -84,7 +84,7 @@ The source glob's base path is stripped, and matched files are placed at the chi
 | `./exports/foo.ts` | `./exports/*` | `input/` | `./input/foo.ts` |
 | `./src/auth.ts` | `./src/*` | `project/src/` | `./project/src/auth.ts` |
 
-The child has no visibility into your broader directory structure. You control what slice of your workspace becomes the child's world.
+The child has no visibility into your broader directory structure. The export specification controls which subset of your workspace appears in the child's workspace.
 
 ### Export Limits
 
@@ -136,7 +136,7 @@ When calling `lenny/delegate_task`, you can optionally specify a `lease_slice` t
 | `maxParallelChildren` | int | Max concurrent children for the child |
 | `perChildMaxAge` | int | Max wall-clock seconds for the child |
 
-All fields are optional. When omitted, the child receives `min(remaining_parent_budget, default_fraction)`. The default fraction is 50% of remaining budget.
+All fields are optional. When omitted, the child receives `min(remaining_parent_budget, default_fraction)`. The default fraction is 50% of remaining budget, and a deployer can set it per environment.
 
 ### Atomic Budget Reservation
 
@@ -346,7 +346,7 @@ The `cascadeOnFailure` policy governs what happens to children when the parent r
 | `await_completion` | Let running children finish (up to `cascadeTimeoutSeconds`), then collect results |
 | `detach` | Children become orphaned; results are stored but no parent collects them |
 
-**Important:** Despite the name, `cascadeOnFailure` applies on **all** terminal transitions, not only failure. A parent completing normally after `await_children(mode="any")` will apply the cascade policy to remaining siblings.
+The name is misleading: `cascadeOnFailure` applies on every terminal transition, including normal completion. A parent that completes normally after `await_children(mode="any")` applies the cascade policy to its remaining children.
 
 To allow children to outlive a completed parent, use `cascadeOnFailure: detach`.
 
@@ -381,9 +381,9 @@ Clients reference presets by name: `"delegationLease": "standard"`. Presets can 
 
 ## Lease Extension
 
-When your runtime's token budget is exhausted, the adapter automatically requests an extension from the gateway. This happens transparently --- your runtime sees a slightly slow LLM response, not a failure.
+When your runtime's token budget is exhausted, the adapter automatically requests an extension from the gateway. The exchange is transparent to your runtime, which observes a slightly slower LLM response while the extension resolves.
 
-Extension is handled via the adapter-to-gateway gRPC channel, not the platform MCP server. Your runtime never calls it directly.
+Extension is handled over the adapter-to-gateway gRPC channel rather than the platform MCP server. Your runtime never calls it directly.
 
 **Approval modes:**
 
