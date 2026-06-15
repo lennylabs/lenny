@@ -332,7 +332,8 @@ func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
 // spec: 3.2 (hold-expiry, no rebind of an expired hold)
 func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
-	c := newEnvtestClient(t,
+	c := newEnvtestClient(
+		t,
 		reservedSandbox("sbx-expired", "acme"),
 		sandboxIn(testPool, "sbx-idle", "idle"),
 	)
@@ -359,7 +360,8 @@ func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
 // spec: 3.2 (a reserved pod is held for its pinned tenant alone), 5.2 (tenant pinning)
 func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
-	c := newEnvtestClient(t,
+	c := newEnvtestClient(
+		t,
 		reservedSandbox("sbx-globex", "globex"),
 		sandboxIn(testPool, "sbx-idle", "idle"),
 	)

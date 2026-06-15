@@ -77,13 +77,6 @@ func retryOnConflictSSA(ctx context.Context, apply func(attempt int) error) erro
 // WarmPoolController maintains on SandboxTemplate.status.
 const conditionPoolWarmingUp = "PoolWarmingUp"
 
-// conditionConcurrentWorkspaceCredentialSharing is the §13.1 warning-class
-// condition the WarmPoolController stamps on a SandboxWarmPool that runs a
-// concurrent-workspace pool against a credential-bearing Runtime, where
-// slots in the shared pod can read each other's credential files. spec:
-// §13.1 line 29. F-13.1.5.
-const conditionConcurrentWorkspaceCredentialSharing = "ConcurrentWorkspaceCredentialSharing"
-
 // Label keys the controller stamps on every Sandbox it creates. The
 // pool label scopes the per-pool List; the managed label marks the
 // resource as controller-owned for §17.2 admission targeting.
@@ -294,16 +287,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		decision.Create = 0
 	}
 
-	// spec: §13.1 line 29 — stamp the ConcurrentWorkspaceCredentialSharing
-	// warning on a concurrent-workspace pool whose Runtime is
-	// credential-bearing, so the cross-slot credential-read tradeoff is
-	// visible in pool status alongside the other concurrent-workspace
-	// properties. F-13.1.5.
-	credSharing, err := r.evaluateConcurrentWorkspaceSharing(ctx, &pool, tmpl)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
 	for i := 0; i < decision.Create; i++ {
 		if err := r.createSandbox(ctx, &pool, tmpl); err != nil {
 			return ctrl.Result{}, fmt.Errorf("create sandbox for pool %s: %w", pool.Name, err)
@@ -316,7 +299,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	if err := r.updateStatus(ctx, &pool, decision, degraded, credSharing); err != nil {
+	if err := r.updateStatus(ctx, &pool, decision, degraded); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update pool %s status: %w", pool.Name, err)
 	}
 	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
@@ -709,72 +692,20 @@ func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.San
 	return &cond, nil
 }
 
-// evaluateConcurrentWorkspaceSharing returns the §13.1 line 29
-// ConcurrentWorkspaceCredentialSharing condition for the pool. The
-// condition is managed only for pools that run more than one session per
-// pod, where multiple slots share one pod, one agent UID, and the
-// lenny-cred-readers group, so any slot can read every other slot's
-// credential file. It is True when the pool's Runtime declares non-empty
-// supportedProviders (a credential-bearing runtime) and False otherwise,
-// so the operator-visible warning tracks the Runtime's current provider
-// set. A nil return leaves the condition unmanaged: the pool runs one
-// session per pod, or the Runtime could not be resolved (a transient read
-// error propagates so the reconcile retries).
-//
-// The `maxConcurrentSessions > 1` trigger lives on the gateway-side
-// `sessionPolicy` mirror in the poolstore, which the SandboxTemplate CRD
-// does not carry; until the warmpool step wires that mirror into the
-// reconcile, the condition is unmanaged from the CRD surface. The
-// SandboxTemplate `executionMode` enum no longer admits `concurrent`, so
-// no template selects this branch yet.
-//
-// spec: §13.1 line 29; §5.2 (concurrent sessions on one pod). F-13.1.5.
-func (r *Reconciler) evaluateConcurrentWorkspaceSharing(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) (*metav1.Condition, error) {
-	if tmpl.Spec.ExecutionMode != "concurrent" {
-		return nil, nil
-	}
-	if tmpl.Spec.RuntimeRef == "" {
-		return nil, nil
-	}
-	var rt lennyv1.Runtime
-	if err := r.Client.Get(ctx, client.ObjectKey{Name: tmpl.Spec.RuntimeRef}, &rt); err != nil {
-		// A missing Runtime is a separate degraded scenario the pool cannot
-		// warm against; leave the condition unmanaged rather than failing
-		// the reconcile on it. Any other read error propagates for retry.
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get runtime %q for pool %s: %w", tmpl.Spec.RuntimeRef, pool.Name, err)
-	}
-	if len(rt.Spec.SupportedProviders) == 0 {
-		return &metav1.Condition{
-			Type:    conditionConcurrentWorkspaceCredentialSharing,
-			Status:  metav1.ConditionFalse,
-			Reason:  "NoCredentialProviders",
-			Message: "Concurrent-workspace pool runs a Runtime with no supportedProviders; no credential leases are shared across slots.",
-		}, nil
-	}
-	return &metav1.Condition{
-		Type:   conditionConcurrentWorkspaceCredentialSharing,
-		Status: metav1.ConditionTrue,
-		Reason: "CredentialBearingRuntime",
-		Message: fmt.Sprintf(
-			"Concurrent slots share one pod and the lenny-cred-readers group; "+
-				"any slot can read every other slot's credential file for Runtime %q "+
-				"(supportedProviders: %v). Use maxConcurrentSessions: 1 for strict "+
-				"per-session credential isolation.",
-			tmpl.Spec.RuntimeRef, rt.Spec.SupportedProviders,
-		),
-	}, nil
-}
-
 // updateStatus writes the post-action warm and ready counts, the observed
 // generation, and any controller-managed status conditions to the pool.
-// Each non-nil condition (the §5.3 RuntimeClass Degraded condition and the
-// §13.1 ConcurrentWorkspaceCredentialSharing warning) is merged into the
-// live condition list. The write is skipped when nothing changed, to avoid
-// spurious etcd writes and reconcile events. When every supplied condition
-// is nil the condition list is left untouched (no checker produced one).
+// Each non-nil condition (the §5.3 RuntimeClass Degraded condition) is
+// merged into the live condition list. The write is skipped when nothing
+// changed, to avoid spurious etcd writes and reconcile events. When every
+// supplied condition is nil the condition list is left untouched (no
+// checker produced one).
+//
+// The §13.1 ConcurrentWorkspaceCredentialSharing warning is not managed
+// from this controller: its trigger is `sessionPolicy.maxConcurrentSessions
+// > 1`, which lives on the gateway-side poolstore mirror rather than the
+// SandboxTemplate CRD, so the gateway pool-admission path (§4.7) stamps the
+// condition. The SandboxTemplate `executionMode` enum no longer admits
+// `concurrent`. spec: §13.1 line 29; §5.2.
 func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan, conds ...*metav1.Condition) error {
 	drained := len(decision.Drain)
 	warm := int32(decision.WarmCount + decision.Create - drained)

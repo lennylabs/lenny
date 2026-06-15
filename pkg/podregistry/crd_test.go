@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/podregistry"
@@ -140,6 +142,79 @@ func TestClaimPodExhaustedWhenNoneIdle(t *testing.T) {
 		podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme", SessionID: "s1"})
 	if !errors.Is(err, podregistry.ErrPoolExhausted) {
 		t.Errorf("err = %v, want ErrPoolExhausted", err)
+	}
+}
+
+// spec: §4.6.1 (ClaimPod input validation). PoolID and SessionID are both
+// required: a claim with no pool has nothing to scan, and a claim with no
+// session has no attribution for the returned record. Each missing field is
+// rejected before any idle-pod scan, so the guard fails closed rather than
+// claiming a pod it cannot attribute.
+func TestClaimPodRejectsMissingRequiredOpts(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"))
+	cases := []struct {
+		name string
+		opts podregistry.ClaimOpts
+		want string
+	}{
+		{"no pool", podregistry.ClaimOpts{TenantID: "acme", SessionID: "s1"}, "PoolID is required"},
+		{"no session", podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme"}, "SessionID is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := r.ClaimPod(context.Background(), tc.opts)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want error containing %q", err, tc.want)
+			}
+			// A rejected claim returns before any idle-pod scan, so the seeded
+			// idle pod is untouched and stays claimable (the gateway never
+			// wrote its Sandbox.status.phase).
+			rec, gerr := r.GetPod(context.Background(), "alpha")
+			if gerr != nil {
+				t.Fatalf("GetPod after rejected claim: %v", gerr)
+			}
+			if rec.State != "idle" {
+				t.Errorf("pod state = %q after rejected claim, want idle (untouched)", rec.State)
+			}
+		})
+	}
+}
+
+// spec: §6.2 (UpdatePodState on an unknown pod returns ErrNotFound). The
+// CAS write reads the Sandbox first; a missing Sandbox maps the API
+// NotFound to the package sentinel so callers branch on it with errors.Is.
+func TestUpdatePodStateMissingReturnsErrNotFound(t *testing.T) {
+	r := newRegistry(t, "lenny-agents")
+	err := r.UpdatePodState(context.Background(), "ghost",
+		podregistry.StateTransition{From: "warming", To: "idle"})
+	if !errors.Is(err, podregistry.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// spec: §4.6.1 (ReleasePod propagates a non-NotFound delete error). A
+// release that fails for any reason other than a missing claim wraps the
+// API error rather than swallowing it, so a transient delete failure
+// surfaces to the caller instead of silently leaving the claim in place.
+func TestReleasePodPropagatesDeleteError(t *testing.T) {
+	base := fake.NewClientBuilder().
+		WithScheme(newScheme(t)).
+		WithObjects(seedSandbox("alpha", "echo-pool", "claimed")).
+		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
+		Build()
+	cli := interceptor.NewClient(base, interceptor.Funcs{
+		Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+			return apierrors.NewServiceUnavailable("apiserver down")
+		},
+	})
+	r, err := podregistry.New(cli, "lenny-agents")
+	if err != nil {
+		t.Fatalf("podregistry.New: %v", err)
+	}
+	rerr := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted)
+	if rerr == nil || !strings.Contains(rerr.Error(), "release alpha") {
+		t.Fatalf("ReleasePod err = %v, want a wrapped release error", rerr)
 	}
 }
 

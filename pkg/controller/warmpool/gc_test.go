@@ -268,7 +268,8 @@ func TestGCReservedReclaimAbortsOnRebindRace(t *testing.T) {
 // reclaimed), 3.3 (drain for live states), 3.2 (reserved DELETE).
 func TestGCLeavesNoNonTerminalOrEmptyClaimUnreclaimed(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s,
+	c := newClient(
+		t, s,
 		claimedSandbox("pod-bound"), claim("claim-bound", "pod-bound"),
 		claimedSandbox("pod-recycling"), claim("claim-recycling", "pod-recycling"),
 		reservedSandbox("pod-reserved"), claim("claim-reserved", "pod-reserved"),
@@ -307,7 +308,8 @@ func TestGCLeavesNoNonTerminalOrEmptyClaimUnreclaimed(t *testing.T) {
 // them).
 func TestGCSkipsTerminalDispositionClaims(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s,
+	c := newClient(
+		t, s,
 		claimedSandbox("pod-released"), claim("claim-released", "pod-released"),
 		claimedSandbox("pod-failed"), claim("claim-failed", "pod-failed"),
 	)

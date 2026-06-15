@@ -201,7 +201,8 @@ func TestDeleteOnHoldExpiryAbortsOnConflict_spec_3_2(t *testing.T) {
 	ctx := context.Background()
 	conflict := apierrors.NewConflict(
 		schema.GroupResource{Resource: "sandboxclaims"}, "claim-sbx-1",
-		errors.New("the object has been modified"))
+		errors.New("the object has been modified"),
+	)
 	c := interceptor.NewClient(fakeWith(t, claimstate.Reserved), interceptor.Funcs{
 		Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
 			return conflict

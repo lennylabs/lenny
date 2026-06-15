@@ -240,18 +240,21 @@ func (c *HoldCoordinator) expire(claimName string) {
 	aborted, err := c.delete(ctx, c.namespace, claimName, entry.hold)
 	switch {
 	case err != nil:
-		c.log.LogAttrs(ctx, slog.LevelWarn, "recycle: hold-expiry delete failed",
+		c.log.LogAttrs(
+			ctx, slog.LevelWarn, "recycle: hold-expiry delete failed",
 			slog.String("claim", claimName),
 			slog.String("err", err.Error()),
 		)
 	case aborted:
 		// A rebind from any replica changed the resourceVersion; the rebound
 		// claim is left intact and the pod stays claimed. spec: §3.2.
-		c.log.LogAttrs(ctx, slog.LevelDebug, "recycle: hold-expiry delete aborted by rebind",
+		c.log.LogAttrs(
+			ctx, slog.LevelDebug, "recycle: hold-expiry delete aborted by rebind",
 			slog.String("claim", claimName),
 		)
 	default:
-		c.log.LogAttrs(ctx, slog.LevelDebug, "recycle: reserved hold expired, pod returned to idle",
+		c.log.LogAttrs(
+			ctx, slog.LevelDebug, "recycle: reserved hold expired, pod returned to idle",
 			slog.String("claim", claimName),
 		)
 	}
