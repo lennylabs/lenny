@@ -260,17 +260,29 @@ type ClaimDispositionDriver interface {
 	// lifecycle, line 449), §6.2 (preConnect re-warm).
 	Recycle(ctx context.Context, podID string, preConnect, scrubWarning bool) error
 	// Retire writes the terminal disposition on the claim so the projection
-	// drains the pod. failed selects the claim's `failed` terminal (an
-	// onScrubFailure: fail termination) versus its `released` terminal (a
-	// limit-reached or §6.39 unschedulable-host retire). scrubWarning stamps
-	// the scrub_warning audit annotation onto the retire, set only on the
-	// §6.39 cordon-drain-under-warn path where the disposition retains the
-	// residual-state marker (the package doc's `draining [scrub_warning]`
-	// case); the limit-reached and fail-policy retires clear it. reason is
-	// the stable observability label, and detail is the optional
-	// adapter-side failure description retained in the audit trail on a
-	// FAILED outcome. spec: §3.4 (retire disposition), §6.39, §5.2 (audit
-	// retention of the failed pod's metadata).
+	// drains the pod. failed selects the claim's `failed` terminal versus its
+	// `released` terminal. The `failed` terminal is the onScrubFailure: fail
+	// termination (and, on the session-end path, a failed or crashed session);
+	// every other retire is a drain that maps to `released`. The drain-to-
+	// `released` set is every limit-reached retirement — maxSessionsPerPod,
+	// maxPodUptimeSeconds, AND the cumulative maxScrubFailures limit under the
+	// warn policy — plus the §6.39 unschedulable-host cordon-drain. The
+	// scrub-failure-limit drain belongs to `released` (not `failed`) because
+	// `failed` is scoped to the fail policy and to crashed sessions: a warn-
+	// policy pod that exhausts maxScrubFailures is retired as a lifecycle limit,
+	// the same drain disposition the other two limits take, so it shares their
+	// terminal. spec: §4.6.3 (`released` vs `failed` binding terminals), §5.2
+	// (maxScrubFailures retirement under onScrubFailure: warn), §16.1
+	// (scrub_failure_limit grouped with the other two drain retirements).
+	//
+	// scrubWarning stamps the scrub_warning audit annotation onto the retire,
+	// set only on the §6.39 cordon-drain-under-warn path where the disposition
+	// retains the residual-state marker (the package doc's `draining
+	// [scrub_warning]` case); the limit-reached and fail-policy retires clear
+	// it. reason is the stable observability label, and detail is the optional
+	// adapter-side failure description retained in the audit trail on a FAILED
+	// outcome. spec: §3.4 (retire disposition), §6.39, §5.2 (audit retention of
+	// the failed pod's metadata).
 	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason taskcleanup.RetireReason, detail string) error
 }
 
@@ -499,12 +511,21 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runti
 			r.metrics.IncRetirement(d.Reason, pool, runtimeClass)
 		}
 		// state.Failed is the onScrubFailure: fail termination → claim
-		// `failed`; every other retire (limit reached or §6.39 unschedulable
-		// host) is a drain → claim `released`. d.ScrubWarning is set only on
-		// the §6.39 cordon-drain-under-warn path; it stamps the scrub_warning
-		// audit annotation onto the retire so the residual-state marker the
-		// disposition computed is retained. detail carries the adapter-side
-		// failure description for the audit trail on a FAILED outcome.
+		// `failed`; every other retire is a drain → claim `released`. Decide
+		// returns state.Draining for all three limit retirements
+		// (session_count_limit, uptime_limit, AND scrub_failure_limit) and for
+		// the §6.39 host_unschedulable cordon-drain, so the scrub-failure-limit
+		// retirement (maxScrubFailures reached under the warn policy) routes to
+		// `released` alongside the other two lifecycle limits rather than to
+		// `failed`. `failed` is reserved for the fail-policy termination, which
+		// Decide alone returns as state.Failed. spec: §4.6.3 (`released` vs
+		// `failed` binding terminals), §16.1 (scrub_failure_limit is a drain
+		// retirement, grouped with the session-count and uptime limits).
+		// d.ScrubWarning is set only on the §6.39 cordon-drain-under-warn path;
+		// it stamps the scrub_warning audit annotation onto the retire so the
+		// residual-state marker the disposition computed is retained. detail
+		// carries the adapter-side failure description for the audit trail on a
+		// FAILED outcome.
 		if err := r.driver.Retire(ctx, podID, d.NextPhase == state.Failed, d.ScrubWarning, d.Reason, detail); err != nil {
 			return fmt.Errorf("retire pod %s (%s): %w", podID, d.Reason, err)
 		}

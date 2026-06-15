@@ -508,12 +508,21 @@ func TestReporterPodScrubFailedIncrementsAndWarns_spec_5_2(t *testing.T) {
 }
 
 // TestReporterPodScrubScrubFailuresExhaustedRetires verifies that reaching
-// maxScrubFailures retires the pod with a released terminal (a drain).
-// spec: 3.4 (retire disposition), 5.2 (scrub failure limit)
+// maxScrubFailures under the warn policy retires the pod with the `released`
+// terminal (a drain), NOT the `failed` terminal. The scrub-failure-limit
+// retirement is the third drain trigger alongside the session-count and
+// uptime limits, so it shares their `released` terminal; the `failed`
+// terminal is reserved for the onScrubFailure: fail termination and for a
+// failed or crashed session (§4.6.3). This pins the finding-2 mapping: the
+// landed Retire selects `released` (failed == false) for the warn-policy
+// count-limit drain.
+// spec: 3.4 (retire disposition), 4.6.3 (released vs failed binding terminals), 5.2 (scrub failure limit under onScrubFailure warn)
 //
-// diagnosis: a failure means a pod that has exhausted its scrub-failure budget
-// is returned to the pool instead of retired, so residual-state risk
-// accumulates across sessions.
+// diagnosis: a failure means either a pod that has exhausted its scrub-failure
+// budget is returned to the pool instead of retired (residual-state risk
+// accumulates across sessions), or the count-limit drain is misrouted to the
+// `failed` terminal, conflating a lifecycle-limit retirement with a fail-policy
+// or crash termination in the audit trail and the projection's drain reason.
 func TestReporterPodScrubScrubFailuresExhaustedRetires_spec_5_2(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
@@ -526,8 +535,15 @@ func TestReporterPodScrubScrubFailuresExhaustedRetires_spec_5_2(t *testing.T) {
 	if err := r.RecordPodScrub(context.Background(), "pod-1", true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
-	if len(d.retires) != 1 || d.retires[0].failed || d.retires[0].reason != taskcleanup.ReasonScrubFailuresExhausted {
-		t.Errorf("retires = %+v, want one released retire for scrub exhaustion", d.retires)
+	if len(d.retires) != 1 {
+		t.Fatalf("retires = %+v, want exactly one retire for scrub exhaustion", d.retires)
+	}
+	got := d.retires[0]
+	if got.failed {
+		t.Errorf("retire failed = true, want false: scrub_failure_limit drains to the `released` terminal, not `failed`")
+	}
+	if got.reason != taskcleanup.ReasonScrubFailuresExhausted {
+		t.Errorf("retire reason = %q, want %q", got.reason, taskcleanup.ReasonScrubFailuresExhausted)
 	}
 }
 
@@ -876,8 +892,12 @@ func TestReporterPodScrubCounterReadErrorPropagates_spec_4_7(t *testing.T) {
 // spec: 3.4 (recycle disposition drives the claim binding state)
 //
 // diagnosis: a failure means a failed reserved/retire claim patch is
-// swallowed, leaving the pod's claim in `recycling` with no disposition and
-// the projection stuck until the gateway-side scrub-report timeout fires.
+// swallowed, so the handler reports success and the adapter never retries the
+// scrub report, leaving the pod's claim in `recycling` with no disposition.
+// This step's handler only surfaces the error for the retry; the recycle
+// coordinator that patches `bound → recycling` and bounds a never-arriving
+// report owns the missing-report backstop, so a swallowed error here strands
+// the claim until that separately-wired backstop or the orphan GC reclaims it.
 func TestReporterPodScrubDriverErrorPropagates_spec_3_4(t *testing.T) {
 	c, l := newFakeCounters(), &fakeLedger{}
 	c.served["pod-1"] = 1
