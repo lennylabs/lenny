@@ -294,10 +294,10 @@ func TestWriteSessionManifestWrites(t *testing.T) {
 	}
 }
 
-// TestWriteSessionManifestTaskIDFrozenToSessionID pins the §3.5 session/task
+// TestWriteSessionManifestTaskIDFrozenToSessionID pins the §7.2 session/task
 // 1:1 freeze: when the gateway supplies no taskId the per-session manifest
 // freezes it to the session id (the session is its single execution).
-// spec: §3.5 (session/task 1:1, TaskID frozen), §4.17 (per-session manifest)
+// spec: §7.2 (session/task 1:1, TaskID frozen), §4.7 (per-session manifest)
 func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
@@ -310,12 +310,12 @@ func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
 	}
 }
 
-// TestWriteSessionManifestTaskIDStableAcrossRegeneration pins the §4.17
+// TestWriteSessionManifestTaskIDStableAcrossRegeneration pins the §4.7
 // per-session manifest contract: regenerating the manifest for the same
 // session keeps taskId frozen to the supplied root task identifier. The
 // removed task-mode pods rewrote taskId before each between-task cycle; a
 // per-session manifest never does.
-// spec: §3.5 (TaskID frozen to root task), §4.17 (per-session manifest regen)
+// spec: §7.2 (TaskID frozen to root task), §4.7 (per-session manifest regen)
 func TestWriteSessionManifestTaskIDStableAcrossRegeneration(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}

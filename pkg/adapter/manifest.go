@@ -110,7 +110,7 @@ type Manifest struct {
 	// exactly one execution), so the manifest is regenerated per session
 	// and TaskID never changes for the manifest's lifetime; it defaults to
 	// the session id when the gateway supplies none.
-	// spec: §3.5 (session/task 1:1, TaskID frozen), §4.17 (per-session manifest)
+	// spec: §7.2 (session/task 1:1, TaskID frozen), §4.7 (per-session manifest)
 	TaskID            string                     `json:"taskId"`
 	ExperimentContext *ManifestExperimentContext `json:"experimentContext,omitempty"`
 	// TracingContext is the §8.3 opaque tracing-identifier map the
@@ -247,8 +247,8 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// §3.5: the session/task mapping is 1:1, so the manifest taskId is
-	// frozen to the session's root task identifier and defaults to the
+	// spec: §7.2 — the session/task mapping is 1:1, so the manifest taskId
+	// is frozen to the session's root task identifier and defaults to the
 	// session id when the gateway supplies none.
 	taskID := in.taskID
 	if taskID == "" {
