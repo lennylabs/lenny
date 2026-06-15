@@ -331,7 +331,7 @@ docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
 | Your binary gets SIGTERM after 10 seconds | Heartbeat wasn't acknowledged | Handle `heartbeat` by immediately writing `heartbeat_ack` |
 | `tool_result` never arrives | `tool_call` referenced an invalid tool | Stick to `read_file`, `write_file`, `list_dir`, `delete_file` at the Basic level |
 | MCP connection refused (Standard level) | You're on macOS with `make run` | Use `docker compose up` -- abstract Unix sockets only exist on Linux |
-| MCP nonce rejected | You cached the manifest too early | Re-read `/run/lenny/adapter-manifest.json` at startup -- the nonce is regenerated per task |
+| MCP nonce rejected | You cached the manifest too early | Re-read `/run/lenny/adapter-manifest.json` at startup -- the nonce is regenerated per session |
 
 ---
 

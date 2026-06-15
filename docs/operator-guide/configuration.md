@@ -311,9 +311,9 @@ pools:
         scrubProfile: standard           # standard | vm-restart | in-place
         acknowledgeMicrovmResidualState: false  # required when scrubProfile: in-place
         allowCrossTenantReuse: false     # requires isolationProfile: microvm; never permitted when maxConcurrentSessions > 1
-        cleanupCommands:
-          - rm -rf /tmp/sandbox-*
-        cleanupTimeoutSeconds: 60
+      cleanupCommands:
+        - rm -rf /tmp/sandbox-*
+      cleanupTimeoutSeconds: 60
       maxSessionRetries: 1               # crash re-dispatch budget; default 1 (2 total attempts; 0 disables)
       maxSessionAgeSeconds: 7200
       maxClientIdleSeconds: 7200         # client-inactivity bound; defaults to the effective maxSessionAgeSeconds

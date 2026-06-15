@@ -94,8 +94,8 @@ The `sessionPolicy` block parameterizes session mode. `taskPolicy` and `concurre
 | `sessionPolicy.recycle.scrubProfile` | string | `standard` | Scrub procedure. `vm-restart` restarts the guest VM between tenants; `in-place` runs the standard scrub inside the continuing VM guest. | One of `standard`, `vm-restart`, `in-place`. |
 | `sessionPolicy.recycle.acknowledgeMicrovmResidualState` | bool | `false` | Acknowledges cross-tenant guest-kernel residual state. | Required when `scrubProfile: in-place`. |
 | `sessionPolicy.recycle.allowCrossTenantReuse` | bool | `false` | Permit cross-tenant sequential reuse. | Requires `isolationProfile: microvm`; never permitted when `maxConcurrentSessions > 1`. |
-| `sessionPolicy.recycle.cleanupCommands` | string[] | `[]` | Deployer cleanup commands run at the recycle boundary. | -- |
-| `sessionPolicy.recycle.cleanupTimeoutSeconds` | int | 60 | Timeout for `cleanupCommands` plus the scrub-report grace. | Must be `> 0`. |
+| `sessionPolicy.cleanupCommands` | string[] | `[]` | Deployer cleanup commands run at the recycle boundary. | -- |
+| `sessionPolicy.cleanupTimeoutSeconds` | int | 60 | Timeout for `cleanupCommands` plus the scrub-report grace. | Must be `> 0`. |
 | `sessionPolicy.maxSessionRetries` | int | 1 | Crash re-dispatch budget (2 total attempts; 0 disables). | Must be `>= 0`. |
 | `sessionPolicy.maxSessionAgeSeconds` | int | 7200 | Wall-clock session age cap. | Must be `> 0`. |
 | `sessionPolicy.maxClientIdleSeconds` | int | effective `maxSessionAgeSeconds` | Client-inactivity bound. | Must be `> 0`. |
