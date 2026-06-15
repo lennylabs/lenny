@@ -176,6 +176,7 @@ func main() {
 		maxConcurrentReconciles int
 		statusDedupWindow       time.Duration
 		claimOrphanTimeout      time.Duration
+		reservedHoldGrace       time.Duration
 		workqueueMaxDepth       int
 		devMode                 bool
 		certTTL                 time.Duration
@@ -259,7 +260,9 @@ func main() {
 	flag.DurationVar(&statusDedupWindow, "status-update-dedup-window", 500*time.Millisecond,
 		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same Sandbox. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
 	flag.DurationVar(&claimOrphanTimeout, "claim-orphan-timeout", 5*time.Minute,
-		"§4.6.1 SandboxClaim orphan timeout: a SandboxClaim older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
+		"§4.6.1 SandboxClaim orphan timeout: a live (bound/recycling) or empty-status SandboxClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
+	flag.DurationVar(&reservedHoldGrace, "reserved-hold-grace", 60*time.Second,
+		"§4.6.1 reserved-claim grace period: a reserved SandboxClaim is reclaimed by the leader's GarbageCollect loop once holdExpiresAt plus this grace has passed, so the GC does not race the gateway's own hold-expiry DELETE.")
 	flag.IntVar(&workqueueMaxDepth, "workqueue-max-depth", 500,
 		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
 	flag.BoolVar(&devMode, "dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
@@ -551,10 +554,11 @@ func main() {
 			log.Fatalf("lenny-controller: set up mirror reconciler: %v", err)
 		}
 		if err := mgr.Add(&warmpool.ClaimGarbageCollector{
-			Client:        mgr.GetClient(),
-			Sessions:      sessionLookup,
-			Namespaces:    agentNamespaces,
-			OrphanTimeout: claimOrphanTimeout,
+			Client:            mgr.GetClient(),
+			Sessions:          sessionLookup,
+			Namespaces:        agentNamespaces,
+			OrphanTimeout:     claimOrphanTimeout,
+			ReservedHoldGrace: reservedHoldGrace,
 		}); err != nil {
 			log.Fatalf("lenny-controller: set up orphan-claim GC: %v", err)
 		}
