@@ -22,8 +22,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
@@ -37,7 +35,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/upload"
@@ -392,6 +389,14 @@ type BindRequest struct {
 	// binder demotes the SDK-warm pod before materializing the workspace
 	// (§6.1 line 34). An empty list disables demotion (§6.1 line 38).
 	SDKWarmBlockingPaths []string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
+	// by ResolvePool. When true and the session ends cleanly, Release patches
+	// the per-pod claim bound → recycling and signals the adapter to run the
+	// whole-pod scrub (the §3.4 recycle disposition) rather than draining the
+	// pod; the adapter's ReportPodScrub then drives recycle vs. retire. A
+	// failed/crashed session always retires regardless of this flag. spec:
+	// §3.1, §3.4 (recycle on occupancy-zero).
+	Recycle bool
 }
 
 // BindResult reports the pod a session was bound to.
@@ -409,6 +414,14 @@ type BindResult struct {
 	// the pod is claimed exclusively for the session. It is non-empty
 	// only for a BindSlot result.
 	SlotID string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried
+	// from the BindRequest so Release can apply the §3.4 recycle disposition
+	// without re-resolving the pool: on a recycling pool a clean session
+	// release patches the claim bound → recycling and signals the whole-pod
+	// scrub rather than draining the pod. False for a non-recycling pool and
+	// for every BindSlot result (the concurrent slot path uses the per-slot
+	// cleanup + claim-delete-on-last edge). spec: §3.1, §3.4.
+	Recycle bool
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
 	Adapter *adapterclient.Client
@@ -705,6 +718,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		TenantID:              req.TenantID,
 		SandboxName:           sandboxName,
 		PodIP:                 sb.Status.PodIP,
+		Recycle:               req.Recycle,
 		Adapter:               cl,
 		Timings:               t,
 		WorkspacePlanWarnings: finalizeWarnings,
@@ -1376,104 +1390,70 @@ func (b *Binder) recordFallbackSkip(reason string) {
 	}
 }
 
-// Release tears down a session that Bind placed on a pod: it shuts the
-// pod's runtime down through the adapter, closes the adapter connection,
-// records the session's terminal disposition as a Sandbox condition, and
-// drains the pod so the Sandbox reconciler reclaims it (§6.2 → draining →
-// terminated). disposition is the session-terminal outcome the session
-// reached (completed, failed, cancelled, or expired). The fine
-// session-terminal states are recorded on the Postgres session model and
-// are no longer coarse Sandbox.status.phase occupancy values (§6.2, §6.37),
-// so Release does not write the disposition to status.phase; the pod's
-// coarse phase moves directly from claimed to draining. The disposition is
-// still surfaced on the Sandbox as a Terminated condition (best-effort) so
-// operators can read why the pod was reclaimed. The adapter Shutdown and the
-// condition write are best-effort — the drain reclaims the pod regardless —
-// so Release returns only an error from the drain transition. spec: §6.2,
-// §6.37; §4.6.1.
+// dispositionFailed is the disposition string Release treats as the §6.2
+// "ends in failure or a crash" terminal that always retires the pod
+// regardless of recycle settings. Every other clean terminal (completed,
+// cancelled, expired) recycles on a recycling pool. spec: §6.2 lines 24, 157
+// (a session that ends in failure or a crash always retires its pod).
+const dispositionFailed = "failed"
+
+// Release tears down a session that Bind placed on a pod: it shuts the pod's
+// runtime down through the adapter, closes the adapter connection, releases
+// the session's §4.9 credential leases, and then applies the §3.4 disposition.
+// disposition is the session-terminal outcome the session reached (completed,
+// failed, cancelled, or expired); the fine session-terminal states and the
+// Terminated session-condition fact are recorded on the Postgres session model
+// (§7.2 / §8.8), so Release writes no Sandbox.status field — the WarmPoolController
+// is the sole writer of Sandbox.status (§4.6.3).
+//
+// On a recycling pool (BindResult.Recycle, maxConcurrentSessions: 1) a clean
+// terminal (anything but "failed") brings occupancy to zero, so Release patches
+// the per-pod claim bound → recycling (podclaim.WriteRecyclingStatus) and lets
+// the adapter's whole-pod scrub run; the §4.7 ReportPodScrub report then drives
+// the recycle-vs-retire disposition on the claim binding state. The adapter
+// Shutdown above is the occupancy-zero signal that triggers the scrub. A
+// non-recycling pool, or a failed/crashed session, takes the drain path: the
+// per-pod claim is deleted, which the WarmPoolController projects as
+// draining → terminated (§4.6.1). The adapter Shutdown and the recycling-status
+// patch are best-effort — a lost recycling patch is reclaimed by the §4.6.1
+// orphan GC, which drains a stuck `bound`/`recycling` claim — so Release returns
+// only an error from the disposition write. spec: §3.1, §3.4 (recycle on
+// occupancy-zero); §4.6.1; §4.6.3; §7.2 / §8.8.
 func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
 	if result.Adapter != nil {
+		// On a recycling pool this Shutdown is the occupancy-zero signal: the
+		// adapter tears the session's processes down and runs the whole-pod
+		// scrub it reports via ReportPodScrub. spec: §3.1 (uniform scrub model).
 		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
 		result.Adapter.Close()
 	}
 
 	// spec: §7.1 line 52 (step 23) — release the session's §4.9 credential
-	// leases back to the pool. Done before the drain so the credential's
+	// leases back to the pool. Done before the disposition so the credential's
 	// active-session counter is decremented on the way out; without it the
 	// pool's per-credential slot count drifts up without bound and
 	// select.go eventually reports exhaustion for idle credentials.
 	b.releaseCredentials(result.SessionID)
 
+	// spec: §3.4 / §6.2 lines 24, 105, 157 — a recycling pool recycles the pod
+	// across whole sessions of the same tenant when occupancy reaches zero
+	// after a clean session termination; a failed/crashed session always
+	// retires the pod. On the recycle path Release patches the claim
+	// bound → recycling and the adapter-executed whole-pod scrub (reported via
+	// §4.7 ReportPodScrub) takes over the disposition; on the retire path it
+	// deletes the claim so the WarmPoolController drains the pod.
+	if result.Recycle && disposition != dispositionFailed {
+		if err := podclaim.WriteRecyclingStatus(ctx, b.Client, b.Namespace, podclaim.ClaimName(result.SandboxName), nil); err != nil {
+			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.SandboxName, err)
+		}
+		return nil
+	}
+
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {
 		return fmt.Errorf("podsession: get sandbox %s: %w", result.SandboxName, err)
 	}
-
-	// spec: §6.2 line 305 / §4.6.1 — record the session-terminal disposition
-	// as a Terminated condition so operators can read why the pod was
-	// reclaimed. The condition write carries only status.conditions and does
-	// not disturb status.phase. Best-effort: the drain reclaims the pod
-	// regardless of whether the condition write lands.
-	if reason := sandboxcond.TerminalReason(disposition); reason != "" {
-		cond := metav1.Condition{
-			Type:    sandboxcond.Terminated,
-			Status:  metav1.ConditionTrue,
-			Reason:  reason,
-			Message: "session ended: " + disposition,
-		}
-		if err := sandboxcond.Apply(ctx, b.Client, &sb, cond); err != nil {
-			log.Printf("podsession: record terminal condition %s on sandbox %s: %v", reason, result.SandboxName, err)
-		}
-	}
-
 	return b.drain(ctx, &sb)
-}
-
-// Suspend records the §6.2 line 214 interrupt-driven suspension on the
-// Sandbox after the adapter has acknowledged (or forced) the interrupt.
-// The pod is NOT released — the suspended session is a hold where the pod
-// stays bound until `maxSuspendedPodHoldSeconds` (§6.2 line 234) fires or
-// the client takes another action.
-//
-// `suspended` is a session-model state recorded on the Postgres session row,
-// not a coarse Sandbox.status.phase occupancy value (§6.2 lines 82, 172): a
-// pod whose bound session is suspended still projects the coarse `claimed`
-// phase, so Suspend does not write status.phase. It records a Suspended
-// condition (best-effort) so an operator can tell an acknowledged interrupt
-// from a forced (timeout) one; the condition write carries only
-// status.conditions and does not disturb status.phase. The session row is
-// the source of truth, so a lost condition write does not roll back the
-// suspension.
-//
-// spec: §6.2 line 214 (`running → suspended` interrupt path); §6.2 line 305
-// condition history. F-6.2.13.
-func (b *Binder) Suspend(ctx context.Context, sandboxName, reason string) error {
-	if b.Client == nil || sandboxName == "" {
-		return nil
-	}
-	var sb lennyv1.Sandbox
-	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("podsession: get sandbox %s for suspend: %w", sandboxName, err)
-	}
-	// spec: §6.2 line 305 / §4.6.1 — record the suspend in condition history
-	// so an operator can tell an acknowledged interrupt from a forced
-	// (timeout) one. Best-effort: the session row already advanced.
-	if reason == "" {
-		reason = "InterruptAcknowledged"
-	}
-	cond := metav1.Condition{
-		Type:    sandboxcond.Suspended,
-		Status:  metav1.ConditionTrue,
-		Reason:  reason,
-		Message: "session suspended on interrupt",
-	}
-	if err := sandboxcond.Apply(ctx, b.Client, &sb, cond); err != nil {
-		log.Printf("podsession: record suspended condition on sandbox %s: %v", sandboxName, err)
-	}
-	return nil
 }
 
 // resolveSandbox reads the claimed Sandbox and verifies it carries a pod

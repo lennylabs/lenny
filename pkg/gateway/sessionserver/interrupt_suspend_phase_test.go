@@ -11,7 +11,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -23,15 +22,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// spec: §6.2 lines 82, 172, 214 — `running → suspended` on
-// interrupt_request + interrupt_acknowledged is a session-model state on the
-// Postgres session row, not a coarse Sandbox.status.phase value. The pod
-// stays in the coarse `claimed` phase; the gateway records a Suspended
-// condition so the operator-visible history mirrors the interrupt. F-6.2.13.
+// spec: §7.2 / §8.8 — `running → suspended` on interrupt_request +
+// interrupt_acknowledged is a session-model state on the Postgres session row.
+// The interrupt-suspension fact (SuspendedAt + SuspendedReason) lives on the
+// session row, not on Sandbox.status.conditions: the gateway lost
+// sandboxes/status RBAC and is no longer a Sandbox.status writer (§4.6.3), so
+// the gateway writes no Sandbox condition for the suspend. The pod stays in
+// the coarse `claimed` phase (the WarmPoolController is the sole Sandbox.status
+// writer). F-6.2.12.
 
 func suspendStubAdapter(t *testing.T, status adapterv1.InterruptResponse_Status) (*stubAdapterServer, *adapterclient.Client) {
 	t.Helper()
@@ -40,7 +41,7 @@ func suspendStubAdapter(t *testing.T, status adapterv1.InterruptResponse_Status)
 	return stub, cl
 }
 
-func TestInterruptAdvancesSandboxToSuspended_spec_6_2_214(t *testing.T) {
+func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -78,27 +79,29 @@ func TestInterruptAdvancesSandboxToSuspended_spec_6_2_214(t *testing.T) {
 	if row.State != session.StateSuspended {
 		t.Errorf("row state = %q, want suspended", row.State)
 	}
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-att"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// spec: §7.2 / §8.8 — the acknowledged interrupt stamps the Suspended
+	// session-condition fact on the row with the InterruptAcknowledged reason.
+	if row.SuspendedAt.IsZero() {
+		t.Errorf("F-6.2.12: SuspendedAt not stamped on the session row")
 	}
-	// spec: §6.2 lines 82, 172 — suspended is a session-model state; the pod
-	// stays in the coarse `claimed` phase.
+	if row.SuspendedReason != "InterruptAcknowledged" {
+		t.Errorf("F-6.2.12: SuspendedReason = %q, want InterruptAcknowledged", row.SuspendedReason)
+	}
+	// spec: §4.6.3 — the gateway writes no Sandbox.status field; the pod stays
+	// in the coarse `claimed` phase and no condition is written.
+	sb := getSandbox(t, cluster, "sbx-att")
 	if sb.Status.Phase != string(state.Claimed) {
 		t.Errorf("F-6.2.13: Sandbox.status.phase = %q, want claimed (suspended is a session-model state)", sb.Status.Phase)
 	}
-	// spec: §6.2 line 305 / §4.6.1 — the acknowledged interrupt records a
-	// Suspended condition with the InterruptAcknowledged reason. F-6.2.12.
-	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond == nil {
-		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Suspended, sb.Status.Conditions)
-	} else if cond.Reason != "InterruptAcknowledged" {
-		t.Errorf("F-6.2.12: condition reason = %q, want InterruptAcknowledged", cond.Reason)
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("§4.6.3: gateway must write no Sandbox condition; got %+v", sb.Status.Conditions)
 	}
 }
 
-// spec: §7.2 line 169 — adapter-forced suspended (INTERRUPT_TIMEOUT)
-// still produces the §6.2 Sandbox transition.
-func TestInterruptAdvancesSandboxOnTimeout_spec_6_2_214(t *testing.T) {
+// spec: §7.2 line 169 — adapter-forced suspended (INTERRUPT_TIMEOUT) stamps the
+// Suspended session-condition fact with the InterruptTimeout reason so the
+// session history distinguishes the forced suspend from an acknowledged one.
+func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -128,27 +131,29 @@ func TestInterruptAdvancesSandboxOnTimeout_spec_6_2_214(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-to"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	row, _ := store.Get(context.Background(), "acme", "sess_to")
+	if row.State != session.StateSuspended {
+		t.Errorf("row state = %q, want suspended", row.State)
 	}
-	// spec: §6.2 lines 82, 172 — the pod stays in the coarse `claimed` phase.
+	if row.SuspendedAt.IsZero() {
+		t.Errorf("F-6.2.12: SuspendedAt not stamped on the session row")
+	}
+	if row.SuspendedReason != "InterruptTimeout" {
+		t.Errorf("F-6.2.12: SuspendedReason = %q, want InterruptTimeout", row.SuspendedReason)
+	}
+	// spec: §4.6.3 — the pod stays in the coarse `claimed` phase; no condition.
+	sb := getSandbox(t, cluster, "sbx-to")
 	if sb.Status.Phase != string(state.Claimed) {
 		t.Errorf("F-6.2.13 timeout path: Sandbox.status.phase = %q, want claimed", sb.Status.Phase)
 	}
-	// spec: §7.2 line 169 / §4.6.1 — the forced suspend records the
-	// InterruptTimeout reason so the history distinguishes it. F-6.2.12.
-	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond == nil {
-		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Suspended, sb.Status.Conditions)
-	} else if cond.Reason != "InterruptTimeout" {
-		t.Errorf("F-6.2.12: condition reason = %q, want InterruptTimeout", cond.Reason)
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("§4.6.3: gateway must write no Sandbox condition; got %+v", sb.Status.Conditions)
 	}
 }
 
-// spec: §4.7 STATUS_BUSY — the row stays running; the Sandbox must
-// therefore stay in the coarse `claimed` phase with no Suspended condition
-// written (no spurious suspend).
-func TestInterruptBusyLeavesSandboxClaimed_spec_6_2_214(t *testing.T) {
+// spec: §4.7 STATUS_BUSY — the row stays running; no Suspended fact is stamped
+// on the row and the Sandbox stays in the coarse `claimed` phase.
+func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -178,22 +183,26 @@ func TestInterruptBusyLeavesSandboxClaimed_spec_6_2_214(t *testing.T) {
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-bz"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	row, _ := store.Get(context.Background(), "acme", "sess_busy")
+	if row.State != session.StateRunning {
+		t.Errorf("BUSY must leave the row running; got %q", row.State)
 	}
+	// BUSY does not suspend the session, so no Suspended fact is stamped.
+	if !row.SuspendedAt.IsZero() {
+		t.Errorf("BUSY must not stamp SuspendedAt; got %v", row.SuspendedAt)
+	}
+	sb := getSandbox(t, cluster, "sbx-bz")
 	if sb.Status.Phase != string(state.Claimed) {
 		t.Errorf("BUSY must not flip Sandbox.status.phase; got %q, want claimed", sb.Status.Phase)
 	}
-	// BUSY does not suspend the session, so no Suspended condition is recorded.
-	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond != nil {
-		t.Errorf("BUSY must not record a Suspended condition; got %+v", cond)
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("§4.6.3: gateway must write no Sandbox condition; got %+v", sb.Status.Conditions)
 	}
 }
 
-// spec: the no-binding fallback path must still flip the session row but
-// MUST NOT panic when there is no Sandbox to update. F-6.2.13.
-func TestInterruptSuspendNoBindingSafe_spec_6_2_214(t *testing.T) {
+// spec: the no-binding fallback path must still flip the session row and stamp
+// the Suspended fact even when there is no Sandbox to update. F-6.2.12.
+func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -215,58 +224,24 @@ func TestInterruptSuspendNoBindingSafe_spec_6_2_214(t *testing.T) {
 	if row.State != session.StateSuspended {
 		t.Errorf("row state = %q, want suspended", row.State)
 	}
-}
-
-// spec: §6.2 line 214 — the binder's Suspend method is idempotent: a
-// retry re-applies the Suspended condition in place (status.conditions is a
-// listType=map keyed by type) and never errors.
-func TestBinderSuspendIsIdempotent_spec_6_2_214(t *testing.T) {
-	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-id", Namespace: podTestNS},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.4"},
-	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
-
-	for i := 0; i < 2; i++ {
-		if err := binder.Suspend(context.Background(), "sbx-id", ""); err != nil {
-			t.Errorf("Suspend iteration %d: %v", i, err)
-		}
+	// Even with no pod binding the Suspended fact is stamped on the row: the
+	// fact is a session-model field, independent of the Sandbox.
+	if row.SuspendedAt.IsZero() {
+		t.Errorf("F-6.2.12: SuspendedAt not stamped in row-only mode")
+	}
+	if row.SuspendedReason != "InterruptAcknowledged" {
+		t.Errorf("F-6.2.12: SuspendedReason = %q, want InterruptAcknowledged", row.SuspendedReason)
 	}
 }
 
-// spec: §6.2 lines 82, 172 — Suspend never writes Sandbox.status.phase
-// (suspended is a session-model state, not a coarse occupancy value); the
-// pod's coarse phase is preserved while the Suspended condition is recorded.
-func TestBinderSuspendPreservesCoarsePhase_spec_6_2_214(t *testing.T) {
-	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-keep", Namespace: podTestNS},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.5"},
-	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
-
-	if err := binder.Suspend(context.Background(), "sbx-keep", ""); err != nil {
-		t.Errorf("Suspend: %v", err)
-	}
+// getSandbox reads a Sandbox by name from the envtest cluster.
+func getSandbox(t *testing.T, c client.Client, name string) lennyv1.Sandbox {
+	t.Helper()
 	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-keep"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: name}, &sb); err != nil {
+		t.Fatalf("get sandbox %s: %v", name, err)
 	}
-	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("phase = %q, want claimed (unchanged; suspended is session-model)", sb.Status.Phase)
-	}
-	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Suspended); cond == nil {
-		t.Errorf("missing %s condition; have %v", sandboxcond.Suspended, sb.Status.Conditions)
-	}
-}
-
-// spec: a missing Sandbox (already reclaimed) must no-op so the
-// interrupt handler completes cleanly.
-func TestBinderSuspendMissingSandboxIsNoOp_spec_6_2_214(t *testing.T) {
-	cluster := podBindClient(t /* no sandbox */)
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
-	if err := binder.Suspend(context.Background(), "sbx-missing", ""); err != nil {
-		t.Errorf("Suspend on missing sandbox: %v", err)
-	}
+	return sb
 }
 
 // Smoke: enforce that the stub adapter dial helper is still callable —

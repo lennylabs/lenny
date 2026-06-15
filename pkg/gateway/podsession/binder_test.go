@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -39,7 +38,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
@@ -883,13 +881,14 @@ func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 	}
 }
 
-// TestReleaseDeletesClaimAndRecordsTerminalCondition_spec_4_6_3 asserts
-// Release releases the exclusive pod by deleting its per-pod claim and writes
-// no Sandbox.status.phase (§4.6.3 ownership decomposition: the gateway is not
-// a writer of Sandbox.status; the WarmPoolController projects draining from
-// the claim DELETE). The session's terminal disposition is still surfaced on
-// the Sandbox as a Terminated condition. F-6.2.12.
-func TestReleaseDeletesClaimAndRecordsTerminalCondition_spec_4_6_3(t *testing.T) {
+// TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3 asserts
+// Release on a non-recycling pool releases the exclusive pod by deleting its
+// per-pod claim and writes no Sandbox.status field at all (§4.6.3 ownership
+// decomposition: the gateway is not a writer of Sandbox.status; the
+// WarmPoolController projects draining from the claim DELETE). The terminal
+// disposition fact lives on the Postgres session row (§7.2 / §8.8), so the
+// gateway records no Sandbox condition. F-6.2.12.
+func TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -921,20 +920,17 @@ func TestReleaseDeletesClaimAndRecordsTerminalCondition_spec_4_6_3(t *testing.T)
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	// spec: §6.2 line 305 / §4.6.1 — the disposition is recorded as a
-	// Terminated condition (with reason Completed), owned by a distinct field
-	// manager. F-6.2.12.
-	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Terminated); cond == nil {
-		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Terminated, sb.Status.Conditions)
-	} else if cond.Reason != "Completed" {
-		t.Errorf("F-6.2.12: condition reason = %q, want Completed", cond.Reason)
+	// spec: §4.6.3 / §7.2 / §8.8 — the gateway writes no Sandbox condition for
+	// the terminal disposition; the fact lives on the session row. F-6.2.12.
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("gateway must write no Sandbox condition on Release; got %+v", sb.Status.Conditions)
 	}
 }
 
-// TestReleaseExpiredDeletesClaimWithoutPhaseWrite_spec_4_6_3 asserts an
-// expired session's Release deletes the per-pod claim and records the Expired
-// terminal condition, writing no Sandbox.status.phase (§4.6.3).
-func TestReleaseExpiredDeletesClaimWithoutPhaseWrite_spec_4_6_3(t *testing.T) {
+// TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3 asserts an
+// expired session's Release on a non-recycling pool deletes the per-pod claim
+// and writes no Sandbox.status field (§4.6.3).
+func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -966,10 +962,88 @@ func TestReleaseExpiredDeletesClaimWithoutPhaseWrite_spec_4_6_3(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Terminated); cond == nil {
-		t.Errorf("missing %s condition; have %v", sandboxcond.Terminated, sb.Status.Conditions)
-	} else if cond.Reason != "Expired" {
-		t.Errorf("condition reason = %q, want Expired", cond.Reason)
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("gateway must write no Sandbox condition on Release; got %+v", sb.Status.Conditions)
+	}
+}
+
+// TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4 asserts that on a
+// recycling pool a clean session release patches the per-pod claim
+// bound → recycling rather than deleting it: the adapter-executed whole-pod
+// scrub (reported via §4.7 ReportPodScrub) then drives the recycle-vs-retire
+// disposition. The gateway writes no Sandbox.status field. spec: §3.1, §3.4
+// (recycle on occupancy-zero); §4.6.1 (recycling binding state); §4.6.3.
+func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	var phases []string
+	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if !res.Recycle {
+		t.Fatalf("BindResult.Recycle = false, want true (carried from the request)")
+	}
+	phases = phases[:0]
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v on recycle Release, want none", phases)
+	}
+	// The claim is NOT deleted: it is patched bound → recycling so the scrub
+	// report path can drive the disposition.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim); err != nil {
+		t.Fatalf("per-pod claim get after recycle Release = %v, want the claim to survive", err)
+	}
+	if claim.Status.Phase != string(claimstate.Recycling) {
+		t.Errorf("claim binding state = %q, want recycling", claim.Status.Phase)
+	}
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("gateway must write no Sandbox condition on recycle Release; got %+v", sb.Status.Conditions)
+	}
+}
+
+// TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4 asserts a failed/crashed
+// session on a recycling pool retires the pod (deletes the claim) rather than
+// recycling: §6.2 lines 24, 157 require a failed session to always retire its
+// pod regardless of recycle settings. spec: §3.4; §6.2 lines 24, 157.
+func TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "failed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	// A failed session always retires: the claim is deleted.
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after failed Release = %v, want NotFound (failed session retires the pod)", gerr)
 	}
 }
 

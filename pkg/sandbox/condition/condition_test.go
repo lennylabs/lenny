@@ -59,15 +59,22 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 	c := newClient(t, sb)
 	ctx := context.Background()
 
+	// Two distinct lifecycle condition types accumulate as history. Each Type
+	// is owned by its own SSA field manager, so a second Apply does not
+	// overwrite the first. (The session-terminal and interrupt-suspension
+	// facts moved to the Postgres session model under §7.2 / §8.8; the
+	// remaining Sandbox condition types are controller-written, so this test
+	// exercises the accumulation mechanics with the OrphanClaimReclaimed type
+	// and a second arbitrary type.)
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Suspended, Reason: "InterruptAcknowledged",
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimCollected",
 	}); err != nil {
-		t.Fatalf("apply suspended: %v", err)
+		t.Fatalf("apply orphan-claim-reclaimed: %v", err)
 	}
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Terminated, Reason: "Completed",
+		Type: "Cordoned", Reason: "NodeUnschedulable",
 	}); err != nil {
-		t.Fatalf("apply terminated: %v", err)
+		t.Fatalf("apply cordoned: %v", err)
 	}
 
 	var got lennyv1.Sandbox
@@ -77,7 +84,7 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 	if len(got.Status.Conditions) != 2 {
 		t.Fatalf("conditions = %d, want 2 (both accumulate): %+v", len(got.Status.Conditions), got.Status.Conditions)
 	}
-	for _, ty := range []string{sandboxcond.Suspended, sandboxcond.Terminated} {
+	for _, ty := range []string{sandboxcond.OrphanClaimReclaimed, "Cordoned"} {
 		if cond := apimeta.FindStatusCondition(got.Status.Conditions, ty); cond == nil {
 			t.Errorf("missing %s condition", ty)
 		} else if cond.Status != metav1.ConditionTrue {
@@ -97,12 +104,12 @@ func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 	ctx := context.Background()
 
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Suspended, Reason: "InterruptAcknowledged",
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimCollected",
 	}); err != nil {
 		t.Fatalf("apply 1: %v", err)
 	}
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Suspended, Reason: "InterruptTimeout",
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimRecollected",
 	}); err != nil {
 		t.Fatalf("apply 2: %v", err)
 	}
@@ -114,32 +121,8 @@ func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 	if len(got.Status.Conditions) != 1 {
 		t.Fatalf("conditions = %d, want 1 (updated in place): %+v", len(got.Status.Conditions), got.Status.Conditions)
 	}
-	if got.Status.Conditions[0].Reason != "InterruptTimeout" {
-		t.Errorf("reason = %q, want InterruptTimeout (latest wins)", got.Status.Conditions[0].Reason)
-	}
-}
-
-// spec: §6.2, §6.37 — TerminalReason maps every session-terminal disposition
-// to its PascalCase condition reason and returns "" for any non-terminal or
-// unrecognized disposition. The fine session-terminal states are recorded on
-// the Postgres session model and are no longer coarse CRD phases, so the
-// helper keys on the disposition string rather than a Sandbox.status.phase.
-func TestTerminalReason_spec_6_2(t *testing.T) {
-	cases := map[string]string{
-		"completed": "Completed",
-		"failed":    "Failed",
-		"cancelled": "Cancelled",
-		"expired":   "Expired",
-		// Non-terminal or unknown dispositions carry no reason; the caller
-		// then records no Terminated condition.
-		"claimed": "",
-		"":        "",
-		"bogus":   "",
-	}
-	for disposition, want := range cases {
-		if got := sandboxcond.TerminalReason(disposition); got != want {
-			t.Errorf("TerminalReason(%q) = %q, want %q", disposition, got, want)
-		}
+	if got.Status.Conditions[0].Reason != "OrphanClaimRecollected" {
+		t.Errorf("reason = %q, want OrphanClaimRecollected (latest wins)", got.Status.Conditions[0].Reason)
 	}
 }
 

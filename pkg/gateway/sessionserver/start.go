@@ -1262,6 +1262,10 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		MinPlatformVersion:       minPlatformVersion,
 		PreConnect:               preConnect,
 		SDKWarmBlockingPaths:     sdkWarmBlockingPaths,
+		// spec: §3.4 — carry the pool's recycle.enabled flag so Release applies
+		// the §3.4 recycle disposition (patch claim bound → recycling, signal
+		// the whole-pod scrub) on a clean release rather than draining the pod.
+		Recycle: match.Recycle,
 	})
 	if err != nil {
 		return nil, err

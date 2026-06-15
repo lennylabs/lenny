@@ -26,16 +26,16 @@ import (
 // Sandbox lifecycle condition types written by Apply. They are the §4.6.1
 // history entries operators read to learn why a Sandbox sits in a given
 // §6.2 phase.
+//
+// The session-terminal and interrupt-suspension facts are NOT Sandbox
+// conditions: the §5.2 mode collapse relocated them to the Postgres session
+// model (§7.2 / §8.8), because the gateway lost sandboxes/status RBAC and is
+// no longer a Sandbox.status writer (§4.6.3). The orphan-claim reclaim is the
+// sole remaining condition write, and the WarmPoolController performs it.
 const (
-	// Suspended records the §6.2 line 214 attached → suspended interrupt
-	// transition. Reason distinguishes an acknowledged interrupt from a
-	// forced (timeout) one.
-	Suspended = "Suspended"
-	// Terminated records the §6.2 lines 105-117 session-terminal
-	// disposition (completed / failed / cancelled / expired).
-	Terminated = "Terminated"
 	// OrphanClaimReclaimed records the §4.6.1 orphan-SandboxClaim
-	// collection that returned a Sandbox to idle.
+	// collection that returned a Sandbox to idle. Written by the
+	// WarmPoolController, the sole writer of Sandbox.status (§4.6.3).
 	OrphanClaimReclaimed = "OrphanClaimReclaimed"
 )
 
@@ -85,26 +85,4 @@ func Apply(ctx context.Context, cl client.Client, sb *lennyv1.Sandbox, cond meta
 	}
 	apimeta.SetStatusCondition(&sb.Status.Conditions, cond)
 	return nil
-}
-
-// TerminalReason maps a session-terminal disposition to the PascalCase
-// reason recorded on the Terminated condition. The disposition is the
-// session outcome the gateway records on the Postgres session model; the
-// fine session-terminal states are no longer coarse CRD phases (spec: §6.2,
-// §6.37), so this helper keys on the disposition string rather than on a
-// Sandbox.status.phase value. It returns "" for an empty or unrecognized
-// disposition, which the caller treats as "no terminal condition to record".
-func TerminalReason(disposition string) string {
-	switch disposition {
-	case "completed":
-		return "Completed"
-	case "failed":
-		return "Failed"
-	case "cancelled":
-		return "Cancelled"
-	case "expired":
-		return "Expired"
-	default:
-		return ""
-	}
 }

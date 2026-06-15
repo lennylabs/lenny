@@ -148,6 +148,81 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 	}
 }
 
+// TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2 asserts the
+// single terminal funnel (recordSessionCompleted, reached via OnSessionTerminal)
+// records the §7.2 / §8.8 Terminated session-condition fact (TerminatedAt +
+// TerminatedReason) on the Postgres session row. The gateway writes no
+// Sandbox.status field for the terminal disposition — the WarmPoolController is
+// the sole writer of Sandbox.status (§4.6.3) — so the fact lives on the session
+// row and is read through the session API (§7.2 line 230). F-6.2.12.
+func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		state      session.State
+		wantReason string
+	}{
+		{session.StateCompleted, "Completed"},
+		{session.StateFailed, "Failed"},
+		{session.StateCancelled, "Cancelled"},
+		{session.StateExpired, "Expired"},
+	} {
+		store := memstore.New()
+		srv := sessionserver.New(store, sessionserver.Options{})
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		sess := sessionstore.Session{ID: "tc", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
+		if err := store.Create(ctx, sess); err != nil {
+			t.Fatalf("seed %s: %v", tc.state, err)
+		}
+
+		srv.OnSessionTerminal(ctx, sess)
+
+		row, err := store.Get(ctx, "acme", "tc")
+		if err != nil {
+			t.Fatalf("get %s: %v", tc.state, err)
+		}
+		if row.TerminatedAt.IsZero() {
+			t.Errorf("F-6.2.12: terminal %s did not stamp TerminatedAt on the row", tc.state)
+		}
+		if row.TerminatedReason != tc.wantReason {
+			t.Errorf("F-6.2.12: terminal %s TerminatedReason = %q, want %q", tc.state, row.TerminatedReason, tc.wantReason)
+		}
+	}
+}
+
+// TestTerminalConditionStampIsIdempotent_spec_7_2 asserts a re-entrant terminal
+// funnel (a watchdog firing after a REST terminate already stamped the fact)
+// leaves the original TerminatedAt unchanged: the fact is stamped once and not
+// churned by a second pass. spec: §7.2 / §8.8.
+func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	sess := sessionstore.Session{ID: "idem", TenantID: "acme", State: session.StateCompleted, CreatedAt: now, UpdatedAt: now}
+	if err := store.Create(ctx, sess); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	srv.OnSessionTerminal(ctx, sess)
+	first, err := store.Get(ctx, "acme", "idem")
+	if err != nil {
+		t.Fatalf("get after first: %v", err)
+	}
+	if first.TerminatedAt.IsZero() {
+		t.Fatalf("first terminal pass did not stamp TerminatedAt")
+	}
+
+	// A second terminal pass (re-entrant funnel) must not move the stamp.
+	srv.OnSessionTerminal(ctx, first)
+	second, err := store.Get(ctx, "acme", "idem")
+	if err != nil {
+		t.Fatalf("get after second: %v", err)
+	}
+	if !second.TerminatedAt.Equal(first.TerminatedAt) {
+		t.Errorf("re-entrant terminal funnel churned TerminatedAt: first=%v second=%v", first.TerminatedAt, second.TerminatedAt)
+	}
+}
+
 // TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9 asserts the
 // cascade-drain respects the per-node §8.10 policy: a detach child shields its
 // own subtree, so the cascade neither cancels nor drains a grandchild under a
