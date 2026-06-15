@@ -479,6 +479,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// line 396 T4 cross-tenant-reuse check below.
 	var runtimeTier runtimestore.WorkspaceTier
 	var runtimePreConnect bool
+	var runtimeMultiTurn bool
 	if r.runtimes != nil && body.RuntimeRef != "" {
 		rt, err := r.runtimes.Get(req.Context(), body.RuntimeRef)
 		if err != nil {
@@ -489,6 +490,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		}
 		runtimeTier = rt.WorkspaceTier
 		runtimePreConnect = poolstore.RuntimePreConnect(rt)
+		runtimeMultiTurn = poolstore.RuntimeMultiTurn(rt)
 	}
 
 	pl := r.poolFromPayload(body)
@@ -553,10 +555,36 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		"executionMode":    string(stored.ExecutionMode),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, stored)
+	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, stored, runtimeMultiTurn)
 	r.dispatchPoolIsolationAudit(req.Context(), principal, stored.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(fromPool(stored))
+}
+
+// maybeEmitMultiTurnServiceWarning emits the §5.2 service-mode warning
+// event when a multi_turn runtime is bound to a service-mode pool. Service
+// mode preserves no cross-message conversation continuity: each message may
+// route to a different ready replica, so a multi_turn runtime's clients must
+// re-inject any needed context into each message's input. The binding is
+// permitted (service mode admits multi_turn runtimes), so this is an
+// advisory audit event rather than a rejection. A session-mode pool, or a
+// one_shot runtime on a service pool, emits nothing.
+// spec: §5.2 (multi_turn permitted on service mode, registration-time
+// warning), §3.6.
+func (r *Router) maybeEmitMultiTurnServiceWarning(ctx context.Context, p authmw.Principal, pool poolstore.Pool, multiTurn bool) {
+	if pool.ExecutionMode != runtimestore.ExecutionModeService || !multiTurn {
+		return
+	}
+	r.emit(ctx, p, "pool.multi_turn_service_no_continuity", pool.Name, map[string]any{
+		"runtimeRef":             pool.RuntimeRef,
+		"executionMode":          string(pool.ExecutionMode),
+		"interaction":            string(runtimestore.InteractionMultiTurn),
+		"conversationContinuity": "none",
+		"severity":               "warning",
+		"reason": "multi_turn runtime bound to a service-mode pool; service mode preserves no cross-message " +
+			"conversation continuity, so clients must re-inject context into each message's input (§5.2)",
+	})
 }
 
 // maybeEmitWeakIsolation emits the §5.3 DirectModeWeakIsolation warning
@@ -1246,6 +1274,22 @@ func (r *Router) poolIsSDKWarm(ctx context.Context, p poolstore.Pool) bool {
 	return poolstore.RuntimePreConnect(rt)
 }
 
+// poolRuntimeMultiTurn reports whether the pool's runtime declares the
+// §5.1 capabilities.interaction: multi_turn model, so the update path can
+// re-evaluate the §5.2 multi_turn-on-service-mode warning after a PUT. When
+// no runtime store is wired, or the runtime does not resolve, it reports
+// false so no warning is emitted for an unresolvable binding.
+func (r *Router) poolRuntimeMultiTurn(ctx context.Context, p poolstore.Pool) bool {
+	if r.runtimes == nil {
+		return false
+	}
+	rt, err := r.runtimes.Get(ctx, p.RuntimeRef)
+	if err != nil {
+		return false
+	}
+	return poolstore.RuntimeMultiTurn(rt)
+}
+
 // applyPoolUpdate validates the §15.1 pool-update body, applies it, emits
 // the audit event, and writes the §4.6.2 sync-status response. It is the
 // shared core of the PUT /v1/admin/pools/{name} handler and the §25.17
@@ -1429,6 +1473,8 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 		"changedFields": changedPoolFields(body),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
+	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, updated,
+		r.poolRuntimeMultiTurn(req.Context(), updated))
 	r.dispatchPoolIsolationAudit(req.Context(), principal, updated.Name)
 	// spec: §15.1 line 1210 — on a successful PUT the response carries
 	// the new ETag reflecting the incremented version.

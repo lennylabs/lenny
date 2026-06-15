@@ -136,68 +136,69 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 // reuse and maxConcurrentSessions > 1.
 func TestIsolationLevelForPool_spec_7_1(t *testing.T) {
 	cases := []struct {
-		name    string
-		match   podsession.PoolMatch
-		req     isolation.Profile
-		wantExe string
-		wantPro string
-		wantRe  bool
-		wantWar bool
-		wantScr string
+		name     string
+		match    podsession.PoolMatch
+		req      isolation.Profile
+		wantExe  string
+		wantPro  string
+		wantRe   bool
+		wantWar  bool
+		wantScr  string
+		wantCont string
 	}{
 		{
 			name:    "session mode: no reuse, no scrub, no warning",
 			match:   podsession.PoolMatch{ExecutionMode: "session", IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "session", wantPro: "sandboxed", wantRe: false, wantWar: false, wantScr: "",
+			wantExe: "session", wantPro: "sandboxed", wantRe: false, wantWar: false, wantScr: "", wantCont: "platform",
 		},
 		{
 			name:    "empty execution mode defaults to session",
 			match:   podsession.PoolMatch{IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "session", wantPro: "sandboxed", wantRe: false, wantWar: false, wantScr: "",
+			wantExe: "session", wantPro: "sandboxed", wantRe: false, wantWar: false, wantScr: "", wantCont: "platform",
 		},
 		{
-			name:    "service mode: reuse + warning + no scrub",
+			name:    "service mode: reuse + warning + no scrub + no continuity",
 			match:   podsession.PoolMatch{ExecutionMode: "service", IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "service", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "none",
+			wantExe: "service", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "none", wantCont: "none",
 		},
 		{
 			name:    "recycle standard: best-effort scrub",
 			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "session", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort",
+			wantExe: "session", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort", wantCont: "platform",
 		},
 		{
 			name:    "recycle microvm cross-tenant restart (explicit): vm-restart",
 			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "restart"},
 			req:     isolation.ProfileMicrovm,
-			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart",
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart", wantCont: "platform",
 		},
 		{
 			name:    "recycle microvm cross-tenant default scrub mode: vm-restart",
 			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true},
 			req:     isolation.ProfileMicrovm,
-			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart",
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart", wantCont: "platform",
 		},
 		{
 			name:    "recycle microvm cross-tenant in-place: best-effort-in-place",
 			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "in-place"},
 			req:     isolation.ProfileMicrovm,
-			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort-in-place",
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort-in-place", wantCont: "platform",
 		},
 		{
 			name:    "recycle microvm same-tenant: best-effort (scrub mode irrelevant without cross-tenant)",
 			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", MicrovmScrubMode: "in-place"},
 			req:     isolation.ProfileMicrovm,
-			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort",
+			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "best-effort", wantCont: "platform",
 		},
 		{
 			name:    "concurrent sessions: best-effort-per-slot",
 			match:   podsession.PoolMatch{ExecutionMode: "session", MaxConcurrentSessions: 4, IsolationProfile: "sandboxed"},
 			req:     isolation.ProfileSandboxed,
-			wantExe: "session", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort-per-slot",
+			wantExe: "session", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort-per-slot", wantCont: "platform",
 		},
 	}
 	for _, tc := range cases {
@@ -217,6 +218,11 @@ func TestIsolationLevelForPool_spec_7_1(t *testing.T) {
 			}
 			if got.ScrubPolicy != tc.wantScr {
 				t.Errorf("scrubPolicy = %q, want %q", got.ScrubPolicy, tc.wantScr)
+			}
+			// spec: §7.1 line 74 — service mode reports "none", every other
+			// mode "platform".
+			if got.ConversationContinuity != tc.wantCont {
+				t.Errorf("conversationContinuity = %q, want %q", got.ConversationContinuity, tc.wantCont)
 			}
 		})
 	}
@@ -264,57 +270,100 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 		{
 			name: "session mode: no reuse, no scrub, no warning",
 			row: sessionstore.Session{
-				IsolationProfile: isolation.ProfileSandboxed,
-				ExecutionMode:    "session",
+				IsolationProfile:       isolation.ProfileSandboxed,
+				ExecutionMode:          "session",
+				ConversationContinuity: "platform",
 			},
 			want: SessionIsolationLevel{
-				ExecutionMode:    "session",
-				IsolationProfile: "sandboxed",
+				ExecutionMode:          "session",
+				IsolationProfile:       "sandboxed",
+				ConversationContinuity: "platform",
 			},
 		},
 		{
 			name: "recycle mode: pod reuse + warning + scrub",
 			row: sessionstore.Session{
-				IsolationProfile: isolation.ProfileMicrovm,
-				ExecutionMode:    "session",
-				ScrubPolicy:      "vm-restart",
+				IsolationProfile:       isolation.ProfileMicrovm,
+				ExecutionMode:          "session",
+				ScrubPolicy:            "vm-restart",
+				ConversationContinuity: "platform",
 			},
 			want: SessionIsolationLevel{
-				ExecutionMode:        "session",
-				IsolationProfile:     "microvm",
-				PodReuse:             true,
-				ResidualStateWarning: true,
-				ScrubPolicy:          "vm-restart",
+				ExecutionMode:          "session",
+				IsolationProfile:       "microvm",
+				PodReuse:               true,
+				ResidualStateWarning:   true,
+				ScrubPolicy:            "vm-restart",
+				ConversationContinuity: "platform",
 			},
 		},
 		{
-			name: "service mode: pod reuse + warning + no scrub",
+			name: "service mode: pod reuse + warning + no scrub + no continuity",
+			row: sessionstore.Session{
+				IsolationProfile:       isolation.ProfileSandboxed,
+				ExecutionMode:          "service",
+				ScrubPolicy:            "none",
+				ConversationContinuity: "none",
+			},
+			want: SessionIsolationLevel{
+				ExecutionMode:          "service",
+				IsolationProfile:       "sandboxed",
+				PodReuse:               true,
+				ResidualStateWarning:   true,
+				ScrubPolicy:            "none",
+				ConversationContinuity: "none",
+			},
+		},
+		{
+			name: "concurrent sessions: per-slot scrub recorded on the row",
+			row: sessionstore.Session{
+				IsolationProfile:       isolation.ProfileSandboxed,
+				ExecutionMode:          "session",
+				ScrubPolicy:            "best-effort-per-slot",
+				ConversationContinuity: "platform",
+			},
+			want: SessionIsolationLevel{
+				ExecutionMode:          "session",
+				IsolationProfile:       "sandboxed",
+				PodReuse:               true,
+				ResidualStateWarning:   true,
+				ScrubPolicy:            "best-effort-per-slot",
+				ConversationContinuity: "platform",
+			},
+		},
+		{
+			// spec: §7.1 line 74 — a service-mode row whose stored
+			// conversation_continuity column was never populated (a row
+			// persisted before the gateway resolved a service pool) still
+			// reports "none" through the mode-derived fallback, so the field
+			// never reports "platform" for a service-mode session.
+			name: "service mode with empty continuity column falls back to none",
 			row: sessionstore.Session{
 				IsolationProfile: isolation.ProfileSandboxed,
 				ExecutionMode:    "service",
 				ScrubPolicy:      "none",
 			},
 			want: SessionIsolationLevel{
-				ExecutionMode:        "service",
-				IsolationProfile:     "sandboxed",
-				PodReuse:             true,
-				ResidualStateWarning: true,
-				ScrubPolicy:          "none",
+				ExecutionMode:          "service",
+				IsolationProfile:       "sandboxed",
+				PodReuse:               true,
+				ResidualStateWarning:   true,
+				ScrubPolicy:            "none",
+				ConversationContinuity: "none",
 			},
 		},
 		{
-			name: "concurrent sessions: per-slot scrub recorded on the row",
+			// spec: §7.1 line 74 — a session-mode row with an empty
+			// continuity column falls back to "platform".
+			name: "session mode with empty continuity column falls back to platform",
 			row: sessionstore.Session{
 				IsolationProfile: isolation.ProfileSandboxed,
 				ExecutionMode:    "session",
-				ScrubPolicy:      "best-effort-per-slot",
 			},
 			want: SessionIsolationLevel{
-				ExecutionMode:        "session",
-				IsolationProfile:     "sandboxed",
-				PodReuse:             true,
-				ResidualStateWarning: true,
-				ScrubPolicy:          "best-effort-per-slot",
+				ExecutionMode:          "session",
+				IsolationProfile:       "sandboxed",
+				ConversationContinuity: "platform",
 			},
 		},
 	}
@@ -323,6 +372,50 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			got := persistedIsolationLevel(tc.row)
 			if got != tc.want {
 				t.Errorf("persistedIsolationLevel = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// spec: §7.1 line 74 — conversationContinuityFor maps the §5.2 execution
+// mode to the contract value: "none" for service mode, "platform" for
+// session mode and the empty (unresolved) default.
+func TestConversationContinuityFor_spec_7_1_74(t *testing.T) {
+	cases := []struct {
+		mode string
+		want string
+	}{
+		{mode: "service", want: "none"},
+		{mode: "session", want: "platform"},
+		{mode: "", want: "platform"},
+	}
+	for _, tc := range cases {
+		if got := conversationContinuityFor(tc.mode); got != tc.want {
+			t.Errorf("conversationContinuityFor(%q) = %q, want %q", tc.mode, got, tc.want)
+		}
+	}
+}
+
+// spec: §7.1 line 74 — persistedContinuity prefers the stored S25a
+// conversation_continuity column when non-empty so a read returns the value
+// frozen at create, and falls back to the mode-derived value for an empty
+// column (a pre-migration or never-resolved row).
+func TestPersistedContinuity_spec_7_1_74(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored string
+		mode   string
+		want   string
+	}{
+		{name: "stored value is authoritative", stored: "platform", mode: "service", want: "platform"},
+		{name: "empty column falls back to service mode none", stored: "", mode: "service", want: "none"},
+		{name: "empty column falls back to session mode platform", stored: "", mode: "session", want: "platform"},
+		{name: "empty column and empty mode falls back to platform", stored: "", mode: "", want: "platform"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := persistedContinuity(tc.stored, tc.mode); got != tc.want {
+				t.Errorf("persistedContinuity(%q, %q) = %q, want %q", tc.stored, tc.mode, got, tc.want)
 			}
 		})
 	}

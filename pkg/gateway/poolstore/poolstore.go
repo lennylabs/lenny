@@ -583,6 +583,15 @@ func RuntimePreConnect(rt runtimestore.Runtime) bool {
 	return rt.Capabilities != nil && rt.Capabilities.PreConnect
 }
 
+// RuntimeMultiTurn reports whether rt declares the §5.1
+// capabilities.interaction: multi_turn model. A multi_turn runtime bound to
+// a service-mode pool is permitted but warned: service mode preserves no
+// cross-message conversation continuity, so its clients must re-inject any
+// needed context into each message's input (§5.2 service-mode contract).
+func RuntimeMultiTurn(rt runtimestore.Runtime) bool {
+	return rt.Capabilities != nil && rt.Capabilities.Interaction == runtimestore.InteractionMultiTurn
+}
+
 // Store is the §5.2 pool registry contract.
 type Store interface {
 	Create(ctx context.Context, p Pool) error

@@ -94,3 +94,22 @@ func TestRuntimePreConnect_spec_5_1(t *testing.T) {
 		t.Error("preConnect: true must report true")
 	}
 }
+
+// TestRuntimeMultiTurn_spec_5_1 covers the capabilities.interaction reader the
+// §5.2 multi_turn-on-service warning derivation uses: nil capabilities and a
+// one_shot interaction report false; an explicit multi_turn reports true.
+func TestRuntimeMultiTurn_spec_5_1(t *testing.T) {
+	if poolstore.RuntimeMultiTurn(runtimestore.Runtime{}) {
+		t.Error("nil capabilities must report multiTurn false")
+	}
+	if poolstore.RuntimeMultiTurn(runtimestore.Runtime{
+		Capabilities: &runtimestore.RuntimeCapabilities{Interaction: runtimestore.InteractionOneShot},
+	}) {
+		t.Error("one_shot interaction must report multiTurn false")
+	}
+	if !poolstore.RuntimeMultiTurn(runtimestore.Runtime{
+		Capabilities: &runtimestore.RuntimeCapabilities{Interaction: runtimestore.InteractionMultiTurn},
+	}) {
+		t.Error("multi_turn interaction must report multiTurn true")
+	}
+}

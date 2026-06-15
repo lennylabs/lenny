@@ -1121,3 +1121,133 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 		t.Errorf("reject pool returned after %s, want a prompt failure (no queueing)", elapsed)
 	}
 }
+
+// podBindServiceTemplate is podBindTemplate's service-mode sibling: a
+// SandboxTemplate whose §5.2 executionMode is `service`, so ResolvePool
+// reports a service-mode match and the start path takes the claimless
+// routing branch.
+func podBindServiceTemplate(name, runtimeRef, isolationProfile string) *lennyv1.SandboxTemplate {
+	tmpl := podBindTemplate(name, runtimeRef, isolationProfile)
+	tmpl.Spec.ExecutionMode = string(runtimestore.ExecutionModeService)
+	return tmpl
+}
+
+// podBindServicePool returns a poolstore mirror for a service-mode pool so
+// ResolvePool folds in the §5.2 per-pod request capacity (MaxConcurrent).
+func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int) poolstore.Store {
+	t.Helper()
+	pools := poolstore.NewMemory()
+	if err := pools.Create(context.Background(), poolstore.Pool{
+		Name:          name,
+		RuntimeRef:    runtimeRef,
+		ExecutionMode: runtimestore.ExecutionModeService,
+		MaxConcurrent: maxConcurrent,
+	}); err != nil {
+		t.Fatalf("create service pool: %v", err)
+	}
+	return pools
+}
+
+// spec: §5.2 (service mode is claimless: no SandboxClaim, no workspace
+// materialization), §3.6 (service-mode session contract), §7.1 line 74
+// (conversationContinuity).
+// diagnosis: a service-mode start that claims a Sandbox or binds a pod
+// breaks the §5.2 claimless contract — every service-mode session would
+// burn a warm pod and the tenant-affinity routing layer would never be
+// reached. A failure here means the start path did not take the claimless
+// branch for executionMode=service.
+func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	// The cluster carries a service-mode pool, its service-mode template, and
+	// one idle Sandbox. The claimless path must leave that Sandbox unclaimed.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("svc-pool", "svc-tmpl"),
+		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-svc-1" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "svc-runtime", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("service-mode start: status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// No binding is registered: a service-mode session is a connection handle,
+	// not a pod-bound session.
+	if b, ok := registry.Get("sess-svc-1"); ok {
+		t.Errorf("service-mode session registered a pod binding %+v; want none (claimless)", b)
+	}
+
+	// spec: §5.2 — no SandboxClaim is created for a service-mode session. The
+	// per-pod claim the session-claim path would have created (`claim-svc-sbx-1`)
+	// must be absent.
+	var claim lennyv1.SandboxClaim
+	err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-svc-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("service-mode start created/looked up claim-svc-sbx-1 (err=%v); want NotFound (claimless)", err)
+	}
+
+	// The idle Sandbox is untouched: still idle, no occupancy projected.
+	var sbx lennyv1.Sandbox
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "svc-sbx-1"}, &sbx); err != nil {
+		t.Fatalf("get service-mode idle sandbox: %v", err)
+	}
+	if sbx.Status.Phase != "idle" {
+		t.Errorf("service-mode idle sandbox phase = %q, want idle (claimless leaves it untouched)", sbx.Status.Phase)
+	}
+
+	// The response and persisted row carry the §7.1 / §5.2 service-mode
+	// envelope: executionMode=service, podReuse, residualStateWarning,
+	// scrubPolicy=none, conversationContinuity=none.
+	var resp sessionserver.SessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode service-mode start response: %v", err)
+	}
+	lvl := resp.SessionIsolationLevel
+	if lvl.ExecutionMode != "service" {
+		t.Errorf("executionMode = %q, want service", lvl.ExecutionMode)
+	}
+	if !lvl.PodReuse || !lvl.ResidualStateWarning {
+		t.Errorf("service-mode level = %+v, want podReuse and residualStateWarning true", lvl)
+	}
+	if lvl.ScrubPolicy != "none" {
+		t.Errorf("scrubPolicy = %q, want none", lvl.ScrubPolicy)
+	}
+	if lvl.ConversationContinuity != "none" {
+		t.Errorf("conversationContinuity = %q, want none", lvl.ConversationContinuity)
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess-svc-1")
+	if err != nil {
+		t.Fatalf("get persisted service-mode row: %v", err)
+	}
+	if row.ExecutionMode != "service" {
+		t.Errorf("row.ExecutionMode = %q, want service", row.ExecutionMode)
+	}
+	if row.ConversationContinuity != "none" {
+		t.Errorf("row.ConversationContinuity = %q, want none (frozen at create for the GET / List envelope)", row.ConversationContinuity)
+	}
+	if row.PodAssignment != "" {
+		t.Errorf("row.PodAssignment = %q, want empty (claimless: no pod bound)", row.PodAssignment)
+	}
+}

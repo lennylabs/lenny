@@ -2153,7 +2153,53 @@ type SessionIsolationLevel struct {
 	PodReuse             bool   `json:"podReuse"`
 	ScrubPolicy          string `json:"scrubPolicy,omitempty"`
 	ResidualStateWarning bool   `json:"residualStateWarning"`
+	// ConversationContinuity is the §7.1 line 74 contract field:
+	// "platform" for session mode (the platform binds the session to a pod
+	// and preserves conversation context across messages for the session's
+	// lifetime) or "none" for service mode (the gateway routes each message
+	// to any ready replica and keeps no conversation context between
+	// messages, so clients of multi_turn runtimes re-inject context into
+	// each message's input). spec: §5.2 (service-mode session contract),
+	// §7.1 line 74.
+	ConversationContinuity string `json:"conversationContinuity"`
 }
+
+// conversationContinuityFor maps a §5.2 execution mode to its §7.1 line 74
+// conversationContinuity contract value: "none" for service mode (no
+// cross-message continuity, each message routes to any ready replica) and
+// "platform" for session mode (the session is pinned to a pod that
+// preserves context for its lifetime). An empty mode resolves to the
+// session-mode default, mirroring the executionMode fallbacks elsewhere so
+// the field never understates continuity. spec: §5.2, §7.1 line 74.
+func conversationContinuityFor(mode string) string {
+	if mode == string(runtimestore.ExecutionModeService) {
+		return continuityNone
+	}
+	return continuityPlatform
+}
+
+// persistedContinuity returns the §7.1 line 74 conversationContinuity for a
+// read off the persisted row. The stored value (the S25a
+// conversation_continuity column) is authoritative when non-empty, so a
+// GET / List after a coordinator handoff returns the exact value the create
+// response carried. An empty column (a pre-migration row, or a row created
+// before the gateway resolved a pool) falls back to the mode-derived value
+// so the field never understates continuity. spec: §7.1 line 74.
+func persistedContinuity(stored, mode string) string {
+	if stored != "" {
+		return stored
+	}
+	return conversationContinuityFor(mode)
+}
+
+const (
+	// continuityPlatform is the §7.1 line 74 conversationContinuity value
+	// for session mode.
+	continuityPlatform = "platform"
+	// continuityNone is the §7.1 line 74 conversationContinuity value for
+	// service mode.
+	continuityNone = "none"
+)
 
 // errorEnvelope is the §15.1 error response shape.
 type errorEnvelope struct {
@@ -2374,19 +2420,20 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// rich level the pool resolved to.
 	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, isoProf)
 	row := sessionstore.Session{
-		ID:               s.idFn(),
-		TenantID:         tenantID,
-		UserID:           req.UserID,
-		RuntimeRef:       req.RuntimeRef,
-		Environment:      req.Environment,
-		State:            session.StateCreated,
-		IsolationProfile: isoProf,
-		ExecutionMode:    level.ExecutionMode,
-		ScrubPolicy:      level.ScrubPolicy,
-		WorkspacePlan:    planJSON,
-		Metadata:         cloneMetadata(req.Metadata),
-		RetryPolicy:      effectiveRetry,
-		CreatedAt:        s.clock(),
+		ID:                     s.idFn(),
+		TenantID:               tenantID,
+		UserID:                 req.UserID,
+		RuntimeRef:             req.RuntimeRef,
+		Environment:            req.Environment,
+		State:                  session.StateCreated,
+		IsolationProfile:       isoProf,
+		ExecutionMode:          level.ExecutionMode,
+		ScrubPolicy:            level.ScrubPolicy,
+		ConversationContinuity: level.ConversationContinuity,
+		WorkspacePlan:          planJSON,
+		Metadata:               cloneMetadata(req.Metadata),
+		RetryPolicy:            effectiveRetry,
+		CreatedAt:              s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
 	// spec: §4.2 line 159 — stamp the resume-eligibility deadline
@@ -2581,6 +2628,10 @@ func defaultIsolationLevel(p isolation.Profile) SessionIsolationLevel {
 		PodReuse:             false,
 		ScrubPolicy:          "",
 		ResidualStateWarning: false,
+		// spec: §7.1 line 74 — a session-mode pod binds the session to one
+		// pod for its lifetime and preserves conversation context across
+		// messages.
+		ConversationContinuity: continuityPlatform,
 	}
 }
 
@@ -2601,6 +2652,14 @@ func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
 	level := SessionIsolationLevel{
 		ExecutionMode:    mode,
 		IsolationProfile: string(row.IsolationProfile),
+		// spec: §7.1 line 74 — derive conversationContinuity from the frozen
+		// execution mode so a GET / List after a coordinator handoff returns
+		// "none" for a service-mode row and "platform" otherwise, matching
+		// the create response. The stored ConversationContinuity column
+		// (migration from S25a) is authoritative when present; an empty
+		// column falls back to the mode-derived value so a pre-migration or
+		// never-resolved row still reports the correct continuity.
+		ConversationContinuity: persistedContinuity(row.ConversationContinuity, mode),
 	}
 	// spec: §5.2 / §7.1 — a service-mode pod serves successive requests with
 	// no scrub, and a session-mode pod that recorded a non-empty scrubPolicy
@@ -2629,7 +2688,14 @@ func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profi
 	if mode == "" {
 		mode = string(runtimestore.ExecutionModeSession)
 	}
-	level := SessionIsolationLevel{ExecutionMode: mode, IsolationProfile: profile}
+	level := SessionIsolationLevel{
+		ExecutionMode:    mode,
+		IsolationProfile: profile,
+		// spec: §7.1 line 74 — a service-mode pool provides no cross-message
+		// continuity (each message routes to any ready replica); every other
+		// mode binds the session to one pod that preserves context.
+		ConversationContinuity: conversationContinuityFor(mode),
+	}
 	scrub := scrubPolicyForPool(match)
 	if mode == string(runtimestore.ExecutionModeService) || scrub != "" {
 		level.PodReuse = true

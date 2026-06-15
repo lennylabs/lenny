@@ -161,6 +161,12 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	if resp.SessionIsolationLevel.ResidualStateWarning {
 		t.Error("session-mode must not raise residualStateWarning")
 	}
+	// spec: §7.1 line 74 — a session-mode pool binds the session to one pod
+	// and preserves conversation context for its lifetime.
+	if resp.SessionIsolationLevel.ConversationContinuity != "platform" {
+		t.Errorf("conversationContinuity: got %q, want platform",
+			resp.SessionIsolationLevel.ConversationContinuity)
+	}
 	// Session row should be persisted with the resolved isolation profile.
 	row, _ := store.Get(context.Background(), "acme", "sess_new")
 	if row.IsolationProfile != isolation.Default() {

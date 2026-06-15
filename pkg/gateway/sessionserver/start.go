@@ -409,17 +409,18 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// coordinator handoff.
 	level := s.resolveIsolationLevel(r.Context(), runtimeRef, isoProf)
 	row := sessionstore.Session{
-		ID:               s.idFn(),
-		TenantID:         tenantID,
-		UserID:           req.UserID,
-		RuntimeRef:       runtimeRef,
-		Environment:      req.Environment,
-		State:            session.StateRunning, // skip directly to running per §15.1
-		IsolationProfile: isoProf,
-		ExecutionMode:    level.ExecutionMode,
-		ScrubPolicy:      level.ScrubPolicy,
-		WorkspacePlan:    planJSON,
-		CreatedAt:        s.clock(),
+		ID:                     s.idFn(),
+		TenantID:               tenantID,
+		UserID:                 req.UserID,
+		RuntimeRef:             runtimeRef,
+		Environment:            req.Environment,
+		State:                  session.StateRunning, // skip directly to running per §15.1
+		IsolationProfile:       isoProf,
+		ExecutionMode:          level.ExecutionMode,
+		ScrubPolicy:            level.ScrubPolicy,
+		ConversationContinuity: level.ConversationContinuity,
+		WorkspacePlan:          planJSON,
+		CreatedAt:              s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
 	// spec: §15.1 line 690 / §14 lines 108-139 — validate the optional
@@ -470,6 +471,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf)
 		row.ExecutionMode = afterLevel.ExecutionMode
 		row.ScrubPolicy = afterLevel.ScrubPolicy
+		row.ConversationContinuity = afterLevel.ConversationContinuity
 	}
 	// §4.8 PostRoute: run the interceptor chain after runtime selection
 	// with the resolved runtime metadata. A REJECT blocks the create; a
@@ -1229,10 +1231,23 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if match.PoolWarmingUp {
 		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
+	// spec: §5.2 — service mode is claimless: there is no workspace
+	// materialization and no SandboxClaim. A service-mode session is a
+	// connection handle; the gateway routes each message through the
+	// pool's Kubernetes Service / EndpointSlice with tenant-affinity
+	// routing (statelessproxy + tenantaffinity), pinning each pod to one
+	// tenant. The start path therefore returns a nil BindResult without
+	// touching the claim or slot acquisition paths, so no Sandbox is
+	// claimed and no pod is bound to the session. The session row persists
+	// with execution_mode=service; message routing reads that mode and
+	// dispatches to the stateless data plane rather than a bound pod.
+	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return nil, nil
+	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	// spec: §5.2 — a session-mode pool with maxConcurrentSessions > 1 routes
 	// the bind through the slot-claim path; the one-session-per-pod default
-	// and service mode use the session-claim path.
+	// uses the session-claim path.
 	if match.MaxConcurrentSessions > 1 {
 		slotReq := podsession.SlotBindRequest{
 			Pool:                    match.Pool,
@@ -2130,6 +2145,13 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 			return "", err
 		}
 		s.registerBinding(ctx, result)
+		// spec: §5.2 — a service-mode session is claimless, so startOnPod
+		// returns a nil BindResult with no pod to fence. Service mode has no
+		// Lenny-managed lifecycle and never reaches a resumable state, so this
+		// guard is defensive: skip the resumed-pod fence when no pod was bound.
+		if result == nil {
+			return "", nil
+		}
 		if ferr := s.fenceResumedPod(ctx, result.Adapter, row.TenantID, row.ID); ferr != nil {
 			return "", ferr
 		}

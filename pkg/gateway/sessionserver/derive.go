@@ -357,20 +357,21 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	// rich envelope as a freshly-created row.
 	derivedLevel := s.resolveIsolationLevel(r.Context(), runtimeRef, target)
 	derived := sessionstore.Session{
-		ID:                 derivedID,
-		TenantID:           tenantID,
-		UserID:             userID,
-		State:              session.StateCreated,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-		RuntimeRef:         runtimeRef,
-		PoolRef:            pool,
-		IsolationProfile:   target,
-		ExecutionMode:      derivedLevel.ExecutionMode,
-		ScrubPolicy:        derivedLevel.ScrubPolicy,
-		WorkspaceSnapshot:  copySnapshotRef(source.WorkspaceSnapshot, derivedRef),
-		ParentSessionID:    source.ID,
-		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
+		ID:                     derivedID,
+		TenantID:               tenantID,
+		UserID:                 userID,
+		State:                  session.StateCreated,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		RuntimeRef:             runtimeRef,
+		PoolRef:                pool,
+		IsolationProfile:       target,
+		ExecutionMode:          derivedLevel.ExecutionMode,
+		ScrubPolicy:            derivedLevel.ScrubPolicy,
+		ConversationContinuity: derivedLevel.ConversationContinuity,
+		WorkspaceSnapshot:      copySnapshotRef(source.WorkspaceSnapshot, derivedRef),
+		ParentSessionID:        source.ID,
+		ParentWorkspaceRef:     source.WorkspaceSnapshot.Ref,
 	}
 	if err := s.store.Create(r.Context(), derived); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
