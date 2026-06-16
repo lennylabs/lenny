@@ -591,18 +591,51 @@ func scanDiagnosis(path string) (int, []string) {
 	return funcs, missing
 }
 
-// hasAnnotationBefore returns true when one of the 10 lines preceding
-// idx contains the named annotation marker (e.g. "// spec:" or
-// "// diagnosis:").
+// hasAnnotationBefore returns true when the doc-comment block immediately
+// preceding the function at idx contains the named annotation marker (e.g.
+// "// spec:" or "// diagnosis:"). It scans upward over the contiguous run of
+// comment lines (and the blank lines that separate paragraphs within a
+// leading comment) that abut the function, stopping at the first line that is
+// neither a comment nor blank. Bounding by the function's own doc block rather
+// than a fixed line count keeps a thorough multi-paragraph `// spec:` plus
+// `// diagnosis:` header from pushing one annotation out of range, while a
+// trailing-blank-line gap before unrelated code still ends the scan so an
+// annotation on a different declaration is never mis-attributed.
 func hasAnnotationBefore(lines []string, idx int, marker string) bool {
-	start := idx - 10
-	if start < 0 {
-		start = 0
-	}
-	for i := start; i < idx; i++ {
+	for i := idx - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			// A blank line inside a leading comment block separates
+			// paragraphs; keep scanning as long as a comment line still
+			// precedes it. A blank line with no comment above it (plain code
+			// gap) ends the block on the next iteration.
+			if !precedingCommentExists(lines, i) {
+				return false
+			}
+			continue
+		}
+		if !startsWith(trimmed, "//") {
+			// The first non-comment, non-blank line ends the doc block.
+			return false
+		}
 		if containsSubstr(lines[i], marker) {
 			return true
 		}
+	}
+	return false
+}
+
+// precedingCommentExists reports whether any line above idx, up to the first
+// non-comment/non-blank line, is a comment. It lets hasAnnotationBefore treat
+// a blank line as part of a leading comment block only when a comment still
+// sits above it.
+func precedingCommentExists(lines []string, idx int) bool {
+	for i := idx - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		return startsWith(trimmed, "//")
 	}
 	return false
 }

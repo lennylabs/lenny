@@ -227,7 +227,10 @@
         "tests/tier2_component/stores/agentpodstatestore_test.go",
         "tests/tier8_chaos/concurrency_test.go",
         "tests/tier8_chaos/leader_election_test.go",
-        "tests/tier8_chaos/live_session_test.go"
+        "tests/tier8_chaos/live_session_test.go",
+        "tests/tier2_component/stores/crdpodregistry_claim_test.go::TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1",
+        "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash",
+        "tests/tier8_chaos/reserved_hold_holder_crash_test.go::TestOrphanGCReclaimsReservedClaimAfterHolderCrash"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -407,7 +410,8 @@
         "tests/tier12_load_cloud/concurrent_workspace_test.go",
         "tests/tier12_load_cloud/task_mode_test.go",
         "tests/tier2_component/poolresume/concurrent_uptime_test.go",
-        "tests/tier12_load_cloud/session_mode_test.go"
+        "tests/tier12_load_cloud/session_mode_test.go",
+        "tests/tier9_security/concurrent_slot_isolation_test.go::TestConcurrentCrossTenantReuseRejected_spec_6_28"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1237,7 +1241,8 @@
       "tests": [
         "pkg/gateway/watchdog/...",
         "pkg/gateway/inputwait/...",
-        "pkg/session/state/..."
+        "pkg/session/state/...",
+        "tests/tier2_component/watchdog/idle_pause_table_test.go::TestWatchdogIdleSweepPauseTable_spec_6_2"
       ],
       "packages": [
         "pkg/policy/timeout"
@@ -1455,7 +1460,9 @@
         "tests/tier2_component/breakers/breakerstore_test.go",
         "tests/tier2_component/quota/quotastore_test.go",
         "pkg/redisconn/redisconn_test.go",
-        "tests/tier8_chaos/redis_sentinel_failover_test.go"
+        "tests/tier8_chaos/redis_sentinel_failover_test.go",
+        "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReserveSlotUnderLock",
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers"
       ],
       "packages": [
         "pkg/store/lease",
