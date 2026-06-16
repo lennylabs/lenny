@@ -41,7 +41,11 @@ func TestQuotaEnforcement(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	// allow-all noEnvironmentPolicy so the §10.6 / §11.1 environment gate
+	// admits a no-environment session create and the §4.8 QuotaEvaluator
+	// is the gate under test on the create path.
+	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0",
+		"--no-environment-policy", "allow-all")
 	c := policyClient{t: t, base: gw.BaseURL()}
 	ctx := context.Background()
 
@@ -54,7 +58,10 @@ func TestQuotaEnforcement(t *testing.T) {
 		t.Fatalf("create tenant: status %d", code)
 	}
 
-	key := quotaWindowKey(tenant, user, time.Now())
+	// tokenQuotaPerWindow is the tenant-scope limit, so the usage the
+	// QuotaEvaluator checks lives in the tenant-rollup window, not any
+	// per-user window.
+	key := tenantQuotaWindowKey(tenant, time.Now())
 
 	// ---- well under the limit: the create is admitted ----
 	if err := rd.Client.Set(ctx, key, 2_000, time.Hour).Err(); err != nil {
@@ -114,7 +121,11 @@ func TestQuotaRecovery(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	// allow-all noEnvironmentPolicy so the §10.6 / §11.1 environment gate
+	// admits a no-environment session create and the §4.8 QuotaEvaluator
+	// enforcing the reconciled counter is the gate under test.
+	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0",
+		"--no-environment-policy", "allow-all")
 	c := policyClient{t: t, base: gw.BaseURL()}
 	ctx := context.Background()
 
@@ -127,7 +138,9 @@ func TestQuotaRecovery(t *testing.T) {
 		t.Fatalf("create tenant: status %d", code)
 	}
 
-	key := quotaWindowKey(tenant, user, time.Now())
+	// tokenQuotaPerWindow is the tenant-scope limit, so the reconciled
+	// usage the QuotaEvaluator checks lives in the tenant-rollup window.
+	key := tenantQuotaWindowKey(tenant, time.Now())
 
 	// Accumulated usage at the moment a Redis outage begins: the tenant
 	// has consumed its whole budget. This is the in-memory counter the

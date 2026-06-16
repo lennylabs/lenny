@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -67,6 +68,15 @@ func (s *Scenario) Setup(ctx context.Context) error {
 	s.failureMode.Store(true)
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.upstreamHits.Add(1)
+		// Drain the request body before responding. The forwarder sends a
+		// request body on every call; a handler that returns (especially
+		// on the 503 failure path) without consuming it leaves unread data
+		// on the connection, so Go's server sets Connection: close and the
+		// client opens a fresh socket per request. Under the high-rate SLO
+		// battery that exhausts the loopback ephemeral port range
+		// ("connect: can't assign requested address"). A real upstream
+		// reads the request, so draining also matches production behavior.
+		_, _ = io.Copy(io.Discard, r.Body)
 		if s.failureMode.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -78,7 +88,15 @@ func (s *Scenario) Setup(ctx context.Context) error {
 		FailureThreshold: failureThreshold,
 		Cooldown:         probeCooldown,
 	}
-	s.forwarder = &llmproxy.Forwarder{Client: s.server.Client(), Breaker: breaker}
+	// Forward through the shared scenkit client rather than the default
+	// httptest client: the default http.Transport keeps only
+	// MaxIdleConnsPerHost=2 idle connections, so under the scenario's
+	// concurrent VUs most returned connections exceed that cap and are
+	// closed, churning a fresh socket per request and exhausting the
+	// loopback ephemeral port range across the back-to-back SLO battery.
+	// The scenkit client raises the per-host idle pool and caps total
+	// connections per host, forcing reuse.
+	s.forwarder = &llmproxy.Forwarder{Client: scenkit.HTTPClient(), Breaker: breaker}
 	// Flip the upstream from failing to healthy partway through the
 	// profile so the half-open probe has a chance to succeed and the
 	// breaker reopens-then-closes path runs at least once. Run for
@@ -93,6 +111,9 @@ func (s *Scenario) Teardown(ctx context.Context) error {
 	if s.server != nil {
 		s.server.Close()
 	}
+	// Evict the shared client's idle connections to the now-closed test
+	// server so they do not linger across the back-to-back battery.
+	scenkit.CloseIdleConnections()
 	return nil
 }
 

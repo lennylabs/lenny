@@ -112,10 +112,22 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	// --dev-mode flag (cmd/lenny-gateway reads envFlag("LENNY_DEV_MODE")),
 	// so a StartWith(t, "--dev-mode") caller is unaffected; the env value
 	// only supplies the default for callers that pass no flag.
+	//
+	// §12.4 (F-12.4): the gateway fail-closes at startup when a
+	// --redis-url points at an unauthenticated, plaintext Redis without
+	// --redis-allow-insecure. The integration harness boots against a
+	// dev Redis container (tests/testinfra/containers.StartRedis) that
+	// runs auth-less and plaintext, which is the dev/local posture the
+	// --redis-allow-insecure opt-out exists for. Default the env flag so
+	// a StartWith(t, "--redis-url=...") caller dials the dev Redis the
+	// same way a dev deployment does; a test that wants to exercise the
+	// §12.4 AUTH-and-TLS guard sets LENNY_REDIS_ALLOW_INSECURE=false (or
+	// passes the flag) itself.
 	cmd.Env = append(
 		os.Environ(),
 		"LENNY_TLS_TERMINATED_UPSTREAM=true",
 		"LENNY_DEV_MODE=true",
+		"LENNY_REDIS_ALLOW_INSECURE=true",
 	)
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause
 	// the gateway to exit within this window, the runtime sends

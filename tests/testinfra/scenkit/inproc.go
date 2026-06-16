@@ -43,10 +43,15 @@ func (m *InProcMixin) SetupInProc(ctx context.Context, c inproc.Config) error {
 }
 
 // TeardownInProc stops the embedded env. Safe to call when
-// SetupInProc was never invoked.
+// SetupInProc was never invoked. It also evicts the shared client's
+// idle connections to the now-closed gateway port so per-scenario
+// keep-alive sockets do not linger across the back-to-back battery and
+// exhaust the loopback ephemeral port range.
 func (m *InProcMixin) TeardownInProc(ctx context.Context) error {
 	if m.env == nil {
 		return nil
 	}
-	return m.env.Stop(ctx)
+	err := m.env.Stop(ctx)
+	CloseIdleConnections()
+	return err
 }

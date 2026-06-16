@@ -83,7 +83,11 @@ func (s *Scenario) Setup(ctx context.Context) error {
 		// enough; the assertion accounts for that.
 		Cooldown: 30 * time.Second,
 	}
-	s.forwarder = &llmproxy.Forwarder{Client: s.server.Client(), Breaker: breaker}
+	// Forward through the shared scenkit client rather than the default
+	// httptest client, whose MaxIdleConnsPerHost=2 floor churns a fresh
+	// socket per request under concurrent VUs and exhausts the loopback
+	// ephemeral port range across the back-to-back SLO battery.
+	s.forwarder = &llmproxy.Forwarder{Client: scenkit.HTTPClient(), Breaker: breaker}
 	return nil
 }
 
@@ -91,6 +95,9 @@ func (s *Scenario) Teardown(ctx context.Context) error {
 	if s.server != nil {
 		s.server.Close()
 	}
+	// Evict the shared client's idle connections to the now-closed test
+	// server so they do not linger across the back-to-back battery.
+	scenkit.CloseIdleConnections()
 	return nil
 }
 
