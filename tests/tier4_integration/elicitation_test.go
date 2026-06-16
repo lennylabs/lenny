@@ -240,80 +240,86 @@ func TestMCPElicitationChain(t *testing.T) {
 	}
 }
 
-// spec: 9.2 (url-mode elicitation provenance controls)
+// spec: 9.2 (url-mode elicitation provenance controls), 8.5 line 559
+// (F-8.5.13 request_elicitation schema requirement)
 // diagnosis: the §9.2 url-mode provenance controls did not behave as
 //
-//	specified through the real cmd/lenny-gateway binary. An
-//	agent-initiated url-mode elicitation must be dropped when
-//	the pool does not allowlist url-mode (the gateway default),
-//	while a connector-initiated url-mode elicitation is
-//	admitted because §9.2 reserves url-mode for gateway-
-//	registered connectors.
+//	specified through the real cmd/lenny-gateway binary. A
+//	pod-initiated url-mode elicitation is always agent-initiated
+//	(F-9.2.19 removed the self-declared initiator input), so with
+//	no per-pool url-mode allowlist it must be dropped with
+//	DOMAIN_NOT_ALLOWLISTED. A non-url-mode elicitation through the
+//	same tool is admitted and resolvable.
 func TestMCPProvenance(t *testing.T) {
 	gw := gateway.StartWith(t, "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	root := c.runningSession()
 
-	// §9.2 control 1: an agent-initiated url-mode elicitation is
-	// blocked when the pool does not allowlist agent url-mode at all.
-	// The gateway is started with no per-pool url-mode allowlist, so
-	// the §9.2 default — block agent-initiated url-mode — applies.
+	// §9.2 control 1: a pod-initiated url-mode elicitation is treated
+	// as agent-initiated (F-9.2.19 removed the self-declared initiator
+	// input so a compromised pod cannot self-assert `connector`). The
+	// gateway is started with no per-pool url-mode allowlist, so the
+	// §9.2 default — agent-initiated url-mode disabled for the pool —
+	// drops it. With no urlModeElicitation config the rejection reason
+	// is "disabled for this pool"; DOMAIN_NOT_ALLOWLISTED applies only
+	// when url-mode is enabled and the host misses the allowlist. The
+	// required §8.5 line 559 `schema` is present so the request reaches
+	// the provenance check rather than failing input validation first
+	// (F-8.5.13).
 	agentRPC := c.callTool("lenny/request_elicitation",
-		`{"sessionId":"`+root+`","message":"sign in",`+
-			`"url":"https://accounts.evil.test/oauth","initiatorType":"agent",`+
+		`{"sessionId":"`+root+`","message":"sign in","schema":{},`+
+			`"url":"https://accounts.evil.test/oauth",`+
 			`"elicitationId":"elic-agent-url"}`)
 	agentText, agentErr := toolResultText(t, agentRPC)
 	if !agentErr {
 		t.Fatalf("an agent-initiated url-mode elicitation must be dropped, got: %q", agentText)
 	}
-	if !strings.Contains(agentText, "DOMAIN_NOT_ALLOWLISTED") {
-		t.Errorf("agent url-mode drop reason = %q, want DOMAIN_NOT_ALLOWLISTED", agentText)
+	if !strings.Contains(agentText, "url-mode elicitation is disabled for this pool") {
+		t.Errorf("agent url-mode drop reason = %q, want the §9.2 disabled-for-pool rejection", agentText)
 	}
 
-	// §9.2 control 3: a connector-initiated url-mode elicitation is
-	// admitted even against an empty pool allowlist — url-mode is
-	// reserved for gateway-registered connectors. It forwards up the
-	// chain to the root (a single-session chain here) and blocks for a
-	// human response; a REST respond resolves it, proving the
-	// connector url-mode elicitation was recorded rather than dropped.
-	const connElicID = "elic-connector-url"
+	// §9.2 admitted path: a non-url-mode elicitation through the same
+	// tool is recorded and forwards up the chain to the root (a
+	// single-session chain here), blocking for a human response. A
+	// REST respond resolves it, proving the non-url-mode elicitation
+	// was admitted rather than dropped by the url-mode provenance gate.
+	const promptElicID = "elic-agent-prompt"
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- c.callTool("lenny/request_elicitation",
-			`{"sessionId":"`+root+`","message":"sign in",`+
-				`"url":"https://github.com/login/oauth/authorize","initiatorType":"connector",`+
-				`"elicitationId":"`+connElicID+`"}`)
+			`{"sessionId":"`+root+`","message":"approve the deploy?","schema":{},`+
+				`"elicitationId":"`+promptElicID+`"}`)
 	}()
 
 	resolved := false
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		code, _ := c.rest(http.MethodPost,
-			"/v1/sessions/"+root+"/elicitations/"+connElicID+"/respond",
-			map[string]any{"response": "signed-in"})
+			"/v1/sessions/"+root+"/elicitations/"+promptElicID+"/respond",
+			map[string]any{"response": "approved"})
 		if code == http.StatusOK {
 			resolved = true
 			break
 		}
 		if code != http.StatusNotFound {
-			t.Fatalf("respond to connector url-mode elicitation: unexpected status %d", code)
+			t.Fatalf("respond to non-url-mode elicitation: unexpected status %d", code)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	if !resolved {
-		t.Fatal("a connector-initiated url-mode elicitation was not recorded; §9.2 admits connector url-mode")
+		t.Fatal("a non-url-mode elicitation was not recorded; §9.2 admits non-url-mode prompts")
 	}
 	select {
 	case rpc := <-done:
 		text, isErr := toolResultText(t, rpc)
 		if isErr {
-			t.Fatalf("connector url-mode request_elicitation returned an error: %s", text)
+			t.Fatalf("non-url-mode request_elicitation returned an error: %s", text)
 		}
-		if !strings.Contains(text, "signed-in") {
-			t.Errorf("connector url-mode result = %q, want the human response", text)
+		if !strings.Contains(text, "approved") {
+			t.Errorf("non-url-mode result = %q, want the human response", text)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("connector url-mode request_elicitation did not return after resolution")
+		t.Fatal("non-url-mode request_elicitation did not return after resolution")
 	}
 }
