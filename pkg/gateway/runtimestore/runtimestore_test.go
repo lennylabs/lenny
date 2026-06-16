@@ -417,7 +417,7 @@ func TestRuntimeSessionPolicyRoundTripAndIsolation(t *testing.T) {
 		Recycle: &runtimestore.RecyclePolicy{
 			Enabled:                    true,
 			AcknowledgeBestEffortScrub: true,
-			ScrubProfile:               runtimestore.MicrovmScrubRestart,
+			ScrubProfile:               runtimestore.MicrovmScrubStandard,
 			OnScrubFailure:             runtimestore.CleanupFailureWarn,
 			MaxScrubFailures:           3,
 			MaxSessionsPerPod:          50,
@@ -447,11 +447,28 @@ func TestRuntimeSessionPolicyRoundTripAndIsolation(t *testing.T) {
 	}
 }
 
+// spec: 5.2 (scrubProfile enum: standard | vm-restart | in-place)
 func TestMicrovmScrubModeAndCleanupDispositionIsValid(t *testing.T) {
 	for _, m := range runtimestore.AllMicrovmScrubModes() {
 		if !m.IsValid() {
 			t.Errorf("scrub mode %q from the closed enum reports invalid", m)
 		}
+	}
+	// §5.2 documents `standard` as the default scrubProfile value, so the
+	// store enum must admit it (the prior two-value `restart`/`in-place`
+	// enum rejected it). The other two §5.2 values must also be admitted.
+	for _, want := range []runtimestore.MicrovmScrubMode{
+		runtimestore.MicrovmScrubStandard,
+		runtimestore.MicrovmScrubVMRestart,
+		runtimestore.MicrovmScrubInPlace,
+	} {
+		if !want.IsValid() {
+			t.Errorf("scrubProfile %q must be a recognised §5.2 value", want)
+		}
+	}
+	// The pre-rename `restart` value (the divergent non-spec value) is gone.
+	if runtimestore.MicrovmScrubMode("restart").IsValid() {
+		t.Error("the legacy `restart` value must report invalid; §5.2 uses vm-restart")
 	}
 	if runtimestore.MicrovmScrubMode("wipe").IsValid() {
 		t.Error("an unknown scrub mode must report invalid")

@@ -427,7 +427,7 @@ func validateSessionPolicy(p *runtimestore.SessionPolicy) error {
 	}
 	if r := p.Recycle; r != nil {
 		if r.ScrubProfile != "" && !r.ScrubProfile.IsValid() {
-			return errors.New("sessionPolicy.recycle.scrubProfile must be restart or in-place")
+			return errors.New("sessionPolicy.recycle.scrubProfile must be standard, vm-restart, or in-place")
 		}
 		if r.OnScrubFailure != "" && !r.OnScrubFailure.IsValid() {
 			return errors.New("sessionPolicy.recycle.onScrubFailure must be warn or fail")
@@ -498,8 +498,7 @@ func validateLimits(l *runtimestore.Limits) error {
 		return nil
 	}
 	if l.MaxSessionAgeSeconds < 0 || l.MaxUploadSizeBytes < 0 || l.MaxRequestInputWaitSeconds < 0 ||
-		l.MaxElicitationWaitSeconds < 0 || l.MaxElicitationsPerSession < 0 ||
-		l.MaxIdleTimeSeconds < 0 {
+		l.MaxElicitationWaitSeconds < 0 || l.MaxElicitationsPerSession < 0 {
 		return errors.New("limits fields must not be negative")
 	}
 	return nil

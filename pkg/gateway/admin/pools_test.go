@@ -700,15 +700,19 @@ func TestCreatePoolRejectsCrossTenantReuseOnT4Runtime_spec_5_2_396(t *testing.T)
 	})
 
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
-		Name:          "t4-pool",
-		RuntimeRef:    "phi-agent",
-		ExecutionMode: "session",
+		Name:             "t4-pool",
+		RuntimeRef:       "phi-agent",
+		ExecutionMode:    "session",
+		IsolationProfile: "microvm",
 		SessionPolicy: &runtimestore.SessionPolicy{
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          10,
 				AllowCrossTenantReuse:      true,
+				// Well-formed for every gate except the T4-tier rule, so the
+				// rejection is attributable to the T4 prohibition alone.
+				ScrubProfile: runtimestore.MicrovmScrubVMRestart,
 			},
 		},
 	})
@@ -745,6 +749,9 @@ func TestCreatePoolAllowsCrossTenantReuseOnT3Runtime_spec_5_2_396(t *testing.T) 
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          10,
 				AllowCrossTenantReuse:      true,
+				// §5.2: a cross-tenant-reuse microvm pool must carry vm-restart
+				// or in-place; the standard in-guest scrub is rejected.
+				ScrubProfile: runtimestore.MicrovmScrubVMRestart,
 			},
 		},
 	})
@@ -790,6 +797,7 @@ func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *te
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          5,
 				AllowCrossTenantReuse:      true,
+				ScrubProfile:               runtimestore.MicrovmScrubVMRestart,
 			},
 		}})
 	if rr.Code != http.StatusBadRequest {

@@ -428,6 +428,11 @@ func ValidateSDKWarmConfig(p Pool) error {
 //     (maxConcurrentSessions == 1) (§5.2). The further §5.2 T4 prohibition
 //     is enforced by ValidateCrossTenantReuseTier.
 //
+//   - recycle.allowCrossTenantReuse: true requires a scrubProfile of
+//     vm-restart or in-place; standard (the default) or unset is rejected
+//     because the in-guest scrub is insufficient for cross-tenant
+//     sequential reuse (§5.2 Kata scrub variant).
+//
 //   - recycle.scrubProfile `in-place` requires
 //     acknowledgeMicrovmResidualState: true (§5.2 Kata scrub variant).
 //
@@ -479,8 +484,10 @@ func ValidateSessionPolicy(p Pool) error {
 // validateRecyclePolicy enforces the §5.2 recycle-block invariants for a
 // session-mode pool, the sequential-reuse successor of task mode: the
 // best-effort-scrub acknowledgment, the required session-count limit, the
-// microvm-only cross-tenant gate, and the in-place residual-state
-// acknowledgment. spec: §5.2 (recycle lifecycle, Kata scrub variant).
+// microvm-only cross-tenant gate, the cross-tenant scrub-profile floor
+// (standard is insufficient; vm-restart or in-place is required), and the
+// in-place residual-state acknowledgment. spec: §5.2 (recycle lifecycle,
+// Kata scrub variant).
 func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	if r.Enabled {
 		if !r.AcknowledgeBestEffortScrub {
@@ -500,9 +507,18 @@ func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 		if p.IsolationProfile != isolation.ProfileMicrovm {
 			return errors.New("poolstore: recycle.allowCrossTenantReuse is permitted only when isolationProfile is microvm (§5.2)")
 		}
+		// §5.2: the standard in-guest scrub is insufficient for cross-tenant
+		// sequential reuse because the guest VM persists across sessions. A
+		// cross-tenant-reuse pool MUST set vm-restart or in-place; standard
+		// (the default) or an unset profile is rejected so the residual-state
+		// boundary between tenants is not crossed by the insufficient scrub.
+		if r.ScrubProfile == "" || r.ScrubProfile == runtimestore.MicrovmScrubStandard {
+			return errors.New("poolstore: recycle.allowCrossTenantReuse: true requires recycle.scrubProfile vm-restart or in-place; " +
+				"the standard in-guest scrub is insufficient for cross-tenant sequential reuse on a microvm pool (§5.2)")
+		}
 	}
 	if r.ScrubProfile != "" && !r.ScrubProfile.IsValid() {
-		return errors.New("poolstore: recycle.scrubProfile is not a recognised §5.2 mode (restart, in-place)")
+		return errors.New("poolstore: recycle.scrubProfile is not a recognised §5.2 mode (standard, vm-restart, in-place)")
 	}
 	if r.ScrubProfile == runtimestore.MicrovmScrubInPlace && !r.AcknowledgeMicrovmResidualState {
 		return errors.New("poolstore: recycle.scrubProfile \"in-place\" requires recycle.acknowledgeMicrovmResidualState: true; " +

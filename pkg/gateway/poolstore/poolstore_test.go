@@ -427,6 +427,57 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 			wantSub: "permitted only when isolationProfile is microvm",
 		},
 		{
+			// §5.2: the standard in-guest scrub is insufficient for
+			// cross-tenant sequential reuse; the pool controller rejects it.
+			name: "cross-tenant reuse with an unset scrubProfile is rejected",
+			pool: poolstore.Pool{
+				IsolationProfile: isolation.ProfileMicrovm,
+				ExecutionMode:    runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled:                    true,
+						AcknowledgeBestEffortScrub: true,
+						MaxSessionsPerPod:          10,
+						AllowCrossTenantReuse:      true,
+					},
+				},
+			},
+			wantSub: "requires recycle.scrubProfile vm-restart or in-place",
+		},
+		{
+			name: "cross-tenant reuse with the standard scrubProfile is rejected",
+			pool: poolstore.Pool{
+				IsolationProfile: isolation.ProfileMicrovm,
+				ExecutionMode:    runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled:                    true,
+						AcknowledgeBestEffortScrub: true,
+						MaxSessionsPerPod:          10,
+						AllowCrossTenantReuse:      true,
+						ScrubProfile:               runtimestore.MicrovmScrubStandard,
+					},
+				},
+			},
+			wantSub: "requires recycle.scrubProfile vm-restart or in-place",
+		},
+		{
+			name: "cross-tenant reuse with the vm-restart scrubProfile is admitted",
+			pool: poolstore.Pool{
+				IsolationProfile: isolation.ProfileMicrovm,
+				ExecutionMode:    runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled:                    true,
+						AcknowledgeBestEffortScrub: true,
+						MaxSessionsPerPod:          10,
+						AllowCrossTenantReuse:      true,
+						ScrubProfile:               runtimestore.MicrovmScrubVMRestart,
+					},
+				},
+			},
+		},
+		{
 			name: "unrecognised scrubProfile is rejected",
 			pool: poolstore.Pool{
 				ExecutionMode: runtimestore.ExecutionModeSession,

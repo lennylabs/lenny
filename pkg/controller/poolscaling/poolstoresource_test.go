@@ -151,13 +151,14 @@ func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
 	}
 }
 
-// TestPoolStoreSourceMapsRestartScrubMode verifies the store `restart`
-// scrub mode maps onto the CRD `vm-restart` scrub profile.
+// TestPoolStoreSourceMapsVMRestartScrubMode verifies the store
+// `vm-restart` scrub mode passes through to the CRD `vm-restart` scrub
+// profile value-for-value.
 //
 // spec: §5.2 (Kata/microvm scrub variant).
-func TestPoolStoreSourceMapsRestartScrubMode(t *testing.T) {
+func TestPoolStoreSourceMapsVMRestartScrubMode(t *testing.T) {
 	store := newMemoryStore(t, poolstore.Pool{
-		Name:             "restart-pool",
+		Name:             "vm-restart-pool",
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.ProfileMicrovm,
 		ExecutionMode:    runtimestore.ExecutionModeSession,
@@ -168,7 +169,7 @@ func TestPoolStoreSourceMapsRestartScrubMode(t *testing.T) {
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          10,
 				AllowCrossTenantReuse:      true,
-				ScrubProfile:               runtimestore.MicrovmScrubRestart,
+				ScrubProfile:               runtimestore.MicrovmScrubVMRestart,
 			},
 		},
 	})

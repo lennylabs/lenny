@@ -158,11 +158,13 @@ type SandboxTemplateSpec struct {
 
 	// TerminationGracePeriodSeconds is the §5.2 deployer-set pod
 	// terminationGracePeriodSeconds for this pool. spec: §5.2 line 516 —
-	// for concurrent-workspace pools the deployer sets it to cover the
-	// per-slot checkpoint budget (`maxConcurrent × max_tiered_checkpoint_cap
-	// + checkpointBarrierAckTimeoutSeconds + 30`); §6.4 line 67 requires
-	// at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces
-	// the §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
+	// for service-mode pools the deployer sets it to cover the per-slot
+	// checkpoint budget fanned across maxConcurrent slots
+	// (`maxConcurrent × max_tiered_checkpoint_cap
+	// + checkpointBarrierAckTimeoutSeconds + 30`), while a session-mode
+	// pool uses a multiplier of 1; §6.4 line 67 requires at least
+	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces the
+	// §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
 	// clamps it down.
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
@@ -171,18 +173,22 @@ type SandboxTemplateSpec struct {
 	// workspace-size hard limit. The pool-config webhook resolves it to the
 	// matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
 	// ≤300 MB, 90s for ≤512 MB) when computing the
-	// `terminationGracePeriodSeconds` floor for concurrent-workspace pools
-	// (spec/05_runtime-registry-and-pool-model.md §5.2 line 516). Unset
-	// defaults to the 90s conservative tier per §10.1 line 108.
+	// `terminationGracePeriodSeconds` floor; a service-mode pool fans this
+	// cap across maxConcurrent slots while a session-mode pool uses a
+	// multiplier of 1 (spec/05_runtime-registry-and-pool-model.md §5.2
+	// line 516). Unset defaults to the 90s conservative tier per §10.1
+	// line 108.
 	// +optional
 	WorkspaceSizeLimitBytes *int64 `json:"workspaceSizeLimitBytes,omitempty"`
 
 	// CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline
 	// the gateway waits for `CheckpointBarrierAck` from every coordinated
 	// pod during a rolling drain. The pool-config webhook adds it to the
-	// per-pod `terminationGracePeriodSeconds` floor for concurrent-workspace
-	// pools and additionally enforces the §10.1 line 124 BarrierAck-floor
-	// rule (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
+	// per-pod `terminationGracePeriodSeconds` floor (fanned across
+	// maxConcurrent slots for a service-mode pool, multiplier of 1 for a
+	// session-mode pool) and additionally enforces the §10.1 line 124
+	// BarrierAck-floor rule
+	// (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
 	// Unset defaults to the §10.1 line 122 90s.
 	// +optional
 	CheckpointBarrierAckTimeoutSeconds *int64 `json:"checkpointBarrierAckTimeoutSeconds,omitempty"`

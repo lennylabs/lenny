@@ -2740,8 +2740,10 @@ func scrubPolicyForPool(match podsession.PoolMatch) string {
 	if match.Recycle {
 		// Cross-tenant microvm sequential reuse selects a VM-level scrub
 		// variant; same-tenant and non-microvm reuse uses the standard
-		// best-effort scrub. scrubProfile defaults to `restart` (§5.2), so an
-		// empty value with cross-tenant reuse maps to `vm-restart`.
+		// best-effort scrub. A cross-tenant-reuse pool is validated to carry
+		// scrubProfile vm-restart or in-place (the standard in-guest scrub is
+		// rejected for cross-tenant reuse, §5.2), so in-place maps to the
+		// in-place scrub and any other value (vm-restart) maps to vm-restart.
 		if match.IsolationProfile == string(isolation.ProfileMicrovm) && match.AllowCrossTenantReuse {
 			if match.MicrovmScrubMode == string(runtimestore.MicrovmScrubInPlace) {
 				return "best-effort-in-place"

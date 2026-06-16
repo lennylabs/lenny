@@ -61,6 +61,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          50,
 				AllowCrossTenantReuse:      true,
+				ScrubProfile:               runtimestore.MicrovmScrubVMRestart,
 				MaxPodUptimeSeconds:        86400,
 			},
 		},
@@ -171,13 +172,17 @@ func TestIsolationLevelForPool_spec_7_1(t *testing.T) {
 			wantExe: "session", wantPro: "sandboxed", wantRe: true, wantWar: true, wantScr: "best-effort", wantCont: "platform",
 		},
 		{
-			name:    "recycle microvm cross-tenant restart (explicit): vm-restart",
-			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "restart"},
+			name:    "recycle microvm cross-tenant vm-restart (explicit): vm-restart",
+			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true, MicrovmScrubMode: "vm-restart"},
 			req:     isolation.ProfileMicrovm,
 			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart", wantCont: "platform",
 		},
 		{
-			name:    "recycle microvm cross-tenant default scrub mode: vm-restart",
+			// The poolstore validator rejects an unset scrubProfile on a
+			// cross-tenant-reuse pool, so this combination does not reach the
+			// gateway in practice; the mapping defensively maps any non-in-place
+			// value to vm-restart.
+			name:    "recycle microvm cross-tenant unset scrub mode: defensively vm-restart",
 			match:   podsession.PoolMatch{ExecutionMode: "session", Recycle: true, IsolationProfile: "microvm", AllowCrossTenantReuse: true},
 			req:     isolation.ProfileMicrovm,
 			wantExe: "session", wantPro: "microvm", wantRe: true, wantWar: true, wantScr: "vm-restart", wantCont: "platform",

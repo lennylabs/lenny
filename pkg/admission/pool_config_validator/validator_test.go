@@ -296,9 +296,11 @@ func TestTemplate(t *testing.T) {
 
 // spec: §5.2 line 516 (spec/05_runtime-registry-and-pool-model.md) — the
 // SandboxWarmPool admission webhook enforces the per-pod
-// `terminationGracePeriodSeconds` floor for concurrent-workspace pools
+// `terminationGracePeriodSeconds` floor, fanning the per-slot checkpoint
+// cap across maxConcurrent slots for a service-mode pool
 // (`maxConcurrent × max_tiered_checkpoint_cap +
-// checkpointBarrierAckTimeoutSeconds + 30`), warning at >600s and
+// checkpointBarrierAckTimeoutSeconds + 30`) and using a multiplier of 1
+// for a session-mode pool, warning at >600s and
 // rejecting when maxTerminationGracePeriodSeconds is set and breached or
 // when the deployer's terminationGracePeriodSeconds falls below the
 // floor. spec: §10.1 lines 104-124 — the tier-cap table and the

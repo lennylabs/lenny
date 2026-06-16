@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -954,7 +955,7 @@ func TestRuntimeSessionPolicyRoundTrip(t *testing.T) {
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
-				ScrubProfile:               runtimestore.MicrovmScrubRestart,
+				ScrubProfile:               runtimestore.MicrovmScrubStandard,
 				OnScrubFailure:             runtimestore.CleanupFailureWarn,
 				MaxSessionsPerPod:          50,
 			},
@@ -993,6 +994,9 @@ func TestCreateRuntimeRejectsInvalidSessionPolicy(t *testing.T) {
 	router, _, _ := newRuntimeAdmin(t)
 	cases := []*runtimestore.SessionPolicy{
 		{Recycle: &runtimestore.RecyclePolicy{ScrubProfile: "wipe"}},
+		// §5.2 renamed the scrub mode from `restart` to `vm-restart`; the
+		// old value is no longer a recognised scrubProfile.
+		{Recycle: &runtimestore.RecyclePolicy{ScrubProfile: "restart"}},
 		{Recycle: &runtimestore.RecyclePolicy{OnScrubFailure: "retry"}},
 		{Recycle: &runtimestore.RecyclePolicy{MaxSessionsPerPod: -1}},
 		{OnPoolExhausted: "drop"},
@@ -1005,6 +1009,35 @@ func TestCreateRuntimeRejectsInvalidSessionPolicy(t *testing.T) {
 		})
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("case %d: status %d, want 400 (body=%s)", i, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+// spec: 5.2 (scrubProfile enum: standard | vm-restart | in-place)
+func TestCreateRuntimeAdmitsSpecScrubProfiles(t *testing.T) {
+	// §5.2 documents `standard` as the default scrubProfile and `vm-restart`
+	// as the guest-restart variant; both must be admitted by the admin path.
+	// The prior two-value enum rejected `standard` and only accepted the
+	// non-spec value `restart`.
+	router, _, _ := newRuntimeAdmin(t)
+	for i, profile := range []runtimestore.MicrovmScrubMode{
+		runtimestore.MicrovmScrubStandard,
+		runtimestore.MicrovmScrubVMRestart,
+	} {
+		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+			Name:  fmt.Sprintf("scrub-%d", i),
+			Image: "lenny/rt@sha256:abc",
+			SessionPolicy: &runtimestore.SessionPolicy{
+				Recycle: &runtimestore.RecyclePolicy{
+					Enabled:                    true,
+					AcknowledgeBestEffortScrub: true,
+					MaxSessionsPerPod:          10,
+					ScrubProfile:               profile,
+				},
+			},
+		})
+		if rr.Code != http.StatusCreated {
+			t.Errorf("scrubProfile %q: status %d, want 201 (body=%s)", profile, rr.Code, rr.Body.String())
 		}
 	}
 }

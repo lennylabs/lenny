@@ -292,7 +292,7 @@ func TestRuntimeStoreContract(t *testing.T) {
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
-				ScrubProfile:               runtimestore.MicrovmScrubRestart,
+				ScrubProfile:               runtimestore.MicrovmScrubStandard,
 				OnScrubFailure:             runtimestore.CleanupFailureWarn,
 				MaxSessionsPerPod:          50,
 			},
@@ -308,6 +308,7 @@ func TestRuntimeStoreContract(t *testing.T) {
 		if got.SessionPolicy == nil || got.SessionPolicy.Recycle == nil ||
 			!got.SessionPolicy.Recycle.AcknowledgeBestEffortScrub ||
 			got.SessionPolicy.Recycle.MaxSessionsPerPod != 50 ||
+			got.SessionPolicy.Recycle.ScrubProfile != runtimestore.MicrovmScrubStandard ||
 			len(got.SessionPolicy.CleanupCommands) != 1 ||
 			got.SessionPolicy.MaxSessionRetries == nil || *got.SessionPolicy.MaxSessionRetries != 2 {
 			t.Errorf("sessionPolicy round-trip mismatch: %+v", got.SessionPolicy)

@@ -635,15 +635,6 @@ type Limits struct {
 	// elicitation budget, configurable per pool in the `limits:` block.
 	// Zero selects the platform default (50). spec: §11.3 line 203.
 	MaxElicitationsPerSession int `json:"maxElicitationsPerSession,omitempty"`
-
-	// MaxIdleTimeSeconds is the §11.3 line 199 / §6.2 lines 273-300
-	// `maxIdleTime` cap, configurable per pool in the `limits:` block. A
-	// `running` session with no qualifying agent activity for longer than
-	// this is expired by the §11.3 watchdog. Zero selects the platform
-	// default (600s). The per-session §27.6 playground idle override
-	// (`SessionTimeouts.MaxIdleSeconds`) tightens it below this value.
-	// spec: §11.3 line 199; §6.2 lines 273-300. F-11.3.7.
-	MaxIdleTimeSeconds int `json:"maxIdleTimeSeconds,omitempty"`
 }
 
 // Clone returns a copy of the limits block. A nil receiver clones to nil.
@@ -938,17 +929,21 @@ type SharedAsset struct {
 }
 
 // MicrovmScrubMode is the §5.2 sessionPolicy.recycle.scrubProfile enum:
-// how a microvm-isolated recycling pod is scrubbed between cross-tenant
-// sessions. The store carries this enum; the CRD projection maps it onto
-// the `scrubProfile` enum (`vm-restart`, `in-place`). spec: §5.2
+// the whole-pod scrub variant a recycling pod runs between sessions. The
+// store carries the same closed enum the CRD `scrubProfile` field uses
+// (`standard`, `vm-restart`, `in-place`), so a pool that sets the
+// spec-documented default `standard` is admitted unchanged. spec: §5.2
 // (Kata/microvm scrub variant).
 type MicrovmScrubMode string
 
 const (
-	// MicrovmScrubRestart boots a fresh guest VM between tenants
-	// (projected as the CRD `vm-restart` scrub profile). Default for a
-	// cross-tenant-reuse microvm pool.
-	MicrovmScrubRestart MicrovmScrubMode = "restart"
+	// MicrovmScrubStandard runs the in-guest scrub steps (the §5.2
+	// steps 0-6) and is the default. It is insufficient for cross-tenant
+	// sequential reuse, where the pool controller rejects it.
+	MicrovmScrubStandard MicrovmScrubMode = "standard"
+	// MicrovmScrubVMRestart boots a fresh guest VM between tenants on a
+	// microvm cross-tenant-reuse pool (the §5.2 step 7 guest restart).
+	MicrovmScrubVMRestart MicrovmScrubMode = "vm-restart"
 	// MicrovmScrubInPlace reuses the running guest, leaving documented
 	// guest-kernel residual state across tenants.
 	MicrovmScrubInPlace MicrovmScrubMode = "in-place"
@@ -956,7 +951,7 @@ const (
 
 // AllMicrovmScrubModes returns the closed enum.
 func AllMicrovmScrubModes() []MicrovmScrubMode {
-	return []MicrovmScrubMode{MicrovmScrubRestart, MicrovmScrubInPlace}
+	return []MicrovmScrubMode{MicrovmScrubStandard, MicrovmScrubVMRestart, MicrovmScrubInPlace}
 }
 
 // IsValid reports whether m is a known scrub mode.
@@ -1066,11 +1061,11 @@ type RecyclePolicy struct {
 	// only with microvm isolation and only when MaxConcurrentSessions is 1.
 	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
 
-	// ScrubProfile is the §5.2 cross-tenant scrub variant for microvm
-	// pods: `standard`, `vm-restart` (boot a fresh guest between tenants),
-	// or `in-place` (reuse the running guest with documented residual
-	// state). The store carries the MicrovmScrubMode enum; the CRD
-	// projection maps it onto the `scrubProfile` enum.
+	// ScrubProfile is the §5.2 whole-pod scrub variant: `standard` (the
+	// default, in-guest scrub steps), `vm-restart` (boot a fresh guest
+	// between tenants on a microvm cross-tenant-reuse pool), or `in-place`
+	// (reuse the running guest with documented residual state). The store
+	// enum matches the CRD `scrubProfile` enum value-for-value.
 	ScrubProfile MicrovmScrubMode `json:"scrubProfile,omitempty"`
 
 	// AcknowledgeMicrovmResidualState is the §5.2 acknowledgment that

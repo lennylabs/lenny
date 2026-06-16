@@ -122,13 +122,13 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 // CRD SessionPolicy block. The CRD carries only the cross-tenant microvm
 // scrub controls the API server enforces as a fail-closed admission gate
 // (§4.6.3 ownership): the scrub profile and the in-place residual-state
-// acknowledgment. The store's `MicrovmScrubMode` enum (`restart`,
-// `in-place`) carried on `recycle.scrubProfile` maps onto the CRD
-// `scrubProfile` enum (`vm-restart`, `in-place`); the remaining recycle and
-// concurrency knobs reach the gateway directly through the poolstore. A
-// store row with no recycle scrub control returns nil, leaving the CRD on
-// its default one-session-per-pod configuration. spec: §5.2 (recycle
-// lifecycle, Kata scrub variant).
+// acknowledgment. The store's `MicrovmScrubMode` enum carried on
+// `recycle.scrubProfile` matches the CRD `scrubProfile` enum value-for-value
+// (`standard`, `vm-restart`, `in-place`), so it is passed through unchanged;
+// the remaining recycle and concurrency knobs reach the gateway directly
+// through the poolstore. A store row with no recycle scrub control returns
+// nil, leaving the CRD on its default one-session-per-pod configuration.
+// spec: §5.2 (recycle lifecycle, Kata scrub variant).
 func sessionPolicyToCRD(sp *runtimestore.SessionPolicy) *lennyv1.SessionPolicy {
 	if sp == nil || sp.Recycle == nil {
 		return nil
@@ -139,24 +139,8 @@ func sessionPolicyToCRD(sp *runtimestore.SessionPolicy) *lennyv1.SessionPolicy {
 	}
 	return &lennyv1.SessionPolicy{
 		Recycle: &lennyv1.RecyclePolicy{
-			ScrubProfile:                    scrubProfileFromMode(r.ScrubProfile),
+			ScrubProfile:                    string(r.ScrubProfile),
 			AcknowledgeMicrovmResidualState: r.AcknowledgeMicrovmResidualState,
 		},
-	}
-}
-
-// scrubProfileFromMode translates the store `microvmScrubMode` enum onto
-// the CRD `scrubProfile` enum. `restart` (boot a fresh guest VM between
-// tenants) becomes `vm-restart`; `in-place` (reuse the running guest)
-// keeps its name; an empty mode leaves the profile unset (the CRD
-// default `standard`). spec: §5.2 (Kata/microvm scrub variant).
-func scrubProfileFromMode(m runtimestore.MicrovmScrubMode) string {
-	switch m {
-	case runtimestore.MicrovmScrubRestart:
-		return "vm-restart"
-	case runtimestore.MicrovmScrubInPlace:
-		return "in-place"
-	default:
-		return ""
 	}
 }
