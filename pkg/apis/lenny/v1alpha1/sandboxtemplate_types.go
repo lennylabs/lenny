@@ -76,7 +76,7 @@ type SandboxTemplateSpec struct {
 	// WorkspaceTier is the §12.9 data-classification tier of the runtime
 	// this pool serves. The pool-config webhook reads it to enforce the
 	// §12.9 line 1043 cross-tenant-reuse prohibition: a `T4` (Restricted)
-	// pool may not set `taskPolicy.allowCrossTenantReuse: true`, because
+	// pool may not set `sessionPolicy.recycle.allowCrossTenantReuse: true`, because
 	// T4 workspace state must never be reused across tenants regardless of
 	// isolation profile. Empty leaves the tier unclassified at the pool
 	// level (the cross-tenant rule does not fire). spec: §12.9 line 1043.

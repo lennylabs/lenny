@@ -3,9 +3,10 @@
 // Package slotstate defines the §6.2 concurrent-workspace per-slot
 // sub-state machine and a registry that tracks each slotId's sub-state.
 //
-// A concurrent-workspace pod has a two-level state model (spec §6.2 line
-// 194): the pod-level phase (pkg/sandbox/state) tracks the pod's overall
-// availability (idle / slot_active / draining), while these per-slot
+// A pod serving sessionPolicy.maxConcurrentSessions > 1 has a two-level state
+// model (spec §6.2): the coarse pod-level phase (pkg/sandbox/state) tracks the
+// pod's overall occupancy (the pod-level phase is the coarse `claimed`
+// whenever the Redis-counter occupancy is nonzero), while these per-slot
 // sub-states track each individual slot's progress through workspace
 // materialization, execution, and cleanup. The sub-states are tracked per
 // slotId, not as a pod-level phase (spec §6.2 line 170).
@@ -24,7 +25,8 @@ type SubState string
 
 const (
 	// SlotAssigned is the initial sub-state once a slotId is allocated
-	// (the pod-level idle → slot_active assignment has succeeded).
+	// (the first slot's allocation has carried the coarse pod-level phase
+	// from idle to claimed under sessionPolicy.maxConcurrentSessions > 1).
 	SlotAssigned SubState = "slot_assigned"
 	// ReceivingUploads is the workspace-materialization sub-state for one
 	// slot. spec: §6.2 line 171.

@@ -92,8 +92,8 @@ type Session struct {
 	IsolationProfile isolation.Profile
 
 	// ExecutionMode is the §5.2 pool execution mode the assigned pool
-	// resolved to at session creation: "session" (default), "task", or
-	// "concurrent". Resolved from the pool's SandboxTemplate at
+	// resolved to at session creation: "session" (default) or "service".
+	// Resolved from the pool's SandboxTemplate at
 	// /v1/sessions and frozen for the session lifetime per §7.1 line 75
 	// so GET /v1/sessions/{id} returns the same envelope a client
 	// received from the create response. Empty when the gateway has not

@@ -1341,7 +1341,7 @@ func New() (*Metrics, error) {
 	}
 	// spec: §16.1 lines 161-163 / §10.7 lines 1120-1132 — the variant-labelled
 	// rollback-trigger metric family. session_type carries the session's
-	// §5.2 ExecutionMode ("session", "task", "concurrent"); variant_id carries
+	// §5.2 ExecutionMode ("session", "service"); variant_id carries
 	// the §10.7 experiment enrollment ("" for control / un-enrolled sessions).
 	// lenny_session_total is the denominator for the variant error rate
 	// (§16.1 line 162); lenny_session_error_total is the numerator (line 161).
