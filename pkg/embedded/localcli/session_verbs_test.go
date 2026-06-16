@@ -49,10 +49,14 @@ func fakeGateway(t *testing.T) *httptest.Server {
 				Arguments json.RawMessage `json:"arguments"`
 			}
 			_ = json.Unmarshal(req.Params, &p)
+			// F-8.5.16 renamed the lenny/send_message arguments from the
+			// legacy sessionId/content to the §8.5 to/message fields; the
+			// interrupt and cancel tools keep sessionId/reason.
 			var a struct {
 				SessionID  string `json:"sessionId"`
 				RuntimeRef string `json:"runtimeRef"`
-				Content    string `json:"content"`
+				To         string `json:"to"`
+				Message    string `json:"message"`
 				Reason     string `json:"reason"`
 			}
 			_ = json.Unmarshal(p.Arguments, &a)
@@ -60,7 +64,7 @@ func fakeGateway(t *testing.T) *httptest.Server {
 			case "lenny/create_session":
 				write(text(`{"sessionId":"sess_new","state":"running"}`))
 			case "lenny/send_message":
-				write(text("echo: " + a.Content))
+				write(text("echo: " + a.Message))
 			case "lenny/interrupt_session":
 				write(text(`{"sessionId":"` + a.SessionID + `","state":"suspended"}`))
 			case "lenny/cancel_session":
