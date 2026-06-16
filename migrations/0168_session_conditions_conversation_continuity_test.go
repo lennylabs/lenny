@@ -99,9 +99,12 @@ func TestSessionConditionsMigrationDB_spec_6_49_7_1(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
 	}
+	// Port 0 asks the kernel for a free ephemeral port so this test does
+	// not collide with other embedded-Postgres tests under parallel
+	// execution (§17.4 forbids hardcoded ports).
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15570,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",

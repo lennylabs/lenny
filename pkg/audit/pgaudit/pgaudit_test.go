@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,8 +18,11 @@ import (
 // spec: §4.4 line 232 — pgaudit sink consumers in the OCSF egress
 // targets list.
 
-// recordingSink captures every Deliver call.
+// recordingSink captures every Deliver call. The tail loop delivers from
+// a background goroutine while a test polls the captured calls, so the
+// recorded calls are guarded by a mutex to stay -race clean.
 type recordingSink struct {
+	mu    sync.Mutex
 	calls []deliverCall
 	err   error
 }
@@ -33,8 +37,18 @@ func (r *recordingSink) Deliver(_ context.Context, tenantID, topic string, rec o
 	if r.err != nil {
 		return r.err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.calls = append(r.calls, deliverCall{tenantID, topic, rec})
 	return nil
+}
+
+// snapshot returns a copy of the recorded calls under the lock so a
+// concurrent reader does not race the tail-loop Deliver.
+func (r *recordingSink) snapshot() []deliverCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]deliverCall(nil), r.calls...)
 }
 
 // recordingMetrics captures every counter increment.
@@ -207,18 +221,19 @@ func TestStartTailsLogFile(t *testing.T) {
 	_ = f.Close()
 
 	// Poll the sink (the tail loop sleeps 100ms between EOF checks).
+	var calls []deliverCall
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(sink.calls) > 0 {
+		if calls = sink.snapshot(); len(calls) > 0 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if len(sink.calls) == 0 {
+	if len(calls) == 0 {
 		t.Fatal("shipper never delivered the appended line to the sink")
 	}
-	if sink.calls[0].tenantID != "acme" {
-		t.Errorf("tenantID = %q, want acme", sink.calls[0].tenantID)
+	if calls[0].tenantID != "acme" {
+		t.Errorf("tenantID = %q, want acme", calls[0].tenantID)
 	}
 }
 

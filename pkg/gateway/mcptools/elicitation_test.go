@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,8 +87,11 @@ func (r *recordingDropMetric) RecordElicitationDrop(reason string) {
 }
 
 // recordingLifecycleMetric records the §16.1 lines 60–63 admit/terminal
-// lifecycle events the dispatcher reports. F-9.2.14.
+// lifecycle events the dispatcher reports. F-9.2.14. The dispatcher fires
+// these hooks from the elicitation handler goroutine while a test reads
+// the counters, so the fields are guarded by a mutex to stay -race clean.
 type recordingLifecycleMetric struct {
+	mu           sync.Mutex
 	pendingDelta int
 	pendingMax   int
 	timeouts     int
@@ -96,16 +100,69 @@ type recordingLifecycleMetric struct {
 }
 
 func (r *recordingLifecycleMetric) IncElicitationPending() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.pendingDelta++
 	if r.pendingDelta > r.pendingMax {
 		r.pendingMax = r.pendingDelta
 	}
 }
-func (r *recordingLifecycleMetric) DecElicitationPending()    { r.pendingDelta-- }
-func (r *recordingLifecycleMetric) IncElicitationTimeout()    { r.timeouts++ }
-func (r *recordingLifecycleMetric) IncElicitationSuppressed() { r.suppressed++ }
+
+func (r *recordingLifecycleMetric) DecElicitationPending() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pendingDelta--
+}
+
+func (r *recordingLifecycleMetric) IncElicitationTimeout() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.timeouts++
+}
+
+func (r *recordingLifecycleMetric) IncElicitationSuppressed() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppressed++
+}
+
 func (r *recordingLifecycleMetric) ObserveElicitationRoundtrip(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.roundtrips = append(r.roundtrips, d)
+}
+
+// The accessors below read the recorded counters under the lock so a test
+// polling them does not race the handler-goroutine writes above.
+
+func (r *recordingLifecycleMetric) getPendingDelta() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pendingDelta
+}
+
+func (r *recordingLifecycleMetric) getPendingMax() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pendingMax
+}
+
+func (r *recordingLifecycleMetric) getTimeouts() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.timeouts
+}
+
+func (r *recordingLifecycleMetric) getSuppressed() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.suppressed
+}
+
+func (r *recordingLifecycleMetric) roundtripCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.roundtrips)
 }
 
 // waitElicitationFor blocks until an elicitation is recorded against
@@ -451,27 +508,27 @@ func TestElicitationLifecycleAdmitAndResolveBumpsMetrics_spec_16_1_F_9_2_14(t *t
 	}()
 	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
 	// Admit → pending gauge incremented to at least 1.
-	if lc.pendingMax < 1 {
-		t.Errorf("pendingMax = %d, want >= 1 (admit must Inc the pending gauge)", lc.pendingMax)
+	if lc.getPendingMax() < 1 {
+		t.Errorf("pendingMax = %d, want >= 1 (admit must Inc the pending gauge)", lc.getPendingMax())
 	}
 	resolveAt(t, interactions, "sess_root", "alice", "elic_x", "yes")
 	// Wait until the dispatcher records terminal — Allow time for the
 	// poll cycle.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(lc.roundtrips) > 0 {
+		if lc.roundtripCount() > 0 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(lc.roundtrips) != 1 {
-		t.Errorf("roundtrips = %d, want exactly 1", len(lc.roundtrips))
+	if lc.roundtripCount() != 1 {
+		t.Errorf("roundtrips = %d, want exactly 1", lc.roundtripCount())
 	}
-	if lc.pendingDelta != 0 {
-		t.Errorf("pendingDelta = %d, want net 0 (Inc + Dec)", lc.pendingDelta)
+	if lc.getPendingDelta() != 0 {
+		t.Errorf("pendingDelta = %d, want net 0 (Inc + Dec)", lc.getPendingDelta())
 	}
-	if lc.timeouts != 0 {
-		t.Errorf("timeouts = %d, want 0 on the resolved-happy path", lc.timeouts)
+	if lc.getTimeouts() != 0 {
+		t.Errorf("timeouts = %d, want 0 on the resolved-happy path", lc.getTimeouts())
 	}
 }
 
@@ -493,14 +550,14 @@ func TestElicitationLifecycleTimeoutBumpsTimeoutCounter_spec_16_1_F_9_2_14(t *te
 	if result["isError"] != true {
 		t.Fatalf("expected ELICITATION_TIMEOUT error: %+v", resp)
 	}
-	if lc.timeouts != 1 {
-		t.Errorf("timeouts = %d, want 1 after maxElicitationWait fires", lc.timeouts)
+	if lc.getTimeouts() != 1 {
+		t.Errorf("timeouts = %d, want 1 after maxElicitationWait fires", lc.getTimeouts())
 	}
-	if lc.pendingDelta != 0 {
-		t.Errorf("pendingDelta = %d, want net 0 (Inc + Dec on timeout)", lc.pendingDelta)
+	if lc.getPendingDelta() != 0 {
+		t.Errorf("pendingDelta = %d, want net 0 (Inc + Dec on timeout)", lc.getPendingDelta())
 	}
-	if len(lc.roundtrips) != 1 {
-		t.Errorf("roundtrips = %d, want 1 observation on timeout path", len(lc.roundtrips))
+	if lc.roundtripCount() != 1 {
+		t.Errorf("roundtrips = %d, want 1 observation on timeout path", lc.roundtripCount())
 	}
 }
 
@@ -524,11 +581,11 @@ func TestElicitationLifecycleSuppressionBumpsSuppressedCounter_spec_16_1_F_9_2_1
 	if !strings.Contains(text, "suppressed") {
 		t.Fatalf("expected suppressed response, got %q", text)
 	}
-	if lc.suppressed != 1 {
-		t.Errorf("suppressed = %d, want 1 after depth suppression", lc.suppressed)
+	if lc.getSuppressed() != 1 {
+		t.Errorf("suppressed = %d, want 1 after depth suppression", lc.getSuppressed())
 	}
-	if lc.pendingMax != 0 {
-		t.Errorf("pendingMax = %d, want 0 (suppression must reject before admit)", lc.pendingMax)
+	if lc.getPendingMax() != 0 {
+		t.Errorf("pendingMax = %d, want 0 (suppression must reject before admit)", lc.getPendingMax())
 	}
 }
 

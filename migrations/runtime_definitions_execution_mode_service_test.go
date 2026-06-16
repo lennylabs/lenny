@@ -202,9 +202,12 @@ func TestExecutionModeServiceMigrationDB_spec_5_2_12_6(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
 	}
+	// Port 0 asks the kernel for a free ephemeral port so this test does
+	// not collide with other embedded-Postgres tests under parallel
+	// execution (§17.4 forbids hardcoded ports).
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15567,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",
@@ -382,7 +385,7 @@ func TestExecutionModeServiceGatePredicate_spec_5_2_10_5(t *testing.T) {
 	}
 
 	t.Run("gate passes when only default rows are present", func(t *testing.T) {
-		pool, done := startGatePostgres(t, 15568)
+		pool, done := startGatePostgres(t)
 		defer done()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -397,7 +400,7 @@ func TestExecutionModeServiceGatePredicate_spec_5_2_10_5(t *testing.T) {
 	})
 
 	t.Run("gate fails closed on a non-default value", func(t *testing.T) {
-		pool, done := startGatePostgres(t, 15569)
+		pool, done := startGatePostgres(t)
 		defer done()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -425,13 +428,15 @@ func TestExecutionModeServiceGatePredicate_spec_5_2_10_5(t *testing.T) {
 	})
 }
 
-// startGatePostgres starts an embedded Postgres on the given port for a
-// subtest and returns a connected pool plus a cleanup closure.
-func startGatePostgres(t *testing.T, port uint32) (*pgxpool.Pool, func()) {
+// startGatePostgres starts an embedded Postgres on a free ephemeral port
+// for a subtest and returns a connected pool plus a cleanup closure. Port
+// 0 lets concurrent subtests and test binaries avoid the fixed-port
+// collisions §17.4 forbids.
+func startGatePostgres(t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         port,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",

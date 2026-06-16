@@ -50,7 +50,7 @@ func TestListenNotifyRoundTrip_F1338(t *testing.T) {
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15499,
+		Port:         0, // ephemeral; §17.4 forbids hardcoded ports and they collide under parallel tests
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",
