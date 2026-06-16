@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 )
 
@@ -291,6 +293,35 @@ func TestCancelIsNoOpOnPeerHeldClaim(t *testing.T) {
 func TestNewHoldCoordinatorRequiresClientAndNamespace(t *testing.T) {
 	if _, err := NewHoldCoordinator(HoldCoordinatorOptions{Namespace: testNS}); err == nil {
 		t.Error("NewHoldCoordinator with no Client returned nil error, want a guard error")
+	}
+	// A Client without a Namespace is equally fail-closed: a namespace-less
+	// coordinator would address claims in the wrong (empty) namespace.
+	if _, err := NewHoldCoordinator(HoldCoordinatorOptions{Client: fake.NewClientBuilder().Build()}); err == nil {
+		t.Error("NewHoldCoordinator with no Namespace returned nil error, want a guard error")
+	}
+}
+
+// TestExpiryDeleteErrorIsLoggedNotPanicked pins the §3.2 expiry-DELETE error
+// branch: when the precondition-guarded DELETE fails for a reason other than a
+// rebind abort, the coordinator logs the failure and drops the hold entry
+// rather than panicking or retrying, so a transient API error during expiry
+// does not strand the coordinator. A later sweep by the §4.6.1 orphan GC
+// reclaims the reserved claim.
+// spec: 3.2 (hold-expiry DELETE), 4.6.1 (orphan GC backstops a failed expiry)
+func TestExpiryDeleteErrorIsLoggedNotPanicked(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	del := &recordingDeleter{err: errors.New("apiserver unreachable")}
+	c, timers := newTestCoordinator(now, del.delete, (&recordingRebinder{}).rebind)
+
+	c.Hold("pod-a", podclaim.ReservedHold{UID: "uid-1", ResourceVersion: "100", HoldExpiresAt: now.Add(10 * time.Second)})
+	// Fire the timer: the DELETE errors, which must be logged and the hold
+	// entry dropped without a panic.
+	(*timers)[0].fn()
+	if del.count() != 1 {
+		t.Fatalf("expiry issued %d deletes, want 1", del.count())
+	}
+	if c.Holds("pod-a") {
+		t.Error("Holds(pod-a) = true after a failed expiry DELETE, want the entry dropped")
 	}
 }
 
