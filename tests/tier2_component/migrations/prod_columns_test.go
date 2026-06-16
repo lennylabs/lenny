@@ -237,6 +237,17 @@ var prodMigrationSchema = []struct {
 		"sessions_served", "scrub_failure_count",
 	}},
 	{migration: "0167", table: "sandbox_warm_pools", columns: []string{"session_policy"}},
+	// 0168 relocates the §7.2 / §8.8 Terminated/Suspended session-condition
+	// facts off Sandbox.status onto the Postgres session row (the §5.2 mode
+	// collapse makes the WarmPoolController the sole writer of Sandbox.status)
+	// and persists the §7.1 conversationContinuity envelope half resolved at
+	// create time and frozen for the session lifetime. All columns are
+	// append-only ALTER TABLE additions on the sessions row. spec: §7.1, §7.2,
+	// §8.8.
+	{migration: "0168", table: "sessions", columns: []string{
+		"conversation_continuity", "terminated_at", "terminated_reason",
+		"suspended_at", "suspended_reason",
+	}},
 }
 
 // spec: 12.2, 18.5

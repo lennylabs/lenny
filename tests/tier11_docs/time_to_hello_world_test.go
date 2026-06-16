@@ -99,7 +99,12 @@ func TestTimeToHelloWorld(t *testing.T) {
 			t.Fatalf("lenny help: %v\n%s", err, sb.String())
 		}
 		usage := sb.String()
-		for _, want := range []string{"lenny up", "--http-port", "--https-port", "Embedded Mode"} {
+		// The §24.19 Embedded Mode help renders the command as `up [...]`
+		// under the "Embedded Mode local commands" header (it is identical
+		// to the lenny short name), so assert the rendered command line and
+		// its documented flags rather than a "lenny up" literal the help
+		// never prints.
+		for _, want := range []string{"up [--http-port", "--http-port", "--https-port", "Embedded Mode"} {
 			if !strings.Contains(usage, want) {
 				t.Errorf("lenny help output is missing %q; the §17.4 up command is not documented\n%s", want, usage)
 			}
