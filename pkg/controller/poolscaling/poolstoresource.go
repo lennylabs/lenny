@@ -101,6 +101,20 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		v := *p.BootstrapMinWarm
 		cfg.BootstrapMinWarm = &v
 	}
+	// spec: §5.2 / §6.33 — the CRD does not model the session-mode recycle
+	// sizing knobs (they live in the gateway poolstore, §4.6.3 ownership), so
+	// the controller's mode_factor derivation reads recycle.enabled,
+	// recycle.maxSessionsPerPod, and maxConcurrentSessions directly off the
+	// store row. A non-recycling pool keeps the one-session-per-pod base
+	// sizing (mode_factor = 1.0); a recycling pool derives mode_factor from
+	// observed reuse bounded above by maxSessionsPerPod.
+	if sp := p.SessionPolicy; sp != nil {
+		cfg.MaxConcurrentSessions = sp.MaxConcurrentSessions
+		if r := sp.Recycle; r != nil {
+			cfg.RecycleEnabled = r.Enabled
+			cfg.MaxSessionsPerPod = r.MaxSessionsPerPod
+		}
+	}
 	return cfg
 }
 

@@ -658,9 +658,7 @@ func TestSyncWithZeroGenerationOmitsAnnotation_Spec4_6_2_558(t *testing.T) {
 // TestSyncServiceModeUsesMaxConcurrent_spec_5_2 confirms a service-mode
 // pool uses MaxConcurrent for both mode_factor and burst_mode_factor.
 // With MaxConcurrent=8 and demand p95 0.4, the steady-state term
-// collapses by a factor of 8. The session-mode session-rate reuse
-// derivation lands with the gateway-side sessionPolicy sizing knobs in
-// the poolscaling step; until then session mode keeps the base factors.
+// collapses by a factor of 8.
 // spec: §5.2 (execution mode scaling implications).
 func TestSyncServiceModeUsesMaxConcurrent_spec_5_2(t *testing.T) {
 	s := newScheme(t)
@@ -682,6 +680,166 @@ func TestSyncServiceModeUsesMaxConcurrent_spec_5_2(t *testing.T) {
 	// 0.4·10 / 8 = 0.5 → ceil(3.125) = 4.
 	if got := getWarmPool(t, c).Spec.MinWarm; got != 4 {
 		t.Errorf("service pool minWarm = %d, want 4 (mode_factor=8)", got)
+	}
+}
+
+// fakeModeFactor is a §5.2 ModeFactorSource that returns a fixed
+// reuse-histogram median (or a not-yet-converged / error signal) so the
+// recycling-pool mode_factor derivation can be exercised deterministically.
+type fakeModeFactor struct {
+	median float64
+	ok     bool
+	err    error
+}
+
+func (f *fakeModeFactor) PoolSessionReuseMedian(context.Context, string) (float64, bool, error) {
+	return f.median, f.ok, f.err
+}
+
+// recyclingConfig is a session-mode pool with recycling enabled, a
+// maxSessionsPerPod ceiling, and one session per pod (maxConcurrentSessions
+// unset → burst_mode_factor 1).
+func recyclingConfig(maxSessionsPerPod int) poolscaling.PoolConfig {
+	cfg := config()
+	cfg.RecycleEnabled = true
+	cfg.MaxSessionsPerPod = maxSessionsPerPod
+	return cfg
+}
+
+// recyclingDemand is the steady demand the recycling-pool tests size
+// against: p95 0.4 / p99 0.4 with the §4.6.2 defaults (safetyFactor 1.5,
+// failover 25s, podWarmup 10s) gives steady ≈ 0.4·1.5·35 = 21 and
+// burst ≈ 0.4·10 = 4 at mode_factor=burst=1.
+func recyclingDemand() *fakeDemand {
+	return &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95: 0.4, BurstP99Claims: 0.4, Observed: true,
+	}}
+}
+
+// TestSyncRecyclingPoolColdStartUsesBaseModeFactor confirms a recycling
+// session pool with no converged reuse histogram (ok=false) falls back to
+// mode_factor = 1.0 (cold-start one-session-per-pod sizing). With burst
+// factor 1 the formula is the base steady-plus-burst term, ceil(25.0…) = 26
+// (the float64 multiplication chain lands just above the integer boundary).
+// spec: §6.33 (cold-start fallback 1.0 until the histogram converges).
+func TestSyncRecyclingPoolColdStartUsesBaseModeFactor(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand:      recyclingDemand(),
+		ModeFactors: &fakeModeFactor{ok: false},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 26 {
+		t.Errorf("cold-start recycling pool minWarm = %d, want 26 (mode_factor=1.0)", got)
+	}
+}
+
+// TestSyncRecyclingPoolNilSourceUsesBaseModeFactor confirms that with no
+// ModeFactorSource wired the recycling pool sizes at the same cold-start
+// mode_factor = 1.0 rather than assuming the configured ceiling.
+// spec: §6.33 (cold start, no historical data).
+func TestSyncRecyclingPoolNilSourceUsesBaseModeFactor(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: recyclingDemand()}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 26 {
+		t.Errorf("nil-source recycling pool minWarm = %d, want 26 (mode_factor=1.0)", got)
+	}
+}
+
+// TestSyncRecyclingPoolConvergedUsesObservedMedian confirms a converged
+// recycling pool divides the steady-state term by the observed reuse median.
+// With median 5 (below the ceiling 10): steady = 21/5 = 4.2, burst = 4
+// (burst_mode_factor 1) → ceil(8.2) = 9.
+// spec: §6.33 (mode_factor from observed reuse p50).
+func TestSyncRecyclingPoolConvergedUsesObservedMedian(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand:      recyclingDemand(),
+		ModeFactors: &fakeModeFactor{median: 5, ok: true},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 9 {
+		t.Errorf("converged recycling pool minWarm = %d, want 9 (mode_factor=5)", got)
+	}
+}
+
+// TestSyncRecyclingPoolMedianBoundedByMaxSessionsPerPod confirms the
+// converged median is clamped to recycle.maxSessionsPerPod: a pod cannot
+// serve more sessions than the configured ceiling, so an observed median of
+// 50 against a ceiling of 10 sizes at mode_factor = 10. steady = 21/10 = 2.1,
+// burst = 4 → ceil(6.1) = 7.
+// spec: §6.33 (converged value bounded above by recycle.maxSessionsPerPod).
+func TestSyncRecyclingPoolMedianBoundedByMaxSessionsPerPod(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand:      recyclingDemand(),
+		ModeFactors: &fakeModeFactor{median: 50, ok: true},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 7 {
+		t.Errorf("bounded recycling pool minWarm = %d, want 7 (mode_factor clamped to 10)", got)
+	}
+}
+
+// TestSyncRecyclingPoolSourceErrorFallsBackToColdStart confirms a
+// ModeFactorSource error is treated conservatively as not-yet-converged: the
+// pool sizes at mode_factor = 1.0 rather than from an unverifiable signal.
+// spec: §6.33 (cold-start fallback).
+func TestSyncRecyclingPoolSourceErrorFallsBackToColdStart(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand:      recyclingDemand(),
+		ModeFactors: &fakeModeFactor{median: 8, ok: true, err: errors.New("prometheus unreachable")},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 26 {
+		t.Errorf("source-error recycling pool minWarm = %d, want 26 (cold-start fallback)", got)
+	}
+}
+
+// TestSyncSessionPoolConcurrentBurstFactor confirms a session pool with
+// maxConcurrentSessions > 1 divides the burst term by that slot count while
+// a non-recycling pool keeps mode_factor = 1.0 on the steady-state term.
+// With maxConcurrentSessions=4: steady ≈ 21 (mode_factor 1), burst = 4/4 = 1
+// → 23 (the steady term lands just above 21).
+// spec: §6.33 (burst_mode_factor = maxConcurrentSessions).
+func TestSyncSessionPoolConcurrentBurstFactor(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	cfg := config()
+	cfg.MaxConcurrentSessions = 4
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: recyclingDemand()}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 23 {
+		t.Errorf("concurrent session pool minWarm = %d, want 23 (burst_mode_factor=4)", got)
 	}
 }
 

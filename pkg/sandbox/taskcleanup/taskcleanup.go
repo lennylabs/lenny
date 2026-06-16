@@ -171,6 +171,20 @@ const (
 	// (host-node schedulability retire), spec/16 §16.1.1 (retirement-reason
 	// vocabulary is the three limit triggers only).
 	ReasonHostUnschedulable RetireReason = "host_unschedulable"
+	// ReasonScrubReportTimeout: the adapter never sent ReportPodScrub within
+	// the gateway-side missing-report timeout (cleanupTimeoutSeconds plus a
+	// grace) armed at the bound → recycling transition, so the gateway retires
+	// the pod rather than leaving it stuck in `recycling` until the much longer
+	// orphan-GC window. The scrub never completed, so the pod's residual state
+	// is uncleared and the retire is fail-closed (the `failed` terminal). This
+	// is a coordinator-driven timeout rather than one of the three
+	// retirement-limit triggers, so it is NOT a member of the
+	// lenny_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
+	// reports false for it. spec: §3.4 (gateway-side missing-report timeout),
+	// §4.7 (missing report bounded by cleanupTimeoutSeconds plus a grace),
+	// spec/16 §16.1.1 (retirement-reason vocabulary is the three limit triggers
+	// only).
+	ReasonScrubReportTimeout RetireReason = "scrub_report_timeout"
 )
 
 // CountsOnRetirementTotal reports whether this reason is a member of the

@@ -2383,6 +2383,18 @@ func main() {
 		// stays nil when --agent-namespace is unset (single-process dev) so
 		// the recycle path and the rebind branch are inert there.
 		holdCoordinator *recycle.HoldCoordinator
+		// recycleBoundary runs the §3.4 gateway-side recycle-boundary timers on
+		// this replica: the missing-report timeout armed at the bound → recycling
+		// patch (cancelled by ReportPodScrub, retiring the pod if no report
+		// arrives within cleanupTimeoutSeconds plus a grace) and the preConnect
+		// re-warm completion poll that drives the claim recycling → reserved once
+		// the SDK re-warm makes the pod Ready. It is shared between the Binder /
+		// SlotClaimer (which arm the timeout at the recycle patch) and the
+		// scrub-report disposition driver (which cancels it and starts the
+		// re-warm poll). It stays nil when --agent-namespace is unset so the
+		// recycle path is inert there; the §4.6.1 orphan GC remains the
+		// coordinator-crash backstop.
+		recycleBoundary *recycle.RecycleBoundaryCoordinator
 		// clusterClient is the controller-runtime client used by the
 		// session-start path and by the §10.4 PDB poller (F-10.4.4). It
 		// stays nil when --agent-namespace is unset (single-process dev).
@@ -2509,12 +2521,30 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: §3.2 reserved-hold coordinator: %v", err)
 		}
+		// §3.4 recycle-boundary coordinator: arms the missing-report timeout at
+		// the bound → recycling patch and drives the preConnect re-warm
+		// completion (recycling → reserved) once the SDK re-warm makes the pod
+		// Ready. It hands the re-warm-completion reserve token to the
+		// holdCoordinator so the hold-TTL expiry timer is armed on the same
+		// registry the non-preConnect reserve uses.
+		recycleBoundary, err = recycle.NewRecycleBoundaryCoordinator(recycle.RecycleBoundaryCoordinatorOptions{
+			Client:    k8sClient,
+			Namespace: *agentNamespace,
+			Pools:     pools,
+			HoldTTL:   time.Duration(*claimHoldTTLSeconds) * time.Second,
+			Holds:     holdCoordinator,
+			Now:       clockinject.Now,
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: §3.4 recycle-boundary coordinator: %v", err)
+		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,
 			Namespace:        *agentNamespace,
 			AdapterPort:      adapterGRPCPort,
 			AcceptedVersions: []string{adapter.ProtocolVersionV1},
 			HoldCanceller:    holdCoordinator,
+			RecycleBoundary:  recycleBoundary,
 			Now:              clockinject.Now,
 			DialAdapter: func(addr string) (*adapterclient.Client, error) {
 				return adapterclient.Dial(addr, dialOpt, keepaliveOpt)
@@ -6554,7 +6584,14 @@ func main() {
 		if holdCoordinator != nil {
 			defer holdCoordinator.Stop()
 		}
-		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, slotHealth, *agentNamespace, holdTTL, holdCoordinator, clockinject.Now)
+		// §3.4 recycle-boundary coordinator: stopped on shutdown so the
+		// in-process missing-report timers and re-warm polls do not run against
+		// a draining client. The recycling claims it abandons are reclaimed by
+		// the §4.6.1 orphan GC after the orphan timeout.
+		if recycleBoundary != nil {
+			defer recycleBoundary.Stop()
+		}
+		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, slotHealth, *agentNamespace, holdTTL, holdCoordinator, recycleBoundary, clockinject.Now)
 		if err != nil {
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}
@@ -8444,7 +8481,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
 // disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.39
 // (host-node schedulability retire), §16.1 (recycle metrics).
-func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, now func() time.Time) (leasecontrol.ScrubReportService, error) {
+func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, boundary *recycle.RecycleBoundaryCoordinator, now func() time.Time) (leasecontrol.ScrubReportService, error) {
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
 		Tracker:   slotHealth,
 		Client:    cl,
@@ -8465,13 +8502,23 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 	if err != nil {
 		return nil, fmt.Errorf("build pod inspector: %w", err)
 	}
-	driver, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+	driverOpts := recycle.ClaimDispositionDriverOptions{
 		Client:    cl,
 		Namespace: agentNamespace,
 		HoldTTL:   holdTTL,
 		Now:       now,
 		Holds:     holds,
-	})
+	}
+	// §3.4: the disposition driver signals the recycle-boundary coordinator on
+	// every resolved ReportPodScrub so it cancels the missing-report timeout
+	// and, on a preConnect recycle, drives recycling → reserved once the SDK
+	// re-warm completes. Set only when the coordinator exists so a typed-nil
+	// pointer is not wrapped into a non-nil interface (single-process dev leaves
+	// the timeout to fire and the re-warm completion to the orphan GC).
+	if boundary != nil {
+		driverOpts.Boundary = boundary
+	}
+	driver, err := recycle.NewClaimDispositionDriver(driverOpts)
 	if err != nil {
 		return nil, fmt.Errorf("build claim disposition driver: %w", err)
 	}

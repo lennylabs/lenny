@@ -245,6 +245,25 @@ type SlotClaimer struct {
 	// Now supplies the wall clock for the §6.2 lines 166-167 pod-uptime
 	// retirement check. Nil defaults to time.Now.
 	Now func() time.Time
+	// RecycleBoundary arms the §3.4 gateway-side missing-report timeout when
+	// ReleaseSlot patches the per-pod claim bound → recycling on the
+	// occupancy-zero edge of a recycling concurrent-session pool. The adapter's
+	// ReportPodScrub cancels it; if no report arrives within
+	// cleanupTimeoutSeconds plus a grace, the coordinator retires the pod rather
+	// than leaving it stuck in `recycling` until the much longer §4.6.1
+	// orphan-GC window. Nil is a no-op (a deployment with no in-process recycle
+	// coordinator); the orphan GC remains the crash backstop. spec: §3.4
+	// (missing-report timeout).
+	RecycleBoundary RecycleBoundaryArmer
+}
+
+// RecycleBoundaryArmer arms the §3.4 missing-report timeout for a pod at the
+// bound → recycling patch. *recycle.RecycleBoundaryCoordinator satisfies it
+// through OnRecycling; the interface is defined at this consumer so podclaim
+// does not import the recycle package (which imports podclaim). spec: §3.4
+// (gateway-side missing-report timeout armed at session termination).
+type RecycleBoundaryArmer interface {
+	OnRecycling(podID string)
 }
 
 // now returns the claimer's clock, defaulting to time.Now. spec: §6.2
@@ -608,18 +627,32 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 
 // ReleaseSlot releases a concurrent-session slot when its session ends or
 // fails. It decrements the pod's §5.2 Redis slot counter and, when the last
-// slot drains (the counter reaches zero), deletes the per-pod SandboxClaim
-// so the pod returns to the pool. While other slots remain the claim is
+// slot drains (the counter reaches zero), disposes of the per-pod SandboxClaim
+// per the §3.4 recycle disposition. While other slots remain the claim is
 // left in place: the per-pod claim spans the whole occupancy episode, and
 // the session-to-pod binding the released session held is cleared on its
 // Postgres session row by the session server. The gateway does not write
 // Sandbox.status; the WarmPoolController projects the pod's occupancy phase
-// from claim existence (§4.6.1).
+// from claim existence and binding state (§4.6.1, §6.41).
+//
+// recycle selects the occupancy-zero disposition for a recycling pool (the
+// §3.1 "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
+// true) on a clean terminal: the last-slot-drain edge patches the per-pod
+// claim bound → recycling (WriteRecyclingStatus) rather than deleting it, so
+// the adapter runs the whole-pod scrub when occupancy reaches zero and its
+// §4.7 ReportPodScrub drives the recycle-vs-retire disposition. This is the
+// concurrent-session counterpart of the session-mode Binder.Release recycle
+// branch and closes the §3.1 concurrent-workspace residue gap (shared /tmp,
+// /dev/shm, surviving processes across cohorts). When recycle is false (a
+// non-recycling "Bounded cohort" pool, or a failed/crashed concurrent session
+// the caller maps to the drain path) the claim is deleted directly so the
+// §4.6.1 occupancy projection moves the pod claimed → draining → terminated.
 //
 // The counter decrement is clamped at zero so a double release cannot drive
-// the count negative; a release that reaches zero deletes the claim
-// idempotently (a NotFound is a no-op).
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string) error {
+// the count negative; a release that reaches zero disposes of the claim
+// idempotently (a NotFound from either the recycling patch or the DELETE is a
+// no-op). spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.30/§6.41.
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle bool) error {
 	if c.Counter == nil {
 		// The Redis counter (with its §12.4 Postgres fallback) is the only
 		// intra-pod occupancy record now that the gateway does not mirror the
@@ -643,8 +676,36 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		return nil
 	}
 
-	// Last slot drained: delete the per-pod occupancy claim so the pod
-	// returns to the pool. The §4.6.1 occupancy projection moves the pod
-	// from claimed back toward idle on the claim DELETE.
+	if recycle {
+		// §3.4 recycle disposition on the occupancy-zero edge of a recycling
+		// concurrent pool: patch the per-pod claim bound → recycling so the
+		// claim is in `recycling` before any §4.7 ReportPodScrub arrives (the
+		// claim state machine admits recycling → reserved/released/failed but
+		// not bound → reserved, §3.2). The adapter runs the whole-pod scrub on
+		// occupancy zero and the ReportPodScrub disposition drives recycle vs.
+		// retire off the `recycling` binding state. A claim that vanished (a
+		// concurrent retirement, the §4.6.1 orphan GC reclaimed it) is a no-op:
+		// there is nothing left to recycle. spec: §3.1, §3.4, §6.41.
+		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(sandboxName), c.now); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		// §3.4: arm the gateway-side missing-report timeout now that the claim
+		// is `recycling`. The adapter's ReportPodScrub cancels it; if no report
+		// arrives within cleanupTimeoutSeconds plus a grace the coordinator
+		// retires the pod rather than leaving it stuck in `recycling` until the
+		// much longer §4.6.1 orphan-GC window.
+		if c.RecycleBoundary != nil {
+			c.RecycleBoundary.OnRecycling(sandboxName)
+		}
+		return nil
+	}
+
+	// Last slot drained on a non-recycling pool, or a failed/crashed session:
+	// delete the per-pod occupancy claim so the pod retires. The §4.6.1
+	// occupancy projection moves the pod from claimed to draining on the
+	// claim DELETE.
 	return DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
 }

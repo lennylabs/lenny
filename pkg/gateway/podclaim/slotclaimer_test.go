@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -406,7 +407,7 @@ func TestReleaseSlotRequiresCounter(t *testing.T) {
 		t.Fatalf("seed per-pod claim: %v", err)
 	}
 	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS}
-	if err := claimer.ReleaseSlot(ctx, "sbx-1", "sess-1"); err == nil {
+	if err := claimer.ReleaseSlot(ctx, "sbx-1", "sess-1", false); err == nil {
 		t.Error("ReleaseSlot with no Counter must fail closed")
 	}
 	// The fail-closed release must not have deleted the per-pod claim.
@@ -462,19 +463,53 @@ func TestReleaseSlotDecrementsAndDeletesClaimOnLastSlot(t *testing.T) {
 	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 2)
 
 	// Release one of the two slots: the per-pod claim stays.
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1"); err != nil {
+	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1", false); err != nil {
 		t.Fatalf("ReleaseSlot: %v", err)
 	}
 	if !podClaimExists(t, c, "sbx-1") {
 		t.Error("the per-pod claim must remain while a sibling slot is held")
 	}
 
-	// Release the last slot: the per-pod claim is deleted.
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-2"); err != nil {
+	// Release the last slot: the per-pod claim is deleted (non-recycling pool).
+	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-2", false); err != nil {
 		t.Fatalf("ReleaseSlot last: %v", err)
 	}
 	if podClaimExists(t, c, "sbx-1") {
 		t.Error("the per-pod claim must be deleted when the last slot drains")
+	}
+}
+
+// fakeRecycleArmer records the §3.4 missing-report timeout arming the
+// SlotClaimer requests at the occupancy-zero recycle edge.
+type fakeRecycleArmer struct{ armed []string }
+
+func (f *fakeRecycleArmer) OnRecycling(podID string) { f.armed = append(f.armed, podID) }
+
+// spec: 3.4, 3.1, 6.41
+// diagnosis: a recycling concurrent-session pool deleted the per-pod claim on
+// the last-slot-drain edge instead of patching it bound → recycling and arming
+// the §3.4 missing-report timeout, so the pod retired rather than recycling and
+// no gateway-side timeout bounded a missing ReportPodScrub.
+func TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4(t *testing.T) {
+	armer := &fakeRecycleArmer{}
+	claimer, c, counter := slotClaimerFor(t, concurrentSandbox("sbx-1", "claimed", "acme"))
+	claimer.RecycleBoundary = armer
+	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 1)
+
+	// recycle=true on the last slot: the claim is patched bound → recycling
+	// (not deleted) and the missing-report timeout is armed.
+	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1", true); err != nil {
+		t.Fatalf("ReleaseSlot recycle: %v", err)
+	}
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Fatal("a recycling last-slot-drain must keep the claim (patched recycling), not delete it")
+	}
+	got := getClaim(t, c, "claim-sbx-1")
+	if got.Status.Phase != string(claimstate.Recycling) {
+		t.Errorf("claim phase = %q, want recycling", got.Status.Phase)
+	}
+	if len(armer.armed) != 1 || armer.armed[0] != "sbx-1" {
+		t.Errorf("armed missing-report timeouts = %v, want [sbx-1]", armer.armed)
 	}
 }
 
@@ -484,7 +519,7 @@ func TestReleaseSlotDecrementsAndDeletesClaimOnLastSlot(t *testing.T) {
 // no-op that touches no claim.
 func TestReleaseSlotIsIdempotentAtZero(t *testing.T) {
 	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", "acme"))
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-gone"); err != nil {
+	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-gone", false); err != nil {
 		t.Fatalf("ReleaseSlot on a zero-slot pod: %v", err)
 	}
 	if podClaimExists(t, c, "sbx-1") {

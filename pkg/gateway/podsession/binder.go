@@ -199,6 +199,16 @@ type Binder struct {
 	// is a no-op (a deployment with no in-process hold coordinator, or a
 	// peer-held reserved claim). spec: §3.2.
 	HoldCanceller HoldCanceller
+	// RecycleBoundary arms the §3.4 gateway-side missing-report timeout when
+	// Release patches the per-pod claim bound → recycling on a recycling pool.
+	// The adapter then runs the whole-pod scrub and reports it via
+	// ReportPodScrub; the report cancels the timer. If no report arrives within
+	// the pool's cleanupTimeoutSeconds plus a grace, the coordinator retires the
+	// pod so a hung or silent adapter does not leave it stuck in `recycling`
+	// until the much longer §4.6.1 orphan-GC window. Nil is a no-op (a
+	// deployment with no in-process recycle coordinator); the orphan GC remains
+	// the crash backstop. spec: §3.4 (missing-report timeout).
+	RecycleBoundary RecycleBoundaryArmer
 	// Now supplies the wall clock for the §3.2 reserved-hold-window check on
 	// the acquisition-path rebind branch. Nil uses time.Now.
 	Now func() time.Time
@@ -210,6 +220,15 @@ type Binder struct {
 // recycle package. spec: §3.2 (within-hold rebind cancels the local timer).
 type HoldCanceller interface {
 	Cancel(podID string)
+}
+
+// RecycleBoundaryArmer arms the §3.4 missing-report timeout for a pod at the
+// bound → recycling patch. *recycle.RecycleBoundaryCoordinator satisfies it
+// through OnRecycling; the interface is defined at this consumer so podsession
+// does not import the recycle package. spec: §3.4 (gateway-side missing-report
+// timeout armed at session termination).
+type RecycleBoundaryArmer interface {
+	OnRecycling(podID string)
 }
 
 // SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
@@ -436,12 +455,15 @@ type BindResult struct {
 	// only for a BindSlot result.
 	SlotID string
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried
-	// from the BindRequest so Release can apply the §3.4 recycle disposition
-	// without re-resolving the pool: on a recycling pool a clean session
-	// release patches the claim bound → recycling and signals the whole-pod
-	// scrub rather than draining the pod. False for a non-recycling pool and
-	// for every BindSlot result (the concurrent slot path uses the per-slot
-	// cleanup + claim-delete-on-last edge). spec: §3.1, §3.4.
+	// from the bind request so the release path can apply the §3.4 recycle
+	// disposition without re-resolving the pool. On a recycling session-mode
+	// pool a clean session release patches the claim bound → recycling and
+	// signals the whole-pod scrub rather than draining the pod (Release). On a
+	// recycling concurrent-session pool (the §3.1 "Concurrent" preset) the same
+	// disposition runs when the last slot drains cleanly (ReleaseSlot →
+	// SlotClaimer.ReleaseSlot). False for a non-recycling pool, where the pod
+	// terminates after the session or cohort drains. spec: §3.1, §3.4,
+	// §6.30/§6.41.
 	Recycle bool
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
@@ -1477,6 +1499,16 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	if result.Recycle && disposition != dispositionFailed {
 		if err := podclaim.WriteRecyclingStatus(ctx, b.Client, b.Namespace, podclaim.ClaimName(result.SandboxName), nil); err != nil {
 			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.SandboxName, err)
+		}
+		// §3.4: arm the gateway-side missing-report timeout now that the claim
+		// is `recycling`. The adapter's ReportPodScrub cancels it; if the report
+		// never arrives within cleanupTimeoutSeconds plus a grace, the
+		// coordinator retires the pod so a hung adapter does not leave it stuck
+		// in `recycling` until the much longer orphan-GC window. Armed before
+		// the best-effort Shutdown so a Shutdown that blocks does not delay the
+		// timer.
+		if b.RecycleBoundary != nil {
+			b.RecycleBoundary.OnRecycling(result.SandboxName)
 		}
 		// The claim now projects `recycling`. This Shutdown is the
 		// occupancy-zero signal that runs the whole-pod scrub the adapter

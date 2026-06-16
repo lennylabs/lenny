@@ -174,8 +174,11 @@ func TestClaimDispositionRecycleNonPreConnectRegistersHold_spec_3_2(t *testing.T
 
 // TestClaimDispositionRecyclePreConnectDoesNotRegisterHold verifies a
 // preConnect recycle stamps rewarmStartedAt only and does not register a hold
-// (the reserved patch follows asynchronously once the SDK reports warm).
-// spec: 3.2 (reserved hold timer ownership), 6.2 (preConnect re-warm)
+// synchronously. The reserved patch and the hold registration follow from the
+// §3.4 RecycleBoundaryCoordinator's re-warm completion poll once the SDK
+// re-warm makes the pod Ready (exercised in the boundary-coordinator tests),
+// not from the disposition driver. spec: 3.2 (reserved hold timer ownership),
+// 3.4 (re-warm completion drives recycling → reserved), 6.2 (preConnect re-warm)
 //
 // diagnosis: a failure means a preConnect pod's hold timer is armed before the
 // claim has even entered reserved, so the timer would delete a recycling claim
@@ -742,4 +745,161 @@ func TestInspectForRecycleClaimGonePodPresentAgainstApiserver_spec_4_7(t *testin
 	if found {
 		t.Error("InspectForRecycle found = true with a gone claim, want false (skip)")
 	}
+}
+
+// agentPodWithContainer builds a schedulable agent Pod with the pool label.
+// The envtest API server validates the Pod spec (a container is required) and
+// drops any status set at create (there is no kubelet), so the Ready condition
+// is written separately via setPodReady.
+func agentPodWithContainer(name, pool string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelPool: pool},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+	}
+}
+
+// setPodReady writes a Ready=True condition on the pod's status subresource so
+// the §3.4 re-warm completion poll observes it as ready (envtest has no kubelet
+// to flip readiness).
+func setPodReady(t *testing.T, c client.Client, name string) {
+	t.Helper()
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &pod); err != nil {
+		t.Fatalf("get pod %s: %v", name, err)
+	}
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	if err := c.Status().Update(context.Background(), &pod); err != nil {
+		t.Fatalf("set pod %s ready: %v", name, err)
+	}
+}
+
+// boundaryPoolReader resolves a pool with the given cleanupTimeoutSeconds for
+// the §3.4 missing-report timeout base.
+func boundaryPoolReader(pool string, cleanupTimeoutSeconds int) fakePoolReader {
+	return fakePoolReader{pools: map[string]poolstore.Pool{
+		pool: {
+			Name:          pool,
+			RuntimeRef:    "rt",
+			ExecutionMode: runtimestore.ExecutionModeSession,
+			SessionPolicy: &runtimestore.SessionPolicy{
+				CleanupTimeoutSeconds: cleanupTimeoutSeconds,
+				Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+			},
+		},
+	}}
+}
+
+// TestRecycleBoundaryPreConnectReachesReserved drives a preConnect recycle all
+// the way to the `reserved` claim binding state through the real
+// RecycleBoundaryCoordinator against the envtest API server: the disposition
+// driver stamps rewarmStartedAt, signals the coordinator, and the coordinator's
+// re-warm completion poll patches the claim recycling → reserved once the agent
+// pod reports Ready. This is the producer of the recycling → reserved patch that
+// was previously absent on preConnect pools, so the reserved-hold optimization
+// is functional.
+// spec: 3.4 (preConnect re-warm completion drives recycling → reserved), 3.2
+// (reserved hold), 6.2 / 6.14 (recycling → reserved binding edge)
+//
+// diagnosis: a failure means a preConnect recycling pod's claim is stranded in
+// `recycling` after the SDK re-warm completes, never reaching `reserved`, so the
+// pod is drained by the orphan GC instead of being held for its pinned tenant.
+func TestRecycleBoundaryPreConnectReachesReserved_spec_3_4(t *testing.T) {
+	c := newEnvtestClient(t, agentPodWithContainer("pod-1", "agents"))
+	setPodReady(t, c, "pod-1")
+	name := seedRecyclingClaim(t, c, "pod-1")
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+
+	boundary, err := recycle.NewRecycleBoundaryCoordinator(recycle.RecycleBoundaryCoordinatorOptions{
+		Client:       c,
+		Namespace:    testNS,
+		Pools:        boundaryPoolReader("agents", 60),
+		HoldTTL:      10 * time.Second,
+		PollInterval: 10 * time.Millisecond,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewRecycleBoundaryCoordinator: %v", err)
+	}
+	defer boundary.Stop()
+
+	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
+		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Now: func() time.Time { return now }, Boundary: boundary,
+	})
+	if err != nil {
+		t.Fatalf("NewClaimDispositionDriver: %v", err)
+	}
+	// preConnect recycle: stamps rewarmStartedAt and signals the coordinator.
+	if err := d.Recycle(context.Background(), "pod-1", true, false); err != nil {
+		t.Fatalf("Recycle: %v", err)
+	}
+	// The coordinator polls the pod readiness and reserves the claim.
+	if !waitForClaimPhase(t, c, name, claimstate.Reserved) {
+		got := getClaim(t, c, name)
+		t.Fatalf("claim phase = %q, want reserved (re-warm completion patch)", got.Status.Phase)
+	}
+	got := getClaim(t, c, name)
+	if got.Status.HoldExpiresAt == nil {
+		t.Error("reserved claim carries no holdExpiresAt after re-warm completion")
+	}
+}
+
+// TestRecycleBoundaryMissingReportRetires drives the §3.4 gateway-side
+// missing-report timeout against the envtest API server: with the timeout armed
+// at the bound → recycling patch and no ReportPodScrub arriving, the coordinator
+// retires the pod (claim → `failed`) so it does not linger in `recycling` until
+// the much longer orphan-GC window. The cleanupTimeoutSeconds is set to 0 so the
+// effective delay is the grace alone, keeping the test fast.
+// spec: 3.4 (missing-report timeout retires the pod), 4.7
+//
+// diagnosis: a failure means an adapter that never sends ReportPodScrub leaves
+// the pod stuck in `recycling` (projecting claimed) on a still-running gateway
+// until the 5-minute orphan GC rather than being retired at
+// cleanupTimeoutSeconds plus a grace.
+func TestRecycleBoundaryMissingReportRetires_spec_3_4(t *testing.T) {
+	c := newEnvtestClient(t, agentPodWithContainer("pod-1", "agents"))
+	name := seedRecyclingClaim(t, c, "pod-1")
+
+	// A tiny GracePeriod and the smallest positive pool cleanupTimeoutSeconds
+	// (1s) keep the real timer fast: the missing-report delay is ~1s, well
+	// under the test deadline, exercising the production time.AfterFunc path.
+	boundary, err := recycle.NewRecycleBoundaryCoordinator(recycle.RecycleBoundaryCoordinatorOptions{
+		Client:      c,
+		Namespace:   testNS,
+		Pools:       boundaryPoolReader("agents", 1),
+		GracePeriod: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewRecycleBoundaryCoordinator: %v", err)
+	}
+	defer boundary.Stop()
+
+	// No ReportPodScrub arrives, so the missing-report timeout fires and
+	// retires the pod (claim → failed) rather than leaving it in `recycling`.
+	boundary.OnRecycling("pod-1")
+	if !waitForClaimPhase(t, c, name, claimstate.Failed) {
+		got := getClaim(t, c, name)
+		t.Fatalf("claim phase = %q, want failed (missing-report retire)", got.Status.Phase)
+	}
+}
+
+// waitForClaimPhase polls the claim binding state up to a short deadline,
+// returning true once it reaches want.
+func waitForClaimPhase(t *testing.T, c client.Client, name string, want claimstate.State) bool {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var got lennyv1.SandboxClaim
+		if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got); err == nil {
+			if got.Status.Phase == string(want) {
+				return true
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	return false
 }

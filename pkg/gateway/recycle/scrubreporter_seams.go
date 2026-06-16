@@ -505,6 +505,26 @@ type claimDispositionDriver struct {
 	// after holdExpiresAt plus a grace, §4.6.1), which keeps the disposition
 	// usable in unit tests that do not exercise the hold window.
 	holds HoldRegistrar
+	// boundary is signaled when a ReportPodScrub disposition resolves so the
+	// §3.4 recycle-boundary coordinator cancels the pod's missing-report
+	// timeout and, on a preConnect recycle, begins the re-warm completion poll
+	// that drives the claim recycling → reserved. Nil leaves the missing-report
+	// timeout to fire (and, on preConnect pools, the re-warm completion to the
+	// orphan GC), which keeps the driver usable in unit tests that do not
+	// exercise the coordinator.
+	boundary recycleBoundarySignal
+}
+
+// recycleBoundarySignal is the §3.4 seam the disposition driver notifies when
+// a ReportPodScrub resolves: the boundary coordinator cancels the pod's
+// missing-report timeout and, on a preConnect recycle, starts the re-warm
+// completion poll. *RecycleBoundaryCoordinator satisfies it.
+type recycleBoundarySignal interface {
+	// OnScrubReported cancels the missing-report timeout for podID and, when
+	// preConnect is true and the disposition recycled (rather than retired),
+	// begins the re-warm completion poll that reserves the claim once the SDK
+	// re-warm makes the pod Ready.
+	OnScrubReported(podID string, preConnect bool)
 }
 
 // ClaimDispositionDriverOptions configures the claim disposition driver.
@@ -530,6 +550,12 @@ type ClaimDispositionDriverOptions struct {
 	// Nil leaves expiry to the §4.6.1 orphan GC (after holdExpiresAt plus a
 	// grace) and is the default in tests that do not exercise the hold window.
 	Holds HoldRegistrar
+	// Boundary is the §3.4 recycle-boundary coordinator the driver notifies on
+	// every resolved ReportPodScrub so it cancels the pod's missing-report
+	// timeout and, on a preConnect recycle, drives the claim recycling →
+	// reserved once the SDK re-warm completes. Nil leaves the timeout to fire
+	// and the re-warm completion to the orphan GC.
+	Boundary recycleBoundarySignal
 }
 
 // NewClaimDispositionDriver builds the §3.4 claim disposition driver.
@@ -560,6 +586,7 @@ func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol
 		now:       now,
 		log:       log,
 		holds:     opts.Holds,
+		boundary:  opts.Boundary,
 	}, nil
 }
 
@@ -586,14 +613,18 @@ func claimGone(err error) bool {
 
 // Recycle drives the §3.4 reuse disposition. A preConnect pool stamps
 // rewarmStartedAt on the recycling claim, anchoring the §6.2 re-warm
-// watchdog; the projection then enters sdk_connecting and the re-warm
-// completes asynchronously, with the reserved patch following once the SDK
-// reports warm. A non-preConnect pool patches the claim directly to
-// reserved. When scrubWarning is true (a warn-policy scrub failure that
-// reuses the pod) it stamps the §5.2 lenny.dev/scrub-warning annotation on
-// the agent Pod first, so the residual-state marker re-enters the pool with
-// the pod and persists through the re-warm (the SDK re-initialization does
-// not clear it). spec: §5.2 (warn policy returns the pod with a
+// watchdog; the projection then enters sdk_connecting and the §3.4
+// recycle-boundary coordinator polls the pod readiness and patches the claim
+// recycling → reserved once the SDK re-warm makes the pod Ready. A
+// non-preConnect pool patches the claim directly to reserved. In both cases
+// the resolved ReportPodScrub cancels the pod's missing-report timeout
+// through the boundary coordinator. When scrubWarning is true (a warn-policy
+// scrub failure that reuses the pod) it stamps the §5.2 lenny.dev/scrub-warning
+// annotation on the agent Pod first, so the residual-state marker re-enters
+// the pool with the pod and persists through the re-warm (the SDK
+// re-initialization does not clear it). spec: §3.4 (preConnect re-warm
+// completion drives recycling → reserved; ReportPodScrub cancels the
+// missing-report timeout), §5.2 (warn policy returns the pod with a
 // scrub_warning annotation), §6.2 (preConnect re-warm persists the
 // annotation).
 func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preConnect, scrubWarning bool) error {
@@ -620,6 +651,11 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 			}
 			return fmt.Errorf("recycle: stamp rewarm-started on claim %s: %w", claim, err)
 		}
+		// §3.4: cancel the missing-report timeout (the report arrived) and
+		// start the re-warm completion poll that patches the claim
+		// recycling → reserved once the SDK re-warm makes the pod Ready.
+		// Nothing else produces that reserved patch on a preConnect pool.
+		d.signalBoundary(podID, true)
 		return nil
 	}
 	hold, err := podclaim.WriteReservedStatus(ctx, d.cl, d.namespace, claim, d.holdTTL, d.now)
@@ -636,7 +672,22 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 	if d.holds != nil {
 		d.holds.Hold(podID, hold)
 	}
+	// §3.4: the reserve happened synchronously here, so the boundary signal
+	// only cancels the missing-report timeout (no re-warm poll on a
+	// non-preConnect pool).
+	d.signalBoundary(podID, false)
 	return nil
+}
+
+// signalBoundary notifies the §3.4 recycle-boundary coordinator that a
+// ReportPodScrub resolved for podID so it cancels the missing-report timeout
+// and, on a preConnect recycle, starts the re-warm completion poll. A nil
+// coordinator (unit tests, or a deployment without the cluster client) leaves
+// the timeout to fire and the re-warm completion to the orphan GC.
+func (d *claimDispositionDriver) signalBoundary(podID string, preConnect bool) {
+	if d.boundary != nil {
+		d.boundary.OnScrubReported(podID, preConnect)
+	}
 }
 
 // Retire writes the terminal §3.4 disposition on the claim so the
@@ -674,6 +725,10 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 		}
 		return fmt.Errorf("recycle: write %s disposition on claim %s: %w", disposition, claim, err)
 	}
+	// §3.4: the ReportPodScrub that drove this retire cancels the pod's
+	// missing-report timeout so the coordinator does not later re-retire a
+	// claim it already terminated. A retire never starts a re-warm poll.
+	d.signalBoundary(podID, false)
 	// §5.2: on a FAILED termination (onScrubFailure: fail), the failed pod's
 	// metadata is retained in the audit log for inspection. The terminal claim
 	// phase carries no detail string, so the reason and the adapter-supplied
@@ -737,4 +792,5 @@ var (
 	_ leasecontrol.PodInspector           = (*podInspector)(nil)
 	_ leasecontrol.ClaimDispositionDriver = (*claimDispositionDriver)(nil)
 	_ leasecontrol.RetirementMetrics      = (*retirementMetrics)(nil)
+	_ recycleBoundarySignal               = (*RecycleBoundaryCoordinator)(nil)
 )

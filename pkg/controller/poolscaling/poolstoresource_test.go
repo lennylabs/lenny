@@ -186,6 +186,75 @@ func TestPoolStoreSourceMapsRestartScrubMode(t *testing.T) {
 	}
 }
 
+// TestPoolStoreSourceCarriesSessionSizingKnobs verifies the §5.2 / §6.33
+// session-mode scaling knobs (recycle.enabled, recycle.maxSessionsPerPod,
+// maxConcurrentSessions) reach PoolConfig directly from the store row even
+// though the CRD does not model them. The mode_factor derivation reads them
+// off PoolConfig rather than the CRD spec (§4.6.3 ownership).
+//
+// spec: §5.2 / §6.33 (execution mode scaling implications).
+func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:             "recycle-sizing-pool",
+		RuntimeRef:       "claude-code",
+		IsolationProfile: isolation.ProfileSandboxed,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
+		WarmCount:        2,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            4,
+			AcknowledgeProcessLevelIsolation: true,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          12,
+			},
+		},
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1 config, got %d", len(configs))
+	}
+	c := configs[0]
+	if !c.RecycleEnabled {
+		t.Error("RecycleEnabled = false, want true")
+	}
+	if c.MaxSessionsPerPod != 12 {
+		t.Errorf("MaxSessionsPerPod = %d, want 12", c.MaxSessionsPerPod)
+	}
+	if c.MaxConcurrentSessions != 4 {
+		t.Errorf("MaxConcurrentSessions = %d, want 4", c.MaxConcurrentSessions)
+	}
+}
+
+// TestPoolStoreSourceLeavesSizingKnobsZeroOnNonRecyclingPool verifies a
+// non-recycling session pool with no SessionPolicy block carries the
+// one-session-per-pod sizing defaults (RecycleEnabled false, both bounds 0),
+// so the mode_factor derivation keeps mode_factor = 1.0.
+//
+// spec: §6.33 (default configuration mode_factor = 1.0).
+func TestPoolStoreSourceLeavesSizingKnobsZeroOnNonRecyclingPool(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:          "plain-sizing-pool",
+		RuntimeRef:    "claude-code",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		WarmCount:     1,
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	c := configs[0]
+	if c.RecycleEnabled || c.MaxSessionsPerPod != 0 || c.MaxConcurrentSessions != 0 {
+		t.Errorf("sizing knobs = %v/%d/%d, want false/0/0",
+			c.RecycleEnabled, c.MaxSessionsPerPod, c.MaxConcurrentSessions)
+	}
+}
+
 // TestPoolStoreSourceLeavesSessionPolicyNilWithoutScrubControl verifies a
 // pool with no recycle scrub control leaves the CRD on its default
 // one-session-per-pod configuration (no SessionPolicy block).

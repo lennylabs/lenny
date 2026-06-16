@@ -161,6 +161,32 @@ type PoolConfig struct {
 	// retried on this tick. spec: spec/04_system-components.md §4.6.2
 	// item 3 condition (c).
 	ResumeEpoch int64
+
+	// RecycleEnabled mirrors the gateway-poolstore
+	// sessionPolicy.recycle.enabled flag for a session-mode pool. It is the
+	// §5.2 scaling switch between the default one-session-per-pod sizing
+	// (mode_factor = 1.0) and recycling sizing (mode_factor derived from
+	// observed reuse, converging toward MaxSessionsPerPod). The CRD does not
+	// model the recycle sizing knobs (they live in the gateway poolstore, so
+	// the controller does not derive scaling from the CRD), so the
+	// PoolStoreSource carries them onto PoolConfig directly. spec: §5.2
+	// (execution mode scaling implications).
+	RecycleEnabled bool
+
+	// MaxSessionsPerPod is the gateway-poolstore
+	// sessionPolicy.recycle.maxSessionsPerPod ceiling: a recycling pod is
+	// retired after serving this many sessions, so the converged mode_factor
+	// is bounded above by it. Meaningful only when RecycleEnabled is true.
+	// spec: §5.2 (mode_factor bounded above by recycle.maxSessionsPerPod).
+	MaxSessionsPerPod int
+
+	// MaxConcurrentSessions is the gateway-poolstore
+	// sessionPolicy.maxConcurrentSessions per-pod slot bound. It is the
+	// §5.2 burst_mode_factor for session mode: a pod absorbs as many
+	// simultaneous burst arrivals as it has free slots. A value below 1 is
+	// the one-session-per-pod default. spec: §5.2 (burst_mode_factor =
+	// maxConcurrentSessions).
+	MaxConcurrentSessions int
 }
 
 // Demand is the observed claim-rate signal for one pool — the input
@@ -1139,21 +1165,88 @@ func podWarmupSeconds(cfg PoolConfig) float64 {
 // resolveModeFactors returns the (mode_factor, burst_mode_factor) the
 // §5.2 mode-adjusted scaling formula consumes for one pool.
 //
-//   - Session mode: both factors are 1.0 (the base formula). The
-//     session-rate reuse derivation (expected sessions per pod lifetime
-//     from `sessionPolicy`, observed through the reuse histogram) lands
-//     with the poolscaling step that introduces the gateway-side
-//     sessionPolicy sizing knobs; the CRD carries only the scrub-profile
-//     acknowledgment, so the CRD-derived steady state stays at the base.
 //   - Service mode: both factors are maxConcurrent (the per-pod slot
 //     bound) — the §5.2 saturation formula treats service pods as
 //     reusing their slots for both the steady-state and burst terms.
+//   - Session mode, default configuration (recycle.enabled: false): each
+//     pod serves exactly one session, so mode_factor = 1.0. The burst
+//     factor is maxConcurrentSessions (1 by default).
+//   - Session mode, recycling pool: mode_factor is the expected sessions
+//     per pod lifetime. It is derived from the observed
+//     `lenny_pod_session_reuse_count` median through the ModeFactorSource:
+//     before convergence (the histogram has not collected ~100 completed
+//     sessions) it falls back to 1.0 (cold-start one-session-per-pod
+//     sizing); once converged it is the observed median bounded above by
+//     recycle.maxSessionsPerPod (a pod cannot serve more sessions than the
+//     configured ceiling). The burst factor is maxConcurrentSessions.
 //
-// spec: §5.2 (execution mode scaling implications).
-func resolveModeFactors(_ context.Context, cfg PoolConfig, _ ModeFactorSource) (modeFactor, burstModeFactor float64) {
+// The CRD does not model the session-mode recycle sizing knobs, so the
+// derivation reads them off the PoolConfig fields the PoolStoreSource
+// carries from the gateway poolstore (RecycleEnabled, MaxSessionsPerPod,
+// MaxConcurrentSessions).
+//
+// spec: §5.2 (execution mode scaling implications), §6.33.
+func resolveModeFactors(ctx context.Context, cfg PoolConfig, src ModeFactorSource) (modeFactor, burstModeFactor float64) {
 	if cfg.Template.ExecutionMode == "service" && cfg.Template.MaxConcurrent > 0 {
 		modeFactor = float64(cfg.Template.MaxConcurrent)
 		return modeFactor, modeFactor
 	}
-	return 1, 1
+	// Session mode. burst_mode_factor = maxConcurrentSessions: a pod absorbs
+	// as many simultaneous burst arrivals as it has free slots. Below 1 is
+	// the one-session-per-pod default; the strategy clamps a non-positive
+	// value to 1.0 either way, but resolving it here keeps the burst term
+	// explicit for a concurrent recycling pool. spec: §5.2 (burst_mode_factor
+	// = maxConcurrentSessions).
+	burstModeFactor = float64(maxConcurrentSessionsOrOne(cfg.MaxConcurrentSessions))
+	// A non-recycling session pool serves one session per pod: mode_factor
+	// stays at the base 1.0. spec: §6.33 (default configuration mode_factor =
+	// 1.0).
+	if !cfg.RecycleEnabled {
+		return 1, burstModeFactor
+	}
+	// Recycling pool: derive mode_factor from observed reuse, bounded above
+	// by recycle.maxSessionsPerPod, with a 1.0 cold-start fallback until the
+	// histogram converges. spec: §6.33.
+	modeFactor = recyclingModeFactor(ctx, cfg, src)
+	return modeFactor, burstModeFactor
+}
+
+// recyclingModeFactor derives a recycling session pool's mode_factor from
+// the observed `lenny_pod_session_reuse_count` median. With no ModeFactorSource
+// wired, or before the histogram converges (ok=false), it falls back to the
+// 1.0 cold-start one-session-per-pod sizing. A source error is treated
+// conservatively as not-yet-converged (the controller must not size a pool
+// from an unverifiable signal). The converged median is bounded above by
+// recycle.maxSessionsPerPod (a pod cannot serve more sessions than the
+// configured ceiling) and floored at 1.0 (a sub-1 observed median never
+// inflates the formula's pod count below the one-session baseline).
+// spec: §6.33 (cold-start fallback 1.0, converged value bounded above by
+// recycle.maxSessionsPerPod).
+func recyclingModeFactor(ctx context.Context, cfg PoolConfig, src ModeFactorSource) float64 {
+	const coldStart = 1.0
+	if src == nil {
+		return coldStart
+	}
+	median, ok, err := src.PoolSessionReuseMedian(ctx, cfg.Name)
+	if err != nil || !ok {
+		return coldStart
+	}
+	if median < coldStart {
+		median = coldStart
+	}
+	if ceiling := float64(cfg.MaxSessionsPerPod); ceiling >= coldStart && median > ceiling {
+		median = ceiling
+	}
+	return median
+}
+
+// maxConcurrentSessionsOrOne returns the pool's §5.2
+// sessionPolicy.maxConcurrentSessions, defaulting a non-positive value to 1
+// (the one-session-per-pod bound). spec: §5.2 (maxConcurrentSessions default
+// 1).
+func maxConcurrentSessionsOrOne(v int) int {
+	if v < 1 {
+		return 1
+	}
+	return v
 }

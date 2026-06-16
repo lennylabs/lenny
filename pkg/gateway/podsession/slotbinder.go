@@ -81,6 +81,18 @@ type SlotBindRequest struct {
 	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion written
 	// into the §15.4 manifest. Empty when none is specified.
 	MinPlatformVersion string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
+	// by ResolvePool. On a recycling concurrent-session pool (the §3.1
+	// "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
+	// true), when the last slot drains cleanly ReleaseSlot patches the per-pod
+	// claim bound → recycling and signals the whole-pod scrub (the §3.4 recycle
+	// disposition) rather than deleting the claim, so the adapter's
+	// ReportPodScrub drives recycle vs. retire and the occupancy-zero whole-pod
+	// scrub clears the cross-cohort residue (shared /tmp, /dev/shm, surviving
+	// processes). False for a non-recycling concurrent pool (the §3.1 "Bounded
+	// cohort" preset), where the pod terminates after the cohort drains. spec:
+	// §3.1, §3.4, §6.30/§6.41 (occupancy-zero recycle edge on a recycling pod).
+	Recycle bool
 }
 
 // BindSlot places a session on a §5.2 concurrent-session pod slot.
@@ -171,6 +183,12 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		Adapter:               cl,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
+		// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so
+		// ReleaseSlot drives the §3.4 recycle disposition (patch the per-pod
+		// claim bound → recycling, signal the whole-pod scrub) on the
+		// occupancy-zero edge of a recycling concurrent pool rather than
+		// deleting the claim.
+		Recycle: req.Recycle,
 	}, nil
 }
 
@@ -316,7 +334,11 @@ func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *Sl
 // the failed attempt already closed its adapter connection.
 func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string) error {
 	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
-	return claimer.ReleaseSlot(ctx, sandboxName, slotID)
+	// recycle=false: a released reservation after a failed bind is a slot-count
+	// rollback, not the occupancy-zero recycle edge, so it never patches the
+	// claim to `recycling` or arms the missing-report timeout. spec: §5.2 (slot
+	// retry releases the reservation), §3.4.
+	return claimer.ReleaseSlot(ctx, sandboxName, slotID, false)
 }
 
 // ReleaseSlot tears down a concurrent-session slot when its session ends.
@@ -342,8 +364,16 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// credential leases back to the pool, the same teardown session-mode
 	// Release runs. The pod and its sibling slots stay live.
 	b.releaseCredentials(result.SessionID)
-	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
-	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID)
+	claimer := &podclaim.SlotClaimer{
+		Client:    b.Client,
+		Namespace: b.Namespace,
+		Counter:   b.SlotCounter,
+		// §3.4: a recycling concurrent-session pool arms the missing-report
+		// timeout on the occupancy-zero edge (the last slot draining), the same
+		// gateway-side timeout session-mode Release arms.
+		RecycleBoundary: b.RecycleBoundary,
+	}
+	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID, result.Recycle)
 }
 
 // DrainSandbox requests the whole-pod retirement of a concurrent-session

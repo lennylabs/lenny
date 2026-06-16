@@ -1265,6 +1265,11 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			UserCredentialProviders: userCredProviders,
 			AgentInterface:          agentInterface,
 			MinPlatformVersion:      minPlatformVersion,
+			// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so the
+			// last-slot-drain edge of a recycling concurrent pool patches the
+			// claim bound → recycling and signals the whole-pod scrub (the §3.1
+			// "Concurrent" preset) rather than deleting the claim outright.
+			Recycle: match.Recycle,
 		}
 		// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted slot
 		// acquisition in the per-pool claim FIFO and re-enter the slot-claim

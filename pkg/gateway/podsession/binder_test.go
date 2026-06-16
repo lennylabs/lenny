@@ -1027,6 +1027,69 @@ func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
 	}
 }
 
+// fakeRecycleBoundary records the §3.4 missing-report timeout arming the
+// binder requests at the bound → recycling patch.
+type fakeRecycleBoundary struct{ armed []string }
+
+func (f *fakeRecycleBoundary) OnRecycling(podID string) { f.armed = append(f.armed, podID) }
+
+// TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4 asserts that on the
+// recycle path Release arms the §3.4 gateway-side missing-report timeout for
+// the pod after patching the claim bound → recycling, so a hung or silent
+// adapter is bounded by cleanupTimeoutSeconds plus a grace rather than the
+// much longer orphan-GC window. spec: §3.4 (missing-report timeout).
+func TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	armer := &fakeRecycleBoundary{}
+	binder.RecycleBoundary = armer
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if len(armer.armed) != 1 || armer.armed[0] != res.SandboxName {
+		t.Errorf("armed missing-report timeouts = %v, want [%s]", armer.armed, res.SandboxName)
+	}
+}
+
+// TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4 asserts a failed session
+// on a recycling pool takes the retire path (deletes the claim) and does NOT
+// arm the missing-report timeout: there is no whole-pod scrub to await on a
+// retired pod. spec: §3.4; §6.2 lines 24, 157.
+func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	armer := &fakeRecycleBoundary{}
+	binder.RecycleBoundary = armer
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "failed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if len(armer.armed) != 0 {
+		t.Errorf("failed-session retire armed missing-report timeouts %v, want none", armer.armed)
+	}
+}
+
 // TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2 pins the §3.4
 // patch-then-scrub ordering: on the recycle path the claim is patched
 // bound → recycling BEFORE the adapter is signaled to run the whole-pod scrub.
