@@ -14,6 +14,15 @@ import (
 	"time"
 )
 
+// fakeRuntimeReadDeadline bounds a single fakeRuntime read. The frames
+// travel an in-process loopback Unix socket, so a multi-second wait is
+// only ever scheduler starvation under the whole-repo parallel test run,
+// never a genuine protocol stall. The deadline guards against a true
+// hang (the read still fails with a clear message); the generous value
+// keeps the no-op rotation-gate pass-through and the handshake reads from
+// timing out when 28+ packages contend for cores. spec: §4.7.
+const fakeRuntimeReadDeadline = 30 * time.Second
+
 // fakeRuntime plays the agent-runtime end of the §4.7 lifecycle
 // channel: it dials the adapter's Unix socket and exchanges JSONL
 // frames.
@@ -25,7 +34,7 @@ type fakeRuntime struct {
 
 func (fr *fakeRuntime) read() lifecycleFrame {
 	fr.t.Helper()
-	_ = fr.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = fr.conn.SetReadDeadline(time.Now().Add(fakeRuntimeReadDeadline))
 	frame, err := readLifecycleFrame(fr.r)
 	if err != nil {
 		fr.t.Fatalf("fakeRuntime read: %v", err)
