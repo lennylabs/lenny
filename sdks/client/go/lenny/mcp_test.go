@@ -91,11 +91,19 @@ func handleStubToolCall(w http.ResponseWriter, req mcpRPCEnvelope) {
 		}
 		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"sess_mcp_1","state":"running"}`, false), nil)
 	case "lenny/send_message":
+		// §8.5 line 537 wire contract: the tool arguments are `to`
+		// (target session id) and `message` (content). F-8.5.16 renamed
+		// them from the legacy `sessionId`/`content`.
 		var args struct {
-			Content string `json:"content"`
+			To      string `json:"to"`
+			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(params.Arguments, &args)
-		writeRPC(w, req.ID, toolResultMap("echo: "+args.Content, false), nil)
+		if args.To == "" {
+			writeRPC(w, req.ID, toolResultMap("to is required", true), nil)
+			return
+		}
+		writeRPC(w, req.ID, toolResultMap("echo: "+args.Message, false), nil)
 	case "lenny/interrupt_session":
 		var args struct {
 			SessionID string `json:"sessionId"`

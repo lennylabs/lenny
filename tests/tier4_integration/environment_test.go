@@ -135,8 +135,11 @@ func TestEnvironmentResource(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("list environments: status %d", code)
 	}
-	if envs, _ := list["environments"].([]any); len(envs) != 1 {
-		t.Errorf("listed environments = %v", list["environments"])
+	// spec: §15.1 lines 1228-1253 — admin list endpoints return the
+	// canonical cursor-paginated envelope {items, cursor, hasMore}; the
+	// rows are under `items`, not a resource-named field.
+	if envs, _ := list["items"].([]any); len(envs) != 1 {
+		t.Errorf("listed environments = %v", list["items"])
 	}
 
 	// ---- update: the member role is reassigned ----

@@ -33,7 +33,11 @@ import (
 // and must never serialize private key material onto the wire.
 func TestJWKSEndpointPublishedByLiveGateway(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
-	gw := gateway.StartWith(t, "--dev-mode")
+	// §10.3 / F-10.2.14: JWKS publication defaults off because the v1
+	// HMAC backend cannot publish usable public-key material. The
+	// endpoint mounts only under --jwks-publish=true, so the test opts in
+	// explicitly to exercise the published JWK Set.
+	gw := gateway.StartWith(t, "--dev-mode", "--jwks-publish=true")
 	resp, err := http.Get(gw.BaseURL() + "/.well-known/jwks.json")
 	if err != nil {
 		t.Fatalf("GET /.well-known/jwks.json: %v", err)

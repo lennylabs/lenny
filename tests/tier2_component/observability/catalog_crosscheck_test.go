@@ -63,6 +63,19 @@ type renderedRule struct {
 	Annotations map[string]string `yaml:"annotations"`
 }
 
+// alertKey identifies a single catalog/rendered alert. Most alerts are
+// keyed by name alone, but the §16.5 / §17.2 multi-pair alerts
+// (AdmissionPlaneFeatureFlagDowngrade emits one rule per gated
+// flag/webhook pair, F-17.2.6) share an alert Name and are distinguished
+// only by their static flag_name / expected_webhook_name labels. Keying
+// by name alone collapses those distinct rules and triggers a false
+// duplicate/count-drift verdict, so the cross-check keys on the name
+// plus the distinguishing labels. For a single-rule alert the labels are
+// absent, so the key reduces to the name.
+func alertKey(name string, labels map[string]string) string {
+	return name + "|" + labels["flag_name"] + "|" + labels["expected_webhook_name"]
+}
+
 // renderedPrometheusRule is the chart-rendered PrometheusRule CRD.
 type renderedPrometheusRule struct {
 	APIVersion string `yaml:"apiVersion"`
@@ -87,11 +100,31 @@ func helmTemplatePrometheusRule(t *testing.T, root string, setArgs ...string) re
 		t.Skipf("helm not on PATH: %v", err)
 	}
 	chart := filepath.Join(root, "charts", "lenny")
-	// §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required
-	// chart value with no default. `helm template --show-only` still
-	// renders every template (the filter applies afterward), so the
-	// gateway-deployment `required` guard fires unless a value is set.
-	args := []string{"template", chart, "--show-only", "templates/prometheusrule.yaml", "--set", "global.spiffeTrustDomain=lenny-test"}
+	// `helm template --show-only` still renders every template (the
+	// filter applies afterward), so the chart's render-time `required`
+	// and `fail` guards fire even though only prometheusrule.yaml is
+	// returned. Two such guards must be satisfied:
+	//   - §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a
+	//     required value with no default (gateway-deployment guard).
+	//   - §13.2 (K8S-033) F-13.2.3: coredns.clusterIP must be non-empty
+	//     when agentNamespaces is set, which it is in the shipped
+	//     default values.yaml (coredns-service.yaml fail guard). The
+	//     address mirrors the chart unit tests' free service-CIDR value.
+	//
+	// §16.9 R8 F-16.9.4: prometheusrule.yaml renders the PrometheusRule
+	// CRD only when the Prometheus Operator API group is registered;
+	// otherwise monitoring.format degrades to a ConfigMap so a
+	// kubectl apply does not fail on a missing CRD. `helm template` sees
+	// no live cluster, so the operator group must be declared explicitly
+	// with --api-versions for the catalog cross-check to observe the
+	// PrometheusRule output it asserts on.
+	args := []string{
+		"template", chart,
+		"--show-only", "templates/prometheusrule.yaml",
+		"--api-versions", "monitoring.coreos.com/v1",
+		"--set", "global.spiffeTrustDomain=lenny-test",
+		"--set", "coredns.clusterIP=10.96.0.53",
+	}
 	args = append(args, setArgs...)
 	out, err := exec.Command(helm, args...).CombinedOutput()
 	if err != nil {
@@ -129,30 +162,31 @@ func TestPrometheusRuleMatchesAlertCatalog(t *testing.T) {
 	rendered := map[string]renderedRule{}
 	for _, g := range doc.Spec.Groups {
 		for _, r := range g.Rules {
-			if _, dup := rendered[r.Alert]; dup {
+			key := alertKey(r.Alert, r.Labels)
+			if _, dup := rendered[key]; dup {
 				t.Errorf("rendered PrometheusRule has duplicate alert %q", r.Alert)
 			}
-			rendered[r.Alert] = r
+			rendered[key] = r
 		}
 	}
 
 	catalog := rules.Catalog()
-	catalogByName := map[string]rules.Rule{}
+	catalogByKey := map[string]rules.Rule{}
 	for _, r := range catalog {
-		catalogByName[r.Name] = r
+		catalogByKey[alertKey(r.Name, r.Labels)] = r
 	}
 
 	// Direction 1: every catalog alert must appear in the chart.
 	for _, r := range catalog {
-		if _, ok := rendered[r.Name]; !ok {
+		if _, ok := rendered[alertKey(r.Name, r.Labels)]; !ok {
 			t.Errorf("§16.5 catalog alert %q is missing from the rendered chart PrometheusRule", r.Name)
 		}
 	}
 
 	// Direction 2: every rendered alert must be a catalog alert.
-	for name := range rendered {
-		if _, ok := catalogByName[name]; !ok {
-			t.Errorf("rendered PrometheusRule alert %q is not in the §16.5 catalog — the chart must not invent rules", name)
+	for _, r := range flattenRendered(doc) {
+		if _, ok := catalogByKey[alertKey(r.Alert, r.Labels)]; !ok {
+			t.Errorf("rendered PrometheusRule alert %q is not in the §16.5 catalog — the chart must not invent rules", r.Alert)
 		}
 	}
 
@@ -161,6 +195,18 @@ func TestPrometheusRuleMatchesAlertCatalog(t *testing.T) {
 		t.Errorf("rendered chart has %d alerts, the §16.5 catalog has %d — the two surfaces have drifted",
 			len(rendered), len(catalog))
 	}
+}
+
+// flattenRendered returns every rendered rule across the per-severity
+// groups in document order. Unlike the keyed map it preserves the
+// multi-pair alerts that share an alert Name, so direction-2 checks see
+// each rule individually.
+func flattenRendered(doc renderedPrometheusRule) []renderedRule {
+	var out []renderedRule
+	for _, g := range doc.Spec.Groups {
+		out = append(out, g.Rules...)
+	}
+	return out
 }
 
 // spec: 16.5 (no per-field drift between the catalog and the rendered chart)
@@ -175,16 +221,18 @@ func TestPrometheusRuleFieldsMatchCatalog(t *testing.T) {
 		t.Fatal("rendered PrometheusRule has no rule groups")
 	}
 	// §25.13 line 4822 per-severity group split — flatten before the
-	// per-field comparison.
+	// per-field comparison. The map is keyed by the composite alertKey so
+	// the §16.5 / §17.2 multi-pair alerts that share an alert Name compare
+	// against their matching rule rather than collapsing onto one.
 	rendered := map[string]renderedRule{}
 	for _, g := range doc.Spec.Groups {
 		for _, r := range g.Rules {
-			rendered[r.Alert] = r
+			rendered[alertKey(r.Alert, r.Labels)] = r
 		}
 	}
 
 	for _, want := range rules.Catalog() {
-		got, ok := rendered[want.Name]
+		got, ok := rendered[alertKey(want.Name, want.Labels)]
 		if !ok {
 			continue // absence is reported by TestPrometheusRuleMatchesAlertCatalog
 		}

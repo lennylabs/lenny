@@ -5,28 +5,36 @@ package playground
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 )
 
 // playgroundAllowedScope is the §27.3 / §10.2 playground_allowed_scope
 // ceiling. The minted JWT's scope is the intersection of the subject
 // token's scope and this set, never the union, so a playground bearer
-// can never be broader than what the subject already held. The set
-// covers the session, chat, and discovery operations the playground
-// UI needs (§27.5) and nothing else.
+// can never be broader than what the subject already held. The values
+// are the canonical §25.1 `tools:<domain>:<action>` taxonomy. The §10.2
+// auth chain parses every minted scope claim through scopes.Parse on
+// each request, so a non-canonical value here would be rejected with
+// TOKEN_INVALID before any handler sees the token.
+//
+// spec: §10.2 ("Playground mint invariants") and §25.1
+// ("Playground-allowed scope set") pin the v1 set to
+// {tools:sessions:*, tools:me:read, tools:runtimes:read,
+// tools:pools:read, tools:operations:read, tools:events:read}: chat
+// plus read-only runtime, pool, ops, and event introspection, with no
+// write to runtimes, pools, credentials, experiments, or configuration.
 var playgroundAllowedScope = []string{
-	"sessions:create",
-	"sessions:read",
-	"sessions:interact",
-	"sessions:cancel",
-	"runtimes:list",
-	"models:list",
-	"mcp:connect",
+	"tools:sessions:*",
+	"tools:me:read",
+	"tools:runtimes:read",
+	"tools:pools:read",
+	"tools:operations:read",
+	"tools:events:read",
 }
 
 // tokenResponse is the §27.3.1 POST /v1/playground/token success
@@ -342,27 +350,41 @@ func (h *Handler) rejectWrongMaterial(w http.ResponseWriter, presented string) {
 		})
 }
 
-// intersectScope returns the space-joined intersection of the
-// subjectScope string and the allowed set, sorted for determinism.
-// An empty subjectScope yields the empty string (the subject held no
-// scope, so the intersection is empty).
+// intersectScope returns the §10.2 narrowing of the subject scope by
+// the playground_allowed_scope ceiling: the largest scope claim whose
+// values are matched by both. The narrowing is wildcard-aware through
+// the shared §25.1 scopes package, so a subject `tools:sessions:read`
+// survives against the allowed `tools:sessions:*`. An empty subject
+// scope yields the empty string (the subject held no scope, so the
+// intersection is empty), and a malformed subject scope is treated as
+// empty so a mint never produces a scope claim the auth chain would
+// reject. The allowed set is a package constant of canonical values, so
+// its Parse cannot fail.
+//
+// spec: §10.2 "scope is intersection(subject_token.scope,
+// playground_allowed_scope) — never the union".
 func intersectScope(subjectScope string, allowed []string) string {
-	want := map[string]bool{}
-	for _, s := range allowed {
-		want[s] = true
+	subjectSet, err := scopes.Parse(subjectScope)
+	if err != nil {
+		// Fail closed: a subject scope the §25.1 parser rejects yields no
+		// playground scope rather than a claim the §10.2 auth chain would
+		// reject downstream.
+		return ""
 	}
-	have := map[string]bool{}
-	for _, s := range strings.Fields(subjectScope) {
-		have[s] = true
+	allowedSet, err := scopes.Parse(strings.Join(allowed, " "))
+	if err != nil {
+		return ""
 	}
-	var out []string
-	for s := range have {
-		if want[s] {
-			out = append(out, s)
-		}
+	narrowed := subjectSet.Intersect(allowedSet)
+	// spec: §10.2 line 250 — "If the intersection is empty, the mint
+	// proceeds with an empty scope claim." Intersect carries a sentinel
+	// Raw for the both-present-but-disjoint case to keep Matches
+	// fail-closed for its other callers; the playground mint translates
+	// that sentinel back to the empty claim the §10.2 table mandates.
+	if len(narrowed.Scopes()) == 0 {
+		return ""
 	}
-	sort.Strings(out)
-	return strings.Join(out, " ")
+	return narrowed.Raw
 }
 
 // emptyJSONBody reports whether the request body is empty or an empty

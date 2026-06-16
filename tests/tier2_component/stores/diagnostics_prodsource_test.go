@@ -14,6 +14,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics/prodsource"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -43,19 +46,26 @@ func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, "acme"); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
-	if _, err := pg.Pool.Exec(ctx,
-		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, pool_ref, root_session_id,
-			failure_class, failure_reason)
-		 VALUES ($1, 'acme', 'failed', 'claude', 'default-gvisor', $1, 'runtime_crash', 'budget_exceeded')`,
-		sessID); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	if _, err := pg.Pool.Exec(ctx,
-		`INSERT INTO agent_pod_state (pod_id, pool_id, state, tenant_id, session_id, isolation_profile,
-			execution_mode, resource_version, node_name)
-		 VALUES ('pod-1', 'default-gvisor', 'claimed', 'acme', $1, 'sandboxed', 'session', 1, 'node-a')`,
-		sessID); err != nil {
-		t.Fatalf("seed pod: %v", err)
+	// §4.2 line 163 / §12.3 — sessions and agent_pod_state carry the
+	// lenny_tenant_guard trigger, which rejects any write whose
+	// transaction has not set app.current_tenant. Seed them inside a
+	// tenant-scoped transaction so the guard admits the rows.
+	if err := pgtenant.InTx(ctx, pg.Pool, "acme", func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO sessions (id, tenant_id, state, runtime_ref, pool_ref, root_session_id,
+				failure_class, failure_reason)
+			 VALUES ($1, 'acme', 'failed', 'claude', 'default-gvisor', $1, 'runtime_crash', 'budget_exceeded')`,
+			sessID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO agent_pod_state (pod_id, pool_id, state, tenant_id, session_id, isolation_profile,
+				execution_mode, resource_version, node_name)
+			 VALUES ('pod-1', 'default-gvisor', 'claimed', 'acme', $1, 'sandboxed', 'session', 1, 'node-a')`,
+			sessID)
+		return err
+	}); err != nil {
+		t.Fatalf("seed session + pod: %v", err)
 	}
 
 	row, err := r.Session(ctx, sessID)
@@ -160,9 +170,12 @@ func TestProdSourceCredentialPoolLoad_spec_25_6(t *testing.T) {
 		{"l5", "cp-2", "cred-z"}, // a different pool
 	}
 	for _, l := range leases {
+		// spec: §13.3 / migration 0129 — the lease column is the encrypted
+		// BYTEA envelope, not the legacy JSONB body. The reader only tallies
+		// leases by credential, so an empty envelope is sufficient seed data.
 		if _, err := pg.Pool.Exec(ctx,
 			`INSERT INTO credential_leases (lease_id, delivery_mode, lease, pool_id, credential_id)
-			 VALUES ($1, 'proxy', '{}'::jsonb, $2, $3)`,
+			 VALUES ($1, 'proxy', '\x'::bytea, $2, $3)`,
 			l.id, l.pool, l.cred); err != nil {
 			t.Fatalf("seed lease %s: %v", l.id, err)
 		}

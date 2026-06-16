@@ -103,7 +103,20 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	// passes for both the dev-mode and the production-posture tests. A
 	// test that wants the gate to fail sets LENNY_DEV_MODE/upstream
 	// itself. F-17.4.5.
-	cmd.Env = append(os.Environ(), "LENNY_TLS_TERMINATED_UPSTREAM=true")
+	//
+	// §10.3 (F-10.3.14): outside dev mode the gateway fail-closes at
+	// startup on the required platform keys auth.oidc.issuerUrl and
+	// auth.oidc.clientId. Every integration test drives the gateway via
+	// the X-Lenny-* dev headers rather than a real OIDC bearer, so the
+	// harness defaults LENNY_DEV_MODE=true. This is the default for the
+	// --dev-mode flag (cmd/lenny-gateway reads envFlag("LENNY_DEV_MODE")),
+	// so a StartWith(t, "--dev-mode") caller is unaffected; the env value
+	// only supplies the default for callers that pass no flag.
+	cmd.Env = append(
+		os.Environ(),
+		"LENNY_TLS_TERMINATED_UPSTREAM=true",
+		"LENNY_DEV_MODE=true",
+	)
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause
 	// the gateway to exit within this window, the runtime sends
 	// SIGKILL and closes the inherited stdio pipes so cmd.Wait can

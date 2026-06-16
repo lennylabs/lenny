@@ -179,24 +179,21 @@ export class Client {
     }
     const encoded = q.toString();
     const path = encoded ? `/v1/sessions?${encoded}` : '/v1/sessions';
+    // §15.1 lines 1228-1253 canonical cursor-paginated envelope:
+    // {items, cursor, hasMore, total?}. The list helper surfaces items
+    // as page.sessions and cursor as page.nextCursor so the SDK's
+    // pagination surface stays stable regardless of the wire field
+    // names. This matches the Go SDK's ListSessions decode.
     const raw = await this.do<{
-      sessions?: Session[];
-      nextCursor?: string;
+      items?: Session[];
+      cursor?: string;
       hasMore?: boolean;
-      pagination?: { cursor?: string; hasMore?: boolean };
     }>('GET', path, undefined, opts);
-    const page: SessionPage = {
-      sessions: raw.sessions ?? [],
-      nextCursor: raw.nextCursor ?? '',
+    return {
+      sessions: raw.items ?? [],
+      nextCursor: raw.cursor ?? '',
       hasMore: raw.hasMore ?? false,
     };
-    // The §25.2 pagination envelope is the canonical source when the
-    // gateway supplies it; the top-level fields are the fallback.
-    if (raw.pagination) {
-      page.nextCursor = raw.pagination.cursor ?? '';
-      page.hasMore = raw.pagination.hasMore ?? false;
-    }
-    return page;
   }
 
   /**

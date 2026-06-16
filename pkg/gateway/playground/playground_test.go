@@ -399,8 +399,12 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 		Subject:  "bob",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:create admin:everything",
-		Expiry:   time.Now().Add(time.Hour).Unix(),
+		// tools:sessions:read is inside the playground_allowed_scope
+		// ceiling (tools:sessions:*); tools:credential:write is outside
+		// it. Both are canonical §25.1 values so the minted scope claim
+		// parses through the §10.2 auth chain.
+		Scope:  "tools:sessions:read tools:credential:write",
+		Expiry: time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatalf("sign subject token: %v", err)
@@ -424,11 +428,11 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	claims := decodeJWTPayload(t, body.BearerToken)
 	scope, _ := claims["scope"].(string)
-	if strings.Contains(scope, "admin:everything") {
-		t.Fatalf("minted scope %q leaked the out-of-policy admin:everything scope", scope)
+	if strings.Contains(scope, "credential") {
+		t.Fatalf("minted scope %q leaked the out-of-policy tools:credential:write scope", scope)
 	}
-	if !strings.Contains(scope, "sessions:create") {
-		t.Fatalf("minted scope %q dropped the in-policy sessions:create scope", scope)
+	if !strings.Contains(scope, "tools:sessions:read") {
+		t.Fatalf("minted scope %q dropped the in-policy tools:sessions:read scope", scope)
 	}
 }
 

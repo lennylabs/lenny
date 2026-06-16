@@ -20,6 +20,7 @@ package rls_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -151,7 +152,11 @@ func TestSessionTreeArchiveUpsertIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.State != "failed" || got.Result != `{"v":2}` {
+	// Result is a jsonb column, so the store returns Postgres's canonical
+	// serialization (`{"v": 2}` with a space) rather than the input bytes.
+	// Compare the result semantically so the assertion pins the
+	// overwrite, not Postgres's whitespace convention.
+	if got.State != "failed" || !jsonEqual(t, got.Result, `{"v":2}`) {
 		t.Errorf("upsert did not overwrite: state=%q result=%q", got.State, got.Result)
 	}
 	nodes, err := store.Replay(ctx, "alice", root)
@@ -217,4 +222,21 @@ func mustArchive(t *testing.T, ctx context.Context, store *treearchivepg.Store, 
 	if err := store.Archive(ctx, n); err != nil {
 		t.Fatalf("archive node %s: %v", n.NodeSessionID, err)
 	}
+}
+
+// jsonEqual reports whether two JSON documents are semantically equal,
+// ignoring the whitespace and key-order differences a jsonb round-trip
+// introduces. An unparseable side fails the test outright.
+func jsonEqual(t *testing.T, got, want string) bool {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Fatalf("got result is not JSON (%q): %v", got, err)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("want result is not JSON (%q): %v", want, err)
+	}
+	gb, _ := json.Marshal(g)
+	wb, _ := json.Marshal(w)
+	return string(gb) == string(wb)
 }

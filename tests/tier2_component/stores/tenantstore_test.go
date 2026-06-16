@@ -26,6 +26,19 @@ func tenantID(t *testing.T) string {
 	return "acme-" + newUUID(t)[:8]
 }
 
+// jsonRawEqual reports whether two JSON documents are semantically
+// equal, ignoring the whitespace and key-order differences a jsonb
+// round-trip introduces. Unparseable input compares false.
+func jsonRawEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	ab, _ := json.Marshal(av)
+	bb, _ := json.Marshal(bv)
+	return string(ab) == string(bb)
+}
+
 // spec: 15.1, 10.2
 // diagnosis: the Postgres-backed tenant registry in
 // pkg/gateway/tenantstore/pgstore did not behave as specified. Create
@@ -42,11 +55,13 @@ func TestTenantStoreContract(t *testing.T) {
 
 	t.Run("create and get round-trip", func(t *testing.T) {
 		want := tenantstore.Tenant{
-			ID:                    tenantID(t),
-			DisplayName:           "Acme Corporation",
-			ComplianceProfile:     "soc2",
-			DataResidencyRegion:   "us-east-1",
-			WorkspaceTier:         "T2",
+			ID:                  tenantID(t),
+			DisplayName:         "Acme Corporation",
+			ComplianceProfile:   "soc2",
+			DataResidencyRegion: "us-east-1",
+			// spec: §12.9 line 1048 / migration 0103 — workspace_tier is a
+			// closed enum {'', 'T3', 'T4'}; T3 is the lowest classified tier.
+			WorkspaceTier:         "T3",
 			MaxConcurrentSessions: 25,
 			StorageQuotaBytes:     1 << 30,
 			// spec: §11.2 — the token budget and per-tenant reset period
@@ -98,7 +113,11 @@ func TestTenantStoreContract(t *testing.T) {
 		if got.RBACConfig.IdentityProvider != want.IdentityProvider {
 			t.Errorf("identityProvider: got %+v, want %+v", got.RBACConfig.IdentityProvider, want.IdentityProvider)
 		}
-		if string(got.RBACConfig.TokenPolicy) != string(want.TokenPolicy) {
+		// tokenPolicy persists in the rbac_config jsonb column, so the
+		// store returns Postgres's canonical serialization (a space after
+		// each colon) rather than the input bytes. Compare semantically so
+		// the assertion pins the persisted value, not jsonb whitespace.
+		if !jsonRawEqual(got.RBACConfig.TokenPolicy, want.TokenPolicy) {
 			t.Errorf("tokenPolicy: got %s, want %s", got.RBACConfig.TokenPolicy, want.TokenPolicy)
 		}
 		if strings.Join(got.RBACConfig.Capabilities, ",") != "search,summarize" {

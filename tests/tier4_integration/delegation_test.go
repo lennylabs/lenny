@@ -42,16 +42,20 @@ func TestDelegation(t *testing.T) {
 		if root == nil {
 			t.Fatalf("tree response carried no root: %v", body)
 		}
-		if got, _ := root["sessionId"].(string); got != parent {
-			t.Errorf("tree root sessionId = %q, want %q", got, parent)
+		// spec: §8.5 line 540 — each tree node's wire field is `taskId`
+		// (the external-protocol name for the session's execution under
+		// the §4.2 "task record == session row" invariant), not the
+		// internal `sessionId`. The tree projection emits `taskId`.
+		if got, _ := root["taskId"].(string); got != parent {
+			t.Errorf("tree root taskId = %q, want %q", got, parent)
 		}
 		children, _ := root["children"].([]any)
 		if len(children) != 1 {
 			t.Fatalf("tree root children = %d, want 1: %v", len(children), children)
 		}
 		c0, _ := children[0].(map[string]any)
-		if got, _ := c0["sessionId"].(string); got != child {
-			t.Errorf("tree child sessionId = %q, want %q", got, child)
+		if got, _ := c0["taskId"].(string); got != child {
+			t.Errorf("tree child taskId = %q, want %q", got, child)
 		}
 		nc, _ := body["nodeCount"].(float64)
 		if int(nc) != 2 {

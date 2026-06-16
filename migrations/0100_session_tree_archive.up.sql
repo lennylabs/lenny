@@ -67,3 +67,11 @@ CREATE POLICY session_tree_archive_tenant_isolation
 CREATE TRIGGER lenny_tenant_guard
     BEFORE INSERT OR UPDATE OR DELETE ON session_tree_archive
     FOR EACH ROW EXECUTE FUNCTION lenny_tenant_guard();
+
+-- §4.2 line 163 / §12.8 step 11 — the gateway connects as lenny_app and
+-- archives, replays, and (for §12.8 erasure) deletes archive rows inside
+-- a SET LOCAL app.current_tenant transaction. lenny_app therefore needs
+-- full DML on the table; RLS plus the tenant guard keep each transaction
+-- scoped to its own tenant. Without this grant the application role is
+-- denied at the table level before the RLS policy is ever consulted.
+GRANT SELECT, INSERT, UPDATE, DELETE ON session_tree_archive TO lenny_app;

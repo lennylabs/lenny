@@ -181,8 +181,11 @@ func TestMCPElicitationChain(t *testing.T) {
 	const elicitationID = "elic-chain-1"
 	done := make(chan map[string]any, 1)
 	go func() {
+		// spec: §8.5 line 559 (F-8.5.13) — request_elicitation requires
+		// both `message` and `schema`. An empty schema object declares a
+		// free-form prompt, which is all this chain test needs.
 		done <- c.callTool("lenny/request_elicitation",
-			`{"sessionId":"`+leaf+`","message":"approve the deploy?","elicitationId":"`+elicitationID+`"}`)
+			`{"sessionId":"`+leaf+`","message":"approve the deploy?","schema":{},"elicitationId":"`+elicitationID+`"}`)
 	}()
 
 	// §9.2: the elicitation forwarded up to the root. A REST respond

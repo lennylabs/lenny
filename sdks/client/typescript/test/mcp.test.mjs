@@ -109,7 +109,14 @@ async function mcpHandler(req, res) {
         return;
       }
       if (name === 'lenny/send_message') {
-        send(toolResult(`echo: ${args.content}`, false));
+        // §8.5 line 537 wire contract: the tool arguments are `to`
+        // (target session id) and `message` (content). F-8.5.16 renamed
+        // them from the legacy `sessionId`/`content`.
+        if (!args.to) {
+          send(toolResult('to is required', true));
+          return;
+        }
+        send(toolResult(`echo: ${args.message}`, false));
         return;
       }
       send(undefined, { code: -32601, message: `unknown tool ${name}` });
