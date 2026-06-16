@@ -145,6 +145,52 @@ func TestMemory_ReleaseIdempotent_spec_7_1_92(t *testing.T) {
 	rel2()
 }
 
+// spec: §7.1 line 92 — concurrent acquire/release churn on a single
+// source session never admits two simultaneous holders. The Memory
+// implementation reclaims its per-source map entry only when the last
+// referencing goroutine leaves; a release that dropped the entry while a
+// waiter was mid-acquire would let the next acquirer mint a second mutex
+// for the same source and run a derive in parallel with the waiter. This
+// test drives that GC race directly with a large concurrent fan-in and a
+// shared holder counter, so a regression in the reference-counted
+// reclamation surfaces as maxConcurrent > 1.
+func TestMemory_ConcurrentChurnNeverDoubleAdmits_spec_7_1_92(t *testing.T) {
+	m := derivelock.NewMemory(2 * time.Second)
+
+	var (
+		held          atomic.Int32
+		maxConcurrent atomic.Int32
+		wg            sync.WaitGroup
+	)
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				rel, err := m.Acquire(context.Background(), "sess-A")
+				if err != nil {
+					t.Errorf("acquire: %v", err)
+					return
+				}
+				cur := held.Add(1)
+				for {
+					prev := maxConcurrent.Load()
+					if cur <= prev || maxConcurrent.CompareAndSwap(prev, cur) {
+						break
+					}
+				}
+				held.Add(-1)
+				rel()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := maxConcurrent.Load(); got > 1 {
+		t.Fatalf("maxConcurrent holders = %d, want ≤1 (per-source lock failed to serialize under churn)", got)
+	}
+}
+
 // spec: §7.1 line 92 — Redis-backed lock serializes across replicas.
 // We simulate two replicas by issuing two Acquire calls against the
 // same Redis instance; the second must time out and return ErrContended.
