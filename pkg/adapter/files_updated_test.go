@@ -34,8 +34,7 @@ func TestSignalFilesUpdatedEmitsFrame_spec_7_4_433(t *testing.T) {
 // sentinel rather than panicking, so FinalizeWorkspace can ignore it.
 // F-7.4.6.
 func TestSignalFilesUpdatedNoRuntimeIsBenign_spec_7_4_433(t *testing.T) {
-	dir := t.TempDir()
-	lc, err := NewLifecycleChannel(filepath.Join(dir, "lc.sock"))
+	lc, err := NewLifecycleChannel(shortSocketName(t, "lc.sock"))
 	if err != nil {
 		t.Fatalf("NewLifecycleChannel: %v", err)
 	}

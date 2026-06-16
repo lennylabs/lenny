@@ -54,17 +54,26 @@ func (fr *fakeRuntime) handshake() {
 	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: caps.Capabilities})
 }
 
+// shortSocketName returns a Unix socket path under a short temp directory.
+// t.TempDir() embeds the (often long) test name, so a socket derived from it
+// can overflow the platform sun_path limit (~104 bytes on darwin); binding
+// under os.MkdirTemp's short root keeps the path within that limit.
+func shortSocketName(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-sock-*")
+	if err != nil {
+		t.Fatalf("temp socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, name)
+}
+
 // startLifecycleChannel creates a LifecycleChannel on a temporary
 // socket, runs it, and dials it as a fake runtime. Run and the
 // connection are torn down on test cleanup.
 func startLifecycleChannel(t *testing.T) (*LifecycleChannel, *fakeRuntime) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "lc-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "lifecycle.sock")
+	sock := shortSocketName(t, "lifecycle.sock")
 
 	lc, err := NewLifecycleChannel(sock)
 	if err != nil {

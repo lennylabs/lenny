@@ -53,14 +53,8 @@ func (f *fakeConnectorForwarder) CallConnectorTool(_ context.Context, sessionID,
 func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
-	// Short socket dir so the derived per-connector sun_path fits darwin's
-	// ~104-byte limit.
-	sockDir, err := os.MkdirTemp("", "mcp-*")
-	if err != nil {
-		t.Fatalf("temp socket dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	s.MCPSocket = filepath.Join(sockDir, "m")
+	// The derived per-connector sun_path must fit darwin's ~104-byte limit.
+	s.MCPSocket = shortSocketName(t, "m")
 	fwd := &fakeConnectorForwarder{
 		refs:   []mcp.ConnectorRef{{ID: "github", DisplayName: "GitHub"}},
 		list:   []mcp.Tool{{Name: "list_repos", Description: "list"}},
@@ -151,7 +145,7 @@ func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 func TestConnectorServersEmptyWithoutForwarder_spec_9_3_142(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
-	s.MCPSocket = filepath.Join(t.TempDir(), "m")
+	s.MCPSocket = shortSocketName(t, "m")
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)

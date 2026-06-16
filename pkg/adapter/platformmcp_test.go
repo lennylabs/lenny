@@ -20,7 +20,7 @@ func TestPlatformMCP(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	manifestDir := t.TempDir()
 	s.ManifestDir = manifestDir
-	s.MCPSocket = filepath.Join(t.TempDir(), "m")
+	s.MCPSocket = shortSocketName(t, "m")
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
@@ -79,14 +79,7 @@ func TestPlatformMCP(t *testing.T) {
 func TestPlatformMCPNonceOnlyChallenge_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
-	// The Unix sun_path is ~104 bytes on darwin; t.TempDir() with a long
-	// test name overflows it, so bind the socket under a short temp dir.
-	sockDir, err := os.MkdirTemp("", "mcp-*")
-	if err != nil {
-		t.Fatalf("temp socket dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	s.MCPSocket = filepath.Join(sockDir, "m")
+	s.MCPSocket = shortSocketName(t, "m")
 	s.NonceOnlyMode = true
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
@@ -190,7 +183,7 @@ func (f *fakePlatformForwarder) lastCall() (session, tool string, args json.RawM
 func TestPlatformMCPForwardsToGateway_spec_9_1(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
-	s.MCPSocket = filepath.Join(t.TempDir(), "m")
+	s.MCPSocket = shortSocketName(t, "m")
 	fwd := &fakePlatformForwarder{
 		list:   []mcp.Tool{{Name: "lenny/delegate_task", Description: "delegate"}},
 		result: json.RawMessage(`{"content":[{"type":"text","text":"forwarded"}]}`),
@@ -272,7 +265,7 @@ func TestPlatformMCPForwardsToGateway_spec_9_1(t *testing.T) {
 func TestPlatformMCPRejectsBadNonce(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
-	s.MCPSocket = filepath.Join(t.TempDir(), "m")
+	s.MCPSocket = shortSocketName(t, "m")
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)

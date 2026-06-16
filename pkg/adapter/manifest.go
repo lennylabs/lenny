@@ -274,7 +274,7 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	// session's effective delegation policy permits, so the runtime can
 	// dial each connector's intra-pod MCP server. F-9.1.2.
 	for _, c := range in.connectors {
-		m.ConnectorServers = append(m.ConnectorServers, ManifestConnector{ID: c.ID, Socket: c.Socket})
+		m.ConnectorServers = append(m.ConnectorServers, ManifestConnector(c))
 	}
 	if s.Lifecycle != nil {
 		m.LifecycleChannel = &ManifestLifecycleChannel{Socket: s.Lifecycle.SocketPath()}

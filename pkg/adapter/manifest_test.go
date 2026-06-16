@@ -134,12 +134,7 @@ func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
 
 	// With a lifecycle channel configured, the manifest advertises its
 	// socket so a Full-level runtime can dial it.
-	sockDir, err := os.MkdirTemp("", "lc-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(sockDir)
-	lc, err := NewLifecycleChannel(filepath.Join(sockDir, "lifecycle.sock"))
+	lc, err := NewLifecycleChannel(shortSocketName(t, "lifecycle.sock"))
 	if err != nil {
 		t.Fatalf("NewLifecycleChannel: %v", err)
 	}
