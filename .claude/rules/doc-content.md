@@ -11,8 +11,14 @@ A documentation page is correct, complete for its scope, written for its reader,
 Documentation serves the reader's task and mental model, rather than mirroring the system's internal structure. Organize a page around what the reader is trying to do or understand, and use the reader's vocabulary, introducing a platform term at the point the reader first needs it.
 
 - Every paragraph must be readable by the page's intended reader without unstated context. A paragraph that only a maintainer, or someone who has already read the spec or the source, can follow is a defect on a reader-facing page.
+- Open a section by answering the question its heading implies, and open each item in a series by defining what it is. For example, a "who is this for" section names the reader in its first sentence, and an integration-level subsection states what the level is before listing what it includes.
 - Define a term before relying on it. Do not reference a concept, field, or component the page has not yet introduced or linked.
+- Name a concept with the platform's canonical term rather than a generic paraphrase, and gloss it in parentheses the first time it appears.
+- Define a concept rather than substituting a list of examples for it. A list of examples may accompany a definition, but on its own it neither conveys the concept nor stays complete.
+- Embed an example only when it makes an abstract statement concrete that prose alone leaves ambiguous, and mark it as an example with "for example" or "such as". An example that only restates the rule is noise.
 - Keep one idea to a paragraph and lead with the point. The reader gets the takeaway from the first sentence and the support from the rest.
+- Label list groups and callouts in neutral terms rather than the second person; for example, "Included" and "Not included" rather than "You get" and "You don't get" (see `doc-style.md` on second-person framing).
+- Keep language-neutral guidance free of any single language's vocabulary. When advice applies across languages, name the general concept, such as a background thread or process, rather than a single language's primitive such as a goroutine.
 
 ## Give the page a throughline
 
@@ -45,9 +51,9 @@ Calibrate the level of detail to the page's purpose and its reader. The depth th
 
 The spec under `spec/` is the source of truth for platform behavior (see `spec-driven-development.md`).
 
-- Before documenting how something works (a protocol, a default, a capability, an error path), confirm it against the relevant spec section. Do not infer behavior from the name of a flag, the structure of an example, or what would be convenient to write.
+- Before documenting how something works (such as a protocol, a default, a capability, or an error path), confirm it against the relevant spec section. Do not infer behavior from the name of a flag, the structure of an example, or what would be convenient to write.
 - When the spec and an existing doc disagree, the spec is right and the doc is the defect. When the spec is silent on something a reader needs, that is a spec gap. Raise it through the proposal pipeline rather than inventing an answer in the documentation.
-- Reader-facing documentation must stand on its own for a reader who does not have the spec. Do not cite spec section numbers (`§4.7`) in published prose; section numbers are internal and shift. State the behavior and link to the relevant documentation page. The `// spec:` citations defined in `code-best-practices.md` belong in code rather than in published documentation.
+- Reader-facing documentation must stand on its own for a reader who does not have the spec. Do not cite spec section numbers (such as `§4.7`) in published prose; section numbers are internal and shift. State the behavior and link to the relevant documentation page. The `// spec:` citations defined in `code-best-practices.md` belong in code rather than in published documentation.
 
 ## State the recommended path and mark alternatives
 
@@ -56,8 +62,9 @@ The spec under `spec/` is the source of truth for platform behavior (see `spec-d
 
 ## Comparison tables
 
-- A table that compares options (modes, levels, commands, backends) states, for each option, what it is or runs, what it gives the reader, and its limitations or when to use it. A table that lists only names with one-line descriptions does not let a reader choose.
+- A table that compares options (such as modes, levels, commands, or backends) states, for each option, what it is or runs, what it gives the reader, and its limitations or when to use it. A table that lists only names with one-line descriptions does not let a reader choose.
 - Do not organize a comparison around an incidental axis (the host operating system, for example) when the real axis is a platform concept such as an integration level or a deployment mode. Put an incidental caveat in the row it affects, rather than in the structure of the table.
+- Label columns and row keys with concise, parallel noun phrases rather than conversational sentences; for example, "Runtime" and "From scratch" rather than "If you're building a net-new agent".
 
 ## Keep a page internally consistent
 
@@ -66,7 +73,7 @@ The spec under `spec/` is the source of truth for platform behavior (see `spec-d
 
 ## Cover the page's whole subject
 
-- A page that introduces a category covers its full scope, rather than the common case alone. When a category has more than one member (the runtime types, the credential sources, the isolation profiles), name each member, even when the page then focuses on the common one.
+- A page that introduces a category covers its full scope, rather than the common case alone. When a category has more than one member (such as the runtime types, the credential sources, or the isolation profiles), name each member, even when the page then focuses on the common one.
 - Do not describe the default case as though it were the only case. State the default, then note where the other cases are documented.
 
 ## Do not anchor prose to transient output
@@ -75,7 +82,7 @@ The spec under `spec/` is the source of truth for platform behavior (see `spec-d
 
 ## Counts and enumerations
 
-Avoid stating a count of things the platform provides (`the nine built-in runtimes`, `the four reference wrappers`). Counts go stale when the set changes, and the list beside the count already carries the information. Remove the count and name the set. This repeats a `doc-style.md` rule because stale counts surface in review as a content defect, beyond their stylistic cost.
+Avoid stating a count of things the platform provides (such as `the nine built-in runtimes` or `the four reference wrappers`). Counts go stale when the set changes, and the list beside the count already carries the information. Remove the count and name the set. This repeats a `doc-style.md` rule because stale counts surface in review as a content defect, beyond their stylistic cost.
 
 ## Place reference material in Reference
 

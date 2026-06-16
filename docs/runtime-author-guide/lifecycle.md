@@ -267,7 +267,7 @@ At the Basic and Standard levels, interrupt is SIGTERM-based --- there is no cle
 
 ## Credential Rotation
 
-When a provider credential is rate-limited, expires, or is revoked, the platform rotates it. The behavior depends on your integration level:
+When a provider credential is rate-limited, expires, or is revoked, the platform rotates it. Whether this force-restarts your runtime mid-session depends on your integration level: at the Full level rotation happens in place with no restart, while at the Standard and Basic levels a credential change terminates the pod and starts a replacement, which is a restart. Standard preserves context through a best-effort checkpoint; Basic loses in-flight context because it has no checkpoint.
 
 | Level | Method | Session Impact |
 |------|--------|----------------|

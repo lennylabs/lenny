@@ -77,7 +77,7 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
 
 1. **Read the manifest** the sidecar writes to `/run/lenny/adapter-manifest.json` at startup. Extract `platformMcpServer.socket`, `connectorServers`, and `mcpNonce`.
 2. **Connect to the platform tool server** over the Unix socket named in the manifest. Present the `mcpNonce` in the MCP `initialize` handshake.
-3. **Optionally connect to connector tool servers** -- one per connector the operator has authorized for your tenant.
+3. **Optionally connect to connector tool servers** -- one per connector the operator has authorized for your tenant. A connector is an external MCP server registered with Lenny; the gateway proxies its tools into your pod, scoped by the session's DelegationPolicy. This is how an agent runtime reaches external MCP tools. A `type: mcp` runtime's tools are not reachable this way; an agent cannot call them in v1 (see [`type: mcp` runtimes](#type-mcp-runtimes)).
 4. **Use the platform tools** for delegation, streaming output, asking the user questions, memory, and messaging.
 
 ### About the connection
@@ -113,7 +113,7 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
 | `lenny/memory_write` | Write to the persistent memory store |
 | `lenny/memory_query` | Query the memory store |
 | `lenny/request_input` | Block until the user answers |
-| `lenny/send_message` | Send a message to any task by task ID |
+| `lenny/send_message` | Send a point-to-point message to another session by ID (same-tenant only, scoped by `messagingScope`); the target receives it through its gateway-managed inbox. There is no broadcast. See [Platform Tools](platform-tools.md). |
 | `lenny/get_task_tree` | Get the task hierarchy with current states |
 | `lenny/set_tracing_context` | Register tracing identifiers the gateway propagates to child tasks, so delegated spans link back to the parent's trace |
 
@@ -220,10 +220,10 @@ When an LLM provider rate-limits or revokes a credential, Lenny rotates it. What
 | Level | How rotation happens | What the session sees |
 |-------|---------------------|----------------------|
 | Full | The platform sends `credentials_rotated` on the lifecycle channel; your runtime rebinds in place. | Nothing -- the session keeps running. |
-| Standard | The platform checkpoints, terminates the pod, allocates a new one, assigns new credentials, and resumes. | A brief pause; the client sees a reconnect. |
-| Basic | The platform terminates the pod, allocates a new one, assigns new credentials, and restarts the session. There is no checkpoint at this level, so any in-flight context is lost. | A pause, and the loss of in-flight context. |
+| Standard | The platform checkpoints, terminates the pod, allocates a new one, assigns new credentials, and resumes. This is a force restart; context is preserved by the best-effort checkpoint. | A brief pause; the client sees a reconnect. |
+| Basic | The platform terminates the pod, allocates a new one, assigns new credentials, and restarts the session. This is a force restart; there is no checkpoint at this level, so any in-flight context is lost. | A pause, and the loss of in-flight context. |
 
-The platform picks the right strategy automatically -- based on the capabilities you declared in `lifecycle_support`, or the absence of a lifecycle channel.
+So at Full level your runtime is never force-restarted for a credential change, while at Standard and Basic a credential change always restarts the pod. The platform picks the strategy automatically, based on the capabilities you declared in `lifecycle_support` or the absence of a lifecycle channel. The [Credential Rotation section of Pod Lifecycle](lifecycle.md#credential-rotation) covers the same behavior in the context of the pod state machine.
 
 ---
 
@@ -235,7 +235,9 @@ A `type: mcp` runtime hosts an MCP server behind Lenny's infrastructure. You get
 
 Your server just needs to speak MCP. It doesn't receive `message`, `heartbeat`, or `shutdown` -- Lenny manages the pod lifecycle from the outside.
 
-Each `type: mcp` runtime gets its own endpoint on the gateway at `/mcp/runtimes/{runtime-name}`. Clients connect directly over standard MCP; Lenny creates a session record per connection for audit and billing.
+Each `type: mcp` runtime gets its own endpoint on the gateway at `/mcp/runtimes/{runtime-name}`. External MCP clients connect directly over standard MCP; Lenny creates a session record per connection for audit and billing.
+
+In v1, an agent runtime cannot invoke a `type: mcp` runtime's tools from inside its pod. The adapter-manifest slot that would proxy them (`runtimeMcpServers`) is reserved and empty in v1, so a `type: mcp` runtime is reachable only by external MCP clients at `/mcp/runtimes/{runtime-name}`. For an agent runtime to reach external MCP tools, register the MCP server as a connector instead; connectors are proxied into the pod and scoped by the session's DelegationPolicy (see the Connector tool servers note under Standard above).
 
 How it differs from `type: agent`:
 
