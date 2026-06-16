@@ -1093,6 +1093,12 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
+	// A reject pool never enters the per-pool claim FIFO, so the §16.1
+	// lenny_pod_claim_queue_depth gauge is never published. Counting the gauge
+	// emissions is the deterministic signal that the request did not queue; a
+	// wall-clock elapsed bound flakes when a saturated -race run delays the
+	// single bind attempt past any fixed threshold.
+	var enqueued int32
 	// No Pools store wired: the disposition is empty, which defaults to reject.
 	srv := sessionserver.New(store, sessionserver.Options{
 		IDFunc:                  func() string { return "sess-reject" },
@@ -1101,6 +1107,7 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 		PodRegistry:             registry,
 		AgentNamespace:          podTestNS,
 		QueuePollInterval:       20 * time.Millisecond,
+		SetPodClaimQueueDepth:   func(string, int) { atomic.AddInt32(&enqueued, 1) },
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
@@ -1108,17 +1115,15 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 
-	start := time.Now()
 	srv.Handler().ServeHTTP(rr, req)
-	elapsed := time.Since(start)
 
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("reject pool: status = %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
-	// A reject pool must not wait; the response is prompt (well under any
-	// queue wait bound).
-	if elapsed > 500*time.Millisecond {
-		t.Errorf("reject pool returned after %s, want a prompt failure (no queueing)", elapsed)
+	// A reject pool returns on the first exhaustion without holding the request
+	// in the claim FIFO, so the queue-depth gauge is never touched.
+	if got := atomic.LoadInt32(&enqueued); got != 0 {
+		t.Errorf("reject pool published the claim-queue depth gauge %d times, want 0 (no queueing)", got)
 	}
 }
 
