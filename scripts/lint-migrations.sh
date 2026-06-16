@@ -131,11 +131,11 @@ done < <(find "${MIGRATIONS_DIR}" -type f -name '*.up.sql' | sort)
 # matter, then counts bare vs guarded DROP COLUMN clauses.
 while IFS= read -r up; do
     norm="$(sed -E 's/--.*$//' "${up}" | tr '\n' ' ' | tr '[:upper:]' '[:lower:]')"
-    total_drops="$(grep -oE 'drop[[:space:]]+column' <<<"${norm}" | wc -l | tr -d ' ')"
+    total_drops="$(grep -oE 'drop[[:space:]]+column' <<<"${norm}" | wc -l | tr -d ' ')" || total_drops=0
     if [[ "${total_drops}" == "0" ]]; then
         continue # not a Phase 3 migration
     fi
-    guarded_drops="$(grep -oE 'drop[[:space:]]+column[[:space:]]+if[[:space:]]+exists' <<<"${norm}" | wc -l | tr -d ' ')"
+    guarded_drops="$(grep -oE 'drop[[:space:]]+column[[:space:]]+if[[:space:]]+exists' <<<"${norm}" | wc -l | tr -d ' ')" || guarded_drops=0
     if (( total_drops > guarded_drops )); then
         report "§10.5 line 430: ${up} drops a column without IF EXISTS (Phase 3 DROP COLUMN is not idempotent; a re-run fails). Use DROP COLUMN IF EXISTS."
     fi
