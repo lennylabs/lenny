@@ -13,12 +13,14 @@ import (
 )
 
 // outFrame is the subset of an outbound JSONL frame the echo-concurrent
-// tests assert on: the discriminator, the slot fields the front loop
-// stamps, and the echoed text parts.
+// tests assert on: the discriminator, the slotId the front loop stamps,
+// and the echoed text parts. The §15.4.1 outbound schema carries slotId
+// alone for concurrent multiplexing, so the tests assert on slotId and
+// never on a cwd wire field (the per-slot cwd is an internal derivation
+// covered by TestSlotCwdDerivation).
 type outFrame struct {
 	Type   string `json:"type"`
 	SlotID string `json:"slotId"`
-	Cwd    string `json:"cwd"`
 	Output []struct {
 		Inline string `json:"inline"`
 	} `json:"output"`
@@ -70,9 +72,11 @@ func message(slotID, text string) string {
 
 // TestDemultiplexesTwoSlotsWithIsolatedSequences asserts the front loop
 // routes frames to per-slot echocore loops keyed on slotId, each with its
-// own sequence counter, and stamps the originating slotId and the derived
-// per-slot cwd onto every response. This is the core §15.4.1 dispatch
-// loop the concurrent-workspace pod depends on.
+// own sequence counter, and stamps the originating slotId onto every
+// response. This is the core §15.4.1 dispatch loop the concurrent-workspace
+// pod depends on. slotId is the only field the §15.4.1 outbound schema tags
+// for concurrent multiplexing; the per-slot cwd derivation is asserted
+// directly in TestSlotCwdDerivation rather than read off the wire.
 // spec: §5.2 line 509 (slotId multiplexing, dispatch loop keyed on slotId),
 // §15.4.1 line 1459 (single stdin channel), §6.4 line 384 (per-slot cwd).
 func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
@@ -95,16 +99,16 @@ func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
 		t.Fatalf("slot-02 got %d responses, want 1: %+v", len(bySlot["slot-02"]), bySlot["slot-02"])
 	}
 
-	// Per-slot cwd derivation (§6.4 line 384): each response carries the
-	// slot-derived cwd, never the global /workspace/current.
-	for _, f := range bySlot["slot-01"] {
-		if f.Cwd != "/workspace/slots/slot-01/current/" {
-			t.Errorf("slot-01 response cwd = %q, want the per-slot path", f.Cwd)
+	// Per-slot cwd derivation (§6.4 line 384) is an internal filesystem
+	// derivation the runtime never emits on the wire; it is asserted
+	// directly in TestSlotCwdDerivation. Here, confirm the dispatch tagged
+	// each response with the slot whose cwd the runtime derives.
+	for slotID := range bySlot {
+		if slotID == "" {
+			continue
 		}
-	}
-	for _, f := range bySlot["slot-02"] {
-		if f.Cwd != "/workspace/slots/slot-02/current/" {
-			t.Errorf("slot-02 response cwd = %q, want the per-slot path", f.Cwd)
+		if want := slotCwd(slotID); want != "/workspace/slots/"+slotID+"/current/" {
+			t.Errorf("slot %q cwd = %q, want the per-slot path", slotID, want)
 		}
 	}
 
@@ -123,9 +127,9 @@ func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
 }
 
 // TestNoSlotIDFrameServesWholePodSession asserts a frame without a slotId
-// takes the single-session whole-pod path: the response carries no slotId
-// and no per-slot cwd, so echo-concurrent also serves a
-// maxConcurrentSessions: 1 pod, where runtimes never see slotId.
+// takes the single-session whole-pod path: the response carries no slotId,
+// so echo-concurrent also serves a maxConcurrentSessions: 1 pod, where
+// runtimes never see slotId.
 // spec: §15.4.1 line 1459 (maxConcurrentSessions: 1 pods never carry slotId).
 func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
 	frames := responsesOnly(drive(t, message("", "solo")))
@@ -135,9 +139,6 @@ func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
 	if frames[0].SlotID != "" {
 		t.Errorf("whole-pod response slotId = %q, want empty (no slotId on a single-session pod)", frames[0].SlotID)
 	}
-	if frames[0].Cwd != "" {
-		t.Errorf("whole-pod response carried cwd %q, want none on the single-session path", frames[0].Cwd)
-	}
 	if got := inline(frames[0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "solo") {
 		t.Errorf("whole-pod response = %q, want a seq=1 echo of solo", got)
 	}
@@ -145,8 +146,8 @@ func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
 
 // TestHeartbeatAckIsNotSlotStamped asserts a per-slot heartbeat is
 // answered with a heartbeat_ack carrying no content payload: the front
-// loop does not stamp slotId or cwd onto the protocol-level ack, matching
-// the §15.4.1 heartbeat_ack schema.
+// loop does not stamp slotId onto the protocol-level ack, matching the
+// §15.4.1 heartbeat_ack schema.
 // spec: §15.4.1 line 1453 (heartbeat_ack is protocol-level, no payload).
 func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 	in := `{"type":"heartbeat","ts":1,"slotId":"slot-01"}` + "\n"
@@ -157,8 +158,8 @@ func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 			continue
 		}
 		acks++
-		if f.SlotID != "" || f.Cwd != "" {
-			t.Errorf("heartbeat_ack carried slot fields slotId=%q cwd=%q, want none", f.SlotID, f.Cwd)
+		if f.SlotID != "" {
+			t.Errorf("heartbeat_ack carried slotId=%q, want none", f.SlotID)
 		}
 	}
 	if acks != 1 {
@@ -261,7 +262,7 @@ func TestProtocolErrorMessage(t *testing.T) {
 // a non-object outbound frame verbatim, so a future non-object frame on a
 // slot is not dropped or corrupted by the stamping path.
 func TestStampLeavesNonObjectFrameUnchanged(t *testing.T) {
-	s := &slotWriter{slotID: "slot-01", cwd: slotCwd("slot-01")}
+	s := &slotWriter{slotID: "slot-01"}
 	got, err := s.stamp([]byte("[]"))
 	if err != nil {
 		t.Fatalf("stamp non-object frame: %v", err)

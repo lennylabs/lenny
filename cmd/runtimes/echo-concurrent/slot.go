@@ -20,7 +20,6 @@ import (
 // the slot's slotId by slotWriter before they reach the shared transport.
 type slotWorker struct {
 	slotID string
-	cwd    string
 
 	pw        *io.PipeWriter
 	done      chan struct{}
@@ -28,9 +27,16 @@ type slotWorker struct {
 }
 
 // newSlotWorker starts the slot's echocore loop. slotID "" is the
-// whole-pod default session: its cwd is the global /workspace/current and
-// its outbound frames carry no slotId, so echo-concurrent serves a
-// maxConcurrentSessions: 1 pod through the same loop.
+// whole-pod default session: its outbound frames carry no slotId, so
+// echo-concurrent serves a maxConcurrentSessions: 1 pod through the same
+// loop.
+//
+// The slot's cwd is derived from slotId via slotCwd
+// (/workspace/slots/{slotId}/current/ per spec §6.4 line 384). It is an
+// internal filesystem derivation the runtime would use for per-slot file
+// operations; an echo runtime performs none, so the derivation is not
+// plumbed onto the wire. The §15.4.1 outbound frame schema carries slotId
+// alone for concurrent multiplexing, never cwd.
 //
 // spec: §6.4 line 384 — per-slot cwd /workspace/slots/{slotId}/current/;
 // the runtime MUST NOT assume a global /workspace/current when
@@ -39,17 +45,24 @@ func newSlotWorker(ctx context.Context, slotID string, d *demux, stderr io.Write
 	pr, pw := io.Pipe()
 	w := &slotWorker{
 		slotID: slotID,
-		cwd:    slotCwd(slotID),
 		pw:     pw,
 		done:   make(chan struct{}),
 	}
+	// Derive the slot's cwd up front (spec §6.4 line 384). An echo runtime
+	// performs no file operations, so the derivation only surfaces as a
+	// diagnostic line on stderr; a runtime that read or wrote the workspace
+	// would root every per-slot file operation at this path instead of the
+	// global /workspace/current.
+	if slotID != "" {
+		fmt.Fprintf(stderr, "echo-concurrent: slot %q cwd %s\n", slotID, slotCwd(slotID))
+	}
 	go func() {
 		defer close(w.done)
-		// slotWriter stamps the slotId and the derived cwd onto every
-		// outbound frame echocore produces and forwards it to the shared
-		// transport. echocore is driven unmodified; the slotId multiplexing
-		// lives entirely in the front loop and this writer.
-		sw := &slotWriter{slotID: slotID, cwd: w.cwd, out: d}
+		// slotWriter stamps the slotId onto every outbound frame echocore
+		// produces and forwards it to the shared transport. echocore is
+		// driven unmodified; the slotId multiplexing lives entirely in the
+		// front loop and this writer.
+		sw := &slotWriter{slotID: slotID, out: d}
 		err := echocore.Run(ctx, pr, sw, stderr)
 		if err != nil {
 			d.recordErr(fmt.Errorf("slot %q: %w", slotID, err))
@@ -98,12 +111,11 @@ func slotCwd(slotID string) string {
 // every outbound JSONL frame echocore emits for a non-empty slot. echocore
 // writes one JSON object per Write call (its json.Encoder.Encode), so
 // slotWriter parses the object, injects slotId, and forwards the
-// re-encoded frame. On a `response` frame it also records the slot's
-// derived cwd, the observable signal that the runtime materialized the
-// per-slot path. The empty default session forwards frames unchanged.
+// re-encoded frame. slotId is the only field the §15.4.1 outbound schema
+// tags for concurrent multiplexing, so it is the only field stamped. The
+// empty default session forwards frames unchanged.
 type slotWriter struct {
 	slotID string
-	cwd    string
 	out    *demux
 }
 
@@ -129,16 +141,16 @@ func (s *slotWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// stamp injects the slot fields into a single outbound JSONL frame. It
-// decodes the object, sets slotId on every frame the §15.4.1 wire schema
-// tags with it (response, tool_call), records the derived cwd on a
-// `response` frame, and re-encodes. A `heartbeat_ack` carries no content
-// payload per the schema and is forwarded unchanged. A frame that is not
-// a JSON object is forwarded unchanged so a future non-object frame is
-// not dropped.
+// stamp injects the slotId into a single outbound JSONL frame. It decodes
+// the object, sets slotId on every frame the §15.4.1 wire schema tags with
+// it (response, tool_call), and re-encodes. A `heartbeat_ack` carries no
+// content payload per the schema and is forwarded unchanged. A frame that
+// is not a JSON object is forwarded unchanged so a future non-object frame
+// is not dropped. slotId is the only field the schema adds for concurrent
+// multiplexing; the per-slot cwd is an internal derivation (slotCwd) the
+// runtime never emits on the wire.
 //
-// spec: §15.4.1 line 1451-1452 (slotId on response/tool_call), §6.4 line
-// 384 (per-slot cwd derivation).
+// spec: §15.4.1 line 1451-1452 (slotId on response/tool_call).
 func (s *slotWriter) stamp(frame []byte) ([]byte, error) {
 	trimmed := bytes.TrimSpace(frame)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
@@ -161,13 +173,6 @@ func (s *slotWriter) stamp(frame []byte) ([]byte, error) {
 		return nil, fmt.Errorf("stamp slot fields: encode slotId: %w", err)
 	}
 	obj["slotId"] = id
-	if typ == "response" {
-		cwd, err := json.Marshal(s.cwd)
-		if err != nil {
-			return nil, fmt.Errorf("stamp slot fields: encode cwd: %w", err)
-		}
-		obj["cwd"] = cwd
-	}
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return nil, fmt.Errorf("stamp slot fields: re-encode outbound frame: %w", err)
