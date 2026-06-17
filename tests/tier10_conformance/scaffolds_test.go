@@ -69,6 +69,7 @@ type builtArtifacts struct {
 	echo           string
 	streamingEcho  string
 	delegationEcho string
+	echoConcurrent string
 }
 
 var (
@@ -111,6 +112,7 @@ func buildArtifacts(t *testing.T) *builtArtifacts {
 		a.echo = build("echo", "./cmd/runtimes/echo")
 		a.streamingEcho = build("streaming-echo", "./cmd/runtimes/streaming-echo")
 		a.delegationEcho = build("delegation-echo", "./cmd/runtimes/delegation-echo")
+		a.echoConcurrent = build("echo-concurrent", "./cmd/runtimes/echo-concurrent")
 		if artifactsErr != nil {
 			os.RemoveAll(dir)
 			return
