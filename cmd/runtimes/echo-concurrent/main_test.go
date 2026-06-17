@@ -10,6 +10,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 )
 
 // outFrame is the subset of an outbound JSONL frame the echo-concurrent
@@ -246,6 +248,15 @@ func TestPerSlotProtocolErrorFailsTheRuntime(t *testing.T) {
 	if !strings.Contains(err.Error(), "slot-01") {
 		t.Errorf("error %q must name the offending slot", err.Error())
 	}
+	// The per-slot ProtocolError must surface as the package-local
+	// protocolError so the entrypoint maps it to the §15.4 protocol-error
+	// exit code (2). Asserting errors.As here pins the exit-code-2 contract:
+	// a chain that wrapped only echocore.ProtocolError would fail this match
+	// and the runtime would exit with the runtime-error code (1) instead.
+	var pe protocolError
+	if !errors.As(err, &pe) {
+		t.Errorf("error %T must convert to protocolError so the entrypoint exits with code 2", err)
+	}
 }
 
 // TestProtocolErrorMessage asserts the front-loop protocolError renders
@@ -294,6 +305,36 @@ func TestWriteFrameSurfacesTransportError(t *testing.T) {
 	d := newDemux(context.Background(), errWriter{}, io.Discard)
 	if err := d.writeFrame([]byte(`{"type":"response"}`)); err == nil {
 		t.Fatal("a transport write error must surface from writeFrame")
+	}
+}
+
+// TestSlotErrorMapsExitCodes asserts slotError routes a per-slot failure to
+// the right §15.4 exit code: a per-slot echocore.ProtocolError converts to
+// the package-local protocolError (exit code 2) while any other per-slot
+// failure keeps a plain wrapped chain (exit code 1). The entrypoint selects
+// the exit code with errors.As(err, &protocolError{}), so both branches are
+// pinned through that match. Failing closed on a malformed slot frame keeps
+// a single slot from wedging a concurrent pod.
+// spec: §15.4 (protocol-error exit code 2 vs runtime-error exit code 1).
+func TestSlotErrorMapsExitCodes(t *testing.T) {
+	protoErr := slotError("slot-01", echocore.ProtocolError{Msg: "bad body"})
+	var pe protocolError
+	if !errors.As(protoErr, &pe) {
+		t.Errorf("a per-slot ProtocolError must convert to protocolError (exit code 2), got %T", protoErr)
+	}
+	if !strings.Contains(protoErr.Error(), "slot-01") {
+		t.Errorf("error %q must name the offending slot", protoErr.Error())
+	}
+
+	runErr := slotError("slot-02", io.ErrClosedPipe)
+	if errors.As(runErr, &pe) {
+		t.Error("a non-protocol per-slot failure must not convert to protocolError; it maps to exit code 1")
+	}
+	if !errors.Is(runErr, io.ErrClosedPipe) {
+		t.Errorf("a non-protocol per-slot failure must preserve its wrapped chain, got %v", runErr)
+	}
+	if !strings.Contains(runErr.Error(), "slot-02") {
+		t.Errorf("error %q must name the offending slot", runErr.Error())
 	}
 }
 

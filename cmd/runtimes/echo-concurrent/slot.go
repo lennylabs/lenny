@@ -6,12 +6,31 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 )
+
+// slotError wraps a per-slot echocore failure with the slot it came from.
+// A per-slot echocore.ProtocolError (a malformed inbound body on the slot)
+// is re-wrapped as the package-local protocolError so the entrypoint's
+// errors.As(err, &protocolError{}) match succeeds and the runtime exits
+// with the §15.4 protocol-error code (2) rather than the runtime-error
+// code (1). Any other failure keeps the wrapped chain and maps to the
+// runtime-error code. Failing closed on a malformed slot frame prevents a
+// single slot from wedging a concurrent pod.
+//
+// spec: §15.4 — protocol-error exit code 2 for malformed inbound JSONL.
+func slotError(slotID string, err error) error {
+	var pe echocore.ProtocolError
+	if errors.As(err, &pe) {
+		return protocolError{msg: fmt.Sprintf("slot %q: %v", slotID, err)}
+	}
+	return fmt.Errorf("slot %q: %w", slotID, err)
+}
 
 // slotWorker runs one slot's §15.4.1 echo loop. It feeds inbound frames
 // to an independent echocore.Run over a pipe, so each slot keeps its own
@@ -65,7 +84,7 @@ func newSlotWorker(ctx context.Context, slotID string, d *demux, stderr io.Write
 		sw := &slotWriter{slotID: slotID, out: d}
 		err := echocore.Run(ctx, pr, sw, stderr)
 		if err != nil {
-			d.recordErr(fmt.Errorf("slot %q: %w", slotID, err))
+			d.recordErr(slotError(slotID, err))
 		}
 		// Drain any unread inbound frames so a writer blocked on the pipe
 		// after the loop exits (shutdown, protocol error) does not deadlock.
