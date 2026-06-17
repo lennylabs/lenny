@@ -7,7 +7,7 @@ nav_order: 5
 
 # Pod Lifecycle
 
-This page covers the lifecycle of a Lenny agent pod, from pre-warming through session execution to termination. The states described here apply to `type: agent` runtimes, which hold a workspace and run a session or task. `type: mcp` runtimes have no session or task lifecycle and follow a different model; see [Integration Levels](integration-levels.md#type-mcp-runtimes). Understanding these states helps you write a runtime that handles startup, checkpointing, interrupts, and shutdown correctly.
+This page covers the lifecycle of a Lenny agent pod, from pre-warming through session execution to termination. The states described here apply to `type: agent` runtimes, which hold a workspace and run a session. `type: mcp` runtimes have no session lifecycle and follow a different model; see [Integration Levels](integration-levels.md#type-mcp-runtimes). Understanding these states helps you write a runtime that handles startup, checkpointing, interrupts, and shutdown correctly.
 
 Several capabilities on this page depend on the runtime's integration level. Basic, Standard, and Full are defined in [Integration Levels](integration-levels.md); each section notes which level it requires.
 

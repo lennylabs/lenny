@@ -98,7 +98,7 @@ The `capabilities` group declares what interaction patterns and platform feature
 | `capabilityInferenceMode` | The default tool capability for unannotated MCP tools. | `strict` (default; unannotated tools infer as `admin` and emit a warning) or `permissive` (unannotated tools infer as `write`). | author | Override. A derived runtime may relax to `permissive`. |
 | `sessionPolicy` | The pod-occupancy configuration for `session` mode: concurrency, recycling, retirement, scrub, and idle bounds. See [Execution mode](#execution-mode) below. | Object; applies only to `executionMode: session`. | author | Override. The whole object is replaced when the derived runtime sets it. |
 
-Setup commands run once per pod after workspace materialization and before the runtime starts, while the pod is in its init state. Per-session setup belongs in the runtime's own initialization rather than in setup commands. `sessionPolicy` carries the reuse policy for session mode; the older per-task reuse policy is described under [Execution mode](#execution-mode).
+Setup commands run once per pod after workspace materialization and before the runtime starts, while the pod is in its init state. Per-session setup belongs in the runtime's own initialization rather than in setup commands. `sessionPolicy` carries the pod-reuse policy for session mode, described under [Execution mode](#execution-mode).
 
 ### Workspace and pool defaults
 

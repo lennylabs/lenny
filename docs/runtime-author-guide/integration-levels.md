@@ -59,7 +59,6 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 - No clean interrupt handling -- you only get SIGTERM.
 - No cooperative checkpointing -- a pod failure loses everything in flight.
 - No advance deadline warnings -- you just get `shutdown` when time's up.
-- No pod reuse across tasks.
 
 ### What happens if the pod dies
 

@@ -210,9 +210,9 @@ Read everything above, then:
 
 ### To support checkpoints, clean interrupts, and credential rotation (Full level)
 
-Full integration is the lifecycle channel and the handlers it carries. [Pod Lifecycle](lifecycle.md) walks through each one, with the message formats inline; read its Checkpointing, Interrupt and Suspend, Credential Rotation, Deadline Signals, and Task-Mode Pod Reuse sections, each of which is marked Full level. Read everything above, then:
+Full integration is the lifecycle channel and the handlers it carries. [Pod Lifecycle](lifecycle.md) walks through each one, with the message formats inline; read its Checkpointing, Interrupt and Suspend, Credential Rotation, and Deadline Signals sections, each of which is marked Full level. Read everything above, then:
 
-10. [Pod Lifecycle](lifecycle.md) -- the checkpoint, interrupt/suspend, credential-rotation, deadline-signal, and pod-reuse handshakes you implement at this level.
+10. [Pod Lifecycle](lifecycle.md) -- the checkpoint, interrupt/suspend, credential-rotation, and deadline-signal handshakes you implement at this level.
 11. [Runtime Configuration](runtime-configuration.md) -- the manifest fields and pool settings that enable these capabilities.
 12. [Platform Tools](platform-tools.md) -- the tools your lifecycle handlers call while quiescing, flushing, or wrapping up.
 
