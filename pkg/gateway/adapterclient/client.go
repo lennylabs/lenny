@@ -379,12 +379,20 @@ func (c *Client) runSetup(ctx context.Context, sessionID, slotID string, setupCo
 }
 
 // SendMessage forwards a pre-encoded §15.4.1 message envelope to the
-// pod's runtime.
-func (c *Client) SendMessage(ctx context.Context, sessionID string, envelope []byte) error {
-	_, err := c.rpc.SendMessage(ctx, &adapterv1.SendMessageRequest{
+// pod's runtime. slotID stamps the §6.4 slot the gateway resolved for
+// the session onto the request so the reconciled adapter routes the
+// envelope to that slot's runtime stream; an empty slotID (the exclusive
+// session-mode bind) tags none. spec: §7.2 (per-slot routing), §15.4.1
+// (slotId multiplexing).
+func (c *Client) SendMessage(ctx context.Context, sessionID, slotID string, envelope []byte) error {
+	req := &adapterv1.SendMessageRequest{
 		SessionId:    &adapterv1.SessionId{Value: sessionID},
 		EnvelopeJson: envelope,
-	})
+	}
+	if slotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: slotID}
+	}
+	_, err := c.rpc.SendMessage(ctx, req)
 	return err
 }
 
@@ -701,34 +709,52 @@ func (c *Client) ReportUsageForLease(ctx context.Context, sessionID string, deli
 
 // AttachStream is a live §4.7 bidirectional content stream to a pod's
 // adapter. Send forwards a client-to-agent envelope; Recv returns the
-// next agent-to-gateway envelope.
+// next agent-to-gateway envelope. A concurrent-pool stream carries the
+// adapter-assigned §6.4 slotId so the reconciled adapter and the
+// runtime's dispatch loop key on it; an exclusive session-mode stream
+// leaves it empty.
 type AttachStream struct {
 	stream    grpc.BidiStreamingClient[adapterv1.AttachRequest, adapterv1.AttachResponse]
 	sessionID string
+	slotID    string
 }
 
 // Attach opens the §4.7 content stream for sessionID and binds it with
 // an envelope-free first message, so the returned stream is ready to
-// carry content. The caller closes the stream by cancelling ctx.
-func (c *Client) Attach(ctx context.Context, sessionID string) (*AttachStream, error) {
+// carry content. slotID stamps the §6.4 slot the gateway resolved for
+// the session onto the binding frame and every subsequent Send frame;
+// an empty slotID (the exclusive session-mode bind) emits no slotId so
+// a single-session pod's runtime never sees one. The caller closes the
+// stream by cancelling ctx. spec: §7.2 (per-slot routing), §15.4.1
+// (slotId multiplexing).
+func (c *Client) Attach(ctx context.Context, sessionID, slotID string) (*AttachStream, error) {
 	stream, err := c.rpc.Attach(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("adapterclient: open attach stream: %w", err)
 	}
-	if err := stream.Send(&adapterv1.AttachRequest{
+	req := &adapterv1.AttachRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
-	}); err != nil {
+	}
+	if slotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: slotID}
+	}
+	if err := stream.Send(req); err != nil {
 		return nil, fmt.Errorf("adapterclient: bind attach stream: %w", err)
 	}
-	return &AttachStream{stream: stream, sessionID: sessionID}, nil
+	return &AttachStream{stream: stream, sessionID: sessionID, slotID: slotID}, nil
 }
 
-// Send forwards a §15.4.1 client-to-agent envelope to the agent.
+// Send forwards a §15.4.1 client-to-agent envelope to the agent. A
+// concurrent-pool stream stamps the resolved slotId on the frame.
 func (a *AttachStream) Send(envelope []byte) error {
-	return a.stream.Send(&adapterv1.AttachRequest{
+	req := &adapterv1.AttachRequest{
 		SessionId:    &adapterv1.SessionId{Value: a.sessionID},
 		EnvelopeJson: envelope,
-	})
+	}
+	if a.slotID != "" {
+		req.SlotId = &adapterv1.SlotId{Value: a.slotID}
+	}
+	return a.stream.Send(req)
 }
 
 // Recv returns the next §15.4.1 agent-to-gateway envelope. It returns

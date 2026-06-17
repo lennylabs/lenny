@@ -69,10 +69,16 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 	}
 	// The §7.2 KindToolUse interaction the approval gate records is keyed
 	// on the session's tenant; capture it from the live binding once so
-	// each approval-required frame on this Send carries it.
-	var tenantID string
+	// each approval-required frame on this Send carries it. The same live
+	// bind carries the §6.4 slot the gateway resolved for the session: a
+	// concurrent-pool bind (SlotID != "") stamps the slotId on every
+	// outbound envelope so the reconciled adapter and runtime key on it,
+	// while an exclusive session-mode bind leaves it empty. spec: §7.2
+	// (per-slot routing), §15.4.1 (slotId multiplexing).
+	var tenantID, slotID string
 	if bind, ok := e.registry.Get(sessionID); ok {
 		tenantID = bind.TenantID
+		slotID = bind.SlotID
 	}
 	var out []OutputPart
 	var envAnn map[string]any
@@ -83,6 +89,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 			ID:            newMessageID(),
 			From:          resolveFromBlock(m),
 			Input:         []wireOutputPart{{Type: "text", Inline: m.Content}},
+			SlotID:        slotID,
 		}
 		line, err := json.Marshal(env)
 		if err != nil {
@@ -114,7 +121,12 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 	if !ok {
 		return nil, fmt.Errorf("podexec: session %s is not bound to a pod", sessionID)
 	}
-	s, err := bind.Adapter.Attach(ctx, sessionID)
+	// A concurrent-pool bind (SlotID != "") carries the adapter-assigned slot
+	// onto the Attach stream so the reconciled adapter and the runtime's
+	// dispatch loop key on it; an exclusive session-mode bind leaves it empty
+	// and the single-session path emits no slotId. spec: §7.2 (per-slot
+	// routing), §15.4.1 (slotId multiplexing).
+	s, err := bind.Adapter.Attach(ctx, sessionID, bind.SlotID)
 	if err != nil {
 		return nil, fmt.Errorf("podexec: open attach stream: %w", err)
 	}

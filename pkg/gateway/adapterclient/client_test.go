@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -427,7 +428,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 
 	envelope := []byte(`{"type":"user","content":"hello"}`)
-	if err := cl.SendMessage(ctx, "sess-x", envelope); err != nil {
+	if err := cl.SendMessage(ctx, "sess-x", "", envelope); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	if len(rt.envelopes) != 1 || string(rt.envelopes[0]) != string(envelope) {
@@ -476,7 +477,7 @@ func TestSendMessageRejectsAnUnassignedSession(t *testing.T) {
 	cl := dialAdapter(t, srv)
 
 	// No StartSession ran, so the pod holds no session.
-	err := cl.SendMessage(context.Background(), "sess-absent", []byte(`{"type":"user"}`))
+	err := cl.SendMessage(context.Background(), "sess-absent", "", []byte(`{"type":"user"}`))
 	if err == nil {
 		t.Error("SendMessage to an unassigned session succeeded, want a failure")
 	}
@@ -493,7 +494,7 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	stream, err := cl.Attach(ctx, "sess-x")
+	stream, err := cl.Attach(ctx, "sess-x", "")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -1125,5 +1126,151 @@ func TestRotateCredentialsRewritesTheCredentialFile(t *testing.T) {
 	}
 	if len(doc.Providers) != 1 || doc.Providers[0]["leaseId"] != "cl-rotated" {
 		t.Errorf("credential file providers = %v, want one entry for the rotated lease cl-rotated", doc.Providers)
+	}
+}
+
+// capturingAdapter is a minimal AdapterServer that records the SlotId
+// carried on the SendMessage and Attach requests it receives, so a test
+// can assert the gateway-side client stamps (or omits) the §6.4 slotId on
+// the outbound adapter path.
+type capturingAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+
+	mu              sync.Mutex
+	sendMessageSlot string
+	attachSlots     []string
+}
+
+func (a *capturingAdapter) SendMessage(_ context.Context, req *adapterv1.SendMessageRequest) (*adapterv1.SendMessageResponse, error) {
+	a.mu.Lock()
+	a.sendMessageSlot = req.GetSlotId().GetValue()
+	a.mu.Unlock()
+	return &adapterv1.SendMessageResponse{}, nil
+}
+
+func (a *capturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return nil //nolint:nilerr // EOF/cancel ends the capture cleanly.
+		}
+		a.mu.Lock()
+		a.attachSlots = append(a.attachSlots, req.GetSlotId().GetValue())
+		a.mu.Unlock()
+	}
+}
+
+func (a *capturingAdapter) recordedAttachSlots() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.attachSlots...)
+}
+
+// dialCapturingAdapter serves a capturingAdapter over bufconn and returns
+// the recorder plus a connected Client.
+func dialCapturingAdapter(t *testing.T) (*capturingAdapter, *adapterclient.Client) {
+	t.Helper()
+	rec := &capturingAdapter{}
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, rec)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return rec, cl
+}
+
+// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+func TestSendMessageStampsTheResolvedSlotIDForAConcurrentPoolBind(t *testing.T) {
+	rec, cl := dialCapturingAdapter(t)
+	if err := cl.SendMessage(context.Background(), "sess-x", "slot_01", []byte(`{"type":"message"}`)); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	rec.mu.Lock()
+	got := rec.sendMessageSlot
+	rec.mu.Unlock()
+	if got != "slot_01" {
+		t.Errorf("SendMessage carried slotId %q, want slot_01", got)
+	}
+}
+
+// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+func TestSendMessageStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
+	rec, cl := dialCapturingAdapter(t)
+	if err := cl.SendMessage(context.Background(), "sess-x", "", []byte(`{"type":"message"}`)); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	rec.mu.Lock()
+	got := rec.sendMessageSlot
+	rec.mu.Unlock()
+	if got != "" {
+		t.Errorf("SendMessage on an exclusive bind carried slotId %q, want empty", got)
+	}
+}
+
+// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+func TestAttachStampsTheResolvedSlotIDOnTheBindingAndEverySendFrame(t *testing.T) {
+	rec, cl := dialCapturingAdapter(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stream, err := cl.Attach(ctx, "sess-x", "slot_01")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send([]byte(`{"type":"message"}`)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	_ = stream.CloseSend()
+
+	// The binding frame and the content frame must both carry the slotId.
+	if got := waitForAttachSlots(t, rec, 2); got[0] != "slot_01" || got[1] != "slot_01" {
+		t.Errorf("Attach frames carried slotIds %v, want both slot_01", got)
+	}
+}
+
+// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+func TestAttachStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
+	rec, cl := dialCapturingAdapter(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stream, err := cl.Attach(ctx, "sess-x", "")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send([]byte(`{"type":"message"}`)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	_ = stream.CloseSend()
+
+	if got := waitForAttachSlots(t, rec, 2); got[0] != "" || got[1] != "" {
+		t.Errorf("Attach frames on an exclusive bind carried slotIds %v, want both empty", got)
+	}
+}
+
+// waitForAttachSlots polls until the recorder has captured at least n Attach
+// frames or the deadline elapses, returning the recorded slotIds.
+func waitForAttachSlots(t *testing.T, rec *capturingAdapter, n int) []string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := rec.recordedAttachSlots()
+		if len(got) >= n {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recorded %d Attach frames, want at least %d", len(got), n)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
