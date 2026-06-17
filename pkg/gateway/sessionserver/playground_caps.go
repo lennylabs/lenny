@@ -26,10 +26,11 @@ const originPlayground = "playground"
 // EffectiveSessionMinutes methods; the gateway wires it post-construction
 // through SetPlaygroundCaps. spec: §27.6 lines 200-201. F-27.6.1 / F-27.6.2.
 type PlaygroundCapResolver interface {
-	// EffectiveIdleSeconds returns min(runtimeIdleSeconds, playground idle
-	// cap) in seconds, treating a zero runtimeIdleSeconds as "no runtime
-	// limit declared" (the playground cap then applies unchanged).
-	EffectiveIdleSeconds(runtimeIdleSeconds int) int
+	// EffectiveIdleSeconds returns min(maxClientIdleSeconds, playground idle
+	// cap) in seconds, treating a zero maxClientIdleSeconds as "no idle bound
+	// declared" (the playground cap then applies unchanged). The caller
+	// passes the pool's effective sessionPolicy.maxClientIdleSeconds.
+	EffectiveIdleSeconds(maxClientIdleSeconds int) int
 	// EffectiveSessionMinutes returns min(runtimeMinutes, playground
 	// duration cap) in minutes, treating a zero runtimeMinutes as "no
 	// runtime limit declared".
@@ -133,10 +134,10 @@ func (s *Server) SetUserCredChecker(fn func(ctx context.Context, tenantID, userI
 //     Timeouts.MaxSessionAgeSeconds so the §11.3 watchdog (via the sessionage
 //     resolver) expires the session at the playground bound (F-27.6.2);
 //   - the §27.6 line 201 idle override
-//     min(runtime.maxIdleTime, playground.maxIdleTimeSeconds) is stamped onto
-//     Timeouts.MaxIdleSeconds (F-27.6.1). v1 models no per-runtime idle limit
-//     in RuntimeDefinition.limits, so the runtime side is zero and the
-//     playground cap applies unchanged.
+//     min(maxClientIdleSeconds, playground.maxIdleTimeSeconds) is stamped onto
+//     Timeouts.MaxIdleSeconds (F-27.6.1), where maxClientIdleSeconds is the
+//     pool's effective sessionPolicy.maxClientIdleSeconds (its declared value,
+//     or the effective maxSessionAgeSeconds default).
 //
 // Both caps are stamped min-wins against any §14 client-requested timeout, so
 // a tighter client value is never loosened. A non-playground caller, or a
@@ -177,13 +178,15 @@ func (s *Server) applyPlaygroundCaps(ctx context.Context, runtimeRef string, row
 	}
 	row.Timeouts.MaxSessionAgeSeconds = minPositiveInt64(row.Timeouts.MaxSessionAgeSeconds, capSeconds)
 
-	// §27.6 line 201 idle override. The §5.1 RuntimeDefinition
-	// `limits.maxIdleTimeSeconds` (when declared) is resolved min-wins
-	// against the playground idle cap, so a runtime that already declares a
-	// tighter idle limit is never loosened to the playground default. The
-	// resulting value lands on Timeouts.MaxIdleSeconds, which the §11.3
+	// §27.6 line 201 idle override. The pool's effective
+	// `sessionPolicy.maxClientIdleSeconds` (its declared value, or the
+	// effective `maxSessionAgeSeconds` default) is resolved min-wins against
+	// the playground idle cap, so a runtime that already declares a tighter
+	// idle bound is never loosened to the playground default. The override
+	// computes `min(maxClientIdleSeconds, playground.maxIdleTimeSeconds)` and
+	// the resulting value lands on Timeouts.MaxIdleSeconds, which the §11.3
 	// idle watchdog (via sessionidle.Resolver) enforces. F-11.3.7 / F-27.6.1.
-	idleSeconds := int64(s.playgroundCaps.EffectiveIdleSeconds(s.runtimeMaxIdle(ctx, runtimeRef)))
+	idleSeconds := int64(s.playgroundCaps.EffectiveIdleSeconds(s.runtimeMaxClientIdle(ctx, runtimeRef)))
 	row.Timeouts.MaxIdleSeconds = minPositiveInt64(row.Timeouts.MaxIdleSeconds, idleSeconds)
 }
 
