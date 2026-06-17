@@ -655,6 +655,39 @@ for (let i = 0; i < plan.steps.length; i++) {
 
 // ---- Verify: run the reached tiers across the whole change ----
 
+// Clean-checkout compile guard. The Verify and recheck agents run tests
+// against the WORKING TREE, so a valid fix left uncommitted reads as green even
+// though HEAD does not contain it — which has shipped a non-compiling branch
+// tip (verification passing over code that was never committed). Before
+// trusting green, assert the tree carries no uncommitted tracked source change
+// and that HEAD compiles from that clean state. Returns {clean, compiles,
+// committed, details}; the caller ANDs clean && compiles into green.
+const GUARD = {
+  type: "object",
+  required: ["clean", "compiles"],
+  properties: {
+    clean: { type: "boolean", description: "git status --porcelain lists no tracked source change (every change committed)" },
+    compiles: { type: "boolean", description: "`go build ./...` exits 0 on the committed tree" },
+    committed: { type: "string", description: "SHA of a commit made to clean the tree, or empty if nothing needed committing" },
+    details: { type: "string", description: "what was uncommitted and what was done, or the build error if it does not compile" },
+  },
+};
+
+const GUARD_PROMPT =
+  "CLEAN-CHECKOUT COMPILE GUARD for the implementation in " +
+  repo +
+  ".\n\nThe verification runs tests against the WORKING TREE, so a valid fix left UNCOMMITTED reads as green even though HEAD does not contain it (this has shipped a non-compiling branch tip). Enforce that green reflects COMMITTED code:\n" +
+  "1. Run `git status --porcelain`. A tracked modified/added SOURCE file (Go, chart, schema, migration, proto) is part of this change and MUST be committed: first confirm the whole tree builds with `go build ./...` and the affected packages' tests pass, then stage and commit those files on the current feature branch with a descriptive message. Do NOT commit build outputs, coverage files, logs, or unrelated scratch artifacts — leave git-ignored or clearly-external untracked files in place; they do not block clean.\n" +
+  "2. After the tree carries no uncommitted tracked source change, run `go build ./...` and confirm it exits 0 (HEAD compiles from the committed state).\n" +
+  "Set clean=true only when `git status --porcelain` lists no tracked source change, and compiles=true only when `go build ./...` exits 0. If a tracked source file cannot be committed because it does not build or breaks tests, set clean=false and explain in details rather than committing a broken tree. " +
+  "MEMORY-SAFE: run `go build ./...` (compilation only, not under the race detector) and any scoped package tests in the FOREGROUND; never run a whole-repo `go test -race ./...`. " +
+  "BRANCH SAFETY: confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch before any commit; never checkout/switch/reset/branch -f.";
+
+// Runs the guard and returns its verdict (or null if the agent died).
+async function runCompileGuard(label, phaseName) {
+  return await agent(GUARD_PROMPT, { schema: GUARD, label: "compile-guard:" + label, phase: phaseName });
+}
+
 phase("Verify");
 const tierSet = Array.from(new Set(plan.steps.flatMap((s) => s.tiers || [])));
 let verify = await agent(
@@ -716,13 +749,28 @@ while (
   );
 }
 
-const green = !!(verify && verify.green);
+let green = !!(verify && verify.green);
 if (!green) {
   log(
     vround >= maxVerifyRounds
       ? "Verify cap (" + maxVerifyRounds + " rounds) reached; still not green"
       : "Verify not green with no actionable failures listed; stopping",
   );
+} else {
+  // Verify reported green against the working tree; confirm that green
+  // reflects COMMITTED code and that HEAD compiles from a clean tree.
+  const guard = await runCompileGuard("postverify", "Verify");
+  if (!guard || !guard.clean || !guard.compiles) {
+    green = false;
+    log(
+      "Clean-checkout compile guard FAILED: " +
+        (guard
+          ? "clean=" + guard.clean + ", compiles=" + guard.compiles + (guard.details ? " — " + guard.details : "")
+          : "guard agent returned no result"),
+    );
+  } else if (guard.committed) {
+    log("Clean-checkout compile guard committed outstanding work: " + guard.committed);
+  }
 }
 
 // ---- Review: final cross-step design-conformance review of the cumulative diff ----
@@ -843,6 +891,23 @@ if (green && reviewFixApplied) {
   );
   finalGreen = !!(recheck && recheck.green);
   if (recheck) verify = recheck;
+  // The review-fix agents commit their own fixes, but a fix left uncommitted
+  // in the working tree would pass the recheck while leaving HEAD red. Re-run
+  // the clean-checkout compile guard so finalGreen reflects committed code.
+  if (finalGreen) {
+    const guard = await runCompileGuard("postreview", "Review");
+    if (!guard || !guard.clean || !guard.compiles) {
+      finalGreen = false;
+      log(
+        "Clean-checkout compile guard FAILED after review fixes: " +
+          (guard
+            ? "clean=" + guard.clean + ", compiles=" + guard.compiles + (guard.details ? " — " + guard.details : "")
+            : "guard agent returned no result"),
+      );
+    } else if (guard.committed) {
+      log("Clean-checkout compile guard committed outstanding review work: " + guard.committed);
+    }
+  }
 }
 
 return {
