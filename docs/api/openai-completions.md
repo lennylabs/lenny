@@ -368,7 +368,8 @@ Remove any parameters Lenny does not support:
 ### Step 4: Handle session semantics
 
 Be aware that each request creates a Lenny session:
-- Requests are **not** stateless. Each request allocates a pod, sets up a workspace, and tears it down.
+- For a `session`-mode runtime, requests are **not** stateless. Each request allocates a pod, sets up a workspace, and tears it down.
+- For a `service`-mode runtime, each message is self-contained and the platform maintains no conversation context between messages, so a `multi_turn` runtime served in service mode must receive any needed context in each request. The session creation response carries `sessionIsolationLevel.conversationContinuity: "none"` in that case.
 - Latency is higher than a direct LLM call because of session lifecycle overhead.
 - For conversational use cases with multiple turns, consider using the [MCP API](mcp.html) or [REST API](rest) instead, which support multi-turn sessions natively.
 

@@ -40,9 +40,10 @@ var (
 	ErrTenantMismatch = errors.New("tenantaffinity: pod is pinned to a different tenant")
 )
 
-// StatelessMetrics is the metric sink the router writes the §5.2 line
-// 573 demand signals to. *gatewaymetrics.Metrics satisfies it. A nil
-// sink disables emission so the router is usable in isolation.
+// StatelessMetrics is the metric sink the router writes the §5.2
+// service-mode demand signals (lenny_service_requests_total and
+// lenny_service_concurrent_active) to. *gatewaymetrics.Metrics satisfies
+// it. A nil sink disables emission so the router is usable in isolation.
 type StatelessMetrics interface {
 	IncStatelessRequest(pool string)
 	SetStatelessConcurrentActive(pool string, value float64)
@@ -124,12 +125,12 @@ func (r *Router) UpdateEndpoints(eps []Endpoint) {
 // false), an unpinned ready pod is selected and pinned. When no
 // routable pod exists, ErrNoAvailablePod is returned.
 //
-// Each call increments lenny_stateless_requests_total (the §5.2 line
-// 573 demand signal counts every arrival, including unservable ones, so
-// the PoolScalingController scales up under unmet demand). A successful
-// call also increments the pool-wide in-flight count published as
-// lenny_stateless_concurrent_active; the caller MUST call Release
-// exactly once when that request completes.
+// Each call increments lenny_service_requests_total (the §5.2 demand
+// signal counts every arrival, including unservable ones, so the
+// PoolScalingController scales up under unmet demand). A successful call
+// also increments the pool-wide in-flight count published as
+// lenny_service_concurrent_active; the caller MUST call Release exactly
+// once when that request completes.
 func (r *Router) Route(tenantID string) (Decision, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -154,7 +155,7 @@ func (r *Router) Route(tenantID string) (Decision, error) {
 
 // Release records that one in-flight request has completed, decrementing
 // the pool-wide concurrent-active count published as
-// lenny_stateless_concurrent_active. spec: §5.2 line 573.
+// lenny_service_concurrent_active. spec: §5.2.
 func (r *Router) Release() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -195,7 +196,7 @@ func (r *Router) PinnedPods(tenantID string) []string {
 }
 
 // ActiveCount returns the current pool-wide in-flight request count
-// mirrored to lenny_stateless_concurrent_active.
+// mirrored to lenny_service_concurrent_active.
 func (r *Router) ActiveCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

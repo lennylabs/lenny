@@ -196,7 +196,7 @@ credentialPools:
 
 1. Gateway writes the API key to `/run/lenny/credentials.json` on the pod
 2. Pod contacts the LLM provider directly
-3. Credential file is removed on session end or between tasks
+3. Credential file is removed on session end, and re-leased per session on a recycling pod
 
 The combination of `deliveryMode: direct` + `isolationProfile: standard` (runc) is **blocked by admission control** in multi-tenant mode — a container escape under runc would expose materialized credential material across tenants. Pool registration returns `DirectModeStandardIsolationMultiTenantRejected`.
 

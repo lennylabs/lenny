@@ -52,7 +52,8 @@ func TestForceDropAuditPartition_acknowledged(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
 		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop?force=true",
-			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"acme"}`))))
+			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"acme"}`)),
+	))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -80,7 +81,8 @@ func TestForceDropAuditPartition_requiresAcknowledgement(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
 		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop?force=true",
-			strings.NewReader(`{"acknowledgeDataLoss":false,"partition":"acme"}`))))
+			strings.NewReader(`{"acknowledgeDataLoss":false,"partition":"acme"}`)),
+	))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d, want 400, body=%s", rr.Code, rr.Body.String())
 	}
@@ -98,7 +100,8 @@ func TestForceDropAuditPartition_requiresForceQueryParam(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
 		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop",
-			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"acme"}`))))
+			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"acme"}`)),
+	))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d, want 400, body=%s", rr.Code, rr.Body.String())
 	}
@@ -116,7 +119,8 @@ func TestForceDropAuditPartition_partitionMismatch(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
 		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop?force=true",
-			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"globex"}`))))
+			strings.NewReader(`{"acknowledgeDataLoss":true,"partition":"globex"}`)),
+	))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d, want 400, body=%s", rr.Code, rr.Body.String())
 	}
@@ -152,7 +156,8 @@ func TestForceDropAuditPartition_absentWithoutPruner(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
 		httptest.NewRequest(http.MethodPost, "/v1/admin/audit-partitions/acme/drop",
-			strings.NewReader(`{"acknowledgeDataLoss":true}`))))
+			strings.NewReader(`{"acknowledgeDataLoss":true}`)),
+	))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status: %d, want 404 (route unregistered), body=%s", rr.Code, rr.Body.String())
 	}

@@ -116,9 +116,9 @@ func auditBearingEvent(row audit.Row, publisherID string) (events.OperationalEve
 		}
 	}
 	return events.OperationalEvent{
-		Source:          "//lenny.dev/gateway/" + publisherID,
-		Type:            "dev.lenny." + row.EventType,
-		Subject:         subject,
+		Source:  "//lenny.dev/gateway/" + publisherID,
+		Type:    "dev.lenny." + row.EventType,
+		Subject: subject,
 		// Every escalated event is a security-salient §16.7 row operators
 		// asked to see in real time; tag it warning so the §25.5
 		// ?severity= filter surfaces the escalation set.

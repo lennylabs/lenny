@@ -121,7 +121,9 @@ Authorization: Bearer <token>
   "sessionIsolationLevel": {
     "executionMode": "session",
     "isolationProfile": "gvisor",
-    "podReuse": false
+    "podReuse": false,
+    "residualStateWarning": false,
+    "conversationContinuity": "platform"
   },
   "state": "created",
   "createdAt": "2026-01-15T10:30:00Z"
@@ -371,12 +373,70 @@ Authorization: Bearer <token>
   "sessionIsolationLevel": {
     "executionMode": "session",
     "isolationProfile": "gvisor",
-    "podReuse": false
+    "podReuse": false,
+    "residualStateWarning": false,
+    "conversationContinuity": "platform"
   }
 }
 ```
 
 This creates the session, uploads inline files, finalizes, starts, and optionally sends the first message in one request. The optional `callbackUrl` enables webhook notifications (see [Webhooks](webhooks.html)).
+
+---
+
+## Execution Modes and Pod Isolation
+
+The `sessionIsolationLevel` object in the create response describes how the assigned pool uses pods. A client that requires strict per-session isolation should inspect it before proceeding.
+
+| Field | Description |
+| :--- | :--- |
+| `executionMode` | `session` (a managed session bound to a claimed pod) or `service` (each message routed to any ready replica) |
+| `isolationProfile` | `runc`, `gvisor`, or `microvm` |
+| `podReuse` | `true` when the pool recycles pods, runs `maxConcurrentSessions > 1`, or is service mode |
+| `scrubPolicy` | Present only when `podReuse: true`; `best-effort`, `vm-restart`, `best-effort-in-place`, `best-effort-per-slot`, or `none` |
+| `residualStateWarning` | `true` when the pod may carry residual state from prior sessions, sibling slots, or same-tenant concurrent requests |
+| `conversationContinuity` | `platform` for session mode; `none` for service mode |
+
+When `residualStateWarning: true`, the session runs on a pod that serves more than one session over its lifetime. Reject the session if your use case cannot tolerate residual state (DNS cache, TCP `TIME_WAIT`, page cache, or shared process state).
+
+### Session mode with recycling
+
+In session mode the platform binds the session to a pod and preserves conversation context for the session's lifetime (`conversationContinuity: "platform"`). When the pool sets `recycle.enabled: true`, the pod is reused across sequential sessions of the same tenant; a whole-pod scrub runs when occupancy reaches zero, and the pod is held for the tenant for a short window before returning to the idle pool. Recycling is transparent to the client: the session API is unchanged, and the only client-visible signal is `podReuse: true` / `residualStateWarning: true` in the response.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as Gateway
+    participant P as Recycling pod
+    C->>G: POST /v1/sessions (recycle.enabled)
+    G->>P: claim idle pod, bind session
+    G-->>C: session_id, residualStateWarning:true
+    C->>P: messages (continuity preserved)
+    C->>G: terminate
+    G->>P: per-slot cleanup, whole-pod scrub at occupancy zero
+    Note over P: held for tenant (reserved), then idle
+    C->>G: POST /v1/sessions (same tenant, within hold)
+    G->>P: rebind same pod, no acquisition
+```
+
+### Service mode
+
+In service mode the gateway routes each message to any ready tenant-pinned replica (`conversationContinuity: "none"`). The platform maintains no conversation context between messages, and successive messages of one session may land on different replicas. A session is a connection handle. Clients of a `multi_turn` runtime served in service mode must re-inject any needed context into each message's `input`:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as Gateway
+    participant R1 as Replica A
+    participant R2 as Replica B
+    C->>G: POST /v1/sessions (service pool)
+    G-->>C: session_id, conversationContinuity:"none"
+    C->>G: send_message { input: [context, prompt-1] }
+    G->>R1: route to ready replica
+    C->>G: send_message { input: [context, prompt-2] }
+    G->>R2: may route to a different replica
+    Note over C: client re-injects context into every message
+```
 
 ---
 
@@ -631,7 +691,9 @@ curl -s https://lenny.example.com/v1/sessions/sess_abc123 \
   "sessionIsolationLevel": {
     "executionMode": "session",
     "isolationProfile": "gvisor",
-    "podReuse": false
+    "podReuse": false,
+    "residualStateWarning": false,
+    "conversationContinuity": "platform"
   },
   "retryPolicy": {
     "mode": "auto_then_client",

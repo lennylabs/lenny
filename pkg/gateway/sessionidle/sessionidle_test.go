@@ -8,41 +8,93 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
-func runtimeStoreWithIdle(t *testing.T, ref string, idleSeconds int) runtimestore.Store {
+// runtimeStore returns a runtime store holding one runtime named ref whose
+// sessionPolicy carries maxClientIdleSeconds (0 declares no idle bound) and
+// whose limits carry maxSessionAgeSeconds (0 declares no age cap).
+func runtimeStore(t *testing.T, ref string, idleSeconds, ageSeconds int) runtimestore.Store {
 	t.Helper()
 	rs := runtimestore.NewMemory()
-	if err := rs.Create(context.Background(), runtimestore.Runtime{
-		Name:   ref,
-		Type:   runtimestore.TypeAgent,
-		Limits: &runtimestore.Limits{MaxIdleTimeSeconds: idleSeconds},
-	}); err != nil {
+	rt := runtimestore.Runtime{
+		Name: ref,
+		Type: runtimestore.TypeAgent,
+	}
+	if idleSeconds > 0 {
+		rt.SessionPolicy = &runtimestore.SessionPolicy{MaxClientIdleSeconds: idleSeconds}
+	}
+	if ageSeconds > 0 {
+		rt.Limits = &runtimestore.Limits{MaxSessionAgeSeconds: ageSeconds}
+	}
+	if err := rs.Create(context.Background(), rt); err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
 	return rs
 }
 
-// spec: §11.3 line 199 — the per-runtime limits.maxIdleTimeSeconds is the
-// effective cap when no per-session override is set. F-11.3.7.
-func TestResolverReturnsRuntimeLimit_spec_11_3_199(t *testing.T) {
-	r := sessionidle.NewResolver(runtimeStoreWithIdle(t, "rt", 300))
+// poolStore returns a pool store holding one session-mode pool named ref
+// whose sessionPolicy carries maxClientIdleSeconds (0 declares none).
+func poolStore(t *testing.T, ref string, idleSeconds int) poolstore.Store {
+	t.Helper()
+	ps := poolstore.NewMemory()
+	p := poolstore.Pool{Name: ref, RuntimeRef: ref}
+	if idleSeconds > 0 {
+		p.SessionPolicy = &runtimestore.SessionPolicy{MaxClientIdleSeconds: idleSeconds}
+	}
+	if err := ps.Create(context.Background(), p); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	return ps
+}
+
+// spec: 11.3 line 199 (max client idle row), 6.2 (maxClientIdleSeconds
+// clock) — the runtime sessionPolicy.maxClientIdleSeconds is the effective
+// cap when no per-session override is set. F-11.3.7.
+func TestResolverReturnsRuntimePolicy_spec_11_3_199(t *testing.T) {
+	r := sessionidle.NewResolver(runtimeStore(t, "rt", 300, 0), nil)
 	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{RuntimeRef: "rt"})
 	if got != 300 {
 		t.Errorf("EffectiveMaxIdleSeconds = %d, want 300", got)
 	}
 }
 
-// spec: §27.6 line 201 — the playground idle override (landed on
-// Timeouts.MaxIdleSeconds) tightens the runtime cap min-wins. F-11.3.7 / F-9.2.15.
-func TestResolverPlaygroundOverrideTightensRuntime_spec_27_6_201(t *testing.T) {
-	r := sessionidle.NewResolver(runtimeStoreWithIdle(t, "rt", 600))
+// spec: 6.2 (maxClientIdleSeconds clock default) — when no sessionPolicy
+// declares maxClientIdleSeconds, the bound defaults to the pool's effective
+// maxSessionAgeSeconds rather than a fixed 600s. F-11.3.7.
+func TestResolverDefaultsToEffectiveMaxSessionAge_spec_6_2(t *testing.T) {
+	// Runtime declares only maxSessionAgeSeconds (no idle bound); the idle
+	// default takes that age cap.
+	r := sessionidle.NewResolver(runtimeStore(t, "rt", 0, 3600), nil)
+	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{RuntimeRef: "rt"})
+	if got != 3600 {
+		t.Errorf("EffectiveMaxIdleSeconds = %d, want 3600 (effective maxSessionAge default)", got)
+	}
+}
+
+// spec: 6.2 (maxClientIdleSeconds clock) — the pool's
+// sessionPolicy.maxClientIdleSeconds participates in the most-restrictive
+// resolution alongside the runtime's. F-11.3.7.
+func TestResolverPoolPolicyTightensRuntime_spec_6_2(t *testing.T) {
+	r := sessionidle.NewResolver(runtimeStore(t, "rt", 600, 0), poolStore(t, "rt", 120))
+	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{
+		RuntimeRef: "rt",
+		PoolRef:    "rt",
+	})
+	if got != 120 {
+		t.Errorf("EffectiveMaxIdleSeconds = %d, want 120 (pool cap wins)", got)
+	}
+}
+
+// spec: 27.6 line 201 (playground idle override) — the playground idle
+// override (landed on Timeouts.MaxIdleSeconds) tightens the resolved cap
+// min-wins. F-11.3.7 / F-9.2.15.
+func TestResolverPlaygroundOverrideTightensPolicy_spec_27_6_201(t *testing.T) {
+	r := sessionidle.NewResolver(runtimeStore(t, "rt", 600, 0), nil)
 	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{
 		RuntimeRef: "rt",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxIdleSeconds: 300},
@@ -52,80 +104,51 @@ func TestResolverPlaygroundOverrideTightensRuntime_spec_27_6_201(t *testing.T) {
 	}
 }
 
-// A runtime idle cap tighter than the per-session override still wins
+// spec: 27.6 line 201 (playground idle override) — the playground override
+// applies against the maxSessionAge default too: a session whose only bound
+// is the age-default still gets the tighter playground cap. F-27.6.1.
+func TestResolverPlaygroundOverrideTightensAgeDefault_spec_27_6_201(t *testing.T) {
+	// No idle bound declared; the default is the 3600s age cap, which the
+	// 300s playground override tightens.
+	r := sessionidle.NewResolver(runtimeStore(t, "rt", 0, 3600), nil)
+	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{
+		RuntimeRef: "rt",
+		Timeouts:   &sessionstore.SessionTimeouts{MaxIdleSeconds: 300},
+	})
+	if got != 300 {
+		t.Errorf("EffectiveMaxIdleSeconds = %d, want 300 (playground cap tightens age default)", got)
+	}
+}
+
+// A policy idle cap tighter than the per-session override still wins
 // (min-wins on both axes). F-11.3.7.
-func TestResolverRuntimeTighterThanOverride(t *testing.T) {
-	r := sessionidle.NewResolver(runtimeStoreWithIdle(t, "rt", 120))
+func TestResolverPolicyTighterThanOverride(t *testing.T) {
+	r := sessionidle.NewResolver(runtimeStore(t, "rt", 120, 0), nil)
 	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{
 		RuntimeRef: "rt",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxIdleSeconds: 300},
 	})
 	if got != 120 {
-		t.Errorf("EffectiveMaxIdleSeconds = %d, want 120 (runtime cap wins)", got)
+		t.Errorf("EffectiveMaxIdleSeconds = %d, want 120 (policy cap wins)", got)
 	}
 }
 
-// No runtime limit and no override → 0, so the watchdog applies the
-// platform default. F-11.3.7.
+// No policy, no age cap, and no override → 0, so the watchdog applies the
+// platform default. A nil runtime store also resolves to 0. F-11.3.7.
 func TestResolverNoCapReturnsZero(t *testing.T) {
-	r := sessionidle.NewResolver(runtimeStoreWithIdle(t, "rt", 0))
-	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{RuntimeRef: "rt"})
-	if got != 0 {
+	r := sessionidle.NewResolver(runtimeStore(t, "rt", 0, 0), nil)
+	if got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{RuntimeRef: "rt"}); got != 0 {
 		t.Errorf("EffectiveMaxIdleSeconds = %d, want 0", got)
 	}
-	// A nil runtime store also resolves to 0.
-	if got := sessionidle.NewResolver(nil).EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{RuntimeRef: "rt"}); got != 0 {
+	if got := sessionidle.NewResolver(nil, nil).EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{RuntimeRef: "rt"}); got != 0 {
 		t.Errorf("nil-store EffectiveMaxIdleSeconds = %d, want 0", got)
 	}
 }
 
-// spec: §9.2 line 102 — a pending elicitation pauses the idle timer. F-9.2.15.
-func TestPauseCheckerPausesOnPendingElicitation_spec_9_2_102(t *testing.T) {
-	interactions := interactionstore.NewMemory()
-	_ = interactions.Put(context.Background(), interactionstore.Interaction{
-		ID: "el1", TenantID: "acme", SessionID: "sess", UserID: "alice",
-		Kind: interactionstore.KindElicitation, Phase: interactionstore.PhasePending,
-	})
-	pc := sessionidle.NewPauseChecker(interactions, inputwait.NewRegistry())
-	if !pc.IdlePaused(context.Background(), sessionstore.Session{TenantID: "acme", ID: "sess"}) {
-		t.Error("a session with a pending elicitation must be paused")
-	}
-	// A different session has no pending interaction → not paused.
-	if pc.IdlePaused(context.Background(), sessionstore.Session{TenantID: "acme", ID: "other"}) {
-		t.Error("a session with no pending interaction must not be paused")
-	}
-}
-
-// A pending tool-use interaction (not an elicitation) does not pause the
-// idle timer — only the §9.2 elicitation and the §6.2 request_input pause.
-func TestPauseCheckerToolUseDoesNotPause(t *testing.T) {
-	interactions := interactionstore.NewMemory()
-	_ = interactions.Put(context.Background(), interactionstore.Interaction{
-		ID: "tu1", TenantID: "acme", SessionID: "sess", UserID: "alice",
-		Kind: interactionstore.KindToolUse, Phase: interactionstore.PhasePending,
-	})
-	pc := sessionidle.NewPauseChecker(interactions, inputwait.NewRegistry())
-	if pc.IdlePaused(context.Background(), sessionstore.Session{TenantID: "acme", ID: "sess"}) {
-		t.Error("a pending tool-use approval must not pause the idle timer")
-	}
-}
-
-// spec: §6.2 `input_required` row — an outstanding lenny/request_input
-// pauses the idle timer. F-9.2.15.
-func TestPauseCheckerPausesOnPendingInputWait_spec_6_2(t *testing.T) {
-	reg := inputwait.NewRegistry()
-	if _, err := reg.Register("sess", "req1", nil); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	pc := sessionidle.NewPauseChecker(interactionstore.NewMemory(), reg)
-	if !pc.IdlePaused(context.Background(), sessionstore.Session{TenantID: "acme", ID: "sess"}) {
-		t.Error("a session blocked on request_input must be paused")
-	}
-}
-
-// spec: §6.2 line 277 — the stamper advances last_agent_activity_at and
-// coalesces writes to ≤1 per interval per session. F-11.3.7.
-func TestStamperAdvancesAndCoalesces_spec_6_2_277(t *testing.T) {
+// spec: 6.2 (qualifying events; ≤1/s flush) — the stamper advances
+// last_agent_activity_at and coalesces writes to ≤1 per interval per
+// session. F-11.3.7.
+func TestStamperAdvancesAndCoalesces_spec_6_2(t *testing.T) {
 	store := memstore.New()
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := t0

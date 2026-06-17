@@ -26,10 +26,13 @@ type fakeLockService struct {
 func (f fakeLockService) Acquire(context.Context, coordination.LockRequest) (*coordination.Lock, error) {
 	return nil, nil
 }
+
 func (f fakeLockService) List(context.Context) ([]coordination.Lock, error) { return f.locks, f.err }
+
 func (f fakeLockService) Get(context.Context, string) (*coordination.Lock, error) {
 	return nil, nil
 }
+
 func (f fakeLockService) Extend(context.Context, string, int) (*coordination.Lock, error) {
 	return nil, nil
 }

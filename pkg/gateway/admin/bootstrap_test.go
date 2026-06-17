@@ -49,8 +49,10 @@ func TestBootstrapCredentialPools(t *testing.T) {
 
 	body := admin.BootstrapRequest{
 		CredentialPools: []admin.CredentialPoolPayload{
-			{TenantID: "acme", Name: "anthropic-shared", Provider: "anthropic_direct",
-				AssignmentStrategy: "least-loaded", CacheScope: "per-user"},
+			{
+				TenantID: "acme", Name: "anthropic-shared", Provider: "anthropic_direct",
+				AssignmentStrategy: "least-loaded", CacheScope: "per-user",
+			},
 			// Rejected: cacheScope tenant on a hipaa tenant.
 			{TenantID: "globex", Name: "bad-cache", Provider: "anthropic_direct", CacheScope: "tenant"},
 		},

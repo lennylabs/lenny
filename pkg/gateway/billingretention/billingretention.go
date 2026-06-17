@@ -60,7 +60,8 @@ type RetentionFloorError struct {
 func (e *RetentionFloorError) Error() string {
 	return fmt.Sprintf(
 		"CONFIG_INVALID: billing.retentionDays below compliance floor for complianceProfile '%s' (configured %d days, floor %d days)",
-		e.Profile, e.RetentionDays, e.FloorDays)
+		e.Profile, e.RetentionDays, e.FloorDays,
+	)
 }
 
 // ValidateRetentionDays enforces the §11.2.1 compliance-aware retention

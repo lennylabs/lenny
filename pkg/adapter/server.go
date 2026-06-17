@@ -68,7 +68,8 @@ type Server struct {
 	// the per-slot tree under /workspace/slots/{slotId}/ and writes the
 	// per-slot credential file /run/lenny/slots/{slotId}/credentials.json
 	// rather than the single /workspace/current and /run/lenny/credentials.json.
-	// False (session/task mode) keeps the one-session-only base layout.
+	// False (the single-session layout, maxConcurrentSessions == 1) keeps
+	// the one-session-only base layout.
 	// spec: §6.4 lines 385-409; §6.1 line 28.
 	ConcurrentWorkspace bool
 	// WorkspaceBase is the §6.4 base the per-slot `slots/{slotId}` trees
@@ -85,8 +86,8 @@ type Server struct {
 	// slot so a concurrent-workspace pod runs one runtime process per
 	// active slot (the §6.4 "N concurrent runtime processes per pod"
 	// topology). Nil leaves concurrent StartSession returning
-	// FailedPrecondition; the single-slot Runtime field is used in
-	// session/task mode.
+	// FailedPrecondition; the single-slot Runtime field is used in the
+	// single-session layout (maxConcurrentSessions == 1).
 	RuntimeFactory func(slotID string, paths SlotRuntimePaths) (RuntimeProcess, error)
 	// SessionsRoot is the §6.4 line 380 /sessions tmpfs the runtime
 	// writes its session file into (conversation logs, native SDK

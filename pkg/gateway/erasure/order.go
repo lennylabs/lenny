@@ -109,7 +109,8 @@ func ValidateOrder(cfg Config) error {
 		if childWired && parentWired && ci >= pi {
 			return fmt.Errorf(
 				"erasure: §12.8 FK order violation — %q (rank %d) must be erased before %q (rank %d) but is wired after it",
-				child, canonicalRank[child], parent, canonicalRank[parent])
+				child, canonicalRank[child], parent, canonicalRank[parent],
+			)
 		}
 	}
 	return nil

@@ -75,7 +75,7 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	// runtimestore.ApplyDefaults must fill them so the row satisfies
 	// the runtime_definitions CHECK constraints.
 	code, _ := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
-		"tenants":  []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
+		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
 		// §5.1: declare capabilities.injection.supported: true so the
 		// test's mid-session /messages call satisfies the
 		// INJECTION_REJECTED gate. The bootstrapped runtime is the

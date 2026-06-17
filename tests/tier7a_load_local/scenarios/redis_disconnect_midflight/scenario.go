@@ -88,7 +88,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 		})
 	}
 
-	_, err := s.counter.Reserve(ctx, "pod-disc", s.maxConcurrent)
+	_, _, err := s.counter.Reserve(ctx, "pod-disc", s.maxConcurrent)
 	if err != nil {
 		switch {
 		case errors.Is(err, slotcounter.ErrSlotsExhausted):
@@ -137,4 +137,3 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	}
 	return nil
 }
-

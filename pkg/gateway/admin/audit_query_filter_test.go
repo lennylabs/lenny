@@ -113,7 +113,8 @@ func listAudit(t *testing.T, router *admin.Router, query string) (*httptest.Resp
 	t.Helper()
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&"+query, nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&"+query, nil),
+	))
 	var env admin.AuditEventEnvelope
 	if rr.Code == http.StatusOK {
 		if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
@@ -125,7 +126,8 @@ func listAudit(t *testing.T, router *admin.Router, query string) (*httptest.Resp
 
 func TestListAuditEventsFilterByEventType_spec_25_9_3659(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.tenant.created", `{}`, ts},
 		[3]any{"delegation.cycle_warning", `{}`, ts},
 	)}
@@ -146,7 +148,8 @@ func TestListAuditEventsFilterByEventType_spec_25_9_3659(t *testing.T) {
 // when its event type is any list member.
 func TestListAuditEventsFilterByEventTypeList_spec_12_8_986(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.impersonation_started", `{}`, ts},
 		[3]any{"admin.impersonation_ended", `{}`, ts},
 		[3]any{"admin.tenant.created", `{}`, ts},
@@ -172,7 +175,8 @@ func TestListAuditEventsFilterByEventTypeList_spec_12_8_986(t *testing.T) {
 
 func TestListAuditEventsFilterByActorAndResource_spec_25_9_3659(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.tenant.created", `{"actor_subject":"alice@acme.com","target_resource":"tenant/acme"}`, ts},
 		[3]any{"admin.tenant.created", `{"actor_subject":"bob@acme.com","target_resource":"pool/warm"}`, ts},
 	)}
@@ -198,7 +202,8 @@ func TestListAuditEventsFilterByActorAndResource_spec_25_9_3659(t *testing.T) {
 
 func TestListAuditEventsTimeWindowDefault_spec_25_9_3708(t *testing.T) {
 	old := auditTestClock.Add(-48 * time.Hour) // outside the default 24h window
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.tenant.created", `{}`, old},
 	)}
 	router := newCraftedRouter(backend, &recordingSink{})
@@ -236,7 +241,8 @@ func TestListAuditEventsTooBroad_spec_25_9_3707(t *testing.T) {
 
 func TestListAuditEventsSeverityFilter_spec_25_9_3659(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.tenant.created", `{}`, ts},     // OCSF severity Informational
 		[3]any{"delegation.cycle_warning", `{}`, ts}, // OCSF severity Medium (Warning)
 	)}
@@ -256,7 +262,8 @@ func TestListAuditEventsSeverityFilter_spec_25_9_3659(t *testing.T) {
 
 func TestListAuditEventsCursorPagination_spec_25_9_3659(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.tenant.created", `{}`, ts},
 		[3]any{"admin.tenant.created", `{}`, ts},
 		[3]any{"admin.tenant.created", `{}`, ts},
@@ -291,14 +298,16 @@ func TestListAuditEventsChainIntegrityReport_spec_25_9_3653(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(string(body)))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(string(body))),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
 
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil),
+	))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("list: %d", rr.Code)
 	}
@@ -354,7 +363,8 @@ func TestGetAuditEventNotFoundCode_spec_25_9_3732(t *testing.T) {
 	router := newCraftedRouter(&craftedAuditLog{}, &recordingSink{})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/99?tenantId=platform", nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/99?tenantId=platform", nil),
+	))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rr.Code)
 	}
@@ -385,7 +395,8 @@ func TestAuditStoreUnavailable_spec_25_9_3714(t *testing.T) {
 func TestAuditQueryEmitsQueryExecuted_spec_25_9_3750(t *testing.T) {
 	sink := &recordingSink{}
 	ts := auditTestClock.Add(-time.Hour)
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.tenant.created", `{}`, ts},
 	)}
 	router := newCraftedRouter(backend, sink)
@@ -414,7 +425,8 @@ func TestAuditQueryEmitsChainIntegrityBroken_spec_25_9_3750(t *testing.T) {
 
 func TestAuditSummaryGroupByEventType_spec_25_9_3661(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
-	backend := &craftedAuditLog{rows: craftChain("platform",
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
 		[3]any{"admin.tenant.created", `{}`, ts},
 		[3]any{"admin.tenant.created", `{}`, ts},
 		[3]any{"delegation.cycle_warning", `{}`, ts},
@@ -452,7 +464,8 @@ func TestAuditQueryExecutedRowReQueriesCleanly(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(string(body)))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(string(body))),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}

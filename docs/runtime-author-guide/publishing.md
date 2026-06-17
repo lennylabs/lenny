@@ -121,7 +121,7 @@ curl -X POST http://localhost:8080/v1/admin/runtimes \
   }'
 ```
 
-**`preConnect` explained:** When `preConnect: true`, the adapter starts the runtime binary during the warm phase (before a session is assigned). This eliminates cold-start latency from the hot path. The runtime must implement the `DemoteSDK` contract --- the ability to tear down a pre-connected SDK session when an actual session is assigned and the workspace includes files matching `sdkWarmBlockingPaths` (default: `["CLAUDE.md", ".claude/*"]`). Demotion adds 1--3 seconds but ensures the agent starts with workspace files present. `preConnect` is incompatible with concurrent execution modes (`concurrent-workspace` and `concurrent-stateless`); the pool controller rejects pool definitions that combine `preConnect: true` with concurrent modes.
+**`preConnect` explained:** When `preConnect: true`, the adapter starts the runtime binary during the warm phase (before a session is assigned). This eliminates cold-start latency from the hot path. The runtime must implement the `DemoteSDK` contract --- the ability to tear down a pre-connected SDK session when an actual session is assigned and the workspace includes files matching `sdkWarmBlockingPaths` (default: `["CLAUDE.md", ".claude/*"]`). Demotion adds 1--3 seconds but ensures the agent starts with workspace files present. `preConnect` is admitted only when `sessionPolicy.maxConcurrentSessions` is 1, and the pool controller rejects it for service-mode pools.
 
 ### Via Bootstrap Seed File
 
@@ -206,7 +206,8 @@ curl -X POST http://localhost:8080/v1/admin/pools \
 | `minSize` | Minimum number of warm pods (always available) |
 | `maxSize` | Maximum number of pods (scaling ceiling) |
 | `resourceClass` | CPU/memory class for pods |
-| `executionMode` | `session` (one session per pod), `task` (sequential reuse), or `concurrent` |
+| `executionMode` | `session` (a managed session bound to a claimed pod, parameterized by `sessionPolicy`) or `service` (each message routed to any ready replica) |
+| `sessionPolicy` | Session-mode parameters: `maxConcurrentSessions`, the `recycle` block (pod reuse), `maxClientIdleSeconds`, and `onPoolExhausted` |
 | `runtimeClass` | Container isolation: `gvisor` (default, `sandboxed` profile), `kata` (`microvm` profile), or `runc` (`standard` profile; requires explicit deployer opt-in with security acknowledgment — no kernel-level isolation) |
 
 ---

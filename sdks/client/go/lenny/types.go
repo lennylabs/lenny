@@ -69,11 +69,20 @@ type Session struct {
 // IsolationLevel mirrors the §7.1 sessionIsolationLevel object on the
 // create response.
 type IsolationLevel struct {
+	// ExecutionMode is the §5.2 execution mode of the assigned pool:
+	// `session` or `service`.
 	ExecutionMode        string `json:"executionMode"`
 	IsolationProfile     string `json:"isolationProfile"`
 	PodReuse             bool   `json:"podReuse"`
 	ScrubPolicy          string `json:"scrubPolicy,omitempty"`
 	ResidualStateWarning bool   `json:"residualStateWarning"`
+
+	// ConversationContinuity is `platform` for session mode (the
+	// platform binds the session to a pod and preserves conversation
+	// context across messages) or `none` for service mode (the gateway
+	// routes each message to any ready replica and maintains no
+	// conversation context between messages). spec: §7.1.
+	ConversationContinuity string `json:"conversationContinuity"`
 }
 
 // CreateSessionResult is the §15.1 POST /v1/sessions response. It

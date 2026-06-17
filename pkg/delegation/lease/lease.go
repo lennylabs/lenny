@@ -20,17 +20,17 @@
 // delegation_leases table. The lease lifecycle maps onto session
 // fields as follows:
 //
-//   * The lease is "granted" when the child session row is created
+//   - The lease is "granted" when the child session row is created
 //     under a parent's parent_session_id; sessions.created_at
 //     records the grant time.
-//   * The lease's expiry tracks sessions.resume_eligible_until from
+//   - The lease's expiry tracks sessions.resume_eligible_until from
 //     migration 0055 — the per-session resume window that doubles
 //     as the lease lifetime cap.
-//   * The lease's policy reference is the delegation_policies row
+//   - The lease's policy reference is the delegation_policies row
 //     resolved at issuance and recorded on the child via the §8.3
 //     effective policy carried through tracingContext and
 //     policy_enforcement_state (§4.2 line 158).
-//   * The lease's remaining slice is the in-Redis budget under
+//   - The lease's remaining slice is the in-Redis budget under
 //     {root_session_id}:dlg:* — atomically reserved at every
 //     lenny/delegate_task call per §8.2.
 //

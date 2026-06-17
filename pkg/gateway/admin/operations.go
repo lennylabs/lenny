@@ -77,7 +77,8 @@ func (r *Router) handleGetOperation(w http.ResponseWriter, req *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"error": conventions.NewError(
 					"OPERATIONS_INVENTORY_PARTIAL", conventions.CategoryTransient,
-					"operation lookup partial because one or more sources were unreachable").Error,
+					"operation lookup partial because one or more sources were unreachable",
+				).Error,
 				"degradation": &conventions.Degradation{
 					Level:    conventions.DegradationDegraded,
 					Warnings: warns,

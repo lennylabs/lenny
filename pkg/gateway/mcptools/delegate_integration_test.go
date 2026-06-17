@@ -57,11 +57,11 @@ type rewritingInterceptor struct {
 	rewrite string
 }
 
-func (rewritingInterceptor) Name() string                    { return "rewriter" }
-func (rewritingInterceptor) Priority() int32                 { return 300 }
-func (rewritingInterceptor) Builtin() bool                   { return false }
+func (rewritingInterceptor) Name() string                       { return "rewriter" }
+func (rewritingInterceptor) Priority() int32                    { return 300 }
+func (rewritingInterceptor) Builtin() bool                      { return false }
 func (rewritingInterceptor) FailPolicy() interceptor.FailPolicy { return interceptor.FailClosed }
-func (rewritingInterceptor) Timeout() time.Duration          { return 0 }
+func (rewritingInterceptor) Timeout() time.Duration             { return 0 }
 
 func (r rewritingInterceptor) Intercept(_ context.Context, req interceptor.Request) (interceptor.Result, error) {
 	if req.Phase != r.phase {

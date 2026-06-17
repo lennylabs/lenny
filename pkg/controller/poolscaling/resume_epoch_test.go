@@ -30,7 +30,8 @@ func denyingClient(t *testing.T) client.WithWatch {
 			Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
 				return apierrors.NewForbidden(
 					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
-					obj.GetName(), errors.New("validator rejected"))
+					obj.GetName(), errors.New("validator rejected"),
+				)
 			},
 		}).Build()
 }

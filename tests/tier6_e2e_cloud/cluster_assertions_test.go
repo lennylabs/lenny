@@ -32,8 +32,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/lennylabs/lenny/tests/testinfra/cloud"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/lennylabs/lenny/tests/testinfra/cloud"
 )
 
 const lennySystem = "lenny-system"

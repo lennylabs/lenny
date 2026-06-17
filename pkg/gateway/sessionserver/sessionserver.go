@@ -55,7 +55,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -172,9 +171,17 @@ type Server struct {
 	// multi-tenant deployments). When false (single-tenant or no-OIDC
 	// dev), the gate retains the historical fall-through.
 	// spec: §10.2 lines 256–264, F-10.2.4.
-	multiTenant    bool
-	podBinder      *podsession.Binder
-	podRegistry    *podsession.Registry
+	multiTenant bool
+	podBinder   *podsession.Binder
+	podRegistry *podsession.Registry
+	// claimQueue is the §4.6.1 per-pool claim FIFO that backs
+	// sessionPolicy.onPoolExhausted: queue. On a `queue` pool the start path
+	// holds an exhausted acquisition in this FIFO for up to
+	// maxQueueWaitSeconds, re-entering acquisition as pods free; on a `reject`
+	// pool the queue is bypassed and the acquisition returns
+	// WARM_POOL_EXHAUSTED immediately. Always non-nil after New.
+	// spec: §4.6.1 (Pool exhaustion behavior), §5.2 (onPoolExhausted).
+	claimQueue     *podClaimQueue
 	fencer         CoordinationFencer
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
@@ -288,8 +295,8 @@ type Server struct {
 	// providers (launchdarkly, statsig, unleash) for mode:external
 	// targeting. Nil disables the SDK-provider path; only OFREP-targeted
 	// experiments evaluate. F-10.7.3.
-	externalProviders  ExternalProviderResolver
-	runtimes           runtimestore.Store
+	externalProviders ExternalProviderResolver
+	runtimes          runtimestore.Store
 	// capOverrides applies the §5.1 line 49 per-tenant capability override
 	// on top of a resolved runtime at every capability consumer. Optional;
 	// nil falls back to the platform-default capabilities. F-5.1.20.
@@ -506,6 +513,12 @@ type Server struct {
 	// lenny_session_retry_total{failure_class} counter for the retry.
 	// Nil disables the emission. spec: §16.1 catalog. F-7.3.10.
 	incSessionRetry func(failureClass string)
+
+	// incSessionExpiry, when set, increments the §16.1
+	// lenny_session_expiry_total{pool, reason} counter when the watchdog
+	// expires a session on a platform expiry clock. Nil disables the
+	// emission. spec: §16.1 catalog; §16.1.1 reason vocabulary. F-11.3.7.
+	incSessionExpiry func(pool, reason string)
 
 	// incWarmpoolWarmupFailure, when set, increments the §16.1 line 124
 	// lenny_warmpool_warmup_failure_total{error_type} counter for one
@@ -1454,6 +1467,18 @@ type Options struct {
 	// spec: §4.9 line 1220.
 	PreclaimMismatch func(pool, provider string)
 
+	// SlotHealth is the §5.2 per-pod fail/leak rolling-window tracker the
+	// slot retry policy reads to apply the ceil(maxConcurrentSessions/2)
+	// whole-pod replacement trigger. The gateway constructs a single Tracker
+	// and shares it with the §4.7 scrub-report drain ledger so adapter-reported
+	// slot-scrub leaks and gateway-observed slot-bind failures accumulate in
+	// one rolling window: a pod crossing the unhealthy threshold on the
+	// combined failed+leaked count drains regardless of which path observed the
+	// degradation. A nil tracker defaults to a fresh per-server Tracker (the
+	// standalone test path with no scrub-report ledger). spec: §5.2 (combined
+	// failed+leaked unhealthy threshold), §6.2 (leaked-slot semantics).
+	SlotHealth *slothealth.Tracker
+
 	// SlotReplacement, when set, increments
 	// lenny_slot_pod_replacement_total{pool} when the §5.2 concurrent-
 	// workspace slot retry policy drains an unhealthy pod (ceil(maxConcurrent
@@ -1467,6 +1492,27 @@ type Options struct {
 	// counted in active_slots until the pod terminates. Nil disables the
 	// emission. spec: §6.2 line 179.
 	SlotLeakGauge func(pod, pool string, leaked int)
+
+	// QueuePollInterval is the cadence at which a §4.6.1 onPoolExhausted:queue
+	// request re-enters acquisition while it waits for a pod to free. Zero
+	// selects DefaultQueuePollInterval. Operator-tunable; the spec fixes the
+	// wait bound (maxQueueWaitSeconds), not the poll cadence. spec: §4.6.1.
+	QueuePollInterval time.Duration
+
+	// SetPodClaimQueueDepth, when set, publishes the §16.1
+	// lenny_pod_claim_queue_depth{pool} gauge as the per-pool claim FIFO grows
+	// and shrinks. Nil disables the emission. spec: §4.6.1, §16.1.
+	SetPodClaimQueueDepth func(pool string, depth int)
+	// ObservePodClaimQueueWait, when set, observes the §16.1
+	// lenny_pod_claim_queue_wait_seconds{pool} histogram when a queued request
+	// leaves the FIFO (acquired or timed out). Nil disables it. spec: §4.6.1,
+	// §16.1.
+	ObservePodClaimQueueWait func(pool string, seconds float64)
+	// IncPodClaimTimeout, when set, increments the §16.1
+	// lenny_pod_claim_timeout_total{pool} counter when a queued request
+	// exhausts its maxQueueWaitSeconds bound. Nil disables it. spec: §4.6.1,
+	// §16.1.
+	IncPodClaimTimeout func(pool string)
 
 	// ObserveStartupDuration, when set, records the §6.3 line 348
 	// end-to-end pod-warm session startup latency (pod claim through
@@ -1521,6 +1567,15 @@ type Options struct {
 	// "unknown" for a session that has no recorded class. Nil disables
 	// the emission. spec: §16.1 catalog. F-7.3.10.
 	IncSessionRetry func(failureClass string)
+
+	// IncSessionExpiry, when set, increments the §16.1
+	// lenny_session_expiry_total{pool, reason} counter when the watchdog
+	// terminates a session on a platform expiry clock. reason is the
+	// §16.1.1 vocabulary value the watchdog resolved from the expiry edge
+	// ("max_idle_time" for the §6.2 idle clock, "max_session_age" for the
+	// §11.3 age cap and the §7.3 awaiting_client_action deadline). Nil
+	// disables the emission. spec: §16.1 catalog; §16.1.1. F-11.3.7.
+	IncSessionExpiry func(pool, reason string)
 
 	// IncWarmpoolWarmupFailure, when set, increments the §16.1 line 124
 	// lenny_warmpool_warmup_failure_total{error_type} counter for a
@@ -1620,7 +1675,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		warmupEstimateSeconds:    opts.WarmupEstimateSeconds,
 		credRouter:               opts.CredentialRouter,
 		preclaimMismatch:         opts.PreclaimMismatch,
-		slotHealth:               slothealth.New(),
+		slotHealth:               opts.SlotHealth,
 		slotStates:               slotstate.NewRegistry(),
 		slotReplacement:          opts.SlotReplacement,
 		slotLeakGauge:            opts.SlotLeakGauge,
@@ -1640,6 +1695,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		envBlocklist:             envblock.New(opts.EnvVarBlocklist),
 		incSessionResumeAttempt:  opts.IncSessionResumeAttempt,
 		incSessionRetry:          opts.IncSessionRetry,
+		incSessionExpiry:         opts.IncSessionExpiry,
 		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
 		uploadTokenTTL:           opts.UploadTokenTTL,
 		uploadAborts:             newUploadAbortRegistry(),
@@ -1648,6 +1704,13 @@ func New(store sessionstore.Store, opts Options) *Server {
 			opts.MaxConcurrentUploadsGlobal,
 			opts.MaxUploadBytesPerSession,
 		),
+	}
+	if s.slotHealth == nil {
+		// spec: §5.2 — default to a fresh per-server fail/leak tracker when no
+		// shared tracker is injected (the standalone test path with no §4.7
+		// scrub-report drain ledger). The gateway wiring injects a single
+		// Tracker so the slot-bind-failure and adapter-leak windows are one.
+		s.slotHealth = slothealth.New()
 	}
 	if s.callbackValidator == nil {
 		// spec: §14 lines 108-112 — the SSRF validator needs no external
@@ -1678,6 +1741,15 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
 	}
+	// §4.6.1 per-pool claim FIFO backing sessionPolicy.onPoolExhausted: queue.
+	// It shares the server clock so a test can drive the wait deadline, and it
+	// carries the §16.1 queue-metric callbacks. A `reject` pool never reaches
+	// the FIFO; the queue is consulted only after an acquisition exhausts both
+	// the claim-path timeout and the Postgres fallback.
+	s.claimQueue = newPodClaimQueue(opts.QueuePollInterval, s.clock)
+	s.claimQueue.onDepth = opts.SetPodClaimQueueDepth
+	s.claimQueue.onWait = opts.ObservePodClaimQueueWait
+	s.claimQueue.onTimeout = opts.IncPodClaimTimeout
 	if s.idFn == nil {
 		s.idFn = randomSessionID
 	}
@@ -2097,7 +2169,53 @@ type SessionIsolationLevel struct {
 	PodReuse             bool   `json:"podReuse"`
 	ScrubPolicy          string `json:"scrubPolicy,omitempty"`
 	ResidualStateWarning bool   `json:"residualStateWarning"`
+	// ConversationContinuity is the §7.1 line 74 contract field:
+	// "platform" for session mode (the platform binds the session to a pod
+	// and preserves conversation context across messages for the session's
+	// lifetime) or "none" for service mode (the gateway routes each message
+	// to any ready replica and keeps no conversation context between
+	// messages, so clients of multi_turn runtimes re-inject context into
+	// each message's input). spec: §5.2 (service-mode session contract),
+	// §7.1 line 74.
+	ConversationContinuity string `json:"conversationContinuity"`
 }
+
+// conversationContinuityFor maps a §5.2 execution mode to its §7.1 line 74
+// conversationContinuity contract value: "none" for service mode (no
+// cross-message continuity, each message routes to any ready replica) and
+// "platform" for session mode (the session is pinned to a pod that
+// preserves context for its lifetime). An empty mode resolves to the
+// session-mode default, mirroring the executionMode fallbacks elsewhere so
+// the field never understates continuity. spec: §5.2, §7.1 line 74.
+func conversationContinuityFor(mode string) string {
+	if mode == string(runtimestore.ExecutionModeService) {
+		return continuityNone
+	}
+	return continuityPlatform
+}
+
+// persistedContinuity returns the §7.1 line 74 conversationContinuity for a
+// read off the persisted row. The stored value (the S25a
+// conversation_continuity column) is authoritative when non-empty, so a
+// GET / List after a coordinator handoff returns the exact value the create
+// response carried. An empty column (a pre-migration row, or a row created
+// before the gateway resolved a pool) falls back to the mode-derived value
+// so the field never understates continuity. spec: §7.1 line 74.
+func persistedContinuity(stored, mode string) string {
+	if stored != "" {
+		return stored
+	}
+	return conversationContinuityFor(mode)
+}
+
+const (
+	// continuityPlatform is the §7.1 line 74 conversationContinuity value
+	// for session mode.
+	continuityPlatform = "platform"
+	// continuityNone is the §7.1 line 74 conversationContinuity value for
+	// service mode.
+	continuityNone = "none"
+)
 
 // errorEnvelope is the §15.1 error response shape.
 type errorEnvelope struct {
@@ -2318,19 +2436,20 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// rich level the pool resolved to.
 	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, isoProf)
 	row := sessionstore.Session{
-		ID:               s.idFn(),
-		TenantID:         tenantID,
-		UserID:           req.UserID,
-		RuntimeRef:       req.RuntimeRef,
-		Environment:      req.Environment,
-		State:            session.StateCreated,
-		IsolationProfile: isoProf,
-		ExecutionMode:    level.ExecutionMode,
-		ScrubPolicy:      level.ScrubPolicy,
-		WorkspacePlan:    planJSON,
-		Metadata:         cloneMetadata(req.Metadata),
-		RetryPolicy:      effectiveRetry,
-		CreatedAt:        s.clock(),
+		ID:                     s.idFn(),
+		TenantID:               tenantID,
+		UserID:                 req.UserID,
+		RuntimeRef:             req.RuntimeRef,
+		Environment:            req.Environment,
+		State:                  session.StateCreated,
+		IsolationProfile:       isoProf,
+		ExecutionMode:          level.ExecutionMode,
+		ScrubPolicy:            level.ScrubPolicy,
+		ConversationContinuity: level.ConversationContinuity,
+		WorkspacePlan:          planJSON,
+		Metadata:               cloneMetadata(req.Metadata),
+		RetryPolicy:            effectiveRetry,
+		CreatedAt:              s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
 	// spec: §4.2 line 159 — stamp the resume-eligibility deadline
@@ -2444,6 +2563,55 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// poolPolicyReader adapts the §5.2 poolstore onto the
+// podsession.PoolPolicyReader the CRD resolver folds the gateway-enforced
+// sessionPolicy mirror through. It returns nil when no pool store is
+// wired, so ResolvePool keeps its CRD-derived dispatch defaults.
+func (s *Server) poolPolicyReader() podsession.PoolPolicyReader {
+	if s.pools == nil {
+		return nil
+	}
+	return poolPolicyMirror{pools: s.pools}
+}
+
+// poolPolicyMirror reads a pool's gateway-enforced §5.2 sessionPolicy
+// fields (maxConcurrentSessions, the service-mode maxConcurrent,
+// recycle.allowCrossTenantReuse, and recycle.maxPodUptimeSeconds) from
+// the poolstore so ResolvePool can fold them into the PoolMatch. The CRD
+// pair does not carry these; the poolstore is the source of truth.
+//
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset).
+type poolPolicyMirror struct {
+	pools poolstore.Store
+}
+
+// PoolPolicy implements podsession.PoolPolicyReader. found is false for a
+// missing or soft-deleted pool, leaving the CRD-derived dispatch fields
+// unchanged.
+func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsession.PoolPolicyMirror, bool, error) {
+	p, err := m.pools.Get(ctx, name)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			return podsession.PoolPolicyMirror{}, false, nil
+		}
+		return podsession.PoolPolicyMirror{}, false, fmt.Errorf("sessionserver: get pool %s: %w", name, err)
+	}
+	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
+	if sp := p.SessionPolicy; sp != nil {
+		mirror.MaxConcurrentSessions = int32(sp.MaxConcurrentSessions)
+		// §5.2 / §4.6.1 pool-exhaustion disposition: fold the queue-vs-reject
+		// choice and its wait bound from the session policy so the start
+		// path's claim queue reads the gateway-enforced values.
+		mirror.OnPoolExhausted = string(sp.OnPoolExhausted)
+		mirror.MaxQueueWaitSeconds = sp.MaxQueueWaitSeconds
+		if r := sp.Recycle; r != nil {
+			mirror.AllowCrossTenantReuse = r.AllowCrossTenantReuse
+			mirror.MaxPodUptimeSeconds = int64(r.MaxPodUptimeSeconds)
+		}
+	}
+	return mirror, true, nil
+}
+
 // resolveIsolationLevel computes the §7.1 sessionIsolationLevel for a
 // session against its assigned pool. spec: §7.1 line 75 — the field is
 // populated from the assigned pool's configuration at session creation
@@ -2458,7 +2626,7 @@ func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, r
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		return defaultIsolationLevel(requested)
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace, runtimeRef, string(requested))
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested))
 	if err != nil {
 		return defaultIsolationLevel(requested)
 	}
@@ -2476,6 +2644,10 @@ func defaultIsolationLevel(p isolation.Profile) SessionIsolationLevel {
 		PodReuse:             false,
 		ScrubPolicy:          "",
 		ResidualStateWarning: false,
+		// spec: §7.1 line 74 — a session-mode pod binds the session to one
+		// pod for its lifetime and preserves conversation context across
+		// messages.
+		ConversationContinuity: continuityPlatform,
 	}
 }
 
@@ -2496,9 +2668,21 @@ func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
 	level := SessionIsolationLevel{
 		ExecutionMode:    mode,
 		IsolationProfile: string(row.IsolationProfile),
+		// spec: §7.1 line 74 — derive conversationContinuity from the frozen
+		// execution mode so a GET / List after a coordinator handoff returns
+		// "none" for a service-mode row and "platform" otherwise, matching
+		// the create response. The stored ConversationContinuity column
+		// (migration from S25a) is authoritative when present; an empty
+		// column falls back to the mode-derived value so a pre-migration or
+		// never-resolved row still reports the correct continuity.
+		ConversationContinuity: persistedContinuity(row.ConversationContinuity, mode),
 	}
-	switch mode {
-	case string(runtimestore.ExecutionModeTask), string(runtimestore.ExecutionModeConcurrent):
+	// spec: §5.2 / §7.1 — a service-mode pod serves successive requests with
+	// no scrub, and a session-mode pod that recorded a non-empty scrubPolicy
+	// at create time (recycle.enabled or maxConcurrentSessions > 1) reuses a
+	// pod across more than one session. Both report podReuse and the
+	// residual-state warning; the one-session-per-pod default does neither.
+	if mode == string(runtimestore.ExecutionModeService) || row.ScrubPolicy != "" {
 		level.PodReuse = true
 		level.ResidualStateWarning = true
 		level.ScrubPolicy = row.ScrubPolicy
@@ -2507,10 +2691,10 @@ func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
 }
 
 // isolationLevelForPool maps a resolved §5.2 pool to the §7.1
-// sessionIsolationLevel fields. spec: §7.1 lines 69-73 — task and
-// concurrent pools reuse a pod (podReuse true) and may expose residual
-// state from prior tasks or sibling slots (residualStateWarning true);
-// session pools do neither.
+// sessionIsolationLevel fields. spec: §5.2 / §7.1 lines 69-73 — a
+// service-mode pool and a session-mode pool that reuses a pod
+// (recycle.enabled or maxConcurrentSessions > 1) report podReuse and the
+// residual-state warning; the one-session-per-pod default does neither.
 func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profile) SessionIsolationLevel {
 	profile := match.IsolationProfile
 	if profile == "" {
@@ -2520,27 +2704,46 @@ func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profi
 	if mode == "" {
 		mode = string(runtimestore.ExecutionModeSession)
 	}
-	level := SessionIsolationLevel{ExecutionMode: mode, IsolationProfile: profile}
-	switch mode {
-	case string(runtimestore.ExecutionModeTask), string(runtimestore.ExecutionModeConcurrent):
+	level := SessionIsolationLevel{
+		ExecutionMode:    mode,
+		IsolationProfile: profile,
+		// spec: §7.1 line 74 — a service-mode pool provides no cross-message
+		// continuity (each message routes to any ready replica); every other
+		// mode binds the session to one pod that preserves context.
+		ConversationContinuity: conversationContinuityFor(mode),
+	}
+	scrub := scrubPolicyForPool(match)
+	if mode == string(runtimestore.ExecutionModeService) || scrub != "" {
 		level.PodReuse = true
 		level.ResidualStateWarning = true
-		level.ScrubPolicy = scrubPolicyForPool(match)
+		level.ScrubPolicy = scrub
 	}
 	return level
 }
 
 // scrubPolicyForPool returns the §7.1 line 72 scrubPolicy string for a
-// reuse pool. It is meaningful only when podReuse is true; a session
-// pool returns the empty string (the field is omitted on the wire).
+// reuse pool. spec: §5.2 — a service-mode pod serves successive requests
+// with no scrub (`none`); a session-mode pod that recycles a pod across
+// sessions scrubs best-effort, with the cross-tenant microvm variants
+// selecting the VM-level scrub, and concurrent slots scrub per slot. A
+// one-session-per-pod session pool returns the empty string (the field is
+// omitted on the wire). The PoolMatch recycle/concurrency signals are
+// derived from the §5.2 sessionPolicy mirror by ResolvePool.
 func scrubPolicyForPool(match podsession.PoolMatch) string {
-	switch match.ExecutionMode {
-	case string(runtimestore.ExecutionModeTask):
-		// Cross-tenant microvm task reuse selects a VM-level scrub
-		// variant; same-tenant and non-microvm task reuse uses the
-		// standard best-effort scrub. microvmScrubMode defaults to
-		// `restart` (§5.2), so an empty value with cross-tenant reuse maps
-		// to `vm-restart`.
+	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return "none"
+	}
+	if match.MaxConcurrentSessions > 1 {
+		// Concurrent sessions scrub per slot on completion or failure.
+		return "best-effort-per-slot"
+	}
+	if match.Recycle {
+		// Cross-tenant microvm sequential reuse selects a VM-level scrub
+		// variant; same-tenant and non-microvm reuse uses the standard
+		// best-effort scrub. A cross-tenant-reuse pool is validated to carry
+		// scrubProfile vm-restart or in-place (the standard in-guest scrub is
+		// rejected for cross-tenant reuse, §5.2), so in-place maps to the
+		// in-place scrub and any other value (vm-restart) maps to vm-restart.
 		if match.IsolationProfile == string(isolation.ProfileMicrovm) && match.AllowCrossTenantReuse {
 			if match.MicrovmScrubMode == string(runtimestore.MicrovmScrubInPlace) {
 				return "best-effort-in-place"
@@ -2548,16 +2751,8 @@ func scrubPolicyForPool(match podsession.PoolMatch) string {
 			return "vm-restart"
 		}
 		return "best-effort"
-	case string(runtimestore.ExecutionModeConcurrent):
-		// Concurrent-stateless performs no per-request scrub; concurrent-
-		// workspace scrubs per slot on completion or failure.
-		if match.ConcurrencyStyle == string(podclaim.StyleStateless) {
-			return "none"
-		}
-		return "best-effort-per-slot"
-	default:
-		return ""
 	}
+	return ""
 }
 
 // writeWorkspacePlanError translates a workspaceplan.ValidationError

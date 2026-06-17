@@ -23,7 +23,7 @@ func (h captureHandler) Handle(_ context.Context, r slog.Record) error {
 	return nil
 }
 func (h captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h captureHandler) WithGroup(string) slog.Handler       { return h }
+func (h captureHandler) WithGroup(string) slog.Handler      { return h }
 
 // toolsListResp builds the tools/list JSON-RPC result body for a list of
 // (name, annotations-json) pairs.

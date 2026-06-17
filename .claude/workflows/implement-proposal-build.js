@@ -64,7 +64,9 @@ const RULES =
   repo +
   "/.claude/rules/code-best-practices.md (small single-purpose functions, reuse over duplication, wrapped errors, injected dependencies, context propagation, fail-closed security, `// spec:` citations, no backward-compat shims) and " +
   repo +
-  "/.claude/rules/test-coverage.md (tests across every tier the change reaches, not unit alone; tier 0 and tier 1 always plus each higher tier the change touches; 80% changed-line coverage; the `// spec:` and `// diagnosis:` test conventions). REMOVE DEAD CODE: when the proposal eliminates a surface (a mode, field, RPC, frame, metric, enum value, function, struct, or whole file), delete it together with every code path, helper, test, fixture, schema entry, chart template, and identifier that becomes unreferenced as a result; never leave a removed surface compiling-but-dead or two implementations side by side. A removal is part of the change, not a follow-up. Do not hand-edit files under spec/ — the spec is already applied and the guard hook blocks direct writes.";
+  "/.claude/rules/test-coverage.md (tests across every tier the change reaches, not unit alone; tier 0 and tier 1 always plus each higher tier the change touches; 80% changed-line coverage; the `// spec:` and `// diagnosis:` test conventions). REMOVE DEAD CODE: when the proposal eliminates a surface (a mode, field, RPC, frame, metric, enum value, function, struct, or whole file), delete it together with every code path, helper, test, fixture, schema entry, chart template, and identifier that becomes unreferenced as a result; never leave a removed surface compiling-but-dead or two implementations side by side. A removal is part of the change, not a follow-up. Do not hand-edit files under spec/ — the spec is already applied and the guard hook blocks direct writes." +
+  "\n\nPER-STEP VERIFICATION — must TEST the step, avoid the 180s no-progress watchdog, AND stay MEMORY-SAFE on a 16GB host (running heavy tests in the background or concurrently accumulates orphaned processes and OOM-crashes the whole machine, including this build). DO test every step; do NOT skip tests. Follow ALL of these: (1) DEFAULT to scoped FOREGROUND verification — NEVER use `run_in_background` for `go test`/`lenny-test`/envtest/integration/e2e UNLESS the tier is a single long-running command that will exceed the 180s watchdog without emitting output (see rule (6) for that case only); never more than one heavy job alive at once. (2) SCOPE every command to the changed packages, never the whole repo: `go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`, `go test ./<changed-pkg>/... -count=1 -p 2`. Scoped runs finish well under 180s (no watchdog stall) AND keep memory bounded; do NOT pipe through `| tail`/`| head` (let output stream). (3) For a tier-2 envtest package the step changes, run it FOREGROUND and SCOPED to that one package only (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only ONE etcd+kube-apiserver pair is alive at a time; immediately after it returns, reap strays with `pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null; pkill -f kube-controller 2>/dev/null` before continuing. (4) NEVER run `go test -race ./...` over the whole repo — the race detector uses ~10x memory; if you need `-race`, run it scoped to the one changed package only. (5) NEVER run whole-repo `lenny-test --max-tier unit`/`static` per step. A pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. (6) LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely run longer than ~150s without emitting any output (a rare case for full component or integration tiers), you may launch it with `run_in_background: true` to a log file. In that case, poll for completion using the READ TOOL (read the log file path returned by the Bash tool) — do NOT use a Bash `tail -f`/`until` loop. A Bash poll loop depends on the task `.output` file remaining on disk; if the 180s watchdog kills the foreground Bash wrapper, the harness deletes that `.output` file and the poll loop hangs forever. The Read tool bypasses the task-output mechanism and reads the log file directly, making it immune to harness cleanup." +
+  "\n\nBRANCH SAFETY (critical): you MUST stay on the current feature branch and commit ONLY to it. NEVER run `git checkout <branch-or-commit>`, `git switch`, `git reset --hard`, or `git branch -f` — switching the checkout has caused build commits to land on the wrong branch (a real, damaging failure). To inspect a historical commit or the pre-implementation baseline, use `git diff <SHA>..HEAD`, `git diff <SHA> -- <path>`, or `git show <SHA>:<path>`, which read history WITHOUT changing the working tree. Immediately before every `git commit`, confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch (not `HEAD`/detached, and never `impl/v1-initial` or any base branch); if it does not, `git checkout <feature-branch>` to return before committing.";
 
 // One build step, shared by the initial plan and the tail re-plan.
 const STEP_ITEM = {
@@ -219,7 +221,8 @@ let plan = await agent(
     "The blast radius and the build sequence MUST include the surfaces the proposal REMOVES, not only those it adds or changes: for every mode, field, RPC, frame, metric, enum value, function, or whole file the proposal eliminates, include an explicit removal step that deletes it plus the code paths, tests, fixtures, schema entries, and chart templates orphaned by its removal, sequenced so the removal lands without breaking the build (remove consumers before the surface, or in the same step). A surface the proposal eliminates that has no removal step is a planning gap. " +
     "Produce blastRadius (one entry per surface) and an ORDERED build sequence of steps where each step is independently implementable once its dependencies are done. For each step give the work, the target files or packages, dependsOn (earlier step ids), the test tiers it must create and run (per " +
     repo +
-    "/.claude/rules/test-coverage.md), and the spec sections it implements. Sequence so foundational changes (CRD fields, schemas, shared types) come before the code that consumes them, and tests for each step land within that step.",
+    "/.claude/rules/test-coverage.md), and the spec sections it implements. Sequence so foundational changes (CRD fields, schemas, shared types) come before the code that consumes them, and tests for each step land within that step." +
+    " CRITICAL — RESUMING A PARTIALLY-BUILT PROPOSAL. A large prefix of this proposal is ALREADY IMPLEMENTED and committed on the current branch; run `git log --oneline -80` (commits tagged '0002 S1:' through '0002 S22:') and grep the current code to confirm. The following surfaces are DONE and you MUST NOT emit any step for them: the CRD API types (`executionMode: session;service` enum, `ConcurrencyStyle`/`TaskPolicy` removed, `sessionPolicy` types) with regenerated CRD manifests; migration 0167 (execution_mode enum re-key, `agent_pod_state` recycle counters, the concurrency_style Phase-3 gate); the mode-enum collapse and `sessionPolicy` mirror across the stores, admin, and persistence layers; the adapter-proto `ReportSessionScrub`/`ReportPodScrub` RPC declarations, the hand-authored OpenAPI document, the SDK `conversationContinuity` field, and the `CoarseState` mapping with `slot_active` removed; the deletion of between-task lifecycle frames and the `task_lifecycle` capability from schemas and examples; and the §6.2 coarse pod-state-machine re-key with recycle edges; ALSO committed (as S11 through S19) and likewise DONE: the `lenny-sandboxclaim-guard` CREATE-only re-key with its alert/runbook, `taskcleanup.Decide` re-sourced to `sessionPolicy`, the `pool_config_validator` derived-property re-keys, the `maxClientIdleSeconds` idle clock, the metric renames and new series, the chart RBAC decomposition with the gateway claim-hold/queue config, and the per-pod `SandboxClaim` claimer (`claim-<podName>`, Postgres-fallback slot gate) WITH the ownership decomposition (gateway no longer writes `Sandbox.status`, claim-driven occupancy projection, drains routed through claim DELETE plus the drain-request annotation); ALSO committed (as S20 through S22) and DONE: the `agent_pod_state` recycle-counter store accessors, the binding-state status writers with the precondition-guarded hold-expiry DELETE, and the gateway-side `ReportSessionScrub`/`ReportPodScrub` handlers with the recycle-disposition decision. Your plan MUST begin at the FIRST surface that is NOT yet implemented and cover ONLY the remainder; the remaining work is approximately the gateway recycle branch on session-end and reserved-hold rebind, the WarmPoolController claim-driven occupancy projection in the Sandbox status writer, the reserved-hold coordinator (hold TTL, rewarm stamp, precondition-guarded expiry DELETE), the binding-state-aware orphan GC, the `sdk_connecting` watchdog reserved-terminus and re-warm-start clock re-anchor, the `onPoolExhausted: queue` bounded wait, service-mode claimless routing and the `multi_turn`/`conversationContinuity` contract, the Session/Task 1:1 freeze, the PoolScalingController reserved-pod inventory and scaling derivations, the `podregistry`/`podlifecycle` re-source for the per-pod claim model, and the documentation/diagram sweep with finding closure — but grep-confirm each is genuinely absent before emitting it and SKIP any already present. For reference, the full candidate list in dependency order is: the per-pod `SandboxClaim` claimer (deterministic `claim-<podName>`, spec-only CREATE, Postgres `pod_assignment` binding, Redis slot-counter gate with §12.4 Postgres fallback); the `lenny-sandboxclaim-guard` CREATE-only per-pod-uniqueness re-key (drop the PATCH/PUT rule); the ownership decomposition (gateway stops writing `Sandbox.status`, WarmPoolController becomes sole writer, claim-driven occupancy projection, RBAC grant changes); the adapter scrub-split handlers wiring (`ReportSessionScrub`/`ReportPodScrub` gateway-side) and `taskcleanup.Decide` re-sourced to `sessionPolicy` with the `taskdriver` package removed; the recycle disposition and reserved-hold on the gateway binder/sessionserver; the binding-state-aware orphan GC; the `sdk_connecting` watchdog reserved-terminus and re-warm-start clock re-anchor; the `maxClientIdleSeconds` idle clock replacing `runtime.limits.maxIdleTimeSeconds`; the `onPoolExhausted: queue` bounded wait; service-mode claimless routing and the `multi_turn`/`conversationContinuity` contract with the registration-time warning; the metric renames and new series at every emitter and consumer; the RBAC convergence and alert-rule re-key; the Session/Task 1:1 freeze (TaskID, per-session manifest, integration-level matrix); the PoolScalingController reserved-pod inventory and scaling derivations; and the documentation/diagram sweep with finding closure. Confirm by grep that each step you emit targets a surface genuinely absent from the current code before including it.",
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
@@ -406,9 +409,9 @@ for (let i = 0; i < plan.steps.length; i++) {
         stepRef +
         " (`git diff " +
         stepRef +
-        "..HEAD`). Run tier 0 (`go build ./...`, `go vet`, lint) and tier 1 for the changed packages, plus each tier this step must run: " +
+        "..HEAD`). Run SCOPED tier 0 (`go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`) and tier 1 (`go test ./<changed-pkg>/... -count=1`) for the changed packages, plus each higher tier this step must run: " +
         ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
-        ". Use `lenny-test --changed --max-tier <tier>` and bring infrastructure up with `lenny-test infra up` when a tier needs it. Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it). List any failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here.",
+        ". MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
       { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
     );
     stepGreen = !!(sv && sv.green);
@@ -652,6 +655,39 @@ for (let i = 0; i < plan.steps.length; i++) {
 
 // ---- Verify: run the reached tiers across the whole change ----
 
+// Clean-checkout compile guard. The Verify and recheck agents run tests
+// against the WORKING TREE, so a valid fix left uncommitted reads as green even
+// though HEAD does not contain it — which has shipped a non-compiling branch
+// tip (verification passing over code that was never committed). Before
+// trusting green, assert the tree carries no uncommitted tracked source change
+// and that HEAD compiles from that clean state. Returns {clean, compiles,
+// committed, details}; the caller ANDs clean && compiles into green.
+const GUARD = {
+  type: "object",
+  required: ["clean", "compiles"],
+  properties: {
+    clean: { type: "boolean", description: "git status --porcelain lists no tracked source change (every change committed)" },
+    compiles: { type: "boolean", description: "`go build ./...` exits 0 on the committed tree" },
+    committed: { type: "string", description: "SHA of a commit made to clean the tree, or empty if nothing needed committing" },
+    details: { type: "string", description: "what was uncommitted and what was done, or the build error if it does not compile" },
+  },
+};
+
+const GUARD_PROMPT =
+  "CLEAN-CHECKOUT COMPILE GUARD for the implementation in " +
+  repo +
+  ".\n\nThe verification runs tests against the WORKING TREE, so a valid fix left UNCOMMITTED reads as green even though HEAD does not contain it (this has shipped a non-compiling branch tip). Enforce that green reflects COMMITTED code:\n" +
+  "1. Run `git status --porcelain`. A tracked modified/added SOURCE file (Go, chart, schema, migration, proto) is part of this change and MUST be committed: first confirm the whole tree builds with `go build ./...` and the affected packages' tests pass, then stage and commit those files on the current feature branch with a descriptive message. Do NOT commit build outputs, coverage files, logs, or unrelated scratch artifacts — leave git-ignored or clearly-external untracked files in place; they do not block clean.\n" +
+  "2. After the tree carries no uncommitted tracked source change, run `go build ./...` and confirm it exits 0 (HEAD compiles from the committed state).\n" +
+  "Set clean=true only when `git status --porcelain` lists no tracked source change, and compiles=true only when `go build ./...` exits 0. If a tracked source file cannot be committed because it does not build or breaks tests, set clean=false and explain in details rather than committing a broken tree. " +
+  "MEMORY-SAFE: run `go build ./...` (compilation only, not under the race detector) and any scoped package tests in the FOREGROUND; never run a whole-repo `go test -race ./...`. " +
+  "BRANCH SAFETY: confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch before any commit; never checkout/switch/reset/branch -f.";
+
+// Runs the guard and returns its verdict (or null if the agent died).
+async function runCompileGuard(label, phaseName) {
+  return await agent(GUARD_PROMPT, { schema: GUARD, label: "compile-guard:" + label, phase: phaseName });
+}
+
 phase("Verify");
 const tierSet = Array.from(new Set(plan.steps.flatMap((s) => s.tiers || [])));
 let verify = await agent(
@@ -664,7 +700,7 @@ let verify = await agent(
     stepResults.map((s) => s.commit).filter(Boolean).join(", ") +
     ".\n\nRun tier 0 and tier 1 for the changed packages, plus each higher tier the change reached: " +
     (tierSet.join(", ") || "as determined from the diff") +
-    ". Use `lenny-test --changed --max-tier <tier>` and bring infrastructure up as needed. Run `lenny-test coverage --diff " +
+    ". MEMORY-SAFE on this 16GB host: DEFAULT to running each tier in the FOREGROUND, one at a time, SCOPED to the changed packages (`lenny-test --changed --max-tier <tier>` selects only changed packages; add go-test parallelism `-p 1`/`-p 2`). NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without emitting output (see below). NEVER run a whole-repo `go test -race ./...` — orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash the machine. Run tier-2 envtest packages one at a time and reap strays (`pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null`) between them. Stream output (no `| tail`); scoped runs stay under the 180s watchdog. LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely exceed ~150s without any output, launch it with `run_in_background: true` to a log file path — then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop hangs forever when the harness deletes its `.output` file after the 180s watchdog fires). RUN TIER-0 STATIC CHECKS DIRECTLY: do not rely solely on `lenny-test --tier static` to report all tier-0 failures at once — run `go build ./...`, `go vet ./...`, `golangci-lint run ./...`, and `bash scripts/lint-migrations.sh` as separate foreground commands so each failure is visible independently rather than short-circuiting the others. A `lint-migrations` failure on a migration number with no test reference is only a failure for the THIS change if the migration was ADDED on this branch; a pre-existing uncovered migration (present on the base ref too) is pre-existing debt, not this change's failure — note it but do not mark green=false for it alone. Bring infrastructure up as needed. Run `lenny-test coverage --diff " +
     baseRef +
     "` and report the changed-line coverage. COVERAGE GATE: green=true requires BOTH that every reached tier passes AND that changed-line coverage is at least " +
     coverageFloor +
@@ -704,7 +740,7 @@ while (
       repo +
       " and report whether everything is now green. Tiers: " +
       (tierSet.join(", ") || "from the diff") +
-      ". Use `lenny-test --changed --max-tier <tier>`, bringing infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
+      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`); reap stray envtest processes (`pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null`) between tier-2 packages; pass `-p 1`/`-p 2` to cap memory; stream output (no `| tail`). Bring infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
       baseRef +
       "`) at least " +
       coverageFloor +
@@ -713,13 +749,28 @@ while (
   );
 }
 
-const green = !!(verify && verify.green);
+let green = !!(verify && verify.green);
 if (!green) {
   log(
     vround >= maxVerifyRounds
       ? "Verify cap (" + maxVerifyRounds + " rounds) reached; still not green"
       : "Verify not green with no actionable failures listed; stopping",
   );
+} else {
+  // Verify reported green against the working tree; confirm that green
+  // reflects COMMITTED code and that HEAD compiles from a clean tree.
+  const guard = await runCompileGuard("postverify", "Verify");
+  if (!guard || !guard.clean || !guard.compiles) {
+    green = false;
+    log(
+      "Clean-checkout compile guard FAILED: " +
+        (guard
+          ? "clean=" + guard.clean + ", compiles=" + guard.compiles + (guard.details ? " — " + guard.details : "")
+          : "guard agent returned no result"),
+    );
+  } else if (guard.committed) {
+    log("Clean-checkout compile guard committed outstanding work: " + guard.committed);
+  }
 }
 
 // ---- Review: final cross-step design-conformance review of the cumulative diff ----
@@ -831,7 +882,7 @@ if (green && reviewFixApplied) {
       repo +
       " after the design-conformance fixes and report whether everything is still green. Tiers: " +
       (tierSet.join(", ") || "from the diff") +
-      ". Use `lenny-test --changed --max-tier <tier>`. Apply the coverage gate (changed-line coverage at least " +
+      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`; reap stray envtest etcd/kube-apiserver between packages; `-p 1`/`-p 2` to cap memory; stream output, no `| tail`). Apply the coverage gate (changed-line coverage at least " +
       coverageFloor +
       "% via `lenny-test coverage --diff " +
       baseRef +
@@ -840,6 +891,23 @@ if (green && reviewFixApplied) {
   );
   finalGreen = !!(recheck && recheck.green);
   if (recheck) verify = recheck;
+  // The review-fix agents commit their own fixes, but a fix left uncommitted
+  // in the working tree would pass the recheck while leaving HEAD red. Re-run
+  // the clean-checkout compile guard so finalGreen reflects committed code.
+  if (finalGreen) {
+    const guard = await runCompileGuard("postreview", "Review");
+    if (!guard || !guard.clean || !guard.compiles) {
+      finalGreen = false;
+      log(
+        "Clean-checkout compile guard FAILED after review fixes: " +
+          (guard
+            ? "clean=" + guard.clean + ", compiles=" + guard.compiles + (guard.details ? " — " + guard.details : "")
+            : "guard agent returned no result"),
+      );
+    } else if (guard.committed) {
+      log("Clean-checkout compile guard committed outstanding review work: " + guard.committed);
+    }
+  }
 }
 
 return {

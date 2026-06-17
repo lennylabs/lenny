@@ -109,14 +109,22 @@ func seedRestore(t *testing.T, store *backup.MemStore, r backup.RestoreState) {
 func TestMetricsCollectorBackupOutcomes_spec_25_11(t *testing.T) {
 	svc, store, _, _ := newTestService(t)
 	start := fixedNow
-	seedBackupRow(t, store, backup.Backup{ID: "bkp-a", Type: "full", Status: backup.StatusCompleted,
-		StartedAt: start, CompletedAt: ptr(start.Add(30 * time.Second)), SizeBytes: 1000})
-	seedBackupRow(t, store, backup.Backup{ID: "bkp-b", Type: "full", Status: backup.StatusCompleted,
-		StartedAt: start, CompletedAt: ptr(start.Add(90 * time.Second)), SizeBytes: 2000})
-	seedBackupRow(t, store, backup.Backup{ID: "bkp-c", Type: "full", Status: backup.StatusFailed,
-		StartedAt: start, CompletedAt: ptr(start.Add(3 * time.Second))})
-	seedBackupRow(t, store, backup.Backup{ID: "bkp-d", Type: "incremental", Status: backup.StatusCompleted,
-		StartedAt: start, CompletedAt: ptr(start.Add(5 * time.Second)), SizeBytes: 500})
+	seedBackupRow(t, store, backup.Backup{
+		ID: "bkp-a", Type: "full", Status: backup.StatusCompleted,
+		StartedAt: start, CompletedAt: ptr(start.Add(30 * time.Second)), SizeBytes: 1000,
+	})
+	seedBackupRow(t, store, backup.Backup{
+		ID: "bkp-b", Type: "full", Status: backup.StatusCompleted,
+		StartedAt: start, CompletedAt: ptr(start.Add(90 * time.Second)), SizeBytes: 2000,
+	})
+	seedBackupRow(t, store, backup.Backup{
+		ID: "bkp-c", Type: "full", Status: backup.StatusFailed,
+		StartedAt: start, CompletedAt: ptr(start.Add(3 * time.Second)),
+	})
+	seedBackupRow(t, store, backup.Backup{
+		ID: "bkp-d", Type: "incremental", Status: backup.StatusCompleted,
+		StartedAt: start, CompletedAt: ptr(start.Add(5 * time.Second)), SizeBytes: 500,
+	})
 	// An in-flight backup is not an outcome and must not be counted.
 	seedBackupRow(t, store, backup.Backup{ID: "bkp-e", Type: "full", Status: backup.StatusRunning, StartedAt: start})
 
@@ -173,8 +181,10 @@ func TestMetricsCollectorBackupOutcomes_spec_25_11(t *testing.T) {
 func TestMetricsCollectorRestoreOutcomes_spec_25_11(t *testing.T) {
 	svc, store, _, _ := newTestService(t)
 	start := fixedNow
-	seedRestore(t, store, backup.RestoreState{ID: "rst-a", Status: backup.RestoreStatusCompleted,
-		StartedAt: start, CompletedAt: ptr(start.Add(60 * time.Second))})
+	seedRestore(t, store, backup.RestoreState{
+		ID: "rst-a", Status: backup.RestoreStatusCompleted,
+		StartedAt: start, CompletedAt: ptr(start.Add(60 * time.Second)),
+	})
 	seedRestore(t, store, backup.RestoreState{ID: "rst-b", Status: backup.RestoreStatusFailed, StartedAt: start})
 	// A running restore is not a terminal outcome.
 	seedRestore(t, store, backup.RestoreState{ID: "rst-c", Status: backup.RestoreStatusRunning, StartedAt: start})

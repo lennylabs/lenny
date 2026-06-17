@@ -56,8 +56,8 @@ const CapabilityConcurrentWorkspace = "concurrentWorkspace"
 
 // useSlot reports whether the adapter should take the §6.4 per-slot path
 // for slotID: the adapter is in concurrent-workspace mode and the RPC
-// carries a non-empty slot id. Session and task mode (slotID == "") keep
-// the single-session base layout untouched.
+// carries a non-empty slot id. The single-session base layout
+// (maxConcurrentSessions == 1, slotID == "") is left untouched.
 func (s *Server) useSlot(slotID string) bool {
 	return s.ConcurrentWorkspace && slotID != ""
 }
@@ -158,7 +158,7 @@ func removeSlotTree(st *slotState) error {
 
 // runtimeForSlot returns the runtime process that drives slotID. For the
 // single-session base layout (slotID == "" or non-concurrent mode) it
-// returns the pod-global Runtime unchanged, so the session/task hot path
+// returns the pod-global Runtime unchanged, so the single-session hot path
 // is byte-for-byte identical. For an assigned concurrent slot it returns
 // the slot's own runtime; for an unknown slot it returns nil so the
 // caller surfaces a FailedPrecondition.

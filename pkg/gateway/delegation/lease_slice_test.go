@@ -24,8 +24,8 @@ func seedParentWithLease(t *testing.T, store sessionstore.Store, id string, gran
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
 		ID: id, TenantID: "acme", State: session.StateRunning,
-		UserID:          "user_alice",
-		RuntimeRef:      "claude", PoolRef: "pool-a",
+		UserID:     "user_alice",
+		RuntimeRef: "claude", PoolRef: "pool-a",
 		IsolationProfile: isolation.ProfileSandboxed,
 		DelegationLease:  granted,
 		CreatedAt:        now, UpdatedAt: now,

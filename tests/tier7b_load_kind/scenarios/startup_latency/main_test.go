@@ -13,6 +13,11 @@ import (
 // P95-keyed (spec/06_warm-pod-model.md line 348); p99 is intentionally
 // omitted because the default iteration count cannot defend a tail
 // estimate at one-sample resolution. spec-reviews: F-6.3.14.
+//
+// spec: §6.3 line 348.
+// diagnosis: a failure means the persisted metric_ms column set drifts
+// from the §6.3 P95-keyed contract, either dropping a required
+// percentile or re-introducing the intentionally-omitted p99.
 func TestBuildResultPercentileColumns_spec_6_3_F_6_3_14(t *testing.T) {
 	samples := make([]time.Duration, 0, 200)
 	for i := 0; i < 200; i++ {
@@ -36,6 +41,11 @@ func TestBuildResultPercentileColumns_spec_6_3_F_6_3_14(t *testing.T) {
 
 // TestBuildResultPercentileOrdering_spec_6_3_F_6_3_14 asserts the
 // percentile values are monotonically non-decreasing.
+//
+// spec: §6.3 line 348.
+// diagnosis: a failure means the computed percentiles are not
+// monotonically non-decreasing, indicating a broken percentile
+// computation in buildResult.
 func TestBuildResultPercentileOrdering_spec_6_3_F_6_3_14(t *testing.T) {
 	samples := make([]time.Duration, 0, 200)
 	for i := 0; i < 200; i++ {
@@ -54,6 +64,11 @@ func TestBuildResultPercentileOrdering_spec_6_3_F_6_3_14(t *testing.T) {
 // guard against re-adding p99 without first bumping the iteration
 // budget. The harness comment names the constraint; the test fails if a
 // future edit drops the rationale without acting on it.
+//
+// spec: §6.3 line 348.
+// diagnosis: a failure means the scenario version was promoted past the
+// pre-1.0 gate without clearing the §6.3 promotion gate, so a percentile
+// set change shipped without bumping the iteration budget.
 func TestResultDocCommentP99Rationale_spec_6_3_F_6_3_14(t *testing.T) {
 	// scenarioVersion is intentionally bumped when the percentile set
 	// changes — assert the current contract.

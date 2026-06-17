@@ -5,13 +5,13 @@
 // Component coverage for the §4.2 line 179 session_dlq_archive
 // table scaffold. Exercises the tenant-isolation machinery:
 //
-//   * the lenny_tenant_guard trigger fires on writes (reject
+//   - the lenny_tenant_guard trigger fires on writes (reject
 //     mismatching tenant_id under InTx; accept matching tenant_id),
-//   * the lenny_tenant_isolation RLS policy filters reads to the
+//   - the lenny_tenant_isolation RLS policy filters reads to the
 //     calling tenant,
-//   * the composite PK (tenant_id, session_id, message_id) is in
+//   - the composite PK (tenant_id, session_id, message_id) is in
 //     place,
-//   * the platform-admin __all__ sentinel reads rows across tenants
+//   - the platform-admin __all__ sentinel reads rows across tenants
 //     when paired with the lenny.allow_all_sentinel opt-in.
 //
 // spec: §4.2 line 179.
@@ -57,6 +57,9 @@ func seedDLQ(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant,
 // spec: §4.2 line 179 — session_dlq_archive carries the
 // lenny_tenant_guard trigger; an insert whose row tenant_id does
 // not match app.current_tenant is rejected.
+// diagnosis: a failure means the lenny_tenant_guard trigger on
+// session_dlq_archive does not reject a cross-tenant insert, allowing a
+// row to be written under the wrong tenant context.
 func TestSessionDLQArchiveTriggerRejectsMismatchedTenant(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -96,6 +99,9 @@ func TestSessionDLQArchiveTriggerRejectsMismatchedTenant(t *testing.T) {
 // can each archive a row with message_id=msg-1 even if the session
 // IDs happen to match (which they cannot under the FK, but the PK
 // is the load-bearing check).
+// diagnosis: a failure means the session_dlq_archive composite PK does
+// not include the tenant dimension, so two tenants archiving the same
+// (session_id, message_id) pair would collide.
 func TestSessionDLQArchiveCompositePK(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -113,7 +119,8 @@ func TestSessionDLQArchiveCompositePK(t *testing.T) {
 	// Both rows exist under the __all__ sentinel.
 	var count int
 	if err := pgtenant.InAllTenants(ctx, pg.Pool, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
+		return tx.QueryRow(
+			ctx,
 			`SELECT COUNT(*) FROM session_dlq_archive WHERE message_id = 'msg-1'`,
 		).Scan(&count)
 	}); err != nil {
@@ -126,6 +133,9 @@ func TestSessionDLQArchiveCompositePK(t *testing.T) {
 
 // spec: §4.2 line 179 — RLS isolates DLQ rows by tenant. Bob's
 // SELECT only sees bob's row; alice's only alice's.
+// diagnosis: a failure means RLS on session_dlq_archive does not isolate
+// rows per tenant, so one tenant's SELECT could read another tenant's
+// dead-lettered rows.
 func TestSessionDLQArchiveRLSIsolatesPerTenant(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

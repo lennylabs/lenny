@@ -280,7 +280,8 @@ func buildResolvedTree(buildDir, stagingDir string, sources []*adapterv1.Workspa
 					LosingSourceIndex:  prev,
 					Message: fmt.Sprintf(
 						"path %q written by source %d overwrites source %d (last-writer-wins)",
-						rel, i, prev),
+						rel, i, prev,
+					),
 				})
 			}
 			seen[rel] = i

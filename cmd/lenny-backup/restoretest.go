@@ -255,4 +255,5 @@ func buildArtifactSampler(ctx context.Context, p restoreTestParams) (runner.Arti
 // errReplicationBucketMissing flags a replication endpoint configured
 // without a bucket.
 var errReplicationBucketMissing = errors.New(
-	"lenny-backup: --replication-endpoint set without --replication-bucket")
+	"lenny-backup: --replication-endpoint set without --replication-bucket",
+)

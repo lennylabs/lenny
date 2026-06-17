@@ -175,14 +175,14 @@ func main() {
 	// honors a state already persisted on a pool's status but never
 	// auto-trips (the v1 bootstrap default).
 	var demotionSource poolscaling.DemotionRateSource
-	// spec: §5.2 line 573 — when a Prometheus backend is configured the
-	// controller derives concurrent-stateless pools' demand from
-	// rate(lenny_stateless_requests_total[5m]) and
-	// max_over_time(lenny_stateless_concurrent_active[5m]). The same
-	// source reports Observed=false for every non-stateless pool (which
-	// emits no stateless series), so wiring it leaves session / task /
-	// workspace-concurrent pools in bootstrap mode while activating
-	// demand-driven scaling for stateless pools. F-5.2.29.
+	// spec: §5.2 — when a Prometheus backend is configured the controller
+	// derives service-mode pools' demand from
+	// rate(lenny_service_requests_total[5m]) and
+	// max_over_time(lenny_service_concurrent_active[5m]). The same source
+	// reports Observed=false for every non-service pool (which emits no
+	// service series), so wiring it leaves session-mode pools in bootstrap
+	// mode while activating demand-driven scaling for service pools.
+	// F-5.2.29.
 	var demandSource poolscaling.DemandSource
 	if prometheusURL != "" {
 		promClient, perr := metrics.NewPrometheusClient(metrics.PrometheusConfig{BaseURL: prometheusURL})

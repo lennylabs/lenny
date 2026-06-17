@@ -50,7 +50,14 @@ tests:
             resources: ["services"]
             verbs: ["get", "list", "watch"]
 
-  - it: grants Sandbox create/update/delete and SandboxClaim list/delete for §4.6.1 cert-expiry replacement and orphan-claim GC
+  # spec: §4.6.3 (RBAC enforcement) / §4.6.1 (occupancy projection,
+  # orphan-claim GC) — the WarmPoolController create/update/delete on
+  # Sandbox serves §4.6.1 cert-expiry replacement and pod-failed retire,
+  # and its get/list/watch/delete on SandboxClaim serves both the
+  # claim-existence occupancy projection (the `watch` drives
+  # Sandbox.status.phase) and the orphan-claim garbage collection (the
+  # `list`/`delete`).
+  - it: grants Sandbox create/update/delete and SandboxClaim get/watch+list/delete for §4.6.1 occupancy projection and orphan-claim GC
     documentIndex: 1
     asserts:
       - contains:
@@ -65,6 +72,14 @@ tests:
             apiGroups: ["lenny.dev"]
             resources: ["sandboxclaims"]
             verbs: ["get", "list", "watch", "delete"]
+      # The WarmPoolController retains the sandboxes/status write (it is
+      # the sole writer of Sandbox.status under §4.6.3).
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status", "runtimes/status"]
+            verbs: ["get", "update", "patch"]
 
   - it: grants PodDisruptionBudget management for per-pool warm-pod PDBs (§4.6.1)
     documentIndex: 1

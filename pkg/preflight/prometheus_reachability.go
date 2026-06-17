@@ -101,7 +101,8 @@ func (c PrometheusReachabilityCheck) Decide(ctx context.Context) Decision {
 				"recommendations, historical diagnostics, alerting) require persistent time-series "+
 				"storage. Configuring a Prometheus-compatible endpoint is strongly recommended for "+
 				"production deployments. Set monitoring.acknowledgeNoPrometheus=true to acknowledge "+
-				"running without it (§25.4).", where)}
+				"running without it (§25.4).", where,
+		)}
 	}
 	return Decision{Passed: true, Reason: "INFO: Prometheus not configured. lenny-ops will operate " +
 		"in degraded mode. This is acceptable for development (§25.4)."}

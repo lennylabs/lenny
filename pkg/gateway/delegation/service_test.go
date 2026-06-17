@@ -30,8 +30,8 @@ func seedParent(t *testing.T, store sessionstore.Store, id, parentID, runtime, p
 		// §8.2 line 58: child-token exchange requires a parent user
 		// identity; tests seed `user_alice` so Delegate does not
 		// reject with ErrParentNoUser.
-		UserID:          "user_alice",
-		RuntimeRef:      runtime, PoolRef: pool, IsolationProfile: prof,
+		UserID:     "user_alice",
+		RuntimeRef: runtime, PoolRef: pool, IsolationProfile: prof,
 		ParentSessionID: parentID,
 		CreatedAt:       now, UpdatedAt: now,
 	}
@@ -421,52 +421,72 @@ type countingStore struct {
 func (c *countingStore) Create(ctx context.Context, s sessionstore.Session) error {
 	return c.inner.Create(ctx, s)
 }
+
 func (c *countingStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	c.gets++
 	return c.inner.Get(ctx, tenantID, id)
 }
+
 func (c *countingStore) GetByID(ctx context.Context, id string) (sessionstore.Session, error) {
 	return c.inner.GetByID(ctx, id)
 }
+
 func (c *countingStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	return c.inner.Update(ctx, tenantID, id, mutate)
 }
+
 func (c *countingStore) List(ctx context.Context, tenantID string, filter sessionstore.ListFilter) ([]sessionstore.Session, error) {
 	return c.inner.List(ctx, tenantID, filter)
 }
+
 func (c *countingStore) ListByRoot(ctx context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error) {
 	return c.inner.ListByRoot(ctx, tenantID, rootSessionID)
 }
+
 func (c *countingStore) Delete(ctx context.Context, tenantID, id string) error {
 	return c.inner.Delete(ctx, tenantID, id)
 }
+
 func (c *countingStore) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	return c.inner.DeleteByUser(ctx, tenantID, userID)
 }
+
 func (c *countingStore) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	return c.inner.DeleteByTenant(ctx, tenantID)
 }
+
 func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
 	return c.inner.GetActiveSlotsByPod(ctx, podID)
 }
+
+func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+	return c.inner.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
+}
+
 func (c *countingStore) PoolDrainStats(ctx context.Context, poolRef string) (int, time.Time, error) {
 	return c.inner.PoolDrainStats(ctx, poolRef)
 }
+
 func (c *countingStore) CountActiveSessions(ctx context.Context, tenantID string) (int, error) {
 	return c.inner.CountActiveSessions(ctx, tenantID)
 }
+
 func (c *countingStore) CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	return c.inner.CountActiveSessionsByUser(ctx, tenantID, userID)
 }
+
 func (c *countingStore) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error) {
 	return c.inner.CountActiveSessionsByRuntime(ctx, tenantID, runtimeRef)
 }
+
 func (c *countingStore) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
 	return c.inner.CountActiveSessionsGlobal(ctx)
 }
+
 func (c *countingStore) CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error) {
 	return c.inner.CountActiveSessionsInRecoveryGlobal(ctx)
 }
+
 func (c *countingStore) CountActiveDelegatedChildrenByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	return c.inner.CountActiveDelegatedChildrenByUser(ctx, tenantID, userID)
 }
@@ -666,7 +686,7 @@ func TestDelegateRejectsUserlessParent(t *testing.T) {
 		// UserID intentionally omitted.
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed userless parent: %v", err)
 	}

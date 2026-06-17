@@ -48,6 +48,12 @@ type stubGatewayControl struct {
 	gotConnListReq  *adapterv1.ListSessionConnectorsRequest
 	gotConnToolsReq *adapterv1.ListConnectorToolsRequest
 	gotConnCallReq  *adapterv1.CallConnectorToolRequest
+
+	// §5.2 scrub-report stubs.
+	sessionScrubErr    error
+	podScrubErr        error
+	gotSessionScrubReq *adapterv1.ReportSessionScrubRequest
+	gotPodScrubReq     *adapterv1.ReportPodScrubRequest
 }
 
 func (s *stubGatewayControl) ExtendLease(_ context.Context, req *adapterv1.ExtendLeaseRequest) (*adapterv1.ExtendLeaseResponse, error) {
@@ -96,6 +102,22 @@ func (s *stubGatewayControl) CallConnectorTool(_ context.Context, req *adapterv1
 		return nil, s.connCallErr
 	}
 	return s.connCallResp, nil
+}
+
+func (s *stubGatewayControl) ReportSessionScrub(_ context.Context, req *adapterv1.ReportSessionScrubRequest) (*adapterv1.ReportSessionScrubResponse, error) {
+	s.gotSessionScrubReq = req
+	if s.sessionScrubErr != nil {
+		return nil, s.sessionScrubErr
+	}
+	return &adapterv1.ReportSessionScrubResponse{}, nil
+}
+
+func (s *stubGatewayControl) ReportPodScrub(_ context.Context, req *adapterv1.ReportPodScrubRequest) (*adapterv1.ReportPodScrubResponse, error) {
+	s.gotPodScrubReq = req
+	if s.podScrubErr != nil {
+		return nil, s.podScrubErr
+	}
+	return &adapterv1.ReportPodScrubResponse{}, nil
 }
 
 // dialStub boots stub on an in-memory bufconn server and returns a

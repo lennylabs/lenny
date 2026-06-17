@@ -192,7 +192,11 @@ func TestShutdownInvokesTerminate(t *testing.T) {
 }
 
 // TestSequentialMessages confirms multiple messages each produce a
-// response and the SDK assigns increasing sequence numbers.
+// response, the SDK assigns increasing sequence numbers, and OnCreate is
+// invoked once for the whole session regardless of message count. The
+// session has exactly one execution, so the SDK does not re-invoke
+// OnCreate between messages.
+// spec: §15.7 (single OnCreate per session), §7.2 (one execution per session)
 func TestSequentialMessages(t *testing.T) {
 	var seqs []uint64
 	h := &echoHandler{onMessageFn: func(_ context.Context, m Message) {
@@ -213,6 +217,11 @@ func TestSequentialMessages(t *testing.T) {
 		if seqs[i] <= seqs[i-1] {
 			t.Fatalf("sequence not increasing: %v", seqs)
 		}
+	}
+	// §7.2: the session has one execution, so OnCreate fires once for
+	// the whole session regardless of how many messages arrive.
+	if h.created != 1 {
+		t.Fatalf("OnCreate called %d times across three messages, want 1", h.created)
 	}
 }
 

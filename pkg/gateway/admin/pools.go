@@ -104,25 +104,11 @@ type PoolPayload struct {
 	// §13.2 default (`restricted`).
 	EgressProfile string `json:"egressProfile,omitempty"`
 
-	// ConcurrencyStyle, MaxConcurrent, AcknowledgeProcessLevelIsolation,
-	// CleanupTimeoutSeconds, and AllowCrossTenantReuse are the §5.2
-	// concurrent-mode (`executionMode: concurrent`) configuration. They
-	// are meaningful only on a concurrent-mode pool; the pool store's
-	// ValidateConcurrentConfig rejects them on any other pool.
-	ConcurrencyStyle                 string `json:"concurrencyStyle,omitempty"`
-	MaxConcurrent                    int    `json:"maxConcurrent,omitempty"`
-	AcknowledgeProcessLevelIsolation bool   `json:"acknowledgeProcessLevelIsolation,omitempty"`
-	CleanupTimeoutSeconds            int    `json:"cleanupTimeoutSeconds,omitempty"`
-	AllowCrossTenantReuse            bool   `json:"allowCrossTenantReuse,omitempty"`
-
-	// ConcurrentMaxPodUptimeSeconds is the §6.2 lines 166-167
-	// concurrent-workspace pod-uptime retirement cap: a pod whose
-	// wall-clock uptime since first boot exceeds it is drained before
-	// its next slot assignment (no new slots accepted; existing slots
-	// drain). It is meaningful only on a concurrent-mode pool;
-	// ValidateConcurrentConfig rejects it on any other pool. Zero leaves
-	// uptime retirement off.
-	ConcurrentMaxPodUptimeSeconds int `json:"concurrentMaxPodUptimeSeconds,omitempty"`
+	// MaxConcurrent is the §5.2 service-mode per-pod request capacity. It
+	// is meaningful only on a `service`-mode pool; the pool store's
+	// ValidateServiceConfig rejects it on any other pool. The session-mode
+	// concurrency bound lives on SessionPolicy.MaxConcurrentSessions.
+	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 
 	// PoolCondition and IdlePodCount are the §5.2 line 629 live
 	// bootstrap-status fields, populated on GET when the gateway is
@@ -165,13 +151,13 @@ type PoolPayload struct {
 	// step 3.
 	BootstrapStatus *BootstrapStatusPayload `json:"bootstrapStatus,omitempty"`
 
-	// TaskPolicy is the §5.2 task-mode taskPolicy block (lines 398-413).
-	// Required when ExecutionMode is `task` and must be absent on session
-	// and concurrent pools; the gateway-side ValidateTaskPolicy enforces
-	// both directions. AllowCrossTenantReuse is not nested under
-	// taskPolicy on the wire — it is carried at the top level above to
-	// match the v1 admin contract. spec: §5.2 lines 398-475.
-	TaskPolicy *TaskPolicyPayload `json:"taskPolicy,omitempty"`
+	// SessionPolicy is the §5.2 session-mode sessionPolicy block: the
+	// pod-reuse, concurrency, and workspace-cleanup configuration
+	// (maxConcurrentSessions, recycle.*, the cleanup and exhaustion
+	// knobs). It is meaningful only on a `session`-mode pool; the
+	// gateway-side ValidateSessionPolicy and ValidateServiceConfig enforce
+	// that direction. spec: §5.2 (sessionPolicy block).
+	SessionPolicy *runtimestore.SessionPolicy `json:"sessionPolicy,omitempty"`
 
 	// ElicitationDepthPolicy is the §9.2 line 90-98 per-pool depth
 	// policy (`allow_all`, `suppress_at_depth`, `block_all`) for
@@ -222,24 +208,6 @@ type URLModeElicitationPayload struct {
 	DomainAllowlist []string `json:"domainAllowlist,omitempty"`
 }
 
-// TaskPolicyPayload is the §5.2 taskPolicy block on the admin wire. It
-// mirrors the §5.2 spec yaml minus allowCrossTenantReuse, which lives on
-// PoolPayload at the top level so the v1 admin contract stays stable
-// while the spec-canonical CRD field is populated downstream by the
-// PoolScalingController. spec: §5.2 lines 398-475.
-type TaskPolicyPayload struct {
-	AcknowledgeBestEffortScrub      bool     `json:"acknowledgeBestEffortScrub,omitempty"`
-	MicrovmScrubMode                string   `json:"microvmScrubMode,omitempty"`
-	AcknowledgeMicrovmResidualState bool     `json:"acknowledgeMicrovmResidualState,omitempty"`
-	CleanupCommands                 []string `json:"cleanupCommands,omitempty"`
-	CleanupTimeoutSeconds           int      `json:"cleanupTimeoutSeconds,omitempty"`
-	OnCleanupFailure                string   `json:"onCleanupFailure,omitempty"`
-	MaxScrubFailures                int      `json:"maxScrubFailures,omitempty"`
-	MaxTasksPerPod                  int      `json:"maxTasksPerPod,omitempty"`
-	MaxPodUptimeSeconds             int      `json:"maxPodUptimeSeconds,omitempty"`
-	MaxTaskRetries                  *int     `json:"maxTaskRetries,omitempty"`
-}
-
 // PoolSyncStatus is the §15.1 GET /v1/admin/pools/{name}/sync-status
 // payload. spec: spec/04_system-components.md line 560.
 type PoolSyncStatus struct {
@@ -253,26 +221,22 @@ type PoolSyncStatus struct {
 
 // UpdatePoolRequest is the §15.1 PUT body.
 type UpdatePoolRequest struct {
-	RuntimeRef                       *string            `json:"runtimeRef,omitempty"`
-	IsolationProfile                 *string            `json:"isolationProfile,omitempty"`
-	ExecutionMode                    *string            `json:"executionMode,omitempty"`
-	ResourceClass                    *string            `json:"resourceClass,omitempty"`
-	WarmCount                        *int               `json:"warmCount,omitempty"`
-	BootstrapMinWarm                 *int               `json:"bootstrapMinWarm,omitempty"`
-	MaxSessionAgeSeconds             *int               `json:"maxSessionAgeSeconds,omitempty"`
-	AllowStandardIsolation           *bool              `json:"allowStandardIsolation,omitempty"`
-	EgressProfile                    *string            `json:"egressProfile,omitempty"`
-	ConcurrencyStyle                 *string            `json:"concurrencyStyle,omitempty"`
-	MaxConcurrent                    *int               `json:"maxConcurrent,omitempty"`
-	AcknowledgeProcessLevelIsolation *bool              `json:"acknowledgeProcessLevelIsolation,omitempty"`
-	CleanupTimeoutSeconds            *int               `json:"cleanupTimeoutSeconds,omitempty"`
-	ConcurrentMaxPodUptimeSeconds    *int               `json:"concurrentMaxPodUptimeSeconds,omitempty"`
-	AllowCrossTenantReuse            *bool              `json:"allowCrossTenantReuse,omitempty"`
-	TaskPolicy                       *TaskPolicyPayload `json:"taskPolicy,omitempty"`
-	// ClearTaskPolicy, when true, removes the persisted task policy block
-	// in the same PUT. A non-nil TaskPolicy with ClearTaskPolicy set is
-	// rejected (the two operations are mutually exclusive).
-	ClearTaskPolicy bool `json:"clearTaskPolicy,omitempty"`
+	RuntimeRef             *string                     `json:"runtimeRef,omitempty"`
+	IsolationProfile       *string                     `json:"isolationProfile,omitempty"`
+	ExecutionMode          *string                     `json:"executionMode,omitempty"`
+	ResourceClass          *string                     `json:"resourceClass,omitempty"`
+	WarmCount              *int                        `json:"warmCount,omitempty"`
+	BootstrapMinWarm       *int                        `json:"bootstrapMinWarm,omitempty"`
+	MaxSessionAgeSeconds   *int                        `json:"maxSessionAgeSeconds,omitempty"`
+	AllowStandardIsolation *bool                       `json:"allowStandardIsolation,omitempty"`
+	EgressProfile          *string                     `json:"egressProfile,omitempty"`
+	MaxConcurrent          *int                        `json:"maxConcurrent,omitempty"`
+	SessionPolicy          *runtimestore.SessionPolicy `json:"sessionPolicy,omitempty"`
+	// ClearSessionPolicy, when true, removes the persisted sessionPolicy
+	// block in the same PUT. A non-nil SessionPolicy with
+	// ClearSessionPolicy set is rejected (the two operations are mutually
+	// exclusive).
+	ClearSessionPolicy bool `json:"clearSessionPolicy,omitempty"`
 
 	// ElicitationDepthPolicy / ElicitationSuppressAtDepth / URLModeElicitation
 	// are the §9.2 per-pool elicitation policy fields. spec: §9.2 lines 86,
@@ -292,33 +256,26 @@ type UpdatePoolRequest struct {
 
 func fromPool(p poolstore.Pool) PoolPayload {
 	out := PoolPayload{
-		Name:                             p.Name,
-		RuntimeRef:                       p.RuntimeRef,
-		IsolationProfile:                 string(p.IsolationProfile),
-		ExecutionMode:                    string(p.ExecutionMode),
-		ResourceClass:                    p.ResourceClass,
-		WarmCount:                        p.WarmCount,
-		MaxSessionAgeSeconds:             p.MaxSessionAgeSeconds,
-		AllowStandardIsolation:           p.AllowStandardIsolation,
-		EgressProfile:                    string(p.EgressProfile),
-		ConcurrencyStyle:                 string(p.ConcurrencyStyle),
-		MaxConcurrent:                    p.MaxConcurrent,
-		AcknowledgeProcessLevelIsolation: p.AcknowledgeProcessLevelIsolation,
-		CleanupTimeoutSeconds:            p.CleanupTimeoutSeconds,
-		ConcurrentMaxPodUptimeSeconds:    p.ConcurrentMaxPodUptimeSeconds,
-		AllowCrossTenantReuse:            p.AllowCrossTenantReuse,
-		CreatedAt:                        rfc3339Nano(p.CreatedAt),
-		UpdatedAt:                        rfc3339Nano(p.UpdatedAt),
-		DeletedAt:                        rfc3339Nano(p.DeletedAt),
+		Name:                   p.Name,
+		RuntimeRef:             p.RuntimeRef,
+		IsolationProfile:       string(p.IsolationProfile),
+		ExecutionMode:          string(p.ExecutionMode),
+		ResourceClass:          p.ResourceClass,
+		WarmCount:              p.WarmCount,
+		MaxSessionAgeSeconds:   p.MaxSessionAgeSeconds,
+		AllowStandardIsolation: p.AllowStandardIsolation,
+		EgressProfile:          string(p.EgressProfile),
+		MaxConcurrent:          p.MaxConcurrent,
+		SessionPolicy:          p.SessionPolicy.Clone(),
+		CreatedAt:              rfc3339Nano(p.CreatedAt),
+		UpdatedAt:              rfc3339Nano(p.UpdatedAt),
+		DeletedAt:              rfc3339Nano(p.DeletedAt),
 		// spec: §15.1 line 1207 — the ETag is the quoted decimal
 		// pool_config_generation (the per-resource version column).
 		ETag: formatETag(p.Generation),
 		// spec: §15.1 line 797 — GET surfaces the pool lifecycle phase so
 		// a client can see a drain in progress.
 		Phase: p.Phase(),
-	}
-	if p.TaskPolicy != nil {
-		out.TaskPolicy = taskPolicyToWire(p.TaskPolicy)
 	}
 	out.ElicitationDepthPolicy = string(p.ElicitationDepthPolicy)
 	out.ElicitationSuppressAtDepth = p.ElicitationSuppressAtDepth
@@ -334,54 +291,6 @@ func fromPool(p poolstore.Pool) PoolPayload {
 			AcknowledgeHighDemotionRate: p.AcknowledgeHighDemotionRate,
 			DemotionRateThreshold:       p.DemotionRateThreshold,
 		}
-	}
-	return out
-}
-
-// taskPolicyToWire renders a stored task policy as the admin payload
-// shape. spec: §5.2 lines 398-475.
-func taskPolicyToWire(tp *poolstore.TaskPolicy) *TaskPolicyPayload {
-	if tp == nil {
-		return nil
-	}
-	out := &TaskPolicyPayload{
-		AcknowledgeBestEffortScrub:      tp.AcknowledgeBestEffortScrub,
-		MicrovmScrubMode:                string(tp.MicrovmScrubMode),
-		AcknowledgeMicrovmResidualState: tp.AcknowledgeMicrovmResidualState,
-		CleanupCommands:                 append([]string(nil), tp.CleanupCommands...),
-		CleanupTimeoutSeconds:           tp.CleanupTimeoutSeconds,
-		OnCleanupFailure:                string(tp.OnCleanupFailure),
-		MaxScrubFailures:                tp.MaxScrubFailures,
-		MaxTasksPerPod:                  tp.MaxTasksPerPod,
-		MaxPodUptimeSeconds:             tp.MaxPodUptimeSeconds,
-	}
-	if tp.MaxTaskRetries != nil {
-		n := *tp.MaxTaskRetries
-		out.MaxTaskRetries = &n
-	}
-	return out
-}
-
-// taskPolicyFromWire is the inverse of taskPolicyToWire: a nil payload
-// reads as a nil stored policy.
-func taskPolicyFromWire(in *TaskPolicyPayload) *poolstore.TaskPolicy {
-	if in == nil {
-		return nil
-	}
-	out := &poolstore.TaskPolicy{
-		AcknowledgeBestEffortScrub:      in.AcknowledgeBestEffortScrub,
-		MicrovmScrubMode:                runtimestore.MicrovmScrubMode(in.MicrovmScrubMode),
-		AcknowledgeMicrovmResidualState: in.AcknowledgeMicrovmResidualState,
-		CleanupCommands:                 append([]string(nil), in.CleanupCommands...),
-		CleanupTimeoutSeconds:           in.CleanupTimeoutSeconds,
-		OnCleanupFailure:                runtimestore.CleanupFailureDisposition(in.OnCleanupFailure),
-		MaxScrubFailures:                in.MaxScrubFailures,
-		MaxTasksPerPod:                  in.MaxTasksPerPod,
-		MaxPodUptimeSeconds:             in.MaxPodUptimeSeconds,
-	}
-	if in.MaxTaskRetries != nil {
-		n := *in.MaxTaskRetries
-		out.MaxTaskRetries = &n
 	}
 	return out
 }
@@ -407,26 +316,21 @@ func urlModeFromWire(in *URLModeElicitationPayload) elicitation.URLModeAllowlist
 // defaults. CreatedAt/UpdatedAt are stamped from the Router clock.
 func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 	pl := poolstore.Pool{
-		Name:                             body.Name,
-		RuntimeRef:                       body.RuntimeRef,
-		IsolationProfile:                 isolation.Profile(body.IsolationProfile),
-		ExecutionMode:                    runtimestore.ExecutionMode(body.ExecutionMode),
-		ConcurrencyStyle:                 poolstore.ConcurrencyStyle(body.ConcurrencyStyle),
-		MaxConcurrent:                    body.MaxConcurrent,
-		AcknowledgeProcessLevelIsolation: body.AcknowledgeProcessLevelIsolation,
-		CleanupTimeoutSeconds:            body.CleanupTimeoutSeconds,
-		ConcurrentMaxPodUptimeSeconds:    body.ConcurrentMaxPodUptimeSeconds,
-		AllowCrossTenantReuse:            body.AllowCrossTenantReuse,
-		ResourceClass:                    body.ResourceClass,
-		WarmCount:                        body.WarmCount,
-		MaxSessionAgeSeconds:             body.MaxSessionAgeSeconds,
-		AllowStandardIsolation:           body.AllowStandardIsolation,
-		EgressProfile:                    egress.Profile(body.EgressProfile),
-		TaskPolicy:                       taskPolicyFromWire(body.TaskPolicy),
-		ElicitationDepthPolicy:           elicitation.DepthPolicy(body.ElicitationDepthPolicy),
-		ElicitationSuppressAtDepth:       body.ElicitationSuppressAtDepth,
-		URLModeElicitation:               urlModeFromWire(body.URLModeElicitation),
-		CreatedAt:                        r.clock(),
+		Name:                       body.Name,
+		RuntimeRef:                 body.RuntimeRef,
+		IsolationProfile:           isolation.Profile(body.IsolationProfile),
+		ExecutionMode:              runtimestore.ExecutionMode(body.ExecutionMode),
+		MaxConcurrent:              body.MaxConcurrent,
+		SessionPolicy:              body.SessionPolicy.Clone(),
+		ResourceClass:              body.ResourceClass,
+		WarmCount:                  body.WarmCount,
+		MaxSessionAgeSeconds:       body.MaxSessionAgeSeconds,
+		AllowStandardIsolation:     body.AllowStandardIsolation,
+		EgressProfile:              egress.Profile(body.EgressProfile),
+		ElicitationDepthPolicy:     elicitation.DepthPolicy(body.ElicitationDepthPolicy),
+		ElicitationSuppressAtDepth: body.ElicitationSuppressAtDepth,
+		URLModeElicitation:         urlModeFromWire(body.URLModeElicitation),
+		CreatedAt:                  r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
 	// spec: §6.1 lines 48, 63-65 — carry the SDK-warm operability block
@@ -482,10 +386,10 @@ func validatePoolForStore(p poolstore.Pool) error {
 	if err := poolstore.ValidateEgressIsolation(p); err != nil {
 		return err
 	}
-	if err := poolstore.ValidateConcurrentConfig(p); err != nil {
+	if err := poolstore.ValidateServiceConfig(p); err != nil {
 		return err
 	}
-	if err := poolstore.ValidateTaskPolicy(p); err != nil {
+	if err := poolstore.ValidateSessionPolicy(p); err != nil {
 		return err
 	}
 	return poolstore.ValidateElicitationPolicy(p)
@@ -544,9 +448,6 @@ func (p PoolPayload) validateEnums() error {
 	if p.ExecutionMode != "" && !runtimestore.ExecutionMode(p.ExecutionMode).IsValid() {
 		return errors.New("executionMode is not a recognised mode")
 	}
-	if p.ConcurrencyStyle != "" && !poolstore.ConcurrencyStyle(p.ConcurrencyStyle).IsValid() {
-		return errors.New("concurrencyStyle is not a recognised §5.2 style (workspace, stateless)")
-	}
 	if p.EgressProfile != "" && !egress.IsValid(egress.Profile(p.EgressProfile)) {
 		return errors.New("egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)")
 	}
@@ -578,6 +479,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// line 396 T4 cross-tenant-reuse check below.
 	var runtimeTier runtimestore.WorkspaceTier
 	var runtimePreConnect bool
+	var runtimeMultiTurn bool
 	if r.runtimes != nil && body.RuntimeRef != "" {
 		rt, err := r.runtimes.Get(req.Context(), body.RuntimeRef)
 		if err != nil {
@@ -588,14 +490,15 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		}
 		runtimeTier = rt.WorkspaceTier
 		runtimePreConnect = poolstore.RuntimePreConnect(rt)
+		runtimeMultiTurn = poolstore.RuntimeMultiTurn(rt)
 	}
 
 	pl := r.poolFromPayload(body)
-	// spec: §6.1 lines 77-78 — reject an SDK-warm runtime (preConnect: true)
-	// bound to a concurrent-mode pool before storage; SDK-warm assumes a
-	// single pre-connected agent process, which both concurrency styles
-	// violate.
-	if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.ConcurrencyStyle); err != nil {
+	// spec: §5.2 line 430, §6.1 lines 77-78 — reject an SDK-warm runtime
+	// (preConnect: true) bound to a service-mode pool or a concurrent
+	// session-mode pool (maxConcurrentSessions > 1) before storage;
+	// SDK-warm assumes a single pre-connected agent process.
+	if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.SessionPolicy); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
@@ -652,10 +555,36 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		"executionMode":    string(stored.ExecutionMode),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, stored)
+	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, stored, runtimeMultiTurn)
 	r.dispatchPoolIsolationAudit(req.Context(), principal, stored.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(fromPool(stored))
+}
+
+// maybeEmitMultiTurnServiceWarning emits the §5.2 service-mode warning
+// event when a multi_turn runtime is bound to a service-mode pool. Service
+// mode preserves no cross-message conversation continuity: each message may
+// route to a different ready replica, so a multi_turn runtime's clients must
+// re-inject any needed context into each message's input. The binding is
+// permitted (service mode admits multi_turn runtimes), so this is an
+// advisory audit event rather than a rejection. A session-mode pool, or a
+// one_shot runtime on a service pool, emits nothing.
+// spec: §5.2 (multi_turn permitted on service mode, registration-time
+// warning), §3.6.
+func (r *Router) maybeEmitMultiTurnServiceWarning(ctx context.Context, p authmw.Principal, pool poolstore.Pool, multiTurn bool) {
+	if pool.ExecutionMode != runtimestore.ExecutionModeService || !multiTurn {
+		return
+	}
+	r.emit(ctx, p, "pool.multi_turn_service_no_continuity", pool.Name, map[string]any{
+		"runtimeRef":             pool.RuntimeRef,
+		"executionMode":          string(pool.ExecutionMode),
+		"interaction":            string(runtimestore.InteractionMultiTurn),
+		"conversationContinuity": "none",
+		"severity":               "warning",
+		"reason": "multi_turn runtime bound to a service-mode pool; service mode preserves no cross-message " +
+			"conversation continuity, so clients must re-inject context into each message's input (§5.2)",
+	})
 }
 
 // maybeEmitWeakIsolation emits the §5.3 DirectModeWeakIsolation warning
@@ -756,7 +685,8 @@ func (r *Router) emitPoolIsolationWarnings(ctx context.Context, p authmw.Princip
 		// spec: §11.2.1 — the warning lands on the affected tenant's billing
 		// stream (the DelegationPolicy owner), the per-tenant compliance record.
 		r.appendBilling(ctx, billingfanout.PoolIsolationWarning(
-			v.TenantID, poolName, v.TargetProfile, ruleRef, v.SourcePool, v.SourceProfile))
+			v.TenantID, poolName, v.TargetProfile, ruleRef, v.SourcePool, v.SourceProfile,
+		))
 	}
 }
 
@@ -1112,28 +1042,13 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.EgressProfile != nil {
 		p.EgressProfile = egress.Profile(*body.EgressProfile)
 	}
-	if body.ConcurrencyStyle != nil {
-		p.ConcurrencyStyle = poolstore.ConcurrencyStyle(*body.ConcurrencyStyle)
-	}
 	if body.MaxConcurrent != nil {
 		p.MaxConcurrent = *body.MaxConcurrent
 	}
-	if body.AcknowledgeProcessLevelIsolation != nil {
-		p.AcknowledgeProcessLevelIsolation = *body.AcknowledgeProcessLevelIsolation
-	}
-	if body.CleanupTimeoutSeconds != nil {
-		p.CleanupTimeoutSeconds = *body.CleanupTimeoutSeconds
-	}
-	if body.ConcurrentMaxPodUptimeSeconds != nil {
-		p.ConcurrentMaxPodUptimeSeconds = *body.ConcurrentMaxPodUptimeSeconds
-	}
-	if body.AllowCrossTenantReuse != nil {
-		p.AllowCrossTenantReuse = *body.AllowCrossTenantReuse
-	}
-	if body.ClearTaskPolicy {
-		p.TaskPolicy = nil
-	} else if body.TaskPolicy != nil {
-		p.TaskPolicy = taskPolicyFromWire(body.TaskPolicy)
+	if body.ClearSessionPolicy {
+		p.SessionPolicy = nil
+	} else if body.SessionPolicy != nil {
+		p.SessionPolicy = body.SessionPolicy.Clone()
 	}
 	if body.ElicitationDepthPolicy != nil {
 		p.ElicitationDepthPolicy = elicitation.DepthPolicy(*body.ElicitationDepthPolicy)
@@ -1359,6 +1274,22 @@ func (r *Router) poolIsSDKWarm(ctx context.Context, p poolstore.Pool) bool {
 	return poolstore.RuntimePreConnect(rt)
 }
 
+// poolRuntimeMultiTurn reports whether the pool's runtime declares the
+// §5.1 capabilities.interaction: multi_turn model, so the update path can
+// re-evaluate the §5.2 multi_turn-on-service-mode warning after a PUT. When
+// no runtime store is wired, or the runtime does not resolve, it reports
+// false so no warning is emitted for an unresolvable binding.
+func (r *Router) poolRuntimeMultiTurn(ctx context.Context, p poolstore.Pool) bool {
+	if r.runtimes == nil {
+		return false
+	}
+	rt, err := r.runtimes.Get(ctx, p.RuntimeRef)
+	if err != nil {
+		return false
+	}
+	return poolstore.RuntimeMultiTurn(rt)
+}
+
 // applyPoolUpdate validates the §15.1 pool-update body, applies it, emits
 // the audit event, and writes the §4.6.2 sync-status response. It is the
 // shared core of the PUT /v1/admin/pools/{name} handler and the §25.17
@@ -1379,21 +1310,15 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 			"executionMode is not a recognised mode", nil)
 		return
 	}
-	if body.ConcurrencyStyle != nil && *body.ConcurrencyStyle != "" &&
-		!poolstore.ConcurrencyStyle(*body.ConcurrencyStyle).IsValid() {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"concurrencyStyle is not a recognised §5.2 style (workspace, stateless)", nil)
-		return
-	}
 	if body.EgressProfile != nil && *body.EgressProfile != "" &&
 		!egress.IsValid(egress.Profile(*body.EgressProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)", nil)
 		return
 	}
-	if body.ClearTaskPolicy && body.TaskPolicy != nil {
+	if body.ClearSessionPolicy && body.SessionPolicy != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"clearTaskPolicy and taskPolicy are mutually exclusive in one PUT", nil)
+			"clearSessionPolicy and sessionPolicy are mutually exclusive in one PUT", nil)
 		return
 	}
 	if body.ElicitationDepthPolicy != nil && *body.ElicitationDepthPolicy != "" &&
@@ -1425,11 +1350,18 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 			return
 		}
-		effCross := current.AllowCrossTenantReuse
-		if body.AllowCrossTenantReuse != nil {
-			effCross = *body.AllowCrossTenantReuse
+		// effSession is the post-update sessionPolicy: the body's block when
+		// set (or cleared), otherwise the stored block. The cross-tenant and
+		// preConnect checks key off it after the relocation of
+		// allowCrossTenantReuse onto recycle.
+		effSession := current.SessionPolicy
+		if body.ClearSessionPolicy {
+			effSession = nil
+		} else if body.SessionPolicy != nil {
+			effSession = body.SessionPolicy
 		}
-		if effCross {
+		effPool := poolstore.Pool{SessionPolicy: effSession}
+		if effPool.RequestsCrossTenantReuse() {
 			effRef := current.RuntimeRef
 			if body.RuntimeRef != nil {
 				effRef = *body.RuntimeRef
@@ -1444,45 +1376,38 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 				}
 				tier = rt.WorkspaceTier
 			}
-			if err := poolstore.ValidateCrossTenantReuseTier(
-				poolstore.Pool{AllowCrossTenantReuse: true}, tier); err != nil {
+			if err := poolstore.ValidateCrossTenantReuseTier(effPool, tier); err != nil {
 				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 					map[string]any{"runtimeRef": effRef, "workspaceTier": string(tier)})
 				return
 			}
 		}
-		// spec: §6.1 lines 77-78 — reject a PUT that would leave the pool in
-		// concurrent mode bound to a preConnect runtime. The effective
-		// post-update executionMode, concurrencyStyle, and runtimeRef are
-		// resolved from the body (when set) or the stored pool, so newly
-		// setting either field is caught. The runtime is resolved only when
-		// the effective mode is concurrent.
+		// spec: §5.2 line 430, §6.1 lines 77-78 — reject a PUT that would
+		// leave the pool bound to a preConnect runtime in service mode or
+		// with maxConcurrentSessions > 1. The effective post-update
+		// executionMode, sessionPolicy, and runtimeRef are resolved from the
+		// body (when set) or the stored pool.
 		effMode := current.ExecutionMode
 		if body.ExecutionMode != nil {
 			effMode = runtimestore.ExecutionMode(*body.ExecutionMode)
 		}
-		if effMode == runtimestore.ExecutionModeConcurrent {
-			effRef := current.RuntimeRef
-			if body.RuntimeRef != nil {
-				effRef = *body.RuntimeRef
+		effRef := current.RuntimeRef
+		if body.RuntimeRef != nil {
+			effRef = *body.RuntimeRef
+		}
+		if effRef != "" {
+			rt, rerr := r.runtimes.Get(req.Context(), effRef)
+			if rerr != nil {
+				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+					"runtimeRef does not resolve to a registered runtime", nil)
+				return
 			}
-			effStyle := current.ConcurrencyStyle
-			if body.ConcurrencyStyle != nil {
-				effStyle = poolstore.ConcurrencyStyle(*body.ConcurrencyStyle)
-			}
-			if effRef != "" {
-				rt, rerr := r.runtimes.Get(req.Context(), effRef)
-				if rerr != nil {
-					writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-						"runtimeRef does not resolve to a registered runtime", nil)
-					return
-				}
-				if err := poolstore.ValidatePreConnectExecutionMode(
-					poolstore.RuntimePreConnect(rt), effMode, effStyle); err != nil {
-					writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
-						map[string]any{"runtimeRef": effRef})
-					return
-				}
+			if err := poolstore.ValidatePreConnectExecutionMode(
+				poolstore.RuntimePreConnect(rt), effMode, effSession,
+			); err != nil {
+				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+					map[string]any{"runtimeRef": effRef})
+				return
 			}
 		}
 	}
@@ -1548,6 +1473,8 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 		"changedFields": changedPoolFields(body),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
+	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, updated,
+		r.poolRuntimeMultiTurn(req.Context(), updated))
 	r.dispatchPoolIsolationAudit(req.Context(), principal, updated.Name)
 	// spec: §15.1 line 1210 — on a successful PUT the response carries
 	// the new ETag reflecting the incremented version.
@@ -1677,29 +1604,14 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	if b.EgressProfile != nil {
 		out = append(out, "egressProfile")
 	}
-	if b.ConcurrencyStyle != nil {
-		out = append(out, "concurrencyStyle")
-	}
 	if b.MaxConcurrent != nil {
 		out = append(out, "maxConcurrent")
 	}
-	if b.AcknowledgeProcessLevelIsolation != nil {
-		out = append(out, "acknowledgeProcessLevelIsolation")
+	if b.SessionPolicy != nil {
+		out = append(out, "sessionPolicy")
 	}
-	if b.CleanupTimeoutSeconds != nil {
-		out = append(out, "cleanupTimeoutSeconds")
-	}
-	if b.ConcurrentMaxPodUptimeSeconds != nil {
-		out = append(out, "concurrentMaxPodUptimeSeconds")
-	}
-	if b.AllowCrossTenantReuse != nil {
-		out = append(out, "allowCrossTenantReuse")
-	}
-	if b.TaskPolicy != nil {
-		out = append(out, "taskPolicy")
-	}
-	if b.ClearTaskPolicy {
-		out = append(out, "taskPolicy.cleared")
+	if b.ClearSessionPolicy {
+		out = append(out, "sessionPolicy.cleared")
 	}
 	if b.SDKWarm != nil {
 		out = append(out, "sdkWarm.acknowledgeHighDemotionRate")

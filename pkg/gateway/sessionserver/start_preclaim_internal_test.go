@@ -80,7 +80,8 @@ func TestResolveCredentialPoolsPoolSource(t *testing.T) {
 			"aws_bedrock":      {DefaultPool: "bedrock-prod"},
 		},
 	}
-	s := preclaimFixture(t, policy, []string{"anthropic_direct", "aws_bedrock"},
+	s := preclaimFixture(
+		t, policy, []string{"anthropic_direct", "aws_bedrock"},
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
 	)
@@ -102,7 +103,8 @@ func TestResolveCredentialPoolsIntersectionNarrows(t *testing.T) {
 			"vertex_ai":        {DefaultPool: "vertex-prod"}, // not supported by runtime
 		},
 	}
-	s := preclaimFixture(t, policy, []string{"anthropic_direct"}, // runtime supports only one
+	s := preclaimFixture(
+		t, policy, []string{"anthropic_direct"}, // runtime supports only one
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 		poolFixture("vertex-prod", "vertex_ai", credentialpoolstore.CredentialActive),
 	)
@@ -123,7 +125,8 @@ func TestResolveCredentialPoolsFallbackOrder(t *testing.T) {
 			"anthropic_direct": {Fallback: credential.ProviderFallback{Order: []string{"primary", "backup"}}},
 		},
 	}
-	s := preclaimFixture(t, policy, []string{"anthropic_direct"},
+	s := preclaimFixture(
+		t, policy, []string{"anthropic_direct"},
 		poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialRevoked), // all revoked
 		poolFixture("backup", "anthropic_direct", credentialpoolstore.CredentialActive),
 	)
@@ -144,7 +147,8 @@ func TestResolveCredentialPoolsExhausted(t *testing.T) {
 			"anthropic_direct": {DefaultPool: "primary"},
 		},
 	}
-	s := preclaimFixture(t, policy, []string{"anthropic_direct"},
+	s := preclaimFixture(
+		t, policy, []string{"anthropic_direct"},
 		poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialRevoked),
 	)
 	_, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
@@ -164,7 +168,8 @@ func TestResolveCredentialPoolsUserOnlyMiss(t *testing.T) {
 			"anthropic_direct": {DefaultPool: "primary"},
 		},
 	}
-	s := preclaimFixture(t, policy, []string{"anthropic_direct"},
+	s := preclaimFixture(
+		t, policy, []string{"anthropic_direct"},
 		poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialActive),
 	)
 	_, _, err := s.resolveCredentialPools(context.Background(), sessionRow())

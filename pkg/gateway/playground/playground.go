@@ -275,18 +275,18 @@ func runtimeGlobMatch(pattern, s string) bool {
 }
 
 // EffectiveIdleSeconds returns the §27.6 effective idle cap for a
-// playground session running against a runtime whose own
-// maxIdleTimeSeconds is runtimeIdleSeconds. The override never
-// relaxes a stricter runtime limit; it only tightens a looser one.
-// A zero runtimeIdleSeconds (runtime did not declare a limit) yields
-// the configured playground cap unchanged. The gateway session server
-// invokes this through its PlaygroundCapResolver seam to stamp the cap
-// onto a §27.3 origin=playground session at create time (F-27.6.1).
-// spec: §27.6 line 201.
-func (c Config) EffectiveIdleSeconds(runtimeIdleSeconds int) int {
+// playground session: min(maxClientIdleSeconds, playground.maxIdleTimeSeconds).
+// maxClientIdleSeconds is the pool's effective
+// sessionPolicy.maxClientIdleSeconds. The override never relaxes a stricter
+// platform bound; it only tightens a looser one. A zero maxClientIdleSeconds
+// (no idle bound resolved) yields the configured playground cap unchanged.
+// The gateway session server invokes this through its PlaygroundCapResolver
+// seam to stamp the cap onto a §27.3 origin=playground session at create time
+// (F-27.6.1). spec: §27.6 line 201.
+func (c Config) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
 	pg := c.MaxIdleTimeSeconds
-	if runtimeIdleSeconds > 0 && runtimeIdleSeconds < pg {
-		return runtimeIdleSeconds
+	if maxClientIdleSeconds > 0 && maxClientIdleSeconds < pg {
+		return maxClientIdleSeconds
 	}
 	return pg
 }

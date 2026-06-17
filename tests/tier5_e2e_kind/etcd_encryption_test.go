@@ -185,11 +185,17 @@ func renderEncryptionConfig(t *testing.T, root string) string {
 	cmd := exec.Command(
 		helm, "template", chart,
 		"--show-only", "templates/etcd-encryption.yaml",
-		// §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required
-		// chart value with no default; --show-only still renders every
-		// template, so the gateway-deployment `required` guard fires
-		// unless a value is set.
+		// --show-only still renders every template, so the chart's
+		// render-time `required` and `fail` guards fire even though only
+		// etcd-encryption.yaml is returned:
+		//   - §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a
+		//     required value with no default (gateway-deployment guard).
+		//   - §13.2 (K8S-033) F-13.2.3: coredns.clusterIP must be
+		//     non-empty when agentNamespaces is set, which it is in the
+		//     shipped default values.yaml (coredns-service.yaml fail
+		//     guard). The address mirrors the chart unit tests' value.
 		"--set", "global.spiffeTrustDomain=lenny-test",
+		"--set", "coredns.clusterIP=10.96.0.53",
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

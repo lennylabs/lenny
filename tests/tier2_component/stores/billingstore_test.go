@@ -123,9 +123,11 @@ func TestBillingStoreContract(t *testing.T) {
 	t.Run("Since respects the limit", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		for i := 0; i < 6; i++ {
-			store.Append(ctx, billingstore.Event{
+			if _, err := store.Append(ctx, billingstore.Event{
 				TenantID: tenant, EventType: billingstore.EventSessionCreated,
-			})
+			}); err != nil {
+				t.Fatalf("Append %d: %v", i, err)
+			}
 		}
 		got, err := store.Since(ctx, tenant, 0, 2)
 		if err != nil {

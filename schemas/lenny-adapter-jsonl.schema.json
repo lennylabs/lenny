@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lenny.dev/adapter-jsonl/v1.json",
   "title": "Lenny Adapter Binary Protocol (JSONL)",
-  "description": "Newline-delimited JSON exchanged on stdin/stdout between the adapter sidecar and the agent binary inside a Lenny pod, plus the task-mode lifecycle envelopes that flow over the same channel. The adapter receives lines on stdin (inbound) and reads lines from stdout (outbound). Each line is a single JSON object discriminated by `type`. The gateway↔adapter lifecycle channel (checkpoint, interrupt, credentials_rotated, deadline_approaching) uses the gRPC LifecycleChannel stream in lenny-adapter.proto and is out of scope here. See spec/15_external-api-surface.md §15.4.",
+  "description": "Newline-delimited JSON exchanged on stdin/stdout between the adapter sidecar and the agent binary inside a Lenny pod. The adapter receives lines on stdin (inbound) and reads lines from stdout (outbound). Each line is a single JSON object discriminated by `type`. The gateway↔adapter lifecycle channel (checkpoint, interrupt, credentials_rotated, deadline_approaching) uses the gRPC LifecycleChannel stream in lenny-adapter.proto and is out of scope here. See spec/15_external-api-surface.md §15.4.",
   "type": "object",
   "required": ["type"],
   "discriminator": { "propertyName": "type" },
@@ -15,10 +15,7 @@
     { "$ref": "#/$defs/tool_result" },
     { "$ref": "#/$defs/response" },
     { "$ref": "#/$defs/status" },
-    { "$ref": "#/$defs/set_tracing_context" },
-    { "$ref": "#/$defs/task_complete" },
-    { "$ref": "#/$defs/task_complete_acknowledged" },
-    { "$ref": "#/$defs/task_ready" }
+    { "$ref": "#/$defs/set_tracing_context" }
   ],
   "$defs": {
     "messageEnvelope": {
@@ -60,7 +57,7 @@
         },
         "slotId": {
           "type": "string",
-          "description": "Slot identifier. Present only on pods in concurrent-workspace mode."
+          "description": "Slot identifier. Present only on pods whose pool sets `maxConcurrentSessions > 1`."
         },
         "input": {
           "type": "array",
@@ -222,42 +219,6 @@
           "description": "Opaque tracing context. Typical keys: langsmith_run_id, otel_trace_id, otel_span_id, tracestate.",
           "additionalProperties": true
         }
-      }
-    },
-
-    "task_complete": {
-      "title": "task_complete",
-      "description": "Outbound (adapter → gateway) lifecycle signal in task-mode pools. The adapter emits this after a task finishes and the pod is ready to scrub workspace and accept another task. See spec/15_external-api-surface.md §15.4 task-mode lifecycle.",
-      "type": "object",
-      "required": ["type", "taskId"],
-      "properties": {
-        "type": { "const": "task_complete" },
-        "taskId": {
-          "type": "string",
-          "description": "Identifier of the task that just completed. Matches the taskId the gateway supplied at task assignment."
-        }
-      }
-    },
-
-    "task_complete_acknowledged": {
-      "title": "task_complete_acknowledged",
-      "description": "Inbound (gateway → adapter) acknowledgement of a task_complete. The runtime releases task-specific resources (open files, in-memory caches) and prepares for the next task.",
-      "type": "object",
-      "required": ["type", "taskId"],
-      "properties": {
-        "type": { "const": "task_complete_acknowledged" },
-        "taskId": { "type": "string" }
-      }
-    },
-
-    "task_ready": {
-      "title": "task_ready",
-      "description": "Outbound (adapter → gateway) signal that the pod is ready to accept the next task in task-mode reuse. Carries the new task identifier the gateway has assigned.",
-      "type": "object",
-      "required": ["type", "taskId"],
-      "properties": {
-        "type": { "const": "task_ready" },
-        "taskId": { "type": "string" }
       }
     }
   }

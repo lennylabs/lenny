@@ -253,7 +253,8 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 			scanIn = append(scanIn, interceptor.ExportFile{Path: pth, Content: f.Content})
 		}
 		scanned, err := interceptor.RunPreExportMaterialization(
-			ctx, p.Scan.Chain, p.Scan.ScanCtx, p.TenantID, p.ChildSessionID, p.Scan.MaxFileSize, scanIn...)
+			ctx, p.Scan.Chain, p.Scan.ScanCtx, p.TenantID, p.ChildSessionID, p.Scan.MaxFileSize, scanIn...,
+		)
 		if err != nil {
 			return Result{}, err
 		}

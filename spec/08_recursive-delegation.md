@@ -828,7 +828,7 @@ Task records use a messages array forward-compatible with multi-turn dialog:
 
 **Lenny canonical task state machine:**
 
-Lenny defines its own task states independent of any external protocol. External protocol adapters map to/from these states at the boundary.
+The canonical task state machine is the session state machine ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model)) under the name external protocols give it. A session is the only unit of execution and each session has exactly one execution, so an MCP or A2A Task is the protocol surface of a session; the nodes of the task tree ([Section 8.9](#89-task-tree)) are sessions, and `lenny/delegate_task` creates a child session. Lenny defines these states independently of any external protocol, and external protocol adapters map to and from them at the boundary. The `TaskRecord` and `TaskResult` schemas and the `taskId` field carry the external-protocol vocabulary for the session's execution.
 
 ```
 submitted → running → completed        (terminal)

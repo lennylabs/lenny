@@ -19,7 +19,8 @@
 //     + burst_p99_claims × pod_warmup_seconds
 //     )
 //
-//  2. Mode-adjusted form (task or concurrent mode), §5.2:
+//  2. Mode-adjusted form (a recycling or concurrent session pool, or a
+//     service-mode pool), §5.2:
 //     target_minWarm = ceil(
 //     base_demand_p95 × safety_factor ×
 //     (failover_seconds + pod_warmup_seconds) / mode_factor
@@ -61,9 +62,8 @@ import (
 type ExecutionMode string
 
 const (
-	ModeSession    ExecutionMode = "session"
-	ModeTask       ExecutionMode = "task"
-	ModeConcurrent ExecutionMode = "concurrent"
+	ModeSession ExecutionMode = "session"
+	ModeService ExecutionMode = "service"
 )
 
 // PoolType distinguishes a standard pool from a variant pool of an A/B
@@ -121,14 +121,17 @@ type ScalingInputs struct {
 	// Sourced from the pool's scalingPolicy.podWarmupSecondsBaseline.
 	PodWarmupSeconds float64
 
-	// ModeFactor is the pod-reuse multiplier (§5.2). 1.0 for session
-	// mode, maxTasksPerPod (or observed reuse) for task, maxConcurrent
-	// for concurrent. Zero is treated as 1.0 (defensive — the
-	// controller should never pass 0).
+	// ModeFactor is the pod-reuse multiplier (§5.2). In session mode it
+	// is the expected sessions per pod lifetime: 1.0 for the default
+	// (one session per pod) configuration, and the observed reuse
+	// converging toward recycle.maxSessionsPerPod on a recycling pool.
+	// In service mode it is maxConcurrent. Zero is treated as 1.0
+	// (defensive — the controller should never pass 0).
 	ModeFactor float64
 
-	// BurstModeFactor is the burst-term reuse multiplier (§5.2). 1.0
-	// for session and task; maxConcurrent for concurrent.
+	// BurstModeFactor is the burst-term reuse multiplier (§5.2). In
+	// session mode it is maxConcurrentSessions; in service mode it is
+	// maxConcurrent.
 	BurstModeFactor float64
 
 	// VariantWeight (variant pools only). Fraction of traffic routed to
@@ -308,9 +311,9 @@ func validate(in ScalingInputs) error {
 		return fmt.Errorf("%w: BootstrapMinWarm must be >= 0", ErrInvalidInput)
 	}
 	switch in.Mode {
-	case ModeSession, ModeTask, ModeConcurrent, "":
+	case ModeSession, ModeService, "":
 	default:
-		return fmt.Errorf("%w: Mode %q is not one of session, task, concurrent", ErrInvalidInput, in.Mode)
+		return fmt.Errorf("%w: Mode %q is not one of session, service", ErrInvalidInput, in.Mode)
 	}
 	return nil
 }

@@ -20,6 +20,7 @@ package rls_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -49,6 +50,9 @@ func seedArchiveSession(t *testing.T, ctx context.Context, pg *containers.Postgr
 
 // spec: §8.10 line 129 — the lenny_tenant_guard trigger rejects an
 // insert whose row tenant_id does not match app.current_tenant.
+// diagnosis: a failure means the lenny_tenant_guard trigger on the
+// session-tree archive does not reject a cross-tenant insert, allowing
+// an archive row under the wrong tenant context.
 func TestSessionTreeArchiveTriggerRejectsMismatchedTenant(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: migrationsDir(t)})
@@ -75,6 +79,9 @@ func TestSessionTreeArchiveTriggerRejectsMismatchedTenant(t *testing.T) {
 
 // spec: §8.10 line 129 — RLS isolates archive rows by tenant under the
 // lenny_app role; alice never sees bob's tree.
+// diagnosis: a failure means RLS on the session-tree archive does not
+// isolate rows per tenant, so one tenant could read another tenant's
+// archived tree under the lenny_app role.
 func TestSessionTreeArchiveRLSIsolatesPerTenant(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: migrationsDir(t)})
@@ -118,6 +125,9 @@ func TestSessionTreeArchiveRLSIsolatesPerTenant(t *testing.T) {
 // spec: §8.10 line 129 — re-archiving the same (root, node) is an
 // idempotent upsert: a node settles once, and a cascade re-archive
 // overwrites rather than duplicating.
+// diagnosis: a failure means re-archiving the same (root, node) is not
+// an idempotent upsert, so a cascade re-archive would duplicate a
+// settled node instead of overwriting it.
 func TestSessionTreeArchiveUpsertIsIdempotent(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: migrationsDir(t)})
@@ -142,7 +152,11 @@ func TestSessionTreeArchiveUpsertIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.State != "failed" || got.Result != `{"v":2}` {
+	// Result is a jsonb column, so the store returns Postgres's canonical
+	// serialization (`{"v": 2}` with a space) rather than the input bytes.
+	// Compare the result semantically so the assertion pins the
+	// overwrite, not Postgres's whitespace convention.
+	if got.State != "failed" || !jsonEqual(t, got.Result, `{"v":2}`) {
 		t.Errorf("upsert did not overwrite: state=%q result=%q", got.State, got.Result)
 	}
 	nodes, err := store.Replay(ctx, "alice", root)
@@ -157,6 +171,9 @@ func TestSessionTreeArchiveUpsertIsIdempotent(t *testing.T) {
 // spec: §8.10 lines 1062-1063 — Replay returns a tree's settled nodes
 // in original-settlement order; GetByNode resolves a child by its
 // globally-unique node id without the tree root.
+// diagnosis: a failure means Replay returns settled nodes out of
+// settlement order or GetByNode cannot resolve a child by its node id,
+// breaking tree replay reconstruction.
 func TestSessionTreeArchiveReplayOrderAndGetByNode(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: migrationsDir(t)})
@@ -205,4 +222,21 @@ func mustArchive(t *testing.T, ctx context.Context, store *treearchivepg.Store, 
 	if err := store.Archive(ctx, n); err != nil {
 		t.Fatalf("archive node %s: %v", n.NodeSessionID, err)
 	}
+}
+
+// jsonEqual reports whether two JSON documents are semantically equal,
+// ignoring the whitespace and key-order differences a jsonb round-trip
+// introduces. An unparseable side fails the test outright.
+func jsonEqual(t *testing.T, got, want string) bool {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Fatalf("got result is not JSON (%q): %v", got, err)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("want result is not JSON (%q): %v", want, err)
+	}
+	gb, _ := json.Marshal(g)
+	wb, _ := json.Marshal(w)
+	return string(gb) == string(wb)
 }

@@ -103,7 +103,7 @@ func (s *Server) resolvePoolName(ctx context.Context, runtimeRef string, request
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		return "", false
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace, runtimeRef, string(requested))
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested))
 	if err != nil || match.Pool == "" {
 		return "", false
 	}

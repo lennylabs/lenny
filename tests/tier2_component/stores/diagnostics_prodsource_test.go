@@ -14,6 +14,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics/prodsource"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -28,6 +31,11 @@ func startDiagPG(t *testing.T) *containers.Postgres {
 
 // TestProdSourceSessionJoin seeds a tenant, a failed session, and its
 // agent_pod_state row, then reads them back through the §25.6 reader.
+//
+// spec: §25.6 line 2885.
+// diagnosis: a failure means the prod-source diagnostics reader joins
+// the session and its agent_pod_state row incorrectly, so operator
+// diagnostics would show wrong pod state for a failed session.
 func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -38,19 +46,26 @@ func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, "acme"); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
-	if _, err := pg.Pool.Exec(ctx,
-		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, pool_ref, root_session_id,
-			failure_class, failure_reason)
-		 VALUES ($1, 'acme', 'failed', 'claude', 'default-gvisor', $1, 'runtime_crash', 'budget_exceeded')`,
-		sessID); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	if _, err := pg.Pool.Exec(ctx,
-		`INSERT INTO agent_pod_state (pod_id, pool_id, state, tenant_id, session_id, isolation_profile,
-			execution_mode, resource_version, node_name)
-		 VALUES ('pod-1', 'default-gvisor', 'claimed', 'acme', $1, 'sandboxed', 'session', 1, 'node-a')`,
-		sessID); err != nil {
-		t.Fatalf("seed pod: %v", err)
+	// §4.2 line 163 / §12.3 — sessions and agent_pod_state carry the
+	// lenny_tenant_guard trigger, which rejects any write whose
+	// transaction has not set app.current_tenant. Seed them inside a
+	// tenant-scoped transaction so the guard admits the rows.
+	if err := pgtenant.InTx(ctx, pg.Pool, "acme", func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO sessions (id, tenant_id, state, runtime_ref, pool_ref, root_session_id,
+				failure_class, failure_reason)
+			 VALUES ($1, 'acme', 'failed', 'claude', 'default-gvisor', $1, 'runtime_crash', 'budget_exceeded')`,
+			sessID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO agent_pod_state (pod_id, pool_id, state, tenant_id, session_id, isolation_profile,
+				execution_mode, resource_version, node_name)
+			 VALUES ('pod-1', 'default-gvisor', 'claimed', 'acme', $1, 'sandboxed', 'session', 1, 'node-a')`,
+			sessID)
+		return err
+	}); err != nil {
+		t.Fatalf("seed session + pod: %v", err)
 	}
 
 	row, err := r.Session(ctx, sessID)
@@ -70,6 +85,11 @@ func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 
 // TestProdSourceSessionNotFound covers the unknown-id and invalid-UUID
 // paths: both report Found=false without an error.
+//
+// spec: §25.6 line 2885.
+// diagnosis: a failure means the reader errors or reports Found=true for
+// an unknown or malformed session id, so a missing session would surface
+// as an error rather than a clean not-found.
 func TestProdSourceSessionNotFound_spec_25_6_2885(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -85,6 +105,10 @@ func TestProdSourceSessionNotFound_spec_25_6_2885(t *testing.T) {
 
 // TestProdSourcePoolPodCounts seeds pods in several states and reads the
 // §25.6 pod-count breakdown.
+//
+// spec: §25.6 line 2861.
+// diagnosis: a failure means the pod-count breakdown miscounts pods by
+// state, so the operator pool diagnostics would misreport capacity.
 func TestProdSourcePoolPodCounts_spec_25_6_2861(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -93,9 +117,12 @@ func TestProdSourcePoolPodCounts_spec_25_6_2861(t *testing.T) {
 	states := []struct {
 		pod, state string
 	}{
-		{"p-idle-1", "idle"}, {"p-idle-2", "idle"},
+		{"p-idle-1", "idle"},
+		{"p-idle-2", "idle"},
 		{"p-warm-1", "warming"},
-		{"p-claim-1", "claimed"}, {"p-claim-2", "claimed"}, {"p-claim-3", "claimed"},
+		{"p-claim-1", "claimed"},
+		{"p-claim-2", "claimed"},
+		{"p-claim-3", "claimed"},
 		{"p-fail-1", "failed"},
 		{"p-drain-1", "draining"}, // not counted in the breakdown
 	}
@@ -124,6 +151,10 @@ func TestProdSourcePoolPodCounts_spec_25_6_2861(t *testing.T) {
 
 // TestProdSourceCredentialPoolLoad seeds leases on a pool and reads the
 // per-credential load the hot-key analysis ranks.
+//
+// spec: §25.6.
+// diagnosis: a failure means the per-credential load read is wrong, so
+// the hot-key analysis would rank the wrong credentials.
 func TestProdSourceCredentialPoolLoad_spec_25_6(t *testing.T) {
 	pg := startDiagPG(t)
 	ctx := context.Background()
@@ -132,14 +163,19 @@ func TestProdSourceCredentialPoolLoad_spec_25_6(t *testing.T) {
 	leases := []struct {
 		id, pool, cred string
 	}{
-		{"l1", "cp-1", "cred-a"}, {"l2", "cp-1", "cred-a"}, {"l3", "cp-1", "cred-a"},
+		{"l1", "cp-1", "cred-a"},
+		{"l2", "cp-1", "cred-a"},
+		{"l3", "cp-1", "cred-a"},
 		{"l4", "cp-1", "cred-b"},
 		{"l5", "cp-2", "cred-z"}, // a different pool
 	}
 	for _, l := range leases {
+		// spec: §13.3 / migration 0129 — the lease column is the encrypted
+		// BYTEA envelope, not the legacy JSONB body. The reader only tallies
+		// leases by credential, so an empty envelope is sufficient seed data.
 		if _, err := pg.Pool.Exec(ctx,
 			`INSERT INTO credential_leases (lease_id, delivery_mode, lease, pool_id, credential_id)
-			 VALUES ($1, 'proxy', '{}'::jsonb, $2, $3)`,
+			 VALUES ($1, 'proxy', '\x'::bytea, $2, $3)`,
 			l.id, l.pool, l.cred); err != nil {
 			t.Fatalf("seed lease %s: %v", l.id, err)
 		}

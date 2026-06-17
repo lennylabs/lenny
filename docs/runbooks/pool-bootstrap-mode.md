@@ -46,11 +46,11 @@ The output includes `bootstrapMode: true` and the bootstrap-default values.
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=lenny_warmpool_pod_claims_total{pool="<name>"}&window=7d
+GET /v1/admin/metrics?q=lenny_warmpool_claims_total{pool="<name>"}&window=7d
 GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))&groupBy=pool&window=7d
 ```
 
-Use actual traffic over the past week to size the pool.
+Use actual traffic over the past week to size the pool. `lenny_warmpool_claims_total` counts `idle`-to-`claimed` transitions (occupancy episodes), which scale with pod-occupancy episodes rather than with sessions on a recycling pool. On a recycling pool, divide by the observed `lenny_pod_session_reuse_count` p50 to recover the session rate.
 
 ### Step 3 — Peak concurrency
 

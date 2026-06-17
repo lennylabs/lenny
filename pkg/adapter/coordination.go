@@ -111,10 +111,10 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 		// Stale fence: the gateway must re-read Postgres and re-issue.
 		// Not a gap — the new coordinator's value is older than ours.
 		return &adapterv1.CoordinatorFenceResponse{
-			Accepted:             false,
-			LastFencedGeneration: s.coord.lastFenced,
-		}, status.Errorf(codes.FailedPrecondition,
-			"coordinator_handoff_stale: requested generation %d <= last fenced %d", gen, s.coord.lastFenced)
+				Accepted:             false,
+				LastFencedGeneration: s.coord.lastFenced,
+			}, status.Errorf(codes.FailedPrecondition,
+				"coordinator_handoff_stale: requested generation %d <= last fenced %d", gen, s.coord.lastFenced)
 	}
 	gap := s.coord.initialized && gen > s.coord.lastFenced+1
 	if gap {

@@ -119,6 +119,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_session_suspension_checkpoint_failed_total` | Counter | `pool`, `tenant_id` | Increments when checkpoint attempt before pod release fails. | Operational monitoring. |
 | `lenny_session_error_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Session errors by variant. | Experiment rollback triggers. |
 | `lenny_session_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Total sessions by variant. | Experiment rollback trigger denominator. |
+| `lenny_session_expiry_total` | Counter | `pool`, `reason` | Sessions terminated by a platform expiry clock. Reasons: `max_session_age`, `max_idle_time` (the `maxClientIdleSeconds` idle bound). | Idle-termination and age-cap monitoring. |
 
 ---
 
@@ -127,6 +128,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_warmpool_idle_pods` | Gauge | `pool` | Pods in `idle` state ready to be claimed. | `WarmPoolLow`, `WarmPoolExhausted`, `PodClaimQueueSaturated` alerts. |
+| `lenny_warmpool_reserved_pods` | Gauge | `pool` | Pods whose occupancy claim is in the `reserved` hold window, excluded from idle inventory. | Reserved-hold-window monitoring. |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | `pool`, `isolation_profile` | Time from pod creation to `idle` state. | `WarmPoolReplenishmentSlow` alert. |
 | `lenny_warmpool_replenishment_rate` | Gauge | `pool` | Pods per minute entering `idle` state. | Operational monitoring. |
 | `lenny_warmpool_warmup_failure_total` | Counter | `pool`, `runtime_class`, `error_type` | Pods failing to reach `idle` during warm-up. Error types: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`. | `WarmPoolReplenishmentFailing` alert. |
@@ -150,14 +152,14 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_pod_claim_timeout_total` | Counter | `pool` | Pod claim attempts that timed out. | Operational monitoring. |
 | `lenny_pod_claim_fallback_total` | Counter | -- | Postgres-backed fallback claim path activations. | Primary claim path health monitoring. |
 
-### Task and concurrent mode metrics
+### Session recycle and slot metrics
 
 | Metric | Type | Labels | Description |
 |:-------|:-----|:-------|:------------|
-| `lenny_task_pod_scrub_failure_count` | Gauge | `k8s_pod_name`, `pool`, `runtime_class` | Per-pod scrub failure count in task mode. |
-| `lenny_task_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Pod retirements. Reasons: `task_count_limit`, `uptime_limit`, `scrub_failure_limit`. |
-| `lenny_task_reuse_count` | Histogram | `pool`, `k8s_pod_name` | Tasks executed per pod in task mode. |
-| `lenny_slot_failure_total` | Counter | `error_type`, `pool`, `k8s_pod_name` | Slot failures in concurrent-workspace mode. |
+| `lenny_pod_scrub_failure_count` | Gauge | `k8s_pod_name`, `pool`, `runtime_class` | Per-pod scrub failure count on a recycling session-mode pod. |
+| `lenny_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Pod retirements. Reasons: `session_count_limit`, `uptime_limit`, `scrub_failure_limit`. |
+| `lenny_pod_session_reuse_count` | Histogram | `pool`, `k8s_pod_name` | Sessions served per pod under `recycle.enabled`. |
+| `lenny_slot_failure_total` | Counter | `error_type`, `pool`, `k8s_pod_name` | Per-slot failures on session-mode pods with `maxConcurrentSessions > 1`. |
 | `lenny_slot_pod_replacement_total` | Counter | `pool`, `k8s_pod_name` | Pod replacements triggered by slot failures. |
 
 ---

@@ -51,9 +51,9 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			runtimePreConnect = poolstore.RuntimePreConnect(rt)
 		}
 		pl := r.poolFromPayload(p)
-		// spec: §6.1 lines 77-78 — an SDK-warm runtime cannot back a
-		// concurrent-mode pool.
-		if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.ConcurrencyStyle); err != nil {
+		// spec: §5.2 line 430, §6.1 lines 77-78 — an SDK-warm runtime cannot
+		// back a service-mode pool or a concurrent session-mode pool.
+		if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.SessionPolicy); err != nil {
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
@@ -109,17 +109,13 @@ func applyPoolSeed(stored *poolstore.Pool, desired poolstore.Pool) {
 	stored.RuntimeRef = desired.RuntimeRef
 	stored.IsolationProfile = desired.IsolationProfile
 	stored.ExecutionMode = desired.ExecutionMode
-	stored.ConcurrencyStyle = desired.ConcurrencyStyle
 	stored.MaxConcurrent = desired.MaxConcurrent
-	stored.AcknowledgeProcessLevelIsolation = desired.AcknowledgeProcessLevelIsolation
-	stored.CleanupTimeoutSeconds = desired.CleanupTimeoutSeconds
-	stored.AllowCrossTenantReuse = desired.AllowCrossTenantReuse
+	stored.SessionPolicy = desired.SessionPolicy
 	stored.ResourceClass = desired.ResourceClass
 	stored.WarmCount = desired.WarmCount
 	stored.MaxSessionAgeSeconds = desired.MaxSessionAgeSeconds
 	stored.AllowStandardIsolation = desired.AllowStandardIsolation
 	stored.EgressProfile = desired.EgressProfile
-	stored.TaskPolicy = desired.TaskPolicy
 	stored.UpdatedAt = desired.UpdatedAt
 }
 
@@ -140,9 +136,6 @@ func poolConflicts(existing poolstore.Pool, p PoolPayload) (conflicts, securityC
 	}
 	if p.ExecutionMode != "" && string(existing.ExecutionMode) != p.ExecutionMode {
 		conflicts = append(conflicts, "executionMode")
-	}
-	if p.ConcurrencyStyle != "" && string(existing.ConcurrencyStyle) != p.ConcurrencyStyle {
-		conflicts = append(conflicts, "concurrencyStyle")
 	}
 	if p.ResourceClass != "" && existing.ResourceClass != p.ResourceClass {
 		conflicts = append(conflicts, "resourceClass")

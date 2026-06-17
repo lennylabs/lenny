@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -274,7 +275,10 @@ func TestBinaryEmitsEventEmitterReadyLog(t *testing.T) {
 		"--addr="+httpAddr,
 		"--issuer=https://test.local/token",
 	)
-	var stderr bytes.Buffer
+	// stderr is read by the test goroutine while os/exec's copier
+	// goroutine writes the subprocess pipe into it, so it must be
+	// goroutine-safe to stay -race clean.
+	var stderr safeBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start binary: %v", err)
@@ -304,4 +308,23 @@ func TestBinaryEmitsEventEmitterReadyLog(t *testing.T) {
 	if !strings.Contains(stderr.String(), "redis=false") {
 		t.Errorf("token-service §4.0 emitter log did not report redis=false; stderr=%q", stderr.String())
 	}
+}
+
+// safeBuffer is a goroutine-safe bytes.Buffer for capturing subprocess
+// output that the os/exec copier goroutine writes while the test reads.
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

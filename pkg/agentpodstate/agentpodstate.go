@@ -54,6 +54,25 @@ type PodState struct {
 	NodeName string
 }
 
+// RecycleCounters is the pair of gateway-written per-pod recycle counters
+// read by the §5.2 recycle disposition. They are the exception to the
+// WarmPoolController-maintained mirror: the gateway increments
+// SessionsServed at each session release (ReportSessionScrub) and
+// ScrubFailureCount on each failed whole-pod scrub (ReportPodScrub), and
+// the disposition evaluates them against recycle.maxSessionsPerPod and
+// recycle.maxScrubFailures. Both columns are NULL until the gateway first
+// writes them; a never-written counter reads back as 0.
+// spec: §12.6 (agent_pod_state schema), §5.2 (recycle disposition).
+type RecycleCounters struct {
+	// SessionsServed is the number of sessions the pod has served over its
+	// lifetime, evaluated against recycle.maxSessionsPerPod.
+	SessionsServed int
+
+	// ScrubFailureCount is the number of failed whole-pod scrubs the pod
+	// has accumulated, evaluated against recycle.maxScrubFailures.
+	ScrubFailureCount int
+}
+
 // Store is the §4.6.1 agent_pod_state mirror contract. The mirror is a
 // read-optimized copy of Sandbox status; the authoritative store is the
 // Sandbox CRD status subresource.
@@ -101,6 +120,33 @@ type Store interface {
 	// here is provisional until the caller flips the authoritative
 	// Sandbox CRD phase and creates the binding SandboxClaim.
 	ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string) (PodState, bool, error)
+
+	// IncrementSessionsServed adds one to the pod's sessions_served recycle
+	// counter and returns the new value. A NULL counter (never written) is
+	// treated as 0, so the first increment returns 1. The bool reports
+	// whether the pod row exists; a missing row returns (0, false, nil)
+	// without writing. The gateway calls this at each session release on
+	// the ReportSessionScrub RPC; the §5.2 recycle disposition evaluates
+	// the returned value against recycle.maxSessionsPerPod.
+	// spec: §4.7 (ReportSessionScrub increments sessionsServed), §5.2.
+	IncrementSessionsServed(ctx context.Context, podID string) (int, bool, error)
+
+	// IncrementScrubFailureCount adds one to the pod's scrub_failure_count
+	// recycle counter and returns the new value. A NULL counter is treated
+	// as 0, so the first increment returns 1. The bool reports whether the
+	// pod row exists; a missing row returns (0, false, nil) without
+	// writing. The gateway calls this on each failed whole-pod scrub
+	// reported through ReportPodScrub; the §5.2 recycle disposition
+	// evaluates the returned value against recycle.maxScrubFailures.
+	// spec: §4.7 (ReportPodScrub increments scrubFailureCount), §5.2.
+	IncrementScrubFailureCount(ctx context.Context, podID string) (int, bool, error)
+
+	// RecycleCounters reads both recycle counters back for the §5.2 recycle
+	// disposition. A NULL column reads back as 0. The bool reports whether
+	// the pod row exists; a missing row returns (RecycleCounters{}, false,
+	// nil).
+	// spec: §12.6 (agent_pod_state schema), §5.2 (recycle disposition).
+	RecycleCounters(ctx context.Context, podID string) (RecycleCounters, bool, error)
 }
 
 // ErrEmptyPoolID is returned by Sync, MirrorLagSeconds, and ClaimIdle

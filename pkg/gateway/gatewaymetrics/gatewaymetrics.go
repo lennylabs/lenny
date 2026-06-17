@@ -262,6 +262,15 @@ type Metrics struct {
 	// every POST /v1/sessions/{id}/resume that passes the precondition
 	// gate bumps it once with outcome "success" or "failure". F-7.3.10.
 	sessionResumeAttempts *prometheus.CounterVec
+	// sessionExpiry counts the §16.1
+	// `lenny_session_expiry_total{pool, reason}` counter: a session
+	// terminated by a platform expiry clock, by reason. The watchdog's
+	// expiry sweeps bump it once per `→ expired` transition with reason
+	// `max_idle_time` (the §6.2 maxClientIdleSeconds idle clock) or
+	// `max_session_age` (the §11.3 maxSessionAge age cap and the §7.3
+	// awaiting_client_action wall-clock deadline). spec: §16.1; §16.1.1
+	// (reason vocabulary). F-11.3.7.
+	sessionExpiry *prometheus.CounterVec
 	// warmpoolWarmupFailure is the §16.1 line 124
 	// `lenny_warmpool_warmup_failure_total{error_type}` counter:
 	// incremented whenever a warm-pool-side §6.3 startup phase
@@ -288,6 +297,19 @@ type Metrics struct {
 	// fallback skip events. Labels: `reason` (`mirror_stale` or
 	// `apiserver_unreachable`).
 	podClaimFallbackSkipped *prometheus.CounterVec
+	// podClaimQueueDepth is the §4.6.1 / §16.1 per-pool claim-FIFO depth
+	// gauge: the number of onPoolExhausted: queue requests waiting for a pod
+	// to free in a pool. Labeled by `pool` (finite, the warm-pool registry).
+	podClaimQueueDepth *prometheus.GaugeVec
+	// podClaimQueueWait is the §4.6.1 / §16.1 per-pool claim-FIFO residency
+	// histogram: the wall-clock a queued request spent in the FIFO before it
+	// acquired a pod or timed out. Labeled by `pool`.
+	podClaimQueueWait *prometheus.HistogramVec
+	// podClaimTimeout counts the §4.6.1 / §16.1 onPoolExhausted: queue
+	// requests that exhausted their maxQueueWaitSeconds bound and returned
+	// WARM_POOL_EXHAUSTED. Labeled by `pool`. It backs the §16.5
+	// PodClaimQueueSaturated alert alongside the depth gauge.
+	podClaimTimeout *prometheus.CounterVec
 	// slotAssignmentConflict counts the §5.2 line 519 concurrent-mode
 	// slot reservation failures due to slot contention (a candidate pod
 	// was at its maxConcurrent bound). Labeled by `pool` (finite, the
@@ -350,6 +372,25 @@ type Metrics struct {
 	// concurrent-workspace slots whose cleanup timed out and are leaked
 	// (not reclaimed until pod termination). Labels: `pod_id`, `pool`.
 	adapterLeakedSlots *prometheus.GaugeVec
+	// podScrubFailureTotal is the §5.2 aggregate
+	// `lenny_pod_scrub_failure_total` counter: incremented on every failed
+	// whole-pod scrub of a recycling session-mode pod, independent of
+	// whether the failure retires the pod. Labels: `pool`, `runtime_class`.
+	// spec: §5.2 (warn-policy scrub failure increments the aggregate
+	// counter alongside the per-pod gauge).
+	podScrubFailureTotal *prometheus.CounterVec
+	// podScrubFailureCount is the §16.1 per-pod
+	// `lenny_pod_scrub_failure_count` gauge: the cumulative scrub-failure
+	// count of a recycling session-mode pod, evaluated against
+	// recycle.maxScrubFailures at the recycle disposition. Labels:
+	// `k8s_pod_name`, `pool`, `runtime_class`. spec: §16.1.
+	podScrubFailureCount *prometheus.GaugeVec
+	// podRetirement is the §16.1 `lenny_pod_retirement_total` counter:
+	// retirements of a recycling session-mode pod at the recycle
+	// disposition, by reason. Labels: `reason` (frozen to
+	// session_count_limit | uptime_limit | scrub_failure_limit),
+	// `pool`, `runtime_class`. spec: §16.1, §16.1.1.
+	podRetirement *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -707,33 +748,30 @@ type Metrics struct {
 	orphanSessionReconciliations prometheus.Counter
 	agentPodStateMirrorLag       *prometheus.GaugeVec
 
-	// statelessRequests is the §5.2 line 573 cumulative request count
-	// arriving at the pool's Kubernetes Service in concurrent-stateless
-	// mode. The PoolScalingController reads
-	// `rate(lenny_stateless_requests_total[5m])` as `base_demand_p95`
-	// for stateless pools (concurrent-stateless bypasses the gateway
-	// claim model). Labeled by `pool` (the SandboxTemplate name) — the
-	// emitter lands with the tenant-affinity routing layer (F-5.2.3),
-	// the metric is registered here so the catalog test sees the
-	// declared surface and operators can scrape it as soon as the
-	// producer exists.
+	// statelessRequests is the §5.2 cumulative request count arriving at
+	// the pool's Kubernetes Service in service mode. The
+	// PoolScalingController reads
+	// `rate(lenny_service_requests_total[5m])` as `base_demand_p95`
+	// for service pools (service mode bypasses the gateway claim model).
+	// Labeled by `pool` (the SandboxTemplate name) — the emitter lands
+	// with the tenant-affinity routing layer (F-5.2.3), the metric is
+	// registered here so the catalog test sees the declared surface and
+	// operators can scrape it as soon as the producer exists.
 	statelessRequests *prometheus.CounterVec
-	// statelessConcurrentActive is the §5.2 line 573 instantaneous
-	// per-pod concurrent active-slot count. The PoolScalingController
-	// reads `max_over_time(lenny_stateless_concurrent_active[5m])` as
-	// `burst_p99_claims` for stateless pools. Labeled by `pool` — the
+	// statelessConcurrentActive is the §5.2 instantaneous per-pod
+	// concurrent active-slot count. The PoolScalingController reads
+	// `max_over_time(lenny_service_concurrent_active[5m])` as
+	// `burst_p99_claims` for service pools. Labeled by `pool` — the
 	// per-pod dimension is intentionally dropped to keep the cardinality
 	// bound and because the controller aggregates across pods anyway.
 	// Emitter lands with F-5.2.3.
 	statelessConcurrentActive *prometheus.GaugeVec
 
-	// taskReuseCount is the §5.2 line 569 / §16.1 line 124 histogram of
-	// tasks executed on a single pod in task mode. The
-	// PoolScalingController reads `histogram_quantile(0.50, ...)` as the
-	// mode-adjusted `mode_factor` for task-mode pools with preConnect:
-	// true so the scaling formula converges on observed reuse. Labeled
-	// by `pool` and `k8s_pod_name` per §16.1; the emitter lands with the
-	// task-mode lifecycle (F-5.2.1 / F-5.2.18).
+	// taskReuseCount is the §5.2 / §16.1 histogram of sessions served by
+	// a single pod under recycle.enabled. The PoolScalingController reads
+	// `histogram_quantile(0.50, ...)` as the mode-adjusted `mode_factor`
+	// for recycling session-mode pools so the scaling formula converges
+	// on observed reuse. Labeled by `pool` and `k8s_pod_name` per §16.1.
 	taskReuseCount *prometheus.HistogramVec
 
 	// delegationLeaseExtension is the §16 line 66 counter for §8.6
@@ -1303,7 +1341,7 @@ func New() (*Metrics, error) {
 	}
 	// spec: §16.1 lines 161-163 / §10.7 lines 1120-1132 — the variant-labelled
 	// rollback-trigger metric family. session_type carries the session's
-	// §5.2 ExecutionMode ("session", "task", "concurrent"); variant_id carries
+	// §5.2 ExecutionMode ("session", "service"); variant_id carries
 	// the §10.7 experiment enrollment ("" for control / un-enrolled sessions).
 	// lenny_session_total is the denominator for the variant error rate
 	// (§16.1 line 162); lenny_session_error_total is the numerator (line 161).
@@ -1639,6 +1677,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 — `lenny_session_expiry_total{pool, reason}` counts sessions
+	// terminated by a platform expiry clock. The reason label is the §16.1.1
+	// vocabulary (`max_session_age` | `max_idle_time`) the watchdog stamps on
+	// each `→ expired` transition. F-11.3.7.
+	sessionExpiry, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_expiry_total",
+		Help: "Sessions terminated by a platform expiry clock, by reason (max_session_age | max_idle_time) (§16.1).",
+	}, []string{"pool", "reason"})
+	if err != nil {
+		return nil, err
+	}
 	// §16.1 line 124 — `lenny_warmpool_warmup_failure_total{error_type}`
 	// counts warm-pool-side startup failures by §7.3 non-retryable
 	// failure category. F-7.5.9.
@@ -1701,6 +1750,38 @@ func New() (*Metrics, error) {
 		Name: "lenny_pod_claim_fallback_skipped_total",
 		Help: "Postgres-backed pod-claim fallback skips by precondition (§4.6.1).",
 	}, []string{"reason"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.6.1 / §16.1 — `lenny_pod_claim_queue_depth{pool}` is the per-pool
+	// claim FIFO depth for onPoolExhausted: queue pools. The §16.5
+	// PodClaimQueueSaturated alert reads it against the pool's minWarm.
+	podClaimQueueDepth, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_pod_claim_queue_depth",
+		Help: "Pod claim queue depth by pool (§4.6.1 Pool exhaustion behavior, §16.1).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.6.1 / §16.1 — `lenny_pod_claim_queue_wait_seconds{pool}` is the
+	// residency a queued request spent in the FIFO before acquiring a pod or
+	// timing out. Buckets span the sub-second poll cadence through the 30s
+	// default maxQueueWaitSeconds and a slow tail to a tuned 120s bound.
+	podClaimQueueWait, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_pod_claim_queue_wait_seconds",
+		Help:    "Pod claim queue wait time by pool (§4.6.1 Pool exhaustion behavior, §16.1).",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120},
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.6.1 / §16.1 — `lenny_pod_claim_timeout_total{pool}` counts the
+	// onPoolExhausted: queue requests that exhausted maxQueueWaitSeconds and
+	// returned WARM_POOL_EXHAUSTED.
+	podClaimTimeout, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pod_claim_timeout_total",
+		Help: "Pod claim queue-wait timeouts by pool (§4.6.1 Pool exhaustion behavior, §16.1).",
+	}, []string{"pool"})
 	if err != nil {
 		return nil, err
 	}
@@ -1850,6 +1931,40 @@ func New() (*Metrics, error) {
 		Name: "lenny_adapter_leaked_slots",
 		Help: "Concurrent-workspace leaked slots per pod awaiting pod termination (§6.2 line 179).",
 	}, []string{"pod_id", "pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §5.2 — `lenny_pod_scrub_failure_total` is the aggregate count of
+	// failed whole-pod scrubs on a recycling session-mode pod, incremented
+	// on every failure regardless of whether it retires the pod. Labels:
+	// `pool`, `runtime_class` (both finite).
+	podScrubFailureTotal, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pod_scrub_failure_total",
+		Help: "Aggregate failed whole-pod scrubs on recycling session-mode pods (§5.2).",
+	}, []string{"pool", "runtime_class"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 — `lenny_pod_scrub_failure_count` is the per-pod cumulative
+	// scrub-failure gauge, evaluated against recycle.maxScrubFailures at the
+	// recycle disposition. `k8s_pod_name` is sanctioned for this metric by
+	// §16.1; `pool` and `runtime_class` are finite.
+	podScrubFailureCount, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_pod_scrub_failure_count",
+		Help: "Per-pod cumulative scrub-failure count on a recycling session-mode pod (§16.1).",
+	}, []string{"k8s_pod_name", "pool", "runtime_class"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 — `lenny_pod_retirement_total` counts session-pool pod
+	// retirements at the recycle disposition by `reason`, frozen to the
+	// three lifecycle-limit triggers (session_count_limit, uptime_limit,
+	// scrub_failure_limit). Labels: `reason`, `pool`, `runtime_class` (all
+	// finite). spec: §16.1, §16.1.1.
+	podRetirement, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pod_retirement_total",
+		Help: "Session-pool pod retirements at the recycle disposition by reason (§16.1).",
+	}, []string{"reason", "pool", "runtime_class"})
 	if err != nil {
 		return nil, err
 	}
@@ -2466,39 +2581,36 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	// §5.2 line 573 — `lenny_stateless_requests_total` is the cumulative
-	// request count arriving at a concurrent-stateless pool's Kubernetes
-	// Service; the PoolScalingController reads
-	// `rate(lenny_stateless_requests_total[5m])` for stateless pool
-	// `base_demand_p95`. The producer lands with the tenant-affinity
-	// routing layer (F-5.2.3).
+	// §5.2 — `lenny_service_requests_total` is the cumulative request
+	// count arriving at a service-mode pool's Kubernetes Service; the
+	// PoolScalingController reads `rate(lenny_service_requests_total[5m])`
+	// for service pool `base_demand_p95`. The producer lands with the
+	// tenant-affinity routing layer (F-5.2.3).
 	statelessRequests, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_stateless_requests_total",
-		Help: "Concurrent-stateless requests routed through the pool's Service (§5.2 line 573).",
+		Name: "lenny_service_requests_total",
+		Help: "Service-mode requests routed through the pool's Service (§5.2).",
 	}, []string{"pool"})
 	if err != nil {
 		return nil, err
 	}
-	// §5.2 line 573 — `lenny_stateless_concurrent_active` is the
-	// instantaneous active-slot count per concurrent-stateless pool. The
-	// PoolScalingController reads `max_over_time(...[5m])` for stateless
-	// pool `burst_p99_claims`. Producer lands with F-5.2.3.
+	// §5.2 — `lenny_service_concurrent_active` is the instantaneous
+	// active-slot count per service-mode pool. The PoolScalingController
+	// reads `max_over_time(...[5m])` for service pool `burst_p99_claims`.
+	// Producer lands with F-5.2.3.
 	statelessConcurrentActive, err := metrics.NewGauge(prometheus.GaugeOpts{
-		Name: "lenny_stateless_concurrent_active",
-		Help: "Concurrent-stateless pool peak active slot count (§5.2 line 573).",
+		Name: "lenny_service_concurrent_active",
+		Help: "Service-mode pool peak active slot count (§5.2).",
 	}, []string{"pool"})
 	if err != nil {
 		return nil, err
 	}
-	// §5.2 line 569 / §16.1 line 124 — `lenny_task_reuse_count` is a
-	// per-pod histogram of completed task counts in task mode. The
-	// PoolScalingController reads the median over the rolling window as
-	// the mode-adjusted `mode_factor` for task-mode pools with
-	// preConnect: true. Emitter lands with the task-mode lifecycle
-	// (F-5.2.1 / F-5.2.18).
+	// §5.2 / §16.1 — `lenny_pod_session_reuse_count` is a per-pod
+	// histogram of sessions served on a single pod under recycle.enabled.
+	// The PoolScalingController reads the median over the rolling window
+	// as the mode-adjusted `mode_factor` for recycling session-mode pools.
 	taskReuseCount, err := metrics.NewHistogram(prometheus.HistogramOpts{
-		Name:    "lenny_task_reuse_count",
-		Help:    "Tasks executed on a single pod in task mode (§5.2 line 569 / §16.1).",
+		Name:    "lenny_pod_session_reuse_count",
+		Help:    "Sessions served by a single pod under recycle.enabled (§5.2 / §16.1).",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
 	}, []string{"pool", "k8s_pod_name"})
 	if err != nil {
@@ -2629,15 +2741,17 @@ func New() (*Metrics, error) {
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
 		sessionTimeToFirstToken, warmpoolClaims, warmpoolSDKDemotions, warmpoolSDKDemotionDuration,
-		sessionRetryTotal, sessionResumeAttempts,
+		sessionRetryTotal, sessionResumeAttempts, sessionExpiry,
 		warmpoolWarmupFailure,
 		workspaceSealDuration,
 		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
+		podClaimQueueDepth, podClaimQueueWait, podClaimTimeout,
 		credentialPreclaimMismatch,
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
 		slotRehydration, slotPodReplacement, adapterLeakedSlots,
+		podScrubFailureTotal, podScrubFailureCount, podRetirement,
 		checkpointPartialTotal, prestopCapSelection, sigkillStreams,
 		resumeDeduplicated, barrierTargetSource,
 		coordinatorHandoffStale, coordinatorFenceRetry, coordinatorFenceRelinquished,
@@ -2858,11 +2972,15 @@ func New() (*Metrics, error) {
 		sessionRetryTotal:                    sessionRetryTotal,
 		deriveFailureAudit:                   deriveFailureAudit,
 		sessionResumeAttempts:                sessionResumeAttempts,
+		sessionExpiry:                        sessionExpiry,
 		warmpoolWarmupFailure:                warmpoolWarmupFailure,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
 		slotAssignmentConflict:               slotAssignmentConflict,
+		podClaimQueueDepth:                   podClaimQueueDepth,
+		podClaimQueueWait:                    podClaimQueueWait,
+		podClaimTimeout:                      podClaimTimeout,
 		credentialPreclaimMismatch:           credentialPreclaimMismatch,
 		credentialLeaseAssignments:           credentialLeaseAssignments,
 		credentialRotation:                   credentialRotation,
@@ -2876,6 +2994,9 @@ func New() (*Metrics, error) {
 		slotRehydration:                      slotRehydration,
 		slotPodReplacement:                   slotPodReplacement,
 		adapterLeakedSlots:                   adapterLeakedSlots,
+		podScrubFailureTotal:                 podScrubFailureTotal,
+		podScrubFailureCount:                 podScrubFailureCount,
+		podRetirement:                        podRetirement,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		resumeDeduplicated:                   resumeDeduplicated,
@@ -3026,8 +3147,9 @@ func (m *Metrics) ObserveInterceptorMTLSHandshake(result string, seconds float64
 	m.interceptorMTLSHandshake.WithLabelValues(result).Observe(seconds)
 }
 
-// IncStatelessRequest records a §5.2 line 573 stateless-pool request.
-// `pool` is the SandboxTemplate name. spec: §5.2 line 573.
+// IncStatelessRequest records a §5.2 service-mode-pool request that
+// increments lenny_service_requests_total. `pool` is the SandboxTemplate
+// name. spec: §5.2.
 func (m *Metrics) IncStatelessRequest(pool string) {
 	if m == nil {
 		return
@@ -3036,7 +3158,8 @@ func (m *Metrics) IncStatelessRequest(pool string) {
 }
 
 // SetStatelessConcurrentActive sets the instantaneous concurrent active
-// slot count for a stateless pool. spec: §5.2 line 573.
+// slot count for a service-mode pool, published as
+// lenny_service_concurrent_active. spec: §5.2.
 func (m *Metrics) SetStatelessConcurrentActive(pool string, value float64) {
 	if m == nil {
 		return
@@ -3044,10 +3167,10 @@ func (m *Metrics) SetStatelessConcurrentActive(pool string, value float64) {
 	m.statelessConcurrentActive.WithLabelValues(pool).Set(value)
 }
 
-// ObserveTaskReuseCount records the completed-task count of a retiring
-// task-mode pod. `pool` is the SandboxTemplate name and `k8sPodName`
-// is the pod whose retirement triggered the observation. spec: §5.2
-// line 569 / §16.1 line 124.
+// ObserveTaskReuseCount records the served-session count of a retiring
+// recycling session-mode pod into lenny_pod_session_reuse_count. `pool`
+// is the SandboxTemplate name and `k8sPodName` is the pod whose
+// retirement triggered the observation. spec: §5.2 / §16.1.
 func (m *Metrics) ObserveTaskReuseCount(pool, k8sPodName string, count int) {
 	if m == nil {
 		return
@@ -3055,12 +3178,12 @@ func (m *Metrics) ObserveTaskReuseCount(pool, k8sPodName string, count int) {
 	m.taskReuseCount.WithLabelValues(pool, k8sPodName).Observe(float64(count))
 }
 
-// TaskReuseQuantile reads the in-process median of the task-reuse
-// histogram for one pool. The PoolScalingController uses it as the
-// mode-adjusted `mode_factor` for task-mode pools with preConnect:
-// true (§5.2 line 569). q must be in (0,1]. ok is false until at least
-// one observation has been recorded for the pool (cold start). spec:
-// §5.2 line 569.
+// TaskReuseQuantile reads the in-process median of the
+// lenny_pod_session_reuse_count histogram for one pool. The
+// PoolScalingController uses it as the mode-adjusted `mode_factor` for
+// recycling session-mode pools (§5.2). q must be in (0,1]. ok is false
+// until at least one observation has been recorded for the pool (cold
+// start). spec: §5.2.
 func (m *Metrics) TaskReuseQuantile(pool string, q float64) (value float64, ok bool) {
 	if m == nil {
 		return 0, false
@@ -3075,7 +3198,7 @@ func (m *Metrics) TaskReuseQuantile(pool string, q float64) (value float64, ok b
 	var totalCount uint64
 	var buckets []bucketSample
 	for _, fam := range families {
-		if fam.GetName() != "lenny_task_reuse_count" {
+		if fam.GetName() != "lenny_pod_session_reuse_count" {
 			continue
 		}
 		for _, mtr := range fam.GetMetric() {
@@ -3135,18 +3258,17 @@ func (m *Metrics) TaskReuseQuantile(pool string, q float64) (value float64, ok b
 
 // bucketSample is one (upper_bound, cumulative_count) pair from a
 // histogram sample. Used by TaskReuseQuantile to merge per-pod
-// histograms before computing the in-process median. spec: §5.2 line
-// 569.
+// histograms before computing the in-process median. spec: §5.2.
 type bucketSample struct {
 	ub    float64
 	count uint64
 }
 
-// mergeBuckets aggregates per-pod task-reuse bucket samples by upper
+// mergeBuckets aggregates per-pod session-reuse bucket samples by upper
 // bound, returning a sorted-by-UB slice with cumulative counts (across
 // all pods that share the upper bound). The summed cumulative counts
 // match Prometheus' histogram_quantile aggregation across series of
-// the same histogram. spec: §5.2 line 569.
+// the same histogram. spec: §5.2.
 func mergeBuckets(in []bucketSample) []bucketSample {
 	by := map[float64]uint64{}
 	for _, b := range in {
@@ -3370,6 +3492,22 @@ func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 		return
 	}
 	m.sessionResumeAttempts.WithLabelValues(pool, outcome).Inc()
+}
+
+// IncSessionExpiry increments the §16.1
+// `lenny_session_expiry_total{pool, reason}` counter for one session the
+// watchdog terminated on a platform expiry clock. reason is the §16.1.1
+// vocabulary value the watchdog resolved from the expiry edge — "max_idle_time"
+// for the §6.2 maxClientIdleSeconds idle clock or "max_session_age" for the
+// §11.3 maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
+// deadline. The pool label echoes the session's §5.2 PoolRef at expiry time
+// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1.
+// F-11.3.7.
+func (m *Metrics) IncSessionExpiry(pool, reason string) {
+	if m == nil {
+		return
+	}
+	m.sessionExpiry.WithLabelValues(pool, reason).Inc()
 }
 
 // IncWarmpoolWarmupFailure increments the §16.1 line 124
@@ -3788,6 +3926,39 @@ func (m *Metrics) IncPodClaimFallbackSkipped(reason string) {
 	m.podClaimFallbackSkipped.WithLabelValues(reason).Inc()
 }
 
+// SetPodClaimQueueDepth publishes the §4.6.1 / §16.1
+// `lenny_pod_claim_queue_depth{pool}` gauge as a pool's onPoolExhausted:
+// queue FIFO grows and shrinks. Called by the gateway start path's claim
+// queue. spec: §4.6.1 (Pool exhaustion behavior), §16.1.
+func (m *Metrics) SetPodClaimQueueDepth(pool string, depth int) {
+	if m == nil {
+		return
+	}
+	m.podClaimQueueDepth.WithLabelValues(pool).Set(float64(depth))
+}
+
+// ObservePodClaimQueueWait observes the §4.6.1 / §16.1
+// `lenny_pod_claim_queue_wait_seconds{pool}` histogram with the residency a
+// queued request spent in the FIFO before acquiring a pod or timing out.
+// spec: §4.6.1 (Pool exhaustion behavior), §16.1.
+func (m *Metrics) ObservePodClaimQueueWait(pool string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.podClaimQueueWait.WithLabelValues(pool).Observe(seconds)
+}
+
+// IncPodClaimTimeout increments the §4.6.1 / §16.1
+// `lenny_pod_claim_timeout_total{pool}` counter when an onPoolExhausted:
+// queue request exhausts its maxQueueWaitSeconds bound. spec: §4.6.1 (Pool
+// exhaustion behavior), §16.1.
+func (m *Metrics) IncPodClaimTimeout(pool string) {
+	if m == nil {
+		return
+	}
+	m.podClaimTimeout.WithLabelValues(pool).Inc()
+}
+
 // IncSlotAssignmentConflict increments the §5.2 line 519
 // `lenny_slot_assignment_conflict_total` counter for pool. Called by
 // the gateway slot claimer when a concurrent-mode reservation found a
@@ -3971,6 +4142,44 @@ func (m *Metrics) SetAdapterLeakedSlots(podID, pool string, count float64) {
 		return
 	}
 	m.adapterLeakedSlots.WithLabelValues(podID, pool).Set(count)
+}
+
+// IncScrubFailureTotal increments the §5.2 `lenny_pod_scrub_failure_total`
+// aggregate counter for the (pool, runtimeClass) pair. The §4.7 recycle
+// disposition calls it on every failed whole-pod scrub of a recycling
+// session-mode pod, independent of whether the failure retires the pod.
+// spec: §5.2 (warn-policy scrub failure increments the aggregate counter).
+func (m *Metrics) IncScrubFailureTotal(pool, runtimeClass string) {
+	if m == nil {
+		return
+	}
+	m.podScrubFailureTotal.WithLabelValues(pool, runtimeClass).Inc()
+}
+
+// SetScrubFailureCount sets the §16.1 `lenny_pod_scrub_failure_count` gauge
+// for podID to count: the pod's cumulative scrub-failure count, evaluated
+// against recycle.maxScrubFailures at the recycle disposition. Labeled by
+// k8s_pod_name (sanctioned for this metric by §16.1), pool, runtime_class.
+// spec: §16.1.
+func (m *Metrics) SetScrubFailureCount(podID, pool, runtimeClass string, count int) {
+	if m == nil {
+		return
+	}
+	m.podScrubFailureCount.WithLabelValues(podID, pool, runtimeClass).Set(float64(count))
+}
+
+// IncRetirement increments the §16.1 `lenny_pod_retirement_total` counter
+// for the (reason, pool, runtimeClass) tuple. The §4.7 recycle disposition
+// calls it only for a reason in the frozen §16.1 vocabulary (the three
+// retirement-limit triggers: session_count_limit, uptime_limit,
+// scrub_failure_limit); the §6.39 cordon-drain and the fail-policy
+// termination drain without a retirement-counter increment. spec: §16.1,
+// §16.1.1.
+func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {
+	if m == nil {
+		return
+	}
+	m.podRetirement.WithLabelValues(reason, pool, runtimeClass).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

@@ -75,50 +75,66 @@ func TestCompute(t *testing.T) {
 			want: plan.Plan{Create: 2, WarmCount: 1, ReadyCount: 1},
 		},
 		{
-			name: "slot_active pods count as warm but not ready",
+			// With one session mode a pod serving concurrent sessions
+			// projects the coarse claimed phase (the former slot_active
+			// value collapsed into claimed), so it is not warm inventory:
+			// the planner counts neither pod as warm and creates the gap.
+			name: "concurrently-occupied claimed pods are not warm inventory",
 			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
-				{Name: "s1", Phase: state.SlotActive},
-				{Name: "s2", Phase: state.SlotActive},
+				{Name: "c1", Phase: state.Claimed},
+				{Name: "c2", Phase: state.Claimed},
 			}},
-			want: plan.Plan{WarmCount: 2},
+			want: plan.Plan{Create: 2},
 		},
 		{
-			name: "slot_active prevents oscillation when sized at minWarm",
-			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
-				{Name: "s1", Phase: state.SlotActive},
-				{Name: "i1", Phase: state.Idle},
-				{Name: "i2", Phase: state.Idle},
-			}},
-			want: plan.Plan{Drain: []string{"i1"}, WarmCount: 3, ReadyCount: 2},
-		},
-		{
-			name: "slot_active is not a drain candidate even above target",
+			// A claimed pod is never a drain candidate even above target:
+			// only idle pods drain, so the planner sheds idle and leaves
+			// the claimed pod (whose claim carries live sessions) untouched.
+			name: "claimed pod is not a drain candidate even above target",
 			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
-				{Name: "s1", Phase: state.SlotActive},
-				{Name: "s2", Phase: state.SlotActive},
+				{Name: "c1", Phase: state.Claimed},
+				{Name: "c2", Phase: state.Claimed},
 				{Name: "i1", Phase: state.Idle},
 			}},
-			want: plan.Plan{Drain: []string{"i1"}, WarmCount: 3, ReadyCount: 1},
+			want: plan.Plan{WarmCount: 1, ReadyCount: 1},
 		},
 		{
-			name: "slot_active over target with no idle keeps every slot pod",
-			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
-				{Name: "s1", Phase: state.SlotActive},
-				{Name: "s2", Phase: state.SlotActive},
-				{Name: "s3", Phase: state.SlotActive},
-			}},
-			want: plan.Plan{WarmCount: 3},
-		},
-		{
-			name: "draining and terminal pods are ignored",
+			// spec: §4.6.2 — a reserved pod is occupied: excluded from
+			// WarmCount/ReadyCount and surfaced separately in ReservedCount.
+			// Draining and terminal pods are ignored entirely.
+			name: "reserved counts occupied; draining and terminal ignored",
 			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
 				{Name: "i1", Phase: state.Idle},
 				{Name: "d1", Phase: state.Draining},
 				{Name: "f1", Phase: state.Failed},
 				{Name: "t1", Phase: state.Terminated},
-				{Name: "x1", Phase: state.Completed},
+				{Name: "r1", Phase: state.Reserved},
 			}},
-			want: plan.Plan{Create: 1, WarmCount: 1, ReadyCount: 1},
+			want: plan.Plan{Create: 1, WarmCount: 1, ReadyCount: 1, ReservedCount: 1},
+		},
+		{
+			// spec: §4.6.2 "reserved pods count as occupied" — a reserved
+			// pod depresses claimable idle inventory, so the planner must
+			// create the gap toward minWarm rather than treating the held
+			// pod as available.
+			name: "reserved pod does not count toward minWarm",
+			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "r1", Phase: state.Reserved},
+				{Name: "r2", Phase: state.Reserved},
+			}},
+			want: plan.Plan{Create: 2, ReservedCount: 2},
+		},
+		{
+			// A reserved pod is never a drain candidate even above target:
+			// only idle pods drain. The planner sheds idle and leaves the
+			// reserved pod (held for its pinned tenant) untouched.
+			name: "reserved pod is not a drain candidate even above target",
+			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "r1", Phase: state.Reserved},
+				{Name: "r2", Phase: state.Reserved},
+				{Name: "i1", Phase: state.Idle},
+			}},
+			want: plan.Plan{WarmCount: 1, ReadyCount: 1, ReservedCount: 2},
 		},
 		{
 			name: "cold pool with minWarm zero creates nothing",

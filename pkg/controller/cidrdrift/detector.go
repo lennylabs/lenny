@@ -315,7 +315,8 @@ func (d *Detector) clusterServiceCIDRs(ctx context.Context) ([]string, error) {
 		host, err := hostCIDR(raw)
 		if err != nil {
 			log.FromContext(ctx).WithName("cidrdrift").V(1).Info(
-				"skipping unparseable kubernetes Service ClusterIP", "clusterIP", raw)
+				"skipping unparseable kubernetes Service ClusterIP", "clusterIP", raw,
+			)
 			continue
 		}
 		if _, ok := seen[host]; ok {

@@ -73,7 +73,8 @@ func (s *pgStore) GetRun(ctx context.Context, id string) (*Run, error) {
 	err := s.pool.QueryRow(ctx, `
         SELECT id, status, scale, scenarios, cluster_release, started_at, completed_at, COALESCE(report_url,''), COALESCE(current_metrics,'')
         FROM runs WHERE id=$1`, id).Scan(
-		&r.ID, &r.Status, &r.Scale, &scenariosJSON, &r.ClusterRelease, &r.StartedAt, &completedAt, &r.ReportURL, &r.CurrentMetrics)
+		&r.ID, &r.Status, &r.Scale, &scenariosJSON, &r.ClusterRelease, &r.StartedAt, &completedAt, &r.ReportURL, &r.CurrentMetrics,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRunNotFound
 	}

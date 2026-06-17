@@ -106,10 +106,12 @@ func TestRunPolicyScoped_unresolvable_ref_fails_closed_spec_4_8_1032(t *testing.
 func TestRunPolicyScoped_named_scanner_can_reject_and_modify(t *testing.T) {
 	t.Run("reject", func(t *testing.T) {
 		c := interceptor.NewChain()
-		mustRegister(t, c, phase, &fakeInterceptor{name: "scanner", priority: 500, builtin: false,
+		mustRegister(t, c, phase, &fakeInterceptor{
+			name: "scanner", priority: 500, builtin: false,
 			fn: func(_ context.Context, _ interceptor.Request) (interceptor.Result, error) {
 				return interceptor.Result{Action: interceptor.ActionReject, Reason: "blocked"}, nil
-			}})
+			},
+		})
 		res := c.RunPolicyScoped(context.Background(), interceptor.Request{Phase: phase, Content: []byte("x")}, "scanner")
 		if res.Action != interceptor.ActionReject || res.RejectedBy != "scanner" {
 			t.Fatalf("res = %+v, want REJECT by scanner", res)
@@ -117,10 +119,12 @@ func TestRunPolicyScoped_named_scanner_can_reject_and_modify(t *testing.T) {
 	})
 	t.Run("modify", func(t *testing.T) {
 		c := interceptor.NewChain()
-		mustRegister(t, c, phase, &fakeInterceptor{name: "scanner", priority: 500, builtin: false,
+		mustRegister(t, c, phase, &fakeInterceptor{
+			name: "scanner", priority: 500, builtin: false,
 			fn: func(_ context.Context, _ interceptor.Request) (interceptor.Result, error) {
 				return interceptor.Result{Action: interceptor.ActionModify, ModifiedContent: []byte("redacted")}, nil
-			}})
+			},
+		})
 		res := c.RunPolicyScoped(context.Background(), interceptor.Request{Phase: phase, Content: []byte("secret")}, "scanner")
 		if res.Action != interceptor.ActionModify || string(res.ModifiedContent) != "redacted" {
 			t.Fatalf("res = %+v, want MODIFY redacted", res)

@@ -111,10 +111,10 @@ type Monitor struct {
 	// the Monitor owns only the timer, not the per-session disposition.
 	OnHoldExpired func(outageStart time.Time)
 
-	mu            sync.Mutex
-	unavailable   bool
-	since         time.Time
-	holdExpired   bool
+	mu          sync.Mutex
+	unavailable bool
+	since       time.Time
+	holdExpired bool
 }
 
 // Unavailable reports whether this replica currently observes both stores

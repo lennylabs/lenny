@@ -33,8 +33,8 @@ type Scenario struct {
 
 	// pod tracks per-pod slot counts (concurrent-mode) and a drained
 	// flag (session-mode).
-	mu      sync.Mutex
-	pods    map[string]*podState
+	mu   sync.Mutex
+	pods map[string]*podState
 }
 
 type podState struct {

@@ -75,7 +75,8 @@ func TestAuditQueryMetricsEmittedPerEndpoint_spec_25_9_metrics(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
@@ -86,7 +87,8 @@ func TestAuditQueryMetricsEmittedPerEndpoint_spec_25_9_metrics(t *testing.T) {
 	} {
 		rr = httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, withAdminPrincipal(
-			httptest.NewRequest(http.MethodGet, path, nil)))
+			httptest.NewRequest(http.MethodGet, path, nil),
+		))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("GET %s: status %d, body=%s", path, rr.Code, rr.Body.String())
 		}
@@ -119,7 +121,8 @@ func TestAuditListMetricsRecordsBroken_spec_25_9_metrics(t *testing.T) {
 	}).WithAuditLog(fake).WithAuditMetrics(rec)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil),
+	))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("list: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -136,6 +139,7 @@ type brokenChainLog struct{}
 func (brokenChainLog) Append(context.Context, string, string, json.RawMessage, time.Time) (audit.Row, error) {
 	return audit.Row{}, nil
 }
+
 func (brokenChainLog) Rows(context.Context, string) ([]audit.Row, error) {
 	// Timestamp inside the default 24h window; Hash deliberately wrong so
 	// VerifyRows classifies the row as broken.
@@ -149,6 +153,7 @@ func (brokenChainLog) Rows(context.Context, string) ([]audit.Row, error) {
 		Hash:      "deadbeef",
 	}}, nil
 }
+
 func (brokenChainLog) Verify(context.Context, string) (audit.VerifyResult, error) {
 	return audit.VerifyResult{Integrity: audit.ChainBroken, BreakSeq: 1}, nil
 }

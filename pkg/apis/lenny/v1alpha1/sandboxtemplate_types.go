@@ -7,114 +7,55 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TaskPolicy configures task-mode pod reuse (§5.2). It is present only
-// on pools whose ExecutionMode is `task`. The pool-config validation
-// webhook rejects a task-mode pool that omits TaskPolicy or sets
-// AcknowledgeBestEffortScrub to false, because the between-task
-// workspace scrub is best-effort and is not a tenant isolation
-// boundary.
-type TaskPolicy struct {
-	// AcknowledgeBestEffortScrub records the deployer's acknowledgment
-	// that the between-task workspace scrub is best-effort and is not a
-	// security boundary between tenants. Task mode is rejected at
-	// validation time unless this is true.
-	// +kubebuilder:validation:Required
-	AcknowledgeBestEffortScrub bool `json:"acknowledgeBestEffortScrub"`
-
-	// AllowCrossTenantReuse permits a task-mode pod to serve more than
-	// one tenant. It is valid only when IsolationProfile is `microvm`
-	// and the runtime is not workspaceTier T4; the pool-config webhook
-	// rejects it on any other pool.
+// SessionPolicy parameterizes session-mode pod reuse (§5.2). One
+// mechanism replaces the former session, task, and concurrent-workspace
+// modes: `maxConcurrentSessions` sets simultaneous sessions per pod and
+// the nested Recycle block governs sequential pod reuse with a whole-pod
+// scrub between sessions. The CRD carries the cross-tenant microvm scrub
+// controls (ScrubProfile and AcknowledgeMicrovmResidualState) that the
+// pool controller's pool_config_validator reads to enforce the
+// fail-closed in-place acknowledgment gate; the gateway's poolstore
+// holds the remaining sizing and acknowledgment knobs (§4.6.3
+// ownership). spec: §5.2 (pool configuration and execution modes).
+type SessionPolicy struct {
+	// Recycle configures sequential pod reuse with a whole-pod scrub at
+	// the occupancy-zero recycle boundary. It is nil on pools that do not
+	// recycle (`recycle.enabled: false`, the default).
 	// +optional
-	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
-
-	// MicrovmScrubMode selects the cross-tenant scrub variant for
-	// microvm pods: `restart` boots a fresh guest VM between tenants,
-	// `in-place` reuses the running guest. It is relevant only when
-	// AllowCrossTenantReuse is true.
-	// +kubebuilder:validation:Enum=restart;in-place
-	// +optional
-	MicrovmScrubMode string `json:"microvmScrubMode,omitempty"`
-
-	// AcknowledgeMicrovmResidualState records the deployer's
-	// acknowledgment that guest-kernel residual state persists across
-	// tenants. The pool-config webhook requires it when MicrovmScrubMode
-	// is `in-place`.
-	// +optional
-	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
-
-	// CleanupCommands are deployer-defined commands run between tasks
-	// before the Lenny scrub. They run after the credential file has
-	// been purged, so they have no access to the previous task's
-	// credentials.
-	// +optional
-	CleanupCommands []string `json:"cleanupCommands,omitempty"`
-
-	// CleanupTimeoutSeconds bounds the cleanup command execution.
-	// +optional
-	CleanupTimeoutSeconds int64 `json:"cleanupTimeoutSeconds,omitempty"`
-
-	// OnCleanupFailure selects pod handling when cleanup fails: `warn`
-	// returns the pod to the pool with a scrub_warning annotation,
-	// `fail` retires and replaces the pod.
-	// +kubebuilder:validation:Enum=warn;fail
-	// +optional
-	OnCleanupFailure string `json:"onCleanupFailure,omitempty"`
-
-	// MaxScrubFailures retires a pod once its cumulative scrub failure
-	// count reaches this value. It defaults to 3 when unset.
-	// +optional
-	MaxScrubFailures *int32 `json:"maxScrubFailures,omitempty"`
-
-	// MaxTasksPerPod retires a pod after this many completed tasks. It
-	// is required for task-mode pools; the pool-config webhook rejects
-	// a TaskPolicy that omits it, forcing an explicit reuse-limit
-	// choice.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Minimum=1
-	MaxTasksPerPod int32 `json:"maxTasksPerPod"`
-
-	// MaxPodUptimeSeconds retires a pod once its wall-clock uptime
-	// exceeds this value. When unset, only MaxTasksPerPod and
-	// MaxScrubFailures govern retirement.
-	// +optional
-	MaxPodUptimeSeconds *int64 `json:"maxPodUptimeSeconds,omitempty"`
-
-	// MaxTaskRetries is the retry count when a pod crashes mid-task. It
-	// defaults to 1 (two total attempts) when unset; 0 disables retries.
-	// +optional
-	MaxTaskRetries *int32 `json:"maxTaskRetries,omitempty"`
+	Recycle *RecyclePolicy `json:"recycle,omitempty"`
 }
 
-// ConcurrentWorkspacePolicy configures concurrent-workspace execution
-// (§5.2). It is present only on pools whose ExecutionMode is
-// `concurrent` and ConcurrencyStyle is `workspace`, where simultaneous
-// slots share the pod process namespace.
-type ConcurrentWorkspacePolicy struct {
-	// AcknowledgeProcessLevelIsolation records the deployer's
-	// acknowledgment that concurrent slots share the pod process
-	// namespace, /tmp, cgroup memory, network stack, and credential
-	// group-read access. Concurrent-workspace mode is rejected at
-	// validation time unless this is true.
-	// +kubebuilder:validation:Required
-	AcknowledgeProcessLevelIsolation bool `json:"acknowledgeProcessLevelIsolation"`
-
-	// CleanupTimeoutSeconds bounds per-slot cleanup. The per-slot
-	// budget is CleanupTimeoutSeconds divided by MaxConcurrent; the
-	// pool-config webhook rejects a pool where that quotient is below
-	// 5 seconds.
+// RecyclePolicy is the §5.2 sessionPolicy.recycle block: sequential pod
+// reuse across whole sessions of one tenant. The CRD declares the
+// cross-tenant microvm scrub controls (ScrubProfile and
+// AcknowledgeMicrovmResidualState) so the pool controller's
+// pool_config_validator can read them; that validator enforces the
+// fail-closed `in-place`-gated acknowledgment (it rejects
+// `scrubProfile: in-place` without `acknowledgeMicrovmResidualState`).
+// The API server validates only the ScrubProfile enum; it does not
+// enforce the in-place→acknowledgment gate. The remaining recycle knobs
+// (maxSessionsPerPod, maxScrubFailures, etc.) live in the gateway
+// poolstore. spec: §5.2 (recycle lifecycle, Kata scrub variant).
+type RecyclePolicy struct {
+	// ScrubProfile selects the whole-pod scrub variant: `standard` (the
+	// default) runs the in-guest scrub steps; `vm-restart` boots a fresh
+	// guest VM between tenants on a microvm cross-tenant-reuse pool;
+	// `in-place` reuses the running guest and leaves guest-kernel residual
+	// state. The pool controller rejects `standard` on a pool with
+	// `recycle.allowCrossTenantReuse: true`. spec: §5.2 (Kata/microvm
+	// scrub variant).
+	// +kubebuilder:validation:Enum=standard;vm-restart;in-place
 	// +optional
-	CleanupTimeoutSeconds int64 `json:"cleanupTimeoutSeconds,omitempty"`
+	ScrubProfile string `json:"scrubProfile,omitempty"`
 
-	// MaxPodUptimeSeconds retires a concurrent-workspace pod once its
-	// wall-clock uptime since first boot exceeds this value: the pod
-	// accepts no new slots and its existing slots drain (§6.2 line 166
-	// slot_active → draining), and an idle pod is drained before its next
-	// slot assignment (§6.2 line 167 idle → draining). When unset, a
-	// concurrent-workspace pod is retired only by the unhealthy-slot
-	// threshold. spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
+	// AcknowledgeMicrovmResidualState records the deployer's
+	// acknowledgment that guest-kernel residual state (DNS cache, TCP
+	// TIME_WAIT, page cache, inotify/fanotify registrations) persists
+	// across tenants. The pool controller requires it when ScrubProfile is
+	// `in-place` and rejects the pool otherwise. spec: §5.2 (Kata/microvm
+	// scrub variant).
 	// +optional
-	MaxPodUptimeSeconds *int64 `json:"maxPodUptimeSeconds,omitempty"`
+	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
 }
 
 // SandboxTemplateSpec is the desired state of a SandboxTemplate — the
@@ -135,7 +76,7 @@ type SandboxTemplateSpec struct {
 	// WorkspaceTier is the §12.9 data-classification tier of the runtime
 	// this pool serves. The pool-config webhook reads it to enforce the
 	// §12.9 line 1043 cross-tenant-reuse prohibition: a `T4` (Restricted)
-	// pool may not set `taskPolicy.allowCrossTenantReuse: true`, because
+	// pool may not set `sessionPolicy.recycle.allowCrossTenantReuse: true`, because
 	// T4 workspace state must never be reused across tenants regardless of
 	// isolation profile. Empty leaves the tier unclassified at the pool
 	// level (the cross-tenant rule does not fire). spec: §12.9 line 1043.
@@ -170,21 +111,14 @@ type SandboxTemplateSpec struct {
 	// +optional
 	ResourceClass string `json:"resourceClass,omitempty"`
 
-	// ExecutionMode is the §5.2 pod-reuse mode. Empty is treated as
-	// `session`.
-	// +kubebuilder:validation:Enum=session;task;concurrent
+	// ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
+	// parameterized by SessionPolicy) or `service` (a claimless,
+	// request-routed pod). Empty is treated as `session`.
+	// +kubebuilder:validation:Enum=session;service
 	// +optional
 	ExecutionMode string `json:"executionMode,omitempty"`
 
-	// ConcurrencyStyle selects the concurrent sub-variant when
-	// ExecutionMode is `concurrent`: `stateless` routes through a
-	// Service with no workspace materialization, `workspace`
-	// materializes a per-slot workspace.
-	// +kubebuilder:validation:Enum=stateless;workspace
-	// +optional
-	ConcurrencyStyle string `json:"concurrencyStyle,omitempty"`
-
-	// MaxConcurrent is the per-pod slot count for concurrent mode.
+	// MaxConcurrent is the per-pod slot count for service mode.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	MaxConcurrent int32 `json:"maxConcurrent,omitempty"`
@@ -224,11 +158,13 @@ type SandboxTemplateSpec struct {
 
 	// TerminationGracePeriodSeconds is the §5.2 deployer-set pod
 	// terminationGracePeriodSeconds for this pool. spec: §5.2 line 516 —
-	// for concurrent-workspace pools the deployer sets it to cover the
-	// per-slot checkpoint budget (`maxConcurrent × max_tiered_checkpoint_cap
-	// + checkpointBarrierAckTimeoutSeconds + 30`); §6.4 line 67 requires
-	// at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces
-	// the §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
+	// for service-mode pools the deployer sets it to cover the per-slot
+	// checkpoint budget fanned across maxConcurrent slots
+	// (`maxConcurrent × max_tiered_checkpoint_cap
+	// + checkpointBarrierAckTimeoutSeconds + 30`), while a session-mode
+	// pool uses a multiplier of 1; §6.4 line 67 requires at least
+	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces the
+	// §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
 	// clamps it down.
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
@@ -237,32 +173,31 @@ type SandboxTemplateSpec struct {
 	// workspace-size hard limit. The pool-config webhook resolves it to the
 	// matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
 	// ≤300 MB, 90s for ≤512 MB) when computing the
-	// `terminationGracePeriodSeconds` floor for concurrent-workspace pools
-	// (spec/05_runtime-registry-and-pool-model.md §5.2 line 516). Unset
-	// defaults to the 90s conservative tier per §10.1 line 108.
+	// `terminationGracePeriodSeconds` floor; a service-mode pool fans this
+	// cap across maxConcurrent slots while a session-mode pool uses a
+	// multiplier of 1 (spec/05_runtime-registry-and-pool-model.md §5.2
+	// line 516). Unset defaults to the 90s conservative tier per §10.1
+	// line 108.
 	// +optional
 	WorkspaceSizeLimitBytes *int64 `json:"workspaceSizeLimitBytes,omitempty"`
 
 	// CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline
 	// the gateway waits for `CheckpointBarrierAck` from every coordinated
 	// pod during a rolling drain. The pool-config webhook adds it to the
-	// per-pod `terminationGracePeriodSeconds` floor for concurrent-workspace
-	// pools and additionally enforces the §10.1 line 124 BarrierAck-floor
-	// rule (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
+	// per-pod `terminationGracePeriodSeconds` floor (fanned across
+	// maxConcurrent slots for a service-mode pool, multiplier of 1 for a
+	// session-mode pool) and additionally enforces the §10.1 line 124
+	// BarrierAck-floor rule
+	// (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
 	// Unset defaults to the §10.1 line 122 90s.
 	// +optional
 	CheckpointBarrierAckTimeoutSeconds *int64 `json:"checkpointBarrierAckTimeoutSeconds,omitempty"`
 
-	// TaskPolicy configures task-mode pod reuse. It is required when
-	// ExecutionMode is `task`.
+	// SessionPolicy parameterizes session-mode pod reuse: simultaneous
+	// sessions per pod and the nested recycle block. It is nil on pools
+	// that take the default one-session-per-pod configuration.
 	// +optional
-	TaskPolicy *TaskPolicy `json:"taskPolicy,omitempty"`
-
-	// ConcurrentWorkspacePolicy configures concurrent-workspace
-	// execution. It is required when ExecutionMode is `concurrent` and
-	// ConcurrencyStyle is `workspace`.
-	// +optional
-	ConcurrentWorkspacePolicy *ConcurrentWorkspacePolicy `json:"concurrentWorkspacePolicy,omitempty"`
+	SessionPolicy *SessionPolicy `json:"sessionPolicy,omitempty"`
 
 	// TopologySpreadConstraints distribute the pool's pods across zones
 	// and nodes. The PoolScalingController writes soft per-zone and

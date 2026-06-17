@@ -46,7 +46,7 @@ func TestUsageStoreContract(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Record claude: %v", err)
 		}
-		rep, err := store.Aggregate(ctx, tenant)
+		rep, err := store.Aggregate(ctx, tenant, nil)
 		if err != nil {
 			t.Fatalf("Aggregate: %v", err)
 		}
@@ -89,7 +89,7 @@ func TestUsageStoreContract(t *testing.T) {
 				t.Fatalf("Record %d: %v", i, err)
 			}
 		}
-		rep, err := store.Aggregate(ctx, tenant)
+		rep, err := store.Aggregate(ctx, tenant, nil)
 		if err != nil {
 			t.Fatalf("Aggregate: %v", err)
 		}
@@ -116,7 +116,7 @@ func TestUsageStoreContract(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Record echo: %v", err)
 		}
-		rep, err := store.Aggregate(ctx, tenant)
+		rep, err := store.Aggregate(ctx, tenant, nil)
 		if err != nil {
 			t.Fatalf("Aggregate: %v", err)
 		}
@@ -133,7 +133,7 @@ func TestUsageStoreContract(t *testing.T) {
 
 	t.Run("aggregate of a tenant with no events is empty", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		rep, err := store.Aggregate(ctx, tenant)
+		rep, err := store.Aggregate(ctx, tenant, nil)
 		if err != nil {
 			t.Fatalf("Aggregate: %v", err)
 		}
@@ -162,7 +162,7 @@ func TestUsageStoreContract(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Record tenant B: %v", err)
 		}
-		rep, err := store.Aggregate(ctx, tenantA)
+		rep, err := store.Aggregate(ctx, tenantA, nil)
 		if err != nil {
 			t.Fatalf("Aggregate(tenantA): %v", err)
 		}
@@ -189,7 +189,7 @@ func TestUsageStoreContract(t *testing.T) {
 		}
 		// The intruder has recorded nothing; its scoped report must be
 		// empty, never carrying the owner's row.
-		rep, err := store.Aggregate(ctx, intruder)
+		rep, err := store.Aggregate(ctx, intruder, nil)
 		if err != nil {
 			t.Fatalf("Aggregate(intruder): %v", err)
 		}

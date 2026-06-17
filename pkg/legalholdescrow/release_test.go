@@ -65,7 +65,8 @@ func artifactRec(tenant, session, uri, key string) Record {
 func TestReleaseForSession_spec_12_8_line884(t *testing.T) {
 	t.Parallel()
 	store := NewMemRecordStore()
-	seedRecords(t, store,
+	seedRecords(
+		t, store,
 		artifactRec("acme", "sess-1", "blob://acme/sess-1/a", "k1"),
 		artifactRec("acme", "sess-1", "blob://acme/sess-1/b", "k2"),
 		artifactRec("acme", "sess-2", "blob://acme/sess-2/c", "k3"), // other session
@@ -106,7 +107,8 @@ func TestReleaseForSession_spec_12_8_line884(t *testing.T) {
 func TestReleaseForArtifact_spec_12_8_line884(t *testing.T) {
 	t.Parallel()
 	store := NewMemRecordStore()
-	seedRecords(t, store,
+	seedRecords(
+		t, store,
 		artifactRec("acme", "sess-1", "blob://acme/sess-1/a", "k1"),
 		artifactRec("acme", "sess-1", "blob://acme/sess-1/b", "k2"),
 	)
@@ -155,7 +157,8 @@ func TestRelease_noRecords(t *testing.T) {
 func TestMemRecordStore_activeFiltering(t *testing.T) {
 	t.Parallel()
 	store := NewMemRecordStore()
-	seedRecords(t, store,
+	seedRecords(
+		t, store,
 		artifactRec("acme", "sess-1", "blob://acme/sess-1/a", "k1"),
 		artifactRec("globex", "sess-1", "blob://globex/sess-1/a", "k9"), // other tenant
 	)

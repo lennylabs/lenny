@@ -209,20 +209,29 @@ func (s *Server) runtimeMaxSessionAge(ctx context.Context, runtimeRef string) in
 	return rt.Limits.MaxSessionAgeSeconds
 }
 
-// runtimeMaxIdle returns the resolved runtime's limits.maxIdleTimeSeconds
-// in seconds, or 0 when no runtime / limit is registered (no per-runtime
-// idle cap). The §27.6 playground idle override is resolved min-wins
-// against this value at create time. spec: §11.3 line 199; §5.1 limits;
-// §27.6 line 201. F-11.3.7.
-func (s *Server) runtimeMaxIdle(ctx context.Context, runtimeRef string) int {
+// runtimeMaxClientIdle returns the resolved runtime's effective
+// sessionPolicy.maxClientIdleSeconds in seconds, or 0 when no runtime is
+// registered (no per-runtime idle bound). The bound is
+// sessionPolicy.maxClientIdleSeconds when the runtime declares one; absent
+// that it defaults to the runtime's effective maxSessionAgeSeconds, the §6.2
+// idle-clock default that supersedes the removed limits.maxIdleTimeSeconds
+// knob. The §27.6 playground idle override is resolved min-wins against this
+// value at create time. spec: §5.2 (sessionPolicy.maxClientIdleSeconds); §6.2
+// (idle clock defaults to the effective maxSessionAgeSeconds); §27.6 line 201.
+func (s *Server) runtimeMaxClientIdle(ctx context.Context, runtimeRef string) int {
 	if s.runtimes == nil || runtimeRef == "" {
 		return 0
 	}
 	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeRef)
-	if err != nil || rt.Limits == nil {
+	if err != nil {
 		return 0
 	}
-	return rt.Limits.MaxIdleTimeSeconds
+	if rt.SessionPolicy != nil && rt.SessionPolicy.MaxClientIdleSeconds > 0 {
+		return rt.SessionPolicy.MaxClientIdleSeconds
+	}
+	// spec: §6.2 / §3.1 — maxClientIdleSeconds defaults to the pool's
+	// effective maxSessionAgeSeconds when no idle bound is declared.
+	return s.runtimeMaxSessionAge(ctx, runtimeRef)
 }
 
 // runtimeSDKWarm returns the resolved runtime's §6.1 SDK-warm inputs: the

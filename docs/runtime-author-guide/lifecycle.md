@@ -62,9 +62,9 @@ In SDK-warm mode, the agent process starts during the warm phase (before any ses
 
 ## Session Binding
 
-A pod is bound to exactly one session for its entire lifetime (in `session` execution mode). After the session completes or fails, the pod is terminated and replaced --- never recycled for a different session. This prevents cross-session data leakage through residual files, cached DNS, or runtime memory.
+In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`), a pod is bound to exactly one session for its entire lifetime. After the session completes or fails, the pod is terminated and replaced --- never reused for a different session. This prevents cross-session data leakage through residual files, cached DNS, or runtime memory.
 
-**Task mode** relaxes this constraint: pods are reused across sequential tasks with workspace scrubbing between tasks. See the task-mode state transitions below.
+**Recycling** relaxes this constraint: with `recycle.enabled: true` the pod is reused across sequential sessions, and with `maxConcurrentSessions > 1` it serves multiple simultaneous sessions. Recycling requires no runtime cooperation: the per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no lifecycle-channel exchange between sessions. See the recycle lifecycle below.
 
 ---
 
@@ -312,7 +312,7 @@ Full-level runtimes receive a `terminate` message on the lifecycle channel as th
 | `deadlineMs` | integer | Time in milliseconds before the adapter sends SIGTERM. |
 | `reason` | string | One of `"session_complete"`, `"budget_exhausted"`, `"eviction"`, or `"operator"`. |
 
-Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit --- it is never used for between-task signaling (see `task_complete` below).
+Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit. On a recycling pod the runtime exits at each session end; the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no lifecycle-channel handshake.
 
 ---
 
@@ -351,71 +351,50 @@ When the in-flight counter for a provider reaches zero and a credential rotation
 
 ---
 
-## Task-Mode Pod Reuse (Full level)
+## Recycle Lifecycle (recycle.enabled: true)
 
-Task-mode pods execute sequential tasks without pod replacement:
+A recycling pod is reused across sequential sessions without pod replacement. Recycling requires no runtime cooperation: your binary exits at the end of each session as it does in the default mode, and the adapter runs the whole-pod scrub and regenerates the next session's manifest.
 
-![Task-mode pod reuse: attached, task_cleanup, idle, then attached again for the next task.](../assets/diagrams/task-mode-reuse.svg)
+![Recycle lifecycle: claimed, recycling whole-pod scrub, sdk_connecting SDK re-warm, reserved tenant hold, then claimed again on a same-tenant rebind or idle on hold expiry.](../assets/diagrams/recycle-lifecycle.svg)
 
 <!--
-ASCII fallback for the diagram above (task-mode-reuse):
+ASCII fallback for the diagram above (recycle-lifecycle):
 
-  attached ===> task_cleanup ===> idle ====(next task)====> attached
+  claimed ===(occ. zero)==> recycling ===(scrub ok)==> sdk_connecting ===(re-warm)==> reserved ===(expires)==> idle
+                                                                                          |
+                                                                                  (within TTL)
+                                                                                          v
+                                                                                       claimed (same-tenant rebind)
+
+  On a non-preConnect pool the scrub success patches recycling directly to reserved with no SDK re-warm leg.
 -->
 
+The gateway drives the recycle boundary; your runtime sees only normal session start and exit:
 
-The lifecycle channel drives the handshake:
+1. When occupancy reaches zero, the gateway patches the pod's `SandboxClaim` to `recycling`.
+2. The adapter purges the credential file, runs deployer `cleanupCommands`, and runs the whole-pod scrub (files removed, processes killed, `/tmp` flushed), then reports the outcome.
+3. On a `preConnect` pool the SDK re-warm runs after a successful scrub (the pod projects `sdk_connecting`); on other pools the claim moves straight to `reserved`.
+4. The pod is held for its tenant in `reserved` for the hold TTL. A same-tenant session arriving within the window rebinds with no acquisition. If the hold expires, the pod returns to `idle`.
 
-1. Task completes. Adapter sends `task_complete` on the lifecycle channel.
-2. Your runtime releases task-specific resources and replies `task_complete_acknowledged`.
-3. Workspace is scrubbed (files removed, processes killed).
-4. Adapter sends `task_ready` with the new task ID.
-5. Your runtime re-reads the adapter manifest (regenerated per task).
-6. The next `message` on stdin starts the new task.
-
-After `maxTasksPerPod` tasks or when `maxPodUptimeSeconds` is exceeded, the pod drains and is replaced.
+After `recycle.maxSessionsPerPod` sessions, when `recycle.maxPodUptimeSeconds` is exceeded, or when a session ends in failure or a crash, the pod drains and is replaced.
 
 ---
 
 ## Execution Modes
 
-Pools are configured with an execution mode that determines how tasks are mapped to pods. The mode affects your runtime's lifecycle, workspace layout, and required integration level.
+Pools are configured with an execution mode that determines how sessions map to pods. The mode affects your runtime's lifecycle, workspace layout, and required integration level. Two modes are available: `session` and `service`.
 
 ### Session Mode (Default)
 
-One session per pod. Your runtime receives one task, handles it, and the pod terminates after the session ends. No special runtime code is needed beyond the base adapter contract for your integration level. The pod is never recycled for a different session --- this prevents cross-session data leakage.
+A managed session is bound to a claimed pod for the session's lifetime. Session mode is parameterized by the `sessionPolicy` block:
 
-This is the simplest mode and works at every integration level.
+- In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. No special runtime code is needed beyond the base adapter contract for your integration level. The pod is never reused for a different session.
+- With `recycle.enabled: true` the pod is reused across sequential sessions (see the recycle lifecycle above). Recycling requires no runtime cooperation and works at every integration level.
+- With `maxConcurrentSessions > 1` multiple sessions run simultaneously on one pod. Your runtime must implement a **dispatch loop keyed on `slotId`** --- all binary protocol messages (inbound and outbound) carry a `slotId` field. Each slot gets its own workspace under `/workspace/slots/{slotId}/current/`; your runtime must NOT assume a global `/workspace/current` path. Cross-slot isolation is process-level and filesystem-level only, explicitly weaker than the default. CPU and memory are shared across slots (no per-slot cgroup subdivision). `preConnect` is admitted only when `maxConcurrentSessions` is 1.
 
-### Task Mode
+### Service Mode
 
-The pod is reused across sequential tasks with workspace scrubbing between tasks. This avoids the overhead of pod provisioning for each task.
-
-Task mode requires **Full-level integration** (lifecycle channel) for actual pod reuse. Standard and Basic level runtimes effectively get one task per pod because they cannot participate in the `task_complete` / `task_complete_acknowledged` / `task_ready` lifecycle handshake.
-
-The between-task sequence on the lifecycle channel:
-
-1. Adapter sends `task_complete` with the finished `taskId`.
-2. Your runtime releases task-specific resources (open files, temp state) and replies `task_complete_acknowledged`.
-3. The adapter scrubs the workspace (files removed, processes killed).
-4. Adapter sends `task_ready` with the new `taskId`.
-5. Your runtime re-reads the adapter manifest (regenerated per task) and prepares for the next `message` on stdin.
-
-After `maxTasksPerPod` tasks or when `maxPodUptimeSeconds` is exceeded, the pod drains and is replaced.
-
-### Concurrent-Workspace Mode
-
-Multiple tasks run simultaneously on a single pod. Your runtime must implement a **dispatch loop keyed on `slotId`** --- all binary protocol messages (inbound and outbound) carry a `slotId` field in this mode. Each slot gets its own workspace under `/workspace/slots/{slotId}/current/`. Your runtime must NOT assume a global `/workspace/current` path.
-
-Cross-slot isolation is process-level and filesystem-level only --- explicitly weaker than session mode. CPU and memory are shared across slots (no per-slot cgroup subdivision).
-
-`preConnect` is incompatible with concurrent-workspace mode. The pool controller rejects pool definitions that combine `executionMode: concurrent`, `concurrencyStyle: workspace`, and `capabilities.preConnect: true`.
-
-### Concurrent-Stateless Mode
-
-No workspace materialization. Requests are routed via Kubernetes Service load balancing. There is no per-slot lifecycle tracking, no checkpoint support, and no per-slot failure isolation. This mode is typically better served by the external connector model.
-
-Your runtime just handles requests as they arrive. The deployer is responsible for retry, idempotency, and error-handling logic. `preConnect` is incompatible with concurrent-stateless mode.
+The gateway routes each message to any ready tenant-pinned replica through the pool's Kubernetes Service. There is no workspace materialization, no `SandboxClaim`, no per-message lifecycle tracking, and no checkpoint support. Service mode provides no cross-message conversation continuity: every message is self-contained. Your runtime handles requests as they arrive; clients of a `multi_turn` runtime re-inject any needed context into each message's `input`. The deployer is responsible for retry, idempotency, and error-handling logic. `preConnect` is rejected for service-mode pools. This mode is often better served by the external connector model.
 
 ---
 
@@ -436,7 +415,7 @@ The heartbeat handler should be immediate --- do not do heavy work before respon
 Pods are terminated in the following cases:
 
 - Session completes or fails (session mode).
-- `maxTasksPerPod` reached (task mode).
+- `recycle.maxSessionsPerPod` reached, or a session ends in failure or a crash (recycling pods).
 - `maxPodUptimeSeconds` exceeded.
 - Pool scaling down (surplus pods).
 - Node drain or eviction.

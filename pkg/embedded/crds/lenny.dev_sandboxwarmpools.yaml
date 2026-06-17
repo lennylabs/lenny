@@ -167,6 +167,17 @@ spec:
                       type: object
                     type: array
                     x-kubernetes-list-type: atomic
+                  sdkConnectTimeoutSeconds:
+                    description: |-
+                      SDKConnectTimeoutSeconds is the §6.1 line 69 per-pod watchdog
+                      budget for the sdk_connecting phase: a pod that has not completed
+                      its SDK pre-connection and reached idle within this window is
+                      retired to failed and the WarmPoolController increments
+                      lenny_warmpool_sdk_connect_timeout_total. It applies only to
+                      preConnect pools and defaults to 60 seconds when unset.
+                    format: int64
+                    minimum: 0
+                    type: integer
                   sdkWarmCircuitBreakerMinOpenSeconds:
                     description: |-
                       SDKWarmCircuitBreakerMinOpenSeconds is how long the SDK-warm
@@ -206,7 +217,9 @@ spec:
                   data the PoolScalingController has observed for the pool while it
                   operates under a §17.8.2 bootstrapMinWarm override. The admin pool
                   GET surfaces it as bootstrapStatus.hoursOfData and projects
-                  estimatedConvergenceAt against the 48-hour window.
+                  estimatedConvergenceAt against the 48-hour window. It is only
+                  written while an override is in force; whole-hour granularity
+                  keeps the status subresource from churning. spec: §17.8.2 step 3.
                 format: int32
                 minimum: 0
                 type: integer
@@ -289,7 +302,8 @@ spec:
                   pool is pinned to its bootstrapMinWarm override, or `formula`
                   once the §17.8.2 step-4 convergence criteria are met (or no
                   override is set). The §16.5 PoolBootstrapMode alert reads the
-                  matching lenny_pool_bootstrap_mode gauge.
+                  matching lenny_pool_bootstrap_mode gauge. spec: §17.8.2 steps 2,
+                  4.
                 enum:
                 - bootstrap
                 - formula

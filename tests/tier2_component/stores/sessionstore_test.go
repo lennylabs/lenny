@@ -490,6 +490,99 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §6.49, §7.1 line 74, §7.2 line 230, §8.8 — the §7.1
+	// conversation_continuity envelope half and the §7.2 / §8.8
+	// Terminated/Suspended session-condition facts relocated off
+	// Sandbox.status.conditions must round-trip through pgstore's
+	// Create/Update/Get the same way execution_mode/scrub_policy do
+	// (migration 0168). conversation_continuity and the reason strings
+	// are NOT NULL DEFAULT '' columns, and the condition timestamps are
+	// nullable: a zero TerminatedAt/SuspendedAt persists as SQL NULL and
+	// reads back as the zero time (the "condition has not fired"
+	// sentinel).
+	t.Run("session-condition and continuity columns round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+
+		// Unset on Create: continuity and reasons read as "", and the
+		// condition timestamps read as the zero time (SQL NULL).
+		idZero := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: idZero, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		gotZero, err := store.Get(ctx, tenant, idZero)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if gotZero.ConversationContinuity != "" || gotZero.TerminatedReason != "" ||
+			gotZero.SuspendedReason != "" {
+			t.Errorf("unset string columns nonempty: continuity=%q terminatedReason=%q suspendedReason=%q",
+				gotZero.ConversationContinuity, gotZero.TerminatedReason, gotZero.SuspendedReason)
+		}
+		if !gotZero.TerminatedAt.IsZero() || !gotZero.SuspendedAt.IsZero() {
+			t.Errorf("unset condition timestamps nonzero: terminatedAt=%v suspendedAt=%v",
+				gotZero.TerminatedAt, gotZero.SuspendedAt)
+		}
+
+		// Values set on Create round-trip through Get.
+		id := newUUID(t)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateSuspended, RuntimeRef: "echo",
+			ConversationContinuity: "platform",
+			SuspendedAt:            ts,
+			SuspendedReason:        "INTERRUPT_REQUESTED",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.ConversationContinuity != "platform" {
+			t.Errorf("ConversationContinuity = %q, want platform", got.ConversationContinuity)
+		}
+		if !got.SuspendedAt.Equal(ts) || got.SuspendedReason != "INTERRUPT_REQUESTED" {
+			t.Errorf("Suspended fact = (%v, %q), want (%v, INTERRUPT_REQUESTED)",
+				got.SuspendedAt, got.SuspendedReason, ts)
+		}
+		if !got.TerminatedAt.IsZero() || got.TerminatedReason != "" {
+			t.Errorf("Terminated fact set without write: (%v, %q)", got.TerminatedAt, got.TerminatedReason)
+		}
+
+		// Update stamps the Terminated fact and clears the Suspended one,
+		// confirming both nullable timestamps are wired through updateSQL.
+		when := ts.Add(time.Minute)
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.State = session.StateCompleted
+			s.TerminatedAt = when
+			s.TerminatedReason = "COMPLETED"
+			s.SuspendedAt = time.Time{}
+			s.SuspendedReason = ""
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !updated.TerminatedAt.Equal(when) || updated.TerminatedReason != "COMPLETED" {
+			t.Errorf("Update Terminated fact = (%v, %q), want (%v, COMPLETED)",
+				updated.TerminatedAt, updated.TerminatedReason, when)
+		}
+		reread, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get after Update: %v", err)
+		}
+		if !reread.TerminatedAt.Equal(when) || reread.TerminatedReason != "COMPLETED" {
+			t.Errorf("persisted Terminated fact = (%v, %q), want (%v, COMPLETED)",
+				reread.TerminatedAt, reread.TerminatedReason, when)
+		}
+		if !reread.SuspendedAt.IsZero() || reread.SuspendedReason != "" {
+			t.Errorf("cleared Suspended fact persisted as (%v, %q), want zero",
+				reread.SuspendedAt, reread.SuspendedReason)
+		}
+	})
+
 	// spec: §4.4 line 258 — never-checkpointed sessions read NULL on
 	// the column, which the sessionstore maps to the zero time.Time
 	// so the `FreshnessCheck` helper can treat them as stale.

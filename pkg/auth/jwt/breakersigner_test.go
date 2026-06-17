@@ -30,21 +30,21 @@ func (s *stubSigner) Sign(c jwt.Claims) (string, error) {
 	return s.output, nil
 }
 
-func (s *stubSigner) KeyID() string                       { return "stub-kid" }
-func (s *stubSigner) Verify(string) (jwt.Claims, error)   { return jwt.Claims{}, nil }
+func (s *stubSigner) KeyID() string                     { return "stub-kid" }
+func (s *stubSigner) Verify(string) (jwt.Claims, error) { return jwt.Claims{}, nil }
 
 // stubObserver records breaker callbacks.
 type stubObserver struct {
-	fail     int
-	reject   int
-	opened   int
-	closed   int
+	fail   int
+	reject int
+	opened int
+	closed int
 }
 
-func (o *stubObserver) OnSigningFailure()  { o.fail++ }
-func (o *stubObserver) OnRejected()        { o.reject++ }
-func (o *stubObserver) OnCircuitOpen()     { o.opened++ }
-func (o *stubObserver) OnCircuitClosed()   { o.closed++ }
+func (o *stubObserver) OnSigningFailure() { o.fail++ }
+func (o *stubObserver) OnRejected()       { o.reject++ }
+func (o *stubObserver) OnCircuitOpen()    { o.opened++ }
+func (o *stubObserver) OnCircuitClosed()  { o.closed++ }
 
 // spec: §10.2 line 225 — > 3 consecutive failures inside the window
 // trip the breaker open. F-10.2.6.

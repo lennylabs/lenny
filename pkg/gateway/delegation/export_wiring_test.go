@@ -219,7 +219,8 @@ func TestDelegateExportEndToEndStampsPlan(t *testing.T) {
 			{Path: "docs/a.txt", Content: []byte("alpha"), Size: 5},
 			{Path: "vendor/lib.tar.gz", Content: []byte("PKZ"), Size: 3},
 		}},
-		inlineSink{}, nil)
+		inlineSink{}, nil,
+	)
 	svc := delegation.NewService(store, delegation.Options{
 		Clock:              func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:             func() string { return "sess_child" },

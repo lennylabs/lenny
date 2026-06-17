@@ -22,7 +22,8 @@ import (
 // ProviderProbeManager exposes the §12.5 availability Probe and nothing
 // else.
 var ErrControlPlaneUnsupported = errors.New(
-	"tenantkms: control-plane operations are not supported by the provider-backed probe manager")
+	"tenantkms: control-plane operations are not supported by the provider-backed probe manager",
+)
 
 // ProviderProbeManager is a probe-only KeyManager over a kms.Provider.
 // It backs the §12.5 admin-time probe (bullet 1) and the continuous

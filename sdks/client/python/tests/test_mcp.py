@@ -78,7 +78,13 @@ def _mcp_response(request: dict[str, Any]) -> dict[str, Any]:
             )
             return body
         if name == "lenny/send_message":
-            body["result"] = _tool_result(f"echo: {args.get('content')}", False)
+            # section 8.5 line 537 wire contract: the tool arguments are
+            # ``to`` (target session id) and ``message`` (content).
+            # F-8.5.16 renamed them from the legacy ``sessionId``/``content``.
+            if not args.get("to"):
+                body["result"] = _tool_result("to is required", True)
+                return body
+            body["result"] = _tool_result(f"echo: {args.get('message')}", False)
             return body
         body["error"] = {"code": -32601, "message": f"unknown tool {name}"}
         return body

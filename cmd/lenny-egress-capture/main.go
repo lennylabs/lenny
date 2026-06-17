@@ -140,17 +140,28 @@ func handle(client net.Conn, upstream string, enc *captureEncoder) {
 	hasher := sha256.New()
 	tee := io.TeeReader(client, hasher)
 
+	// Forward both directions and wait for both to drain before closing.
+	// The client-to-server direction yields the byte count and hash for
+	// the capture record; the server-to-client direction must complete so
+	// the upstream reply reaches the client before the deferred Close
+	// tears the connection down. Returning on the client-to-server copy
+	// alone races client.Close()/server.Close() against an in-flight
+	// reply copy and can drop the upstream response.
 	clientToServer := make(chan int64, 1)
+	var replyDone sync.WaitGroup
+	replyDone.Add(1)
 	go func() {
 		n, _ := io.Copy(server, tee)
 		_ = server.(*net.TCPConn).CloseWrite()
 		clientToServer <- n
 	}()
 	go func() {
+		defer replyDone.Done()
 		_, _ = io.Copy(client, server)
 		_ = client.(*net.TCPConn).CloseWrite()
 	}()
 	n := <-clientToServer
+	replyDone.Wait()
 
 	enc.write(captureRecord{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),

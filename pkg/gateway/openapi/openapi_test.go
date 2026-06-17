@@ -554,6 +554,225 @@ func TestEveryOperationCarriesStabilityTier_spec_15_5_2447(t *testing.T) {
 	}
 }
 
+// enumValues extracts the `enum` array of the schema at the given
+// dotted/keyed path under components.schemas and returns it as a set.
+// It fatals if any path segment is missing so a structural drift in the
+// document surfaces as a clear failure rather than a nil map.
+func enumValues(t *testing.T, schema map[string]any) map[string]bool {
+	t.Helper()
+	raw, ok := schema["enum"].([]any)
+	if !ok {
+		t.Fatalf("schema carries no enum array: %v", schema)
+	}
+	out := map[string]bool{}
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("non-string enum value %v", v)
+		}
+		out[s] = true
+	}
+	return out
+}
+
+// schemas decodes the served document and returns components.schemas.
+func schemas(t *testing.T) map[string]any {
+	t.Helper()
+	var parsed map[string]any
+	if err := json.Unmarshal(openapi.Document(), &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	comps, _ := parsed["components"].(map[string]any)
+	s, _ := comps["schemas"].(map[string]any)
+	if s == nil {
+		t.Fatal("components.schemas missing")
+	}
+	return s
+}
+
+// TestExecutionModeEnumIsSessionAndService_spec_5_2 asserts every
+// executionMode enum in the served document carries exactly {session,
+// service} and never the removed task/concurrent modes, so SDK
+// generators and the §13 openapi-to-mcp generator surface only the two
+// modes §5.2 defines. spec: §5.2 (execution modes); §7.1; §15.1.
+func TestExecutionModeEnumIsSessionAndService_spec_5_2(t *testing.T) {
+	want := map[string]bool{"session": true, "service": true}
+	s := schemas(t)
+
+	// Runtime.executionMode.
+	runtimeProps, _ := s["Runtime"].(map[string]any)["properties"].(map[string]any)
+	runtimeMode, _ := runtimeProps["executionMode"].(map[string]any)
+	if got := enumValues(t, runtimeMode); !equalStringSet(got, want) {
+		t.Errorf("Runtime.executionMode enum: got %v, want %v", got, want)
+	}
+
+	// CreateSessionResponse.sessionIsolationLevel.executionMode (nested
+	// in the allOf override block).
+	isoMode := isolationLevelProp(t, "executionMode")
+	if got := enumValues(t, isoMode); !equalStringSet(got, want) {
+		t.Errorf("sessionIsolationLevel.executionMode enum: got %v, want %v", got, want)
+	}
+}
+
+// TestNoRemovedExecutionModeSurfaces_spec_5_2 asserts the document does
+// not retain the removed concurrencyStyle property or the task/concurrent
+// enum values anywhere, so the removal is complete rather than leaving a
+// dead enum a generator could emit. spec: §5.2; §7.1.
+func TestNoRemovedExecutionModeSurfaces_spec_5_2(t *testing.T) {
+	doc := string(openapi.Document())
+	for _, dead := range []string{
+		`"concurrencyStyle"`,
+		`"taskPolicy"`,
+		`"maxTasksPerPod"`,
+		`"maxTaskRetries"`,
+		`"microvmScrubMode"`,
+		`"onCleanupFailure"`,
+		`"session","task","concurrent"`,
+	} {
+		if strings.Contains(doc, dead) {
+			t.Errorf("served document still contains removed surface %s", dead)
+		}
+	}
+}
+
+// TestSessionIsolationLevelCarriesConversationContinuity_spec_7_1 asserts
+// the §7.1 sessionIsolationLevel object requires and types the new
+// conversationContinuity field as a {platform,none} enum, so clients can
+// read the no-continuity contract of service mode from the create
+// response. spec: §7.1 (session isolation response); §5.2; §15.1.
+func TestSessionIsolationLevelCarriesConversationContinuity_spec_7_1(t *testing.T) {
+	s := schemas(t)
+	resp, _ := s["CreateSessionResponse"].(map[string]any)
+	allOf, _ := resp["allOf"].([]any)
+	var iso map[string]any
+	for _, raw := range allOf {
+		block, _ := raw.(map[string]any)
+		props, _ := block["properties"].(map[string]any)
+		if level, ok := props["sessionIsolationLevel"].(map[string]any); ok {
+			iso = level
+		}
+	}
+	if iso == nil {
+		t.Fatal("sessionIsolationLevel block not found in CreateSessionResponse.allOf")
+	}
+	requiredAny, _ := iso["required"].([]any)
+	hasRequired := false
+	for _, r := range requiredAny {
+		if r == "conversationContinuity" {
+			hasRequired = true
+		}
+	}
+	if !hasRequired {
+		t.Errorf("conversationContinuity must be required, got %v", requiredAny)
+	}
+	props, _ := iso["properties"].(map[string]any)
+	cont, _ := props["conversationContinuity"].(map[string]any)
+	if cont == nil {
+		t.Fatal("conversationContinuity property missing")
+	}
+	if cont["type"] != "string" {
+		t.Errorf("conversationContinuity.type: got %v, want string", cont["type"])
+	}
+	if got := enumValues(t, cont); !equalStringSet(got, map[string]bool{"platform": true, "none": true}) {
+		t.Errorf("conversationContinuity enum: got %v, want {platform,none}", got)
+	}
+}
+
+// TestRuntimeSessionPolicyStructure_spec_5_2 asserts the Runtime schema
+// carries the §5.2 sessionPolicy block (replacing the removed taskPolicy)
+// with the recycle sub-object, the renamed scrubProfile/onScrubFailure/
+// maxSessionRetries knobs, and the relocated concurrency knobs, so the
+// external API surface mirrors the §5.2 configuration the CRD admits.
+// spec: §5.2 (sessionPolicy block); §15.1.
+func TestRuntimeSessionPolicyStructure_spec_5_2(t *testing.T) {
+	s := schemas(t)
+	runtimeProps, _ := s["Runtime"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := runtimeProps["taskPolicy"]; ok {
+		t.Error("Runtime.taskPolicy must be removed")
+	}
+	sp, _ := runtimeProps["sessionPolicy"].(map[string]any)
+	if sp == nil {
+		t.Fatal("Runtime.sessionPolicy missing")
+	}
+	spProps, _ := sp["properties"].(map[string]any)
+	for _, field := range []string{
+		"maxConcurrentSessions", "acknowledgeProcessLevelIsolation",
+		"recycle", "cleanupCommands", "cleanupTimeoutSeconds",
+		"maxSessionRetries", "maxSessionAgeSeconds", "maxClientIdleSeconds",
+		"slotRetries", "onPoolExhausted", "maxQueueWaitSeconds",
+	} {
+		if _, ok := spProps[field]; !ok {
+			t.Errorf("sessionPolicy missing relocated knob %q", field)
+		}
+	}
+	// The removed task-mode knob must not survive at the top level.
+	if _, ok := spProps["maxTasksPerPod"]; ok {
+		t.Error("sessionPolicy must not carry the removed maxTasksPerPod")
+	}
+	if _, ok := spProps["maxTaskRetries"]; ok {
+		t.Error("sessionPolicy must not carry the removed maxTaskRetries")
+	}
+
+	recycle, _ := spProps["recycle"].(map[string]any)
+	if recycle == nil {
+		t.Fatal("sessionPolicy.recycle missing")
+	}
+	recProps, _ := recycle["properties"].(map[string]any)
+	for _, field := range []string{
+		"enabled", "acknowledgeBestEffortScrub", "allowCrossTenantReuse",
+		"scrubProfile", "acknowledgeMicrovmResidualState", "onScrubFailure",
+		"maxScrubFailures", "maxSessionsPerPod", "maxPodUptimeSeconds",
+	} {
+		if _, ok := recProps[field]; !ok {
+			t.Errorf("sessionPolicy.recycle missing knob %q", field)
+		}
+	}
+	scrub, _ := recProps["scrubProfile"].(map[string]any)
+	if got := enumValues(t, scrub); !equalStringSet(got, map[string]bool{"standard": true, "vm-restart": true, "in-place": true}) {
+		t.Errorf("scrubProfile enum: got %v, want {standard,vm-restart,in-place}", got)
+	}
+	onScrub, _ := recProps["onScrubFailure"].(map[string]any)
+	if got := enumValues(t, onScrub); !equalStringSet(got, map[string]bool{"warn": true, "fail": true}) {
+		t.Errorf("onScrubFailure enum: got %v, want {warn,fail}", got)
+	}
+}
+
+// isolationLevelProp returns the named property schema from the
+// CreateSessionResponse.allOf sessionIsolationLevel block.
+func isolationLevelProp(t *testing.T, name string) map[string]any {
+	t.Helper()
+	s := schemas(t)
+	resp, _ := s["CreateSessionResponse"].(map[string]any)
+	allOf, _ := resp["allOf"].([]any)
+	for _, raw := range allOf {
+		block, _ := raw.(map[string]any)
+		props, _ := block["properties"].(map[string]any)
+		level, ok := props["sessionIsolationLevel"].(map[string]any)
+		if !ok {
+			continue
+		}
+		levelProps, _ := level["properties"].(map[string]any)
+		if p, ok := levelProps[name].(map[string]any); ok {
+			return p
+		}
+	}
+	t.Fatalf("sessionIsolationLevel.%s not found", name)
+	return nil
+}
+
+// equalStringSet reports whether two string sets are equal.
+func equalStringSet(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
+}
+
 // spec: §15.5 item 6 — the default tier is `stable` so an unannotated
 // operation reads as covered by the §15.5 items 1–5 guarantees.
 // F-15.5.10.

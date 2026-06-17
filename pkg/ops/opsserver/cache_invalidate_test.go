@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
-	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
 // countingInvalidator records how many times Invalidate was called.

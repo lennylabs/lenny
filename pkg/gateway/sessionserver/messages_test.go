@@ -675,7 +675,8 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	// Mint a cursor at t0, then attempt to use it at t0+25h.
 	enc := pagination.MintCursor(
 		pagination.Sort{Field: "seq", Direction: "asc"},
-		"1", "1", clock().Add(-25*time.Hour))
+		"1", "1", clock().Add(-25*time.Hour),
+	)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/v1/sessions/sess_expired/transcript?cursor="+enc, nil)

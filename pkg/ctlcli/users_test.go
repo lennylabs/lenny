@@ -38,8 +38,10 @@ func TestRotateTokenPrintsRetrieveCommand(t *testing.T) {
 		_, _ = w.Write([]byte(`{"secretCreated":true,"secretNamespace":"ops","secretName":"lenny-admin-token","username":"lenny-admin"}`))
 	}))
 	defer srv.Close()
-	code := run([]string{"--api-url", srv.URL, "--token", "cur",
-		"admin", "users", "rotate-token", "--user", "lenny-admin"}, &stdout, &stderr)
+	code := run([]string{
+		"--api-url", srv.URL, "--token", "cur",
+		"admin", "users", "rotate-token", "--user", "lenny-admin",
+	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("rotate-token: exit %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -65,8 +67,10 @@ func TestRotateTokenRequiresUser(t *testing.T) {
 func TestRotateTokenRequiresAdminToken(t *testing.T) {
 	clearCLIEnv(t)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--api-url", "https://gw.example.com",
-		"admin", "users", "rotate-token", "--user", "lenny-admin"}, &stdout, &stderr)
+	code := run([]string{
+		"--api-url", "https://gw.example.com",
+		"admin", "users", "rotate-token", "--user", "lenny-admin",
+	}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("rotate-token without a token: exit %d, want 2", code)
 	}

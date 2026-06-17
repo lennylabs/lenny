@@ -124,7 +124,7 @@ func buildProbeStub(t *testing.T, pass map[string]bool) string {
 		t.Skipf("go toolchain not on PATH: %v", err)
 	}
 	// Build a JSON report literal at test-author time.
-	var checksJSON, total, passed, failed = "", 0, 0, 0
+	checksJSON, total, passed, failed := "", 0, 0, 0
 	for name := range checkLevel {
 		ok := pass[name]
 		total++

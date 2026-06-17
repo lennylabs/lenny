@@ -44,6 +44,8 @@ import (
 // platform-admin path can read or write across tenants, but only
 // when the gateway has opted in via lenny.allow_all_sentinel —
 // satisfying the §4.2 line 165 LENNY_POOLER_MODE = external posture.
+//
+// spec: §4.2 line 165, §12.3 line 141.
 func TestRLSPlatformAdminAllSentinel(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

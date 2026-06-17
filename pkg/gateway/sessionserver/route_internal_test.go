@@ -161,11 +161,11 @@ type recordingRouteInterceptor struct {
 	calls    *[]string
 }
 
-func (r recordingRouteInterceptor) Name() string                       { return r.name }
-func (r recordingRouteInterceptor) Priority() int32                    { return r.priority }
-func (recordingRouteInterceptor) Builtin() bool                        { return false }
-func (recordingRouteInterceptor) FailPolicy() interceptor.FailPolicy   { return interceptor.FailClosed }
-func (recordingRouteInterceptor) Timeout() time.Duration               { return 0 }
+func (r recordingRouteInterceptor) Name() string                     { return r.name }
+func (r recordingRouteInterceptor) Priority() int32                  { return r.priority }
+func (recordingRouteInterceptor) Builtin() bool                      { return false }
+func (recordingRouteInterceptor) FailPolicy() interceptor.FailPolicy { return interceptor.FailClosed }
+func (recordingRouteInterceptor) Timeout() time.Duration             { return 0 }
 func (r recordingRouteInterceptor) Intercept(context.Context, interceptor.Request) (interceptor.Result, error) {
 	*r.calls = append(*r.calls, r.name)
 	return interceptor.Result{Action: interceptor.ActionAllow}, nil

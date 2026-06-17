@@ -3,6 +3,8 @@
 package crds_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,7 @@ import (
 
 	embeddedcrds "github.com/lennylabs/lenny/pkg/embedded/crds"
 	"github.com/lennylabs/lenny/pkg/preflight"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // embeddedCRDs decodes every embedded manifest into a
@@ -37,6 +40,51 @@ func embeddedCRDs(t *testing.T) []apiextensionsv1.CustomResourceDefinition {
 		out = append(out, crd)
 	}
 	return out
+}
+
+// TestEmbeddedCRDsAreCopiesOfChartManifests pins the invariant the
+// package documents: the embedded .yaml files are byte-for-byte copies
+// of charts/lenny/crds/, which remain the source of truth. The §17.4
+// Embedded Mode stack installs these copies, so any field, enum, or
+// annotation present in the chart manifest (including the hand-applied
+// `lenny.dev/schema-version` annotation and the
+// x-kubernetes-preserve-unknown-fields markers that controller-gen does
+// not emit) must also be present in the embedded copy. A drift here
+// means Embedded Mode installs a CRD whose schema differs from a cluster
+// install, silently stripping fields the controllers and gateway write.
+//
+// spec: §10 line 437 — every embedded Lenny CRD MUST match the
+// chart-installed schema. §17.4 (Embedded Mode CRD install). F-15.5.12.
+func TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437(t *testing.T) {
+	chartDir := filepath.Join(schematest.RepoRoot(t), "charts", "lenny", "crds")
+	entries, err := embeddedcrds.FS.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read embedded CRDs: %v", err)
+	}
+	var seen int
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		seen++
+		embedded, err := embeddedcrds.FS.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("read embedded %s: %v", e.Name(), err)
+		}
+		chart, err := os.ReadFile(filepath.Join(chartDir, e.Name()))
+		if err != nil {
+			t.Errorf("charts/lenny/crds/%s missing for embedded copy: %v", e.Name(), err)
+			continue
+		}
+		if string(embedded) != string(chart) {
+			t.Errorf("pkg/embedded/crds/%s drifted from charts/lenny/crds/%s; the embedded copy must be byte-identical (re-copy the chart manifest)",
+				e.Name(), e.Name())
+		}
+	}
+	if seen != len(preflight.LennyCRDNames) {
+		t.Errorf("embedded CRD directory has %d manifests; want %d (one per chart-installed CRD)",
+			seen, len(preflight.LennyCRDNames))
+	}
 }
 
 // spec: §10 line 437 / line 443 — every embedded Lenny CRD MUST

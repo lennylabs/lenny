@@ -102,8 +102,10 @@ func TestRedactPlaygroundFrameNonJSONPassthrough_spec_27_9_251(t *testing.T) {
 // names MCP payloads carry, and excludes the bare token "key" so benign
 // identifiers (publicKey, keyId) are not scrubbed.
 func TestIsSensitiveFrameKey_spec_16_4_376(t *testing.T) {
-	sensitive := []string{"authorization", "Authorization", "client_secret", "password",
-		"access_token", "refresh_token", "BearerToken", "api_key", "apiKey", "private_key"}
+	sensitive := []string{
+		"authorization", "Authorization", "client_secret", "password",
+		"access_token", "refresh_token", "BearerToken", "api_key", "apiKey", "private_key",
+	}
 	for _, k := range sensitive {
 		if !isSensitiveFrameKey(k) {
 			t.Errorf("isSensitiveFrameKey(%q) = false, want true", k)

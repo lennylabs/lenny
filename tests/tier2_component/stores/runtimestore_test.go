@@ -284,16 +284,19 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
-	t.Run("taskPolicy round-trips through jsonb", func(t *testing.T) {
+	t.Run("sessionPolicy round-trips through jsonb", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		retries := 2
-		r.TaskPolicy = &runtimestore.TaskPolicy{
-			AcknowledgeBestEffortScrub: true,
-			MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
-			CleanupCommands:            []string{"rm -rf /tmp/x"},
-			OnCleanupFailure:           runtimestore.CleanupFailureWarn,
-			MaxTasksPerPod:             50,
-			MaxTaskRetries:             &retries,
+		r.SessionPolicy = &runtimestore.SessionPolicy{
+			MaxSessionRetries: &retries,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				ScrubProfile:               runtimestore.MicrovmScrubStandard,
+				OnScrubFailure:             runtimestore.CleanupFailureWarn,
+				MaxSessionsPerPod:          50,
+			},
+			CleanupCommands: []string{"rm -rf /tmp/x"},
 		}
 		if err := store.Create(ctx, r); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -302,20 +305,23 @@ func TestRuntimeStoreContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
-		if got.TaskPolicy == nil || !got.TaskPolicy.AcknowledgeBestEffortScrub ||
-			got.TaskPolicy.MaxTasksPerPod != 50 || len(got.TaskPolicy.CleanupCommands) != 1 ||
-			got.TaskPolicy.MaxTaskRetries == nil || *got.TaskPolicy.MaxTaskRetries != 2 {
-			t.Errorf("taskPolicy round-trip mismatch: %+v", got.TaskPolicy)
+		if got.SessionPolicy == nil || got.SessionPolicy.Recycle == nil ||
+			!got.SessionPolicy.Recycle.AcknowledgeBestEffortScrub ||
+			got.SessionPolicy.Recycle.MaxSessionsPerPod != 50 ||
+			got.SessionPolicy.Recycle.ScrubProfile != runtimestore.MicrovmScrubStandard ||
+			len(got.SessionPolicy.CleanupCommands) != 1 ||
+			got.SessionPolicy.MaxSessionRetries == nil || *got.SessionPolicy.MaxSessionRetries != 2 {
+			t.Errorf("sessionPolicy round-trip mismatch: %+v", got.SessionPolicy)
 		}
 
-		// A runtime with no taskPolicy reports nil (SQL NULL).
+		// A runtime with no sessionPolicy reports nil (SQL NULL).
 		plain := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, plain); err != nil {
 			t.Fatalf("Create plain: %v", err)
 		}
 		gotPlain, _ := store.Get(ctx, plain.Name)
-		if gotPlain.TaskPolicy != nil {
-			t.Errorf("taskPolicy must be nil when omitted: %+v", gotPlain.TaskPolicy)
+		if gotPlain.SessionPolicy != nil {
+			t.Errorf("sessionPolicy must be nil when omitted: %+v", gotPlain.SessionPolicy)
 		}
 	})
 

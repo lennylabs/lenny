@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -32,6 +33,11 @@ import (
 //     current_setting('app.current_tenant', false), which raises for a
 //     connection that never set the GUC, and otherwise filters rows to
 //     the current tenant.
+//
+// spec: §12.3 line 57.
+// diagnosis: a failure means the lenny_tenant_guard trigger or RLS
+// policy does not reject a write or read on a connection that never set
+// app.current_tenant, so an unscoped transaction could touch tenant data.
 func TestRLSTenantGuardMissingSetLocal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

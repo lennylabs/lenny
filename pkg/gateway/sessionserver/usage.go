@@ -37,11 +37,11 @@ func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID stri
 }
 
 // dispositionForState maps a session's terminal §6.2 state to the executor
-// Disposition recorded on the backing Sandbox at release time
-// (attached → completed/failed/cancelled/expired). A non-terminal state
-// (recordSessionCompleted is only called on a terminal transition, so this is
-// defensive) carries no disposition and skips the terminal-phase write.
-// spec: §6.2 lines 105-117, 269.
+// Disposition that drives the §3.4 pod disposition at release time: a clean
+// terminal (completed/cancelled/expired) recycles a recycling pod, while
+// `failed` always retires it. A non-terminal state (recordSessionCompleted is
+// only called on a terminal transition, so this is defensive) carries no
+// disposition and falls back to Close. spec: §3.4; §6.2 lines 24, 105-117, 157.
 func dispositionForState(st session.State) executor.Disposition {
 	switch st {
 	case session.StateCompleted:
@@ -55,6 +55,55 @@ func dispositionForState(st session.State) executor.Disposition {
 	default:
 		return ""
 	}
+}
+
+// terminatedReasonForState maps a session's terminal §6.2 state to the coded
+// reason stamped on the session row's TerminatedReason field. It returns "" for
+// a non-terminal state, which stampTerminatedCondition treats as "no fact to
+// record". spec: §7.2 / §8.8 (Terminated session-condition fact).
+func terminatedReasonForState(st session.State) string {
+	switch st {
+	case session.StateCompleted:
+		return "Completed"
+	case session.StateFailed:
+		return "Failed"
+	case session.StateCancelled:
+		return "Cancelled"
+	case session.StateExpired:
+		return "Expired"
+	default:
+		return ""
+	}
+}
+
+// stampTerminatedCondition records the §7.2 / §8.8 Terminated session-condition
+// fact (TerminatedAt + TerminatedReason) on the session row when the row has
+// reached a terminal state and the fact has not already been stamped. The
+// gateway writes no Sandbox.status field for the terminal disposition (§4.6.3);
+// the fact lives on the session row and is read through the session API (§7.2
+// line 230). The write is best-effort and idempotent: a row already carrying a
+// TerminatedAt is returned unchanged so a re-entrant terminal funnel does not
+// churn the stamp, and a store error is logged but never rolls back the
+// terminal transition. spec: §7.2 line 230; §8.8.
+func (s *Server) stampTerminatedCondition(ctx context.Context, sess sessionstore.Session) sessionstore.Session {
+	reason := terminatedReasonForState(sess.State)
+	if reason == "" || !sess.TerminatedAt.IsZero() {
+		return sess
+	}
+	now := s.clock()
+	updated, err := s.store.Update(ctx, sess.TenantID, sess.ID, func(r *sessionstore.Session) error {
+		if !r.TerminatedAt.IsZero() {
+			return nil
+		}
+		r.TerminatedAt = now
+		r.TerminatedReason = reason
+		return nil
+	})
+	if err != nil {
+		log.Printf("lenny-gateway: stamp terminated condition session=%s: %v", sess.ID, err)
+		return sess
+	}
+	return updated
 }
 
 // handleUsage implements GET /v1/usage per §15.1 — the aggregated
@@ -289,6 +338,23 @@ func (s *Server) OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Se
 	s.recordSessionRetry(ctx, sess)
 }
 
+// OnSessionExpired is the watchdog's platform-expiry-clock hook (§6.2
+// maxClientIdleSeconds idle clock, §11.3 maxSessionAge age cap, §7.3
+// awaiting_client_action wall-clock deadline). The watchdog fires it on every
+// `→ expired` transition it drives, with the §16.1.1 reason it resolved from
+// the expiry edge, so the §16.1 lenny_session_expiry_total{pool, reason}
+// counter sees the termination. Best-effort: a nil counter degrades to a no-op
+// without rolling back the watchdog's state transition.
+//
+// spec: §16.1 (lenny_session_expiry_total{reason}); §16.1.1 (reason
+// vocabulary); §6.2 (maxClientIdleSeconds clock); §11.3 line 199 (max client
+// idle row). F-11.3.7.
+func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, reason string) {
+	if s.incSessionExpiry != nil {
+		s.incSessionExpiry(sess.PoolRef, reason)
+	}
+}
+
 // recordSessionCompleted runs the side effects of a session reaching a
 // terminal state: it takes the §7.1 final workspace snapshot, releases
 // the session's executor state — for a pod-backed session this shuts
@@ -296,6 +362,15 @@ func (s *Server) OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Se
 // `session.completed` billing event. All are best-effort: a failure
 // never fails the transition that triggered it.
 func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
+	// spec: §7.2 / §8.8 — record the Terminated session-condition fact on the
+	// Postgres session row (the gateway is not a Sandbox.status writer, §4.6.3,
+	// so the terminal disposition is a session-row field rather than a
+	// Sandbox.status.conditions entry). recordSessionCompleted is the single
+	// terminal funnel, so stamping here covers every terminal path (REST
+	// terminate, watchdog force-terminate, cascade). Best-effort and
+	// idempotent: a row already carrying the fact is left unchanged, and a
+	// failed stamp never rolls back the terminal transition. F-6.2.12.
+	sess = s.stampTerminatedCondition(ctx, sess)
 	// §7.1 seal-and-export (steps 20-23): export the final workspace
 	// before the pod is released and before the client- and audit-visible
 	// terminal signals fire below. The seal runs with the §7.1 line 112

@@ -34,6 +34,7 @@ type Scenario struct {
 }
 
 func (s *Scenario) Name() string { return name }
+
 // RampProfiles enumerates ascending VU counts for capacity discovery
 // under LENNY_TIER7A_CAPACITY=1.
 func (s *Scenario) RampProfiles() []loadgen.Profile {

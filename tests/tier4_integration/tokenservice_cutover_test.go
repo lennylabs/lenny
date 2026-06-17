@@ -67,7 +67,8 @@ func TestGatewayWithTokenServiceWiringBoots(t *testing.T) {
 	t.Parallel()
 	tokensvc.SkipUnlessAvailable(t)
 	ts := tokensvc.Start(t)
-	gw := gateway.StartWith(t,
+	gw := gateway.StartWith(
+		t,
 		"--token-service-grpc-addr", ts.GRPCAddr(),
 		"--token-service-tenant", "tier4-cutover",
 	)
@@ -93,9 +94,18 @@ func TestSessionCreateWithoutPoolsUnderCutover(t *testing.T) {
 	t.Parallel()
 	tokensvc.SkipUnlessAvailable(t)
 	ts := tokensvc.Start(t)
-	gw := gateway.StartWith(t,
+	// §10.6: the harness defaults the platform-wide noEnvironmentPolicy to
+	// deny-all, which rejects a session create that names no environment
+	// when the tenant has no environment membership. This test exercises
+	// the §4.3 cutover wiring on the create-without-pools path, not the
+	// §10.6 admission gate, so it runs under an allow-all platform policy
+	// (the later --no-environment-policy value wins in StartWith) to admit
+	// the no-environment create. spec: §10.6, §4.3.
+	gw := gateway.StartWith(
+		t,
 		"--token-service-grpc-addr", ts.GRPCAddr(),
 		"--token-service-tenant", "tier4-cutover",
+		"--no-environment-policy", "allow-all",
 	)
 
 	body, _ := json.Marshal(map[string]any{

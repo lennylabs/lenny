@@ -268,9 +268,11 @@ func TestRuntimePublishRequiresAdminToken(t *testing.T) {
 	clearCLIEnv(t)
 	var stdout, stderr bytes.Buffer
 	// No --token and no dev headers: the client carries no credential.
-	code := run([]string{"--api-url", "https://gw.example.com",
+	code := run([]string{
+		"--api-url", "https://gw.example.com",
 		"runtime", "publish", "my-agent",
-		"--image", "ghcr.io/acme/runtime-my-agent:1.0.0", "--skip-push"},
+		"--image", "ghcr.io/acme/runtime-my-agent:1.0.0", "--skip-push",
+	},
 		&stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("publish without a token: exit %d, want 2", code)

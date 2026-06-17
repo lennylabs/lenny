@@ -72,15 +72,17 @@ import (
 )
 
 // Handler is the single interface a runtime author implements. The SDK
-// invokes OnCreate once before the first message of a task, OnMessage
-// for every inbound §15.4.1 message frame, and OnTerminate once when the
-// adapter closes stdin or sends a shutdown frame.
+// invokes OnCreate once before the first message, OnMessage for every
+// inbound §15.4.1 message frame, and OnTerminate once when the adapter
+// closes stdin or sends a shutdown frame.
 //
-// In §5.2 task-mode pools the SDK invokes OnCreate again with a new
-// TaskID after each task_ready lifecycle signal; in session-mode pools
-// OnCreate is invoked once.
+// Each session has exactly one execution (§5.2, §7.2), so OnCreate is
+// invoked once per pod occupancy with the session's frozen TaskID and is
+// not re-invoked mid-session. A recycling pool serves the next session
+// in a fresh OnCreate invocation after the runtime exits.
+// spec: §15.7 (single OnCreate per session), §7.2 (one execution per session)
 type Handler interface {
-	// OnCreate receives the task-scoped context snapshot before the
+	// OnCreate receives the session-scoped context snapshot before the
 	// first Message is delivered. A non-nil error aborts the runtime.
 	OnCreate(ctx context.Context, req CreateRequest) error
 	// OnMessage handles one inbound message and returns the turn's
@@ -253,7 +255,7 @@ func (s *session) run(ctx context.Context) error {
 
 	s.state.Store(int32(stateReady))
 
-	// OnCreate runs once before the first message with the task-scoped
+	// OnCreate runs once before the first message with the session-scoped
 	// snapshot the SDK assembled from the manifest and credential file.
 	if err := s.invokeCreate(ctx); err != nil {
 		return fmt.Errorf("runtime: OnCreate: %w", err)
@@ -261,7 +263,7 @@ func (s *session) run(ctx context.Context) error {
 
 	// The dispatch worker processes message frames one at a time, in the
 	// order the loop reads them: this is the §15.4.1 coordinator-local
-	// FIFO contract for a session-mode or task-mode stdin. The loop
+	// FIFO contract for the session's stdin. The loop
 	// itself keeps reading while a handler is in flight, so a
 	// tool_result correlated to a tool_call the handler emits, and
 	// heartbeats, are still serviced (§15.4.1 interleaved delivery).
@@ -445,7 +447,9 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 
 	// §15.4.1 adapter-local tools are reachable for the duration of the
 	// turn. The slot id from the inbound envelope is threaded onto every
-	// tool_call so concurrent-workspace runtimes stay correlated.
+	// tool_call so a runtime on a pool with maxConcurrentSessions > 1
+	// stays correlated to the originating slot.
+	// spec: §15.4.1 (slotId present only when maxConcurrentSessions > 1)
 	mctx := context.WithValue(s.withSessionContext(ctx), ctxKeyAdapterTools, &AdapterTools{
 		w:       s.w,
 		timeout: s.cfg.dialTimeout,
@@ -513,7 +517,7 @@ func (s *session) handleShutdown(_ context.Context, line []byte, cancel context.
 	return nil
 }
 
-// invokeCreate calls Handler.OnCreate once with the task-scoped snapshot.
+// invokeCreate calls Handler.OnCreate once with the session-scoped snapshot.
 func (s *session) invokeCreate(ctx context.Context) error {
 	s.credMu.RLock()
 	creds := s.credentials

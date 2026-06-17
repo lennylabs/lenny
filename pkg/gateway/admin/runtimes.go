@@ -76,7 +76,7 @@ type RuntimePayload struct {
 	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
 	SDKWarmBlockingPaths    []string                                    `json:"sdkWarmBlockingPaths,omitempty"`
 	MinPlatformVersion      string                                      `json:"minPlatformVersion,omitempty"`
-	TaskPolicy              *runtimestore.TaskPolicy                    `json:"taskPolicy,omitempty"`
+	SessionPolicy           *runtimestore.SessionPolicy                 `json:"sessionPolicy,omitempty"`
 	BaseRuntime             string                                      `json:"baseRuntime,omitempty"`
 	CreatedAt               string                                      `json:"createdAt,omitempty"`
 	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
@@ -123,7 +123,7 @@ func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runt
 		Capabilities:            p.Capabilities,
 		SDKWarmBlockingPaths:    p.SDKWarmBlockingPaths,
 		MinPlatformVersion:      p.MinPlatformVersion,
-		TaskPolicy:              p.TaskPolicy,
+		SessionPolicy:           p.SessionPolicy,
 		BaseRuntime:             p.BaseRuntime,
 		CreatedAt:               createdAt,
 	}
@@ -161,7 +161,7 @@ type UpdateRuntimeRequest struct {
 	SDKWarmBlockingPaths    *[]string                                    `json:"sdkWarmBlockingPaths,omitempty"`
 	CredentialCapabilities  *runtimestore.CredentialCapabilities         `json:"credentialCapabilities,omitempty"`
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
-	TaskPolicy              *runtimestore.TaskPolicy                     `json:"taskPolicy,omitempty"`
+	SessionPolicy           *runtimestore.SessionPolicy                  `json:"sessionPolicy,omitempty"`
 	BaseRuntime             *string                                      `json:"baseRuntime,omitempty"`
 }
 
@@ -236,7 +236,8 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 // and derived setupPolicy where exactly one declares a finite
 // timeoutSeconds while the other is zero (no aggregate cap).
 var errSetupTimeoutPairing = errors.New(
-	"setupPolicy.timeoutSeconds cannot be zero on one runtime when the other sets a value")
+	"setupPolicy.timeoutSeconds cannot be zero on one runtime when the other sets a value",
+)
 
 // setupTimeoutPairingConflict reports the §5.1 line-195 "neither can be
 // zero if the other is set" violation across a base and derived
@@ -398,27 +399,42 @@ func (r *Router) derivedRuntimesInvalidatedBy(ctx context.Context, baseName stri
 	return affected, nil
 }
 
-// validateTaskPolicy checks a §5.1 taskPolicy: known scrub-mode and
-// cleanup-failure enums and non-negative numeric fields. The §5.1
-// cross-field rules — allowCrossTenantReuse requires microvm isolation
-// and in-place scrub requires the residual-state acknowledgment — are
-// enforced by the pool controller against the resolved pool.
-func validateTaskPolicy(p *runtimestore.TaskPolicy) error {
+// validateSessionPolicy checks a §5.1 sessionPolicy: known scrub-profile,
+// scrub-failure, and pool-exhaustion enums and non-negative numeric fields.
+// The §5.2 cross-field rules — recycle.allowCrossTenantReuse requires
+// microvm isolation and in-place scrub requires the residual-state
+// acknowledgment — are enforced by the pool controller against the
+// resolved pool. spec: §5.1, §5.2.
+func validateSessionPolicy(p *runtimestore.SessionPolicy) error {
 	if p == nil {
 		return nil
 	}
-	if p.MicrovmScrubMode != "" && !p.MicrovmScrubMode.IsValid() {
-		return errors.New("taskPolicy.microvmScrubMode must be restart or in-place")
+	if p.MaxConcurrentSessions < 0 {
+		return errors.New("sessionPolicy.maxConcurrentSessions must not be negative")
 	}
-	if p.OnCleanupFailure != "" && !p.OnCleanupFailure.IsValid() {
-		return errors.New("taskPolicy.onCleanupFailure must be warn or fail")
+	if p.CleanupTimeoutSeconds < 0 || p.MaxSessionAgeSeconds < 0 ||
+		p.MaxClientIdleSeconds < 0 || p.MaxQueueWaitSeconds < 0 {
+		return errors.New("sessionPolicy numeric fields must not be negative")
 	}
-	if p.CleanupTimeoutSeconds < 0 || p.MaxScrubFailures < 0 ||
-		p.MaxTasksPerPod < 0 || p.MaxPodUptimeSeconds < 0 {
-		return errors.New("taskPolicy numeric fields must not be negative")
+	if p.MaxSessionRetries != nil && *p.MaxSessionRetries < 0 {
+		return errors.New("sessionPolicy.maxSessionRetries must not be negative")
 	}
-	if p.MaxTaskRetries != nil && *p.MaxTaskRetries < 0 {
-		return errors.New("taskPolicy.maxTaskRetries must not be negative")
+	if p.SlotRetries != nil && *p.SlotRetries < 0 {
+		return errors.New("sessionPolicy.slotRetries must not be negative")
+	}
+	if p.OnPoolExhausted != "" && !p.OnPoolExhausted.IsValid() {
+		return errors.New("sessionPolicy.onPoolExhausted must be reject or queue")
+	}
+	if r := p.Recycle; r != nil {
+		if r.ScrubProfile != "" && !r.ScrubProfile.IsValid() {
+			return errors.New("sessionPolicy.recycle.scrubProfile must be standard, vm-restart, or in-place")
+		}
+		if r.OnScrubFailure != "" && !r.OnScrubFailure.IsValid() {
+			return errors.New("sessionPolicy.recycle.onScrubFailure must be warn or fail")
+		}
+		if r.MaxScrubFailures < 0 || r.MaxSessionsPerPod < 0 || r.MaxPodUptimeSeconds < 0 {
+			return errors.New("sessionPolicy.recycle numeric fields must not be negative")
+		}
 	}
 	return nil
 }
@@ -468,7 +484,8 @@ func validateSetupPolicy(p *runtimestore.SetupPolicy, maxFinalizingTimeoutSecond
 	if maxFinalizingTimeoutSeconds > 0 && p.TimeoutSeconds > maxFinalizingTimeoutSeconds {
 		return fmt.Errorf(
 			"setupPolicy.timeoutSeconds (%d) exceeds gateway.maxFinalizingTimeoutSeconds (%d); §6.2 requires the gateway outer bound to be ≥ the runtime inner bound",
-			p.TimeoutSeconds, maxFinalizingTimeoutSeconds)
+			p.TimeoutSeconds, maxFinalizingTimeoutSeconds,
+		)
 	}
 	return nil
 }
@@ -481,8 +498,7 @@ func validateLimits(l *runtimestore.Limits) error {
 		return nil
 	}
 	if l.MaxSessionAgeSeconds < 0 || l.MaxUploadSizeBytes < 0 || l.MaxRequestInputWaitSeconds < 0 ||
-		l.MaxElicitationWaitSeconds < 0 || l.MaxElicitationsPerSession < 0 ||
-		l.MaxIdleTimeSeconds < 0 {
+		l.MaxElicitationWaitSeconds < 0 || l.MaxElicitationsPerSession < 0 {
 		return errors.New("limits fields must not be negative")
 	}
 	return nil
@@ -676,7 +692,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		Capabilities:            r.Capabilities,
 		SDKWarmBlockingPaths:    r.SDKWarmBlockingPaths,
 		MinPlatformVersion:      r.MinPlatformVersion,
-		TaskPolicy:              r.TaskPolicy,
+		SessionPolicy:           r.SessionPolicy,
 		BaseRuntime:             r.BaseRuntime,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
@@ -821,7 +837,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	if err := validateTaskPolicy(body.TaskPolicy); err != nil {
+	if err := validateSessionPolicy(body.SessionPolicy); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
@@ -1038,8 +1054,8 @@ func (r *Router) applyRuntimeUpdate(rt *runtimestore.Runtime, body UpdateRuntime
 	if body.MinPlatformVersion != nil {
 		rt.MinPlatformVersion = *body.MinPlatformVersion
 	}
-	if body.TaskPolicy != nil {
-		rt.TaskPolicy = body.TaskPolicy
+	if body.SessionPolicy != nil {
+		rt.SessionPolicy = body.SessionPolicy
 	}
 	if body.BaseRuntime != nil {
 		rt.BaseRuntime = *body.BaseRuntime
@@ -1176,8 +1192,8 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	if body.TaskPolicy != nil {
-		if err := validateTaskPolicy(body.TaskPolicy); err != nil {
+	if body.SessionPolicy != nil {
+		if err := validateSessionPolicy(body.SessionPolicy); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 			return
 		}
@@ -1397,8 +1413,8 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	if b.MinPlatformVersion != nil {
 		out = append(out, "minPlatformVersion")
 	}
-	if b.TaskPolicy != nil {
-		out = append(out, "taskPolicy")
+	if b.SessionPolicy != nil {
+		out = append(out, "sessionPolicy")
 	}
 	if b.BaseRuntime != nil {
 		out = append(out, "baseRuntime")

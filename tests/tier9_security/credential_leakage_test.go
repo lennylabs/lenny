@@ -50,16 +50,16 @@ const credShellPoolSuffix = "cred-shell-echo-pool"
 // prefixes; an adversarial dump that surfaces one indicates the §13.1
 // boundary has been breached.
 var credentialPrefixes = []string{
-	"sk-ant-",       // anthropic_direct
-	"sk-",           // openai
-	"AKIA",          // aws_bedrock (long-term)
-	"ASIA",          // aws_bedrock (short-term / STS)
-	"ya29.",         // google/vertex_ai
-	"AIza",          // google api key
-	"ghp_",          // github personal access token
-	"ghs_",          // github installation
-	"github_pat_",   // github fine-grained
-	"hvs.",          // hashicorp vault token
+	"sk-ant-",     // anthropic_direct
+	"sk-",         // openai
+	"AKIA",        // aws_bedrock (long-term)
+	"ASIA",        // aws_bedrock (short-term / STS)
+	"ya29.",       // google/vertex_ai
+	"AIza",        // google api key
+	"ghp_",        // github personal access token
+	"ghs_",        // github installation
+	"github_pat_", // github fine-grained
+	"hvs.",        // hashicorp vault token
 }
 
 // findCredShellPod returns one cred-shell-echo agent pod from the
@@ -174,6 +174,11 @@ func TestCredentialLeakageFilesystem(t *testing.T) {
 // sidecar is reachable on the standard mount path so the §12.9.8
 // boundary is exercised end-to-end. A missing sidecar or unparseable
 // capture is the probe's failure mode.
+//
+// spec: §12.9.8.
+// diagnosis: a failure means the egress-capture sidecar is unreachable
+// or its JSONL capture is malformed, so the §12.9.8 SentHash boundary
+// (hashed, never raw credential bytes) cannot be verified end-to-end.
 func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pod := findCredShellPod(t, c)
@@ -236,5 +241,7 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 
 // guard: keep static-analysis happy even if the only callers are
 // disabled by build tags or guards.
-var _ = errors.New
-var _ = fmt.Sprintf
+var (
+	_ = errors.New
+	_ = fmt.Sprintf
+)

@@ -483,7 +483,7 @@ func criticalAlerts() []Rule {
 			For:         30 * time.Second,
 			Severity:    SeverityCritical,
 			Summary:     "SandboxClaim guard webhook unreachable",
-			Description: "The lenny-sandboxclaim-guard ValidatingAdmissionWebhook has been unreachable for more than 30s. With failurePolicy: Fail, all PATCH and PUT operations on SandboxClaim resources are blocked — new pod claims are prevented, halting session creation.",
+			Description: "The lenny-sandboxclaim-guard ValidatingAdmissionWebhook has been unreachable for more than 30s. With failurePolicy: Fail, every SandboxClaim CREATE is blocked; new pod acquisition is prevented, halting session creation. Double-claim prevention is suspended until the webhook recovers.",
 			RunbookURL:  runbook("sandboxclaim-guard-unavailable"),
 			SpecRef:     "§16.5",
 		},

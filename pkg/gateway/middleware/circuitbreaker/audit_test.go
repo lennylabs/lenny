@@ -43,8 +43,9 @@ type fakeMetrics struct {
 	staleServes map[string]int
 }
 
-func (m *fakeMetrics) RecordCircuitBreakerRejection(string, string, string)            { m.total++ }
-func (m *fakeMetrics) RecordCircuitBreakerRejectionSuppressed(string, string, string)  { m.suppressed++ }
+func (m *fakeMetrics) RecordCircuitBreakerRejection(string, string, string)           { m.total++ }
+func (m *fakeMetrics) RecordCircuitBreakerRejectionSuppressed(string, string, string) { m.suppressed++ }
+
 func (m *fakeMetrics) RecordCircuitBreakerCacheStaleServe(outcome string) {
 	if m.staleServes == nil {
 		m.staleServes = map[string]int{}
@@ -88,8 +89,10 @@ func TestReportWritesFullAuditRow(t *testing.T) {
 	if row.tenantID != "acme" {
 		t.Errorf("tenantID = %q, want acme", row.tenantID)
 	}
-	for _, k := range []string{"circuit_name", "reason", "opened_at", "limit_tier",
-		"replica_service_instance_id", "caller_sub", "caller_tenant_id", "runtime", "pool", "session_id"} {
+	for _, k := range []string{
+		"circuit_name", "reason", "opened_at", "limit_tier",
+		"replica_service_instance_id", "caller_sub", "caller_tenant_id", "runtime", "pool", "session_id",
+	} {
 		if _, ok := row.payload[k]; !ok {
 			t.Errorf("payload missing %q: %v", k, row.payload)
 		}
@@ -179,8 +182,10 @@ func TestMiddlewareEmitsAuditOnMatch(t *testing.T) {
 		Extract: func(*http.Request) cb.Request {
 			return cb.Request{OperationType: cb.OpSessionCreation}
 		},
-		Audit:    r,
-		Snapshot: func(*http.Request) cbmw.RejectionSnapshot { return cbmw.RejectionSnapshot{CallerSub: "alice", CallerTenantID: "acme"} },
+		Audit: r,
+		Snapshot: func(*http.Request) cbmw.RejectionSnapshot {
+			return cbmw.RejectionSnapshot{CallerSub: "alice", CallerTenantID: "acme"}
+		},
 	})
 
 	rec := httptest.NewRecorder()

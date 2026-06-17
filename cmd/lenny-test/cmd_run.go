@@ -1252,6 +1252,7 @@ func contractTargets(subsets []string) ([]string, error) {
 	}
 	mapping := map[string]string{
 		"adapter-jsonl":         "./tests/tier3_contract/adapter_jsonl/...",
+		"gatewaycontrol-scrub":  "./tests/tier3_contract/gatewaycontrol_scrub/...",
 		"workspaceplan":         "./tests/tier3_contract/workspaceplan/...",
 		"rest-sessions":         "./tests/tier3_contract/rest_sessions/...",
 		"rest-idempotency":      "./tests/tier3_contract/rest_idempotency/...",

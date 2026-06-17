@@ -1552,7 +1552,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Spec/18 components.** Default-deny NetworkPolicy. gVisor RuntimeClass validation. Admission webhooks (`lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, `lenny-ephemeral-container-cred-guard`). PoolScalingController admission-denied integration test. mTLS end-to-end verification. Mandatory `lenny-ops` first deploy.
 
 **Test infrastructure delivered in Phase 3.5.**
-- `pkg/admission/sandboxclaim_guard` is the pure-decision logic for the `lenny-sandboxclaim-guard` webhook from §4.6.1 (ADR-007). CREATE rejects when a non-terminal `SandboxClaim` already exists for the same `Sandbox`; PATCH/PUT rejects when the referenced `Sandbox.status.phase` is not `claimed`. Rejection messages match the spec verbatim.
+- `pkg/admission/sandboxclaim_guard` is the pure-decision logic for the `lenny-sandboxclaim-guard` webhook from §4.6.1 (ADR-007). The guard enforces per-pod claim uniqueness at CREATE only: CREATE rejects when a non-terminal `SandboxClaim` already exists for the same `Sandbox`. The webhook does not gate PATCH/PUT; the per-pod claim spec is immutable after CREATE and binding-state transitions are `SandboxClaim.status`-subresource writes serialized by the §4.6.1 `resourceVersion`-precondition mechanism. The CREATE rejection message matches the spec verbatim.
 - `pkg/admission/label_immutability` is the pure-decision logic for the `lenny-label-immutability` webhook from §17.2 item 5 / §5.2 NET-003. The three immutable agent-pod labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`) reject any mutation; `lenny.dev/tenant-id` allows `unset → {tenant_id}` only for the gateway ServiceAccount and `{tenant_id} → unassigned` only for the WarmPoolController ServiceAccount.
 - `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `SandboxTemplate`, `SandboxWarmPool` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `Sandbox`, and `SandboxClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
 
@@ -1743,11 +1743,11 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `tests/tier4_integration/mcp_runtime_lifecycle_test.go`.
 - A reference `type: mcp` runtime under `cmd/runtimes/mcp-reference/` (or via one of the bundled connectors).
 
-### 13.27 Phase 12c — Concurrent execution modes
+### 13.27 Phase 12c — `sessionPolicy` presets and service mode
 
 **Test infrastructure to land.**
-- `tests/tier4_integration/concurrent_workspace_test.go` and `concurrent_stateless_test.go`.
-- `tests/tier5_e2e_kind/concurrent_modes_test.go` confirms admission webhooks and pod-level isolation hold.
+- `tests/tier4_integration/session_recycle_test.go`, `session_concurrency_test.go`, and `service_mode_test.go`.
+- `tests/tier5_e2e_kind/execution_modes_test.go` confirms admission webhooks and pod-level isolation hold.
 
 ### 13.28 Phase 13 — Full observability + audit + `lenny-backup` + compliance webhooks
 

@@ -51,6 +51,56 @@ func TestMetricsHandlerExposesRegisteredMetrics(t *testing.T) {
 	}
 }
 
+// TestRecycleMetricsExposeSeries verifies the §4.7 recycle disposition
+// metrics — the aggregate scrub-failure counter, the per-pod scrub-failure
+// gauge, and the retirement counter — register and expose their §16.1
+// pool/runtime_class (and reason/k8s_pod_name) label dimensions on /metrics.
+// spec: 5.2 (lenny_pod_scrub_failure_total), 16.1 (lenny_pod_scrub_failure_count, lenny_pod_retirement_total)
+//
+// diagnosis: a failure means the gateway-side recycle observability the §4.7
+// ScrubReporter drives is not registered, so a retiring or scrub-failing pod
+// emits no metric and the §16.5 recycle alerts have no series to read.
+func TestRecycleMetricsExposeSeries_spec_16_1(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncScrubFailureTotal("agents", "gvisor")
+	m.SetScrubFailureCount("pod-1", "agents", "gvisor", 3)
+	m.IncRetirement("scrub_failure_limit", "agents", "gvisor")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_pod_scrub_failure_total{pool="agents",runtime_class="gvisor"} 1`,
+		`lenny_pod_scrub_failure_count{k8s_pod_name="pod-1",pool="agents",runtime_class="gvisor"} 3`,
+		`lenny_pod_retirement_total{pool="agents",reason="scrub_failure_limit",runtime_class="gvisor"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q", want)
+		}
+	}
+}
+
+// TestRecycleMetricsNilReceiverSafe verifies the recycle metric methods are
+// nil-receiver-safe, matching the rest of the *Metrics surface: a gateway
+// built without metrics passes a nil *Metrics and must not panic on a scrub
+// report.
+// spec: 16.1 (optional metrics sink)
+//
+// diagnosis: a failure means the recycle disposition panics when the gateway
+// runs without a metrics sink, taking down the scrub-report handler.
+func TestRecycleMetricsNilReceiverSafe_spec_16_1(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncScrubFailureTotal("agents", "gvisor")
+	m.SetScrubFailureCount("pod-1", "agents", "gvisor", 3)
+	m.IncRetirement("uptime_limit", "agents", "gvisor")
+}
+
 func TestHorizontalScalingGaugesExposeValues(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
@@ -1947,8 +1997,8 @@ func TestStatelessMetricsRegistered_spec_5_2_573(t *testing.T) {
 	m.SetStatelessConcurrentActive("stateless-pool", 5)
 	body := scrapeMetrics(t, m)
 	for _, want := range []string{
-		`lenny_stateless_requests_total{pool="stateless-pool"} 2`,
-		`lenny_stateless_concurrent_active{pool="stateless-pool"} 5`,
+		`lenny_service_requests_total{pool="stateless-pool"} 2`,
+		`lenny_service_concurrent_active{pool="stateless-pool"} 5`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics missing %q", want)
@@ -1989,22 +2039,22 @@ func TestAdapterLeakedSlotsGauge_spec_6_2_179(t *testing.T) {
 	nilM.SetAdapterLeakedSlots("pod-a", "p", 1)
 }
 
-// TestTaskReuseHistogramRegistered_spec_5_2_569 covers the §5.2 line
-// 569 / §16.1 line 124 lenny_task_reuse_count histogram registration +
-// observation + the in-process TaskReuseQuantile helper the
-// PoolScalingController consumes as mode_factor.
+// TestTaskReuseHistogramRegistered_spec_5_2_569 covers the §5.2 / §16.1
+// lenny_pod_session_reuse_count histogram registration + observation +
+// the in-process TaskReuseQuantile helper the PoolScalingController
+// consumes as mode_factor.
 func TestTaskReuseHistogramRegistered_spec_5_2_569(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	// Two pods on the same pool: pod-1 retired after 4 tasks, pod-2 after
-	// 16. The cross-series median should be ~10 (the linear-interpolation
-	// midpoint between 8 and 16 buckets).
+	// Two pods on the same pool: pod-1 retired after 4 sessions, pod-2
+	// after 16. The cross-series median should be ~10 (the
+	// linear-interpolation midpoint between 8 and 16 buckets).
 	m.ObserveTaskReuseCount("tp", "pod-1", 4)
 	m.ObserveTaskReuseCount("tp", "pod-2", 16)
 	body := scrapeMetrics(t, m)
-	if !strings.Contains(body, `lenny_task_reuse_count_count{k8s_pod_name="pod-1",pool="tp"} 1`) {
+	if !strings.Contains(body, `lenny_pod_session_reuse_count_count{k8s_pod_name="pod-1",pool="tp"} 1`) {
 		t.Errorf("/metrics missing pod-1 sample: %s", body)
 	}
 	med, ok := m.TaskReuseQuantile("tp", 0.5)

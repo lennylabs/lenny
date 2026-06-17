@@ -154,7 +154,6 @@ func TestLifecycleEventExamplesValidate(t *testing.T) {
 		"schemas/examples/lifecycle.credentials_rotated.json",
 		"schemas/examples/lifecycle.deadline_approaching.json",
 		"schemas/examples/lifecycle.terminate.json",
-		"schemas/examples/lifecycle.task_complete.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
@@ -186,9 +185,6 @@ func TestAdapterJSONLExamplesValidate(t *testing.T) {
 		"schemas/examples/jsonl.heartbeat.json",
 		"schemas/examples/jsonl.tool_call.json",
 		"schemas/examples/jsonl.response.json",
-		"schemas/examples/jsonl.task_complete.json",
-		"schemas/examples/jsonl.task_complete_acknowledged.json",
-		"schemas/examples/jsonl.task_ready.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {

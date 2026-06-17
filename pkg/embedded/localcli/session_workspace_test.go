@@ -115,8 +115,10 @@ func TestSessionNewWorkspaceStagesAndStarts_spec_26_2(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	args := []string{"new", "--api-url", srv.URL, "--token", "t",
-		"--runtime", "claude-code", "--workspace", dir, "refactor the auth module"}
+	args := []string{
+		"new", "--api-url", srv.URL, "--token", "t",
+		"--runtime", "claude-code", "--workspace", dir, "refactor the auth module",
+	}
 	code := cmdSession(args, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("session new: code=%d stderr=%s", code, stderr.String())
@@ -159,8 +161,10 @@ func TestSessionNewFileStagesUploadFile_spec_26_2(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	args := []string{"new", "--api-url", srv.URL, "--token", "t",
-		"--runtime", "claude-code", "--file", fp}
+	args := []string{
+		"new", "--api-url", srv.URL, "--token", "t",
+		"--runtime", "claude-code", "--file", fp,
+	}
 	code := cmdSession(args, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("session new: code=%d stderr=%s", code, stderr.String())
@@ -191,8 +195,10 @@ func TestSessionNewFileStagesUploadFile_spec_26_2(t *testing.T) {
 func TestSessionNewWorkspaceMissingDirFails(t *testing.T) {
 	srv, g := newWorkspaceGateway(t)
 	var stdout, stderr bytes.Buffer
-	args := []string{"new", "--api-url", srv.URL, "--token", "t",
-		"--runtime", "claude-code", "--workspace", filepath.Join(t.TempDir(), "nope")}
+	args := []string{
+		"new", "--api-url", srv.URL, "--token", "t",
+		"--runtime", "claude-code", "--workspace", filepath.Join(t.TempDir(), "nope"),
+	}
 	code := cmdSession(args, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("code = %d, want 1; stderr=%s", code, stderr.String())

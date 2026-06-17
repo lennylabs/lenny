@@ -8,8 +8,8 @@ import (
 	"context"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/api/meta"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -34,6 +34,10 @@ const digest64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd
 // spec: §5.1 — the controller mirrors a Runtime CRD into the gateway
 // registry, sets the Registered condition, preserves admin-configured
 // fields across updates, and soft-deletes on CRD deletion.
+// diagnosis: a failure means the RuntimeReconciler does not faithfully
+// mirror the Runtime CRD into the gateway registry, mismanages the
+// Registered condition or finalizer, or loses admin-configured fields
+// across reconciles.
 func TestRuntimeController_spec_5_1(t *testing.T) {
 	env := envtest.Start(t)
 

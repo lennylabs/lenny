@@ -63,8 +63,8 @@ func slotBindErr(pod, slotID, stage string, code codes.Code) *podsession.SlotBin
 	}
 }
 
-func req(pool string, maxConcurrent int32) podsession.SlotBindRequest {
-	return podsession.SlotBindRequest{Pool: pool, SessionID: "sess-1", MaxConcurrent: maxConcurrent}
+func req(pool string, maxConcurrentSessions int32) podsession.SlotBindRequest {
+	return podsession.SlotBindRequest{Pool: pool, SessionID: "sess-1", MaxConcurrentSessions: maxConcurrentSessions}
 }
 
 // spec: §5.2 — a transient slot failure is retried once on a fresh slot;
@@ -241,7 +241,7 @@ func TestSlotRetryDrainClearsLeakGauge_spec_6_2(t *testing.T) {
 	}
 	health := slothealth.New()
 	slots := slotstate.NewRegistry()
-	var lastGauge = -1
+	lastGauge := -1
 	leakGauge := func(_, _ string, leaked int) { lastGauge = leaked }
 
 	_, err := applySlotRetryPolicy(context.Background(), binder, health, slots, func(string) {}, leakGauge, req("pool-x", 2))

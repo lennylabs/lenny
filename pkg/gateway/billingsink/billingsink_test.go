@@ -71,8 +71,10 @@ func sampleEvent() billingstore.Event {
 func TestWebhookSink_SignsAndDelivers_spec_11_2_1_136(t *testing.T) {
 	doer := &fakeDoer{statuses: []int{http.StatusOK}}
 	secret := []byte("topsecret")
-	sink, err := NewWebhookSink(WebhookOptions{URL: "https://example/hook", Secret: secret, Client: doer,
-		Sleep: func(context.Context, time.Duration) {}})
+	sink, err := NewWebhookSink(WebhookOptions{
+		URL: "https://example/hook", Secret: secret, Client: doer,
+		Sleep: func(context.Context, time.Duration) {},
+	})
 	if err != nil {
 		t.Fatalf("NewWebhookSink: %v", err)
 	}
@@ -100,8 +102,10 @@ func TestWebhookSink_SignsAndDelivers_spec_11_2_1_136(t *testing.T) {
 // (an internal collector behind mTLS may opt out).
 func TestWebhookSink_NoSecretOmitsSignature_spec_11_2_1_136(t *testing.T) {
 	doer := &fakeDoer{statuses: []int{http.StatusNoContent}}
-	sink, _ := NewWebhookSink(WebhookOptions{URL: "https://example/hook", Client: doer,
-		Sleep: func(context.Context, time.Duration) {}})
+	sink, _ := NewWebhookSink(WebhookOptions{
+		URL: "https://example/hook", Client: doer,
+		Sleep: func(context.Context, time.Duration) {},
+	})
 	if err := sink.Deliver(context.Background(), []byte("{}"), EventMeta{}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -117,9 +121,11 @@ func TestWebhookSink_RetriesThenSucceeds_spec_11_2_1_136(t *testing.T) {
 	doer := &fakeDoer{statuses: []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusOK}}
 	var deadLettered bool
 	var sleeps int
-	sink, _ := NewWebhookSink(WebhookOptions{URL: "https://x/h", Client: doer, MaxAttempts: 5,
+	sink, _ := NewWebhookSink(WebhookOptions{
+		URL: "https://x/h", Client: doer, MaxAttempts: 5,
 		Sleep:      func(context.Context, time.Duration) { sleeps++ },
-		DeadLetter: func(string, EventMeta, []byte, error) { deadLettered = true }})
+		DeadLetter: func(string, EventMeta, []byte, error) { deadLettered = true },
+	})
 	if err := sink.Deliver(context.Background(), []byte("{}"), EventMeta{}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -142,9 +148,11 @@ func TestWebhookSink_DeadLettersOnExhaustion_spec_11_2_1_136(t *testing.T) {
 		sink string
 		meta EventMeta
 	}
-	sink, _ := NewWebhookSink(WebhookOptions{URL: "https://x/h", Client: doer, MaxAttempts: 3,
+	sink, _ := NewWebhookSink(WebhookOptions{
+		URL: "https://x/h", Client: doer, MaxAttempts: 3,
 		Sleep:      func(context.Context, time.Duration) {},
-		DeadLetter: func(s string, m EventMeta, _ []byte, _ error) { dl.sink = s; dl.meta = m }})
+		DeadLetter: func(s string, m EventMeta, _ []byte, _ error) { dl.sink = s; dl.meta = m },
+	})
 	err := sink.Deliver(context.Background(), []byte("{}"), EventMeta{TenantID: "acme", SequenceNumber: 9})
 	if err == nil {
 		t.Fatalf("Deliver returned nil, want exhaustion error")
@@ -163,9 +171,11 @@ func TestWebhookSink_StopsOnContextCancel(t *testing.T) {
 	doer := &fakeDoer{errs: []error{errors.New("x"), errors.New("x"), errors.New("x"), errors.New("x"), errors.New("x")}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	sink, _ := NewWebhookSink(WebhookOptions{URL: "https://x/h", Client: doer, MaxAttempts: 5,
+	sink, _ := NewWebhookSink(WebhookOptions{
+		URL: "https://x/h", Client: doer, MaxAttempts: 5,
 		Sleep:      func(context.Context, time.Duration) {},
-		DeadLetter: func(string, EventMeta, []byte, error) {}})
+		DeadLetter: func(string, EventMeta, []byte, error) {},
+	})
 	if err := sink.Deliver(ctx, []byte("{}"), EventMeta{}); err == nil {
 		t.Fatalf("Deliver returned nil on a cancelled context")
 	}
@@ -191,8 +201,10 @@ func TestQueueSink_DeliversAndRetries_spec_11_2_1_137(t *testing.T) {
 		}
 		return nil
 	})
-	sink, err := NewQueueSink(QueueOptions{Topic: "billing", Publisher: pub, MaxAttempts: 3,
-		Sleep: func(context.Context, time.Duration) {}})
+	sink, err := NewQueueSink(QueueOptions{
+		Topic: "billing", Publisher: pub, MaxAttempts: 3,
+		Sleep: func(context.Context, time.Duration) {},
+	})
 	if err != nil {
 		t.Fatalf("NewQueueSink: %v", err)
 	}

@@ -1,40 +1,65 @@
 // SPDX-License-Identifier: MIT
 
-// Package state defines the SandboxClaim CRD state machine.
+// Package state defines the SandboxClaim CRD binding-state machine.
 //
-// SandboxClaim represents the gateway's binding of a session to a
-// previously idle Sandbox. The state machine is small (three states)
-// because the authoritative pod state lives on Sandbox.status.phase;
-// SandboxClaim.status.phase tracks the session-binding only.
+// SandboxClaim is the per-pod-occupancy claim a gateway replica creates
+// when it acquires an idle Sandbox pod. SandboxClaim.status.phase tracks
+// the gateway-owned binding state of that occupancy, distinct from the
+// pod lifecycle state machine the WarmPoolController projects onto
+// Sandbox.status.phase (§6.2). The gateway is the sole writer of the
+// binding state; the WarmPoolController consumes it as projection input
+// but never writes it.
+//
+// The binding state advances bound → recycling → reserved across a
+// recycling pod's occupancy episode and back to bound on a same-tenant
+// rebind within the hold window; released and failed are the terminal
+// retirement dispositions. Returning a held pod to the pool
+// (reserved → idle) is the claim DELETE edge rather than a phase value.
 //
 // ADR-007 governs the optimistic-locking and failover-fencing behavior
-// that admission-webhook lenny-sandboxclaim-guard enforces. Phase 1
-// ships the state enum and transition list as the authoritative
-// contract; Phase 3.5 wires the admission webhook.
+// the lenny-sandboxclaim-guard admission webhook backstops.
 //
-// Spec: 04_system-components.md §4.6.1.
+// spec: §4.6.1 (binding states, reserved hold, precondition DELETE),
+// §4.6.3 (binding-state enumeration), §6.14 (coarse pod enum projection).
 package state
 
 import "fmt"
 
-// State is the SandboxClaim phase, written to SandboxClaim.status.phase.
+// State is the SandboxClaim binding state, written to
+// SandboxClaim.status.phase.
 type State string
 
 const (
-	// Bound: claim successfully bound to a claimed Sandbox.
+	// Bound: the claim is bound to a claimed pod. spec: §4.6.3.
 	Bound State = "bound"
-	// Released: pod released back to the pool. Resource is deleted shortly
-	// after this state is observed.
+	// Recycling: occupancy reached zero on a recycling pool and the
+	// whole-pod scrub (and, on preConnect pools, the SDK re-warm that
+	// follows it) is running. spec: §4.6.3.
+	Recycling State = "recycling"
+	// Reserved: the pod is scrubbed (and SDK-warm on preConnect pools) and
+	// held for its pinned tenant until holdExpiresAt; it is excluded from
+	// idle inventory. spec: §4.6.3.
+	Reserved State = "reserved"
+	// Released: limit-reached retirement disposition
+	// (recycle.maxSessionsPerPod or recycle.maxPodUptimeSeconds reached).
+	// Terminal: the WarmPoolController drains then terminates the pod
+	// rather than returning it to the pool. spec: §4.6.3.
 	Released State = "released"
-	// Failed: claim cannot be fulfilled. Terminal. Resource is deleted
-	// after the session reaches its own terminal state.
+	// Failed: scrub-failure or crashed-session retirement disposition.
+	// Terminal: the WarmPoolController drains then terminates the pod.
+	// spec: §4.6.3.
 	Failed State = "failed"
 )
 
+// All returns the binding-state enumeration in advancement order. It
+// mirrors the SandboxClaim.status.phase CRD enum
+// (bound;recycling;reserved;released;failed). spec: §4.6.3.
 func All() []State {
-	return []State{Bound, Released, Failed}
+	return []State{Bound, Recycling, Reserved, Released, Failed}
 }
 
+// Terminal returns the retirement dispositions. spec: §4.6.3 — only
+// released and failed are terminal; reserved → idle is a claim DELETE.
 func Terminal() []State {
 	return []State{Released, Failed}
 }
@@ -53,13 +78,25 @@ type Transition struct {
 	To   State
 }
 
-// ValidTransitions per spec §4.6.1 and ADR-007. Note: the initial
-// transition is `<CREATE> → Bound`, modeled here with From = "".
+// ValidTransitions enumerates the legal binding-state edges. The initial
+// CREATE edge is modeled with From = "". A recycling pod advances
+// bound → recycling → reserved and rebinds reserved → bound within the
+// hold window; every live state can record a terminal retirement
+// disposition (released or failed). Returning a held pod to the pool
+// (reserved → idle) is a claim DELETE rather than a phase write and so is
+// not an edge here. spec: §4.6.1 (binding states, rebind), §4.6.3.
 func ValidTransitions() []Transition {
 	return []Transition{
 		{"", Bound}, // initial create
+		{Bound, Recycling},
+		{Recycling, Reserved},
+		{Reserved, Bound}, // same-tenant rebind within the hold window
 		{Bound, Released},
 		{Bound, Failed},
+		{Recycling, Released},
+		{Recycling, Failed},
+		{Reserved, Released},
+		{Reserved, Failed},
 	}
 }
 

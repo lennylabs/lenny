@@ -188,13 +188,16 @@ func (f *fakeReader) GaugeValue(name string, _ map[string]string) (float64, bool
 	v, ok := f.gauges[name]
 	return v, ok
 }
+
 func (f *fakeReader) CounterValue(name string, l map[string]string) (float64, bool) {
 	return f.GaugeValue(name, l)
 }
+
 func (f *fakeReader) HistogramQuantile(name string, _ map[string]string, _ float64) (float64, bool) {
 	v, ok := f.quantiles[name]
 	return v, ok
 }
+
 func (f *fakeReader) WindowedRate(name string, _ map[string]string, window time.Duration) (float64, bool) {
 	if f.seenWindows != nil {
 		f.seenWindows[name] = window

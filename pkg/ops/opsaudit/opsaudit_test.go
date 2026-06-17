@@ -108,7 +108,8 @@ func TestRecord_AppendFailureCountedAndHooked(t *testing.T) {
 	var hookEvent string
 	var hookErr error
 	var logged int
-	r := New(cap,
+	r := New(
+		cap,
 		WithLogger(func(string, ...any) { logged++ }),
 		WithOnError(func(ev string, err error) { hookEvent, hookErr = ev, err }),
 	)

@@ -106,10 +106,10 @@ func (failingStore) Put(context.Context, evictionstatestore.Record) error {
 func (failingStore) Get(context.Context, string, string) (evictionstatestore.Record, error) {
 	return evictionstatestore.Record{}, evictionstatestore.ErrNotFound
 }
-func (failingStore) Delete(context.Context, string, string) error                  { return nil }
-func (failingStore) DeleteByUser(context.Context, string, string, []string) error  { return nil }
-func (failingStore) DeleteByTenant(context.Context, string) error                  { return nil }
-func (failingStore) SweepDeletedBefore(context.Context, time.Time) (int, error)    { return 0, nil }
+func (failingStore) Delete(context.Context, string, string) error                 { return nil }
+func (failingStore) DeleteByUser(context.Context, string, string, []string) error { return nil }
+func (failingStore) DeleteByTenant(context.Context, string) error                 { return nil }
+func (failingStore) SweepDeletedBefore(context.Context, time.Time) (int, error)   { return 0, nil }
 
 func newMemStore() *evictionstatestore.MemoryStore {
 	return evictionstatestore.NewMemoryStore(func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) })

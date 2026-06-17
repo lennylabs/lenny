@@ -9,14 +9,14 @@
 // Surface:
 //
 //   - HTTPClient()             — the canonical connection-pooled client
-//                                used by every HTTP-driven scenario.
+//     used by every HTTP-driven scenario.
 //   - DoJSON()                 — full HTTP request → drain → close →
-//                                ctx-cancel tolerance, returning
-//                                (status, body, error).
+//     ctx-cancel tolerance, returning
+//     (status, body, error).
 //   - Counters                 — named atomic counters with Inc / Get
-//                                / EmitTo helpers.
+//     / EmitTo helpers.
 //   - InProcMixin              — embeddable struct providing the
-//                                inproc.Env Setup / Teardown lifecycle.
+//     inproc.Env Setup / Teardown lifecycle.
 //
 // TESTING.md §12.7.a (Wave 7 follow-up: scenario authoring kit).
 package scenkit

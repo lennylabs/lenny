@@ -45,6 +45,9 @@ func guardedRedis(t *testing.T) redis.UniversalClient {
 // (e), and EventBus (f); each is a subtest below.
 //
 // spec: §12.4 line 195.
+// diagnosis: a failure means Redis key namespacing does not isolate
+// tenants, so one tenant could read or mutate another tenant's DLQ,
+// inbox, cache, delegation-budget, or EventBus keys.
 func TestRedisTenantKeyIsolation(t *testing.T) {
 	const (
 		tenantA = "acme"

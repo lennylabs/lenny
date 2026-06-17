@@ -33,7 +33,7 @@ import (
 //	httptest version — middleware order, store wiring, or
 //	binary dev-mode flag is wrong in cmd/lenny-gateway.
 func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
-	gw := gateway.Start(t)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 
@@ -125,7 +125,7 @@ func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 //	resolve distinct tenant ids; the store path then enforces
 //	isolation.
 func TestCrossTenantLookupRejectedAgainstRealGateway(t *testing.T) {
-	gw := gateway.Start(t)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	base := gw.BaseURL()
 
 	// Create as tenant acme.

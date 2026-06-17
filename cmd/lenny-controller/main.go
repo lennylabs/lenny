@@ -25,7 +25,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -47,7 +46,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
-	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
@@ -178,6 +176,7 @@ func main() {
 		maxConcurrentReconciles int
 		statusDedupWindow       time.Duration
 		claimOrphanTimeout      time.Duration
+		reservedHoldGrace       time.Duration
 		workqueueMaxDepth       int
 		devMode                 bool
 		certTTL                 time.Duration
@@ -261,7 +260,9 @@ func main() {
 	flag.DurationVar(&statusDedupWindow, "status-update-dedup-window", 500*time.Millisecond,
 		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same Sandbox. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
 	flag.DurationVar(&claimOrphanTimeout, "claim-orphan-timeout", 5*time.Minute,
-		"§4.6.1 SandboxClaim orphan timeout: a SandboxClaim older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
+		"§4.6.1 SandboxClaim orphan timeout: a live (bound/recycling) or empty-status SandboxClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
+	flag.DurationVar(&reservedHoldGrace, "reserved-hold-grace", 60*time.Second,
+		"§4.6.1 reserved-claim grace period: a reserved SandboxClaim is reclaimed by the leader's GarbageCollect loop once holdExpiresAt plus this grace has passed, so the GC does not race the gateway's own hold-expiry DELETE.")
 	flag.IntVar(&workqueueMaxDepth, "workqueue-max-depth", 500,
 		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
 	flag.BoolVar(&devMode, "dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
@@ -503,6 +504,22 @@ func main() {
 		log.Fatalf("lenny-controller: set up per-pod reconciler: %v", err)
 	}
 
+	// §4.6.1 claim-driven occupancy projection: the WarmPoolController is the
+	// sole writer of the coarse Sandbox.status.phase and projects the
+	// occupied phases (claimed, reserved, the recycle sdk_connecting re-warm
+	// leg, and the claim-DELETE return to idle or draining) as a
+	// level-triggered function of the per-pod SandboxClaim binding state. It
+	// watches Sandboxes and SandboxClaims (mapping each claim to its owning
+	// Sandbox) so a gateway binding-state transition re-projects the pod
+	// phase within one reconcile cycle.
+	if err := (&warmpool.OccupancyReconciler{
+		Client:                  mgr.GetClient(),
+		MaxConcurrentReconciles: maxConcurrentReconciles,
+		QueueFactory:            queueFactory,
+	}).SetupWithManager(mgr); err != nil {
+		log.Fatalf("lenny-controller: set up occupancy-projection reconciler: %v", err)
+	}
+
 	// §5.1 RuntimeReconciler: mirror declarative Runtime CRDs into the
 	// gateway runtime registry and set each one's Registered condition.
 	// The reconciler needs the Postgres registry, so it is registered
@@ -537,10 +554,11 @@ func main() {
 			log.Fatalf("lenny-controller: set up mirror reconciler: %v", err)
 		}
 		if err := mgr.Add(&warmpool.ClaimGarbageCollector{
-			Client:        mgr.GetClient(),
-			Sessions:      sessionLookup,
-			Namespaces:    agentNamespaces,
-			OrphanTimeout: claimOrphanTimeout,
+			Client:            mgr.GetClient(),
+			Sessions:          sessionLookup,
+			Namespaces:        agentNamespaces,
+			OrphanTimeout:     claimOrphanTimeout,
+			ReservedHoldGrace: reservedHoldGrace,
 		}); err != nil {
 			log.Fatalf("lenny-controller: set up orphan-claim GC: %v", err)
 		}
@@ -648,20 +666,20 @@ func assertCRDSchemaVersion(restCfg *rest.Config) error {
 
 // sessionActiveLookup adapts the session store to the §4.6.1 orphan-claim
 // GC's warmpool.SessionLookup contract: a claim is reclaimable when no
-// non-terminal session backs it. A missing session row (the gateway
-// crashed before persisting the session) and a terminal session both
-// report inactive.
+// non-terminal session backs it. The per-pod claim (§4.6.3) carries no
+// session identifier, so the check keys on the pod through the Postgres
+// `pod_assignment` binding: GetActiveSlotsByPod counts the live
+// (non-terminal) sessions bound to the Sandbox, and a pod with none has
+// no live session. A pod whose sessions all reached a terminal state (or
+// whose gateway crashed before persisting any session) reports inactive.
 type sessionActiveLookup struct {
 	store sessionstore.Store
 }
 
-func (l *sessionActiveLookup) SessionActive(ctx context.Context, tenantID, sessionID string) (bool, error) {
-	sess, err := l.store.Get(ctx, tenantID, sessionID)
-	if errors.Is(err, sessionstore.ErrNotFound) {
-		return false, nil
-	}
+func (l *sessionActiveLookup) PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error) {
+	n, err := l.store.GetActiveSlotsByPod(ctx, sandboxRef)
 	if err != nil {
 		return false, err
 	}
-	return !apisession.IsTerminal(sess.State), nil
+	return n > 0, nil
 }

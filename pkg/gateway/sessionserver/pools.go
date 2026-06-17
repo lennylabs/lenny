@@ -30,15 +30,14 @@ var (
 //
 // spec: §15.1 line 703 ("List pools and warm pod counts").
 type PoolDiscoveryEntry struct {
-	Name             string `json:"name"`
-	RuntimeRef       string `json:"runtimeRef"`
-	ExecutionMode    string `json:"executionMode"`
-	ConcurrencyStyle string `json:"concurrencyStyle,omitempty"`
-	ResourceClass    string `json:"resourceClass,omitempty"`
-	WarmCount        int    `json:"warmCount"`
-	MaxConcurrent    int    `json:"maxConcurrent,omitempty"`
-	CreatedAt        string `json:"createdAt"`
-	UpdatedAt        string `json:"updatedAt"`
+	Name          string `json:"name"`
+	RuntimeRef    string `json:"runtimeRef"`
+	ExecutionMode string `json:"executionMode"`
+	ResourceClass string `json:"resourceClass,omitempty"`
+	WarmCount     int    `json:"warmCount"`
+	MaxConcurrent int    `json:"maxConcurrent,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt"`
 }
 
 // handleListPools implements GET /v1/pools — the §15.1 line 703
@@ -111,8 +110,8 @@ func (s *Server) visibleRuntimeNames(r *http.Request) map[string]bool {
 }
 
 // poolDiscoveryEntry projects a stored pool onto the public discovery
-// entry. The concurrency sub-fields are stamped only for a concurrent
-// pool, where §5.2 makes ConcurrencyStyle and MaxConcurrent meaningful.
+// entry. MaxConcurrent is stamped only for a service-mode pool, where
+// §5.2 makes it the per-pod request capacity.
 func poolDiscoveryEntry(p poolstore.Pool) PoolDiscoveryEntry {
 	// An unset execution mode resolves to the §5.2 default (session), so
 	// the discovery list never reports an empty mode.
@@ -129,8 +128,7 @@ func poolDiscoveryEntry(p poolstore.Pool) PoolDiscoveryEntry {
 		CreatedAt:     p.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:     p.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	if p.ExecutionMode == runtimestore.ExecutionModeConcurrent {
-		e.ConcurrencyStyle = string(p.ConcurrencyStyle)
+	if p.ExecutionMode == runtimestore.ExecutionModeService {
 		e.MaxConcurrent = p.MaxConcurrent
 	}
 	return e

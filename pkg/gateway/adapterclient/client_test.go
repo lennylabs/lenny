@@ -778,14 +778,21 @@ func (s stubCheckpointSource) LoadCheckpoint(context.Context, string) (io.ReadCl
 }
 
 func TestResumeRestoresTheWorkspace(t *testing.T) {
-	// Build a one-file checkpoint archive to restore.
+	// Build a one-file checkpoint bundle to restore. The adapter Resume
+	// replays the bundle through workspace.ExtractTree, which routes each
+	// entry by its reserved prefix; a flat archive (no workspace/ prefix)
+	// extracts nothing. Bundle the workspace tree under WorkspacePrefix so
+	// the entry lands at "workspace/w.txt" and restores its 8 bytes.
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "w.txt"), []byte("restored"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	var archived bytes.Buffer
-	if _, err := workspace.Archive(src, &archived); err != nil {
-		t.Fatalf("Archive: %v", err)
+	if _, err := workspace.ArchiveTree(
+		[]workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: src}},
+		&archived,
+	); err != nil {
+		t.Fatalf("ArchiveTree: %v", err)
 	}
 
 	srv := adapter.New("adapter-test-build")

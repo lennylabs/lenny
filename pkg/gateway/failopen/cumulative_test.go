@@ -13,7 +13,7 @@ import (
 // fakeClock returns a controllable time source.
 type fakeClock struct{ t time.Time }
 
-func (c *fakeClock) now() time.Time { return c.t }
+func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 func newTestTimer(t *testing.T, clk *fakeClock, max time.Duration) *CumulativeTimer {

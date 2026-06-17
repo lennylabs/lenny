@@ -1,19 +1,27 @@
 // SPDX-License-Identifier: MIT
 
-// Package state defines the Sandbox CRD state machine, per spec §6.2.
+// Package state defines the Sandbox CRD coarse pod-occupancy state machine,
+// per spec §6.2.
 //
-// The state enum and ValidTransitions() form the authoritative contract.
-// IsValid returns nil for an edge present in ValidTransitions() and an
-// InvalidTransitionError otherwise. The host-schedulable label check that
-// distinguishes task_cleanup → sdk_connecting/idle (schedulable) from
-// task_cleanup → draining (not schedulable) is enforced separately by the
-// admission webhook lenny-sandboxclaim-guard; this function reports both
-// edges as valid because they are legal at the state-machine layer.
+// The State enum and ValidTransitions() form the authoritative contract for
+// the values the WarmPoolController writes to Sandbox.status.phase. IsValid
+// returns nil for an edge present in ValidTransitions() and an
+// InvalidTransitionError otherwise. The fine session-lifecycle states
+// (running, suspended, resume_pending, resuming, awaiting_client_action, and
+// the session terminals completed/cancelled/expired) live in the Postgres
+// session model, not on the CRD (spec: §6.2, §6.37); they are not part of
+// this enum. The host-schedulable label check that distinguishes a recycle
+// re-warm (claimed → sdk_connecting) from a retirement (claimed → draining)
+// on a cordoned node is enforced separately by the WarmPoolController; this
+// function reports both edges as valid because they are legal at the
+// state-machine layer.
 package state
 
 import "fmt"
 
-// State is the Sandbox phase, written to Sandbox.status.phase.
+// State is the Sandbox coarse pod-occupancy phase, written to
+// Sandbox.status.phase. spec: §6.2 — the enum is warming, idle, reserved,
+// claimed, sdk_connecting, draining, failed, terminated.
 type State string
 
 // LabelState is the pod label the Sandbox-to-Pod reconciler keeps in
@@ -23,23 +31,22 @@ type State string
 // unclaimed pods. spec: §4.6.1 "Disruption protection for agent pods".
 //
 // The label carries only the coarse operational value set (see
-// CoarseState), not the full §6.2 phase: spec §6.2 lines 305-313 reserve
-// the full phase for Sandbox.status.phase and restrict the pod label to
+// CoarseState), not the full §6.2 phase: spec §6.2 reserves the full phase
+// for Sandbox.status.phase and restricts the pod label to
 // idle/active/draining for selectors, monitoring, and NetworkPolicies.
 const LabelState = "lenny.dev/state"
 
 // LabelRuntime is the pod label carrying the runtime name (the Sandbox's
-// RuntimeRef). spec: §6.2 line 311 — operators select pods by runtime
-// type through this coarse label. It is immutable for a pod's lifetime,
-// stamped once at pod creation.
+// RuntimeRef). spec: §6.2 — operators select pods by runtime type through
+// this coarse label. It is immutable for a pod's lifetime, stamped once at
+// pod creation.
 const LabelRuntime = "lenny.dev/runtime"
 
-// The coarse pod-state label values. spec: §6.2 line 309 — the
-// lenny.dev/state pod label carries only these three operational values
-// for kubectl, monitoring, and NetworkPolicy selectors. CoarseIdle and
-// CoarseDraining deliberately equal the Idle and Draining phase strings
-// so the §4.6.1 PDB idle selector (which matches string(Idle)) keeps
-// working unchanged.
+// The coarse pod-state label values. spec: §6.2 — the lenny.dev/state pod
+// label carries only these three operational values for kubectl,
+// monitoring, and NetworkPolicy selectors. CoarseIdle and CoarseDraining
+// deliberately equal the Idle and Draining phase strings so the §4.6.1 PDB
+// idle selector (which matches string(Idle)) keeps working unchanged.
 const (
 	CoarseIdle     = "idle"
 	CoarseActive   = "active"
@@ -47,24 +54,34 @@ const (
 )
 
 // CoarseState maps a §6.2 phase to its coarse lenny.dev/state pod-label
-// value (spec §6.2 line 309: idle, active, or draining) and reports
-// whether the phase has a coarse operational value at all. A pod is idle
-// when warm and claimable, active once it is claimed and serving a
-// session/slot/task, and draining when retiring. The pre-ready phases
-// (warming, sdk_connecting) and the terminal phases (completed, failed,
-// cancelled, expired, terminated) have no coarse value — the pod is
-// either not yet claimable or gone — so the second return is false and
-// the reconciler removes the label rather than emitting a fourth value
-// the spec does not define. spec: §6.2 lines 305-313.
+// value (spec §6.2: idle, active, or draining) and reports whether the
+// phase has a coarse operational value at all. A pod is idle when warm and
+// claimable, active once it is claimed and serving one or more sessions,
+// and draining when retiring. The reserved hold window also maps to active:
+// a recycled pod held for its pinned tenant is excluded from idle
+// inventory, so the §4.6.1 PDB idle selector must not match it (spec §6.2
+// "reserved hold semantics"). claimed and reserved both map to active, so
+// the label stays active across the occupancy-zero recycle boundary and the
+// hold and never oscillates as same-tenant sessions turn over. With the
+// coarse occupancy enum a pod serving any number of concurrent sessions
+// projects claimed, so concurrent occupancy collapses into the claimed →
+// active mapping and is observable through the Redis slot counter and
+// metrics rather than the pod label (spec §6.2 "concurrent pod lifecycle").
+// The pre-ready phase (warming) and the terminal phases (failed,
+// terminated) have no coarse value — the pod is either not yet claimable or
+// gone — so the second return is false and the reconciler removes the label
+// rather than emitting a fourth value the spec does not define.
+// sdk_connecting is unmapped on both the warm-fill leg and the recycle SDK
+// re-warm leg: the phase is shared between unclaimed pre-idle inventory and
+// an occupied recycling pod, so the phase alone cannot distinguish them and
+// the reconciler removes the label in both windows (spec §6.2). spec: §6.2.
 func CoarseState(s State) (string, bool) {
 	switch s {
 	case Idle:
 		return CoarseIdle, true
 	case Draining:
 		return CoarseDraining, true
-	case Claimed, ReceivingUploads, FinalizingWorkspace, RunningSetup,
-		StartingSession, Attached, TaskCleanup, SlotActive, Resuming,
-		Suspended, ResumePending, AwaitingClientAction:
+	case Claimed, Reserved:
 		return CoarseActive, true
 	default:
 		return "", false
@@ -72,61 +89,43 @@ func CoarseState(s State) (string, bool) {
 }
 
 const (
-	Warming              State = "warming"
-	SDKConnecting        State = "sdk_connecting"
-	Idle                 State = "idle"
-	Claimed              State = "claimed"
-	SlotActive           State = "slot_active"
-	ReceivingUploads     State = "receiving_uploads"
-	FinalizingWorkspace  State = "finalizing_workspace"
-	RunningSetup         State = "running_setup"
-	StartingSession      State = "starting_session"
-	Attached             State = "attached"
-	TaskCleanup          State = "task_cleanup"
-	Resuming             State = "resuming"
-	Suspended            State = "suspended"
-	ResumePending        State = "resume_pending"
-	AwaitingClientAction State = "awaiting_client_action"
-	Completed            State = "completed"
-	Failed               State = "failed"
-	Cancelled            State = "cancelled"
-	Expired              State = "expired"
-	Draining             State = "draining"
-	Terminated           State = "terminated"
+	Warming       State = "warming"
+	SDKConnecting State = "sdk_connecting"
+	Idle          State = "idle"
+	// Reserved is the §6.2 coarse occupancy phase a recycled pod projects
+	// while its claim is held for the pinned tenant through the
+	// gateway.claimHoldTTLSeconds hold window (claim binding state
+	// `reserved`). A pod that reaches reserved is always scrubbed and, on
+	// a preConnect pool, SDK-warm; it is excluded from idle inventory and
+	// rebinds to claimed when a same-tenant session arrives within the
+	// hold, or returns to idle when the hold TTL expires. spec: §6.2
+	// (reserved hold semantics).
+	Reserved   State = "reserved"
+	Claimed    State = "claimed"
+	Failed     State = "failed"
+	Draining   State = "draining"
+	Terminated State = "terminated"
 )
 
+// All returns every coarse §6.2 pod-occupancy phase the WarmPoolController
+// writes to Sandbox.status.phase.
 func All() []State {
 	return []State{
-		Warming, SDKConnecting, Idle, Claimed, SlotActive, ReceivingUploads,
-		FinalizingWorkspace, RunningSetup, StartingSession, Attached, TaskCleanup,
-		Resuming, Suspended, ResumePending, AwaitingClientAction,
-		Completed, Failed, Cancelled, Expired, Draining, Terminated,
+		Warming, SDKConnecting, Idle, Reserved, Claimed,
+		Failed, Draining, Terminated,
 	}
 }
 
-// Terminal returns the §6.2 session-terminal phases (spec: §6.2 line 269 —
-// completed, failed, cancelled, expired) plus the pod-lifecycle terminal
-// terminated (spec: §6.2 line 84 SDK-warm sdk_connecting → terminated,
-// line 195 draining → terminated). These are the phases at which the
-// SESSION has stopped: the §6.2 line 269 maxSessionAge timer is no longer
-// evaluated and no session-level edge leaves them. completed is terminal:
-// §6.2 lines 96-99 list attached → completed and suspended → completed as
-// terminal session edges with no path back out, so IsTerminal(Completed)
-// reports true (a resumable-state helper that treated completed as
-// non-terminal would contradict the spec and the CoarseState mapping, which
-// classes completed among the terminal phases that carry no coarse label
-// value).
-//
-// The four session-terminal phases additionally carry a pod-reclamation
-// drain edge (completed/failed/cancelled/expired → draining; see
-// ValidTransitions): a session-mode pod is exclusive, so once its session
-// settles the gateway records the disposition on Sandbox.status.phase and
-// drains the pod for replacement. That drain edge is a POD-lifecycle
-// transition, distinct from the SESSION-terminality this helper reports — a
-// phase can be session-terminal and still have an outgoing pod-cleanup edge.
-// Only terminated has no outgoing edge of any kind.
+// Terminal returns the §6.2 coarse terminal phases. failed is the
+// warm-fill / recycle-rewarm failure terminal and terminated is the
+// pod-lifecycle terminal (spec: §6.2 sdk_connecting → terminated, draining
+// → terminated). These are the phases at which the POD is gone or being
+// reclaimed and no edge other than the failed → draining reclamation leaves
+// them; terminated has no outgoing edge of any kind. The fine
+// session-terminal states (completed, cancelled, expired) live in the
+// Postgres session model and are not coarse CRD phases (spec: §6.2, §6.37).
 func Terminal() []State {
-	return []State{Completed, Failed, Cancelled, Expired, Terminated}
+	return []State{Failed, Terminated}
 }
 
 func IsTerminal(s State) bool {
@@ -143,122 +142,45 @@ type Transition struct {
 	To   State
 }
 
-// ValidTransitions per spec §6.2. The list captures the pod-warm path,
-// the SDK-warm path, the claim/setup chain, the attached/session edges,
-// the suspension/recovery loop, the task-cleanup edges, and the
-// concurrent-mode slot edges. The host-schedulable gate
-// (lenny.dev/host-schedulable: "true") chooses between
-// task_cleanup → sdk_connecting/idle (schedulable) and
-// task_cleanup → draining (not schedulable); both edges appear here.
+// ValidTransitions per spec §6.2. The list captures the warm-fill pod-warm
+// path, the SDK-warm path, the claim-driven occupancy projection, and the
+// recycle edges (the occupancy-zero recycle re-warm, the same-tenant
+// rebind, and the hold-expiry return to idle). With the coarse occupancy
+// enum the phase carries no separate concurrent-occupancy value: a pod
+// serving any number of concurrent sessions projects claimed, so additional
+// and completing sessions are the claimed → claimed self-edge rather than a
+// distinct slot phase. The fine session-lifecycle transitions live in the
+// Postgres session model and are not CRD edges (spec: §6.2, §6.37).
 func ValidTransitions() []Transition {
 	return []Transition{
-		// Pod-warm path.
+		// Warm fill (pod-warm path).
 		{Warming, Idle},
 		{Warming, Failed},
-		// SDK-warm path.
+		// Warm fill (SDK-warm path, preConnect: true).
 		{Warming, SDKConnecting},
 		{SDKConnecting, Idle},
 		{SDKConnecting, Failed},
 		{SDKConnecting, Terminated},
-		// Claim and setup.
+		// Occupancy projection (WarmPoolController-computed from the per-pod
+		// SandboxClaim).
 		{Idle, Claimed},
-		{Claimed, ReceivingUploads},
-		{ReceivingUploads, FinalizingWorkspace},
-		{ReceivingUploads, Failed},
-		{FinalizingWorkspace, RunningSetup},
-		{FinalizingWorkspace, Failed},
-		{RunningSetup, StartingSession},
-		{RunningSetup, Failed},
-		// starting_session is the §6.2 line 87 phase between running_setup
-		// and attached (the agent runtime is starting on a live pod). Its
-		// pre-attached failure edges (spec: §6.2 lines 102-103):
-		// starting_session → failed when retries are exhausted, and
-		// starting_session → resume_pending when the pod crashed after the
-		// client observed `starting` and retries remain (the sole
-		// post-attached visibility path per §6.2 line 303).
-		{StartingSession, Attached},
-		{StartingSession, Failed},
-		{StartingSession, ResumePending},
-		// Session-level edges from attached.
-		{Attached, Completed},
-		{Attached, Failed},
-		{Attached, Cancelled},
-		{Attached, Suspended},
-		{Attached, ResumePending},
-		// Suspension/recovery loop.
-		{Suspended, Attached},
-		{Suspended, ResumePending},
-		{Suspended, Completed},
-		{Suspended, Cancelled},
-		{Suspended, Expired},
-		{Suspended, Failed},
-		{ResumePending, Resuming},
-		{ResumePending, AwaitingClientAction},
-		{ResumePending, Cancelled},
-		{ResumePending, Completed},
-		{Resuming, Attached},
-		{Resuming, AwaitingClientAction},
-		{Resuming, Cancelled},
-		{Resuming, Completed},
-		{AwaitingClientAction, ResumePending},
-		{AwaitingClientAction, Completed},
-		{AwaitingClientAction, Cancelled},
-		{AwaitingClientAction, Expired},
-		// Task-cleanup paths.
-		{Attached, TaskCleanup},
-		// cancelled → task_cleanup is the §6.2 line 146 task-mode
-		// cancellation edge: when a task-mode pod's in-flight task is
-		// cancelled and the cancellation is acknowledged, the pod runs
-		// the same scrub as a completed task and then rejoins the pool
-		// (idle/sdk_connecting) or retires (draining) per the normal
-		// task_cleanup disposition rules. cancelled is session-terminal
-		// (see Terminal()), so this edge — like the cancelled → draining
-		// pod-reclamation edge below — is a pod-lifecycle transition out
-		// of a session-terminal phase, not a session resumption. The
-		// task-mode-only applicability is enforced by the disposition
-		// driver (the gateway task path), not the state-machine layer.
-		{Cancelled, TaskCleanup},
-		{TaskCleanup, SDKConnecting}, // host-schedulable, preConnect re-warm
-		{TaskCleanup, Idle},          // host-schedulable, non-preConnect reuse
-		{TaskCleanup, Draining},      // not host-schedulable, or a retirement limit reached
-		{TaskCleanup, Failed},        // onCleanupFailure: fail
-		// Concurrent-mode slot edges (§5.2 / §6.2). A concurrent-mode pod
-		// hosts up to maxConcurrent slots simultaneously: idle → slot_active
-		// on the first slot, slot_active → slot_active for each further
-		// slot assignment and for a slot completing while siblings remain,
-		// slot_active → idle when the last slot drains.
-		{Idle, SlotActive},
-		{SlotActive, SlotActive},
-		{SlotActive, Idle},
-		{SlotActive, Draining}, // unhealthy slot threshold or maxPodUptimeSeconds
-		{SlotActive, Failed},
-		// Drain and terminate. claimed → draining is the claim-time abort
-		// path: a pod claimed but torn down before workspace start (gateway
-		// crash between the SSA claim and the setup chain) drains and
-		// terminates rather than stranding. It is a deliberate extension of
-		// the §6.2 idle → draining → terminated cleanup model to the
-		// pre-attached claimed phase; §6.2 enumerates the cleanup edge but
-		// not this specific source, so it is documented here.
+		// claimed → claimed is the concurrent-occupancy self-edge: an
+		// additional session is assigned or an existing session completes
+		// while the Redis-counter occupancy stays nonzero, so the coarse
+		// phase remains claimed.
+		{Claimed, Claimed},
 		{Idle, Draining},
 		{Claimed, Draining},
-		{Attached, Draining},
-		{Draining, Terminated},
-		// Session-terminal pod reclamation. A session-mode pod is exclusive
-		// to one session (§6.2 line 194); once the session reaches a terminal
-		// phase the gateway records the disposition on Sandbox.status.phase
-		// (attached → completed/failed/cancelled, §6.2 lines 105-117) and then
-		// drains the pod so the warm-pool sizer provisions a replacement.
-		// §6.2 enumerates the terminal session edges and the
-		// draining → terminated cleanup but not the per-terminal drain source;
-		// like the claimed → draining abort edge above, these are documented
-		// extensions of the §6.2 cleanup model so an exclusive pod is reclaimed
-		// rather than stranded at its terminal phase. The drain is a
-		// pod-lifecycle transition and does not contradict the session
-		// terminality reported by Terminal()/IsTerminal.
-		{Completed, Draining},
 		{Failed, Draining},
-		{Cancelled, Draining},
-		{Expired, Draining},
+		{Draining, Terminated},
+		// Recycle edges (recycle.enabled: true; occupancy reaches zero after
+		// clean session termination; the claim is patched bound → recycling
+		// and the whole-pod scrub runs while the pod projects claimed).
+		{Claimed, SDKConnecting},  // preConnect re-warm begins (host node schedulable)
+		{Claimed, Reserved},       // non-preConnect: claim patched to reserved, no re-warm leg
+		{SDKConnecting, Reserved}, // SDK re-warm completes within the watchdog
+		{Reserved, Claimed},       // same-tenant session rebinds within the hold TTL
+		{Reserved, Idle},          // hold TTL expires — precondition-guarded claim DELETE
 	}
 }
 

@@ -336,12 +336,15 @@ func (m *MCPClient) CreateSession(ctx context.Context, runtimeRef, userID string
 }
 
 // SendMessage invokes the §15.2 lenny/send_message MCP tool, delivering
-// content to the session and returning the agent's text reply. It is
-// the MCP counterpart of a §15.1 send-message REST call.
+// a message to the session and returning the agent's text reply. It is
+// the MCP counterpart of a §15.1 send-message REST call. The wire
+// arguments are the §8.5 `to` (target session id) and `message`
+// (content) fields. F-8.5.16 renamed them from the legacy `sessionId`
+// and `content`.
 func (m *MCPClient) SendMessage(ctx context.Context, sessionID, content string) (string, error) {
 	res, err := m.CallTool(ctx, "lenny/send_message", map[string]any{
-		"sessionId": sessionID,
-		"content":   content,
+		"to":      sessionID,
+		"message": content,
 	})
 	if err != nil {
 		return "", err

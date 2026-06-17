@@ -8,15 +8,33 @@
 -- severity filter. Both tables are platform-scoped (no RLS, no tenant
 -- guard); the tenant_filter column carries the §25.5 isolation scope.
 --
--- The table is empty pre-deployment, so the stub `types` (JSONB) and
--- `secret` columns are dropped and `types` is rebuilt as the spec's
--- TEXT[] rather than cast in place.
+-- The stub `types` (JSONB) and `secret` columns are dropped and `types` is
+-- rebuilt as the spec's TEXT[]. The reshape replaces both columns rather than
+-- casting in place.
 --
--- spec: §25.5 lines 2613-2664.
-
+-- §10.5 Phase 3 column drop (spec §10.5 line 417). The DROP COLUMN is
+-- irreversible, so it is fronted by a PL/pgSQL DO $$ preflight gate that counts
+-- un-migrated rows and RAISE EXCEPTIONs when any remain. The reshape carries no
+-- per-row backfill of the stub `secret`/`types` values into the new
+-- secret_hash/secret_fingerprint/TEXT[] columns, so any existing
+-- ops_event_subscriptions row is un-migrated data the drop would lose. The gate
+-- fails closed on any such row. The whole up-file runs in one transaction, so a
+-- RAISE EXCEPTION rolls back the entire migration. The drops are idempotent
+-- (DROP COLUMN IF EXISTS) so a re-run after the gate passes is a no-op.
+--
+-- spec: §25.5 lines 2613-2664, §10.5 line 417 (Phase 3 enforcement gate).
+-- gate-index: ops_event_subscriptions_pkey
+DO $$
+DECLARE remaining bigint;
+BEGIN
+    SELECT COUNT(*) INTO remaining FROM ops_event_subscriptions;
+    IF remaining > 0 THEN
+        RAISE EXCEPTION 'Phase 3 gate failed: % un-migrated rows remain in ops_event_subscriptions (the §25.5 reshape backfills no stub secret/types values). Resolve data migration before retrying.', remaining;
+    END IF;
+END $$;
 ALTER TABLE ops_event_subscriptions
-    DROP COLUMN secret,
-    DROP COLUMN types;
+    DROP COLUMN IF EXISTS secret,
+    DROP COLUMN IF EXISTS types;
 
 ALTER TABLE ops_event_subscriptions
     ADD COLUMN types                       TEXT[] NOT NULL DEFAULT '{}',

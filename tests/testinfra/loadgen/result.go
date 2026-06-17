@@ -28,10 +28,10 @@ type Result struct {
 
 	// errorSamples retains a bounded set of distinct error messages
 	// from failed iterations. Used in Summary() for diagnosis.
-	mu            sync.Mutex
-	errorSamples  []string
-	errorSeen     map[string]bool
-	errorSampleN  int
+	mu           sync.Mutex
+	errorSamples []string
+	errorSeen    map[string]bool
+	errorSampleN int
 }
 
 // newResult returns a Result wired for a fresh run.
@@ -126,5 +126,5 @@ type counter struct {
 	n int64
 }
 
-func (c *counter) inc()         { atomic.AddInt64(&c.n, 1) }
-func (c *counter) val() int64   { return atomic.LoadInt64(&c.n) }
+func (c *counter) inc()       { atomic.AddInt64(&c.n, 1) }
+func (c *counter) val() int64 { return atomic.LoadInt64(&c.n) }

@@ -132,8 +132,11 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("transcript: %d", code)
 	}
-	if entries, _ := transcript["entries"].([]any); len(entries) < 2 {
-		t.Errorf("transcript should have >= 2 entries, got %v", transcript["entries"])
+	// spec: §15.1 lines 1228-1253 — the transcript is the canonical
+	// cursor-paginated envelope {items, cursor, hasMore}; the linearized
+	// message nodes are under `items`.
+	if entries, _ := transcript["items"].([]any); len(entries) < 2 {
+		t.Errorf("transcript should have >= 2 entries, got %v", transcript["items"])
 	}
 
 	// ---- session: the tree is a single node ----
@@ -152,12 +155,25 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 	}
 
 	// ---- audit: the bootstrap mutation is in the verified chain ----
-	code, verify := do(http.MethodGet, "/v1/admin/audit-events/verify?tenantId=platform", "platform-admin", nil)
+	// spec: §25.9 line 3653 (F-25.9.10) — there is no standalone verify
+	// route; chain integrity rides on the list response's
+	// chainIntegrityReport envelope. A healthy chain reports zero broken
+	// rows and at least one verified row. The bootstrap mutation is
+	// audited under the actor's tenant (acme — actor_tenant_id), which is
+	// the tenant the dev-mode caller header carries.
+	code, audit := do(http.MethodGet, "/v1/admin/audit-events?tenantId=acme", "platform-admin", nil)
 	if code != http.StatusOK {
-		t.Fatalf("audit verify: %d", code)
+		t.Fatalf("audit list: %d (%v)", code, audit)
 	}
-	if verify["integrity"] != "verified" {
-		t.Errorf("audit chain integrity: %v", verify["integrity"])
+	report, _ := audit["chainIntegrityReport"].(map[string]any)
+	if report == nil {
+		t.Fatalf("audit list carried no chainIntegrityReport: %v", audit)
+	}
+	if broken, _ := report["broken"].(float64); broken != 0 {
+		t.Errorf("audit chain integrity: %v broken rows", broken)
+	}
+	if verified, _ := report["verified"].(float64); verified < 1 {
+		t.Errorf("audit chain integrity: want >= 1 verified row, got %v", verified)
 	}
 
 	// ---- health: the platform reports healthy ----

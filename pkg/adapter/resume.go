@@ -74,7 +74,8 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// backstop; this is the symmetric pre-extraction check called out by
 	// F-7.3.26.
 	if err := checkpoint.WorkspaceSizePreCheck(
-		req.GetExpectedWorkspaceBytes(), req.GetWorkspaceSizeLimitBytes()); err != nil {
+		req.GetExpectedWorkspaceBytes(), req.GetWorkspaceSizeLimitBytes(),
+	); err != nil {
 		var sizeErr *checkpoint.WorkspaceSizeExceededError
 		s.releaseSession()
 		if errors.As(err, &sizeErr) {

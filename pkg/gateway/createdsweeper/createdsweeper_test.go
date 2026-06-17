@@ -79,10 +79,16 @@ func TestSweepSkipsZeroCreatedAt_spec_7_1_20(t *testing.T) {
 		want bool
 	}{
 		{"zero-created-at", sessionstore.Session{State: session.StateCreated}, false},
-		{"created-fresh",
-			sessionstore.Session{State: session.StateCreated, CreatedAt: now.Add(-time.Minute)}, false},
-		{"created-stale",
-			sessionstore.Session{State: session.StateCreated, CreatedAt: now.Add(-time.Hour)}, true},
+		{
+			"created-fresh",
+			sessionstore.Session{State: session.StateCreated, CreatedAt: now.Add(-time.Minute)},
+			false,
+		},
+		{
+			"created-stale",
+			sessionstore.Session{State: session.StateCreated, CreatedAt: now.Add(-time.Hour)},
+			true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

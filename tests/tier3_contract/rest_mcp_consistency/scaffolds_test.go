@@ -191,6 +191,11 @@ func getJSON(t *testing.T, url, tenant string) (*http.Response, []byte) {
 // the shared §15.1 service (F-15.2.4). The MCP server does not expose
 // finalize / start / interrupt / terminate tools; the full lifecycle
 // parity is blocked on those tools and tracked below.
+//
+// spec: §15.2.1 rule 1, §15.1.
+// diagnosis: a failure means REST POST /v1/sessions and the MCP
+// lenny/create_session tool return non-equivalent session rows,
+// breaching the §15.2.1 semantic-equivalence rule.
 func TestRESTMCPSessionLifecycle(t *testing.T) {
 	tsREST, tsMCP, store := newConsistencyServers(t, "acme")
 

@@ -42,7 +42,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
-
 	"time"
 
 	"google.golang.org/grpc"
@@ -64,7 +63,8 @@ var version = "0.1.0"
 // workspace RuntimeFactory when neither --runtime-socket nor --runtime-bin
 // was configured, so a per-slot runtime cannot be built.
 var errNoConcurrentRuntimeTransport = errors.New(
-	"concurrent-workspace mode requires --runtime-socket or --runtime-bin")
+	"concurrent-workspace mode requires --runtime-socket or --runtime-bin",
+)
 
 // resolveRuntimeUID returns the agent runtime UID for the §4.7/§13
 // SO_PEERCRED MCP peer check. The --runtime-uid flag takes precedence; a
@@ -155,9 +155,6 @@ func main() {
 		"§9.1/§8.6 gateway GatewayControl address (host:port) the adapter dials to forward "+
 			"platform tool calls (and lease extensions); empty leaves the platform MCP server "+
 			"serving an empty catalog")
-	taskMode := flag.Bool("task-mode", false,
-		"§4.7/§5.2: advertise the task_lifecycle capability on the lifecycle channel; "+
-			"set on task-mode pods so the runtime is driven through task_complete / task_ready")
 	otlpEndpoint := flag.String("otlp-endpoint", "",
 		"§4.7/§16.3 OTLP collector URL written into the adapter manifest's "+
 			"observability.otlpEndpoint; empty omits the observability object")
@@ -244,7 +241,8 @@ func main() {
 	// keep the connection observably alive. F-11.3.12.
 	keepaliveTime := time.Duration(*keepaliveTimeMs) * time.Millisecond
 	keepaliveTimeout := time.Duration(*keepaliveTimeoutMs) * time.Millisecond
-	opts = append(opts,
+	opts = append(
+		opts,
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             keepaliveTime / 2,
 			PermitWithoutStream: true,
@@ -376,11 +374,7 @@ func main() {
 	// advertises it in the session manifest.
 	var lifecycle *adapter.LifecycleChannel
 	if *lifecycleSocket != "" {
-		var lcOpts []adapter.LifecycleOption
-		if *taskMode {
-			lcOpts = append(lcOpts, adapter.WithTaskLifecycle())
-		}
-		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket, lcOpts...)
+		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}

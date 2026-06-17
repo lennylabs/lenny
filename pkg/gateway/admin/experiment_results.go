@@ -175,7 +175,8 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 // 954, 1088.
 func (r *Router) serveResultsFromMatview(w http.ResponseWriter, req *http.Request,
 	ar evalstore.AggregateReader, exp experimentstore.Experiment,
-	tenant, name string, variantIDs []string) bool {
+	tenant, name string, variantIDs []string,
+) bool {
 	aggs, err := ar.AggregatesByExperiment(req.Context(), tenant, name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)

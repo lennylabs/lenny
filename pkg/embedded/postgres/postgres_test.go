@@ -48,9 +48,11 @@ func TestStartStopRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
 	}
+	// Port 0 asks the kernel for a free ephemeral port so parallel test
+	// binaries do not collide on a fixed port (§17.4).
 	i := New(Config{
 		DataDir:      t.TempDir(),
-		Port:         15499,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",
@@ -64,6 +66,11 @@ func TestStartStopRoundTrip(t *testing.T) {
 			t.Errorf("Stop: %v", err)
 		}
 	}()
+
+	// Start resolves the ephemeral port and reflects it on Port() and DSN().
+	if got := i.Port(); got == 0 {
+		t.Error("Port() = 0 after Start with an ephemeral request; want the resolved port")
+	}
 
 	// Start is idempotent within a process.
 	if err := i.Start(); err != nil {

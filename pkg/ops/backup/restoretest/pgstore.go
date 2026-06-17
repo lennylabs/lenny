@@ -56,7 +56,8 @@ func (s *PGStore) Latest(ctx context.Context) (Result, bool, error) {
 		 LIMIT 1`).Scan(
 		&r.ID, &r.BackupID, &r.BackupType, &r.StartedAt, &r.CompletedAt, &r.Success,
 		&durationMS, &r.ArtifactChecked, &r.ArtifactSampled, &r.ArtifactPresent,
-		&r.ArtifactMissing, &r.ArtifactSuccessRate, &r.Error)
+		&r.ArtifactMissing, &r.ArtifactSuccessRate, &r.Error,
+	)
 	if err == pgx.ErrNoRows {
 		return Result{}, false, nil
 	}

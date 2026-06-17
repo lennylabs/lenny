@@ -228,10 +228,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if sw.status >= http.StatusInternalServerError {
 			tracing.RecordError(span, tracing.CategorizeError(
-				errors.New(http.StatusText(sw.status)), tracing.CategoryUpstream))
+				errors.New(http.StatusText(sw.status)), tracing.CategoryUpstream,
+			))
 		} else if sw.status >= http.StatusBadRequest {
 			tracing.RecordError(span, tracing.CategorizeError(
-				errors.New(http.StatusText(sw.status)), tracing.CategoryPolicy))
+				errors.New(http.StatusText(sw.status)), tracing.CategoryPolicy,
+			))
 		}
 		span.End()
 	}()

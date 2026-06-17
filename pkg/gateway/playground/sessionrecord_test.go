@@ -110,7 +110,7 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 	oidc := &fakeOIDC{subject: OIDCSubject{
 		UserID:   "dave",
 		TenantID: "acme",
-		Scope:    "sessions:create",
+		Scope:    "tools:sessions:read",
 	}}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
 		Signer:   signer,
@@ -189,7 +189,7 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 	// way two gateway replicas share Redis — must observe as revoked.
 	signer := devSigner()
 	store := NewMemorySessionStore()
-	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "eve", TenantID: "acme", Scope: "sessions:create"}}
+	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "eve", TenantID: "acme", Scope: "tools:sessions:read"}}
 
 	opts := Options{
 		Signer:   signer,

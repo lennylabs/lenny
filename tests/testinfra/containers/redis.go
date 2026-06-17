@@ -84,3 +84,18 @@ func StartRedis(t testing.TB, opts RedisOptions) *Redis {
 
 	return &Redis{Addr: addr, Client: client, container: container}
 }
+
+// Stop terminates the Redis container mid-test so a caller can inject a
+// genuine Redis outage: subsequent client operations fail to connect rather
+// than returning a miss. It is the testcontainers analogue of the tier-8
+// "scale the Redis Deployment to zero" injection, used by the §12.4
+// slot-counter Postgres-fallback failure/recovery tests. The t.Cleanup
+// registered by StartRedis tolerates a double Terminate.
+func (r *Redis) Stop(t testing.TB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.container.Terminate(ctx); err != nil {
+		t.Fatalf("Redis.Stop: terminate: %v", err)
+	}
+}

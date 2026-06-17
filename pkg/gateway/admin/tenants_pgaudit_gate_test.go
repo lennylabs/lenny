@@ -36,7 +36,8 @@ func TestCreateTenantRegulatedWithoutPgauditRejected_spec_11_7_377(t *testing.T)
 			body, _ := json.Marshal(admin.TenantPayload{ID: "acme", ComplianceProfile: profile})
 			rr := httptest.NewRecorder()
 			router.Handler().ServeHTTP(rr, withAdminPrincipal(
-				httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+				httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+			))
 			if rr.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("status %d, want 422; body %s", rr.Code, rr.Body.String())
 			}
@@ -67,7 +68,8 @@ func TestCreateTenantRegulatedWithPgauditAllowed_spec_11_7_377(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", ComplianceProfile: "hipaa"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -80,7 +82,8 @@ func TestCreateTenantUnregulatedWithoutPgauditAllowed_spec_11_7_377(t *testing.T
 		body, _ := json.Marshal(admin.TenantPayload{ID: "acme", ComplianceProfile: profile})
 		rr := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, withAdminPrincipal(
-			httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+			httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+		))
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("profile %q: status %d, want 201; body %s", profile, rr.Code, rr.Body.String())
 		}
@@ -97,7 +100,8 @@ func TestUpdateTenantToRegulatedWithoutPgauditRejected_spec_11_7_377(t *testing.
 	body, _ := json.Marshal(admin.UpdateTenantRequest{ComplianceProfile: &profile})
 	rr := httptest.NewRecorder()
 	req := withAdminPrincipal(
-		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)),
+	)
 	injectAdminIfMatch(t, router.Handler(), req)
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -118,7 +122,8 @@ func TestCreateEnvironmentUnderRegulatedTenantWithoutPgauditRejected_spec_11_7_3
 	body, _ := json.Marshal(validEnvironmentPayload("prod"))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/environments", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/environments", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("regulated tenant: status %d, want 422; body %s", rr.Code, rr.Body.String())
 	}

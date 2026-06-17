@@ -12,7 +12,7 @@ CREATE TABLE sandbox_warm_pools (
     -- isolation_profile is the §5.3 profile override (standard,
     -- sandboxed, microvm); empty means inherit the runtime default.
     isolation_profile        TEXT        NOT NULL DEFAULT '',
-    -- execution_mode is the §5.2 mode (session, task, concurrent).
+    -- execution_mode is the §5.2 mode (session, service).
     execution_mode           TEXT        NOT NULL DEFAULT '',
     resource_class           TEXT        NOT NULL DEFAULT '',
     warm_count               INTEGER     NOT NULL DEFAULT 0,

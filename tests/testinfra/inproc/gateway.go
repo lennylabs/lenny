@@ -34,18 +34,18 @@ type gateway struct {
 	mxAtomic atomic.Int64
 	idemHits atomic.Int64
 
-	idem    map[string]idempotentResponse
-	idemMu  sync.Mutex
+	idem   map[string]idempotentResponse
+	idemMu sync.Mutex
 
 	server   *http.Server
 	listener net.Listener
 }
 
 type session struct {
-	ID       string    `json:"id"`
-	Status   string    `json:"status"`
-	Created  time.Time `json:"created_at"`
-	Runtime  string    `json:"runtime_ref"`
+	ID      string    `json:"id"`
+	Status  string    `json:"status"`
+	Created time.Time `json:"created_at"`
+	Runtime string    `json:"runtime_ref"`
 }
 
 type idempotentResponse struct {
@@ -200,6 +200,13 @@ func (g *gateway) delete(w http.ResponseWriter, id string) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	// Soft-delete: the session stays in the map marked terminated so a
+	// subsequent GET observes the terminal state (the §15.1 "a terminated
+	// session stays terminated" invariant the streaming_reconnect_storm
+	// scenario asserts). Terminated sessions are retained by design, so a
+	// long-running create/delete loop accumulates one record per cycle;
+	// the memory_leak_long_run scenario bounds its cycle count to keep
+	// that accumulation inside its heap-growth tolerance.
 	sess.Status = "terminated"
 	g.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)

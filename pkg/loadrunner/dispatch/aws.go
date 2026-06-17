@@ -158,14 +158,14 @@ func SubmitAWS(ctx context.Context, client SQSAPI, queueURL string, j *Job) erro
 // --- wire format -----------------------------------------------------
 
 type sqsJobPayload struct {
-	RunID       string `json:"run_id"`
-	Scenario    string `json:"scenario"`
-	ScriptURL   string `json:"script_url"`
-	TargetURL   string `json:"target_url"`
-	VUs         int    `json:"vus"`
-	Rate        int    `json:"rate"`
-	DurationNs  int64  `json:"duration_ns"`
-	AuthBundle  string `json:"auth_bundle,omitempty"`
+	RunID      string `json:"run_id"`
+	Scenario   string `json:"scenario"`
+	ScriptURL  string `json:"script_url"`
+	TargetURL  string `json:"target_url"`
+	VUs        int    `json:"vus"`
+	Rate       int    `json:"rate"`
+	DurationNs int64  `json:"duration_ns"`
+	AuthBundle string `json:"auth_bundle,omitempty"`
 }
 
 func encodeJob(j *Job) ([]byte, error) {

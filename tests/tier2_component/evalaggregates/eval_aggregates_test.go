@@ -72,6 +72,9 @@ func evalScore(v float64) *float64 { return &v }
 // spec: §10.7 line 1088 — the materialized view, its BYPASSRLS owner
 // role, the SECURITY DEFINER refresh function, and the tenant-scoped
 // read view are all defined in the migration system. F-10.7.12.
+// diagnosis: a failure means the eval-aggregates matview DDL, its
+// BYPASSRLS owner role, the SECURITY DEFINER refresh function, or the
+// tenant-scoped read view is missing or misdefined in the migrations.
 func TestEvalAggregatesMatviewDDL_spec_10_7_1088(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -114,6 +117,9 @@ func TestEvalAggregatesMatviewDDL_spec_10_7_1088(t *testing.T) {
 // tenant under the non-superuser lenny_app role, lenny_app cannot read
 // the matview directly, and the pgstore aggregate read reproduces the
 // on-read aggregation. F-10.7.12.
+// diagnosis: a failure means the matview refresh leaks across tenants,
+// the lenny_app role can read the matview directly, or the pgstore
+// aggregate read diverges from the on-read aggregation.
 func TestEvalAggregatesRefreshIsolationAndAggregation_spec_10_7_1088(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -213,6 +219,8 @@ func TestEvalAggregatesRefreshIsolationAndAggregation_spec_10_7_1088(t *testing.
 }
 
 // spec: §10.7 line 1088 — migration 0156 rolls back cleanly.
+// diagnosis: a failure means migration 0156 does not roll back cleanly,
+// leaving eval-aggregates objects behind or erroring on down-migration.
 func TestEvalAggregatesMigrationRollback_spec_10_7_1088(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)

@@ -14,7 +14,6 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -60,15 +59,22 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 	c := newClient(t, sb)
 	ctx := context.Background()
 
+	// Two distinct lifecycle condition types accumulate as history. Each Type
+	// is owned by its own SSA field manager, so a second Apply does not
+	// overwrite the first. (The session-terminal and interrupt-suspension
+	// facts moved to the Postgres session model under §7.2 / §8.8; the
+	// remaining Sandbox condition types are controller-written, so this test
+	// exercises the accumulation mechanics with the OrphanClaimReclaimed type
+	// and a second arbitrary type.)
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Suspended, Reason: "InterruptAcknowledged",
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimCollected",
 	}); err != nil {
-		t.Fatalf("apply suspended: %v", err)
+		t.Fatalf("apply orphan-claim-reclaimed: %v", err)
 	}
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Terminated, Reason: "Completed",
+		Type: "Cordoned", Reason: "NodeUnschedulable",
 	}); err != nil {
-		t.Fatalf("apply terminated: %v", err)
+		t.Fatalf("apply cordoned: %v", err)
 	}
 
 	var got lennyv1.Sandbox
@@ -78,7 +84,7 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 	if len(got.Status.Conditions) != 2 {
 		t.Fatalf("conditions = %d, want 2 (both accumulate): %+v", len(got.Status.Conditions), got.Status.Conditions)
 	}
-	for _, ty := range []string{sandboxcond.Suspended, sandboxcond.Terminated} {
+	for _, ty := range []string{sandboxcond.OrphanClaimReclaimed, "Cordoned"} {
 		if cond := apimeta.FindStatusCondition(got.Status.Conditions, ty); cond == nil {
 			t.Errorf("missing %s condition", ty)
 		} else if cond.Status != metav1.ConditionTrue {
@@ -98,12 +104,12 @@ func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 	ctx := context.Background()
 
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Suspended, Reason: "InterruptAcknowledged",
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimCollected",
 	}); err != nil {
 		t.Fatalf("apply 1: %v", err)
 	}
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
-		Type: sandboxcond.Suspended, Reason: "InterruptTimeout",
+		Type: sandboxcond.OrphanClaimReclaimed, Reason: "OrphanClaimRecollected",
 	}); err != nil {
 		t.Fatalf("apply 2: %v", err)
 	}
@@ -115,27 +121,8 @@ func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 	if len(got.Status.Conditions) != 1 {
 		t.Fatalf("conditions = %d, want 1 (updated in place): %+v", len(got.Status.Conditions), got.Status.Conditions)
 	}
-	if got.Status.Conditions[0].Reason != "InterruptTimeout" {
-		t.Errorf("reason = %q, want InterruptTimeout (latest wins)", got.Status.Conditions[0].Reason)
-	}
-}
-
-// spec: §6.2 lines 105-117 — TerminalReason maps every terminal phase and
-// only terminal phases.
-func TestTerminalReason_spec_6_2_105(t *testing.T) {
-	cases := map[state.State]string{
-		state.Completed: "Completed",
-		state.Failed:    "Failed",
-		state.Cancelled: "Cancelled",
-		state.Expired:   "Expired",
-		state.Attached:  "",
-		state.Idle:      "",
-		state.Draining:  "",
-	}
-	for phase, want := range cases {
-		if got := sandboxcond.TerminalReason(phase); got != want {
-			t.Errorf("TerminalReason(%q) = %q, want %q", phase, got, want)
-		}
+	if got.Status.Conditions[0].Reason != "OrphanClaimRecollected" {
+		t.Errorf("reason = %q, want OrphanClaimRecollected (latest wins)", got.Status.Conditions[0].Reason)
 	}
 }
 

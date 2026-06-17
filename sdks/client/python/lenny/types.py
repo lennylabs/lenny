@@ -112,11 +112,20 @@ class Session:
 class IsolationLevel:
     """The section 7.1 ``sessionIsolationLevel`` object on the create response."""
 
+    #: The section 5.2 execution mode of the assigned pool: ``session``
+    #: or ``service``.
     execution_mode: str = ""
     isolation_profile: str = ""
     pod_reuse: bool = False
     scrub_policy: str = ""
     residual_state_warning: bool = False
+
+    #: ``platform`` for session mode (the platform binds the session to a
+    #: pod and preserves conversation context across messages) or
+    #: ``none`` for service mode (the gateway routes each message to any
+    #: ready replica and maintains no conversation context between
+    #: messages). spec: section 7.1.
+    conversation_continuity: str = ""
 
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> "IsolationLevel":
@@ -127,6 +136,7 @@ class IsolationLevel:
             pod_reuse=bool(raw.get("podReuse", False)),
             scrub_policy=str(raw.get("scrubPolicy", "")),
             residual_state_warning=bool(raw.get("residualStateWarning", False)),
+            conversation_continuity=str(raw.get("conversationContinuity", "")),
         )
 
 

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tdigest "github.com/caio/go-tdigest/v4"
+
 	"github.com/lennylabs/lenny/pkg/loadrunner/dispatch"
 )
 
@@ -330,7 +331,8 @@ func (r *K6Runner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
 	r.mu.Lock()
 	r.lastSummaryPath = summaryPath
 	r.mu.Unlock()
-	args := []string{"run",
+	args := []string{
+		"run",
 		"--vus", fmt.Sprintf("%d", j.VUs),
 		"--duration", j.Duration.String(),
 		"--summary-export", summaryPath,

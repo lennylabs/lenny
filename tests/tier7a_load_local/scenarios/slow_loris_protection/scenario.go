@@ -55,14 +55,15 @@ func readBody(ctx context.Context, slowReader bool) error {
 }
 
 type Scenario struct {
-	counters    *scenkit.Counters
-	overshoots  atomic.Int64
+	counters   *scenkit.Counters
+	overshoots atomic.Int64
 }
 
 func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 8, Duration: 1 * time.Second},

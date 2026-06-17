@@ -71,7 +71,7 @@ An automatic or operator-managed mechanism that stops traffic to a failing compo
 ### Claim (Pod Claim)
 {: #claim }
 
-The process by which the gateway acquires an idle warm pod for a new session. Claims use a `SandboxClaim` CRD with optimistic locking. A `lenny-sandboxclaim-guard` admission webhook prevents double-claims. See [State Machines](state-machines).
+The process by which the gateway acquires an idle warm pod for an occupancy episode. The claim is a per-pod `SandboxClaim` CRD with the deterministic name `claim-<podName>`; the CREATE race resolves pod acquisition between gateway replicas. A `lenny-sandboxclaim-guard` admission webhook intercepts CREATE only and rejects a second non-terminal claim for the same pod. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions. The session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. See [State Machines](state-machines).
 
 ### Connector
 {: #connector }
@@ -81,7 +81,7 @@ An external MCP server (e.g., GitHub, Jira) registered as a top-level admin API 
 ### Credential Lease
 {: #credential-lease }
 
-A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. Leases are per-session in session mode, per-task in task mode, and per-slot in concurrent mode. See [Configuration Reference](configuration).
+A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. A fresh lease is assigned per session, including each session served by a recycling pod, and per slot when `sessionPolicy.maxConcurrentSessions > 1`. See [Configuration Reference](configuration).
 
 ### Credential Pool
 {: #credential-pool }
@@ -144,6 +144,11 @@ The path an elicitation request takes from its originating session up through th
 {: #event-store }
 
 A Postgres-backed store for session events, audit records, and stream cursors. Events are partitioned by time with configurable retention. The Event Store supports replay for client reconnection within the replay window. See [Configuration Reference](configuration).
+
+### Execution Mode
+{: #execution-mode }
+
+A runtime configuration that determines how pods are used. `session` binds a managed session to a claimed pod and is parameterized by the `sessionPolicy` block (pod recycling across sessions, concurrent session slots). `service` routes each message to any ready replica with no claim and no conversation continuity. The pool scaling factors derive from the `sessionPolicy` properties. See [Execution Modes and Pod Lifecycle](execution-modes) and [Configuration Reference](configuration).
 
 ### Protocol Adapter Registry
 {: #protocol-adapter-registry }
@@ -232,6 +237,11 @@ The default S3-compatible object storage used for artifact, checkpoint, and work
 
 ## O
 
+### Occupancy Episode
+{: #occupancy-episode }
+
+The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates. See [State Machines](state-machines).
+
 ### OutputPart
 {: #outputpart }
 
@@ -275,6 +285,11 @@ The process of creating and preparing pods before any session request arrives. P
 Kubernetes-defined security profiles (Privileged, Baseline, Restricted). Lenny uses a split enforcement model: full Restricted PSS for runc pods, relaxed RuntimeClass-specific constraints for gVisor and Kata pods. Enforcement is via RuntimeClass-aware admission policies (OPA/Gatekeeper or Kyverno).
 
 ## R
+
+### Recycle
+{: #recycle }
+
+A `sessionPolicy.recycle` configuration in session mode that reuses a pod across sequential sessions. When occupancy reaches zero the gateway runs a whole-pod scrub (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup) and, on a successful scrub, holds the pod for its pinned tenant through the claim's `reserved` state. The pod retires when it reaches `recycle.maxSessionsPerPod`, `recycle.maxScrubFailures`, or `recycle.maxPodUptimeSeconds`, or when a session ends in failure or a crash. Recycling requires no runtime cooperation and works at every integration level. See [Execution Modes and Pod Lifecycle](execution-modes) and [State Machines](state-machines).
 
 ### RLS (Row-Level Security)
 {: #rls }
@@ -326,7 +341,7 @@ An optional warm pod state where the agent process IS pre-connected and waiting 
 ### Session
 {: #session }
 
-The primary user-facing resource in Lenny. A session represents a single interactive agent execution with its own workspace, credential lease, event stream, and lifecycle. Sessions are identified by a unique `session_id` and managed through the REST API. See [Getting Started](../getting-started/).
+The primary user-facing resource in Lenny and the only client-facing unit of execution; each session has exactly one execution. A session has its own workspace, credential lease, event stream, and lifecycle. Sessions are identified by a unique `session_id` and managed through the REST API. The session is the unit external protocols name a Task. See [Getting Started](../getting-started/).
 
 ### Session Manager
 {: #session-manager }
@@ -353,7 +368,7 @@ A gateway subsystem responsible for MCP streaming, session attachment, event rel
 ### Task
 {: #task }
 
-The protocol-level abstraction for a unit of work in a delegation tree. Tasks have their own state machine (submitted, running, completed, failed, cancelled, expired, input_required) that maps to external protocol states (MCP Tasks, A2A). See [State Machines](state-machines).
+The name external protocols and the delegation API give to a session. An MCP Task and an A2A Task are the protocol surface of a session; the mapping is 1:1, and `lenny/delegate_task` creates a child session. The canonical task state machine is the session state machine under its external-protocol name (submitted, running, completed, failed, cancelled, expired, input_required). See [State Machines](state-machines).
 
 ### Task Tree
 {: #task-tree }

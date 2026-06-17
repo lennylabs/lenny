@@ -40,9 +40,11 @@ type fakeConnForwarder struct {
 func (f *fakeConnForwarder) ListSessionConnectors(_ context.Context, _ string) ([]mcp.ConnectorRef, error) {
 	return f.refs, f.refErr
 }
+
 func (f *fakeConnForwarder) ListConnectorTools(_ context.Context, _, _ string) ([]mcp.Tool, error) {
 	return nil, nil
 }
+
 func (f *fakeConnForwarder) CallConnectorTool(_ context.Context, _, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
 	return nil, nil
 }

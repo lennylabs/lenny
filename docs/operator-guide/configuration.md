@@ -163,7 +163,7 @@ runtimes:
         supported: true
         modes: [immediate, queued]
       preConnect: false                  # SDK-warm mode (default: false)
-    executionMode: session               # session | task | concurrent
+    executionMode: session               # session | service
     isolationProfile: sandboxed          # standard | sandboxed | microvm
     allowedResourceClasses: [small, medium, large]
     supportedProviders:
@@ -229,7 +229,7 @@ Fields that **can** be independently configured:
 - `workspaceDefaults` (appended to base)
 - `setupCommands` (appended after base commands)
 - `setupPolicy.timeoutSeconds` (gateway uses the maximum of base and derived)
-- `agentInterface`, `delegationPolicyRef`, `labels`, `taskPolicy`
+- `agentInterface`, `delegationPolicyRef`, `labels`, `sessionPolicy`
 - `allowSelfRecursion` (restrict-only override: a derived runtime may set `false` when the base is `true`; widening `false → true` is rejected with `INVALID_DERIVED_RUNTIME`)
 
 ### Runtime Types
@@ -274,7 +274,7 @@ pools:
     runtime: claude-worker
     isolationProfile: sandboxed          # standard | sandboxed | microvm
     resourceClass: small                 # small | medium | large
-    executionMode: session               # session | task | concurrent
+    executionMode: session               # session | service
     minWarm: 5                           # Minimum warm pods
     maxWarm: 20                          # Maximum warm pods
     egressProfile: restricted            # restricted | internet
@@ -287,39 +287,58 @@ pools:
 
 ### Execution Modes
 
-**`session`** -- One session per pod. Pod is exclusive to the session for its lifetime. Default mode.
+Two execution modes are available: `session` and `service`. Session mode is parameterized by the `sessionPolicy` block; the acknowledgments, tenant pinning, and scaling factors derive from `sessionPolicy` properties rather than from mode names.
 
-**`task`** -- Pod reuses across sequential tasks with workspace scrub between tasks:
+**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. Default mode. In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends.
+
+The full `sessionPolicy` block:
 
 ```yaml
 pools:
-  - name: task-pool
+  - name: claude-worker-pool
     runtime: claude-worker
-    executionMode: task
-    taskPolicy:
-      acknowledgeBestEffortScrub: true   # Required acknowledgment
-      allowCrossTenantReuse: false
+    executionMode: session
+    sessionPolicy:
+      maxConcurrentSessions: 1           # simultaneous sessions per pod; > 1 requires acknowledgeProcessLevelIsolation
+      acknowledgeProcessLevelIsolation: false  # required when maxConcurrentSessions > 1
+      recycle:
+        enabled: false                   # true requires acknowledgeBestEffortScrub
+        acknowledgeBestEffortScrub: false
+        maxSessionsPerPod: 50            # required when recycle.enabled; counts every session served
+        maxPodUptimeSeconds: 86400       # optional
+        maxScrubFailures: 3
+        onScrubFailure: warn             # warn | fail
+        scrubProfile: standard           # standard | vm-restart | in-place
+        acknowledgeMicrovmResidualState: false  # required when scrubProfile: in-place
+        allowCrossTenantReuse: false     # requires isolationProfile: microvm; never permitted when maxConcurrentSessions > 1
       cleanupCommands:
         - rm -rf /tmp/sandbox-*
-      cleanupTimeoutSeconds: 30
-      onCleanupFailure: warn             # warn | fail
-      maxScrubFailures: 3
-      maxTasksPerPod: 50                 # Required -- no default
-      maxPodUptimeSeconds: 86400
+      cleanupTimeoutSeconds: 60
+      maxSessionRetries: 1               # crash re-dispatch budget; default 1 (2 total attempts; 0 disables)
+      maxSessionAgeSeconds: 7200
+      maxClientIdleSeconds: 7200         # client-inactivity bound; defaults to the effective maxSessionAgeSeconds
+      slotRetries: 1
+      onPoolExhausted: reject            # reject | queue
+      maxQueueWaitSeconds: 30            # queue wait bound when onPoolExhausted: queue
 ```
 
-**`concurrent`** -- Multiple tasks on a single pod simultaneously:
+The configurations the `sessionPolicy` settings express:
+
+| Configuration | `maxConcurrentSessions` | `recycle.enabled` | Behavior |
+|---|---|---|---|
+| One session per pod | 1 | `false` | Each pod is exclusive to one session and terminates when the session ends (default). |
+| Pod reuse | 1 | `true` | The pod is recycled across sequential sessions of the same tenant with a whole-pod scrub at the occupancy-zero boundary. |
+| Concurrent | N | `true` | The pod serves up to N simultaneous sessions in per-slot workspaces and recycles when occupancy reaches zero. |
+| Bounded cohort | N | `false` | The pod serves N concurrent sessions, then terminates after the cohort drains. |
+
+**`service`** -- The gateway routes each message to any ready tenant-pinned replica, creating no claim and materializing no workspace. The pool keeps a per-pod slot bound through `maxConcurrent`. Service mode provides no cross-message conversation continuity, and `sessionPolicy` does not apply:
 
 ```yaml
 pools:
-  - name: concurrent-pool
-    runtime: claude-worker
-    executionMode: concurrent
-    concurrencyStyle: workspace          # stateless | workspace
-    concurrentWorkspacePolicy:
-      acknowledgeProcessLevelIsolation: true  # Required acknowledgment
-      maxConcurrent: 8
-      cleanupTimeoutSeconds: 60
+  - name: service-pool
+    runtime: tool-server
+    executionMode: service
+    maxConcurrent: 8                     # per-pod slot bound; readiness-driven routing
 ```
 
 ### Pool Taxonomy Strategy

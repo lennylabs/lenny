@@ -8,64 +8,59 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/upload"
 	"github.com/lennylabs/lenny/pkg/upload/archive"
 )
 
-// SlotBindRequest describes a session to place on a concurrent-mode
-// (§5.2) pod slot. It is the concurrent-mode counterpart of BindRequest:
-// rather than claiming a pod exclusively, BindSlot reserves one of the
-// pod's up-to-maxConcurrent slots.
+// SlotBindRequest describes a session to place on a §5.2 concurrent-session
+// pod slot (sessionPolicy.maxConcurrentSessions > 1). It is the
+// concurrent-session counterpart of BindRequest: rather than claiming a
+// pod exclusively, BindSlot reserves one of the pod's up-to-
+// maxConcurrentSessions slots, each in its own per-slot workspace.
 type SlotBindRequest struct {
-	// Pool is the concurrent-mode SandboxWarmPool to claim a slot from.
+	// Pool is the SandboxWarmPool to claim a slot from.
 	Pool string
 	// SessionID is the §15.1 session being started. It is also the
 	// slot's SlotID.
 	SessionID string
 	// TenantID is the tenant that owns the session. §5.2 tenant pinning
-	// binds a concurrent-mode pod to its first tenant.
+	// binds a concurrent-session pod to its first tenant.
 	TenantID string
 	// Runtime is the runtime name passed to the adapter's StartSession.
 	Runtime string
-	// Style is the §5.2 concurrency style of the pool: StyleWorkspace
-	// (workspace-concurrent — a per-slot workspace is materialized) or
-	// StyleStateless (stateless-concurrent — no workspace).
-	Style podclaim.ConcurrencyStyle
-	// MaxConcurrent is the §5.2 per-pod slot bound.
-	MaxConcurrent int32
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
-	// pod-uptime retirement cap. The slot-claim path drains a candidate
-	// pod whose uptime exceeds it before assigning a slot. Zero leaves
-	// uptime retirement off.
+	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
+	// per-pod simultaneous-session bound.
+	MaxConcurrentSessions int32
+	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-session
+	// pod-uptime retirement cap. The slot-claim path skips a candidate pod
+	// whose uptime exceeds it before assigning a slot; the skip is a
+	// read-only placement filter and the gateway does not write
+	// Sandbox.status. The WarmPoolController owns the resulting draining
+	// transition, derived from the pod CreationTimestamp (§4.6.1). Zero
+	// leaves uptime retirement off.
 	MaxPodUptimeSeconds int64
 	// Plan is the per-slot workspace the adapter materializes under
-	// /workspace/slots/{slotId}/ before start. It is honored only in
-	// workspace-concurrent mode; stateless-concurrent ignores it because
-	// §5.2 stateless mode materializes no workspace.
+	// /workspace/slots/{slotId}/ before start. spec: §5.2 — concurrent
+	// sessions always materialize a per-slot workspace.
 	Plan *adapterv1.WorkspacePlan
 	// ExperimentContext and TracingContext are delivered to the runtime
 	// in the adapter manifest. Nil when unset.
 	ExperimentContext *adapterv1.ExperimentContext
 	TracingContext    map[string]string
-	// SetupPolicy bounds the §5.1 setup phase. Honored only in
-	// workspace-concurrent mode. Nil when the runtime declares no cap.
+	// SetupPolicy bounds the §5.1 setup phase. Nil when the runtime
+	// declares no cap.
 	SetupPolicy *adapterv1.SetupPolicy
 	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
-	// block. Honored only in workspace-concurrent mode (stateless-
-	// concurrent materializes no workspace). Nil leaves the platform
-	// default (symlinks rejected). spec: §7.4 lines 458, 462 — F-7.4.4.
+	// block. Nil leaves the platform default (symlinks rejected).
+	// spec: §7.4 lines 458, 462 — F-7.4.4.
 	ArchivePolicy *adapterv1.ArchivePolicy
 	// CredentialPools names the §4.9 credential pools to lease from,
-	// keyed by provider. Per §6 a concurrent-mode slot holds an
+	// keyed by provider. Per §6 a concurrent-session slot holds an
 	// independent per-slot credential lease. Empty when the session
 	// needs no upstream LLM credentials.
 	CredentialPools map[string]string
@@ -86,28 +81,33 @@ type SlotBindRequest struct {
 	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion written
 	// into the §15.4 manifest. Empty when none is specified.
 	MinPlatformVersion string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
+	// by ResolvePool. On a recycling concurrent-session pool (the §3.1
+	// "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
+	// true), when the last slot drains cleanly ReleaseSlot patches the per-pod
+	// claim bound → recycling and signals the whole-pod scrub (the §3.4 recycle
+	// disposition) rather than deleting the claim, so the adapter's
+	// ReportPodScrub drives recycle vs. retire and the occupancy-zero whole-pod
+	// scrub clears the cross-cohort residue (shared /tmp, /dev/shm, surviving
+	// processes). False for a non-recycling concurrent pool (the §3.1 "Bounded
+	// cohort" preset), where the pod terminates after the cohort drains. spec:
+	// §3.1, §3.4, §6.30/§6.41 (occupancy-zero recycle edge on a recycling pod).
+	Recycle bool
 }
 
-// BindSlot places a session on a concurrent-mode (§5.2) pod slot.
+// BindSlot places a session on a §5.2 concurrent-session pod slot.
 //
 // It reserves a slot via podclaim.SlotClaimer — landing on a pod that
 // is already hosting slots when one has free capacity for the tenant,
 // or opening a fresh idle pod otherwise — resolves the pod's adapter
-// address, runs the §15.5 version handshake, and then runs the
-// per-style assignment sequence:
-//
-//   - workspace-concurrent (StyleWorkspace): the slot gets its own
-//     workspace. BindSlot runs PrepareWorkspace, FinalizeWorkspace,
-//     RunSetup, AssignCredentials, and StartSession, exactly as
-//     session-mode Bind does — the §6.4 per-slot directory tree under
-//     /workspace/slots/{slotId}/ is the adapter's responsibility, and
-//     the pod's /workspace/shared/ tree is shared read-only across the
-//     pod's slots.
-//   - stateless-concurrent (StyleStateless): §5.2 materializes no
-//     workspace and tracks no per-slot lifecycle. BindSlot assigns
-//     credentials (a per-slot lease per §6) and runs StartSession; it
-//     does not stage, finalize, or run setup, because the slot has no
-//     Lenny-managed workspace.
+// address, runs the §15.5 version handshake, and then runs the per-slot
+// assignment sequence. The slot gets its own workspace: BindSlot stages
+// and finalizes the workspace, runs setup, assigns credentials (a
+// per-slot lease per §6), and starts the session, exactly as
+// session-mode Bind does. The §6.4 per-slot directory tree under
+// /workspace/slots/{slotId}/ is the adapter's responsibility, and the
+// pod's /workspace/shared/ tree is shared read-only across the pod's
+// slots.
 //
 // On success the caller owns the returned live adapter connection and
 // the BindResult carries the slot's SlotID. Any failure after the slot
@@ -118,47 +118,40 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		return nil, err
 	}
 
-	var finalizeWarnings []*adapterv1.WorkspacePlanWarning
-	var setupOutputs []*adapterv1.SetupCommandOutput
-	if req.Style == podclaim.StyleWorkspace {
-		// Workspace-concurrent: the slot has its own per-slot workspace
-		// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
-		// extraction runs gateway-side (§7.4 line 448) exactly as in
-		// session-mode Bind; the adapter re-validates symlinks against the
-		// slot's actual /workspace/slots/{slotId}/current after promotion.
-		allow := upload.RuntimeAllow{
-			AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
-			WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), archive.DefaultWorkspaceRoot),
-		}
-		// spec: §6.4 lines 401-405 — the slot's workspace materializes into
-		// its own /workspace/slots/{slotId}/ tree. slotID is the per-slot
-		// identifier the adapter keys the tree on.
-		stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, slotID, req.TenantID, req.Plan, allow)
-		if err != nil {
-			cl.Close()
-			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
-			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
-				fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
-		}
-		warnings, err := cl.FinalizeWorkspaceSlot(ctx, req.SessionID, slotID, stagedPlan, req.ArchivePolicy, false)
-		if err != nil {
-			cl.Close()
-			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
-			return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
-				fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
-		}
-		finalizeWarnings = append(stageWarnings, warnings...)
-		outs, err := cl.RunSetupSlot(ctx, req.SessionID, slotID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
-		if err != nil {
-			cl.Close()
-			b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
-			return nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
-				&SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: outs})
-		}
-		setupOutputs = outs
+	// spec: §5.2 — a concurrent-session slot has its own per-slot workspace
+	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
+	// extraction runs gateway-side (§7.4 line 448) exactly as in
+	// session-mode Bind; the adapter re-validates symlinks against the
+	// slot's actual /workspace/slots/{slotId}/current after promotion.
+	allow := upload.RuntimeAllow{
+		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
+		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), archive.DefaultWorkspaceRoot),
 	}
-	// Stateless-concurrent skips the workspace path entirely: §5.2
-	// stateless mode materializes no workspace and runs no setup.
+	// spec: §6.4 lines 401-405 — the slot's workspace materializes into
+	// its own /workspace/slots/{slotId}/ tree. slotID is the per-slot
+	// identifier the adapter keys the tree on.
+	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, slotID, req.TenantID, req.Plan, allow)
+	if err != nil {
+		cl.Close()
+		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
+			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
+	}
+	warnings, err := cl.FinalizeWorkspaceSlot(ctx, req.SessionID, slotID, stagedPlan, req.ArchivePolicy, false)
+	if err != nil {
+		cl.Close()
+		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
+			fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
+	}
+	finalizeWarnings := append(stageWarnings, warnings...)
+	setupOutputs, err := cl.RunSetupSlot(ctx, req.SessionID, slotID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
+	if err != nil {
+		cl.Close()
+		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
+			&SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: setupOutputs})
+	}
 
 	if err := b.assignSlotCredentials(ctx, cl, req, slotID); err != nil {
 		cl.Close()
@@ -190,6 +183,12 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		Adapter:               cl,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
+		// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so
+		// ReleaseSlot drives the §3.4 recycle disposition (patch the per-pod
+		// claim bound → recycling, signal the whole-pod scrub) on the
+		// occupancy-zero edge of a recycling concurrent pool rather than
+		// deleting the claim.
+		Recycle: req.Recycle,
 	}, nil
 }
 
@@ -206,7 +205,7 @@ func (b *Binder) recordSlotFailure(errorType, pool, podName string) {
 
 // assignSlotCredentials mints the slot's §4.9 credential leases and
 // pushes them to the pod via AssignCredentials. Per §6 each
-// concurrent-mode slot holds an independent per-slot lease, so a
+// concurrent-session slot holds an independent per-slot lease, so a
 // rotation on one slot does not disrupt sibling slots. It is a no-op
 // when the binder has no credential service or the request names no
 // pools.
@@ -246,7 +245,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 	return cl.AssignCredentialsSlot(ctx, req.SessionID, slotID, leases)
 }
 
-// connectSlot reserves a concurrent-mode slot from the pool, resolves
+// connectSlot reserves a concurrent-session slot from the pool, resolves
 // the slot's pod adapter address, dials it, and runs the §15.5 version
 // handshake. On success the caller owns cl and must close it once the
 // session ends or on any later failure.
@@ -264,12 +263,11 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 		OnRehydrate:    b.Rehydration,
 	}
 	res, err := claimer.ClaimSlot(ctx, podclaim.SlotRequest{
-		Pool:                req.Pool,
-		SessionID:           req.SessionID,
-		TenantID:            req.TenantID,
-		Style:               req.Style,
-		MaxConcurrent:       req.MaxConcurrent,
-		MaxPodUptimeSeconds: req.MaxPodUptimeSeconds,
+		Pool:                  req.Pool,
+		SessionID:             req.SessionID,
+		TenantID:              req.TenantID,
+		MaxConcurrentSessions: req.MaxConcurrentSessions,
+		MaxPodUptimeSeconds:   req.MaxPodUptimeSeconds,
 	})
 	if err != nil {
 		// The §5.2 line 519 exhaustion sentinels are returned unwrapped
@@ -336,20 +334,25 @@ func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *Sl
 // the failed attempt already closed its adapter connection.
 func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string) error {
 	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
-	return claimer.ReleaseSlot(ctx, sandboxName, slotID)
+	// recycle=false: a released reservation after a failed bind is a slot-count
+	// rollback, not the occupancy-zero recycle edge, so it never patches the
+	// claim to `recycling` or arms the missing-report timeout. spec: §5.2 (slot
+	// retry releases the reservation), §3.4.
+	return claimer.ReleaseSlot(ctx, sandboxName, slotID, false)
 }
 
-// ReleaseSlot tears down a concurrent-mode slot when its session ends.
-// It shuts the slot's runtime down through the adapter, closes the
-// adapter connection, deletes the slot's SandboxClaim, and decrements
-// the pod's status.activeSlots.
+// ReleaseSlot tears down a concurrent-session slot when its session ends.
+// It shuts the slot's runtime down through the adapter, closes the adapter
+// connection, and decrements the pod's §5.2 Redis slot counter; when the
+// last slot drains (the counter reaches zero) the per-pod SandboxClaim is
+// deleted so the pod returns to the pool.
 //
-// Unlike session-mode Release, ReleaseSlot does not drain the pod: a
-// concurrent-mode pod hosts sibling slots, and per §6.2 the pod returns
-// to the idle phase only when its last slot drains (activeSlots reaches
-// 0). The slot-count decrement and the idle-on-last transition are
-// handled by podclaim.SlotClaimer.ReleaseSlot. The adapter Shutdown is
-// best-effort.
+// Unlike session-mode Release, ReleaseSlot does not delete the claim while
+// sibling slots remain: a concurrent-session pod hosts up to
+// maxConcurrentSessions slots on one per-pod claim, and the claim spans the
+// whole occupancy episode. The Redis-counter decrement and the
+// claim-delete-on-last edge are handled by podclaim.SlotClaimer.ReleaseSlot.
+// The adapter Shutdown is best-effort.
 func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	if result.Adapter != nil {
 		// spec: §6.4 lines 401-405 — tear down just this slot (its runtime
@@ -361,45 +364,36 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// credential leases back to the pool, the same teardown session-mode
 	// Release runs. The pod and its sibling slots stay live.
 	b.releaseCredentials(result.SessionID)
-	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
-	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID)
+	claimer := &podclaim.SlotClaimer{
+		Client:    b.Client,
+		Namespace: b.Namespace,
+		Counter:   b.SlotCounter,
+		// §3.4: a recycling concurrent-session pool arms the missing-report
+		// timeout on the occupancy-zero edge (the last slot draining), the same
+		// gateway-side timeout session-mode Release arms.
+		RecycleBoundary: b.RecycleBoundary,
+	}
+	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID, result.Recycle)
 }
 
-// DrainSandbox transitions a concurrent-mode Sandbox to the draining
-// phase. It is the §6.2 line 165 whole-pod retirement used when a pod
-// crosses the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2) slots
-// failed or leaked within the rolling window) rather than releasing a
-// single slot: the pod accepts no new slots and its existing slots drain.
+// DrainSandbox requests the whole-pod retirement of a concurrent-session
+// pod that crossed the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2)
+// slots failed or leaked within the rolling window) rather than releasing a
+// single slot. The gateway stamps the §4.6.3 lenny.dev/drain-request
+// annotation on the agent Pod; the WarmPoolController consumes it and writes
+// the draining transition on Sandbox.status. The gateway never writes
+// Sandbox.status itself (§4.6.3 ownership decomposition: the
+// WarmPoolController is the sole writer), so the unhealthy-threshold drain
+// is routed through the annotation rather than a gateway phase write.
 //
-// The transition is idempotent (a no-op when the Sandbox is already
-// draining or gone) and is best-effort under contention: a status-update
-// conflict re-reads and re-applies, and the legal source phases are
-// slot_active and idle (a pod that drained to idle between observation and
-// apply still retires).
+// The stamp is idempotent: a re-request overwrites the annotation with a
+// fresh instant, and a pod already gone is a no-op (a pod with no slots
+// needs no drain).
 //
-// spec: §6.2 line 165 (slot_active → draining on the unhealthy threshold);
-// §5.2 "whole-pod replacement trigger".
+// spec: §4.6.3 (gateway stamps drain-request; WarmPoolController writes the
+// drain); §5.2 "whole-pod replacement trigger". The WarmPoolController-side
+// projection that consumes the annotation lands in the WPC
+// occupancy-projection step.
 func (b *Binder) DrainSandbox(ctx context.Context, sandboxName string) error {
-	const maxConflictRetries = 3
-	for attempt := 0; ; attempt++ {
-		var sb lennyv1.Sandbox
-		if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
-		}
-		if sb.Status.Phase == string(state.Draining) {
-			return nil
-		}
-		sb.Status.Phase = string(state.Draining)
-		err := b.Client.Status().Update(ctx, &sb)
-		if err == nil {
-			return nil
-		}
-		if apierrors.IsConflict(err) && attempt < maxConflictRetries {
-			continue
-		}
-		return fmt.Errorf("podsession: drain sandbox %s: %w", sandboxName, err)
-	}
+	return podclaim.StampDrainRequest(ctx, b.Client, b.Namespace, sandboxName, time.Now())
 }

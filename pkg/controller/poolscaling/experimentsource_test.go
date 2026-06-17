@@ -78,7 +78,7 @@ func TestExperimentSourceNilReaderPassesThrough(t *testing.T) {
 // its variant pool as a variant and reduces the base pool by Σ weights.
 func TestExperimentSourceActiveVariantAndBaseAdjustment(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
-		Inner:       &fakeSource{configs: baseConfigs()},
+		Inner: &fakeSource{configs: baseConfigs()},
 		Experiments: fakeExpReader{exps: []experimentstore.Experiment{
 			experimentDef("exp-1", "claude-base", experiment.StatusActive,
 				experimentstore.Variant{ID: "treatment", Pool: "variant-pool", Weight: 0.25}),
@@ -104,7 +104,7 @@ func TestExperimentSourceActiveVariantAndBaseAdjustment(t *testing.T) {
 // to minWarm 0, and its weight is removed from the base pool's sum.
 func TestExperimentSourcePausedForcesZeroMinWarm(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
-		Inner:       &fakeSource{configs: baseConfigs()},
+		Inner: &fakeSource{configs: baseConfigs()},
 		Experiments: fakeExpReader{exps: []experimentstore.Experiment{
 			experimentDef("exp-1", "claude-base", experiment.StatusPaused,
 				experimentstore.Variant{ID: "treatment", Pool: "variant-pool", Weight: 0.25}),
@@ -129,7 +129,7 @@ func TestExperimentSourcePausedForcesZeroMinWarm(t *testing.T) {
 // flagged for drain-and-delete.
 func TestExperimentSourceConcludedMarksDrainAndDelete(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
-		Inner:       &fakeSource{configs: baseConfigs()},
+		Inner: &fakeSource{configs: baseConfigs()},
 		Experiments: fakeExpReader{exps: []experimentstore.Experiment{
 			experimentDef("exp-1", "claude-base", experiment.StatusConcluded,
 				experimentstore.Variant{ID: "treatment", Pool: "variant-pool", Weight: 0.25}),
@@ -147,7 +147,7 @@ func TestExperimentSourceConcludedMarksDrainAndDelete(t *testing.T) {
 // same pool, so the pool stays sized as a live variant.
 func TestExperimentSourceActiveWinsOverConcluded(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
-		Inner:       &fakeSource{configs: baseConfigs()},
+		Inner: &fakeSource{configs: baseConfigs()},
 		Experiments: fakeExpReader{exps: []experimentstore.Experiment{
 			experimentDef("exp-active", "claude-base", experiment.StatusActive,
 				experimentstore.Variant{ID: "t", Pool: "variant-pool", Weight: 0.3}),
@@ -171,7 +171,7 @@ func TestExperimentSourceActiveWinsOverConcluded(t *testing.T) {
 // the variant formula, but the base-pool adjustment is skipped.
 func TestExperimentSourceOrphanVariantSizedWithoutBaseAdjustment(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
-		Inner:       &fakeSource{configs: baseConfigs()},
+		Inner: &fakeSource{configs: baseConfigs()},
 		Experiments: fakeExpReader{exps: []experimentstore.Experiment{
 			experimentDef("exp-1", "unknown-runtime", experiment.StatusActive,
 				experimentstore.Variant{ID: "t", Pool: "variant-pool", Weight: 0.4, InitialMinWarm: 7}),
@@ -197,7 +197,7 @@ func TestExperimentSourceOrphanVariantSizedWithoutBaseAdjustment(t *testing.T) {
 // un-adjusted base set rather than wedging every pool.
 func TestExperimentSourceMalformedActiveFallsBackToBase(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
-		Inner:       &fakeSource{configs: baseConfigs()},
+		Inner: &fakeSource{configs: baseConfigs()},
 		Experiments: fakeExpReader{exps: []experimentstore.Experiment{
 			experimentDef("exp-1", "claude-base", experiment.StatusActive,
 				experimentstore.Variant{ID: "t", Pool: "variant-pool", Weight: 0.6}),

@@ -251,6 +251,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/redistopology"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
@@ -280,6 +281,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/sessionusage/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/sqlitestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
@@ -473,6 +475,12 @@ func main() {
 	dualStoreMaxSeconds := flag.Int("dual-store-unavailable-max-seconds",
 		envInt("LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS", int(dualstore.DefaultMaxUnavailable/time.Second)),
 		"§10.1 dualStoreUnavailableMaxSeconds: the per-replica window after which sessions with no successful store interaction become eligible for graceful termination once a store recovers. Default 60. The §10.1 dual-store monitor is active only when both --postgres-dsn and --redis-url are set. Override via LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS. F-10.1.3.")
+	claimHoldTTLSeconds := flag.Int("claim-hold-ttl-seconds",
+		envInt("LENNY_CLAIM_HOLD_TTL_SECONDS", int(recycle.DefaultClaimHoldTTL/time.Second)),
+		"§4.6.1 reserved-hold TTL: when a recycling pod's occupancy reaches zero the gateway patches the per-pod SandboxClaim to `reserved` and holds it this many seconds so a back-to-back same-tenant session rebinds (reserved → bound) with no acquisition round trip; on expiry the holder deletes the claim and the pod returns to idle. A reserved pod is counted as occupied for inventory and scaling (§4.6.2), so a high value depresses apparent idle inventory and delays retirement-limit evaluation; the gateway warns at startup when it is set high. Default 10. Override via LENNY_CLAIM_HOLD_TTL_SECONDS.")
+	slotCounterPostgresFallbackMaxSeconds := flag.Int("slot-counter-postgres-fallback-max-seconds",
+		envInt("LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
+		"§12.4 / §6.57 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md line 124 — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
@@ -1288,7 +1296,8 @@ func main() {
 		if perr != nil {
 			log.Fatalf("lenny-gateway: §10.3 startup TLS probe configuration: %v", perr)
 		}
-		if err := tlsprobe.Probe(context.Background(), tlsprobe.Config{TLSConfig: probeTLS},
+		if err := tlsprobe.Probe(
+			context.Background(), tlsprobe.Config{TLSConfig: probeTLS},
 			tlsprobe.Target{Backend: tlsprobe.BackendRedis, Addr: *startupProbeRedisAddr},
 			tlsprobe.Target{Backend: tlsprobe.BackendPgBouncer, Addr: *startupProbePgBouncerAddr},
 		); err != nil {
@@ -1330,6 +1339,17 @@ func main() {
 	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10 lines 1078, 1103)",
 		*delegationCascadeTimeoutSeconds, *delegationMaxOrphanTasksPerTenant)
 	_ = delegationQuiescenceCfg
+
+	// §4.6.1: a high reserved-hold TTL holds a recycled pod out of its pinned
+	// tenant's claimable idle inventory (a reserved pod is counted as occupied
+	// for inventory and scaling, §4.6.2) and delays retirement-limit
+	// evaluation at the next disposition. Warn at startup when the operator
+	// sets it above the advisory ceiling so the inventory effect is visible in
+	// the logs; the value is honored regardless.
+	if *claimHoldTTLSeconds > recycle.HighClaimHoldTTLWarnSeconds {
+		log.Printf("lenny-gateway: WARNING: claimHoldTTLSeconds=%ds exceeds the advisory ceiling of %ds (§4.6.1); a long reserved hold depresses apparent idle inventory and delays retirement-limit evaluation",
+			*claimHoldTTLSeconds, recycle.HighClaimHoldTTLWarnSeconds)
+	}
 
 	// ----- Stores -----
 	// session, transcript, tenant, and runtime state is persisted to
@@ -2042,7 +2062,8 @@ func main() {
 		}
 	}
 	resolvedGrantCheckInterval, err := integrity.ResolveGrantCheckInterval(
-		time.Duration(*auditGrantCheckIntervalSeconds)*time.Second, grantCheckRegulated)
+		time.Duration(*auditGrantCheckIntervalSeconds)*time.Second, grantCheckRegulated,
+	)
 	if err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -2086,7 +2107,8 @@ func main() {
 	if *auditPgauditEnabled && pgPool != nil {
 		if err := pgaudit.Preflight(context.Background(), pgPool); err != nil {
 			regulatedPresent := admin.ValidatePgauditForRegulatedTenants(
-				context.Background(), tenants, false) != nil
+				context.Background(), tenants, false,
+			) != nil
 			if regulatedPresent && os.Getenv("LENNY_ENV") == "production" {
 				log.Fatalf("lenny-gateway: FATAL: §11.7 pgaudit preflight failed with a regulated tenant present: %v", err)
 			}
@@ -2354,6 +2376,25 @@ func main() {
 		podBinder     *podsession.Binder
 		podRegistry   *podsession.Registry
 		checkpointSvc *checkpointer.Checkpointer
+		// holdCoordinator runs the §3.2 reserved-hold expiry timers on this
+		// replica. It is shared between the Binder (whose acquisition-path
+		// rebind cancels the local timer) and the scrub-report service (whose
+		// recycle disposition driver arms the timer after a reserved patch). It
+		// stays nil when --agent-namespace is unset (single-process dev) so
+		// the recycle path and the rebind branch are inert there.
+		holdCoordinator *recycle.HoldCoordinator
+		// recycleBoundary runs the §3.4 gateway-side recycle-boundary timers on
+		// this replica: the missing-report timeout armed at the bound → recycling
+		// patch (cancelled by ReportPodScrub, retiring the pod if no report
+		// arrives within cleanupTimeoutSeconds plus a grace) and the preConnect
+		// re-warm completion poll that drives the claim recycling → reserved once
+		// the SDK re-warm makes the pod Ready. It is shared between the Binder /
+		// SlotClaimer (which arm the timeout at the recycle patch) and the
+		// scrub-report disposition driver (which cancels it and starts the
+		// re-warm poll). It stays nil when --agent-namespace is unset so the
+		// recycle path is inert there; the §4.6.1 orphan GC remains the
+		// coordinator-crash backstop.
+		recycleBoundary *recycle.RecycleBoundaryCoordinator
 		// clusterClient is the controller-runtime client used by the
 		// session-start path and by the §10.4 PDB poller (F-10.4.4). It
 		// stays nil when --agent-namespace is unset (single-process dev).
@@ -2441,10 +2482,11 @@ func main() {
 		// §5.2 atomic slot counter. When Redis is wired, every
 		// concurrent-mode slot reservation goes through the Redis Lua
 		// GET-compare-INCR sequence so two gateway replicas racing on
-		// the same pod cannot transiently exceed maxConcurrent. With
-		// no Redis the SlotClaimer falls back to a race-prone SSA-only
-		// path that is unsafe for the production envelope; the
-		// fallback is retained only for tier-2 unit tests.
+		// the same pod cannot transiently exceed maxConcurrent. The
+		// counter (with its §12.4 Postgres fallback) is the only
+		// intra-pod capacity gate; a nil counter makes SlotClaimer
+		// ClaimSlot and ReleaseSlot fail closed rather than overrun or
+		// over-release the pod, so a concurrent-mode pool requires Redis.
 		var slotCounter *slotcounter.Counter
 		if redisClient != nil {
 			// §5.2 line 521: the SessionStore is the post-recovery
@@ -2452,13 +2494,58 @@ func main() {
 			// slot reservation on each concurrent-mode pod re-seeds the
 			// pod's active_slots counter from GetActiveSlotsByPod before
 			// any new slot is allowed, closing the over-commit race.
-			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination), slotcounter.WithSlotSource(sessions))
+			// §12.4 line 208: the SessionStore is also the Redis-outage
+			// capacity-gate fallback. When Redis is unreachable the counter
+			// gates intra-pod slot admission on GetActiveSlotsByPod under a
+			// per-pod Postgres advisory lock (ReserveSlotUnderLock), failing
+			// closed only after the bounded outage window.
+			// §12.4 / §6.57: the Postgres-fallback window is operator-tunable
+			// (gateway.slotCounterPostgresFallbackMaxSeconds) so the spec-default
+			// 60s bounded outage window is not hardcoded; a non-positive value
+			// keeps the default.
+			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination),
+				slotcounter.WithSlotSource(sessions),
+				slotcounter.WithFallbackSource(sessions),
+				slotcounter.WithFallbackMaxWindow(time.Duration(*slotCounterPostgresFallbackMaxSeconds)*time.Second))
+		}
+		// §3.2 reserved-hold coordinator: arms the per-claim hold-TTL expiry
+		// timer after a recycle reserves the claim, and is cancelled on an
+		// acquisition-path rebind. Constructed here (with the cluster client and
+		// agent namespace available) and shared with the scrub-report service so
+		// the disposition driver and the rebind branch use one timer registry.
+		holdCoordinator, err = recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{
+			Client:    k8sClient,
+			Namespace: *agentNamespace,
+			Now:       clockinject.Now,
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: §3.2 reserved-hold coordinator: %v", err)
+		}
+		// §3.4 recycle-boundary coordinator: arms the missing-report timeout at
+		// the bound → recycling patch and drives the preConnect re-warm
+		// completion (recycling → reserved) once the SDK re-warm makes the pod
+		// Ready. It hands the re-warm-completion reserve token to the
+		// holdCoordinator so the hold-TTL expiry timer is armed on the same
+		// registry the non-preConnect reserve uses.
+		recycleBoundary, err = recycle.NewRecycleBoundaryCoordinator(recycle.RecycleBoundaryCoordinatorOptions{
+			Client:    k8sClient,
+			Namespace: *agentNamespace,
+			Pools:     pools,
+			HoldTTL:   time.Duration(*claimHoldTTLSeconds) * time.Second,
+			Holds:     holdCoordinator,
+			Now:       clockinject.Now,
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: §3.4 recycle-boundary coordinator: %v", err)
 		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,
 			Namespace:        *agentNamespace,
 			AdapterPort:      adapterGRPCPort,
 			AcceptedVersions: []string{adapter.ProtocolVersionV1},
+			HoldCanceller:    holdCoordinator,
+			RecycleBoundary:  recycleBoundary,
+			Now:              clockinject.Now,
 			DialAdapter: func(addr string) (*adapterclient.Client, error) {
 				return adapterclient.Dial(addr, dialOpt, keepaliveOpt)
 			},
@@ -2468,8 +2555,9 @@ func main() {
 			// StartSession. A BindRequest that names no credential pools
 			// assigns nothing.
 			Credentials: credAssign,
-			// §5.2 atomic slot counter (Redis-backed); nil falls back
-			// to the SSA-only path documented on SlotClaimer.
+			// §5.2 atomic slot counter (Redis-backed) with its §12.4
+			// Postgres-outage fallback; nil makes concurrent-mode slot
+			// assignment and release fail closed (see SlotClaimer).
 			SlotCounter: slotCounter,
 			// §5.1 line 43 — log the runtime.integrationLevel.underdeclared
 			// warning when the adapter handshake observes a higher level
@@ -2627,7 +2715,8 @@ func main() {
 	toolApprovalWaits := toolapproval.NewRegistry()
 	if pe, ok := exec.(*executor.PodExecutor); ok {
 		pe.SetApprovalGate(sessionserver.NewToolApprovalGate(
-			sessions, interactions, eventBus, toolApprovalWaits, clockinject.Now, *toolApprovalTimeout))
+			sessions, interactions, eventBus, toolApprovalWaits, clockinject.Now, *toolApprovalTimeout,
+		))
 	}
 	var evals evalstore.Store = evalstore.NewMemory(0, nil)
 	if pgPool != nil {
@@ -3110,7 +3199,8 @@ func main() {
 				jwtaudit.PlatformTenantID,
 				storeRouter,
 				tenantResidencyLookup{tenants: tenants},
-				gwMetrics),
+				gwMetrics,
+			),
 			// spec: §25.9 line 3710 — bound the cross-tenant audit
 			// scatter-gather fan-out by the shared storeRouter scatter
 			// config (max concurrency, per-shard + aggregate timeout). v1 is
@@ -3192,7 +3282,8 @@ func main() {
 				// AuditPartitionDropBlocked alert evaluates when the SIEM
 				// delivery guard holds a partition past its retention TTL.
 				Metrics: auditRetentionMetrics{gwMetrics},
-			})
+			},
+		)
 		// spec: §12.6 lines 685-689 — the EventBus retranscribe worker, the
 		// durable correctness layer that re-publishes every audit row whose
 		// first EventBus publish failed (eventbus_publish_state IN
@@ -3210,14 +3301,16 @@ func main() {
 			}
 			eventBusPublisher := eventbus.NewRedisEventBus(
 				securityBus, eventBusMetrics,
-				eventbus.WithDuplicateInjectionFactor(*eventBusDuplicateInjectionFactor))
+				eventbus.WithDuplicateInjectionFactor(*eventBusDuplicateInjectionFactor),
+			)
 			eventBusRetranscriber = eventbus.NewRetranscriber(
 				pgAudit, eventBusPublisher,
 				eventbus.RetranscribeConfig{
 					RetryInterval:    time.Duration(*eventBusRetryIntervalSeconds) * time.Second,
 					MaxRetryAttempts: *eventBusMaxRetryAttempts,
 				},
-				eventBusMetrics)
+				eventBusMetrics,
+			)
 		}
 	} else {
 		auditChains := audit.NewChainSet()
@@ -3875,6 +3968,16 @@ func main() {
 	// ≤1/s per session. F-11.3.7.
 	activityStamper := sessionidle.NewStamper(sessions, clockinject.Now)
 
+	// spec: §5.2 (combined failed+leaked unhealthy threshold), §6.2
+	// (leaked-slot semantics) — a single per-pod fail/leak rolling-window
+	// tracker shared by the slot-bind-failure path (the sessionserver slot
+	// retry policy) and the §4.7 scrub-report drain ledger (adapter-reported
+	// slot-scrub leaks). Both feed one window so a pod crossing
+	// ceil(maxConcurrentSessions/2) on the combined count drains regardless of
+	// which path observed the degradation; instantiating two disjoint trackers
+	// would let the counts never combine.
+	slotHealth := slothealth.New(slothealth.WithClock(clockinject.Now))
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		// spec: §6.2 lines 273-300 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
@@ -4057,6 +4160,9 @@ func main() {
 		MidSessionUploadEnabled: *midSessionUploadEnabled,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
+		// §5.2 — the shared fail/leak tracker so the slot-bind-failure path and
+		// the §4.7 scrub-report drain ledger accumulate in one rolling window.
+		SlotHealth: slotHealth,
 		// §5.2 — whole-pod replacement counter, incremented when the
 		// concurrent-workspace slot retry policy drains an unhealthy pod
 		// (ceil(maxConcurrent/2) slots failed or leaked in the window).
@@ -4066,6 +4172,12 @@ func main() {
 		SlotLeakGauge: func(pod, pool string, leaked int) {
 			gwMetrics.SetAdapterLeakedSlots(pod, pool, float64(leaked))
 		},
+		// §4.6.1 Pool exhaustion behavior, §16.1 — the per-pool claim FIFO
+		// metrics for onPoolExhausted: queue pools. The depth gauge and the
+		// timeout counter back the §16.5 PodClaimQueueSaturated alert.
+		SetPodClaimQueueDepth:    gwMetrics.SetPodClaimQueueDepth,
+		ObservePodClaimQueueWait: gwMetrics.ObservePodClaimQueueWait,
+		IncPodClaimTimeout:       gwMetrics.IncPodClaimTimeout,
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
 		// each successful pod-warm start.
 		ObserveStartupDuration: gwMetrics.ObserveSessionStartupDuration,
@@ -4092,6 +4204,12 @@ func main() {
 		// counts every attempt with its outcome. F-7.3.10.
 		IncSessionResumeAttempt: gwMetrics.IncSessionResumeAttempt,
 		IncSessionRetry:         gwMetrics.IncSessionRetry,
+		// spec: §16.1 / §16.1.1 — the watchdog's expiry sweeps fire
+		// Server.OnSessionExpired, which bumps the
+		// lenny_session_expiry_total{pool, reason} counter with the §16.1.1
+		// reason the watchdog resolved (max_idle_time | max_session_age).
+		// F-11.3.7.
+		IncSessionExpiry: gwMetrics.IncSessionExpiry,
 		// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9. Increment the
 		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
 		// counter when a §7.5 setup command fails on the warm-pool side
@@ -4775,7 +4893,8 @@ func main() {
 		if pgPool != nil {
 			ruStore = runtimeupgradepg.New(pgPool)
 		}
-		mgr := runtimeupgrade.NewManager(ruStore,
+		mgr := runtimeupgrade.NewManager(
+			ruStore,
 			runtimeupgrade.WithPoolReader(poolSpecReader{store: pools}),
 			runtimeupgrade.WithMetrics(gwMetrics),
 		)
@@ -4909,7 +5028,8 @@ func main() {
 			Audience:         expectedAuds,
 			Clock:            clockinject.Now,
 			NewID:            func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("imp-%x", b[:]) },
-		})
+		},
+	)
 	adminRouter = adminRouter.WithImpersonation(impersonationSvc)
 	// §6.2 line 260 / §11.3 line 219: pin the admin runtime validator
 	// to the same outer bound the finalizing-state watchdog enforces, so
@@ -5064,7 +5184,8 @@ func main() {
 			userScoped = append(userScoped,
 				erasure.Eraser{Name: "quota", DeleteByUser: quotaEraser.DeleteByUser})
 		}
-		userScoped = append(userScoped,
+		userScoped = append(
+			userScoped,
 			// step 8: §9.4 MemoryStore is a §12.1 pluggable role; FromStore
 			// adapts its error-only DeleteByUser and compile-checks it against
 			// StoreEraser. Memory and the session-keyed interaction rows
@@ -5177,7 +5298,8 @@ func main() {
 		// so the redaction is wired only on the durable store.
 		if auditOpsStore != nil && auditValidator != nil {
 			receiptSigner, rerr := deadletterredaction.NewKMSReceiptSigner(
-				context.Background(), kmsProvider, "platform:audit-redaction-signing", "boot")
+				context.Background(), kmsProvider, "platform:audit-redaction-signing", "boot",
+			)
 			if rerr != nil {
 				log.Fatalf("lenny-gateway: §12.8 redaction receipt signer: %v", rerr)
 			}
@@ -5249,7 +5371,8 @@ func main() {
 				return 0, mem.DeleteByTenant(ctx, tenantID)
 			}})
 		}
-		tenantErasers = append(tenantErasers,
+		tenantErasers = append(
+			tenantErasers,
 			namedTenantEraser{"eval_results", evals.DeleteByTenant},
 			namedTenantEraser{"interactions", interactions.DeleteByTenant},
 			// SessionStore is the FK parent of the session-keyed stores
@@ -5427,11 +5550,13 @@ func main() {
 	// full_revoke fan-out's deny-list path.
 	if ls, ok := llmLeases.(poolLeaseStore); ok {
 		adminRouter = adminRouter.WithPoolCredentialRevocation(
-			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp})
+			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp},
+		)
 		// §24.5 row 2: surface per-credential lease counts on the admin GET
 		// from the same lease store the revoker drains.
 		adminRouter = adminRouter.WithPoolCredentialHealth(
-			&poolCredentialHealthReader{leases: ls})
+			&poolCredentialHealthReader{leases: ls},
+		)
 	}
 	// §4.9.1 KMS-key-rotation re-encryption admin surface. Registered
 	// only when at least one envelope-backed store is wired (Postgres).
@@ -6438,7 +6563,40 @@ func main() {
 	if treeBudgetConcrete != nil {
 		leaseTreeGranter = treeBudgetConcrete
 	}
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, saTokenVerifier, mtlsDeny)
+	// §4.7 — the adapter's per-slot and whole-pod scrub reports reach the
+	// gateway recycle-counter writes, the unhealthy-threshold drain ledger,
+	// and the §3.4 / §6.39 recycle disposition through the ScrubReporter. It
+	// needs the cluster client (Pods get, SandboxClaim status patch) and the
+	// Postgres agent_pod_state mirror (the recycle counters), so it is wired
+	// only when both --agent-namespace (clusterClient) and the Postgres pool
+	// are configured; otherwise both scrub-report RPCs return Unimplemented
+	// (the §8.6-only GatewayControl deployment). F-4.7.
+	var scrubReports leasecontrol.ScrubReportService
+	holdTTL := time.Duration(*claimHoldTTLSeconds) * time.Second
+	if *grpcAddr != "" && clusterClient != nil && pgPool != nil && *agentNamespace != "" {
+		// §3.2 reserved-hold coordinator (constructed alongside the Binder):
+		// after a non-preConnect recycle reserves the claim, the disposition
+		// driver hands it the hold token and the coordinator arms the per-claim
+		// hold-TTL expiry timer (the precondition-guarded DELETE that returns
+		// the pod to idle). It is replica-local; a holder crash leaves the
+		// reserved claim for the §4.6.1 orphan GC. It is stopped on shutdown so
+		// the in-process timers do not fire against a draining client.
+		if holdCoordinator != nil {
+			defer holdCoordinator.Stop()
+		}
+		// §3.4 recycle-boundary coordinator: stopped on shutdown so the
+		// in-process missing-report timers and re-warm polls do not run against
+		// a draining client. The recycling claims it abandons are reclaimed by
+		// the §4.6.1 orphan GC after the orphan timeout.
+		if recycleBoundary != nil {
+			defer recycleBoundary.Stop()
+		}
+		scrubReports, err = newScrubReportService(clusterClient, agentpodstatepg.New(pgPool), pools, runtimes, gwMetrics, slotHealth, *agentNamespace, holdTTL, holdCoordinator, recycleBoundary, clockinject.Now)
+		if err != nil {
+			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
+		}
+	}
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, scrubReports, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, saTokenVerifier, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -6492,17 +6650,15 @@ func main() {
 		// default) instead of expiring every session at the single baked
 		// default. F-11.3.3.
 		WithSessionAgeResolver(sessionage.New(runtimes, pools)).
-		// spec: §11.3 line 199 / §6.2 lines 273-300 — the idle sweep
-		// expires a `running` session idle longer than its effective
-		// `maxIdleTimeSeconds`, honouring the per-runtime
-		// `limits.maxIdleTimeSeconds` and the §27.6 playground idle
-		// override. F-11.3.7.
-		WithIdleResolver(sessionidle.NewResolver(runtimes)).
-		// spec: §9.2 line 102 / §6.2 `input_required` row — pause the idle
-		// timer while a session waits on a pending elicitation or
-		// request_input so a session blocked on a human or peer is not
-		// reaped as idle. F-9.2.15.
-		WithIdlePauseChecker(sessionidle.NewPauseChecker(interactions, inputWaits))
+		// spec: §11.3 line 199 / §6.2 (maxClientIdleSeconds clock) — the
+		// idle sweep expires a clock-running session idle longer than its
+		// effective `maxClientIdleSeconds`, honouring the per-runtime /
+		// per-pool `sessionPolicy.maxClientIdleSeconds` (default: the pool's
+		// effective `maxSessionAgeSeconds`) and the §27.6 playground idle
+		// override. The clock runs in `running`, `input_required`, and
+		// `awaiting_client_action`; its pause table lives in the watchdog
+		// sweep, so no separate pause predicate is wired. F-11.3.7.
+		WithIdleResolver(sessionidle.NewResolver(runtimes, pools))
 	// spec: §7.2 lines 294, 341 — wire the DLQ TTL sweeper only when the
 	// messaging coordinator exists (Redis present). Passing a nil
 	// *Coordinator would create a typed-nil interface that defeats the
@@ -8187,7 +8343,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -8222,6 +8378,11 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		// the §8.2 per-tree delegation budget counter so admission observes
 		// the raised pool. F-8.6.3.
 		TreeBudget: treeGranter,
+		// §4.7 — the adapter's per-slot and whole-pod scrub reports drive the
+		// recycle-counter writes, the unhealthy-threshold drain ledger, and the
+		// §3.4 / §6.39 recycle disposition. Nil leaves ReportSessionScrub and
+		// ReportPodScrub returning Unimplemented (the §8.6-only deployment).
+		ScrubReports: scrubReports,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
@@ -8301,6 +8462,77 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterGatewayControlServer(gs, svc)
 	return gs, lis, nil
+}
+
+// newScrubReportService builds the §4.7 ScrubReporter that backs the
+// ReportSessionScrub and ReportPodScrub RPCs. It wires the five concrete
+// recycle seams (pkg/gateway/recycle) onto the gateway's dependencies: the
+// agent_pod_state recycle counters, the unhealthy-threshold drain ledger
+// over the shared slothealth tracker (the same tracker the sessionserver
+// slot-bind-failure path feeds, so adapter-reported leaks and slot-bind
+// failures accumulate in one §5.2 rolling window), the §6.39 host-node
+// schedulability pod inspector, the §3.4 claim disposition driver, and the
+// §16.1 retirement metrics. The drain ledger resolves each leaked pod's pool
+// maxConcurrentSessions through the pool store, so a single-session
+// recycling pod drains on the first leak while a recycling concurrent-session
+// pool (the §5.2 "Concurrent" preset, maxConcurrentSessions: N with
+// recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
+//
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
+// disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.39
+// (host-node schedulability retire), §16.1 (recycle metrics).
+func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, boundary *recycle.RecycleBoundaryCoordinator, now func() time.Time) (leasecontrol.ScrubReportService, error) {
+	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
+		Tracker:   slotHealth,
+		Client:    cl,
+		Namespace: agentNamespace,
+		Pools:     pools,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build drain ledger: %w", err)
+	}
+	inspector, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
+		Client:    cl,
+		Namespace: agentNamespace,
+		Pools:     pools,
+		Runtimes:  runtimes,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build pod inspector: %w", err)
+	}
+	driverOpts := recycle.ClaimDispositionDriverOptions{
+		Client:    cl,
+		Namespace: agentNamespace,
+		HoldTTL:   holdTTL,
+		Now:       now,
+		Holds:     holds,
+	}
+	// §3.4: the disposition driver signals the recycle-boundary coordinator on
+	// every resolved ReportPodScrub so it cancels the missing-report timeout
+	// and, on a preConnect recycle, drives recycling → reserved once the SDK
+	// re-warm completes. Set only when the coordinator exists so a typed-nil
+	// pointer is not wrapped into a non-nil interface (single-process dev leaves
+	// the timeout to fire and the re-warm completion to the orphan GC).
+	if boundary != nil {
+		driverOpts.Boundary = boundary
+	}
+	driver, err := recycle.NewClaimDispositionDriver(driverOpts)
+	if err != nil {
+		return nil, fmt.Errorf("build claim disposition driver: %w", err)
+	}
+	reporter, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters:  recycle.NewRecycleCounterStore(counters),
+		Ledger:    ledger,
+		Inspector: inspector,
+		Driver:    driver,
+		Metrics:   recycle.NewRetirementMetrics(metrics),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build scrub reporter: %w", err)
+	}
+	return reporter, nil
 }
 
 // leaseExtensionAuditAdapter implements leasecontrol.Auditor, turning
@@ -9006,7 +9238,8 @@ func (a mcpVCSLeaseAuditor) RecordVCSLease(ctx context.Context, lease mcptools.V
 	// is not pool-backed, so credential_pool_id is empty; the provider is
 	// the credential attribution and the access mode is the delivery mode.
 	a.billing.Emit(ctx, billingfanout.CredentialLeased(
-		lease.TenantID, lease.SessionID, "", lease.Provider, lease.Mode))
+		lease.TenantID, lease.SessionID, "", lease.Provider, lease.Mode,
+	))
 	if a.appender == nil {
 		return
 	}
@@ -9039,7 +9272,8 @@ type deriveDowngradeBillingAuditor struct {
 func (a deriveDowngradeBillingAuditor) EmitDeriveIsolationDowngrade(ctx context.Context, ev sessionserver.DeriveIsolationDowngradeEvent) {
 	a.billing.Emit(ctx, billingfanout.DeriveIsolationDowngrade(
 		ev.TenantID, ev.SourceSessionID, string(ev.SourceIsolationProfile),
-		ev.TargetPool, string(ev.TargetIsolationProfile), ev.AuthorizingUserSubject, ev.TicketID))
+		ev.TargetPool, string(ev.TargetIsolationProfile), ev.AuthorizingUserSubject, ev.TicketID,
+	))
 }
 
 // sessionLifecycleAuditor adapts the gateway audit appender to the

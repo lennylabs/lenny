@@ -15,6 +15,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net"
 	"path/filepath"
 	"time"
 
@@ -27,7 +28,11 @@ type Config struct {
 	// DataDir holds the PostgreSQL data directory and the downloaded
 	// binary bundle. §17.4 places it at ~/.lenny/postgres/.
 	DataDir string
-	// Port is the loopback TCP port the instance listens on.
+	// Port is the loopback TCP port the instance listens on. Zero asks
+	// the kernel for a free ephemeral port at Start time, which lets
+	// concurrent embedded instances (for example parallel test binaries)
+	// avoid the fixed-port collisions §17.4 warns against; the chosen
+	// port is then reflected by Port() and DSN().
 	Port uint32
 	// Database, Username, and Password name the bootstrap database
 	// and superuser role created on first start.
@@ -56,6 +61,30 @@ func New(cfg Config) *Instance {
 	return &Instance{cfg: cfg}
 }
 
+// Port reports the loopback TCP port the instance listens on. When the
+// Config requested an ephemeral port (Port == 0) the value is resolved
+// during Start, so Port is meaningful only after a successful Start.
+func (i *Instance) Port() uint32 {
+	return i.cfg.Port
+}
+
+// freePort asks the kernel for an unused ephemeral TCP port on the
+// loopback interface and returns it. The listener is closed before the
+// port is returned so the embedded Postgres process can bind it; this
+// is the §17.4 free-port pattern adapted to a numeric port the embedded
+// library requires up front.
+func freePort() (uint32, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("reserve ephemeral port: %w", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		return 0, fmt.Errorf("release ephemeral port: %w", err)
+	}
+	return uint32(port), nil
+}
+
 // DSN returns the libpq connection string for the instance. It is
 // valid only while the instance is running.
 func (i *Instance) DSN() string {
@@ -69,6 +98,13 @@ func (i *Instance) DSN() string {
 func (i *Instance) Start() error {
 	if i.started {
 		return nil
+	}
+	if i.cfg.Port == 0 {
+		port, err := freePort()
+		if err != nil {
+			return fmt.Errorf("embedded postgres: %w", err)
+		}
+		i.cfg.Port = port
 	}
 	cfg := embeddedpostgres.DefaultConfig().
 		Version(embeddedpostgres.V16).

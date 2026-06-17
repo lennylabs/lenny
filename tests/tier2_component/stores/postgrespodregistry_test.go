@@ -62,6 +62,9 @@ func seedPod(t *testing.T, ctx context.Context, pg *containers.Postgres, podID, 
 // agent_pod_state satisfies the full §12.6 PodRegistry interface so a
 // Tier-4 swap is a configuration change rather than a from-scratch
 // build.
+// diagnosis: a failure means the PostgresPodRegistry adapter does not
+// fully satisfy the §12.6 PodRegistry interface, so a Tier-4 swap to it
+// would not be a drop-in configuration change.
 func TestPostgresPodRegistryContract_spec_12_6_436(t *testing.T) {
 	t.Parallel()
 	r, pg := startPodRegistry(t)

@@ -158,7 +158,7 @@ On top of Basic, your program also opens a connection to a local tool server tha
 - Inter-session messaging.
 - Connector tool access (GitHub, Jira, Slack, and so on).
 
-What you still don't get at this level: clean interrupt handling (you'll get a SIGTERM when interrupted), graceful checkpointing (best-effort only), in-place credential rotation (a credential change requires a restart), advance deadline warnings, or pod reuse between tasks.
+What you still don't get at this level: clean interrupt handling (you'll get a SIGTERM when interrupted), graceful checkpointing (best-effort only), in-place credential rotation (a credential change requires a restart), or advance deadline warnings.
 
 Use this level when your agent needs to call out to tools, delegate work, or talk to a human while it's running. About 150-200 lines of code plus an MCP client library.
 
@@ -172,8 +172,9 @@ With it, you can support:
 - Clean interrupts, where the agent is told to stop and acknowledges when it's reached a safe point.
 - Credential rotation without restarting: the platform hands you a new credential and you acknowledge the swap.
 - Advance warning before a deadline, so you can wrap up gracefully instead of being terminated.
-- Pod reuse across sequential tasks in task-mode pools.
 - Coordinated draining when the pool is shutting down.
+
+Pod recycling (`recycle.enabled`) requires no runtime cooperation and works at every integration level; the per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated.
 
 Use this level for agents that need to survive pod failures, handle interrupts, and rotate credentials without restarting. About 300-400 lines of code, including a small background goroutine or thread to handle lifecycle signals.
 

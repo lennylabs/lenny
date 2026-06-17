@@ -99,9 +99,7 @@ func (s *Store) Create(ctx context.Context, c connectorstore.Connector) error {
 func (s *Store) Get(ctx context.Context, tenantID, id string) (connectorstore.Connector, error) {
 	var out connectorstore.Connector
 	err := s.runRead(ctx, tenantID, func(tx pgx.Tx) error {
-		var (
-			row pgx.Row
-		)
+		var row pgx.Row
 		if tenantID == connectorstore.AllTenantsSentinel {
 			row = tx.QueryRow(ctx,
 				`SELECT `+selectList+` FROM connectors WHERE id = $1`, id)

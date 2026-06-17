@@ -292,8 +292,8 @@ func TestHook_CacheSourceOverrides(t *testing.T) {
 			}}
 			metrics := &fakeMetrics{}
 			hook := &Hook{
-				Sessions: enum,
-				Metrics:  metrics,
+				Sessions:   enum,
+				Metrics:    metrics,
 				Checkpoint: func(_ context.Context, _, _ string, _ time.Duration) error { return nil },
 			}
 			w := httptest.NewRecorder()

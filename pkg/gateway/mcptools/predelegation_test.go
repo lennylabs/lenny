@@ -71,7 +71,7 @@ func newMCPForDelegate(t *testing.T, exec executor.Executor, chain *interceptor.
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		RuntimeRef: "claude", PoolRef: "pool-a",
-		State:     session.StateRunning, IsolationProfile: isolation.ProfileSandboxed,
+		State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed parent: %v", err)
@@ -222,7 +222,7 @@ func TestDelegateTaskPreDelegationRejectAudits(t *testing.T) {
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		RuntimeRef: "claude", PoolRef: "pool-a",
-		State:     session.StateRunning, IsolationProfile: isolation.ProfileSandboxed,
+		State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed parent: %v", err)

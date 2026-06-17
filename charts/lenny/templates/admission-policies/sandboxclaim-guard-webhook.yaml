@@ -1,8 +1,9 @@
 {{- /*
 lenny-sandboxclaim-guard ValidatingAdmissionWebhook (§17.2 item 7,
-§4.6.1 ADR-007). Prevents duplicate claims on CREATE and stale writes
-on UPDATE against SandboxClaim resources. Scoped to agent namespaces;
-fail-closed.
+§4.6.1 ADR-007). Enforces per-pod claim uniqueness on CREATE against
+SandboxClaim resources: rejects a second non-terminal claim for the
+same .spec.sandboxRef. PATCH and PUT are admitted without inspection
+and are not registered here. Scoped to agent namespaces; fail-closed.
 */ -}}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-sandboxclaim-guard") }}
 ---
@@ -30,7 +31,7 @@ webhooks:
       - apiGroups: ["lenny.dev"]
         apiVersions: ["v1"]
         resources: ["sandboxclaims"]
-        operations: ["CREATE", "UPDATE"]
+        operations: ["CREATE"]
         scope: Namespaced
     clientConfig:
       service:

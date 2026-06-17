@@ -75,7 +75,34 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 | `pool.runtimeClass` | string | Derived from `isolationProfile` | Explicit Kubernetes `RuntimeClass` override. Normally leave unset and let `isolationProfile` select the default: `runc` | `gvisor` | `kata`. | Must be a valid `RuntimeClass` name on the cluster. |
 | `pool.resources.cpu` | string | `"250m"` (request), `"2"` (limit) | CPU request and limit for agent containers. | Valid Kubernetes resource quantity. |
 | `pool.resources.memory` | string | `"256Mi"` (request), `"2Gi"` (limit) | Memory request and limit for agent containers. | Valid Kubernetes resource quantity. |
-| `pool.executionMode` | string | `session` | Pod execution mode: `session` (one session per pod), `task` (sequential reuse), `concurrent` (parallel slots). | One of `session`, `task`, `concurrent`. |
+| `pool.executionMode` | string | `session` | Pod execution mode: `session` (a managed session bound to a claimed pod, parameterized by `sessionPolicy`) or `service` (each message routed to any ready replica). | One of `session`, `service`. |
+
+### sessionPolicy (session mode)
+
+The `sessionPolicy` block parameterizes session mode. `taskPolicy` and `concurrentWorkspacePolicy` are removed; their fields are relocated here. Service mode does not use `sessionPolicy`; it keeps a per-pod slot bound through `pool.maxConcurrent`.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `sessionPolicy.maxConcurrentSessions` | int | 1 | Simultaneous sessions per pod. | `> 1` requires `acknowledgeProcessLevelIsolation: true`. |
+| `sessionPolicy.acknowledgeProcessLevelIsolation` | bool | `false` | Acknowledges process-level co-tenancy. | Required when `maxConcurrentSessions > 1`. |
+| `sessionPolicy.recycle.enabled` | bool | `false` | Reuse the pod across sequential sessions with a whole-pod scrub at the occupancy-zero boundary. | `true` requires `acknowledgeBestEffortScrub: true`. |
+| `sessionPolicy.recycle.acknowledgeBestEffortScrub` | bool | `false` | Acknowledges that the recycle scrub is best-effort. | Required when `recycle.enabled: true`. |
+| `sessionPolicy.recycle.maxSessionsPerPod` | int | none | Sessions served before the pod retires. Counts every session served. | Required when `recycle.enabled: true`. |
+| `sessionPolicy.recycle.maxPodUptimeSeconds` | int | unset | Wall-clock uptime cap before the pod retires. | Optional; must be `> 0` when set. |
+| `sessionPolicy.recycle.maxScrubFailures` | int | 3 | Cumulative scrub failures before the pod retires. | Must be `> 0`. |
+| `sessionPolicy.recycle.onScrubFailure` | string | `warn` | Disposition on a failed scrub below the limit. | One of `warn`, `fail`. |
+| `sessionPolicy.recycle.scrubProfile` | string | `standard` | Scrub procedure. `vm-restart` restarts the guest VM between tenants; `in-place` runs the standard scrub inside the continuing VM guest. | One of `standard`, `vm-restart`, `in-place`. |
+| `sessionPolicy.recycle.acknowledgeMicrovmResidualState` | bool | `false` | Acknowledges cross-tenant guest-kernel residual state. | Required when `scrubProfile: in-place`. |
+| `sessionPolicy.recycle.allowCrossTenantReuse` | bool | `false` | Permit cross-tenant sequential reuse. | Requires `isolationProfile: microvm`; never permitted when `maxConcurrentSessions > 1`. |
+| `sessionPolicy.cleanupCommands` | string[] | `[]` | Deployer cleanup commands run at the recycle boundary. | -- |
+| `sessionPolicy.cleanupTimeoutSeconds` | int | 60 | Timeout for `cleanupCommands` plus the scrub-report grace. | Must be `> 0`. |
+| `sessionPolicy.maxSessionRetries` | int | 1 | Crash re-dispatch budget (2 total attempts; 0 disables). | Must be `>= 0`. |
+| `sessionPolicy.maxSessionAgeSeconds` | int | 7200 | Wall-clock session age cap. | Must be `> 0`. |
+| `sessionPolicy.maxClientIdleSeconds` | int | effective `maxSessionAgeSeconds` | Client-inactivity bound. | Must be `> 0`. |
+| `sessionPolicy.slotRetries` | int | 1 | Retries for failed slots when `maxConcurrentSessions > 1`. | Must be `>= 0`. |
+| `sessionPolicy.onPoolExhausted` | string | `reject` | Pool-exhaustion behavior. `queue` holds the request in the per-pool FIFO. | One of `reject`, `queue`. |
+| `sessionPolicy.maxQueueWaitSeconds` | int | 30 | Queue wait bound when `onPoolExhausted: queue`. | Must be `> 0`. |
+| `pool.maxConcurrent` | int | none | Service-mode per-pod slot bound; readiness-driven routing selects a new pod when a pod reaches capacity. | Service mode only. |
 
 ### Checkpointing configuration
 
@@ -111,7 +138,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 | `runtime.name` | string | Required | Unique name for the runtime. | Non-empty, alphanumeric with hyphens. |
 | `runtime.image` | string | Required | Container image reference (digest recommended for production). | Valid image reference. |
 | `runtime.type` | string | `agent` | Runtime type: `agent` (participates in Lenny's task lifecycle) or `mcp` (hosts an MCP server; no task lifecycle, no `capabilities`). | One of `agent`, `mcp`. |
-| `runtime.executionMode` | string | `session` | Pod reuse mode: `session` (one session per pod), `task` (sequential task reuse with workspace scrub between tasks — requires deployer acknowledgment), or `concurrent` (multiple concurrent sessions per pod). | One of `session`, `task`, `concurrent`. |
+| `runtime.executionMode` | string | `session` | Execution mode: `session` (a managed session bound to a claimed pod, parameterized by `sessionPolicy`) or `service` (each message routed to any ready replica with no conversation continuity). | One of `session`, `service`. |
 | `runtime.capabilities` | object | `{}` | Runtime capability declarations. | See capabilities table below. |
 | `runtime.agentInterface` | object | `{}` | A2A-style agent card metadata published for clients: `description`, `inputModes`, `outputModes`, `supportsWorkspaceFiles`, `skills`, `examples`. Not a protocol selector. | -- |
 | `runtime.publishedMetadata` | object | `{}` | Metadata published in the runtime registry for client discovery. | -- |
@@ -134,7 +161,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `session.maxSessionAgeSeconds` | int | 7200 | Maximum wall-clock age of a session before automatic expiry. Timer paused during `suspended` and `resume_pending`. | Must be > 0. |
-| `session.maxIdleTimeSeconds` | int | 600 | Maximum time without qualifying activity before automatic expiry. Qualifying events: agent output, tool call, tool result, elicitation request, message send. | Must be > 0. |
+| `session.maxClientIdleSeconds` | int | effective `maxSessionAgeSeconds` | Maximum time without qualifying activity before automatic expiry. Replaces the former `maxIdleTimeSeconds` knob; the default is the effective `maxSessionAgeSeconds` rather than 600s. Qualifying events: agent output, tool call, tool result, elicitation request, message send. Paused during `suspended`, `resume_pending`, and `resuming`; runs during `input_required`, `awaiting_client_action`, and elicitation waits. | Must be > 0. |
 | `session.maxElicitationsPerSession` | int | 50 | Maximum elicitation requests per session. Prevents agents from spamming the user. | Must be > 0. |
 | `session.maxElicitationWait` | int | 600 | Maximum time (seconds) a session waits for a human response to an elicitation. If exceeded, the elicitation is dismissed and the pod receives a timeout error. | Must be > 0. |
 | `session.maxResumeWindowSeconds` | int | 900 | Maximum time to wait for pod allocation during `resume_pending`. | Must be > 0. |
@@ -396,7 +423,7 @@ The web playground is an optional browser-based UI for testing runtimes. It is g
 | `playground.devTenantId` | string | `default` | Tenant bound to the dev HMAC JWT `tenant_id` claim when `authMode=dev`. Format-gated at startup; tenant existence is Ready-gated per-request, returning a transient `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` while `lenny-bootstrap` is still running. | Must match `^[a-zA-Z0-9_-]{1,128}$`. |
 | `playground.allowedRuntimes` | string[] | `["*"]` | Glob list of runtime IDs visible in the playground runtime picker. | Valid glob patterns. |
 | `playground.maxSessionMinutes` | int | 30 | Hard cap on playground-initiated session duration. | Must be > 0. |
-| `playground.maxIdleTimeSeconds` | int | 300 | Hard override of the runtime's `maxIdleTimeSeconds` for playground-initiated sessions. | `60 <= v <= runtime.maxIdleTimeSeconds`. |
+| `playground.maxIdleTimeSeconds` | int | 300 | Hard override of the runtime's `maxClientIdleSeconds` for playground-initiated sessions. The effective bound is `min(runtime.maxClientIdleSeconds, playground.maxIdleTimeSeconds)`. | `60 <= v <= runtime.maxClientIdleSeconds`. |
 | `playground.oidcSessionTtlSeconds` | int | 3600 | Lifetime of the server-side playground session record and the `lenny_playground_session` cookie. | Must be > 0. |
 | `playground.bearerTtlSeconds` | int | 900 | TTL of MCP bearer tokens minted by `POST /v1/playground/token`. | `60 <= ttl <= 3600`. |
 | `playground.sessionLabels` | map[string]string | `{origin: "playground"}` | Labels applied to playground sessions for audit and accounting. | -- |

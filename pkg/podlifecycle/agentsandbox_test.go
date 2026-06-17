@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -93,11 +94,14 @@ func TestAgentSandboxPoolReader_GetPoolStatus_NotFound(t *testing.T) {
 	}
 }
 
-// TestAgentSandboxPodLifecycleManager_ClaimPod_PatchesIdleSandbox
-// confirms ClaimPod selects an idle Sandbox and writes the claimed
-// phase + session annotation.
-// spec: spec/04_system-components.md line 342.
-func TestAgentSandboxPodLifecycleManager_ClaimPod_PatchesIdleSandbox(t *testing.T) {
+// TestAgentSandboxPodLifecycleManager_ClaimPod_CreatesPerPodClaim
+// confirms ClaimPod selects an idle Sandbox and creates the §4.6.1 per-pod
+// occupancy SandboxClaim (`claim-<podName>`) with a `bound` binding state,
+// without writing Sandbox.status — the WarmPoolController projects the
+// claimed phase from the claim.
+// spec: spec/04_system-components.md lines 342, 386, 388 (occupancy
+// projection); §4.6.3 (gateway is not a Sandbox.status writer).
+func TestAgentSandboxPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.T) {
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"},
 	}
@@ -111,7 +115,7 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_PatchesIdleSandbox(t *testing.
 		AgentSandboxPoolReader: podlifecycle.AgentSandboxPoolReader{Client: c, Namespace: "agents"},
 	}
 
-	handle, err := m.ClaimPod(context.Background(), "p1", "sess-1", podlifecycle.ClaimOpts{})
+	handle, err := m.ClaimPod(context.Background(), "p1", "sess-1", podlifecycle.ClaimOpts{TenantID: "acme"})
 	if err != nil {
 		t.Fatalf("ClaimPod: %v", err)
 	}
@@ -119,15 +123,87 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_PatchesIdleSandbox(t *testing.
 		t.Errorf("handle = %+v", handle)
 	}
 
+	// The per-pod claim exists and is bound.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "claim-pod-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
+	}
+	if claim.Spec.SandboxRef != "pod-1" {
+		t.Errorf("claim SandboxRef = %q, want pod-1", claim.Spec.SandboxRef)
+	}
+	// The claim's spec carries sandboxRef and tenantId (§3.2 / §6.5
+	// claim-spec contract); the tenant from ClaimOpts is stamped on the claim.
+	if claim.Spec.TenantID != "acme" {
+		t.Errorf("claim TenantID = %q, want acme (claim-spec tenant pin)", claim.Spec.TenantID)
+	}
+	if claim.Status.Phase != "bound" {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
+	}
+	// spec: §4.6.1 — the `bound` write stamps the binding-state-transition
+	// time the orphan GC keys its live-binding-state reclaim on.
+	if claim.Status.BindingStateTransitionTime == nil {
+		t.Error("claim BindingStateTransitionTime = nil, want a stamp on the bound write")
+	}
+
+	// Sandbox.status is left untouched: the gateway is not a Sandbox.status
+	// writer; the WarmPoolController projects the claimed phase.
 	var got lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "pod-1"}, &got); err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Status.Phase != string(podlifecycle.PodStateClaimed) {
-		t.Errorf("phase = %q, want claimed", got.Status.Phase)
+	if got.Status.Phase != string(podlifecycle.PodStateIdle) {
+		t.Errorf("Sandbox.status.phase = %q, want idle (unwritten by the gateway)", got.Status.Phase)
 	}
-	if got.Annotations["lenny.dev/session-id"] != "sess-1" {
-		t.Errorf("session-id annotation = %q", got.Annotations["lenny.dev/session-id"])
+	if _, ok := got.Annotations["lenny.dev/session-id"]; ok {
+		t.Errorf("per-session annotation set: %v, want none (claim is per-pod)", got.Annotations)
+	}
+}
+
+// TestAgentSandboxPodLifecycleManager_ClaimPod_ConflictsOnExistingClaim
+// confirms a second claim attempt against a pod that already has a per-pod
+// claim surfaces ErrClaimConflict so the caller retries with a fresh pod.
+// spec: spec/04_system-components.md line 386 (AlreadyExists retry).
+func TestAgentSandboxPodLifecycleManager_ClaimPod_ConflictsOnExistingClaim(t *testing.T) {
+	tmpl := &lennyv1.SandboxTemplate{ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"}}
+	idle := &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "agents"},
+		Spec:       lennyv1.SandboxSpec{PoolRef: "p1"},
+		Status:     lennyv1.SandboxStatus{Phase: string(podlifecycle.PodStateIdle)},
+	}
+	existing := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-pod-1", Namespace: "agents"},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "pod-1"},
+	}
+	c := newClient(t, tmpl, idle, existing)
+	m := &podlifecycle.AgentSandboxPodLifecycleManager{
+		AgentSandboxPoolReader: podlifecycle.AgentSandboxPoolReader{Client: c, Namespace: "agents"},
+	}
+	if _, err := m.ClaimPod(context.Background(), "p1", "sess-1", podlifecycle.ClaimOpts{}); !errors.Is(err, podlifecycle.ErrClaimConflict) {
+		t.Errorf("ClaimPod with existing claim = %v, want ErrClaimConflict", err)
+	}
+}
+
+// TestAgentSandboxPodLifecycleManager_ReleasePod_DeletesClaim confirms
+// ReleasePod deletes the per-pod claim; the WarmPoolController returns the
+// pod to idle as a projection of the claim's absence.
+// spec: spec/04_system-components.md line 386 (claim deleted at release).
+func TestAgentSandboxPodLifecycleManager_ReleasePod_DeletesClaim(t *testing.T) {
+	claim := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-pod-1", Namespace: "agents"},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "pod-1"},
+		Status:     lennyv1.SandboxClaimStatus{Phase: "bound"},
+	}
+	c := newClient(t, claim)
+	m := &podlifecycle.AgentSandboxPodLifecycleManager{
+		AgentSandboxPoolReader: podlifecycle.AgentSandboxPoolReader{Client: c, Namespace: "agents"},
+	}
+	if err := m.ReleasePod(context.Background(), podlifecycle.PodHandle{SandboxName: "pod-1", Namespace: "agents"}); err != nil {
+		t.Fatalf("ReleasePod: %v", err)
+	}
+	var got lennyv1.SandboxClaim
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "claim-pod-1"}, &got)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("claim still present after release: err = %v, want NotFound", err)
 	}
 }
 
@@ -286,7 +362,7 @@ func TestAgentSandboxPoolManager_TransitionPodState_RejectsIllegalEdge(t *testin
 	}
 	err := m.TransitionPodState(context.Background(),
 		podlifecycle.PodHandle{SandboxName: "p1", Namespace: "agents"},
-		podlifecycle.PodStateIdle, podlifecycle.PodStateAttached) // not in the idle→{...} allow set
+		podlifecycle.PodStateIdle, podlifecycle.PodStateReserved) // not in the idle→{claimed,draining} allow set
 	if !errors.Is(err, podlifecycle.ErrInvalidTransition) {
 		t.Errorf("TransitionPodState illegal edge = %v, want ErrInvalidTransition", err)
 	}

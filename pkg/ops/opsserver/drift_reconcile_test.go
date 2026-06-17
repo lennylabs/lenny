@@ -138,7 +138,8 @@ func TestDriftReportAgainstBoth_spec_25_10(t *testing.T) {
 		}
 	}
 	svc := driftservice.NewService(store, fixedRunning{state: map[string]any{
-		"pools": map[string]any{"chat": map[string]any{"minWarm": float64(9)}}}})
+		"pools": map[string]any{"chat": map[string]any{"minWarm": float64(9)}},
+	}})
 	srv := opsserver.New(opsserver.Options{Drift: svc})
 
 	rec, body := doJSON(t, srv, http.MethodGet, "/v1/admin/drift?against=both&scope=pools", nil, nil)

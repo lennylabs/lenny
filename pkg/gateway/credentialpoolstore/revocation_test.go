@@ -60,11 +60,13 @@ func TestRevokedCredentialsAcrossTenants(t *testing.T) {
 	store := credentialpoolstore.NewMemory()
 	ctx := context.Background()
 	now := time.Now().UTC()
-	mustCreate(t, store, revPool("acme", "claude-prod",
+	mustCreate(t, store, revPool(
+		"acme", "claude-prod",
 		credentialpoolstore.Credential{ID: "key-1", SecretRef: "s1", Status: credentialpoolstore.CredentialRevoked, RevokedAt: now},
 		credentialpoolstore.Credential{ID: "key-2", SecretRef: "s2"}, // active
 	))
-	mustCreate(t, store, revPool("globex", "openai-prod",
+	mustCreate(t, store, revPool(
+		"globex", "openai-prod",
 		credentialpoolstore.Credential{ID: "key-x", SecretRef: "sx", Status: credentialpoolstore.CredentialRevoked, RevokedAt: now},
 	))
 
@@ -92,7 +94,8 @@ func TestRevokedCredentialsAcrossTenants(t *testing.T) {
 func TestRevokedCredentialsSkipsDeletedPools(t *testing.T) {
 	store := credentialpoolstore.NewMemory()
 	ctx := context.Background()
-	mustCreate(t, store, revPool("acme", "gone",
+	mustCreate(t, store, revPool(
+		"acme", "gone",
 		credentialpoolstore.Credential{ID: "key-1", SecretRef: "s1", Status: credentialpoolstore.CredentialRevoked},
 	))
 	if err := store.SoftDelete(ctx, "acme", "gone", time.Now().UTC()); err != nil {

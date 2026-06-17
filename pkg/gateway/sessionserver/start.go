@@ -31,7 +31,6 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -224,8 +223,17 @@ func (s *Server) writeSlotFailed(w http.ResponseWriter, e *podsession.SlotFailed
 // envelope. details.reason distinguishes "no_idle_pods" (the pool holds
 // no pods) from "concurrent_slots_exhausted" (pods exist but every slot
 // is full). The code is the same one session-mode pod exhaustion uses.
-// spec: §5.2 line 519, §15.2.1 line 1017.
+//
+// The response carries a Retry-After header per the §15.2.1 catalog row, so a
+// client backs off with a deterministic budget. This holds for both the
+// onPoolExhausted: reject path (the immediate exhaustion) and the
+// onPoolExhausted: queue path: the §4.6.1 "Pool exhaustion behavior" paragraph
+// requires the queue-wait timeout to return WARM_POOL_EXHAUSTED with a
+// Retry-After header.
+// spec: §5.2 line 519, §15.2.1 line 1017 (Retry-After), §4.6.1 (queue-wait
+// timeout carries Retry-After).
 func (s *Server) writeWarmPoolExhausted(w http.ResponseWriter, reason string) {
+	w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
 	s.writeError(w, http.StatusServiceUnavailable, "WARM_POOL_EXHAUSTED",
 		"no warm pod or concurrent slot is available; retry with backoff",
 		map[string]any{"reason": reason})
@@ -401,17 +409,18 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// coordinator handoff.
 	level := s.resolveIsolationLevel(r.Context(), runtimeRef, isoProf)
 	row := sessionstore.Session{
-		ID:               s.idFn(),
-		TenantID:         tenantID,
-		UserID:           req.UserID,
-		RuntimeRef:       runtimeRef,
-		Environment:      req.Environment,
-		State:            session.StateRunning, // skip directly to running per §15.1
-		IsolationProfile: isoProf,
-		ExecutionMode:    level.ExecutionMode,
-		ScrubPolicy:      level.ScrubPolicy,
-		WorkspacePlan:    planJSON,
-		CreatedAt:        s.clock(),
+		ID:                     s.idFn(),
+		TenantID:               tenantID,
+		UserID:                 req.UserID,
+		RuntimeRef:             runtimeRef,
+		Environment:            req.Environment,
+		State:                  session.StateRunning, // skip directly to running per §15.1
+		IsolationProfile:       isoProf,
+		ExecutionMode:          level.ExecutionMode,
+		ScrubPolicy:            level.ScrubPolicy,
+		ConversationContinuity: level.ConversationContinuity,
+		WorkspacePlan:          planJSON,
+		CreatedAt:              s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
 	// spec: §15.1 line 690 / §14 lines 108-139 — validate the optional
@@ -462,6 +471,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf)
 		row.ExecutionMode = afterLevel.ExecutionMode
 		row.ScrubPolicy = afterLevel.ScrubPolicy
+		row.ConversationContinuity = afterLevel.ConversationContinuity
 	}
 	// §4.8 PostRoute: run the interceptor chain after runtime selection
 	// with the resolved runtime metadata. A REJECT blocks the create; a
@@ -1155,7 +1165,8 @@ type PoolProxyDialectError struct {
 func (e *PoolProxyDialectError) Error() string {
 	return fmt.Sprintf(
 		"pool proxyDialect %s is not declared in runtime credentialCapabilities.proxyDialect",
-		e.Dialect)
+		e.Dialect,
+	)
 }
 
 // poolDescriptor maps a §4.9 credential pool to the router's pool
@@ -1207,7 +1218,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if err != nil {
 		return nil, err
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
 		return nil, err
@@ -1220,15 +1231,30 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if match.PoolWarmingUp {
 		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
+	// spec: §5.2 — service mode is claimless: there is no workspace
+	// materialization and no SandboxClaim. A service-mode session is a
+	// connection handle; the gateway routes each message through the
+	// pool's Kubernetes Service / EndpointSlice with tenant-affinity
+	// routing (statelessproxy + tenantaffinity), pinning each pod to one
+	// tenant. The start path therefore returns a nil BindResult without
+	// touching the claim or slot acquisition paths, so no Sandbox is
+	// claimed and no pod is bound to the session. The session row persists
+	// with execution_mode=service; message routing reads that mode and
+	// dispatches to the stateless data plane rather than a bound pod.
+	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return nil, nil
+	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
-	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
+	// spec: §5.2 — a session-mode pool with maxConcurrentSessions > 1 routes
+	// the bind through the slot-claim path; the one-session-per-pod default
+	// uses the session-claim path.
+	if match.MaxConcurrentSessions > 1 {
 		slotReq := podsession.SlotBindRequest{
 			Pool:                    match.Pool,
 			SessionID:               row.ID,
 			TenantID:                row.TenantID,
 			Runtime:                 row.RuntimeRef,
-			Style:                   podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
-			MaxConcurrent:           match.MaxConcurrent,
+			MaxConcurrentSessions:   match.MaxConcurrentSessions,
 			MaxPodUptimeSeconds:     match.MaxPodUptimeSeconds,
 			Plan:                    podsession.WorkspacePlanToProto(plan),
 			ExperimentContext:       experimentContextToProto(row.ExperimentContext),
@@ -1239,11 +1265,24 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			UserCredentialProviders: userCredProviders,
 			AgentInterface:          agentInterface,
 			MinPlatformVersion:      minPlatformVersion,
+			// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so the
+			// last-slot-drain edge of a recycling concurrent pool patches the
+			// claim bound → recycling and signals the whole-pod scrub (the §3.1
+			// "Concurrent" preset) rather than deleting the claim outright.
+			Recycle: match.Recycle,
 		}
-		return s.bindSlotWithRetry(ctx, slotReq)
+		// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted slot
+		// acquisition in the per-pool claim FIFO and re-enter the slot-claim
+		// path as pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the
+		// first exhaustion. The slot retry policy itself surfaces the §5.2
+		// exhaustion sentinels unwrapped, which is the queue's retry signal.
+		return runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+			func(ctx context.Context) (*podsession.BindResult, error) {
+				return s.bindSlotWithRetry(ctx, slotReq)
+			})
 	}
 	preConnect, sdkWarmBlockingPaths := s.runtimeSDKWarm(ctx, row.TenantID, row.RuntimeRef)
-	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
+	bindReq := podsession.BindRequest{
 		Pool:                     match.Pool,
 		SessionID:                row.ID,
 		TenantID:                 row.TenantID,
@@ -1260,7 +1299,21 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		MinPlatformVersion:       minPlatformVersion,
 		PreConnect:               preConnect,
 		SDKWarmBlockingPaths:     sdkWarmBlockingPaths,
-	})
+		// spec: §3.4 — carry the pool's recycle.enabled flag so Release applies
+		// the §3.4 recycle disposition (patch claim bound → recycling, signal
+		// the whole-pod scrub) on a clean release rather than draining the pod.
+		Recycle: match.Recycle,
+	}
+	// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted session-claim
+	// acquisition in the per-pool claim FIFO and re-enter the claim path as
+	// pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the first
+	// exhaustion (ErrNoIdlePod after both the claim-path timeout and the
+	// Postgres fallback). A queued request holds no pod or claim between
+	// attempts, so the §7.1 atomicity contract is preserved.
+	result, err := runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+		func(ctx context.Context) (*podsession.BindResult, error) {
+			return s.podBinder.Bind(ctx, bindReq)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -1305,8 +1358,8 @@ func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindR
 //     or an exhausted retry returns the §5.2 structured SlotFailedError.
 //   - A transient reason retries once on a fresh slot.
 //
-// spec: §5.2 "Concurrent-workspace slot retry policy"; §6.2 line 165
-// (slot_active → draining on the unhealthy-slot threshold); §6.2 line 176/179
+// spec: §5.2 "Concurrent-workspace slot retry policy"; §6.2
+// (claimed → draining on the unhealthy-slot threshold); §6.2
 // (a slot whose cleanup does not reclaim it is leaked and feeds the per-pod
 // lenny_adapter_leaked_slots gauge).
 func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothealth.Tracker, slots *slotstate.Registry, replacement func(pool string), leakGauge func(pod, pool string, leaked int), req podsession.SlotBindRequest) (*podsession.BindResult, error) {
@@ -1350,7 +1403,7 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		// Account the failure toward the pod's §5.2 rolling fail/leak window
 		// and retire the whole pod when it crosses the unhealthy threshold.
 		health.RecordFailure(sbe.Pod)
-		if health.Unhealthy(sbe.Pod, req.MaxConcurrent) {
+		if health.Unhealthy(sbe.Pod, req.MaxConcurrentSessions) {
 			if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
 				log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)
 			}
@@ -1551,7 +1604,7 @@ func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindRes
 	if result.SlotID != "" {
 		err = s.podBinder.ReleaseSlot(ctx, result)
 	} else {
-		err = s.podBinder.Release(ctx, result, state.Failed)
+		err = s.podBinder.Release(ctx, result, "failed")
 	}
 	if err != nil {
 		log.Printf("sessionserver: rollback binding for session %s: %v", result.SessionID, err)
@@ -2097,12 +2150,19 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 			return "", err
 		}
 		s.registerBinding(ctx, result)
+		// spec: §5.2 — a service-mode session is claimless, so startOnPod
+		// returns a nil BindResult with no pod to fence. Service mode has no
+		// Lenny-managed lifecycle and never reaches a resumable state, so this
+		// guard is defensive: skip the resumed-pod fence when no pod was bound.
+		if result == nil {
+			return "", nil
+		}
 		if ferr := s.fenceResumedPod(ctx, result.Adapter, row.TenantID, row.ID); ferr != nil {
 			return "", ferr
 		}
 		return "", nil
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
 		return "", err

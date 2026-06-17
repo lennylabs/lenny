@@ -17,13 +17,13 @@ import (
 // LENNY_TIER7A_BASELINE_DIR=<dir>` and consumed by subsequent runs
 // in `LENNY_TIER7A_BASELINE_DIR=<dir>` mode.
 type Baseline struct {
-	Scenario   string            `json:"scenario"`
-	RecordedAt time.Time         `json:"recorded_at"`
+	Scenario   string             `json:"scenario"`
+	RecordedAt time.Time          `json:"recorded_at"`
 	Profile    profileSummaryJSON `json:"profile"`
-	Iterations int64             `json:"iterations"`
-	Throughput float64           `json:"throughput_per_sec"`
-	ErrorRate  float64           `json:"error_rate"`
-	Latency    HistogramSnapshot `json:"latency_seconds"`
+	Iterations int64              `json:"iterations"`
+	Throughput float64            `json:"throughput_per_sec"`
+	ErrorRate  float64            `json:"error_rate"`
+	Latency    HistogramSnapshot  `json:"latency_seconds"`
 }
 
 // BaselineFromResult builds a Baseline from a Result.
@@ -111,10 +111,10 @@ type Threshold struct {
 
 // Regression is a single Threshold violation.
 type Regression struct {
-	Metric  string
-	Got     float64
-	Want    float64
-	Note    string
+	Metric string
+	Got    float64
+	Want   float64
+	Note   string
 }
 
 func (r Regression) String() string {

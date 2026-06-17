@@ -36,8 +36,8 @@ import (
 const name = "kms_outage_session_continuation"
 
 const (
-	tenantID   = "acme"
-	envelopes  = 256
+	tenantID  = "acme"
+	envelopes = 256
 )
 
 func init() {
@@ -60,6 +60,7 @@ func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 16, Duration: 1 * time.Second},

@@ -105,9 +105,12 @@ type ManifestLLM struct {
 type Manifest struct {
 	Version   int    `json:"version"`
 	SessionID string `json:"sessionId"`
-	// TaskID is the §4.7 current task identifier. In session mode it is
-	// the session id (the session is its single task); task-mode pods
-	// rewrite it before each task.
+	// TaskID is the §4.7 task identifier, frozen to the session's root
+	// task identifier. The session/task mapping is 1:1 (each session has
+	// exactly one execution), so the manifest is regenerated per session
+	// and TaskID never changes for the manifest's lifetime; it defaults to
+	// the session id when the gateway supplies none.
+	// spec: §7.2 (session/task 1:1, TaskID frozen), §4.7 (per-session manifest)
 	TaskID            string                     `json:"taskId"`
 	ExperimentContext *ManifestExperimentContext `json:"experimentContext,omitempty"`
 	// TracingContext is the §8.3 opaque tracing-identifier map the
@@ -118,7 +121,9 @@ type Manifest struct {
 	// random 256-bit hex string the runtime presents on the MCP
 	// initialize handshake to every adapter-local MCP server. The
 	// adapter rejects an intra-pod MCP connection that does not present
-	// it. Required at the Standard and Full levels (§4.7).
+	// it. A fresh nonce is generated per session alongside the rest of
+	// the manifest. Required at the Standard and Full levels (§4.7).
+	// spec: §15.4.3 (nonce regenerated per session)
 	MCPNonce string `json:"mcpNonce"`
 	// AgentInterface is the runtime's §5.1 agentInterface descriptor,
 	// carried verbatim from the Runtime definition. Null (JSON null) when
@@ -242,8 +247,9 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// §4.7: in session mode the manifest taskId defaults to the session id
-	// (the session is its single task) when the gateway supplies none.
+	// spec: §7.2 — the session/task mapping is 1:1, so the manifest taskId
+	// is frozen to the session's root task identifier and defaults to the
+	// session id when the gateway supplies none.
 	taskID := in.taskID
 	if taskID == "" {
 		taskID = in.sessionID
@@ -268,7 +274,7 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	// session's effective delegation policy permits, so the runtime can
 	// dial each connector's intra-pod MCP server. F-9.1.2.
 	for _, c := range in.connectors {
-		m.ConnectorServers = append(m.ConnectorServers, ManifestConnector{ID: c.ID, Socket: c.Socket})
+		m.ConnectorServers = append(m.ConnectorServers, ManifestConnector(c))
 	}
 	if s.Lifecycle != nil {
 		m.LifecycleChannel = &ManifestLifecycleChannel{Socket: s.Lifecycle.SocketPath()}

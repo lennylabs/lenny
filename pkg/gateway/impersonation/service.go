@@ -59,8 +59,10 @@ type Service struct {
 	cfg      Config
 }
 
-const defaultMaxDuration = time.Hour
-const defaultPlatformTenant = "platform"
+const (
+	defaultMaxDuration    = time.Hour
+	defaultPlatformTenant = "platform"
+)
 
 // New returns a Service. It panics on a missing collaborator, a wiring
 // error rather than a runtime condition.

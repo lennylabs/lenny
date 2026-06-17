@@ -17,14 +17,39 @@ import (
 // shared client across scenarios is safe.
 func HTTPClient() *http.Client { return pooledClient }
 
+// maxConnsPerHost bounds the live connections the client opens to any
+// single in-process gateway. Without a cap, a high-rate scenario (the
+// SLO battery drives 1600+ requests/s over loopback) opens a fresh TCP
+// connection whenever every pooled one is momentarily busy; each such
+// connection enters TIME_WAIT for one MSL after the gateway listener
+// closes at scenario teardown, and across the whole back-to-back
+// battery the accumulation exhausts the macOS 49152-65535 ephemeral
+// port range ("connect: can't assign requested address"). Capping forces
+// the client to reuse a bounded pool and block rather than dial past it,
+// so the live socket count per gateway stays bounded and TIME_WAIT churn
+// is proportional to the cap rather than to the request rate. The value
+// comfortably exceeds the scenarios' default VU counts so it does not
+// throttle legitimate concurrency.
+const maxConnsPerHost = 64
+
 var pooledClient = &http.Client{
 	Transport: &http.Transport{
 		MaxIdleConns:        200,
-		MaxIdleConnsPerHost: 200,
+		MaxIdleConnsPerHost: maxConnsPerHost,
+		MaxConnsPerHost:     maxConnsPerHost,
 		IdleConnTimeout:     30 * time.Second,
 	},
 	Timeout: 5 * time.Second,
 }
+
+// CloseIdleConnections evicts the shared client's idle keep-alive
+// connections. A tier-7a scenario calls this at teardown: each scenario
+// boots its own in-process gateway on a fresh loopback port, and once
+// that listener closes the pooled connections to it are dead. Evicting
+// them promptly (rather than waiting out IdleConnTimeout) keeps idle
+// sockets to retired gateways from accumulating across the back-to-back
+// battery and competing for the ephemeral port range.
+func CloseIdleConnections() { pooledClient.CloseIdleConnections() }
 
 // Header is a key/value pair for DoJSON headers.
 type Header struct{ K, V string }

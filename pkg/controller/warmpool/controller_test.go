@@ -368,6 +368,49 @@ func TestReconcileOverTargetDrainsExcess(t *testing.T) {
 	}
 }
 
+// spec: §4.6.2 (reserved pods count as occupied), §16.1
+// (lenny_warmpool_reserved_pods gauge).
+// diagnosis: a failure means the WarmPoolController either counts a
+// reserved-hold pod toward claimable idle inventory (so a long
+// claimHoldTTLSeconds would not depress apparent idle inventory as the
+// spec requires) or does not emit the reserved-pods gauge the §16.1
+// catalog declares, leaving operators blind to held capacity.
+func TestReconcileReservedPodsAreOccupiedAndEmitGauge(t *testing.T) {
+	s := newScheme(t)
+	// Two idle (claimable) pods plus two reserved-hold pods. The reserved
+	// pods are occupied: they must not count toward warm/ready inventory,
+	// so the pool is below its minWarm of 3 and creates one replacement.
+	c := newClient(t, s, template(), pool(3, 10),
+		idleSandbox("sb-a"), idleSandbox("sb-b"),
+		reservedSandbox("sb-r1"), reservedSandbox("sb-r2"))
+
+	warmpool.ForgetReservedPodsForTest(testPool)
+	t.Cleanup(func() { warmpool.ForgetReservedPodsForTest(testPool) })
+
+	reconcile(t, c, s)
+
+	// Reserved pods are excluded from idle inventory, so the two reserved
+	// pods do not count toward minWarm and the controller creates the
+	// one-pod gap (2 idle observed below the floor of 3).
+	if got := len(poolSandboxes(t, c)); got != 5 {
+		t.Fatalf("have %d sandboxes, want 5 (2 idle + 2 reserved + 1 created)", got)
+	}
+	// Post-action warm count is the two idle pods plus the one just-created
+	// (warming) pod; ready is the two claimable idle pods. The two reserved
+	// pods appear in neither count — they are occupied, not warm. If they
+	// were counted, warm would be 5 and the gap would not have been filled.
+	p := getPool(t, c)
+	if p.Status.WarmCount != 3 || p.Status.ReadyCount != 2 {
+		t.Errorf("status warm/ready = %d/%d, want 3/2 (reserved excluded, 1 created)",
+			p.Status.WarmCount, p.Status.ReadyCount)
+	}
+
+	// The §16.1 reserved-pods gauge reflects the two held pods.
+	if got := warmpool.ReservedPodsGaugeForTest(testPool); got != 2 {
+		t.Errorf("lenny_warmpool_reserved_pods gauge = %v, want 2", got)
+	}
+}
+
 func TestReconcileMaxWarmCapsCreation(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(10, 4))

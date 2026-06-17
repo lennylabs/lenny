@@ -13,13 +13,15 @@ import (
 // lenny_checkpoint_size_bytes) and the four subsystem template
 // families. Transcribed in §16.1 table order.
 var spec161Metrics = []string{
-	"lenny_gateway_active_sessions", "lenny_warmpool_idle_pods", "lenny_warmpool_stale_pods",
-	"lenny_task_pod_scrub_failure_count", "lenny_task_pod_retirement_total", "lenny_slot_failure_total",
+	"lenny_gateway_active_sessions", "lenny_warmpool_idle_pods", "lenny_warmpool_reserved_pods",
+	"lenny_warmpool_stale_pods",
+	"lenny_pod_scrub_failure_count", "lenny_pod_retirement_total", "lenny_slot_failure_total",
 	"lenny_slot_pod_replacement_total", "lenny_session_startup_duration_seconds",
 	"lenny_session_time_to_first_token_seconds", "lenny_session_creation_duration_seconds",
 	"lenny_pod_claim_duration_seconds", "lenny_pod_state_transition_duration_seconds",
 	"lenny_upload_bytes_total", "lenny_upload_queue_depth", "lenny_upload_extraction_aborted_total",
 	"lenny_tokens_consumed_total", "lenny_session_retry_total", "lenny_session_resume_attempts_total",
+	"lenny_session_expiry_total",
 	"lenny_inbox_drain_failure_total", "lenny_inbox_duplicate_suppressed_total",
 	"lenny_inbox_redis_unavailable_total", "lenny_delegation_depth", "lenny_delegation_tree_size",
 	"lenny_gateway_replica_count", "lenny_gateway_active_streams", "lenny_gateway_request_queue_depth",
@@ -65,7 +67,7 @@ var spec161Metrics = []string{
 	"lenny_llm_proxy_p99_ttfb_seconds", "lenny_warmpool_pod_startup_duration_seconds",
 	"lenny_warmpool_replenishment_rate", "lenny_warmpool_warmup_failure_total",
 	"lenny_warmpool_cold_start_total", "lenny_warmpool_fill_duration_seconds",
-	"lenny_warmpool_claims_total", "lenny_warmpool_sdk_demotions_total", "lenny_task_reuse_count",
+	"lenny_warmpool_claims_total", "lenny_warmpool_sdk_demotions_total", "lenny_pod_session_reuse_count",
 	"lenny_pool_config_reconciliation_lag_seconds", "lenny_pool_bootstrap_mode",
 	"lenny_pool_scaling_admission_denied_total", "lenny_pool_termination_budget_exceeded_total",
 	"lenny_sandboxclaim_guard_rejections_total", "lenny_warmpool_idle_pod_minutes",

@@ -39,8 +39,8 @@ type crdManifest struct {
 
 // expectedCRDs maps each lenny.dev CRD kind to its required scope. The
 // manifests under charts/lenny/crds/ are generated from the Go API
-// types in pkg/apis/lenny/v1 by `make generate`. Runtime is platform-
-// global and cluster-scoped; the pod-fabric CRDs live in agent
+// types in pkg/apis/lenny/v1alpha1 by `make generate`. Runtime is
+// platform-global and cluster-scoped; the pod-fabric CRDs live in agent
 // namespaces and are namespaced.
 var expectedCRDs = map[string]string{
 	"Runtime":         "Cluster",
@@ -110,7 +110,7 @@ func TestCRDManifestsAreWellFormed(t *testing.T) {
 		if want := crd.Spec.Names.Plural + ".lenny.dev"; crd.Metadata.Name != want {
 			t.Errorf("%s: metadata.name = %q, want %q", kind, crd.Metadata.Name, want)
 		}
-		assertServesV1(t, kind, crd)
+		assertServesV1Alpha1(t, kind, crd)
 	}
 
 	for kind := range byKind {
@@ -120,23 +120,25 @@ func TestCRDManifestsAreWellFormed(t *testing.T) {
 	}
 }
 
-// assertServesV1 checks the CRD exposes exactly one version, named v1,
-// that is both served and the storage version.
-func assertServesV1(t *testing.T, kind string, crd crdManifest) {
+// assertServesV1Alpha1 checks the CRD exposes exactly one version, named
+// v1alpha1, that is both served and the storage version. The lenny.dev API
+// group is at the v1alpha1 maturity; pkg/apis/lenny/v1alpha1 is its sole
+// version.
+func assertServesV1Alpha1(t *testing.T, kind string, crd crdManifest) {
 	t.Helper()
 	if len(crd.Spec.Versions) != 1 {
-		t.Errorf("%s: declares %d versions, want exactly 1 (v1)", kind, len(crd.Spec.Versions))
+		t.Errorf("%s: declares %d versions, want exactly 1 (v1alpha1)", kind, len(crd.Spec.Versions))
 		return
 	}
 	v := crd.Spec.Versions[0]
-	if v.Name != "v1" {
-		t.Errorf("%s: version name = %q, want v1", kind, v.Name)
+	if v.Name != "v1alpha1" {
+		t.Errorf("%s: version name = %q, want v1alpha1", kind, v.Name)
 	}
 	if !v.Served {
-		t.Errorf("%s: version v1 is not served", kind)
+		t.Errorf("%s: version v1alpha1 is not served", kind)
 	}
 	if !v.Storage {
-		t.Errorf("%s: version v1 is not the storage version", kind)
+		t.Errorf("%s: version v1alpha1 is not the storage version", kind)
 	}
 }
 
@@ -158,13 +160,60 @@ func findControllerGen() string {
 	return ""
 }
 
+// postProcessLine reports whether a manifest line is one of the two
+// post-generation additions the committed CRDs carry that controller-gen
+// does not emit: the `lenny.dev/schema-version` annotation (and its
+// explanatory comment) and the top-level spec/status
+// `x-kubernetes-preserve-unknown-fields: true` markers. §10 line 437
+// applies the schema-version annotation by hand after generation; the
+// preserve-unknown markers keep a stale CRD from stripping fields a newer
+// controller writes. The drift check normalizes these away so it compares
+// the controller-gen-owned schema rather than the hand-applied wrappers.
+// The nested `workspacePlan` preserve-unknown marker is controller-gen
+// output (the Go field carries +kubebuilder:pruning:PreserveUnknownFields)
+// and is indented deeper than 12 spaces, so it is not stripped here.
+func postProcessLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(trimmed, "lenny.dev/schema-version:"):
+		return true
+	case strings.HasPrefix(trimmed, "# spec: §10 line 437"),
+		strings.HasPrefix(trimmed, "# read at controller startup"),
+		strings.HasPrefix(trimmed, "# FATAL exit so stale CRDs"),
+		strings.HasPrefix(trimmed, "# F-15.5.12."):
+		return true
+	case line == "            x-kubernetes-preserve-unknown-fields: true":
+		// Exactly the top-level spec/status marker (12-space indent). The
+		// deeper-nested workspacePlan marker has more leading whitespace.
+		return true
+	default:
+		return false
+	}
+}
+
+// stripPostProcessing removes the hand-applied post-generation lines so a
+// committed manifest can be compared against raw controller-gen output.
+func stripPostProcessing(manifest []byte) string {
+	var b strings.Builder
+	for _, line := range strings.Split(string(manifest), "\n") {
+		if postProcessLine(line) {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // spec: 4 (CRD manifests are generated artifacts; they must not drift
 //
 //	from the Go API types)
 //
-// diagnosis: A pkg/apis/lenny/v1 type changed but the committed CRD
+// diagnosis: A pkg/apis/lenny/v1alpha1 type changed but the committed CRD
 //
-//	manifests were not regenerated. Run `make generate` and
+//	manifests were not regenerated. Run `make generate`, re-apply the
+//	lenny.dev/schema-version annotation and the top-level
+//	spec/status x-kubernetes-preserve-unknown-fields markers, and
 //	commit charts/lenny/crds/.
 func TestCRDManifestsInSyncWithGoTypes(t *testing.T) {
 	cg := findControllerGen()
@@ -175,7 +224,7 @@ func TestCRDManifestsInSyncWithGoTypes(t *testing.T) {
 	tmp := t.TempDir()
 
 	cmd := exec.Command(cg, "crd",
-		"paths=./pkg/apis/lenny/v1/...",
+		"paths=./pkg/apis/lenny/v1alpha1/...",
 		"output:crd:dir="+tmp)
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -185,6 +234,9 @@ func TestCRDManifestsInSyncWithGoTypes(t *testing.T) {
 	regen, err := os.ReadDir(tmp)
 	if err != nil {
 		t.Fatalf("read regenerated dir: %v", err)
+	}
+	if len(regen) == 0 {
+		t.Fatal("controller-gen produced no manifests; the v1alpha1 package path is wrong")
 	}
 	committed := crdDir(t)
 	for _, e := range regen {
@@ -197,8 +249,11 @@ func TestCRDManifestsInSyncWithGoTypes(t *testing.T) {
 			t.Errorf("charts/lenny/crds/%s is missing; run `make generate`", e.Name())
 			continue
 		}
-		if string(got) != string(want) {
-			t.Errorf("charts/lenny/crds/%s is stale — it differs from controller-gen output; run `make generate`", e.Name())
+		// Compare the controller-gen-owned schema, normalizing away the
+		// hand-applied schema-version annotation and the top-level
+		// spec/status preserve-unknown markers the committed manifest adds.
+		if stripPostProcessing(got) != stripPostProcessing(want) {
+			t.Errorf("charts/lenny/crds/%s is stale — its controller-gen schema differs from the Go types; run `make generate` and re-apply the schema-version annotation + spec/status preserve-unknown markers", e.Name())
 		}
 	}
 }

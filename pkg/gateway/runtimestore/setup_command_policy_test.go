@@ -121,7 +121,7 @@ func TestSetupCommandModesEnumIsAllowlistAndBlocklist(t *testing.T) {
 		}
 	}
 	// The retired `shell` mode must not validate.
-	if (runtimestore.SetupCommandMode("shell")).IsValid() {
+	if runtimestore.SetupCommandMode("shell").IsValid() {
 		t.Error("legacy `shell` mode must no longer be valid; spec §7.5 closed enum is allowlist|blocklist")
 	}
 }

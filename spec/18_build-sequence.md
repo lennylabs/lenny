@@ -14,7 +14,7 @@ The build order is organized into the following bands.
 2. **Controllers, admission, and gateway core (Phase 3 through Phase 4.5).** The `PoolScalingController`, the `RuntimeUpgrade` state machine, the mTLS PKI, the admission webhooks that enforce CRD field ownership and pod-label immutability, the minimum-viable gateway binary with the Session API, and the admin API foundation with OIDC/OAuth 2.1 validation.
 3. **External APIs and credentials (Phase 5 through Phase 5.8).** The `ExternalAdapterRegistry`, the REST and MCP overlapping operations, etcd encryption at rest, basic credential leasing, the Token Service, the minimum-viable quota and authentication interceptors, and the LLM Proxy with the native `anthropic_direct` translator.
 4. **Interactive sessions, policy, and delegation (Phase 6 through Phase 10).** Interactive sessions and client SDKs, the full policy engine (idempotency, circuit breakers, audit hooks), checkpoint and resume, recursive delegation with `delegation-echo`, and the MCP fabric with the elicitation chain.
-5. **Hardening and compliance (Phase 11 through Phase 14.5).** Multi-provider translators, credential rotation and revocation, Token Service KMS hardening, OAuth connectors, `type: mcp` runtimes, concurrent execution modes, full audit and `lenny-backup`, comprehensive security hardening, and the post-hardening SLO re-validation.
+5. **Hardening and compliance (Phase 11 through Phase 14.5).** Multi-provider translators, credential rotation and revocation, Token Service KMS hardening, OAuth connectors, `type: mcp` runtimes, the `sessionPolicy` presets and service mode, full audit and `lenny-backup`, comprehensive security hardening, and the post-hardening SLO re-validation.
 6. **Extensibility and launch (Phase 15 through Phase 17b).** The Environment resource with RBAC and cross-environment delegation, experiment primitives integrated with the `PoolScalingController`, documentation and community launch, and the post-v1 surfaces (memory, semantic caching, and evaluation hooks).
 
 The load-test phases (Phase 6.5, Phase 9.5, Phase 11.5, Phase 13.5, Phase 14.5, and Phase 16.5) are explicit re-baselines. Each captures a Tier 7 baseline after a major capability lands and records the delta against the prior baseline, so regressions are visible before a subsequent phase consumes the same load envelope.
@@ -54,7 +54,7 @@ Three Helm feature flags gate admission webhooks and subsystem templates against
 | 11.5  | Incremental load test (credential lifecycle)                           | —                                       | [§13.24](../TESTING.md#1324-phase-115--incremental-load-test-credential-lifecycle)                                                                          |
 | 12a   | Token Service hardening (KMS envelope + OAuth)                         | —                                       | [§13.25](../TESTING.md#1325-phase-12a--token-service-hardening-kms-envelope--oauth)                                                                         |
 | 12b   | `type: mcp` runtime support                                            | —                                       | [§13.26](../TESTING.md#1326-phase-12b--type-mcp-runtime-support)                                                                                            |
-| 12c   | Concurrent execution modes                                             | —                                       | [§13.27](../TESTING.md#1327-phase-12c--concurrent-execution-modes)                                                                                          |
+| 12c   | `sessionPolicy` presets and service mode                               | —                                       | [§13.27](../TESTING.md#1327-phase-12c--sessionpolicy-presets-and-service-mode)                                                                              |
 | 13    | Full observability + audit + `lenny-backup` + compliance webhooks      | **Phase 3.5 + 5** (phase-stamp, OpenAPI) | [§13.28](../TESTING.md#1328-phase-13--full-observability--audit--lenny-backup--compliance-webhooks)                                                        |
 | 13.5  | Pre-hardening full-system load baseline                                | —                           | [§13.29](../TESTING.md#1329-phase-135--pre-hardening-full-system-load-baseline)                                                                             |
 | 14    | Comprehensive security hardening                                       | —                           | [§13.30](../TESTING.md#1330-phase-14--comprehensive-security-hardening)                                                                                     |
@@ -198,7 +198,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - Default-deny NetworkPolicy per [§13.2](13_security-model.md#132-network-isolation).
 - gVisor RuntimeClass admission policies (RuntimeClass-aware enforcement per [§17.2](17_deployment-topology.md#172-namespace-layout)), including the integration test that validates gVisor's `SO_PEERCRED` semantics against the Phase 2 self-test.
 - Baseline admission webhooks under `templates/admission-policies/`: `lenny-label-immutability`, `lenny-tenant-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, and `lenny-ephemeral-container-cred-guard`. Each webhook is a thin HTTP shim over its pure-decision package under `pkg/admission/`.
-- `pkg/admission/sandboxclaim_guard` (ADR-007 enforcement: CREATE rejection when a non-terminal `SandboxClaim` already exists; PATCH/PUT rejection when the referenced `Sandbox.status.phase` is not `claimed`).
+- `pkg/admission/sandboxclaim_guard` (ADR-007 enforcement: CREATE rejection when a non-terminal `SandboxClaim` already exists).
 - `pkg/admission/label_immutability` ([§17.2](17_deployment-topology.md#172-namespace-layout) item 5 and [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) NET-003).
 - `pkg/admission/tenant_label_immutability` ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) per-tenant pinning enforcement; rejects mutations of `lenny.dev/tenant-id` outside the allowed `unset → {tenant_id} → unassigned` transitions).
 - `pkg/admission/ownership` (the [§4.6.3](04_system-components.md#46-pod-lifecycle-controllers) CRD field-ownership matrix).
@@ -523,17 +523,18 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Exit criteria.** Tier 4 `mcp_runtime_lifecycle_test` passes per [TESTING.md §13.26](../TESTING.md#1326-phase-12b--type-mcp-runtime-support).
 
-### 18.30 Phase 12c — Concurrent execution modes
+### 18.30 Phase 12c — `sessionPolicy` presets and service mode
 
 **Deliverables.**
 
-- Workspace-concurrent execution mode per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
-- Stateless-concurrent execution mode per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
-- Pod-level isolation enforcement when concurrent modes are active.
+- Pod recycling across whole sessions (`sessionPolicy.recycle`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the per-session slot cleanup and whole-pod scrub split, the reserved-hold claim window, and the retirement limits (`maxSessionsPerPod`, `maxPodUptimeSeconds`, and `maxScrubFailures`).
+- Concurrent session slots (`sessionPolicy.maxConcurrentSessions > 1`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): per-slot workspaces, the Redis slot-counter capacity gate, and the `acknowledgeProcessLevelIsolation` requirement.
+- Service execution mode (`executionMode: service`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): claimless tenant-affinity routing over the per-pod `maxConcurrent` slot bound, the `sessionIsolationLevel.conversationContinuity` contract field, and the registration-time warning for `multi_turn` runtimes on service-mode pools.
+- Pod-level isolation enforcement for multiplexed pods (`maxConcurrentSessions > 1` and service-mode pools).
 
 **Prerequisites.** Phase 12b exit gate.
 
-**Exit criteria.** Tier 4 `concurrent_workspace_test` and `concurrent_stateless_test` pass; Tier 5 `concurrent_modes_test` confirms admission webhooks and pod-level isolation hold per [TESTING.md §13.27](../TESTING.md#1327-phase-12c--concurrent-execution-modes).
+**Exit criteria.** Tier 4 `session_recycle_test`, `session_concurrency_test`, and `service_mode_test` pass; Tier 5 `execution_modes_test` confirms admission webhooks and pod-level isolation hold per [TESTING.md §13.27](../TESTING.md#1327-phase-12c--sessionpolicy-presets-and-service-mode).
 
 ### 18.31 Phase 13 — Full observability, audit, `lenny-backup`, compliance webhooks
 

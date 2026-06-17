@@ -23,13 +23,6 @@ var (
 		Help: "Pod starts in nonce-only mode with --require-so-peercred=false " +
 			"(§4.7). Deployers MUST alert on a non-zero value.",
 	})
-	// §4.7 line 708: the runtime did not acknowledge a task_complete
-	// within the 30s window and the adapter proceeded with cleanup anyway.
-	taskCompleteAckTimeout = mustCounter(prometheus.CounterOpts{
-		Name: "lenny_adapter_task_complete_ack_timeout_total",
-		Help: "Task-mode task_complete acknowledgements that timed out (§4.7); " +
-			"the adapter proceeded with scrub without the runtime's ack.",
-	})
 	// §4.7 line 820: per-provider count of outbound LLM requests the
 	// runtime reported via llm_request_started without a matching
 	// llm_request_completed. The Full-level rotation gate clears when it
@@ -163,10 +156,6 @@ func incRotationTimeout(pool, provider, runtime string) {
 func observeRotationGracePeriod(pool, provider string, seconds float64) {
 	credRotationGracePeriod.WithLabelValues(pool, provider).Observe(seconds)
 }
-
-// IncTaskCompleteAckTimeout increments the §4.7 line 708 task-complete
-// acknowledgement timeout counter.
-func IncTaskCompleteAckTimeout() { taskCompleteAckTimeout.WithLabelValues().Inc() }
 
 // SetLLMInflight publishes the current per-provider in-flight LLM
 // request count to the §4.7 gauge.

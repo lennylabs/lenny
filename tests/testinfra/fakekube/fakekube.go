@@ -17,9 +17,9 @@ import (
 // with a more accurate fake (e.g. envtest's local apiserver) when
 // the scenario set demands it.
 type Surface struct {
-	mu        sync.RWMutex
-	objects   map[string][]byte
-	watchLag  time.Duration
+	mu       sync.RWMutex
+	objects  map[string][]byte
+	watchLag time.Duration
 }
 
 // New returns an empty Surface. The default watch-event delay is

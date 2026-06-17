@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 )
 
 // CRDPodRegistry is the §12.6 v1 PodRegistry implementation: it
@@ -146,11 +147,27 @@ func (r *CRDPodRegistry) UpdatePodState(ctx context.Context, podID PodID, transi
 	return nil
 }
 
-// ClaimPod runs the §4.6.1 SELECT ... FOR UPDATE SKIP LOCKED
-// equivalent against the Kubernetes API: it lists idle pods in the
-// pool, selects the first, transitions it to "claimed" under CAS,
-// and returns the claimed record. ErrPoolExhausted reports no idle
-// pod was found.
+// ClaimPod acquires an idle pod from the pool under the §4.6.1 per-pod
+// occupancy claim model: it lists idle pods and, for each, creates the
+// deterministic per-pod SandboxClaim (`claim-<podName>`, spec carries
+// sandboxRef and tenantId) and writes its first `bound` binding state.
+// The CREATE under the deterministic name is the authoritative
+// single-claim guard: an AlreadyExists collision (or a Forbidden from the
+// lenny-sandboxclaim-guard webhook) means another writer already bound the
+// pod, so the loop moves to the next idle pod. ErrPoolExhausted reports no
+// idle pod could be claimed.
+//
+// The gateway does not write Sandbox.status: the WarmPoolController
+// projects the pod's coarse occupancy phase (claimed) from the claim's
+// binding state (§4.6.3 ownership decomposition, §4.6.1 occupancy
+// projection). The session-to-pod binding lives on the Postgres session
+// row's pod_assignment column rather than on the CRD, so the per-pod claim
+// carries no session identifier; the returned PodRecord echoes the
+// claim's tenant and the requesting session for the caller's attribution
+// without persisting either on the Sandbox.
+//
+// spec: §4.6.1 (per-pod occupancy claim), §4.6.3 (gateway is not a
+// Sandbox.status writer), §3.3 (occupancy projection).
 func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *PodRecord, err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opClaim, opts.PoolID, start, err) }()
@@ -169,64 +186,86 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 	}
 	for i := range pods {
 		sb := &pods[i]
-		sb.Status.Phase = "claimed"
-		sb.Status.TenantID = opts.TenantID
-		// spec: §12.6 line 442 / agent_pod_state.session_id — pin the
-		// session to the pod at claim time so the orphan-session
-		// reconciler has a binding to follow.
-		sb.Status.SessionID = opts.SessionID
-		if uerr := r.Client.Status().Update(ctx, sb); uerr != nil {
-			if apierrors.IsConflict(uerr) {
+		if cerr := r.claimViaSandboxClaim(ctx, sb, opts.TenantID); cerr != nil {
+			if apierrors.IsAlreadyExists(cerr) || apierrors.IsForbidden(cerr) {
+				// Another writer already bound this pod; try the next idle pod.
 				continue
 			}
-			err = fmt.Errorf("podregistry: claim %s: %w", sb.Name, uerr)
+			err = cerr
 			return nil, err
 		}
+		// Project the claimed occupancy phase onto the returned record. The
+		// WarmPoolController writes the actual Sandbox.status.phase from the
+		// claim's `bound` binding state (§4.6.1 occupancy projection); the
+		// record echoes that projection so the caller sees the post-claim
+		// state without a re-read.
 		out := toPodRecord(sb)
+		out.State = "claimed"
+		out.TenantID = opts.TenantID
+		out.SessionID = opts.SessionID
 		return &out, nil
 	}
 	err = ErrPoolExhausted
 	return nil, err
 }
 
-// ReleasePod transitions a pod out of an active phase and clears
-// its tenant binding. The reason is recorded as a condition on the
-// status subresource so the §4.6.1 lifecycle manager and the
-// operator-facing inspect path can see why the pod returned to its
-// pool.
-func (r *CRDPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason ReleaseReason) (err error) {
-	start := time.Now()
-	var pool PoolID
-	defer func() { r.recordOp(opRelease, pool, start, err) }()
-	var sb lennyv1.Sandbox
-	if err = r.Client.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: string(podID)}, &sb); err != nil {
-		if apierrors.IsNotFound(err) {
-			err = ErrNotFound
-			return err
-		}
-		err = fmt.Errorf("podregistry: get %s: %w", podID, err)
+// claimViaSandboxClaim creates the per-pod SandboxClaim for sb and writes its
+// first `bound` binding state through the canonical pkg/gateway/podclaim
+// helpers, so this gateway-side path shares one writer with the live S19 claim
+// path: podclaim.CreateClaim performs the spec-only CREATE under the
+// deterministic claim-<podName> name, and podclaim.WriteBoundStatus stamps the
+// `bound` binding state plus the binding-state-transition time the §4.6.1
+// orphan GC keys its live-binding-state reclaim on.
+//
+// The bound status write is a Server-Side Apply PATCH on the
+// `sandboxclaims/status` subresource under the gateway field manager, because
+// the gateway ServiceAccount holds `get`/`patch` (and explicitly no `update`)
+// on that subresource (§4.6.3 ownership decomposition); a Status().Update
+// would issue an HTTP PUT the API server authorizes against the absent
+// `update` verb and would be RBAC-denied in a live cluster.
+//
+// An AlreadyExists/Forbidden CREATE collision is returned as the raw API error
+// so ClaimPod can branch on it and advance to the next idle pod. A failure
+// after the CREATE deletes the partial claim so a retry is not blocked by a
+// claim with empty status; the §4.6.1 orphan GC reclaims any claim left behind
+// by a crash via its CREATE-before-status predicate.
+//
+// spec: §4.6.1 (per-pod claim; first `bound` status patch), §4.6.3 (gateway
+// holds patch-only on sandboxclaims/status, no update verb).
+func (r *CRDPodRegistry) claimViaSandboxClaim(ctx context.Context, sb *lennyv1.Sandbox, tenantID string) error {
+	claim, err := podclaim.CreateClaim(ctx, r.Client, r.Namespace, sb.Name, podclaim.ClaimRequest{TenantID: tenantID})
+	if err != nil {
+		// CreateClaim wraps the API error with %w, so ClaimPod's
+		// apierrors.IsAlreadyExists / IsForbidden race branch still matches
+		// the underlying API status through the error chain.
 		return err
 	}
-	pool = PoolID(sb.Spec.PoolRef)
-	switch reason {
-	case ReleaseCompleted:
-		sb.Status.Phase = "task_cleanup"
-	case ReleaseFailed:
-		sb.Status.Phase = "failed"
-	case ReleaseCancelled:
-		sb.Status.Phase = "cancelled"
-	default:
-		sb.Status.Phase = "task_cleanup"
+	if err := podclaim.WriteBoundStatus(ctx, r.Client, r.Namespace, claim.Name); err != nil {
+		_ = r.Client.Delete(ctx, claim)
+		return fmt.Errorf("podregistry: write bound status for claim %s: %w", claim.Name, err)
 	}
-	sb.Status.TenantID = ""
-	// spec: §12.6 line 442 — releasing a pod unbinds its session so a
-	// released pod no longer reports as bound to the orphan reconciler.
-	sb.Status.SessionID = ""
-	if err = r.Client.Status().Update(ctx, &sb); err != nil {
-		if apierrors.IsConflict(err) {
-			err = ErrResourceConflict
-			return err
-		}
+	return nil
+}
+
+// ReleasePod releases a pod by deleting its deterministic per-pod
+// SandboxClaim (`claim-<podName>`); the WarmPoolController returns the pod to
+// idle as a level-triggered projection of the claim's absence (§4.6.1
+// occupancy projection). The gateway does not write Sandbox.status to roll the
+// pod back: the `sandboxes/status` grant is removed under the §4.6.3 ownership
+// decomposition, so a Sandbox.status write here would be RBAC-denied. The
+// release reason is no longer recorded on Sandbox.status; a terminal
+// retirement disposition is written to the claim's binding state on the live
+// recycle-coordinator path rather than mapped to a Sandbox phase here. The
+// delete is idempotent: a missing claim is a no-op so a double release or a
+// claim the orphan GC already reclaimed does not error.
+//
+// spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
+// a Sandbox.status writer; releases via the claim lifecycle).
+func (r *CRDPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason ReleaseReason) (err error) {
+	start := time.Now()
+	defer func() { r.recordOp(opRelease, "", start, err) }()
+	_ = reason
+	if err = podclaim.DeleteClaim(ctx, r.Client, r.Namespace, string(podID)); err != nil {
 		err = fmt.Errorf("podregistry: release %s: %w", podID, err)
 		return err
 	}
@@ -506,6 +545,5 @@ func toPodRecord(sb *lennyv1.Sandbox) PodRecord {
 		NodeName:         sb.Status.NodeName,
 		PodIP:            sb.Status.PodIP,
 		PodName:          sb.Status.PodName,
-		ActiveSlots:      sb.Status.ActiveSlots,
 	}
 }

@@ -80,6 +80,10 @@ func (c *captureEvents) EmitSessionLost(_ context.Context, sessionID, reason str
 	c.calls = append(c.calls, sessionID+"|"+reason)
 }
 
+// spec: §4.4 lines 263-289.
+// diagnosis: a failure means the eviction-fallback writer does not
+// round-trip an inline-stored last-message context, so a small fallback
+// payload would be lost or corrupted across the Postgres write and read.
 func TestEvictionFallbackWriterPostgresInlineRoundTrip(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
@@ -131,6 +135,10 @@ func TestEvictionFallbackWriterPostgresInlineRoundTrip(t *testing.T) {
 	}
 }
 
+// spec: §4.4 lines 263-289.
+// diagnosis: a failure means the writer does not record the MinIO
+// key-path form of the fallback context, so a large payload offloaded to
+// the artifact store would not be resolvable on read.
 func TestEvictionFallbackWriterPostgresMinIOKeyPath(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
@@ -174,6 +182,10 @@ func TestEvictionFallbackWriterPostgresMinIOKeyPath(t *testing.T) {
 	}
 }
 
+// spec: §4.4 lines 263-289.
+// diagnosis: a failure means the writer does not truncate the inline
+// context when the MinIO offload fails, so a partial or oversized row
+// could be written instead of a bounded fallback record.
 func TestEvictionFallbackWriterPostgresTruncatesOnMinIOFailure(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
@@ -236,6 +248,9 @@ func (r *recordingQuotaCounterTier2) Adjust(_ context.Context, _ string, delta i
 // driver (e.g., a NULL constraint on the new column).
 //
 // spec: §4.4 line 291.
+// diagnosis: a failure means a SQL schema regression breaks the
+// artifact-store row write against the real pgx driver (e.g., a NULL
+// constraint on a new column), which unit tests with fakes would miss.
 func TestEvictionFallbackWriterRecordsArtifactStoreRow(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
@@ -303,6 +318,11 @@ func TestEvictionFallbackWriterRecordsArtifactStoreRow(t *testing.T) {
 // real Postgres pool is healthy but the writer is given an unconfigured
 // store at construction. (We use the nil-store path because forcing a
 // real Postgres failure in a tier-2 test is unreliable.)
+//
+// spec: §4.4 lines 263-289.
+// diagnosis: a failure means the total-loss path does not log CRITICAL,
+// bump the loss metric, and emit session.lost when the writer has no
+// Postgres store, so an unrecoverable eviction would pass silently.
 func TestEvictionFallbackWriterPostgresTotalLossViaNilStore(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

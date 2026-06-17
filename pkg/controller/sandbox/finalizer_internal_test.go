@@ -67,10 +67,14 @@ func TestHasAndRemoveFinalizer(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 305-313 — a freshly-created Sandbox (unset phase,
-// treated as warming) has no coarse operational value, so the label is
-// omitted; once idle, the coarse value is "idle". An attached pod maps to
-// the coarse "active" value rather than carrying the raw §6.2 phase.
+// spec: §6.2 lines 305-313 — the lenny.dev/state pod label carries only
+// the coarse operational set (idle, active, draining). A freshly-created
+// Sandbox (unset phase, treated as warming) has no coarse operational
+// value, so the label is omitted; once idle, the coarse value is "idle". A
+// claimed or reserved pod maps to the coarse "active" value. The fine
+// session phases (for example "attached") no longer project onto the
+// coarse pod label — they live in the Postgres session model and have no
+// coarse value here.
 func TestPodStateLabel(t *testing.T) {
 	sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-a"}}
 	if got, ok := podStateLabel(sb); ok {
@@ -80,8 +84,18 @@ func TestPodStateLabel(t *testing.T) {
 	if got, ok := podStateLabel(sb); !ok || got != "idle" {
 		t.Errorf("podStateLabel(idle) = (%q, %v), want (idle, true)", got, ok)
 	}
-	sb.Status.Phase = "attached"
+	sb.Status.Phase = "claimed"
 	if got, ok := podStateLabel(sb); !ok || got != "active" {
-		t.Errorf("podStateLabel(attached) = (%q, %v), want (active, true) per coarse mapping", got, ok)
+		t.Errorf("podStateLabel(claimed) = (%q, %v), want (active, true) per coarse mapping", got, ok)
+	}
+	sb.Status.Phase = "reserved"
+	if got, ok := podStateLabel(sb); !ok || got != "active" {
+		t.Errorf("podStateLabel(reserved) = (%q, %v), want (active, true) per coarse mapping", got, ok)
+	}
+	// A fine session phase no longer carries a coarse pod-label value; it
+	// lives in the Postgres session model.
+	sb.Status.Phase = "attached"
+	if got, ok := podStateLabel(sb); ok {
+		t.Errorf("podStateLabel(attached) = (%q, true), want no coarse value (fine session phase)", got)
 	}
 }

@@ -265,6 +265,9 @@ func TestTamperedTokenReturns401(t *testing.T) {
 // with the canonical UNAUTHORIZED code (401) and carry details.reason
 // = "auth_required" so callers can discriminate the missing-bearer
 // case while scripting against the §15.1 catalog.
+// diagnosis: a failure means a no-credentials request is not rejected
+// with the canonical UNAUTHORIZED code and auth_required reason, so the
+// missing-bearer case would be indistinguishable from other auth errors.
 func TestNoCredentialsRejectedWhenAuthRequired(t *testing.T) {
 	ts, _ := newTestServer(t, authmw.Options{
 		MultiTenant: false,

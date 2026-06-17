@@ -284,12 +284,13 @@ spec:
                 type: string
               executionMode:
                 description: |-
-                  ExecutionMode is the §5.2 pod-reuse mode. Empty defaults to
-                  `session` at registration time.
+                  ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
+                  parameterized by the pool's sessionPolicy) or `service` (a claimless,
+                  request-routed pod). Empty defaults to `session` at registration
+                  time.
                 enum:
                 - session
-                - task
-                - concurrent
+                - service
                 type: string
               image:
                 description: |-

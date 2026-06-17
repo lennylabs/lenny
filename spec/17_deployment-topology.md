@@ -45,7 +45,7 @@ This approach preserves the same security properties (non-root UID, all capabili
 4. **Label-based namespace targeting** via `.Values.agentNamespaces` (ensures the above policies scope to Lenny-managed agent namespaces only).
 5. **`lenny-label-immutability`** `ValidatingAdmissionWebhook` — enforces immutability of the `lenny.dev/managed: "true"`, `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile` labels on agent pods, plus the `lenny.dev/tenant-id` transition rules (see NET-003 in [Section 13.2](13_security-model.md#132-network-isolation) and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 6. **`lenny-direct-mode-isolation`** `ValidatingAdmissionWebhook` — rejects pools/pods whose configuration combines either (a) `deliveryMode: direct` with `isolationProfile: standard`, or (b) `deliveryMode: proxy` with `spiffeBinding: disabled`, when `tenancy.mode: multi` is set (see [Section 6.2](06_warm-pod-model.md#62-pod-state-machine), [Section 13.2](13_security-model.md#132-network-isolation), and [Section 4.9](04_system-components.md#49-credential-leasing-service) SPIFFE-binding deployment note).
-7. **`lenny-sandboxclaim-guard`** `ValidatingAdmissionWebhook` — double-claim prevention and tenant-scope enforcement on `SandboxClaim` PATCH/PUT operations (see [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+7. **`lenny-sandboxclaim-guard`** `ValidatingAdmissionWebhook` — per-pod claim uniqueness at `SandboxClaim` `CREATE` (double-claim prevention); it admits `PATCH` and `PUT` without inspection (see [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
 8. **`lenny-data-residency-validator`** `ValidatingAdmissionWebhook` — enforces `dataResidencyRegion` constraints on tenant-scoped CRDs (see [Section 12.8](12_storage-architecture.md#128-compliance-interfaces)).
 9. **`lenny-pool-config-validator`** `ValidatingAdmissionWebhook` — applies the semantic budget rules ([§10.1](10_gateway-internals.md#101-horizontal-scaling) tiered-cap + BarrierAck budget and BarrierAck floor) to every `SandboxTemplate.spec`/`SandboxWarmPool.spec` write and additionally applies the `userInfo`-based authorization-denial rule to manual writes (see [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)).
 10. **`lenny-t4-node-isolation`** `ValidatingAdmissionWebhook` — enforces T4 dedicated-node placement (see [Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)).
@@ -867,7 +867,7 @@ All tunable defaults collected in one place for operator convenience.
 | GC cycle interval (`gc.cycleIntervalSeconds`, min 60)                    | 900 s (15 min)                                                           | [§12.5](12_storage-architecture.md#125-artifact-store)     |
 | GC tombstone retention (`gc.tombstoneRetentionSeconds`) | 86400 s (24 h)                                                           | [§12.5](12_storage-architecture.md#125-artifact-store)     |
 | Max session age                   | 7200 s (2 h)                                                             | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
-| Max idle time                     | 600 s                                                                    | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
+| Max client idle time (`maxClientIdleSeconds`) | The pool's effective `maxSessionAgeSeconds` (7200 s at the default age cap) | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
 | Max resume window                 | 900 s                                                                    | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
 | Rate limit fail-open window       | 60 s                                                                     | [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)     |
 | Quota sync interval               | 30 s (min 10 s)                                                          | [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)     |
@@ -1025,7 +1025,7 @@ minWarm >= adjusted_claim_rate * safety_factor * (failover_seconds + pod_warmup_
             + adjusted_burst_claims * pod_warmup_seconds / burst_mode_factor
 ```
 
-This formula assumes session mode when `mode_factor = 1.0` and `burst_mode_factor = 1.0`. For task-mode or concurrent-mode delegation child pools, apply the appropriate `mode_factor` and `burst_mode_factor` values from [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes). Omitting these divisors for a task-mode pool with `maxTasksPerPod: 50` would over-provision by up to 50x.
+This formula assumes a one-session-per-pod pool (`maxConcurrentSessions: 1`, `recycle.enabled: false`) when `mode_factor = 1.0` and `burst_mode_factor = 1.0`. For delegation child pools that recycle pods (`recycle.enabled: true`) or serve concurrent sessions (`maxConcurrentSessions > 1`), apply the `mode_factor` and `burst_mode_factor` derivations from [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes). Omitting these divisors for a recycling pool with `recycle.maxSessionsPerPod: 50` would over-provision by up to 50x.
 
 Where:
 - `concurrent_delegations` — tier concurrent delegation fan-out limit (10 / 100 / 500 for Tier 1/2/3)
@@ -1033,7 +1033,7 @@ Where:
 - `base_claim_rate` — session-creation claim rate from the warm pool sizing table above
 - `delegation_burst_claims` — peak instantaneous delegation claims that outpace pool refill (use `concurrent_delegations × 0.1` as a conservative default; refine from observed `burst_p99_claims` once traffic data is available)
 
-**Tier 3 worked example (orchestrator preset, session mode `mode_factor = 1.0`, default `safety_factor = 1.2`, pod-warm pool with `pod_warmup_seconds = 10`, `failover_seconds = 25`):**
+**Tier 3 worked example (orchestrator preset, one-session-per-pod pool with `mode_factor = 1.0`, default `safety_factor = 1.2`, pod-warm pool with `pod_warmup_seconds = 10`, `failover_seconds = 25`):**
 
 ```
 delegation_claim_rate = 500 / 60 ≈ 8.3/s

@@ -234,5 +234,7 @@ func (c *SubscriptionCache) setAvailable(available bool) {
 	}
 }
 
-var _ SubscriptionSource = (*SubscriptionCache)(nil)
-var _ GenerationChecker = (*SubscriptionCache)(nil)
+var (
+	_ SubscriptionSource = (*SubscriptionCache)(nil)
+	_ GenerationChecker  = (*SubscriptionCache)(nil)
+)

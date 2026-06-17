@@ -30,7 +30,7 @@ Lenny is a platform for running interactive AI agent sessions in isolated sandbo
 
 The platform is runtime-agnostic. Any agent harness that implements a basic JSON-over-stdin/stdout protocol can run under it, and a catalog of ready-to-use runtimes ships out of the box — Claude Code, Gemini CLI, Codex, LangGraph, CrewAI, and others. You can fork any of them or register your own alongside.
 
-Agents run in one of three modes, chosen to fit the isolation–throughput trade-off. The default, `session` mode, gives each session its own locked-down pod with a fresh workspace, leased credentials, and a tight network perimeter. When throughput matters more than per-session isolation, `task` mode reuses a pod across sequential tasks with a workspace scrub between them, and `concurrent` mode handles several tasks at once inside a single pod.
+Agents run in one of two execution modes, chosen to fit the isolation–throughput trade-off. The default, `session` mode, binds each session to a claimed pod and is parameterized by a `sessionPolicy` block. In the default policy each session gets its own locked-down pod with a fresh workspace, leased credentials, and a tight network perimeter. When throughput matters more than per-session isolation, `recycle.enabled: true` reuses a pod across sequential sessions with a whole-pod scrub between them, and `maxConcurrentSessions > 1` serves several sessions at once inside a single pod. `service` mode routes each message to any ready replica with no conversation continuity, for stateless high-throughput workloads.
 
 In Lenny, agents can delegate work to other agents, recursively. Lenny tracks the delegation tree and enforces budget, scope, and isolation at every hop, so multi-agent systems don't depend on any runtime to police itself.
 
@@ -81,7 +81,7 @@ There are three levels of integration. You pick the level that matches what your
 | :----------- | :----------------------------------------------------------------------------- | :---------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Basic**    | Your program reads JSON lines from stdin, writes JSON lines to stdout          | ~50 lines, no Lenny dependency            | Session lifecycle, text in and out, reading and writing files in the workspace                                                                                            |
 | **Standard** | Basic, plus the agent connects to Lenny's local tool server over a Unix socket | ~150-200 lines plus an MCP client library | Delegation to other agents, asking the user for input mid-run, persistent memory, access to connectors like GitHub or Jira                                                |
-| **Full**     | Standard, plus a second socket for lifecycle signals                           | ~300-400 lines                            | Graceful checkpoints, clean interrupt handling, rotating credentials without restarting the agent, advance notice before a deadline, reusing the pod for sequential tasks |
+| **Full**     | Standard, plus a second socket for lifecycle signals                           | ~300-400 lines                            | Graceful checkpoints, clean interrupt handling, rotating credentials without restarting the agent, advance notice before a deadline |
 
 Official SDKs for Go, Python, and TypeScript handle the wire format so you don't have to. If you prefer, you can implement the protocol directly -- the SDKs are thin conveniences, not lock-in.
 
@@ -92,15 +92,16 @@ There are two kinds of runtime:
 - **Agent runtimes** take part in the full session lifecycle -- they receive messages, use workspaces, can delegate, and can ask for user input.
 - **MCP runtimes** wrap an existing MCP server and run it inside Lenny's sandboxing, credential leasing, and pool management -- without the MCP server needing to know Lenny exists.
 
-Agent runtimes can be scheduled three ways:
+Agent runtimes run in one of two execution modes; session mode is parameterized by `sessionPolicy`:
 
-| Mode         | Pod usage                                                          | Isolation guarantee                    | Typical use                                                      |
-| :----------- | :----------------------------------------------------------------- | :------------------------------------- | :--------------------------------------------------------------- |
-| `session`    | One session owns the pod end-to-end                                | Strongest -- no reuse between sessions | Coding agents, long-running interactive work (default)           |
-| `task`       | Pod runs one task, workspace is scrubbed, next task reuses the pod | Best-effort scrub between tasks        | High-throughput batch when the runtime supports Full integration |
-| `concurrent` | One pod handles multiple tasks at once                             | Process-level only                     | Lightweight, stateless handlers                                  |
+| Mode / policy | Pod usage | Isolation guarantee | Typical use |
+| :--- | :--- | :--- | :--- |
+| `session`, `recycle.enabled: false`, `maxConcurrentSessions: 1` | One session owns the pod end-to-end | Strongest -- no reuse between sessions | Coding agents, long-running interactive work (default) |
+| `session`, `recycle.enabled: true` | Pod is scrubbed at occupancy zero and reused for the next session | Best-effort scrub between sessions | High-throughput sequential work |
+| `session`, `maxConcurrentSessions > 1` | One pod serves several sessions at once in per-slot workspaces | Process-level only | Lightweight concurrent handlers |
+| `service` | Each message is routed to any ready replica | Process-level, no scrub | Stateless high-throughput handlers |
 
-`task` and `concurrent` modes relax isolation in exchange for throughput, so the platform requires explicit operator acknowledgment to enable them and refuses unsafe combinations (for example, `task` mode with a Basic-integration runtime).
+Pod recycling, concurrent sessions, and service mode relax isolation in exchange for throughput, so the platform requires explicit operator acknowledgments to enable them (`acknowledgeBestEffortScrub` for recycling, `acknowledgeProcessLevelIsolation` for concurrent sessions) and refuses unsafe combinations. Recycling requires no runtime cooperation and works at every integration level.
 
 ### Pods are untrusted by default
 

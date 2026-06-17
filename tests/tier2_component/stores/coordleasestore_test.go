@@ -32,6 +32,9 @@ func newCoordLeaseStore(t *testing.T) *coordleasepg.Store {
 // spec: §10.1 line 165 — the barrier-target query is cross-tenant per
 // replica; a handoff overwrites coordinator_replica; Release excludes a
 // terminal session.
+// diagnosis: a failure means the coordination-lease store mishandles a
+// barrier-target query, a coordinator handoff, or terminal-session
+// exclusion on Release, breaking §10.1 cross-replica coordination.
 func TestCoordLeasePgRoundTrip_spec_10_1_165(t *testing.T) {
 	store := newCoordLeaseStore(t)
 	ctx := context.Background()
@@ -80,6 +83,9 @@ func TestCoordLeasePgRoundTrip_spec_10_1_165(t *testing.T) {
 
 // spec: §12.1 line 5 — the mandatory erasure primitives remove the scoped
 // rows and reject an empty scope.
+// diagnosis: a failure means the coordination-lease erasure primitive
+// removes the wrong rows or accepts an empty scope, breaching the §12.1
+// scoped-erasure contract.
 func TestCoordLeasePgErasure_spec_12_1_5(t *testing.T) {
 	store := newCoordLeaseStore(t)
 	ctx := context.Background()

@@ -66,9 +66,11 @@ spec:
                   CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline
                   the gateway waits for `CheckpointBarrierAck` from every coordinated
                   pod during a rolling drain. The pool-config webhook adds it to the
-                  per-pod `terminationGracePeriodSeconds` floor for concurrent-workspace
-                  pools and additionally enforces the §10.1 line 124 BarrierAck-floor
-                  rule (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
+                  per-pod `terminationGracePeriodSeconds` floor (fanned across
+                  maxConcurrent slots for a service-mode pool, multiplier of 1 for a
+                  session-mode pool) and additionally enforces the §10.1 line 124
+                  BarrierAck-floor rule
+                  (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
                   Unset defaults to the §10.1 line 122 90s.
                 format: int64
                 type: integer
@@ -78,58 +80,26 @@ spec:
                   workspace checkpoints for sessions in this pool.
                 format: int64
                 type: integer
-              concurrencyStyle:
-                description: |-
-                  ConcurrencyStyle selects the concurrent sub-variant when
-                  ExecutionMode is `concurrent`: `stateless` routes through a
-                  Service with no workspace materialization, `workspace`
-                  materializes a per-slot workspace.
-                enum:
-                - stateless
-                - workspace
-                type: string
-              concurrentWorkspacePolicy:
-                description: |-
-                  ConcurrentWorkspacePolicy configures concurrent-workspace
-                  execution. It is required when ExecutionMode is `concurrent` and
-                  ConcurrencyStyle is `workspace`.
-                properties:
-                  acknowledgeProcessLevelIsolation:
-                    description: |-
-                      AcknowledgeProcessLevelIsolation records the deployer's
-                      acknowledgment that concurrent slots share the pod process
-                      namespace, /tmp, cgroup memory, network stack, and credential
-                      group-read access. Concurrent-workspace mode is rejected at
-                      validation time unless this is true.
-                    type: boolean
-                  cleanupTimeoutSeconds:
-                    description: |-
-                      CleanupTimeoutSeconds bounds per-slot cleanup. The per-slot
-                      budget is CleanupTimeoutSeconds divided by MaxConcurrent; the
-                      pool-config webhook rejects a pool where that quotient is below
-                      5 seconds.
-                    format: int64
-                    type: integer
-                  maxPodUptimeSeconds:
-                    description: |-
-                      MaxPodUptimeSeconds retires a concurrent-workspace pod once its
-                      wall-clock uptime since first boot exceeds this value: the pod
-                      accepts no new slots and its existing slots drain (§6.2 line 166
-                      slot_active to draining), and an idle pod is drained before its
-                      next slot assignment (§6.2 line 167 idle to draining). When unset,
-                      a concurrent-workspace pod is retired only by the unhealthy-slot
-                      threshold. spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
-                    format: int64
-                    type: integer
-                required:
-                - acknowledgeProcessLevelIsolation
-                type: object
               deliveryMode:
                 description: DeliveryMode is the §4.9 credential delivery mode for
                   the pool.
                 enum:
                 - proxy
                 - direct
+                type: string
+              dnsPolicy:
+                description: |-
+                  DNSPolicy opts the pool out of the dedicated lenny-system CoreDNS
+                  instance. The only accepted value is `cluster-default`: pods in the
+                  pool revert to the Kubernetes default ClusterFirst behavior and
+                  resolve through kube-system CoreDNS. Empty (the default) routes DNS
+                  through the dedicated instance, where the WarmPoolController sets
+                  `dnsPolicy: None` plus a `dnsConfig` targeting the dedicated Service.
+                  Opting out is permitted only for `standard` (runc) pools and removes
+                  the dedicated instance's query logging, rate limiting, and response
+                  filtering for that pool. spec: §13.2 lines 470-490.
+                enum:
+                - cluster-default
                 type: string
               egressProfile:
                 description: |-
@@ -145,12 +115,12 @@ spec:
                 type: string
               executionMode:
                 description: |-
-                  ExecutionMode is the §5.2 pod-reuse mode. Empty is treated as
-                  `session`.
+                  ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
+                  parameterized by SessionPolicy) or `service` (a claimless,
+                  request-routed pod). Empty is treated as `session`.
                 enum:
                 - session
-                - task
-                - concurrent
+                - service
                 type: string
               isolationProfile:
                 description: |-
@@ -162,8 +132,7 @@ spec:
                 - microvm
                 type: string
               maxConcurrent:
-                description: MaxConcurrent is the per-pod slot count for concurrent
-                  mode.
+                description: MaxConcurrent is the per-pod slot count for service mode.
                 format: int32
                 minimum: 1
                 type: integer
@@ -190,8 +159,46 @@ spec:
                 - large
                 type: string
               runtimeRef:
-                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this pool warms.
+                description: RuntimeRef names the lenny.dev/v1alpha1 Runtime this
+                  pool warms.
                 type: string
+              sessionPolicy:
+                description: |-
+                  SessionPolicy parameterizes session-mode pod reuse: simultaneous
+                  sessions per pod and the nested recycle block. It is nil on pools
+                  that take the default one-session-per-pod configuration.
+                properties:
+                  recycle:
+                    description: |-
+                      Recycle configures sequential pod reuse with a whole-pod scrub at
+                      the occupancy-zero recycle boundary. It is nil on pools that do not
+                      recycle (`recycle.enabled: false`, the default).
+                    properties:
+                      acknowledgeMicrovmResidualState:
+                        description: |-
+                          AcknowledgeMicrovmResidualState records the deployer's
+                          acknowledgment that guest-kernel residual state (DNS cache, TCP
+                          TIME_WAIT, page cache, inotify/fanotify registrations) persists
+                          across tenants. The pool controller requires it when ScrubProfile is
+                          `in-place` and rejects the pool otherwise. spec: §5.2 (Kata/microvm
+                          scrub variant).
+                        type: boolean
+                      scrubProfile:
+                        description: |-
+                          ScrubProfile selects the whole-pod scrub variant: `standard` (the
+                          default) runs the in-guest scrub steps; `vm-restart` boots a fresh
+                          guest VM between tenants on a microvm cross-tenant-reuse pool;
+                          `in-place` reuses the running guest and leaves guest-kernel residual
+                          state. The pool controller rejects `standard` on a pool with
+                          `recycle.allowCrossTenantReuse: true`. spec: §5.2 (Kata/microvm
+                          scrub variant).
+                        enum:
+                        - standard
+                        - vm-restart
+                        - in-place
+                        type: string
+                    type: object
+                type: object
               spiffeBinding:
                 description: |-
                   SpiffeBinding is the §4.9 proxy-mode lease-token SPIFFE binding.
@@ -204,105 +211,16 @@ spec:
                 - enabled
                 - disabled
                 type: string
-              taskPolicy:
-                description: |-
-                  TaskPolicy configures task-mode pod reuse. It is required when
-                  ExecutionMode is `task`.
-                properties:
-                  acknowledgeBestEffortScrub:
-                    description: |-
-                      AcknowledgeBestEffortScrub records the deployer's acknowledgment
-                      that the between-task workspace scrub is best-effort and is not a
-                      security boundary between tenants. Task mode is rejected at
-                      validation time unless this is true.
-                    type: boolean
-                  acknowledgeMicrovmResidualState:
-                    description: |-
-                      AcknowledgeMicrovmResidualState records the deployer's
-                      acknowledgment that guest-kernel residual state persists across
-                      tenants. The pool-config webhook requires it when MicrovmScrubMode
-                      is `in-place`.
-                    type: boolean
-                  allowCrossTenantReuse:
-                    description: |-
-                      AllowCrossTenantReuse permits a task-mode pod to serve more than
-                      one tenant. It is valid only when IsolationProfile is `microvm`
-                      and the runtime is not workspaceTier T4; the pool-config webhook
-                      rejects it on any other pool.
-                    type: boolean
-                  cleanupCommands:
-                    description: |-
-                      CleanupCommands are deployer-defined commands run between tasks
-                      before the Lenny scrub. They run after the credential file has
-                      been purged, so they have no access to the previous task's
-                      credentials.
-                    items:
-                      type: string
-                    type: array
-                  cleanupTimeoutSeconds:
-                    description: CleanupTimeoutSeconds bounds the cleanup command
-                      execution.
-                    format: int64
-                    type: integer
-                  maxPodUptimeSeconds:
-                    description: |-
-                      MaxPodUptimeSeconds retires a pod once its wall-clock uptime
-                      exceeds this value. When unset, only MaxTasksPerPod and
-                      MaxScrubFailures govern retirement.
-                    format: int64
-                    type: integer
-                  maxScrubFailures:
-                    description: |-
-                      MaxScrubFailures retires a pod once its cumulative scrub failure
-                      count reaches this value. It defaults to 3 when unset.
-                    format: int32
-                    type: integer
-                  maxTaskRetries:
-                    description: |-
-                      MaxTaskRetries is the retry count when a pod crashes mid-task. It
-                      defaults to 1 (two total attempts) when unset; 0 disables retries.
-                    format: int32
-                    type: integer
-                  maxTasksPerPod:
-                    description: |-
-                      MaxTasksPerPod retires a pod after this many completed tasks. It
-                      is required for task-mode pools; the pool-config webhook rejects
-                      a TaskPolicy that omits it, forcing an explicit reuse-limit
-                      choice.
-                    format: int32
-                    minimum: 1
-                    type: integer
-                  microvmScrubMode:
-                    description: |-
-                      MicrovmScrubMode selects the cross-tenant scrub variant for
-                      microvm pods: `restart` boots a fresh guest VM between tenants,
-                      `in-place` reuses the running guest. It is relevant only when
-                      AllowCrossTenantReuse is true.
-                    enum:
-                    - restart
-                    - in-place
-                    type: string
-                  onCleanupFailure:
-                    description: |-
-                      OnCleanupFailure selects pod handling when cleanup fails: `warn`
-                      returns the pod to the pool with a scrub_warning annotation,
-                      `fail` retires and replaces the pod.
-                    enum:
-                    - warn
-                    - fail
-                    type: string
-                required:
-                - acknowledgeBestEffortScrub
-                - maxTasksPerPod
-                type: object
               terminationGracePeriodSeconds:
                 description: |-
                   TerminationGracePeriodSeconds is the §5.2 deployer-set pod
                   terminationGracePeriodSeconds for this pool. spec: §5.2 line 516 —
-                  for concurrent-workspace pools the deployer sets it to cover the
-                  per-slot checkpoint budget (`maxConcurrent × max_tiered_checkpoint_cap
-                  at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces
-                  the §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
+                  for service-mode pools the deployer sets it to cover the per-slot
+                  checkpoint budget fanned across maxConcurrent slots
+                  (`maxConcurrent × max_tiered_checkpoint_cap
+                  pool uses a multiplier of 1; §6.4 line 67 requires at least
+                  `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces the
+                  §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
                   clamps it down.
                 format: int64
                 type: integer
@@ -492,11 +410,28 @@ spec:
                   workspace-size hard limit. The pool-config webhook resolves it to the
                   matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
                   ≤300 MB, 90s for ≤512 MB) when computing the
-                  `terminationGracePeriodSeconds` floor for concurrent-workspace pools
-                  (spec/05_runtime-registry-and-pool-model.md §5.2 line 516). Unset
-                  defaults to the 90s conservative tier per §10.1 line 108.
+                  `terminationGracePeriodSeconds` floor; a service-mode pool fans this
+                  cap across maxConcurrent slots while a session-mode pool uses a
+                  multiplier of 1 (spec/05_runtime-registry-and-pool-model.md §5.2
+                  line 516). Unset defaults to the 90s conservative tier per §10.1
+                  line 108.
                 format: int64
                 type: integer
+              workspaceTier:
+                description: |-
+                  WorkspaceTier is the §12.9 data-classification tier of the runtime
+                  this pool serves. The pool-config webhook reads it to enforce the
+                  §12.9 line 1043 cross-tenant-reuse prohibition: a `T4` (Restricted)
+                  pool may not set `sessionPolicy.recycle.allowCrossTenantReuse: true`, because
+                  T4 workspace state must never be reused across tenants regardless of
+                  isolation profile. Empty leaves the tier unclassified at the pool
+                  level (the cross-tenant rule does not fire). spec: §12.9 line 1043.
+                enum:
+                - T1
+                - T2
+                - T3
+                - T4
+                type: string
             required:
             - runtimeRef
             type: object

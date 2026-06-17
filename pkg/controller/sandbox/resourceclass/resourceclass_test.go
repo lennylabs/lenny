@@ -115,11 +115,11 @@ func TestParseOverrideRoundTrips(t *testing.T) {
 
 func TestParseOverrideRejectsMalformed(t *testing.T) {
 	cases := []string{
-		"",                          // empty
-		"noequals",                  // no name=
-		"x=requests.cpu:1",          // missing fields
-		"x=bogus.field:1,requests.cpu:1,requests.memory:1Gi,limits.cpu:1,limits.memory:1Gi", // unknown field
-		"x=requests.cpu:notaqty,requests.memory:1Gi,limits.cpu:1,limits.memory:1Gi",         // bad quantity
+		"",                 // empty
+		"noequals",         // no name=
+		"x=requests.cpu:1", // missing fields
+		"x=bogus.field:1,requests.cpu:1,requests.memory:1Gi,limits.cpu:1,limits.memory:1Gi",  // unknown field
+		"x=requests.cpu:notaqty,requests.memory:1Gi,limits.cpu:1,limits.memory:1Gi",          // bad quantity
 		"x=requests.cpu:1,requests.cpu:2,requests.memory:1Gi,limits.cpu:1,limits.memory:1Gi", // duplicate
 	}
 	for _, c := range cases {

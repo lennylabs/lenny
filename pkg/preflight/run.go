@@ -820,12 +820,14 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	// F-17.6.1.
 	if len(cfg.AgentNamespaces) > 0 {
 		if statuses, err := gatherNamespaceGovernance(ctx, reader, cfg.AgentNamespaces); err != nil {
-			report = append(report,
+			report = append(
+				report,
 				CheckResult{Name: "namespace-resourcequota", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
 				CheckResult{Name: "namespace-limitrange", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
 			)
 		} else {
-			report = append(report,
+			report = append(
+				report,
 				CheckResult{Name: "namespace-resourcequota", Decision: CheckNamespaceResourceQuotas(statuses)},
 				CheckResult{Name: "namespace-limitrange", Decision: CheckNamespaceLimitRanges(statuses)},
 			)
@@ -887,8 +889,10 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		nsExists, hasPod, err := gatherIngressController(ctx, reader,
 			cfg.IngressController.Namespace, cfg.IngressController.PodLabelKey, cfg.IngressController.PodLabelValue)
 		if err != nil {
-			report = append(report, CheckResult{Name: "ingress-controller", Decision: Decision{Passed: true,
-				Reason: "WARNING: could not determine ingress-controller posture: " + err.Error()}})
+			report = append(report, CheckResult{Name: "ingress-controller", Decision: Decision{
+				Passed: true,
+				Reason: "WARNING: could not determine ingress-controller posture: " + err.Error(),
+			}})
 		} else {
 			report = append(report, CheckResult{
 				Name: "ingress-controller",

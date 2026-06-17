@@ -95,7 +95,8 @@ func gatewayEnv(spec gatewaySpec, base []string) []string {
 		// §17.4 line 165 local-filesystem object storage: uploads and
 		// snapshots persist under this directory across a restart.
 		// F-17.4.8.
-		env = append(env,
+		env = append(
+			env,
 			"LENNY_OBJECT_STORAGE_PROVIDER=filesystem",
 			"LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT="+spec.ArtifactsDir,
 		)

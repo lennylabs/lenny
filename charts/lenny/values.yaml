@@ -2324,6 +2324,26 @@ gateway:
   # streams while the outage holds. Rendered into
   # LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS.
   dualStoreUnavailableMaxSeconds: 60
+  # claimHoldTTLSeconds is the §4.6.1 reserved-hold TTL: when a recycling
+  # pod's occupancy reaches zero the gateway patches the per-pod
+  # SandboxClaim to `reserved` and holds it for this many seconds so a
+  # back-to-back same-tenant session rebinds (reserved → bound) with no
+  # acquisition round trip. On expiry the holder deletes the claim and
+  # the pod returns to idle. A reserved pod is counted as occupied for
+  # inventory and scaling (§4.6.2), so a high value depresses apparent
+  # idle inventory and delays retirement-limit evaluation; the gateway
+  # warns at startup when it is set high. Default 10s. Rendered into
+  # LENNY_CLAIM_HOLD_TTL_SECONDS.
+  claimHoldTTLSeconds: 10
+  # slotCounterPostgresFallbackMaxSeconds is the §12.4 / §6.57 bounded
+  # window during a Redis outage in which the §5.2 atomic slot counter
+  # gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod
+  # under a per-pod advisory lock) instead of the Redis Lua counter. After
+  # this many seconds with Redis still unreachable, slot admission fails
+  # closed so a sustained Redis outage cannot keep the gateway gating
+  # capacity on the higher-latency Postgres path indefinitely. Default 60s.
+  # Rendered into LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS.
+  slotCounterPostgresFallbackMaxSeconds: 60
   # topologySpread opt-in (§4.1 / §17.1). When enabled the chart emits
   # spec.template.spec.topologySpreadConstraints on the gateway
   # Deployment so the scheduler distributes replicas across failure

@@ -16,7 +16,7 @@ import (
 // server-side from the fan-in index. F-27.3.8.
 func TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81(t *testing.T) {
 	store := NewMemorySessionStore()
-	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "alice", TenantID: "acme", Scope: "sessions:create"}}
+	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "alice", TenantID: "acme", Scope: "tools:sessions:read"}}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
 		Signer:   devSigner(),
 		Sessions: store,

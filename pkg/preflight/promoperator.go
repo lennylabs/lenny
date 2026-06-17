@@ -68,17 +68,20 @@ func (c PrometheusOperatorCRDCheck) Decide(ctx context.Context, reader client.Re
 			return Decision{Passed: true, Reason: fmt.Sprintf(
 				"WARNING: could not determine Prometheus Operator CRD presence for monitoring.format=%q: get CRD %q: %v. "+
 					"If the operator is absent the chart falls back to a ConfigMap rule file (§16.9).",
-				format, name, err)}
+				format, name, err,
+			)}
 		}
 	}
 	if len(missing) == 0 {
 		return Decision{Passed: true, Reason: fmt.Sprintf(
 			"all %d Prometheus Operator CRDs present for monitoring.format=%q",
-			len(PrometheusOperatorCRDNames), format)}
+			len(PrometheusOperatorCRDNames), format,
+		)}
 	}
 	return Decision{Passed: true, Reason: fmt.Sprintf(
 		"WARNING: monitoring.format=%q selects the Prometheus Operator CRDs but the following are not installed: %s. "+
 			"The chart falls back to a ConfigMap rule file and skips the ServiceMonitor and PodMonitor (§16.9 R8). "+
 			"Install the Prometheus Operator (kube-prometheus-stack, OpenShift Monitoring) or set monitoring.format=configmap.",
-		format, strings.Join(missing, ", "))}
+		format, strings.Join(missing, ", "),
+	)}
 }

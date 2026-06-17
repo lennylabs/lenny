@@ -45,8 +45,8 @@ import (
 
 	// Importing the scenarios package triggers every scenario
 	// subpackage's init() through blank imports.
-	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios"
 )
 
 // perScenarioBudget bounds a single scenario's wall-clock per
@@ -57,6 +57,10 @@ const perScenarioBudget = 15 * time.Second
 // scenario (each profile gets its own duration plus overhead).
 const perRampBudget = 90 * time.Second
 
+// spec: §12.7.a.
+// diagnosis: a failure means one of the §12.7.a local load scenarios
+// breaches its per-scenario or per-ramp wall-clock budget, or its
+// concurrency/ordering/atomicity assertion does not hold under load.
 func TestScenarios(t *testing.T) {
 	// Scenarios run sequentially. Each scenario boots its own
 	// in-process surfaces (miniredis, fakekube, the inproc gateway

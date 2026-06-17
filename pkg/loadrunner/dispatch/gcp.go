@@ -239,6 +239,7 @@ type pubsubClientAdapter struct {
 func (a *pubsubClientAdapter) Subscription(name string) PubSubSubscription {
 	return &pubsubSubAdapter{sub: a.client.Subscription(name)}
 }
+
 func (a *pubsubClientAdapter) Topic(name string) PubSubTopic {
 	return &pubsubTopicAdapter{topic: a.client.Topic(name)}
 }

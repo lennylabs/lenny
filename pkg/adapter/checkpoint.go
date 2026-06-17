@@ -142,7 +142,8 @@ func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointReques
 	if sessionID == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "Checkpoint requires a session id"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.InvalidArgument, "Checkpoint requires a session id")
 	}
 	if err := s.checkSession(sessionID); err != nil {
@@ -152,14 +153,16 @@ func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointReques
 	if s.WorkspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
 	if s.Checkpoints == nil {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.Unimplemented, "adapter is not configured with a checkpoint sink"),
-			tracing.CategoryPermanent)
+			tracing.CategoryPermanent,
+		)
 		return nil, status.Error(codes.Unimplemented,
 			"adapter is not configured with a checkpoint sink")
 	}

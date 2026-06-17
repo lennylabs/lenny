@@ -45,6 +45,29 @@ type Session struct {
 	// audit bucket, the reason is a specific cause string.
 	FailureReason string
 
+	// TerminatedAt and TerminatedReason carry the §7.2 / §8.8 Terminated
+	// session-condition fact, relocated off Sandbox.status.conditions by
+	// the §5.2 mode collapse: the gateway writes no Sandbox.status field
+	// and the WarmPoolController is the sole writer of Sandbox.status
+	// (§4.6.3), so the terminal-disposition fact lives on the session row
+	// and is read through the session API (§7.2 line 230). TerminatedAt
+	// is the wall-clock instant the session reached a terminal state
+	// (completed, failed, cancelled, expired); it is the zero time while
+	// the session is non-terminal. TerminatedReason is the coded reason
+	// string for the terminal disposition. spec: §6.49; §7.2 line 230;
+	// §8.8 session-level state mapping.
+	TerminatedAt     time.Time
+	TerminatedReason string
+
+	// SuspendedAt and SuspendedReason carry the §7.2 interrupt-suspension
+	// Suspended session-condition fact, relocated off
+	// Sandbox.status.conditions alongside the Terminated fact. SuspendedAt
+	// is the wall-clock instant the session entered `suspended`; it is the
+	// zero time while the session is not suspended. SuspendedReason is the
+	// coded interrupt reason. spec: §6.49; §7.2 line 230; §8.8.
+	SuspendedAt     time.Time
+	SuspendedReason string
+
 	// RuntimeRef identifies the runtime this session targets. Stored
 	// at create-time and immutable across the session lifetime.
 	RuntimeRef string
@@ -69,8 +92,8 @@ type Session struct {
 	IsolationProfile isolation.Profile
 
 	// ExecutionMode is the §5.2 pool execution mode the assigned pool
-	// resolved to at session creation: "session" (default), "task", or
-	// "concurrent". Resolved from the pool's SandboxTemplate at
+	// resolved to at session creation: "session" (default) or "service".
+	// Resolved from the pool's SandboxTemplate at
 	// /v1/sessions and frozen for the session lifetime per §7.1 line 75
 	// so GET /v1/sessions/{id} returns the same envelope a client
 	// received from the create response. Empty when the gateway has not
@@ -85,6 +108,22 @@ type Session struct {
 	// Resolved at create time and frozen for the session lifetime per
 	// §7.1 line 75. Empty for the session-mode default.
 	ScrubPolicy string
+
+	// ConversationContinuity is the §7.1 line 74 sessionIsolationLevel
+	// envelope half the create response and GET /v1/sessions/{id}
+	// return: "platform" for session mode (the platform binds the
+	// session to a pod and preserves conversation context across
+	// messages for the session's lifetime) or "none" for service mode
+	// (the gateway routes each message to any ready replica and keeps no
+	// conversation context between messages, so clients of multi_turn
+	// runtimes re-inject context into each message's input). Resolved
+	// against the assigned pool at create time and frozen for the
+	// session lifetime per §7.1 line 75. Empty when the gateway has not
+	// resolved a pool, in which case the read path backfills "platform"
+	// for an empty execution_mode and "none" for execution_mode =
+	// "service", parallel to the ExecutionMode / ScrubPolicy backfill.
+	// spec: §7.1 line 74.
+	ConversationContinuity string
 
 	// WorkspacePlan is the raw §14 WorkspacePlan JSON submitted with
 	// POST /v1/sessions or POST /v1/sessions/start. It is stored at
@@ -922,6 +961,22 @@ type Store interface {
 	// (0, nil).
 	// spec: §5.2 line 521 (post-recovery rehydration; GetActiveSlotsByPod).
 	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
+
+	// ReserveSlotUnderLock is the §12.4 Redis-outage capacity gate for the
+	// per-pod session-mode slot counter. It serializes the slot-admission
+	// decision for podID under a per-pod Postgres advisory lock so two
+	// concurrent admissions during a Redis outage cannot both observe the
+	// same free slot: under the lock it counts live (non-terminal) sessions
+	// bound to podID (the same source GetActiveSlotsByPod reads) and admits
+	// only when that count is below maxConcurrent. It returns the
+	// post-admission slot count on success (the observed count plus one) and
+	// ErrSlotsExhausted-equivalent semantics via admitted=false when the pod
+	// is already at its bound. The lock is held only for the duration of the
+	// count-and-decide; the §12.4 posture documents the fallback as a
+	// degraded Postgres-latency path bounded by slotCounterPostgresFallbackMaxSeconds.
+	// spec: §12.4 line 208 (Postgres fallback under a per-pod advisory lock);
+	// §5.2 line 541 (intra-pod capacity gate during a Redis outage).
+	ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (count int32, admitted bool, err error)
 
 	// PoolDrainStats returns the §15.1 line 797 pool-drain accounting for
 	// poolRef: the number of live (non-terminal) sessions bound to the

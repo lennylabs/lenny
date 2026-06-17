@@ -37,7 +37,7 @@ func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
 //     allowedResourceClasses) are always taken from the base; a derived
 //     runtime may not set them.
 //   - Override fields (description, delegationPolicyRef, agentInterface,
-//     taskPolicy, capabilityInferenceMode, toolCapabilityOverrides,
+//     sessionPolicy, capabilityInferenceMode, toolCapabilityOverrides,
 //     minPlatformVersion, supportedProviders, credentialCapabilities,
 //     limits, setupCommandPolicy, defaultPoolConfig) take the derived
 //     value when it is set and the base value otherwise.
@@ -92,8 +92,8 @@ func Merge(base, derived Runtime) Runtime {
 	if derived.AgentInterface == nil {
 		eff.AgentInterface = cb.AgentInterface
 	}
-	if derived.TaskPolicy == nil {
-		eff.TaskPolicy = cb.TaskPolicy
+	if derived.SessionPolicy == nil {
+		eff.SessionPolicy = cb.SessionPolicy
 	}
 	if derived.CapabilityInferenceMode == "" {
 		eff.CapabilityInferenceMode = cb.CapabilityInferenceMode

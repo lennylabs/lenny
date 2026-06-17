@@ -52,7 +52,8 @@ func CheckTerminationGracePeriods(pools []PoolGracePeriod) Decision {
 			"pool '%s' terminationGracePeriodSeconds (%ds) exceeds %ds; verify that the "+
 				"cluster node drain timeout is configured to accommodate this value or the "+
 				"kubelet will SIGKILL the pod before checkpoints complete",
-			p.Pool, *p.TerminationGracePeriodSeconds, nodeDrainTimeoutWarnSeconds))
+			p.Pool, *p.TerminationGracePeriodSeconds, nodeDrainTimeoutWarnSeconds,
+		))
 	}
 	if len(warnings) == 0 {
 		return Decision{Passed: true}

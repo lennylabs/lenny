@@ -5,6 +5,8 @@ package adapter_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -115,6 +117,20 @@ func (f *fakeRuntime) envelopesSnapshot() [][]byte {
 	out := make([][]byte, len(f.envelopes))
 	copy(out, f.envelopes)
 	return out
+}
+
+// shortSocketName returns a Unix socket path under a short temp directory.
+// t.TempDir() embeds the (often long) test name, so a socket derived from it
+// can overflow the platform sun_path limit (~104 bytes on darwin); binding
+// under os.MkdirTemp's short root keeps the path within that limit.
+func shortSocketName(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-sock-*")
+	if err != nil {
+		t.Fatalf("temp socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, name)
 }
 
 // sessionServer builds an adapter Server wired to a fresh workspace

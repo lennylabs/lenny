@@ -55,20 +55,24 @@ type ConversionWebhookState struct {
 func CheckConversionWebhook(state ConversionWebhookState) Decision {
 	if !state.DeploymentPresent {
 		return Decision{Passed: true, Reason: fmt.Sprintf(
-			"%s not yet deployed; applied in the chart's main phase after this pre-hook", ConversionWebhookName)}
+			"%s not yet deployed; applied in the chart's main phase after this pre-hook", ConversionWebhookName,
+		)}
 	}
 	if !state.ServicePresent {
 		return Decision{Reason: fmt.Sprintf(
 			"%s Service is absent; the CRD conversion webhook is unreachable and every multi-version CRD operation fails at the API server",
-			ConversionWebhookName)}
+			ConversionWebhookName,
+		)}
 	}
 	if !state.DeploymentReady {
 		return Decision{Reason: fmt.Sprintf(
 			"%s Deployment has no ready replicas; the CRD conversion webhook is not ready and the upgrade is aborted",
-			ConversionWebhookName)}
+			ConversionWebhookName,
+		)}
 	}
 	return Decision{Passed: true, Reason: fmt.Sprintf(
-		"%s conversion webhook present and ready", ConversionWebhookName)}
+		"%s conversion webhook present and ready", ConversionWebhookName,
+	)}
 }
 
 // gatherConversionWebhook reads the lenny-crd-conversion Service and

@@ -69,11 +69,20 @@ export interface Session {
  * The §7.1 sessionIsolationLevel object on the create response.
  */
 export interface IsolationLevel {
+  /** The §5.2 execution mode of the assigned pool: `session` or `service`. */
   executionMode: string;
   isolationProfile: string;
   podReuse: boolean;
   scrubPolicy?: string;
   residualStateWarning: boolean;
+
+  /**
+   * `platform` for session mode (the platform binds the session to a pod
+   * and preserves conversation context across messages) or `none` for
+   * service mode (the gateway routes each message to any ready replica
+   * and maintains no conversation context between messages). spec: §7.1.
+   */
+  conversationContinuity: string;
 }
 
 /**

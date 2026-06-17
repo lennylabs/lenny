@@ -54,7 +54,8 @@ func TestAddTenantTotal_AtomicIncrement_spec_12_4_268(t *testing.T) {
 	// itself (0119). The full migration set is not applied because an
 	// unrelated later migration needs the pgvector extension, which the
 	// embedded Postgres bundle does not carry.
-	applyMigrations(t, ctx, pool,
+	applyMigrations(
+		t, ctx, pool,
 		"0001_initial_schema.up.sql",
 		"0002_rls_immutability_roles.up.sql",
 		"0119_token_usage_checkpoint.up.sql",

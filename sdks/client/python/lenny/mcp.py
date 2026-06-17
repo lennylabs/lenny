@@ -318,13 +318,16 @@ class MCPClient:
     def send_message(self, session_id: str, content: str) -> str:
         """Invoke the section 15.2 ``lenny/send_message`` MCP tool.
 
-        It delivers ``content`` to the session and returns the agent's
+        It delivers a message to the session and returns the agent's
         text reply. It is the MCP counterpart of a section 15.1
-        send-message REST call.
+        send-message REST call. The wire arguments are the section 8.5
+        ``to`` (target session id) and ``message`` (content) fields,
+        renamed from the legacy ``sessionId`` and ``content`` by
+        F-8.5.16.
         """
         result = self.call_tool(
             "lenny/send_message",
-            {"sessionId": session_id, "content": content},
+            {"to": session_id, "message": content},
         )
         if result.is_error:
             raise MCPError(

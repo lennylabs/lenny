@@ -45,7 +45,7 @@ Every minted token carries the `origin: playground` claim. The gateway uses that
 The playground binds two limits on every session it starts, identified by the `origin: playground` claim.
 
 - The duration cap is `min(sandboxTemplate.maxSessionMinutes, playground.maxSessionMinutes)`.
-- The idle timeout is `min(runtime.maxIdleTimeSeconds, playground.maxIdleTimeSeconds)`. The playground value is a hard override that only tightens a looser runtime limit.
+- The idle timeout is `min(maxClientIdleSeconds, playground.maxIdleTimeSeconds)`, where `maxClientIdleSeconds` is the pool's effective `sessionPolicy.maxClientIdleSeconds`. The playground value is a hard override that only tightens a looser platform limit.
 
 A browser that navigates away sends a best-effort `session.cancel`; a dropped connection that cannot send it falls back to the idle timeout.
 

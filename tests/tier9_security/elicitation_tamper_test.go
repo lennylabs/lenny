@@ -257,6 +257,12 @@ func TestElicitationTamperDetectOnlyMode(t *testing.T) {
 // when the wire contract drifts from the spec — e.g., the response
 // shape omits effectiveMode, or the floor neither permits nor
 // rejects with the documented error code.
+//
+// spec: §9.2, §15.1.
+// diagnosis: a failure means the elicitation-integrity platform floor
+// wire contract drifted from the spec, either omitting storedMode /
+// effectiveMode or neither permitting nor rejecting a below-floor PUT
+// with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR.
 func TestElicitationPlatformFloor(t *testing.T) {
 	c := kind.InstallLenny(t)
 	p := startElicitationProbe(t, c)

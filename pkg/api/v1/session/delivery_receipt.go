@@ -44,12 +44,12 @@ type DeliveryReceipt struct {
 type DeliveryStatus string
 
 const (
-	DeliveryStatusDelivered    DeliveryStatus = "delivered"
-	DeliveryStatusQueued       DeliveryStatus = "queued"
-	DeliveryStatusDropped      DeliveryStatus = "dropped"
-	DeliveryStatusExpired      DeliveryStatus = "expired"
-	DeliveryStatusRateLimited  DeliveryStatus = "rate_limited"
-	DeliveryStatusError        DeliveryStatus = "error"
+	DeliveryStatusDelivered   DeliveryStatus = "delivered"
+	DeliveryStatusQueued      DeliveryStatus = "queued"
+	DeliveryStatusDropped     DeliveryStatus = "dropped"
+	DeliveryStatusExpired     DeliveryStatus = "expired"
+	DeliveryStatusRateLimited DeliveryStatus = "rate_limited"
+	DeliveryStatusError       DeliveryStatus = "error"
 )
 
 // DeliveryReason is the closed enum on DeliveryReceipt.Reason. The

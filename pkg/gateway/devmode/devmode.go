@@ -34,7 +34,8 @@ const WarnInterval = 60 * time.Second
 var ErrTLSRequired = errors.New(
 	"gateway refuses to start with TLS disabled: set LENNY_DEV_MODE=true for local " +
 		"development, or LENNY_TLS_TERMINATED_UPSTREAM=true when an ingress or proxy " +
-		"terminates TLS in front of the gateway (§17.4 line 268)")
+		"terminates TLS in front of the gateway (§17.4 line 268)",
+)
 
 // ResolveStartupGate enforces the §17.4 line 268 hard startup assertion.
 // The gateway's listener is always plain HTTP; production terminates TLS

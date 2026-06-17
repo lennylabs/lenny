@@ -12,9 +12,16 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+// fakeRuntimeReadDeadline bounds a single fakeRuntime read. The frames
+// travel an in-process loopback Unix socket, so a multi-second wait is
+// only ever scheduler starvation under the whole-repo parallel test run,
+// never a genuine protocol stall. The deadline guards against a true
+// hang (the read still fails with a clear message); the generous value
+// keeps the no-op rotation-gate pass-through and the handshake reads from
+// timing out when 28+ packages contend for cores. spec: §4.7.
+const fakeRuntimeReadDeadline = 30 * time.Second
 
 // fakeRuntime plays the agent-runtime end of the §4.7 lifecycle
 // channel: it dials the adapter's Unix socket and exchanges JSONL
@@ -27,7 +34,7 @@ type fakeRuntime struct {
 
 func (fr *fakeRuntime) read() lifecycleFrame {
 	fr.t.Helper()
-	_ = fr.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = fr.conn.SetReadDeadline(time.Now().Add(fakeRuntimeReadDeadline))
 	frame, err := readLifecycleFrame(fr.r)
 	if err != nil {
 		fr.t.Fatalf("fakeRuntime read: %v", err)
@@ -56,31 +63,30 @@ func (fr *fakeRuntime) handshake() {
 	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: caps.Capabilities})
 }
 
+// shortSocketName returns a Unix socket path under a short temp directory.
+// t.TempDir() embeds the (often long) test name, so a socket derived from it
+// can overflow the platform sun_path limit (~104 bytes on darwin); binding
+// under os.MkdirTemp's short root keeps the path within that limit.
+func shortSocketName(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-sock-*")
+	if err != nil {
+		t.Fatalf("temp socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, name)
+}
+
 // startLifecycleChannel creates a LifecycleChannel on a temporary
 // socket, runs it, and dials it as a fake runtime. Run and the
 // connection are torn down on test cleanup.
 func startLifecycleChannel(t *testing.T) (*LifecycleChannel, *fakeRuntime) {
-	return startLifecycleChannelOpts(t, nil)
-}
-
-// startLifecycleChannelOpts is startLifecycleChannel with a hook to
-// mutate the channel (set task mode, tighten the ack timeout) before Run
-// performs the handshake.
-func startLifecycleChannelOpts(t *testing.T, configure func(*LifecycleChannel)) (*LifecycleChannel, *fakeRuntime) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "lc-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "lifecycle.sock")
+	sock := shortSocketName(t, "lifecycle.sock")
 
 	lc, err := NewLifecycleChannel(sock)
 	if err != nil {
 		t.Fatalf("NewLifecycleChannel: %v", err)
-	}
-	if configure != nil {
-		configure(lc)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -248,101 +254,6 @@ func TestLifecycleChannelCheckpointContextCancelled(t *testing.T) {
 	}
 	if req := fr.read(); req.Type != "checkpoint_request" {
 		t.Errorf("runtime saw %q, want checkpoint_request", req.Type)
-	}
-}
-
-// TestLifecycleCapabilities_TaskMode_spec_4_7 verifies the adapter
-// advertises task_lifecycle only on task-mode pods (spec line 686-694).
-func TestLifecycleCapabilities_TaskMode_spec_4_7(t *testing.T) {
-	base := &LifecycleChannel{}
-	for _, c := range base.capabilities() {
-		if c == taskLifecycleCapability {
-			t.Fatalf("non-task-mode channel advertised %q", taskLifecycleCapability)
-		}
-	}
-
-	task := &LifecycleChannel{taskMode: true}
-	var found bool
-	for _, c := range task.capabilities() {
-		if c == taskLifecycleCapability {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("task-mode channel did not advertise %q; caps=%v", taskLifecycleCapability, task.capabilities())
-	}
-}
-
-// TestLifecycleChannelTaskCompleteRoundTrip_spec_4_7 drives the
-// task_complete → task_complete_acknowledged exchange (spec line 678-708).
-func TestLifecycleChannelTaskCompleteRoundTrip_spec_4_7(t *testing.T) {
-	lc, fr := startLifecycleChannelOpts(t, func(lc *LifecycleChannel) { lc.taskMode = true })
-	// The runtime declares task_lifecycle in its handshake reply.
-	caps := fr.read()
-	if caps.Type != "lifecycle_capabilities" {
-		t.Fatalf("first frame = %q", caps.Type)
-	}
-	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: caps.Capabilities})
-
-	errc := make(chan error, 1)
-	go func() { errc <- lc.RequestTaskComplete(context.Background(), "task-1") }()
-
-	req := fr.read()
-	if req.Type != "task_complete" || req.TaskID != "task-1" {
-		t.Fatalf("request = %+v, want task_complete task-1", req)
-	}
-	fr.write(lifecycleFrame{Type: "task_complete_acknowledged", TaskID: "task-1"})
-	if err := <-errc; err != nil {
-		t.Fatalf("RequestTaskComplete: %v", err)
-	}
-
-	if err := lc.SignalTaskReady("task-1"); err != nil {
-		t.Fatalf("SignalTaskReady: %v", err)
-	}
-	ready := fr.read()
-	if ready.Type != "task_ready" || ready.TaskID != "task-1" {
-		t.Errorf("frame = %+v, want task_ready task-1", ready)
-	}
-}
-
-// TestLifecycleChannelTaskCompleteAckTimeout_spec_4_7 verifies the
-// 30s ack timeout (here shortened): on timeout the adapter logs,
-// increments the counter, and proceeds (returns nil) per spec line 708.
-func TestLifecycleChannelTaskCompleteAckTimeout_spec_4_7(t *testing.T) {
-	lc, fr := startLifecycleChannelOpts(t, func(lc *LifecycleChannel) {
-		lc.taskMode = true
-		lc.taskCompleteAckTimeout = 80 * time.Millisecond
-	})
-	fr.handshake()
-
-	before := testutil.ToFloat64(taskCompleteAckTimeout.WithLabelValues())
-	// The runtime never acknowledges; the request must return nil (proceed).
-	if err := lc.RequestTaskComplete(context.Background(), "task-stall"); err != nil {
-		t.Fatalf("RequestTaskComplete on timeout = %v, want nil (proceed with cleanup)", err)
-	}
-	if req := fr.read(); req.Type != "task_complete" {
-		t.Errorf("runtime saw %q, want task_complete", req.Type)
-	}
-	if got := testutil.ToFloat64(taskCompleteAckTimeout.WithLabelValues()); got != before+1 {
-		t.Errorf("task_complete_ack_timeout_total = %v, want %v", got, before+1)
-	}
-}
-
-// TestLifecycleChannelTaskCompleteCtxCancel_spec_4_7 verifies a caller
-// cancellation (distinct from the ack timeout) surfaces as an error.
-func TestLifecycleChannelTaskCompleteCtxCancel_spec_4_7(t *testing.T) {
-	lc, fr := startLifecycleChannelOpts(t, func(lc *LifecycleChannel) { lc.taskMode = true })
-	fr.handshake()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	errc := make(chan error, 1)
-	go func() { errc <- lc.RequestTaskComplete(ctx, "task-c") }()
-	if req := fr.read(); req.Type != "task_complete" {
-		t.Fatalf("runtime saw %q, want task_complete", req.Type)
-	}
-	cancel()
-	if err := <-errc; !errors.Is(err, context.Canceled) {
-		t.Fatalf("RequestTaskComplete err = %v, want context.Canceled", err)
 	}
 }
 
@@ -536,7 +447,7 @@ func TestLifecycleVersionsCompatible_MalformedRejected(t *testing.T) {
 		{"1.0", true},
 		{"1.7", true},
 		{"2.0", false},
-		{"", false},   // direct compat predicate test; the handshake handles "" separately.
+		{"", false}, // direct compat predicate test; the handshake handles "" separately.
 		{"abc", false},
 		{".5", false},
 		{"1", false},

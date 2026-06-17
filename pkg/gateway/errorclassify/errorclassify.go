@@ -99,15 +99,15 @@ var table = map[string]entry{
 	// retries do not double-execute the side effect. POLICY: the gate is a
 	// deliberate concurrency rule. retryable=true: once the original
 	// finishes, the next retry replays the cached response. F-11.5.2.
-	"IDEMPOTENCY_KEY_IN_FLIGHT":   {CategoryPolicy, true},
-	"PRECONDITION_FAILED":         {CategoryPermanent, false},
-	"UNAUTHORIZED":                {CategoryPermanent, false},
-	"FORBIDDEN":                   {CategoryPermanent, false},
-	"CONFLICT":                    {CategoryPermanent, false},
-	"PAYLOAD_TOO_LARGE":           {CategoryPermanent, false},
-	"UNSUPPORTED_MEDIA_TYPE":      {CategoryPermanent, false},
-	"INTERNAL_ERROR":              {CategoryTransient, true},
-	"SERVICE_UNAVAILABLE":         {CategoryTransient, true},
+	"IDEMPOTENCY_KEY_IN_FLIGHT": {CategoryPolicy, true},
+	"PRECONDITION_FAILED":       {CategoryPermanent, false},
+	"UNAUTHORIZED":              {CategoryPermanent, false},
+	"FORBIDDEN":                 {CategoryPermanent, false},
+	"CONFLICT":                  {CategoryPermanent, false},
+	"PAYLOAD_TOO_LARGE":         {CategoryPermanent, false},
+	"UNSUPPORTED_MEDIA_TYPE":    {CategoryPermanent, false},
+	"INTERNAL_ERROR":            {CategoryTransient, true},
+	"SERVICE_UNAVAILABLE":       {CategoryTransient, true},
 	// spec: §10.1 item 2/5 — `session.create` is rejected with this code
 	// while both coordination stores are unreachable. TRANSIENT +
 	// retryable: the §10.1 degraded mode is bounded by the Postgres RTO
@@ -422,14 +422,14 @@ var table = map[string]entry{
 	// retryable: the gateway retries on the same replica up to
 	// audit.lock.maxRetries; sustained failure surfaces as 503
 	// audit_unavailable (mapped via SERVICE_UNAVAILABLE).
-	"AUDIT_CONCURRENCY_TIMEOUT":       {CategoryTransient, true},
+	"AUDIT_CONCURRENCY_TIMEOUT": {CategoryTransient, true},
 	// spec: §25.9 lines 3734-3735 — the audit read path has no cache, so
 	// a Postgres outage surfaces as AUDIT_STORE_UNAVAILABLE (503,
 	// retryable once the store recovers); a partial-shard outage surfaces
 	// as AUDIT_PARTIAL_RESULTS (207, retryable when the missing shards
 	// return).
-	"AUDIT_STORE_UNAVAILABLE": {CategoryTransient, true},
-	"AUDIT_PARTIAL_RESULTS":   {CategoryTransient, true},
+	"AUDIT_STORE_UNAVAILABLE":         {CategoryTransient, true},
+	"AUDIT_PARTIAL_RESULTS":           {CategoryTransient, true},
 	"DELEGATION_BUDGET_UNAVAILABLE":   {CategoryTransient, true}, // spec: 12.4 (Redis budget-counter outage fail-closed, retryable)
 	"POOL_DRAINING":                   {CategoryTransient, true}, // spec: 15:1034 (§15.4 family)
 	"GIT_CLONE_REF_RESOLVE_TRANSIENT": {CategoryTransient, true}, // spec: 15:1066 (§15.4 family)

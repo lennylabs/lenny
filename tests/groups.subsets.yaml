@@ -248,6 +248,11 @@ subsets:
     tests:
       - tests/tier3_contract/adapter_jsonl/...
 
+  gatewaycontrol-scrub:
+    tier: contract
+    tests:
+      - tests/tier3_contract/gatewaycontrol_scrub/...
+
   workspaceplan:
     tier: contract
     tests:

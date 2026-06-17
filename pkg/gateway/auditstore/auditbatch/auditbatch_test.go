@@ -57,6 +57,7 @@ func (m *countingMetrics) Flushed(n int) {
 	m.flushed += n
 	m.flushCalls++
 }
+
 func (m *countingMetrics) FlushFailed(n int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

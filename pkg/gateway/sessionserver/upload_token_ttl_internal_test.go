@@ -119,7 +119,9 @@ func TestUploadTokenExpiresPerConfiguredTTL_spec_7_4_7(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	// Pull the minted token by decoding the response.
-	type wrap struct{ UploadToken string `json:"uploadToken"` }
+	type wrap struct {
+		UploadToken string `json:"uploadToken"`
+	}
 	var w wrap
 	_ = decodeJSON(t, rr.Body.Bytes(), &w)
 

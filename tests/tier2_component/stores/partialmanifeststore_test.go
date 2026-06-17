@@ -25,6 +25,9 @@ import (
 // spec: §4.4 line 234 — the partial-checkpoint manifest table is
 // created by migration 0062 and the pgstore round-trips every
 // spec-mandated field through it.
+// diagnosis: a failure means the partial-checkpoint manifest store does
+// not round-trip a spec-mandated field, so a partial checkpoint's
+// manifest would be lost or corrupted on read-back.
 func TestPartialManifestStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

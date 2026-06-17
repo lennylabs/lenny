@@ -27,8 +27,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
+	"github.com/lennylabs/lenny/pkg/tokenservice"
 )
 
 // gatewayClientHarness wires both halves of the §4.3 boundary into one
@@ -113,7 +113,7 @@ func TestTokenServiceClientCutoverEndToEnd(t *testing.T) {
 	h := newGatewayClientHarness(t)
 	defer h.stop()
 
-	wire, err := h.client.AssignProto("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1")
+	wire, err := h.client.AssignProto("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1", "")
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestTokenServiceClientPoolBindingForRenewal(t *testing.T) {
 	h := newGatewayClientHarness(t)
 	defer h.stop()
 
-	lease, err := h.client.Assign("claude-prod", "s_renew", "")
+	lease, err := h.client.Assign("claude-prod", "s_renew", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestTokenServiceClientReleaseReleasesBothSides(t *testing.T) {
 	h := newGatewayClientHarness(t)
 	defer h.stop()
 
-	lease, err := h.client.Assign("claude-prod", "s_rel", "")
+	lease, err := h.client.Assign("claude-prod", "s_rel", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestTokenServiceClientErrorMapping(t *testing.T) {
 	h := newGatewayClientHarness(t)
 	defer h.stop()
 
-	if _, err := h.client.Assign("missing", "s_err", ""); !errors.Is(err, credassign.ErrPoolNotFound) {
+	if _, err := h.client.Assign("missing", "s_err", "", ""); !errors.Is(err, credassign.ErrPoolNotFound) {
 		t.Errorf("unknown pool err = %v, want ErrPoolNotFound", err)
 	}
 }

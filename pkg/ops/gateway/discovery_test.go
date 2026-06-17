@@ -40,7 +40,7 @@ func TestHeadlessDiscovery_Lookup(t *testing.T) {
 		ServiceName: "lenny-gateway-pods",
 		Namespace:   "lenny-system",
 		Port:        8443,
-		Resolver: fakeResolver{ips: []string{"10.0.0.1", "10.0.0.2"}},
+		Resolver:    fakeResolver{ips: []string{"10.0.0.1", "10.0.0.2"}},
 	}
 	got, err := d.Endpoints(context.Background())
 	if err != nil {
@@ -91,7 +91,7 @@ func TestHeadlessDiscovery_DNSFailure(t *testing.T) {
 	d := gateway.HeadlessDiscovery{
 		ServiceName: "lenny-gateway-pods",
 		Namespace:   "lenny-system",
-		Resolver: fakeResolver{err: errors.New("dns unavailable")},
+		Resolver:    fakeResolver{err: errors.New("dns unavailable")},
 	}
 	_, err := d.Endpoints(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "dns unavailable") {

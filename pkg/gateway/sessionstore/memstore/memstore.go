@@ -11,6 +11,7 @@ package memstore
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -24,11 +25,21 @@ import (
 type Store struct {
 	mu       sync.RWMutex
 	sessions map[string]sessionstore.Session
+
+	// podLockMu guards podLocks. podLocks holds the per-pod mutex the
+	// §12.4 Redis-outage capacity gate (ReserveSlotUnderLock) takes so the
+	// in-memory backend serializes the count-and-decide the same way the
+	// Postgres backend serializes it under a per-pod advisory xact lock.
+	podLockMu sync.Mutex
+	podLocks  map[string]*sync.Mutex
 }
 
 // New returns an empty in-memory store.
 func New() *Store {
-	return &Store{sessions: make(map[string]sessionstore.Session)}
+	return &Store{
+		sessions: make(map[string]sessionstore.Session),
+		podLocks: make(map[string]*sync.Mutex),
+	}
 }
 
 // Create inserts the row. Returns ErrAlreadyExists when ID is taken.
@@ -285,6 +296,50 @@ func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error
 		}
 	}
 	return count, nil
+}
+
+// ReserveSlotUnderLock implements Store — the §12.4 Redis-outage capacity
+// gate. It serializes the count-and-decide for podID under a per-pod mutex
+// (the in-memory analogue of the Postgres per-pod advisory xact lock) so two
+// concurrent admissions during a Redis outage cannot both observe the same
+// free slot. The count predicate matches GetActiveSlotsByPod verbatim.
+// spec: §12.4 line 208; §5.2 line 541.
+func (s *Store) ReserveSlotUnderLock(_ context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+	if podID == "" {
+		return 0, false, nil
+	}
+	if maxConcurrent < 1 {
+		return 0, false, fmt.Errorf("memstore: maxConcurrent must be >= 1, got %d", maxConcurrent)
+	}
+	lock := s.podLock(podID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	s.mu.RLock()
+	current := int32(0)
+	for _, row := range s.sessions {
+		if row.PodAssignment == podID && !session.IsTerminal(row.State) {
+			current++
+		}
+	}
+	s.mu.RUnlock()
+	if current >= maxConcurrent {
+		return current, false, nil
+	}
+	return current + 1, true, nil
+}
+
+// podLock returns the per-pod mutex for the §12.4 fallback gate, creating
+// it on first use.
+func (s *Store) podLock(podID string) *sync.Mutex {
+	s.podLockMu.Lock()
+	defer s.podLockMu.Unlock()
+	lock, ok := s.podLocks[podID]
+	if !ok {
+		lock = &sync.Mutex{}
+		s.podLocks[podID] = lock
+	}
+	return lock
 }
 
 // PoolDrainStats implements the §15.1 line 797 pool-drain accounting:

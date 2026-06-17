@@ -117,7 +117,8 @@ func TestResumeRestoresSessionFileToExpectedPath_spec_7_3_14(t *testing.T) {
 	s, _, root := sessionServer(t)
 	sessionsRoot := t.TempDir()
 	s.SessionsRoot = sessionsRoot
-	s.Restorer = fakeCheckpointSource{archive: bundleOf(t,
+	s.Restorer = fakeCheckpointSource{archive: bundleOf(
+		t,
 		map[string]string{"work/file.txt": "ws"},
 		map[string]string{".session.json": `{"id":"sess-1","turns":3}`},
 	)}
@@ -151,7 +152,8 @@ func TestResumeWorkspaceOnlyBundleLeavesSessionsEmpty_spec_7_3_14(t *testing.T) 
 	s, _, root := sessionServer(t)
 	sessionsRoot := t.TempDir()
 	s.SessionsRoot = sessionsRoot
-	s.Restorer = fakeCheckpointSource{archive: bundleOf(t,
+	s.Restorer = fakeCheckpointSource{archive: bundleOf(
+		t,
 		map[string]string{"only.txt": "ws"}, nil,
 	)}
 

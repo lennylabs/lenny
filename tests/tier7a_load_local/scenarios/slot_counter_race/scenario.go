@@ -54,8 +54,8 @@ type Scenario struct {
 	// many iterations may overlap on the same pod; we count the
 	// successful reservations in flight at any instant and assert
 	// that count never exceeds maxConcurrent.
-	mu        sync.Mutex
-	inFlight  int32
+	mu           sync.Mutex
+	inFlight     int32
 	peakInFlight int32
 
 	// Aggregate counters captured at Teardown for the Assert path.
@@ -116,7 +116,7 @@ func (s *Scenario) Teardown(ctx context.Context) error {
 // slotcounter ever returns success past maxConcurrent, inFlight will
 // momentarily exceed the cap and overcommitEvents will increment.
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
-	n, err := s.counter.Reserve(ctx, s.podID, s.maxConcurrent)
+	n, _, err := s.counter.Reserve(ctx, s.podID, s.maxConcurrent)
 	if err != nil {
 		if errors.Is(err, slotcounter.ErrSlotsExhausted) {
 			s.totalRejects.Add(1)

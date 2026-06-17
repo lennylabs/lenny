@@ -11,7 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -20,49 +19,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// gatewayStatusPatch builds an SSA Apply patch for the gateway-owned
-// subset of Sandbox.status (§5.2 + §4.6.3). The patch is an
-// *unstructured.Unstructured so the WPC-owned fields (PodName /
-// NodeName / PodIP / ObservedGeneration) are omitted entirely. SSA on
-// a typed struct would serialize them as Go zero values and
-// claim/clobber WPC's fields; the unstructured form leaves them
-// untouched.
-//
-// The §5.2 slot-reservation protocol requires the gateway to write
-// Sandbox.status.phase (idle → slot_active → idle), and the
-// §4.6.3 ownership table records the same field as WPC-owned. The
-// two together force a cross-manager Phase transition, which SSA
-// rejects without client.ForceOwnership. The implementation uses
-// ForceOwnership on the gateway's slot-reservation apply; the
-// spec's "never force-conflicts" guidance in §4.6.3 governs the
-// WPC/PSC interaction and does not extend to the §5.2 gateway-side
-// transitions where dual ownership is the spec-intended pattern.
-// ActiveSlots and TenantID are exclusively gateway-owned and don't
-// require force on their own; bundling them in the same Apply with
-// Phase still uses ForceOwnership because the API server applies
-// the force flag to the entire patch object.
-func gatewayStatusPatch(name, namespace, phase string, activeSlots int32, tenantID string) *unstructured.Unstructured {
-	status := map[string]interface{}{}
-	if phase != "" {
-		status["phase"] = phase
-	}
-	status["activeSlots"] = int64(activeSlots)
-	if tenantID != "" {
-		status["tenantId"] = tenantID
-	}
-	u := &unstructured.Unstructured{}
-	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
-	u.SetName(name)
-	u.SetNamespace(namespace)
-	_ = unstructured.SetNestedField(u.Object, status, "status")
-	return u
-}
-
 // LabelTenant is the §5.2 tenant-pinning label. The gateway stamps it
-// on a concurrent-mode (or task-mode) pod at first slot assignment; the
+// on a concurrent-session pod at first slot assignment; the
 // lenny-tenant-label-immutability admission webhook rejects any mutation
 // of it to a different non-empty value, so a pod pinned to one tenant
 // can never be re-pinned to another. It is the Kubernetes-layer half of
@@ -113,28 +74,73 @@ func stampPodTenant(ctx context.Context, cl client.Client, namespace, name, tena
 	return err
 }
 
-// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant.
-type ConcurrencyStyle string
-
-const (
-	// StyleWorkspace is `concurrencyStyle: workspace` — workspace-
-	// concurrent. Each slot gets its own per-slot workspace tree under
-	// /workspace/slots/{slotId}/ and the pod's /workspace/shared/ is
-	// shared read-only across the pod's slots (§6.4).
-	StyleWorkspace ConcurrencyStyle = "workspace"
-
-	// StyleStateless is `concurrencyStyle: stateless` — stateless-
-	// concurrent. No workspace is materialized for a slot; the pod holds
-	// no Lenny-managed per-slot workspace or session state (§5.2).
-	StyleStateless ConcurrencyStyle = "stateless"
-)
-
-// IsValid reports whether s is a known concurrency style.
-func (s ConcurrencyStyle) IsValid() bool {
-	return s == StyleWorkspace || s == StyleStateless
+// StampDrainRequest stamps the §4.6.3 lenny.dev/drain-request annotation on
+// the agent Pod named podName (the §4.6.1 reconciler names the pod
+// identically to its Sandbox). The gateway stamps this annotation when a
+// pod crosses the §5.2 unhealthy-slot threshold; the WarmPoolController
+// consumes it and writes the draining transition on Sandbox.status. The
+// gateway never writes Sandbox.status itself (§4.6.3 ownership
+// decomposition), so the unhealthy-threshold drain is routed through this
+// annotation rather than a gateway phase write. The annotation value is the
+// RFC3339Nano request instant so a re-stamp is idempotent in effect and the
+// WarmPoolController can age the request.
+//
+// A JSON-merge patch is used (matching stampPodTenant) so a missing pod
+// returns NotFound rather than being created annotation-only; an absent or
+// terminating pod is tolerated because a pod with no slots needs no drain.
+//
+// spec: §4.6.3 (gateway stamps drain-request; WarmPoolController writes the
+// drain); §5.2 (unhealthy-slot whole-pod replacement trigger).
+func StampDrainRequest(ctx context.Context, cl client.Client, namespace, podName string, requestedAt time.Time) error {
+	body := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
+		lennyv1.AnnotationDrainRequest, requestedAt.UTC().Format(time.RFC3339Nano))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace}}
+	err := cl.Patch(ctx, pod, client.RawPatch(types.MergePatchType, []byte(body)),
+		client.FieldOwner(string(ownership.Gateway)))
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("podclaim: stamp drain-request on pod %s: %w", podName, err)
+	}
+	return nil
 }
 
-// Concurrent-mode claim sentinels.
+// StampScrubWarning stamps the §5.2 lenny.dev/scrub-warning annotation on the
+// recycling agent Pod named podName. The gateway stamps it when a whole-pod
+// scrub fails under the onScrubFailure: warn policy and the recycle
+// disposition reuses the pod (reserve, preConnect re-warm, or the §6.39
+// cordon-drain-under-warn). The marker records that the pod re-enters the pool
+// carrying residual-state risk; it persists through the §6.2 preConnect
+// re-warm because SDK readiness is orthogonal to residual-state risk. The
+// annotation value is the RFC3339Nano stamp instant so a re-stamp is
+// idempotent in effect and a consumer can age the marker.
+//
+// A JSON-merge patch is used (matching StampDrainRequest) so a missing pod
+// returns NotFound rather than being created annotation-only; an absent or
+// terminating pod is tolerated because a pod that is already gone needs no
+// marker. The gateway's `get`/`patch` on agent Pods grant covers this write;
+// the gateway never writes Sandbox.status itself (§4.6.3).
+//
+// spec: §5.2 (warn policy returns the pod with a scrub_warning annotation);
+// §6.2 (preConnect re-warm on scrub_warning persists the annotation); §4.6.3
+// (gateway patches agent Pod annotations, never Sandbox.status).
+func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName string, stampedAt time.Time) error {
+	body := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
+		lennyv1.AnnotationScrubWarning, stampedAt.UTC().Format(time.RFC3339Nano))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace}}
+	err := cl.Patch(ctx, pod, client.RawPatch(types.MergePatchType, []byte(body)),
+		client.FieldOwner(string(ownership.Gateway)))
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("podclaim: stamp scrub-warning on pod %s: %w", podName, err)
+	}
+	return nil
+}
+
+// Concurrent-session claim sentinels.
 var (
 	// ErrNoConcurrentSlot reports that the pool can host no further slot:
 	// every existing pod is at its maxConcurrent bound and no idle warm
@@ -152,8 +158,8 @@ var (
 	ErrTenantMismatch = errors.New("podclaim: candidate pods are pinned to a different tenant")
 )
 
-// SlotRequest identifies the session a concurrent-mode slot is claimed
-// for, the pool to claim from, and the concurrent-mode parameters of
+// SlotRequest identifies the session a concurrent-session slot is claimed
+// for, the pool to claim from, and the concurrent-session parameters of
 // that pool.
 type SlotRequest struct {
 	// Pool is the SandboxWarmPool to claim a slot from.
@@ -165,27 +171,28 @@ type SlotRequest struct {
 	// stable and collision-free for the slot's lifetime.
 	SessionID string
 	// TenantID is the tenant that owns the session. §5.2 tenant pinning
-	// binds a concurrent-mode pod to the first tenant it serves; a slot
+	// binds a concurrent-session pod to the first tenant it serves; a slot
 	// for a different tenant is never placed on that pod.
 	TenantID string
-	// Style is the §5.2 concurrency style of the pool.
-	Style ConcurrencyStyle
-	// MaxConcurrent is the §5.2 per-pod slot bound. A pod hosts at most
-	// this many slots simultaneously; the (MaxConcurrent+1)-th slot
-	// request claims a fresh warm pod instead.
-	MaxConcurrent int32
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
+	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
+	// per-pod slot bound. A pod hosts at most this many slots
+	// simultaneously; the (MaxConcurrentSessions+1)-th slot request claims
+	// a fresh warm pod instead.
+	MaxConcurrentSessions int32
+	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-session
 	// pod-uptime retirement cap. Before a slot is placed on a candidate
 	// pod, ClaimSlot compares the pod's wall-clock uptime (now minus the
-	// Sandbox's creation timestamp) against this value; a pod over the
-	// cap is transitioned to draining (slot_active → draining when it
-	// still hosts slots, idle → draining otherwise) and skipped, so it
-	// accepts no new slots and is replaced from the warm pool. Zero
-	// leaves uptime retirement off.
+	// Sandbox's creation timestamp) against this value and skips a pod over
+	// the cap so no new slot lands on it. The skip is a read-only placement
+	// filter: the gateway does not write Sandbox.status. The
+	// WarmPoolController owns the actual draining transition, which it
+	// derives from the pod CreationTimestamp against
+	// recycle.maxPodUptimeSeconds (§4.6.1). Zero leaves uptime retirement
+	// off. spec: §4.6.1 (uptime drains are WarmPoolController-written).
 	MaxPodUptimeSeconds int64
 }
 
-// SlotResult reports the slot a concurrent-mode session was placed on.
+// SlotResult reports the slot a concurrent-session session was placed on.
 type SlotResult struct {
 	// SandboxName is the pod the slot was opened on.
 	SandboxName string
@@ -198,29 +205,30 @@ type SlotResult struct {
 	// hosting other slots.
 	FreshPod bool
 	// ActiveSlots is the pod's slot count after this slot was reserved,
-	// including this slot. It never exceeds MaxConcurrent.
+	// including this slot. It never exceeds MaxConcurrentSessions.
 	ActiveSlots int32
 }
 
-// SlotClaimer places concurrent-mode (§5.2) sessions onto warm pods. In
-// `executionMode: concurrent` a pod hosts up to maxConcurrent
-// simultaneous slots rather than being claimed exclusively for one
-// session, so SlotClaimer first tries to land the slot on a pod that is
-// already hosting slots (slot_active phase) and only claims a fresh
-// idle pod when every partially-occupied pod is at its bound.
+// SlotClaimer places concurrent-session (§5.2) sessions onto warm pods.
+// When sessionPolicy.maxConcurrentSessions > 1 a pod hosts up to that many
+// simultaneous slots multiplexed onto a single per-pod SandboxClaim. The
+// claim is the pod-acquisition guard; the atomic Redis slot counter is the
+// intra-pod capacity gate, with a §12.4 Postgres fallback during a Redis
+// outage. SlotClaimer first lands a slot on a pod already hosting slots for
+// the tenant (its per-pod claim exists and is non-terminal) and only
+// acquires a fresh idle pod when every partially-occupied pod is at its
+// bound.
 type SlotClaimer struct {
 	// Client is the controller-runtime client addressing the cluster.
 	Client client.Client
 	// Namespace is the agent namespace the pool's Sandboxes live in.
 	Namespace string
-	// Counter is the §5.2 atomic slot counter. When wired (production
-	// install with --redis-url), every reservation goes through the
-	// Redis Lua GET-compare-INCR sequence so multiple gateway replicas
-	// racing on the same pod cannot transiently exceed maxConcurrent.
-	// When nil (test harnesses without Redis), the claimer falls back
-	// to the SSA-only path which is race-prone — it remains for the
-	// envtest unit tests' single-writer scenarios and is explicitly
-	// not spec-aligned for production.
+	// Counter is the §5.2 atomic slot counter and §12.4 Redis-outage
+	// Postgres-fallback gate. Required: the intra-pod capacity gate has no
+	// in-cluster substitute now that the gateway no longer mirrors the slot
+	// count onto Sandbox.status. A nil Counter is a configuration error and
+	// makes ClaimSlot return an error rather than silently overrunning the
+	// per-pod bound.
 	Counter *slotcounter.Counter
 	// OnSlotConflict records a §5.2 line 519 atomic-reservation failure
 	// due to slot contention: a candidate pod was at its maxConcurrent
@@ -237,6 +245,25 @@ type SlotClaimer struct {
 	// Now supplies the wall clock for the §6.2 lines 166-167 pod-uptime
 	// retirement check. Nil defaults to time.Now.
 	Now func() time.Time
+	// RecycleBoundary arms the §3.4 gateway-side missing-report timeout when
+	// ReleaseSlot patches the per-pod claim bound → recycling on the
+	// occupancy-zero edge of a recycling concurrent-session pool. The adapter's
+	// ReportPodScrub cancels it; if no report arrives within
+	// cleanupTimeoutSeconds plus a grace, the coordinator retires the pod rather
+	// than leaving it stuck in `recycling` until the much longer §4.6.1
+	// orphan-GC window. Nil is a no-op (a deployment with no in-process recycle
+	// coordinator); the orphan GC remains the crash backstop. spec: §3.4
+	// (missing-report timeout).
+	RecycleBoundary RecycleBoundaryArmer
+}
+
+// RecycleBoundaryArmer arms the §3.4 missing-report timeout for a pod at the
+// bound → recycling patch. *recycle.RecycleBoundaryCoordinator satisfies it
+// through OnRecycling; the interface is defined at this consumer so podclaim
+// does not import the recycle package (which imports podclaim). spec: §3.4
+// (gateway-side missing-report timeout armed at session termination).
+type RecycleBoundaryArmer interface {
+	OnRecycling(podID string)
 }
 
 // now returns the claimer's clock, defaulting to time.Now. spec: §6.2
@@ -265,12 +292,16 @@ func (c *SlotClaimer) recordRehydration(podID, pool string) {
 }
 
 // expiredByUptime reports whether sb has exceeded the pool's
-// concurrent-workspace maxPodUptimeSeconds and is therefore due for
-// §6.2 lines 166-167 retirement. The pod's wall-clock uptime is measured
-// from the Sandbox's creation timestamp, which the WarmPoolController
-// stamps when it provisions the warm pod; a zero cap disables the check.
+// maxConcurrentSessions pool maxPodUptimeSeconds and is therefore not a
+// valid slot-placement candidate (§6.2 lines 166-167). The pod's
+// wall-clock uptime is measured from the Sandbox's creation timestamp,
+// which the WarmPoolController stamps when it provisions the warm pod; a
+// zero cap disables the check. It is a read-only predicate: ClaimSlot uses
+// it to skip the pod, and the WarmPoolController owns the resulting
+// draining transition, derived from the same CreationTimestamp (§4.6.1).
 //
-// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
+// spec: spec/06_warm-pod-model.md §6.2 lines 166-167; spec/04 §4.6.1
+// (uptime drains are WarmPoolController-written).
 func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool {
 	if req.MaxPodUptimeSeconds <= 0 {
 		return false
@@ -283,78 +314,49 @@ func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool
 	return c.now().Sub(created) > limit
 }
 
-// drainExpiredPod transitions an over-uptime concurrent-workspace pod to
-// the §6.2 draining phase so the pod accepts no new slots (its existing
-// slots run to completion) and the WarmPoolController provisions a
-// replacement. The legal source phases are slot_active (§6.2 line 166)
-// and idle (§6.2 line 167); the transition is idempotent (a no-op when
-// the pod is already draining or gone) and conflict-retried so a status
-// race re-reads and re-applies.
+// ClaimSlot reserves a concurrent-session slot for the request's session
+// on a per-pod occupancy claim (§4.6.1, §5.2). The session-to-pod binding
+// is recorded on the Postgres session row's pod_assignment column by the
+// session server; SlotResult.SlotID carries the session identifier so the
+// per-slot workspace path /workspace/slots/{slotId}/ stays stable.
 //
-// spec: spec/06_warm-pod-model.md §6.2 lines 166-167.
-func (c *SlotClaimer) drainExpiredPod(ctx context.Context, sb *lennyv1.Sandbox) error {
-	const maxConflictRetries = 3
-	name := sb.Name
-	for attempt := 0; ; attempt++ {
-		var cur lennyv1.Sandbox
-		if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: name}, &cur); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("podclaim: get sandbox %s: %w", name, err)
-		}
-		if cur.Status.Phase == string(state.Draining) {
-			return nil
-		}
-		cur.Status.Phase = string(state.Draining)
-		err := c.Client.Status().Update(ctx, &cur)
-		if err == nil {
-			return nil
-		}
-		if apierrors.IsConflict(err) && attempt < maxConflictRetries {
-			continue
-		}
-		return fmt.Errorf("podclaim: drain over-uptime sandbox %s: %w", name, err)
-	}
-}
-
-// ClaimSlot reserves a concurrent-mode slot for the request's session.
+// Placement (§5.2 concurrent-session slot assignment):
 //
-// Placement (§5.2 concurrent-workspace slot assignment):
-//
-//  1. A pod already hosting slots (phase slot_active) with
-//     activeSlots < maxConcurrent and pinned to the request's tenant is
-//     preferred — the slot joins that pod, sharing its process namespace
-//     and, in workspace mode, its /workspace/shared/ tree.
-//  2. When every slot_active pod for the tenant is at the maxConcurrent
-//     bound, an idle warm pod is claimed and the slot opens it: phase
-//     idle → slot_active, activeSlots 0 → 1, and the pod is pinned to
-//     the tenant.
+//  1. A pod already hosting slots for the request's tenant (its per-pod
+//     SandboxClaim exists, is non-terminal, and is pinned to the tenant)
+//     with free Redis-counter capacity is preferred — the slot joins that
+//     pod, sharing its process namespace and /workspace/shared/ tree. No
+//     new claim is created; the slot multiplexes onto the existing per-pod
+//     claim and the Redis counter is the intra-pod capacity gate.
+//  2. When every claimed pod for the tenant is at the maxConcurrentSessions
+//     bound, an idle warm pod is acquired: the gateway CREATEs the per-pod
+//     claim (claim-<podName>), writes its first `bound` status, reserves
+//     the first slot, and pins the pod to the tenant.
 //  3. When no idle pod is left either, ErrNoConcurrentSlot is returned;
 //     §5.2 maps this to WARM_POOL_EXHAUSTED / "concurrent_slots_exhausted".
 //
-// Slot reservation is atomic against competing gateway replicas. The
-// activeSlots increment and the phase write go through an
-// optimistic-locking status update: the cap is re-checked against the
-// freshly-listed Sandbox, and a status-update conflict (a competing
-// replica reserved a slot on the same pod first) makes ClaimSlot
-// re-evaluate the pod or move to the next one rather than overrun the
-// bound. This reproduces the §5.2 atomic check-and-increment guarantee
-// without a separate Redis counter: the Sandbox status is the counter,
-// and the API server's compare-and-swap is the atomicity primitive.
+// Slot reservation is atomic against competing gateway replicas through the
+// §5.2 Redis Lua GET-compare-INCR counter (with the §12.4 Postgres-fallback
+// gate during a Redis outage); pod acquisition is atomic through the
+// deterministic per-pod claim CREATE. The gateway does not write
+// Sandbox.status; the WarmPoolController projects the pod's occupancy phase
+// from the claim binding state (§4.6.1).
 //
-// Tenant pinning (§5.2) is enforced at the application layer here: a
-// slot is never placed on a pod whose status.tenantId is a different
-// non-empty value, and the pod is pinned (status.tenantId and the
-// lenny.dev/tenant-id label) on its first slot. The
-// lenny-tenant-label-immutability admission webhook is the
-// Kubernetes-layer backstop.
+// Tenant pinning (§5.2) is enforced at the application layer here: a slot is
+// never placed on a pod whose claim is pinned to a different tenant, and the
+// pod is pinned (the lenny.dev/tenant-id label) on its first slot. The
+// lenny-tenant-label-immutability admission webhook is the Kubernetes-layer
+// backstop.
 func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResult, error) {
-	if !req.Style.IsValid() {
-		return nil, fmt.Errorf("podclaim: invalid concurrency style %q", req.Style)
+	if req.MaxConcurrentSessions < 1 {
+		return nil, fmt.Errorf("podclaim: maxConcurrentSessions must be >= 1, got %d", req.MaxConcurrentSessions)
 	}
-	if req.MaxConcurrent < 1 {
-		return nil, fmt.Errorf("podclaim: maxConcurrent must be >= 1, got %d", req.MaxConcurrent)
+	if c.Counter == nil {
+		// The Redis counter (with its §12.4 Postgres fallback) is the only
+		// intra-pod capacity gate now that the gateway does not mirror the
+		// slot count onto Sandbox.status; without it a fresh slot could
+		// overrun the per-pod bound. Fail closed.
+		return nil, errors.New("podclaim: slot counter is required for concurrent-session slot assignment")
 	}
 
 	var list lennyv1.SandboxList
@@ -364,83 +366,111 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 		return nil, fmt.Errorf("list sandboxes for pool %s: %w", req.Pool, err)
 	}
 
-	// Pass 1: land the slot on a pod already hosting slots, pinned to
-	// this tenant and below the maxConcurrent bound. Sharing an existing
-	// pod is the point of concurrent mode — it is preferred over burning
-	// a fresh warm pod.
+	// Pass 1: land the slot on a pod that already hosts slots for this
+	// tenant — its per-pod claim exists, is non-terminal, and is pinned to
+	// the tenant — and has free Redis-counter capacity. Sharing an existing
+	// pod is the point of concurrent mode, preferred over acquiring a fresh
+	// warm pod.
 	sawTenantMismatch := false
 	for i := range list.Items {
 		sb := &list.Items[i]
-		if sb.Status.Phase != string(state.SlotActive) {
+		claim, found, err := c.podClaim(ctx, sb.Name)
+		if err != nil {
+			return nil, err
+		}
+		if !found || claimstate.IsTerminal(claimstate.State(claim.Status.Phase)) {
+			// No live per-pod claim: this pod is not yet hosting slots for
+			// anyone. It is a Pass-2 candidate (a fresh acquisition).
 			continue
 		}
-		if sb.Status.ActiveSlots >= req.MaxConcurrent {
-			// Pod is at its slot bound; the §5.2 atomic cap check would
-			// reject a reservation here. Try the next pod.
-			continue
-		}
-		if sb.Status.TenantID != "" && sb.Status.TenantID != req.TenantID {
+		if claim.Spec.TenantID != "" && claim.Spec.TenantID != req.TenantID {
 			// §5.2 tenant pinning: this pod is pinned to another tenant.
 			sawTenantMismatch = true
 			continue
 		}
 		if c.expiredByUptime(sb, req) {
-			// §6.2 line 166: maxPodUptimeSeconds exceeded — the pod
-			// accepts no new slots and its existing slots drain. Drain it
-			// (slot_active → draining) and skip it as a candidate.
-			if err := c.drainExpiredPod(ctx, sb); err != nil {
-				return nil, err
-			}
+			// §6.2 line 166 / §4.6.1: maxPodUptimeSeconds exceeded — the pod
+			// accepts no new slots and its existing slots drain. This is a
+			// read-only placement filter; the gateway skips the pod without
+			// writing Sandbox.status. The WarmPoolController owns the
+			// claimed → draining uptime transition, derived from the pod
+			// CreationTimestamp.
 			continue
 		}
-		res, conflict, err := c.reserveSlot(ctx, sb, req)
+		// §3.2 within-hold rebind: a same-tenant claim held in `reserved`
+		// within its hold window is dispatched onto with no acquisition round
+		// trip. The slot path consumes the hold by patching the claim
+		// `reserved → bound` before reserving the first slot; the rebind
+		// changes the resourceVersion so the holder's expiry DELETE aborts.
+		// A rebind that loses to a concurrent expiry DELETE (the claim
+		// vanished, or moved off `reserved`) re-reads as not-rebound and the
+		// pod is skipped for normal acquisition. spec: §3.2, §4.6.1.
+		if claim.Status.Phase == string(claimstate.Reserved) {
+			rebound, ok, err := c.rebindReservedSlot(ctx, claim)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			claim = rebound
+		}
+		res, conflict, err := c.reserveSlot(ctx, sb, claim, req, false)
 		if err != nil {
 			return nil, err
 		}
 		if conflict {
-			// A competing replica reserved a slot on this pod first; the
-			// cap may now be reached. Skip it and try the next pod.
+			// The Redis counter reported the pod at its bound; try the next.
 			continue
 		}
 		return res, nil
 	}
 
-	// Pass 2: every slot_active pod is full (or pinned elsewhere). Claim
-	// a fresh idle warm pod and open its first slot.
+	// Pass 2: every claimed pod is full (or pinned elsewhere). Acquire a
+	// fresh idle warm pod — one with no live per-pod claim — and open its
+	// first slot. The §4.6.1 occupancy projection still leaves a not-yet-
+	// acquired warm pod at the WPC-written idle phase, so the idle-pod scan
+	// matches on phase here; the per-pod claim CREATE inside reserveSlot is
+	// the acquisition guard against a concurrent replica.
 	for i := range list.Items {
 		sb := &list.Items[i]
 		if sb.Status.Phase != string(state.Idle) {
 			continue
 		}
-		if c.expiredByUptime(sb, req) {
-			// §6.2 line 167: maxPodUptimeSeconds exceeded while idle,
-			// checked before next assignment — drain (idle → draining)
-			// and skip rather than opening a fresh slot on a pod that is
-			// already due for retirement.
-			if err := c.drainExpiredPod(ctx, sb); err != nil {
-				return nil, err
-			}
+		_, found, err := c.podClaim(ctx, sb.Name)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			// A claim exists (a Pass-1 candidate handled above, or a reserved
+			// hold); never double-acquire.
 			continue
 		}
-		res, conflict, err := c.reserveSlot(ctx, sb, req)
+		if c.expiredByUptime(sb, req) {
+			// §6.2 line 167 / §4.6.1: maxPodUptimeSeconds exceeded while idle,
+			// checked before next assignment. Read-only placement filter: the
+			// gateway skips the pod without writing Sandbox.status. The
+			// WarmPoolController owns the idle → draining uptime transition,
+			// derived from the pod CreationTimestamp.
+			continue
+		}
+		res, conflict, err := c.reserveSlot(ctx, sb, nil, req, true)
 		if err != nil {
 			return nil, err
 		}
 		if conflict {
-			// A competing replica claimed this idle pod first; try the
-			// next idle pod.
+			// A competing replica acquired this idle pod first; try the next.
 			continue
 		}
 		return res, nil
 	}
 
-	// No slot_active pod has free capacity for this tenant and no idle
-	// pod is left. §5.2 line 519 distinguishes the cause via
-	// details.reason: when the pool holds no pods at all the reason is
-	// "no_idle_pods" (ErrNoIdlePod, the same sentinel session-mode
-	// exhaustion uses); when pods exist but every slot is full the reason
-	// is "concurrent_slots_exhausted" (ErrNoConcurrentSlot). Tenant
-	// pinning is surfaced distinctly so the binder can fall through.
+	// No claimed pod has free capacity for this tenant and no idle pod is
+	// left. §5.2 line 519 distinguishes the cause via details.reason: when
+	// the pool holds no pods at all the reason is "no_idle_pods"
+	// (ErrNoIdlePod); when pods exist but every slot is full the reason is
+	// "concurrent_slots_exhausted" (ErrNoConcurrentSlot). Tenant pinning is
+	// surfaced distinctly so the binder can fall through.
 	if len(list.Items) == 0 {
 		return nil, ErrNoIdlePod
 	}
@@ -450,167 +480,139 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 	return nil, ErrNoConcurrentSlot
 }
 
-// reserveSlot atomically reserves one slot on sb for the request.
-//
-// Ordering matters for two independent invariants:
-//
-//   - The SandboxClaim is created first. Its name is deterministic per
-//     session, so a repeated slot claim for a live session collides at
-//     CREATE before the pod's slot count is touched. This prevents a
-//     duplicate-session claim from leaking a slot increment, and it
-//     lets the lenny-sandboxclaim-guard webhook see the claim.
-//   - The slot count is then reserved with an optimistic-locking status
-//     update: the maxConcurrent cap and the tenant pin are re-checked
-//     against the freshly-listed Sandbox, status.activeSlots is
-//     incremented, the phase advances (idle → slot_active for the first
-//     slot, slot_active → slot_active for a further slot), and
-//     status.tenantId is pinned on the first slot.
-//
-// A status-update conflict (a competing gateway replica reserved a slot
-// on the same pod first), or a cap re-check that now fails, is reported
-// via the conflict return so the caller can re-evaluate; it is not an
-// error. When that happens the just-created SandboxClaim is deleted so
-// the next placement attempt for the session sees a clean slate. On a
-// successful reservation reserveSlot stamps the lenny.dev/tenant-id
-// label (best-effort).
-func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req SlotRequest) (res *SlotResult, conflict bool, err error) {
-	// Tenant pin check (§5.2 binds a pod to its first tenant for the
-	// pod's lifetime; a slot for a different tenant is never placed
-	// here). Cheap, no API call.
-	if sb.Status.TenantID != "" && sb.Status.TenantID != req.TenantID {
-		return nil, true, nil
+// rebindReservedSlot consumes a §3.2 reserved hold on a concurrent-session
+// pod: when the same tenant holds the pod in `reserved` within its hold
+// window, it patches the claim `reserved → bound` and re-reads it so the slot
+// reservation lands on a `bound` claim. ok is false when the hold has expired
+// or a concurrent expiry DELETE / rebind moved the claim off `reserved`, in
+// which case the caller skips the pod (a slot can never be reserved on a
+// `reserved` claim because a reserved pod has zero active slots and must be
+// rebound first). The rebind changes the resourceVersion, so the holder's
+// precondition-guarded expiry DELETE aborts. spec: §3.2 (within-hold rebind),
+// §4.6.1 (reserved hold, holdExpiresAt), §4.6.3 (reserved → bound).
+func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.SandboxClaim) (*lennyv1.SandboxClaim, bool, error) {
+	if claim.Status.HoldExpiresAt == nil || !claim.Status.HoldExpiresAt.Time.After(c.now()) {
+		// The hold has expired (or carries no deadline); leave the claim to the
+		// holder's expiry DELETE or the orphan GC rather than racing it.
+		return nil, false, nil
 	}
-
-	// §5.2 atomic slot reservation. When wired to Redis, the Lua
-	// GET-compare-INCR sequence enforces the maxConcurrent cap
-	// atomically across gateway replicas — two concurrent reservers
-	// cannot both observe "1 slot available" on a maxConcurrent=1
-	// pod. The SSA fallback (Counter unwired) is race-prone and is
-	// only used by single-writer unit tests; the production path
-	// requires --redis-url.
-	var nextActiveSlots int32
-	if c.Counter != nil {
-		newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrent)
-		if rehydrated {
-			// §5.2 line 521: this reservation seeded the pod's slot
-			// counter from Postgres after a Redis restart. Emit the
-			// rehydration event regardless of the reservation outcome.
-			c.recordRehydration(sb.Name, req.Pool)
+	if err := WriteRebindStatus(ctx, c.Client, c.Namespace, claim.Name, c.now); err != nil {
+		if apierrors.IsNotFound(err) {
+			// A concurrent expiry DELETE reclaimed the claim first; skip the pod.
+			return nil, false, nil
 		}
-		if errors.Is(err, slotcounter.ErrSlotsExhausted) {
-			// §5.2 line 519: the atomic GET-compare-INCR found the pod at
-			// its maxConcurrent bound. Record the slot-contention conflict.
-			c.recordSlotConflict(req.Pool)
-			return nil, true, nil
-		}
-		if err != nil {
-			return nil, false, fmt.Errorf("reserve slot via counter on sandbox %s: %w", sb.Name, err)
-		}
-		nextActiveSlots = newCount
-	} else {
-		// SSA-only fallback. The pre-read cap-check is a best-effort
-		// approximation of the atomic CAS and is documented as
-		// race-prone in the SlotClaimer doc comment.
-		if sb.Status.ActiveSlots >= req.MaxConcurrent {
-			c.recordSlotConflict(req.Pool)
-			return nil, true, nil
-		}
-		nextActiveSlots = sb.Status.ActiveSlots + 1
+		return nil, false, fmt.Errorf("podclaim: rebind reserved claim %s for slot: %w", claim.Name, err)
 	}
-
-	// Create the binding SandboxClaim. The deterministic-name CREATE
-	// is the duplicate-session guard — a repeated slot claim for a
-	// live session collides at CREATE rather than opening a second
-	// slot. On failure, undo the counter reservation so the slot
-	// budget stays accurate.
-	claim, err := createSlotClaim(ctx, c.Client, c.Namespace, sb.Name, req)
+	// §3.2: re-read the claim after the rebind patch so the slot reservation
+	// lands on the post-rebind `bound` object. The claim name is the
+	// authoritative key; req.SandboxRef on the claim spec names its pod.
+	rebound, found, err := c.podClaim(ctx, claim.Spec.SandboxRef)
 	if err != nil {
-		if c.Counter != nil {
-			_, _ = c.Counter.Release(ctx, sb.Name)
-		}
 		return nil, false, err
 	}
-
-	freshPod := nextActiveSlots == 1
-	tenantID := sb.Status.TenantID
-	if tenantID == "" {
-		// First slot on this pod pins it to the tenant for its lifetime.
-		tenantID = req.TenantID
+	if !found || rebound.Status.Phase != string(claimstate.Bound) {
+		// The claim vanished or was moved off `bound` between the patch and the
+		// re-read; skip rather than reserve a slot on an unstable claim.
+		return nil, false, nil
 	}
-	// Mirror the new slot count + phase + tenant pin onto the
-	// Sandbox.status (observable spec-§4.6.3 fields). When the
-	// Counter is wired, this write is purely observability — the
-	// Redis counter is the source of truth and the SSA mirror lags
-	// it. A conflict on the mirror is ignored (the slot is already
-	// reserved); a hard error is logged but does not unwind the
-	// reservation. When the Counter is unwired, the SSA mirror IS
-	// the cap check, so a conflict means another replica raced and
-	// the caller must retry on another pod.
-	patch := gatewayStatusPatch(sb.Name, sb.Namespace,
-		string(state.SlotActive), nextActiveSlots, tenantID)
-	if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway)), client.ForceOwnership); err != nil {
-		if apierrors.IsConflict(err) {
-			if c.Counter == nil {
-				// SSA-only path: the conflict means a competing replica
-				// reserved first. Undo and retry on another pod.
-				_ = c.Client.Delete(ctx, claim)
+	return rebound, true, nil
+}
+
+// podClaim reads the per-pod occupancy SandboxClaim (claim-<podName>) for
+// sandboxName. found is false when no claim exists (a fresh idle pod). The
+// claim's binding state and tenant pin drive ClaimSlot's placement.
+func (c *SlotClaimer) podClaim(ctx context.Context, sandboxName string) (*lennyv1.SandboxClaim, bool, error) {
+	var claim lennyv1.SandboxClaim
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: claimName(sandboxName)}, &claim); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("podclaim: get per-pod claim for sandbox %s: %w", sandboxName, err)
+	}
+	return &claim, true, nil
+}
+
+// reserveSlot reserves one Redis-counter slot on sb for the request and, on
+// a fresh acquisition, CREATEs the per-pod claim and writes its first
+// `bound` status. existing is the live per-pod claim on a Pass-1 placement
+// and nil on a fresh acquisition; freshPod selects which path runs.
+//
+// Ordering:
+//
+//   - The §5.2 Redis counter reservation runs first (with the §12.4
+//     Postgres-fallback gate during a Redis outage). A pod at its
+//     maxConcurrentSessions bound returns the conflict signal so the caller
+//     skips it; a Redis-outage fail-closed surfaces as an error.
+//   - On a fresh acquisition the per-pod claim is then CREATEd (the §4.6.1
+//     acquisition guard) and its first `bound` status is written. An
+//     AlreadyExists collision (a competing replica acquired the pod first)
+//     undoes the counter reservation and returns the conflict signal.
+//
+// The gateway does not write Sandbox.status; the WarmPoolController projects
+// the pod's occupancy phase from the claim binding state (§4.6.1). On a
+// successful reservation reserveSlot stamps the lenny.dev/tenant-id label on
+// the pod (best-effort) for the §13.2 NET-003 NetworkPolicy selector.
+func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, existing *lennyv1.SandboxClaim, req SlotRequest, freshPod bool) (res *SlotResult, conflict bool, err error) {
+	// §5.2 atomic slot reservation. The Redis Lua GET-compare-INCR
+	// enforces the maxConcurrentSessions cap atomically across gateway
+	// replicas; during a Redis outage the §12.4 Postgres-fallback gate
+	// serializes the count-and-decide under a per-pod advisory lock and
+	// fails closed after a bounded outage window.
+	newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrentSessions)
+	if rehydrated {
+		// §5.2 line 521: this reservation seeded the pod's slot counter from
+		// Postgres after a Redis restart. Emit the rehydration event
+		// regardless of the reservation outcome.
+		c.recordRehydration(sb.Name, req.Pool)
+	}
+	if errors.Is(err, slotcounter.ErrSlotsExhausted) {
+		// §5.2 line 519: the pod is at its maxConcurrentSessions bound.
+		c.recordSlotConflict(req.Pool)
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("reserve slot via counter on sandbox %s: %w", sb.Name, err)
+	}
+
+	claim := existing
+	if freshPod {
+		// §4.6.1 fresh acquisition: CREATE the per-pod claim (the acquisition
+		// guard) and write its first `bound` status. An AlreadyExists or
+		// Forbidden means a competing replica acquired the pod first — undo
+		// the counter reservation and report the conflict so the caller
+		// retries on another pod.
+		created, err := CreateClaim(ctx, c.Client, c.Namespace, sb.Name, ClaimRequest{
+			Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
+		})
+		if err != nil {
+			_, _ = c.Counter.Release(ctx, sb.Name)
+			if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
 				return nil, true, nil
 			}
-			// Redis-counter path: the reservation is canonical, the
-			// SSA mirror just lagged. Continue.
-		} else {
-			if c.Counter == nil {
-				_ = c.Client.Delete(ctx, claim)
-				return nil, false, fmt.Errorf("reserve slot on sandbox %s: %w", sb.Name, err)
-			}
-			// Counter is wired: the SSA mirror failure is observability-only.
-			// Log via the wrapped error so an operator notices, but the
-			// reservation stands.
-			_ = fmt.Errorf("reserve slot mirror on sandbox %s: %w", sb.Name, err)
+			return nil, false, err
 		}
-	}
-	// Reflect the applied values onto the caller's in-memory Sandbox
-	// so downstream code observing this Sandbox sees the slot it just
-	// won; ReadyCount math in the planner remains based on a live
-	// re-read so this in-memory mutation is not load-bearing.
-	sb.Status.Phase = string(state.SlotActive)
-	sb.Status.ActiveSlots = nextActiveSlots
-	sb.Status.TenantID = tenantID
-
-	// Stamp the §5.2 tenant-pinning label so the
-	// lenny-tenant-label-immutability webhook backstops the pin at
-	// the Kubernetes layer. Apply via SSA on the Sandbox spec under
-	// the `lenny-gateway` field manager so labels merge cleanly with
-	// the WPC's label set (WPC owns lenny.dev/pool and
-	// lenny.dev/managed; this Apply only claims lenny.dev/tenant-id).
-	// A label conflict means a competing writer set the same value
-	// — that is the spec-intended idempotency, not an error.
-	if sb.Labels[LabelTenant] != req.TenantID {
-		labelPatch := &lennyv1.Sandbox{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "Sandbox",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      sb.Name,
-				Namespace: sb.Namespace,
-				Labels:    map[string]string{LabelTenant: req.TenantID},
-			},
+		if err := writeBoundStatus(ctx, c.Client, c.Namespace, created.Name, c.now); err != nil {
+			_, _ = c.Counter.Release(ctx, sb.Name)
+			_ = c.Client.Delete(ctx, created)
+			return nil, false, err
 		}
-		if err := c.Client.Patch(ctx, labelPatch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil && !apierrors.IsConflict(err) {
-			return nil, false, fmt.Errorf("label sandbox %s with tenant: %w", sb.Name, err)
-		}
-		if sb.Labels == nil {
-			sb.Labels = map[string]string{}
-		}
-		sb.Labels[LabelTenant] = req.TenantID
+		claim = created
 	}
 
-	// §17.2 item 5 / §5.2 line 392: mirror the pin onto the agent pod so
-	// the pod-scoped lenny-tenant-label-immutability webhook binds. The
-	// Sandbox-label patch above is application-layer bookkeeping; the
-	// webhook only guards pods. F-17.2.3.
+	tenantID := req.TenantID
+	if claim != nil && claim.Spec.TenantID != "" {
+		tenantID = claim.Spec.TenantID
+	}
+
+	// §17.2 item 5 / §5.2 line 392: stamp the tenant pin on the agent pod so
+	// the pod-scoped lenny-tenant-label-immutability webhook binds where the
+	// §13.2 NET-003 NetworkPolicies select. Best-effort: a missing pod is
+	// tolerated and the next assignment re-stamps it.
 	if err := stampPodTenant(ctx, c.Client, sb.Namespace, sb.Name, tenantID); err != nil {
+		if freshPod {
+			_, _ = c.Counter.Release(ctx, sb.Name)
+			_ = c.Client.Delete(ctx, claim)
+		}
 		return nil, false, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 	}
 
@@ -619,102 +621,91 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 		SlotID:      req.SessionID,
 		Claim:       claim,
 		FreshPod:    freshPod,
-		ActiveSlots: sb.Status.ActiveSlots,
+		ActiveSlots: newCount,
 	}, false, nil
 }
 
-// ReleaseSlot releases a concurrent-mode slot when its session ends or
-// fails. It deletes the slot's SandboxClaim and decrements the pod's
-// status.activeSlots; per §6.2 the pod returns to the idle phase when
-// its last slot drains (activeSlots reaches 0) and otherwise stays
-// slot_active. The pod's status.tenantId pin is left in place: §5.2
-// tenant pinning binds a concurrent-mode pod to its tenant for the pod's
-// lifetime, not just while a slot is occupied, so an idle-again
-// concurrent-mode pod keeps its pin and accepts further slots only for
-// the same tenant.
+// ReleaseSlot releases a concurrent-session slot when its session ends or
+// fails. It decrements the pod's §5.2 Redis slot counter and, when the last
+// slot drains (the counter reaches zero), disposes of the per-pod SandboxClaim
+// per the §3.4 recycle disposition. While other slots remain the claim is
+// left in place: the per-pod claim spans the whole occupancy episode, and
+// the session-to-pod binding the released session held is cleared on its
+// Postgres session row by the session server. The gateway does not write
+// Sandbox.status; the WarmPoolController projects the pod's occupancy phase
+// from claim existence and binding state (§4.6.1, §6.41).
 //
-// A status-update conflict is retried against a refreshed Sandbox so a
-// concurrent release of a sibling slot on the same pod does not lose a
-// decrement. The decrement is clamped at 0 so a double release cannot
-// drive the count negative.
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string) error {
-	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName(sessionID),
-			Namespace: c.Namespace,
-		},
+// recycle selects the occupancy-zero disposition for a recycling pool (the
+// §3.1 "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
+// true) on a clean terminal: the last-slot-drain edge patches the per-pod
+// claim bound → recycling (WriteRecyclingStatus) rather than deleting it, so
+// the adapter runs the whole-pod scrub when occupancy reaches zero and its
+// §4.7 ReportPodScrub drives the recycle-vs-retire disposition. This is the
+// concurrent-session counterpart of the session-mode Binder.Release recycle
+// branch and closes the §3.1 concurrent-workspace residue gap (shared /tmp,
+// /dev/shm, surviving processes across cohorts). When recycle is false (a
+// non-recycling "Bounded cohort" pool, or a failed/crashed concurrent session
+// the caller maps to the drain path) the claim is deleted directly so the
+// §4.6.1 occupancy projection moves the pod claimed → draining → terminated.
+//
+// The counter decrement is clamped at zero so a double release cannot drive
+// the count negative; a release that reaches zero disposes of the claim
+// idempotently (a NotFound from either the recycling patch or the DELETE is a
+// no-op). spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.30/§6.41.
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle bool) error {
+	if c.Counter == nil {
+		// The Redis counter (with its §12.4 Postgres fallback) is the only
+		// intra-pod occupancy record now that the gateway does not mirror the
+		// slot count onto Sandbox.status. Without it, release cannot tell
+		// whether sibling slots remain, so deleting the per-pod claim would
+		// over-release a pod that still hosts live slots. Fail closed, the same
+		// posture ClaimSlot takes on a nil counter. spec: §12.4 (every
+		// Redis-backed role has a durable fallback; the gate fails closed when
+		// it cannot decide).
+		return errors.New("podclaim: slot counter is required for concurrent-session slot release")
 	}
-	if err := c.Client.Delete(ctx, claim); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("podclaim: delete slot claim for session %s: %w", sessionID, err)
+	// §5.2 atomic slot release. The Redis counter is the source of truth —
+	// DECR clamped at zero.
+	remaining, err := c.Counter.Release(ctx, sandboxName)
+	if err != nil {
+		return fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
 	}
 
-	// §5.2 atomic slot release. The Redis counter is the source of
-	// truth — DECR clamped at zero. The SSA Sandbox.status mirror
-	// follows below.
-	if c.Counter != nil {
-		if _, err := c.Counter.Release(ctx, sandboxName); err != nil {
-			return fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
-		}
+	if remaining > 0 {
+		// Sibling slots remain on the pod; the per-pod claim stays.
+		return nil
 	}
 
-	// Decrement the pod's slot count under SSA. Per spec §4.6.3 the
-	// gateway is the §5.2 owner of Sandbox.status.activeSlots; the
-	// patch carries only gateway-owned fields so the API server
-	// merges it under the `lenny-gateway` manager without racing the
-	// WPC's controller-owned fields. A conflict (the live phase
-	// moved past the gateway's read) triggers a re-read + re-compute.
-	for {
-		var sb lennyv1.Sandbox
-		if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: sandboxName}, &sb); err != nil {
+	if recycle {
+		// §3.4 recycle disposition on the occupancy-zero edge of a recycling
+		// concurrent pool: patch the per-pod claim bound → recycling so the
+		// claim is in `recycling` before any §4.7 ReportPodScrub arrives (the
+		// claim state machine admits recycling → reserved/released/failed but
+		// not bound → reserved, §3.2). The adapter runs the whole-pod scrub on
+		// occupancy zero and the ReportPodScrub disposition drives recycle vs.
+		// retire off the `recycling` binding state. A claim that vanished (a
+		// concurrent retirement, the §4.6.1 orphan GC reclaimed it) is a no-op:
+		// there is nothing left to recycle. spec: §3.1, §3.4, §6.41.
+		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(sandboxName), c.now); err != nil {
 			if apierrors.IsNotFound(err) {
-				// The pod is already gone (terminated/replaced); nothing to
-				// decrement.
 				return nil
 			}
-			return fmt.Errorf("podclaim: get sandbox %s for slot release: %w", sandboxName, err)
+			return err
 		}
-		if sb.Status.ActiveSlots <= 0 {
-			// Already at zero — a double release, or the pod was reset.
-			return nil
-		}
-		nextActiveSlots := sb.Status.ActiveSlots - 1
-		nextPhase := sb.Status.Phase
-		if nextActiveSlots == 0 {
-			// §6.2: the last slot drained, the pod returns to idle.
-			nextPhase = string(state.Idle)
-		}
-		patch := gatewayStatusPatch(sb.Name, sb.Namespace,
-			nextPhase, nextActiveSlots, sb.Status.TenantID)
-		if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway)), client.ForceOwnership); err != nil {
-			if apierrors.IsConflict(err) {
-				continue
-			}
-			return fmt.Errorf("podclaim: release slot on sandbox %s: %w", sandboxName, err)
+		// §3.4: arm the gateway-side missing-report timeout now that the claim
+		// is `recycling`. The adapter's ReportPodScrub cancels it; if no report
+		// arrives within cleanupTimeoutSeconds plus a grace the coordinator
+		// retires the pod rather than leaving it stuck in `recycling` until the
+		// much longer §4.6.1 orphan-GC window.
+		if c.RecycleBoundary != nil {
+			c.RecycleBoundary.OnRecycling(sandboxName)
 		}
 		return nil
 	}
-}
 
-// createSlotClaim creates the SandboxClaim binding a concurrent-mode
-// slot to its pod. The claim name is deterministic per session, so a
-// repeated slot claim for the same session collides at CREATE rather
-// than opening a duplicate slot, and the SlotID field carries the §6.4
-// slot identifier.
-func createSlotClaim(ctx context.Context, cl client.Client, namespace, sandboxName string, req SlotRequest) (*lennyv1.SandboxClaim, error) {
-	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName(req.SessionID),
-			Namespace: namespace,
-		},
-		Spec: lennyv1.SandboxClaimSpec{
-			SandboxRef: sandboxName,
-			SessionID:  req.SessionID,
-			TenantID:   req.TenantID,
-			SlotID:     req.SessionID,
-		},
-	}
-	if err := cl.Create(ctx, claim); err != nil {
-		return nil, fmt.Errorf("create slot claim for %s: %w", sandboxName, err)
-	}
-	return claim, nil
+	// Last slot drained on a non-recycling pool, or a failed/crashed session:
+	// delete the per-pod occupancy claim so the pod retires. The §4.6.1
+	// occupancy projection moves the pod from claimed to draining on the
+	// claim DELETE.
+	return DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
 }

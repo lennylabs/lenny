@@ -399,8 +399,12 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 		Subject:  "bob",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:create admin:everything",
-		Expiry:   time.Now().Add(time.Hour).Unix(),
+		// tools:sessions:read is inside the playground_allowed_scope
+		// ceiling (tools:sessions:*); tools:credential:write is outside
+		// it. Both are canonical §25.1 values so the minted scope claim
+		// parses through the §10.2 auth chain.
+		Scope:  "tools:sessions:read tools:credential:write",
+		Expiry: time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatalf("sign subject token: %v", err)
@@ -424,11 +428,11 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	claims := decodeJWTPayload(t, body.BearerToken)
 	scope, _ := claims["scope"].(string)
-	if strings.Contains(scope, "admin:everything") {
-		t.Fatalf("minted scope %q leaked the out-of-policy admin:everything scope", scope)
+	if strings.Contains(scope, "credential") {
+		t.Fatalf("minted scope %q leaked the out-of-policy tools:credential:write scope", scope)
 	}
-	if !strings.Contains(scope, "sessions:create") {
-		t.Fatalf("minted scope %q dropped the in-policy sessions:create scope", scope)
+	if !strings.Contains(scope, "tools:sessions:read") {
+		t.Fatalf("minted scope %q dropped the in-policy tools:sessions:read scope", scope)
 	}
 }
 
@@ -544,16 +548,16 @@ func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 	// The selected/dropped tarball must reach the upload endpoint with the
 	// uploadToken, and the plan it produces must be finalized and started.
 	for _, want := range []string{
-		"createSessionWithWorkspace",      // the decomposed-lifecycle driver
-		"/upload-archive",                 // staging POST
-		"X-Lenny-Upload-Token",            // §7.1 uploadToken header
-		"uploadArchive",                   // §14 plan source type
-		"/finalize",                       // plan binding
-		"/start",                          // run the bound session
-		"readFileBytes",                   // the file is actually read
-		"FileReader",                      // client-side read of the tarball
-		"dragover",                        // §27.4 drag-drop affordance
-		"workspacePlan",                   // finalize body field
+		"createSessionWithWorkspace", // the decomposed-lifecycle driver
+		"/upload-archive",            // staging POST
+		"X-Lenny-Upload-Token",       // §7.1 uploadToken header
+		"uploadArchive",              // §14 plan source type
+		"/finalize",                  // plan binding
+		"/start",                     // run the bound session
+		"readFileBytes",              // the file is actually read
+		"FileReader",                 // client-side read of the tarball
+		"dragover",                   // §27.4 drag-drop affordance
+		"workspacePlan",              // finalize body field
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("app.js missing workspace-upload wiring substring %q", want)

@@ -22,8 +22,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
@@ -37,7 +35,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/upload"
@@ -99,12 +96,19 @@ type Binder struct {
 	// BindRequest then names no user providers and Bind delivers none.
 	// spec: §4.9 lines 1340-1381.
 	UserCredentials UserCredentialAssigner
-	// SlotCounter is the §5.2 atomic slot counter. Wired in production
-	// installs that expose --redis-url; the SlotClaimer constructed
-	// per BindSlot call carries it through so the Redis Lua
-	// GET-compare-INCR sequence enforces maxConcurrent atomically
-	// across gateway replicas. Nil when no Redis is wired; the
-	// SlotClaimer then falls back to its race-prone SSA-only path.
+	// SlotCounter is the §5.2 atomic slot counter and the only intra-pod
+	// capacity gate for the maxConcurrentSessions > 1 slot path. Wired in
+	// production installs that expose --redis-url; the SlotClaimer
+	// constructed per BindSlot call carries it through so the Redis Lua
+	// GET-compare-INCR sequence enforces maxConcurrentSessions atomically
+	// across gateway replicas. It is required: a nil counter makes both
+	// ClaimSlot and ReleaseSlot fail closed (each returns a configuration
+	// error rather than degrading to an SSA-only path, which no longer
+	// exists), so slot release cannot over-release a pod that still hosts
+	// live slots. A Redis outage does not
+	// disable the gate. It routes to the §12.4 Postgres-fallback capacity
+	// gate under a per-pod advisory lock, which fails closed after a bounded
+	// outage window. spec: §5.2, §12.4.
 	SlotCounter *slotcounter.Counter
 	// APIServerReachable is the §4.6.1 admission-reachability precondition
 	// (precondition 2): before initiating the Postgres-backed fallback,
@@ -187,6 +191,44 @@ type Binder struct {
 	// symlink, etc.). Called only on the gateway extraction path. Nil is a
 	// no-op. spec: §7.4 line 462; §16.1 — F-7.4.11.
 	ExtractionAbort func(errorType string)
+	// HoldCanceller cancels the holding replica's local §3.2 reserved-hold
+	// expiry timer after a successful acquisition-path rebind, so the timer
+	// does not issue a wasted no-op DELETE. The rebind patch already changed
+	// the claim resourceVersion, so the precondition guard is the
+	// authoritative race resolver and a missed cancellation is harmless. Nil
+	// is a no-op (a deployment with no in-process hold coordinator, or a
+	// peer-held reserved claim). spec: §3.2.
+	HoldCanceller HoldCanceller
+	// RecycleBoundary arms the §3.4 gateway-side missing-report timeout when
+	// Release patches the per-pod claim bound → recycling on a recycling pool.
+	// The adapter then runs the whole-pod scrub and reports it via
+	// ReportPodScrub; the report cancels the timer. If no report arrives within
+	// the pool's cleanupTimeoutSeconds plus a grace, the coordinator retires the
+	// pod so a hung or silent adapter does not leave it stuck in `recycling`
+	// until the much longer §4.6.1 orphan-GC window. Nil is a no-op (a
+	// deployment with no in-process recycle coordinator); the orphan GC remains
+	// the crash backstop. spec: §3.4 (missing-report timeout).
+	RecycleBoundary RecycleBoundaryArmer
+	// Now supplies the wall clock for the §3.2 reserved-hold-window check on
+	// the acquisition-path rebind branch. Nil uses time.Now.
+	Now func() time.Time
+}
+
+// HoldCanceller cancels a §3.2 reserved-hold expiry timer this replica holds
+// for the pod's claim. *recycle.HoldCoordinator satisfies it through Cancel;
+// the interface is defined at this consumer so podsession does not import the
+// recycle package. spec: §3.2 (within-hold rebind cancels the local timer).
+type HoldCanceller interface {
+	Cancel(podID string)
+}
+
+// RecycleBoundaryArmer arms the §3.4 missing-report timeout for a pod at the
+// bound → recycling patch. *recycle.RecycleBoundaryCoordinator satisfies it
+// through OnRecycling; the interface is defined at this consumer so podsession
+// does not import the recycle package. spec: §3.4 (gateway-side missing-report
+// timeout armed at session termination).
+type RecycleBoundaryArmer interface {
+	OnRecycling(podID string)
 }
 
 // SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
@@ -387,6 +429,14 @@ type BindRequest struct {
 	// binder demotes the SDK-warm pod before materializing the workspace
 	// (§6.1 line 34). An empty list disables demotion (§6.1 line 38).
 	SDKWarmBlockingPaths []string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
+	// by ResolvePool. When true and the session ends cleanly, Release patches
+	// the per-pod claim bound → recycling and signals the adapter to run the
+	// whole-pod scrub (the §3.4 recycle disposition) rather than draining the
+	// pod; the adapter's ReportPodScrub then drives recycle vs. retire. A
+	// failed/crashed session always retires regardless of this flag. spec:
+	// §3.1, §3.4 (recycle on occupancy-zero).
+	Recycle bool
 }
 
 // BindResult reports the pod a session was bound to.
@@ -404,6 +454,17 @@ type BindResult struct {
 	// the pod is claimed exclusively for the session. It is non-empty
 	// only for a BindSlot result.
 	SlotID string
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried
+	// from the bind request so the release path can apply the §3.4 recycle
+	// disposition without re-resolving the pool. On a recycling session-mode
+	// pool a clean session release patches the claim bound → recycling and
+	// signals the whole-pod scrub rather than draining the pod (Release). On a
+	// recycling concurrent-session pool (the §3.1 "Concurrent" preset) the same
+	// disposition runs when the last slot drains cleanly (ReleaseSlot →
+	// SlotClaimer.ReleaseSlot). False for a non-recycling pool, where the pod
+	// terminates after the session or cohort drains. spec: §3.1, §3.4,
+	// §6.30/§6.41.
+	Recycle bool
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
 	Adapter *adapterclient.Client
@@ -594,17 +655,15 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		}
 	}
 
-	// spec: §6.2 lines 83-94, 305-313 — advance Sandbox.status.phase through
-	// the setup chain (claimed → receiving_uploads → finalizing_workspace →
-	// running_setup → starting_session → attached) so the authoritative state
-	// machine reflects each phase. The detailed transitions live on the CRD
-	// status subresource only (line 313). On a pre-attached RPC failure the
-	// phase is best-effort moved to `failed` per §6.2 lines 99-102.
+	// spec: §6.2 — the fine session-lifecycle states (receiving_uploads,
+	// finalizing_workspace, running_setup, starting_session, attached) are
+	// session-model states recorded on the Postgres session row, not coarse
+	// Sandbox.status.phase occupancy values. The pod projects the coarse
+	// `claimed` phase throughout the setup chain (set at claim time by
+	// connect), so the gateway runs the §4.7 setup RPCs without writing any
+	// per-step CRD phase. On a pre-attached failure the pod is reclaimed by
+	// draining it (the failed claim disposition: claimed → draining, §6.2).
 	phaseStart = time.Now()
-	if err := b.setPhase(ctx, sb, state.ReceivingUploads); err != nil {
-		cl.Close()
-		return nil, fmt.Errorf("podsession: phase receiving_uploads on pod %s: %w", sandboxName, err)
-	}
 	// spec: §7.4 line 458; §13.4 line 665 — symlink targets are
 	// canonicalized against the pod's actual workspace root so the
 	// gateway-side extraction matches the adapter's post-promotion
@@ -619,10 +678,6 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
-	if err := b.setPhase(ctx, sb, state.FinalizingWorkspace); err != nil {
-		cl.Close()
-		return nil, fmt.Errorf("podsession: phase finalizing_workspace on pod %s: %w", sandboxName, err)
-	}
 	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
 	if err != nil {
 		b.failPhase(ctx, sb)
@@ -636,10 +691,6 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	t.WorkspaceMaterialization = time.Since(phaseStart)
 
 	phaseStart = time.Now()
-	if err := b.setPhase(ctx, sb, state.RunningSetup); err != nil {
-		cl.Close()
-		return nil, fmt.Errorf("podsession: phase running_setup on pod %s: %w", sandboxName, err)
-	}
 	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 	if err != nil {
 		b.failPhase(ctx, sb)
@@ -656,8 +707,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 
 	phaseStart = time.Now()
 	// §4.7 AssignCredentials is the fourth setup RPC; it runs while the pod
-	// is in running_setup (§6.2 has no distinct credential phase), before the
-	// starting_session transition below.
+	// projects the coarse `claimed` phase, before the runtime starts below.
 	if err := b.assignCredentials(ctx, cl, req); err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
@@ -666,10 +716,6 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	t.CredentialAssignment = time.Since(phaseStart)
 
 	phaseStart = time.Now()
-	if err := b.setPhase(ctx, sb, state.StartingSession); err != nil {
-		cl.Close()
-		return nil, fmt.Errorf("podsession: phase starting_session on pod %s: %w", sandboxName, err)
-	}
 	// spec: §6.1 lines 30-34 — a still-SDK-warm pod (preConnect, not
 	// demoted) is started by pointing the pre-connected SDK at the
 	// finalized workspace (ConfigureWorkspace) rather than booting the
@@ -698,17 +744,16 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	// On the first assignment to this runtime, compare the observed level
 	// against the declared integrationLevel and reject the assignment with
 	// RUNTIME_LEVEL_UNDERPERFORMS when the runtime delivers less than it
-	// declares. Runs before the attached transition so an underperforming
-	// runtime never reaches attached.
+	// declares. An underperforming runtime fails before the session is
+	// reported running, and the pod is reclaimed by draining it.
 	if err := b.verifyIntegrationLevel(ctx, cl, req.Runtime, req.DeclaredIntegrationLevel); err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, err
 	}
-	if err := b.setPhase(ctx, sb, state.Attached); err != nil {
-		cl.Close()
-		return nil, fmt.Errorf("podsession: phase attached on pod %s: %w", sandboxName, err)
-	}
+	// spec: §6.2 — the session reaching `running` is a session-model state
+	// recorded on the Postgres session row; the pod stays in the coarse
+	// `claimed` phase. No CRD phase write happens here.
 	t.AgentSessionStart = time.Since(phaseStart)
 
 	return &BindResult{
@@ -716,6 +761,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		TenantID:              req.TenantID,
 		SandboxName:           sandboxName,
 		PodIP:                 sb.Status.PodIP,
+		Recycle:               req.Recycle,
 		Adapter:               cl,
 		Timings:               t,
 		WorkspacePlanWarnings: finalizeWarnings,
@@ -724,80 +770,36 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	}, nil
 }
 
-// setPhase advances the claimed Sandbox's §6.2 status.phase to `to`,
-// validating the edge against the state machine and applying via
-// podclaim.ApplyGatewayPhase (SSA Apply with the gateway field manager
-// and ForceOwnership, per §4.6.3's gateway carve-out). The gateway is
-// the sole writer of the claim and session phases (idle → claimed →
-// ... → attached → terminal); the WarmPoolController's lifecycle
-// planner leaves these phases untouched, and SSA + ForceOwnership
-// transfers status.phase ownership from the WPC default to the gateway
-// for the lifetime of the session. sb is updated in place so a chain of
-// setup transitions needs no re-Get; an invalid edge fails loudly rather
-// than corrupting the phase. spec: §6.2 lines 83-94, 305-313; §4.6.3
-// ownership table.
-func (b *Binder) setPhase(ctx context.Context, sb *lennyv1.Sandbox, to state.State) error {
-	from := state.State(sb.Status.Phase)
-	if from == to {
-		return nil // idempotent: a retry or concurrent writer already landed it
-	}
-	if err := state.IsValid(from, to); err != nil {
-		return err
-	}
-	return podclaim.ApplyGatewayPhase(ctx, b.Client, sb, to)
-}
-
-// failPhase best-effort records the §6.2 pre-attached failure phase
-// (receiving_uploads / finalizing_workspace / running_setup /
-// starting_session → failed, spec lines 99-102) on a Sandbox whose setup
-// chain aborted. It is best-effort: the caller already returns the underlying
-// error, and a failed-phase write lost to reclamation does not change the
-// outcome — the orphaned claim is collected and the pod recycled (§4.6.1).
+// failPhase reclaims a claimed pod whose setup chain aborted before the
+// session was reported running. A pre-attached setup failure is a terminal
+// claim disposition: the pod cannot serve the session and is retired by
+// draining it (the coarse §6.2 claimed → draining → terminated edge), so
+// the warm-pool sizer provisions a replacement. It is best-effort — the
+// caller already returns the underlying error, and a drain lost to a
+// concurrent reclamation does not change the outcome, because the orphaned
+// claim is collected and the pod recycled (§4.6.1). spec: §6.2 (claimed →
+// draining on a failed claim disposition); §4.6.1 orphan-claim collection.
 func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox) {
-	if err := b.setPhase(ctx, sb, state.Failed); err != nil {
-		log.Printf("podsession: record failed phase on sandbox %s: %v", sb.Name, err)
+	if err := b.drain(ctx, sb); err != nil {
+		log.Printf("podsession: drain failed sandbox %s after pre-attached setup failure: %v", sb.Name, err)
 	}
 }
 
-// drain transitions the Sandbox to draining so the WarmPoolController
-// reclaims the pod (§6.2 → draining → terminated). It does NOT validate
-// the edge: drain reclaims the pod from whatever phase it holds (a
-// terminal disposition, attached, or an early claimed/idle release), so
-// reclamation is never blocked by a state-machine check. A Sandbox
-// already draining or terminated is a no-op.
+// drain releases a session-mode pod by deleting its per-pod occupancy
+// SandboxClaim. The gateway does not write Sandbox.status (§4.6.3 ownership
+// decomposition): the WarmPoolController is the sole writer of the coarse
+// occupancy phase and projects it from claim existence and pool policy
+// (§4.6.1). On a `recycle.enabled: false` pool a claim DELETE projects
+// `draining` then `terminated`, so deleting the claim is the gateway's
+// reclaim action; on a recycling pool under its limits the projection
+// returns the pod to `idle`. The delete is idempotent — a claim already
+// gone (a double release, or one the orphan GC collected) is a no-op.
 //
-// Direct Update (rather than SSA Apply) is the documented yield
-// mechanism per §4.6.3: per the Kubernetes SSA spec, a non-Apply request
-// removes other managers' claims on the fields it writes. After the
-// drain step the §6.2 draining → terminated edge belongs to the
-// WPC's lifecycle planner, which SSA-applies status.phase under its
-// own field manager without ForceOwnership; if the gateway held
-// ownership via ForceOwnership the WPC's apply would conflict
-// indefinitely. Direct Update strips the gateway's prior SSA claim
-// (from setPhase) so the WPC can re-claim and write terminated. spec:
-// §4.6.3 "never force-conflicts" guidance for WPC/PSC; §6.2 lines
-// 91-94 reclamation edges.
+// spec: §4.6.1 (occupancy projection on claim DELETE); §4.6.3 (gateway is
+// not a writer of Sandbox.status). The WarmPoolController-side projection
+// that consumes the claim DELETE lands in the WPC occupancy-projection step.
 func (b *Binder) drain(ctx context.Context, sb *lennyv1.Sandbox) error {
-	const maxAttempts = 4
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if sb.Status.Phase == string(state.Draining) || sb.Status.Phase == string(state.Terminated) {
-			return nil
-		}
-		sb.Status.Phase = string(state.Draining)
-		err := b.Client.Status().Update(ctx, sb)
-		if err == nil {
-			return nil
-		}
-		if !apierrors.IsConflict(err) {
-			return fmt.Errorf("podsession: drain sandbox %s: %w", sb.Name, err)
-		}
-		lastErr = err
-		if gerr := b.Client.Get(ctx, client.ObjectKeyFromObject(sb), sb); gerr != nil {
-			return fmt.Errorf("podsession: re-read sandbox %s after drain conflict: %w", sb.Name, gerr)
-		}
-	}
-	return fmt.Errorf("podsession: drain sandbox %s exhausted retries: %w", sb.Name, lastErr)
+	return podclaim.DeleteClaim(ctx, b.Client, b.Namespace, sb.Name)
 }
 
 // assignCredentials mints the session's §4.9 credential leases and
@@ -1221,11 +1223,11 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 		cl.Close()
 		return ResumeResult{}, fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, err)
 	}
-	// The resumed pod's §6.2 phase chain (resume_pending → resuming →
-	// attached) is driven by the resume watchdog path, tracked separately; the
-	// fresh pod stays in `claimed` here. Release's IsValid guard handles that
-	// gracefully (it skips the terminal-disposition write when no edge exists
-	// from claimed) and the drain reclaims the pod regardless.
+	// spec: §6.2 lines 82, 172 — the resumed session's fine states
+	// (resume_pending, resuming, running) are session-model states on the
+	// Postgres session row, not coarse Sandbox.status.phase values; the fresh
+	// pod stays in the coarse `claimed` phase. Release drains the pod when the
+	// session settles.
 	return ResumeResult{
 		Result: &BindResult{
 			SessionID:     req.SessionID,
@@ -1258,7 +1260,18 @@ type negotiated struct {
 // The negotiated return value carries the handshake-reported metadata
 // (workspace root, etc.) the caller threads onto BindResult.
 func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sb *lennyv1.Sandbox, cl *adapterclient.Client, neg negotiated, err error) {
-	claimer := &podclaim.Claimer{Client: b.Client, Namespace: b.Namespace}
+	claimer := &podclaim.Claimer{
+		Client:    b.Client,
+		Namespace: b.Namespace,
+		Now:       b.Now,
+		// On a §3.2 acquisition-path rebind, cancel the holding replica's local
+		// hold-TTL timer so it does not issue a wasted no-op expiry DELETE.
+		OnRebind: func(podID string) {
+			if b.HoldCanceller != nil {
+				b.HoldCanceller.Cancel(podID)
+			}
+		},
+	}
 	req := podclaim.ClaimRequest{
 		Pool:      pool,
 		SessionID: sessionID,
@@ -1410,11 +1423,12 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (
 		_ = b.Client.Delete(ctx, claim)
 		return "", podclaim.ErrNoIdlePod
 	}
-	// SSA Apply phase = claimed under the §4.6.3 gateway carve-out, the
-	// same path the in-cluster Claimer takes. ForceOwnership is required
-	// to transfer status.phase from the WPC default to the gateway for
-	// the session lifecycle.
-	if err := podclaim.ApplyGatewayPhase(ctx, b.Client, &sb, state.Claimed); err != nil {
+	// §4.6.1: the per-pod claim is CREATEd with spec only; write its first
+	// `bound` binding state with a subsequent status patch, the same first
+	// status the in-cluster Claimer writes. The gateway does not write
+	// Sandbox.status; the WarmPoolController projects the pod's occupancy
+	// phase from the claim binding state.
+	if err := podclaim.WriteBoundStatus(ctx, b.Client, b.Namespace, claim.Name); err != nil {
 		_ = b.Client.Delete(ctx, claim)
 		return "", err
 	}
@@ -1430,136 +1444,108 @@ func (b *Binder) recordFallbackSkip(reason string) {
 	}
 }
 
-// Release tears down a session that Bind placed on a pod: it shuts the
-// pod's runtime down through the adapter, closes the adapter connection,
-// records the session's terminal disposition on the Sandbox, and drains
-// the pod so the Sandbox reconciler reclaims it (§6.2 → draining →
-// terminated). terminal is the §6.2 terminal phase the session reached
-// (completed, failed, cancelled, or expired); the gateway maps the session
-// state to it. When terminal names a valid edge from the Sandbox's current
-// phase, Release records it (attached → completed/failed/cancelled, §6.2
-// lines 105-117) before draining so the authoritative state machine reflects
-// the outcome; a non-terminal or non-applicable value skips straight to the
-// drain. The adapter Shutdown and the disposition write are best-effort —
-// the drain reclaims the pod regardless — so Release returns only an error
-// from the drain transition. spec: §6.2 lines 105-117, 305.
-func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state.State) error {
-	if result.Adapter != nil {
-		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
-		result.Adapter.Close()
-	}
+// dispositionFailed is the disposition string Release treats as the §6.2
+// "ends in failure or a crash" terminal that always retires the pod
+// regardless of recycle settings. Every other clean terminal (completed,
+// cancelled, expired) recycles on a recycling pool. spec: §6.2 lines 24, 157
+// (a session that ends in failure or a crash always retires its pod).
+const dispositionFailed = "failed"
 
+// Release tears down a session that Bind placed on a pod: it releases the
+// session's §4.9 credential leases, then applies the §3.4 disposition by either
+// recycling the pod (patch the claim bound → recycling, then signal the
+// whole-pod scrub) or draining it (signal the adapter shutdown, then delete the
+// claim). disposition is the session-terminal outcome the session reached
+// (completed, failed, cancelled, or expired); the fine session-terminal states
+// and the Terminated session-condition fact are recorded on the Postgres
+// session model (§7.2 / §8.8), so Release writes no Sandbox.status field — the
+// WarmPoolController is the sole writer of Sandbox.status (§4.6.3).
+//
+// On a recycling pool (BindResult.Recycle, maxConcurrentSessions: 1) a clean
+// terminal (anything but "failed") brings occupancy to zero. The §3.4 recycle
+// disposition orders the two steps patch-then-scrub: Release first patches the
+// per-pod claim bound → recycling (podclaim.WriteRecyclingStatus), then signals
+// the adapter so the whole-pod scrub runs while the pod projects `claimed`. The
+// claim must be in `recycling` before any §4.7 ReportPodScrub can arrive,
+// because the claim state machine admits only recycling → reserved/released/failed,
+// not bound → reserved (§3.2); the ReportPodScrub report then drives the
+// recycle-vs-retire disposition off the `recycling` binding state. A
+// non-recycling pool, or a failed/crashed session, takes the drain path: the
+// adapter is signaled to tear the session down and the per-pod claim is deleted,
+// which the WarmPoolController projects as draining → terminated (§4.6.1). The
+// recycling patch is durable and ordered first; the adapter Shutdown is
+// best-effort — a coordinating-gateway crash after the patch leaves the claim in
+// `recycling` and the §4.6.1 orphan GC drains the stuck pod — so on the recycle
+// path Release returns only an error from the recycling patch. spec: §3.1, §3.2,
+// §3.4 (recycle on occupancy-zero, patch-then-scrub ordering); §4.6.1; §4.6.3;
+// §7.2 / §8.8.
+func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
 	// spec: §7.1 line 52 (step 23) — release the session's §4.9 credential
-	// leases back to the pool. Done before the drain so the credential's
+	// leases back to the pool. Done before the disposition so the credential's
 	// active-session counter is decremented on the way out; without it the
 	// pool's per-credential slot count drifts up without bound and
 	// select.go eventually reports exhaustion for idle credentials.
 	b.releaseCredentials(result.SessionID)
 
+	// spec: §3.2 / §3.4 / §6.2 lines 24, 105, 157 — a recycling pool recycles
+	// the pod across whole sessions of the same tenant when occupancy reaches
+	// zero after a clean session termination; a failed/crashed session always
+	// retires the pod. On the recycle path Release patches the claim
+	// bound → recycling FIRST, then signals the adapter scrub: the claim must be
+	// in `recycling` before any ReportPodScrub arrives, because the claim state
+	// machine admits recycling → reserved/released/failed but not bound →
+	// reserved (§3.2). On the retire path it tears the session down and deletes
+	// the claim so the WarmPoolController drains the pod.
+	if result.Recycle && disposition != dispositionFailed {
+		if err := podclaim.WriteRecyclingStatus(ctx, b.Client, b.Namespace, podclaim.ClaimName(result.SandboxName), nil); err != nil {
+			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.SandboxName, err)
+		}
+		// §3.4: arm the gateway-side missing-report timeout now that the claim
+		// is `recycling`. The adapter's ReportPodScrub cancels it; if the report
+		// never arrives within cleanupTimeoutSeconds plus a grace, the
+		// coordinator retires the pod so a hung adapter does not leave it stuck
+		// in `recycling` until the much longer orphan-GC window. Armed before
+		// the best-effort Shutdown so a Shutdown that blocks does not delay the
+		// timer.
+		if b.RecycleBoundary != nil {
+			b.RecycleBoundary.OnRecycling(result.SandboxName)
+		}
+		// The claim now projects `recycling`. This Shutdown is the
+		// occupancy-zero signal that runs the whole-pod scrub the adapter
+		// reports via §4.7 ReportPodScrub, which drives the disposition off the
+		// `recycling` binding state. spec: §3.1, §3.4 (whole-pod scrub on the
+		// occupancy-zero recycle edge).
+		b.shutdownAdapter(ctx, result)
+		return nil
+	}
+
+	// Retire path: tear the session's processes down, then drain the pod.
+	b.shutdownAdapter(ctx, result)
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {
 		return fmt.Errorf("podsession: get sandbox %s: %w", result.SandboxName, err)
 	}
-
-	// §6.2 lines 105-117: record the terminal disposition on the Sandbox
-	// before draining the exclusive pod. Guarded by IsValid so a disposition
-	// with no edge from the current phase (e.g. attached → expired, which the
-	// state machine does not model, or a resumed pod still in claimed) is
-	// skipped gracefully — the disposition is still on the session row and the
-	// §11.7 audit log — rather than failing the drain.
-	if terminal != "" && terminal != state.Terminated {
-		if from := state.State(sb.Status.Phase); state.IsValid(from, terminal) == nil {
-			if err := b.setPhase(ctx, &sb, terminal); err != nil {
-				log.Printf("podsession: record terminal phase %s on sandbox %s: %v", terminal, result.SandboxName, err)
-			} else if reason := sandboxcond.TerminalReason(terminal); reason != "" {
-				// spec: §6.2 line 305 / §4.6.1 — record the disposition as a
-				// status condition so operators can read why the Sandbox
-				// reached its terminal phase. Best-effort, like the phase write.
-				cond := metav1.Condition{
-					Type:    sandboxcond.Terminated,
-					Status:  metav1.ConditionTrue,
-					Reason:  reason,
-					Message: "session ended: " + string(terminal),
-				}
-				if err := sandboxcond.Apply(ctx, b.Client, &sb, cond); err != nil {
-					log.Printf("podsession: record terminal condition %s on sandbox %s: %v", reason, result.SandboxName, err)
-				}
-			}
-		}
-	}
-
 	return b.drain(ctx, &sb)
 }
 
-// Suspend records the §6.2 line 214 `attached → suspended` Sandbox
-// transition after the adapter has acknowledged (or forced) the
-// interrupt. The pod is NOT released — `suspended` is a hold state
-// where the pod stays bound until `maxSuspendedPodHoldSeconds` (§6.2
-// line 234) fires or the client takes another action.
-//
-// The transition is best-effort by design: a failure to write the phase
-// does not roll back the session-row update that already advanced the
-// session to `suspended`. The Sandbox phase is the operator-visible
-// projection of session state; if the gateway loses it transiently, the
-// session row is the source of truth and the WPC reconciler resyncs.
-//
-// The state machine guards the edge — `attached → suspended` is the
-// only legal source phase, so a sandbox already in `suspended`,
-// `resume_pending`, `draining`, or any other terminal/intermediate
-// phase short-circuits to a no-op rather than returning an error that
-// would mask the interrupt's successful execution.
-//
-// spec: §6.2 line 214 (`running → suspended` interrupt path) projected
-// onto Sandbox.status.phase per §6.2 lines 305-313. F-6.2.13.
-func (b *Binder) Suspend(ctx context.Context, sandboxName, reason string) error {
-	if b.Client == nil || sandboxName == "" {
-		return nil
+// shutdownAdapter shuts the pod's runtime down through the adapter and closes
+// the connection. The Shutdown call is best-effort: on the recycle path it is
+// the occupancy-zero signal that triggers the whole-pod scrub, and on the retire
+// path it tears the session's processes down before the pod drains. A nil
+// Adapter (a BindSlot result or a re-resolved release) is a no-op.
+func (b *Binder) shutdownAdapter(ctx context.Context, result *BindResult) {
+	if result.Adapter == nil {
+		return
 	}
-	var sb lennyv1.Sandbox
-	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("podsession: get sandbox %s for suspend: %w", sandboxName, err)
-	}
-	from := state.State(sb.Status.Phase)
-	if from == state.Suspended {
-		return nil
-	}
-	if err := state.IsValid(from, state.Suspended); err != nil {
-		// Either the sandbox has already moved past attached (e.g. a
-		// concurrent recovery race), or the gateway has lost coherence
-		// with the cluster. Either way the session row is the source of
-		// truth; the spec-visible Sandbox.phase loss is best-effort.
-		log.Printf("podsession: suspend sandbox %s: invalid edge from %s: %v", sandboxName, from, err)
-		return nil
-	}
-	if err := podclaim.ApplyGatewayPhase(ctx, b.Client, &sb, state.Suspended); err != nil {
-		return fmt.Errorf("podsession: record suspended phase on sandbox %s: %w", sandboxName, err)
-	}
-	// spec: §6.2 line 305 / §4.6.1 — record the suspend in condition history
-	// so an operator can tell an acknowledged interrupt from a forced
-	// (timeout) one. Best-effort, like the phase write above.
-	if reason == "" {
-		reason = "InterruptAcknowledged"
-	}
-	cond := metav1.Condition{
-		Type:    sandboxcond.Suspended,
-		Status:  metav1.ConditionTrue,
-		Reason:  reason,
-		Message: "session suspended on interrupt",
-	}
-	if err := sandboxcond.Apply(ctx, b.Client, &sb, cond); err != nil {
-		log.Printf("podsession: record suspended condition on sandbox %s: %v", sandboxName, err)
-	}
-	return nil
+	_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
+	result.Adapter.Close()
 }
 
 // resolveSandbox reads the claimed Sandbox and verifies it carries a pod
 // address. The Sandbox reconciler records status.podIP once the pod is
 // running, so a pod that was idle when claimed carries an address. The full
-// object is returned so the caller can chain §6.2 phase transitions against
-// it without a re-Get.
+// object is returned so the caller can read its coarse §6.2 phase and pod
+// address without a re-Get.
 func (b *Binder) resolveSandbox(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, error) {
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {

@@ -40,7 +40,8 @@ func newCARotationAdmin(t *testing.T) (*admin.Router, *movableClock) {
 	t.Helper()
 	clk := &movableClock{t: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)}
 	store := carotationstore.NewMemory().WithClock(clk.now)
-	mgr := carotation.NewManager(store,
+	mgr := carotation.NewManager(
+		store,
 		carotation.WithOverlapWindow(24*time.Hour),
 		carotation.WithClock(clk.now),
 	)

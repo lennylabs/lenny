@@ -11,7 +11,7 @@
 //
 //   - ConstantVU            N virtual users for the full duration.
 //   - ConstantArrivalRate   R iterations per second across the worker
-//                           pool for the full duration.
+//     pool for the full duration.
 //   - RampingVU             N-step ramp from start VUs to target VUs.
 //
 // The summary format mirrors k6's so baselines are comparable across

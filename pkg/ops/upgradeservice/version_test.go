@@ -34,7 +34,7 @@ func componentByName(r upgradeservice.VersionReport, name string) (upgradeservic
 // spec: §25.8 Version Aggregation — every component at the required
 // version reports no drift.
 func TestAggregateNoDrift(t *testing.T) {
-	var gaugeVal = -1
+	gaugeVal := -1
 	agg := upgradeservice.NewVersionAggregator(upgradeservice.VersionAggregatorOptions{
 		PlatformVersion: "1.5.0",
 		Sources: []upgradeservice.VersionSource{

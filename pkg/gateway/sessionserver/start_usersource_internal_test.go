@@ -97,7 +97,8 @@ func TestResolveUserSourceDialectMismatch_spec_4_9_1476(t *testing.T) {
 func TestResolveUserSourceFallsThroughToPool_spec_4_9_1372(t *testing.T) {
 	// availableProvider is a name the checker never matches, so the user
 	// source is unavailable and prefer-user-then-pool routes to the pool.
-	s := userSourceFixture(t, credential.PreferUserThenPool, []string{"anthropic"}, "none",
+	s := userSourceFixture(
+		t, credential.PreferUserThenPool, []string{"anthropic"}, "none",
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 	)
 	pools, users, err := s.resolveCredentialPools(context.Background(), sessionRow())

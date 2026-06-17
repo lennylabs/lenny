@@ -85,6 +85,14 @@ var _ sessionstore.Store = (*Store)(nil)
 // content-addressed snapshot hash added in migration 0068. The
 // execution_mode and scrub_policy columns are the §7.1
 // line 75 sessionIsolationLevel halves added in migration 0084.
+// The conversation_continuity column is the §7.1 line 74
+// sessionIsolationLevel envelope half, and the
+// terminated_at/terminated_reason and suspended_at/suspended_reason
+// columns are the §7.2 / §8.8 session-condition facts relocated off
+// Sandbox.status.conditions, all added in migration 0168. The nullable
+// condition timestamps COALESCE to NULL: a zero timestamp means the
+// condition has not fired. spec: §6.49; §7.1 line 74; §7.2 line 230;
+// §8.8.
 // The metadata column is the §7.1 line 6 client-supplied
 // CreateSession(..., metadata) payload added in migration 0086
 // (F-7.3.20). The next two columns are the §7.3
@@ -106,6 +114,9 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	last_successful_checkpoint_at,
 	COALESCE(workspace_snapshot_hash, ''),
 	execution_mode, scrub_policy,
+	conversation_continuity,
+	terminated_at, terminated_reason,
+	suspended_at, suspended_reason,
 	metadata,
 	retry_policy, last_checkpoint_workspace_bytes,
 	last_seq,
@@ -169,6 +180,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		last_successful_checkpoint_at,
 		workspace_snapshot_hash,
 		execution_mode, scrub_policy,
+		conversation_continuity,
+		terminated_at, terminated_reason,
+		suspended_at, suspended_reason,
 		metadata,
 		retry_policy, last_checkpoint_workspace_bytes,
 		last_seq,
@@ -200,6 +214,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$34,
 		NULLIF($35, ''),
 		$36, $37,
+		$52,
+		$53, $54,
+		$55, $56,
 		$38::jsonb,
 		$39::jsonb, $40,
 		$41,
@@ -273,7 +290,22 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// $51 — §6.2 lines 273-300 idle-timer anchor; NULL until the
 			// first qualifying agent activity is recorded, in which case
 			// the watchdog falls back to updated_at. F-11.3.7.
-			pgtenant.NullTime(sess.LastAgentActivityAt))
+			pgtenant.NullTime(sess.LastAgentActivityAt),
+			// $52 — §7.1 line 74 conversation_continuity envelope half;
+			// "platform" for session mode, "none" for service mode, or ""
+			// until the next read path resolves it from the pool. spec:
+			// §7.1 line 74.
+			sess.ConversationContinuity,
+			// $53-$54 — §7.2 / §8.8 Terminated session-condition fact
+			// relocated off Sandbox.status.conditions. terminated_at passes
+			// through NullTime so a zero time persists as SQL NULL per the
+			// "condition has not fired" sentinel. spec: §6.49; §7.2 line
+			// 230; §8.8.
+			pgtenant.NullTime(sess.TerminatedAt), sess.TerminatedReason,
+			// $55-$56 — §7.2 interrupt-suspension Suspended condition fact.
+			// suspended_at is NULL while the session is not suspended. spec:
+			// §6.49; §7.2 line 230; §8.8.
+			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -370,6 +402,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		last_successful_checkpoint_at = $32,
 		workspace_snapshot_hash = NULLIF($33, ''),
 		execution_mode = $34, scrub_policy = $35,
+		conversation_continuity = $50,
+		terminated_at = $51, terminated_reason = $52,
+		suspended_at = $53, suspended_reason = $54,
 		metadata = $36::jsonb,
 		retry_policy = $37::jsonb,
 		last_checkpoint_workspace_bytes = $38,
@@ -471,6 +506,19 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// stamper advances it ≤1/s on qualifying agent events. NULL
 			// until the first event. F-11.3.7.
 			pgtenant.NullTime(sess.LastAgentActivityAt),
+			// $50 — §7.1 line 74 conversation_continuity envelope half; see
+			// Create. spec: §7.1 line 74.
+			sess.ConversationContinuity,
+			// $51-$52 — §7.2 / §8.8 Terminated session-condition fact; the
+			// terminal-disposition writer (S27/S30) stamps terminated_at and
+			// terminated_reason when the session reaches a terminal state.
+			// terminated_at passes through NullTime so a non-terminal row
+			// keeps SQL NULL. spec: §6.49; §7.2 line 230; §8.8.
+			pgtenant.NullTime(sess.TerminatedAt), sess.TerminatedReason,
+			// $53-$54 — §7.2 interrupt-suspension Suspended condition fact;
+			// stamped when the session enters `suspended`, NULL otherwise.
+			// spec: §6.49; §7.2 line 230; §8.8.
+			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason,
 		); err != nil {
 			return err
 		}
@@ -669,6 +717,62 @@ func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, err
 	return count, nil
 }
 
+// ReserveSlotUnderLock implements Store — the §12.4 line 208 Redis-outage
+// capacity gate. The count-and-decide runs inside one transaction holding a
+// per-pod `pg_advisory_xact_lock`, so two concurrent admissions for the same
+// pod during a Redis outage serialize: the second waits for the first to
+// commit (releasing the xact lock) before reading the count, and cannot
+// observe the same free slot. The lock key is a 64-bit hash of podID; the
+// xact-scoped form releases automatically at commit or rollback, so a
+// crashed gateway never strands the lock. The count predicate matches
+// GetActiveSlotsByPod (and session.TerminalStates()) verbatim so the gate
+// reads the same source the blocking-rehydration protocol reads. The
+// returned post-admission count is the observed count plus one; the caller
+// (slotcounter) does not write the Postgres row — the slot occupancy is
+// recorded when the session row's pod_assignment is persisted on bind.
+// spec: §12.4 line 208 (Postgres fallback under a per-pod advisory lock);
+// §5.2 line 541 (intra-pod capacity gate during a Redis outage).
+func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+	if podID == "" {
+		return 0, false, nil
+	}
+	if maxConcurrent < 1 {
+		return 0, false, fmt.Errorf("pgstore: maxConcurrent must be >= 1, got %d", maxConcurrent)
+	}
+	var count int32
+	var admitted bool
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		// Per-pod advisory lock scoped to this transaction. The lock key is a
+		// stable 64-bit hash of the pod identifier so distinct pods never
+		// contend; hashtext returns a 32-bit value, widened to the bigint the
+		// single-argument advisory-lock form expects.
+		if _, err := tx.Exec(ctx,
+			"SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", podID); err != nil {
+			return fmt.Errorf("pgstore: acquire per-pod advisory lock for %s: %w", podID, err)
+		}
+		var current int32
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE pod_assignment = $1
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			podID).Scan(&current); err != nil {
+			return fmt.Errorf("pgstore: count active slots under lock for pod %s: %w", podID, err)
+		}
+		if current >= maxConcurrent {
+			count = current
+			admitted = false
+			return nil
+		}
+		count = current + 1
+		admitted = true
+		return nil
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return count, admitted, nil
+}
+
 // PoolDrainStats implements Store — the §15.1 line 797 pool-drain
 // accounting. It counts live (non-terminal) sessions bound to poolRef
 // across every tenant and reports the oldest created_at among them so
@@ -858,6 +962,11 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §4.5 line 311 content-addressed snapshot hash from
 		// migration 0068.
 		wsHash string
+		// §7.2 / §8.8 session-condition timestamps from migration 0168.
+		// Nullable: NULL means the condition has not fired (the session is
+		// neither terminal nor suspended). spec: §6.49; §7.2 line 230; §8.8.
+		terminatedAt *time.Time
+		suspendedAt  *time.Time
 		// §7.1 line 6 client-supplied metadata payload from migration
 		// 0086 (F-7.3.20).
 		metadataJSON []byte
@@ -911,6 +1020,14 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&wsHash,
 		// §7.1 line 75 sessionIsolationLevel halves from migration 0084.
 		&s.ExecutionMode, &s.ScrubPolicy,
+		// §7.1 line 74 conversation_continuity envelope half and the
+		// §7.2 / §8.8 Terminated/Suspended session-condition facts from
+		// migration 0168. The nullable timestamps scan into pointers and
+		// map back to the zero time when NULL. spec: §6.49; §7.1 line 74;
+		// §7.2 line 230; §8.8.
+		&s.ConversationContinuity,
+		&terminatedAt, &s.TerminatedReason,
+		&suspendedAt, &s.SuspendedReason,
 		// §7.1 line 6 client metadata from migration 0086 (F-7.3.20).
 		&metadataJSON,
 		// §7.3 retry_policy + last_checkpoint_workspace_bytes from
@@ -955,6 +1072,16 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	}
 	if lastAgentActivityAt != nil {
 		s.LastAgentActivityAt = *lastAgentActivityAt
+	}
+	// spec: §6.49 / §7.2 line 230 / §8.8 — a NULL terminated_at /
+	// suspended_at means the session-condition has not fired, mapped to
+	// the zero time so the in-memory Session matches the memstore "not
+	// fired" sentinel. The reason strings scan directly into the struct.
+	if terminatedAt != nil {
+		s.TerminatedAt = *terminatedAt
+	}
+	if suspendedAt != nil {
+		s.SuspendedAt = *suspendedAt
 	}
 	// spec: §14 lines 47-50 — decode the client-supplied env map. A
 	// nil/empty payload leaves Env nil so the read envelope omits it.

@@ -123,7 +123,8 @@ func Wrap(next http.Handler, opts Options) http.Handler {
 		// the envelope, but the code is always present. F-16.4.12.
 		if code := cw.errorCode(); code != "" {
 			cat, retryable := errorclassify.Classify(code)
-			attrs = append(attrs,
+			attrs = append(
+				attrs,
 				slog.String("error_code", code),
 				slog.String("error_category", string(cat)),
 				slog.Bool("retryable", retryable),

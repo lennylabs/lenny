@@ -38,6 +38,7 @@ func (f *fakePrimary) Reserve(_ context.Context, _ string, _, _ int64) (int64, e
 }
 func (f *fakePrimary) Adjust(_ context.Context, _ string, _ int64) error { return f.adjustErr }
 func (f *fakePrimary) Used(_ context.Context, _ string) (int64, error)   { return f.usedVal, f.usedErr }
+
 func (f *fakePrimary) Set(_ context.Context, tenantID string, value int64) error {
 	f.setCalls = append(f.setCalls, setCall{tenant: tenantID, value: value})
 	return f.setErr

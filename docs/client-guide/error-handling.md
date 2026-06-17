@@ -89,7 +89,7 @@ All REST API endpoints return errors using a canonical JSON envelope:
 | Code | Category | HTTP | Retryable | Description | Recommended Action |
 |---|---|---|---|---|---|
 | `RUNTIME_UNAVAILABLE` | `TRANSIENT` | 503 | Yes | No healthy pods available | Retry with exponential backoff. |
-| `WARM_POOL_EXHAUSTED` | `TRANSIENT` | 503 | Yes | No idle pods in warm pool | Retry with exponential backoff. |
+| `WARM_POOL_EXHAUSTED` | `TRANSIENT` | 503 | Yes | No idle pods in warm pool (returned after the claim-path timeout and Postgres fallback are exhausted, or after the `onPoolExhausted: queue` wait) | Honor the `Retry-After` header when present; otherwise retry with exponential backoff. |
 | `CREDENTIAL_POOL_EXHAUSTED` | `POLICY` | 503 | Yes | No available credentials in pool | Retry or wait for credentials to become available. |
 | `POD_CRASH` | `TRANSIENT` | 502 | Yes | Session pod terminated unexpectedly | The gateway may auto-retry based on retry policy. |
 | `TIMEOUT` | `TRANSIENT` | 504 | Yes | Operation timed out | Retry with backoff. |

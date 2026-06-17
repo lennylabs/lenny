@@ -40,13 +40,17 @@ type PoolReader interface {
 // spec: spec/04_system-components.md lines 340-345.
 type PodLifecycleManager interface {
 	PoolReader
-	// ClaimPod acquires an idle pod from poolName for sessionID,
-	// returning the claimed pod's handle. opts.RequiresDemotion = true
-	// signals that an SDK-warm pod's adapter must be demoted before
-	// the runtime is used (the §6.1 workspace plan includes
-	// sdkWarmBlockingPaths). opts.Priority is the §5.2 scheduling
-	// priority class hint; opts.ClusterID is reserved for the
-	// multi-cluster v2 path.
+	// ClaimPod acquires an idle pod from poolName for sessionID by creating
+	// the §4.6.1 per-pod occupancy SandboxClaim (`claim-<podName>`) that
+	// guards acquisition; the returned handle references the claimed pod.
+	// The claim is keyed off the pod, not the session: the session-to-pod
+	// binding lives on the Postgres session row's pod_assignment column, and
+	// sessionID is carried on the handle for attribution alone.
+	// opts.RequiresDemotion = true signals that an SDK-warm pod's adapter
+	// must be demoted before the runtime is used (the §6.1 workspace plan
+	// includes sdkWarmBlockingPaths). opts.Priority is the §5.2 scheduling
+	// priority class hint; opts.ClusterID is reserved for the multi-cluster
+	// v2 path.
 	ClaimPod(ctx context.Context, poolName, sessionID string, opts ClaimOpts) (PodHandle, error)
 	// ReleasePod releases a pod after its session ends. Concurrent
 	// failures (e.g., a pod already released) are not surfaced as
@@ -102,6 +106,12 @@ type PoolManager interface {
 
 // ClaimOpts carries the per-claim parameters from §4.6.1 line 342.
 type ClaimOpts struct {
+	// TenantID is the tenant the claimed pod is pinned to. ClaimPod stamps
+	// it onto the per-pod SandboxClaim spec (`spec.tenantId`) alongside
+	// sandboxRef, matching the §3.2 / §6.5 claim-spec contract: the claim's
+	// spec carries sandboxRef and tenantId. Empty leaves the claim
+	// unpinned, the §5.2 default for a pool without lifetime tenant pinning.
+	TenantID string
 	// RequiresDemotion signals that an SDK-warm pod must be demoted
 	// before use (§6.1 sdkWarmBlockingPaths).
 	RequiresDemotion bool
@@ -121,7 +131,11 @@ type PodHandle struct {
 	SandboxName string
 	// Namespace is the agent namespace the Sandbox lives in.
 	Namespace string
-	// SessionID is the session the pod is claimed for.
+	// SessionID is the session the claim was acquired for. The per-pod
+	// occupancy SandboxClaim (`claim-<SandboxName>`) is keyed off the pod,
+	// not the session, so this field is attribution only: the
+	// session-to-pod binding lives on the Postgres session row's
+	// pod_assignment column (§4.6.1).
 	SessionID string
 	// PoolName names the pool the pod was claimed from.
 	PoolName string
@@ -149,10 +163,9 @@ type PodStatus struct {
 	NodeName string
 	// CertExpiresAt is the adapter cert expiry on the Sandbox.
 	CertExpiresAt time.Time
-	// ActiveSlots is the §5.2 concurrent-mode slot count.
-	ActiveSlots int32
 	// TenantID is the §5.2 tenant pinning, empty for an unassigned
-	// pod.
+	// pod. The per-pod slot count lives in the Redis counter (§5.2),
+	// no longer on Sandbox.status, so it is not surfaced here.
 	TenantID string
 }
 
@@ -239,7 +252,7 @@ type OrphanResult struct {
 type OrphanAction string
 
 const (
-	OrphanActionDeleted OrphanAction = "deleted"
+	OrphanActionDeleted  OrphanAction = "deleted"
 	OrphanActionRetained OrphanAction = "retained"
 )
 
@@ -279,34 +292,28 @@ const (
 	WarmModeSDKWarm WarmMode = "sdk_warm"
 )
 
-// PodState is the §6.2 authoritative pod lifecycle phase. The named
-// constants here mirror the values written into Sandbox.status.phase.
+// PodState mirrors the §6.2 coarse pod-occupancy phase written into
+// Sandbox.status.phase. The named constants here are the only values the
+// WarmPoolController projects onto the CRD; the fine session-lifecycle
+// states live in the Postgres session model and are not mirrored here
+// (spec: §6.2, §6.37). This block stays in lockstep with
+// pkg/sandbox/state.All().
 // spec: spec/06_warm-pod-model.md §6.2; spec/04_system-components.md
 // lines 340-358 (the read/write surface that consumes them).
 type PodState string
 
 const (
-	PodStateWarming             PodState = "warming"
-	PodStateSDKConnecting       PodState = "sdk_connecting"
-	PodStateIdle                PodState = "idle"
-	PodStateClaimed             PodState = "claimed"
-	PodStateSlotActive          PodState = "slot_active"
-	PodStateReceivingUploads    PodState = "receiving_uploads"
-	PodStateFinalizingWorkspace PodState = "finalizing_workspace"
-	PodStateRunningSetup        PodState = "running_setup"
-	PodStateStartingSession     PodState = "starting_session"
-	PodStateAttached            PodState = "attached"
-	PodStateTaskCleanup         PodState = "task_cleanup"
-	PodStateResuming            PodState = "resuming"
-	PodStateSuspended           PodState = "suspended"
-	PodStateResumePending       PodState = "resume_pending"
-	PodStateAwaitingClient      PodState = "awaiting_client_action"
-	PodStateCompleted           PodState = "completed"
-	PodStateFailed              PodState = "failed"
-	PodStateCancelled           PodState = "cancelled"
-	PodStateExpired             PodState = "expired"
-	PodStateDraining            PodState = "draining"
-	PodStateTerminated          PodState = "terminated"
+	PodStateWarming       PodState = "warming"
+	PodStateSDKConnecting PodState = "sdk_connecting"
+	PodStateIdle          PodState = "idle"
+	// PodStateReserved is the §6.2 coarse occupancy phase a recycled pod
+	// projects while its claim is held for the pinned tenant through the
+	// hold window. It is excluded from idle inventory.
+	PodStateReserved   PodState = "reserved"
+	PodStateClaimed    PodState = "claimed"
+	PodStateFailed     PodState = "failed"
+	PodStateDraining   PodState = "draining"
+	PodStateTerminated PodState = "terminated"
 )
 
 // FinalizerAction is the action ManageFinalizer takes on the

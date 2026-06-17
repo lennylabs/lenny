@@ -95,7 +95,20 @@ type Memory struct {
 	wait time.Duration
 
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]*memEntry
+}
+
+// memEntry is the per-source-session lock plus a reference count of the
+// goroutines that currently hold or are waiting on it. The count is
+// mutated only under Memory.mu, so the map entry is reclaimed exactly
+// when no goroutine still references the source — closing the GC race
+// where a releaser deleted an entry that a concurrent waiter had
+// already fetched and was about to lock, which would have let a fresh
+// acquirer mint a second mutex for the same source and run a derive
+// in parallel with the waiter.
+type memEntry struct {
+	lk   sync.Mutex
+	refs int
 }
 
 // NewMemory returns an in-process Lock. wait <= 0 selects DefaultWait;
@@ -105,29 +118,31 @@ func NewMemory(wait time.Duration) *Memory {
 	if wait <= 0 {
 		wait = DefaultWait
 	}
-	return &Memory{wait: wait, locks: make(map[string]*sync.Mutex)}
+	return &Memory{wait: wait, locks: make(map[string]*memEntry)}
 }
 
 // Acquire serializes derives on the same source session inside the
 // running process. It honors the wait budget so a runaway derive
 // cannot starve callers beyond the spec's 5-second window.
 func (m *Memory) Acquire(ctx context.Context, sourceSessionID string) (Releaser, error) {
-	lk := m.lockFor(sourceSessionID)
+	e := m.ref(sourceSessionID)
 
 	// Fast path: try once without going through a goroutine. A
-	// contended caller falls through to the deadlined goroutine
-	// branch.
-	if tryLock(lk) {
-		return m.releaserFor(sourceSessionID, lk), nil
+	// contended caller falls through to the deadlined poll loop.
+	if e.lk.TryLock() {
+		return m.releaserFor(sourceSessionID, e), nil
 	}
 
 	deadline := time.Now().Add(m.wait)
 	for {
-		if tryLock(lk) {
-			return m.releaserFor(sourceSessionID, lk), nil
+		if e.lk.TryLock() {
+			return m.releaserFor(sourceSessionID, e), nil
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			// Drop this waiter's reference; it never took the inner
+			// lock, so it only owes the refcount.
+			m.unref(sourceSessionID, e)
 			return nil, ErrContended
 		}
 		wait := defaultPollInterval
@@ -136,45 +151,52 @@ func (m *Memory) Acquire(ctx context.Context, sourceSessionID string) (Releaser,
 		}
 		select {
 		case <-ctx.Done():
+			m.unref(sourceSessionID, e)
 			return nil, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
 }
 
-func (m *Memory) lockFor(sourceSessionID string) *sync.Mutex {
+// ref fetches (or creates) the per-source entry and records that one
+// more goroutine references it, all under m.mu so the count and the
+// map stay consistent with unref.
+func (m *Memory) ref(sourceSessionID string) *memEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	lk, ok := m.locks[sourceSessionID]
+	e, ok := m.locks[sourceSessionID]
 	if !ok {
-		lk = &sync.Mutex{}
-		m.locks[sourceSessionID] = lk
+		e = &memEntry{}
+		m.locks[sourceSessionID] = e
 	}
-	return lk
+	e.refs++
+	return e
 }
 
-func (m *Memory) releaserFor(sourceSessionID string, lk *sync.Mutex) Releaser {
+// unref drops one reference and reclaims the map entry when the last
+// referencing goroutine leaves. Reclamation under m.mu guarantees no
+// concurrent waiter still points at the entry, so a later acquirer of
+// the same source mints a fresh mutex only when the source is truly
+// idle.
+func (m *Memory) unref(sourceSessionID string, e *memEntry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e.refs--
+	if e.refs <= 0 {
+		if cur, ok := m.locks[sourceSessionID]; ok && cur == e {
+			delete(m.locks, sourceSessionID)
+		}
+	}
+}
+
+func (m *Memory) releaserFor(sourceSessionID string, e *memEntry) Releaser {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			lk.Unlock()
-			// GC the entry once no waiters remain. A new acquirer
-			// repopulates the map under m.mu, so this drop is safe
-			// from a steady-state memory-growth perspective.
-			m.mu.Lock()
-			if cur, ok := m.locks[sourceSessionID]; ok && cur == lk && tryLock(cur) {
-				delete(m.locks, sourceSessionID)
-				cur.Unlock()
-			}
-			m.mu.Unlock()
+			e.lk.Unlock()
+			m.unref(sourceSessionID, e)
 		})
 	}
-}
-
-// tryLock returns true when it acquired lk without blocking. Implements
-// the Go 1.18+ idiom via the runtime-internal TryLock method.
-func tryLock(lk *sync.Mutex) bool {
-	return lk.TryLock()
 }
 
 // Redis is the §7.1 line 92 Redis-backed Lock. SETNX writes a per-

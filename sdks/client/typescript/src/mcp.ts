@@ -241,11 +241,14 @@ export class MCPClient {
 
   /**
    * sendMessage invokes the §15.2 lenny/send_message MCP tool,
-   * delivering content to the session and returning the agent's text
+   * delivering a message to the session and returning the agent's text
    * reply. It is the MCP counterpart of a §15.1 send-message REST call.
+   * The wire arguments are the §8.5 `to` (target session id) and
+   * `message` (content) fields, renamed from the legacy `sessionId` and
+   * `content` by F-8.5.16.
    */
   async sendMessage(sessionId: string, content: string): Promise<string> {
-    const res = await this.callTool('lenny/send_message', { sessionId, content });
+    const res = await this.callTool('lenny/send_message', { to: sessionId, message: content });
     if (res.isError) {
       throw new Error(`lenny: lenny/send_message reported a failure: ${textOf(res)}`);
     }

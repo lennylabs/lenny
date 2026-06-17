@@ -172,7 +172,8 @@ type crossCursor struct {
 
 func encodeCrossCursor(c crossCursor) string {
 	return base64.RawURLEncoding.EncodeToString(
-		[]byte("xseq:" + c.tenant + ":" + strconv.FormatUint(c.seq, 10)))
+		[]byte("xseq:" + c.tenant + ":" + strconv.FormatUint(c.seq, 10)),
+	)
 }
 
 // decodeCrossCursor parses a cross-tenant cursor. An empty cursor starts

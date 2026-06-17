@@ -417,10 +417,12 @@ func TestExperimentResultsRoutesUnfilteredToMatview_spec_10_7_1088(t *testing.T)
 			"treatment": {
 				VariantID: "treatment", SampleCount: 5,
 				Scorers: map[string]evalstore.ScorerAggregate{
-					"judge": {Count: 3, Mean: 0.9, P50: 0.9, P95: 0.95,
+					"judge": {
+						Count: 3, Mean: 0.9, P50: 0.9, P95: 0.95,
 						Dimensions: map[string]evalstore.ScorerAggregate{
 							"coherence": {Count: 2, Mean: 0.8, P50: 0.8, P95: 0.85},
-						}},
+						},
+					},
 				},
 			},
 		},

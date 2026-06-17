@@ -264,7 +264,10 @@ class AdapterManifest:
     version: int = 0
     # session_id is the session this runtime instance is bound to.
     session_id: str = ""
-    # task_id is the current task identifier.
+    # task_id is the root task identifier for this session. Each session
+    # has exactly one execution, so the manifest is per-session and
+    # task_id is frozen for the session's lifetime.
+    # spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
     task_id: str = ""
     # mcp_nonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
     # SDK injects it as params._lennyNonce on every MCP initialize.
@@ -350,15 +353,18 @@ class TerminationReason:
 
 @dataclass
 class CreateRequest:
-    """§15.7 snapshot of task-scoped context handed to
-    :meth:`Handler.on_create` before the first :class:`Message`.
+    """§15.7 snapshot of session context handed to
+    :meth:`Handler.on_create` once before the first :class:`Message`.
 
     Handler implementations MUST treat it as read-only.
     """
 
     # session_id is the session this runtime instance is bound to.
     session_id: str = ""
-    # task_id is the current task identifier.
+    # task_id is the root task identifier for this session. Each session
+    # has exactly one execution, so task_id is frozen for the session's
+    # lifetime and on_create is invoked once with this value.
+    # spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
     task_id: str = ""
     # runtime_options is the effective caller options map.
     runtime_options: dict[str, Any] = field(default_factory=dict)
@@ -385,7 +391,10 @@ class Message:
     envelope: MessageEnvelope
     # session_id is the session the message was delivered to.
     session_id: str = ""
-    # task_id is the active task the message belongs to.
+    # task_id is the root task identifier of the session the message
+    # belongs to. It always equals CreateRequest.task_id, which is frozen
+    # for the session's lifetime.
+    # spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
     task_id: str = ""
     # sequence is a monotonic, SDK-assigned per-task counter ordering
     # messages as the SDK observed them on stdin. It is local to this

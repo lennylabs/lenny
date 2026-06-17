@@ -58,7 +58,8 @@ func TestTLSServerOptionSkipsModsOnPlaintext_spec_10_3_321(t *testing.T) {
 func TestTLSClientOptionAppliesServerNameMod_spec_10_3_322(t *testing.T) {
 	certFile, keyFile := writeTestKeypair(t)
 	ran := false
-	opt, err := adapter.TLSClientOption(certFile, keyFile, certFile,
+	opt, err := adapter.TLSClientOption(
+		certFile, keyFile, certFile,
 		adapter.WithServerName("lenny-gateway.lenny-system.svc"),
 		func(c *tls.Config) {
 			ran = true

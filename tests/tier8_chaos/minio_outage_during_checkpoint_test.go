@@ -56,6 +56,11 @@ import (
 // test reserves the chaos-subset target and is wired up alongside the
 // other tier-8 live runs once the toxiproxy + MinIO sidecar overlays
 // land (tier-8 ops backlog).
+//
+// spec: §4.4 lines 254, 271, 277, 281.
+// diagnosis: a failure means a checkpoint write does not degrade safely
+// when MinIO is unavailable mid-checkpoint, so the session would lose
+// its checkpoint rather than fall back to the inline/truncated path.
 func TestMinIOOutageDuringCheckpoint(t *testing.T) {
 	// spec: §4.4 lines 254, 271, 277, 281.
 	t.Skip("tier-8 live exercise — requires toxiproxy + testcontainers MinIO; " +

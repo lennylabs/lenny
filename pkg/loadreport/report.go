@@ -29,12 +29,12 @@ type Run struct {
 
 // ScenarioResult is one scenario's outcome.
 type ScenarioResult struct {
-	Name        string
-	Status      string
-	Throughput  float64
-	ErrorRate   float64
-	Latency     Latency
-	Errors      []ErrorBucket
+	Name       string
+	Status     string
+	Throughput float64
+	ErrorRate  float64
+	Latency    Latency
+	Errors     []ErrorBucket
 }
 
 // Latency is the percentile summary surfaced in the report.

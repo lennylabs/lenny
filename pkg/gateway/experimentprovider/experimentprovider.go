@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	unleash "github.com/Unleash/unleash-client-go/v4"
 	ld "github.com/launchdarkly/go-server-sdk/v6"
 	"github.com/launchdarkly/go-server-sdk/v6/ldcomponents"
 	ldprovider "github.com/open-feature/go-sdk-contrib/providers/launchdarkly/pkg"
@@ -38,7 +39,6 @@ import (
 	unleashprovider "github.com/open-feature/go-sdk-contrib/providers/unleash/pkg"
 	"github.com/open-feature/go-sdk/openfeature"
 	statsig "github.com/statsig-io/go-sdk"
-	unleash "github.com/Unleash/unleash-client-go/v4"
 
 	"github.com/lennylabs/lenny/pkg/experiment"
 )

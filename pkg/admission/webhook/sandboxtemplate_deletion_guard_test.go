@@ -120,7 +120,8 @@ func TestDeletionFailsClosedWhenReaderUnavailable_spec_10_5_508(t *testing.T) {
 func TestDeletionChecksEveryReferencingPool_spec_10_5_508(t *testing.T) {
 	// Two pools share the template; only the second has an active
 	// upgrade. The guard must still deny.
-	c := guardClient(t,
+	c := guardClient(
+		t,
 		pool("pool-a", "shared-tmpl"),
 		pool("pool-b", "shared-tmpl"),
 	)

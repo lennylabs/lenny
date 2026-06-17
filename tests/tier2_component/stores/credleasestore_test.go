@@ -256,6 +256,9 @@ func TestCredLeaseStoreContract(t *testing.T) {
 // the lease column holds AES-256-GCM envelope ciphertext and that the
 // bearer token is never persisted in cleartext (the token-hash column
 // is the SHA-256 digest, not the token).
+// diagnosis: a failure means the credential lease body is persisted in
+// cleartext rather than AES-256-GCM ciphertext, exposing the proxy-mode
+// bearer token in a database dump (a T4-Restricted breach).
 func TestCredLeaseCiphertextAtRest(t *testing.T) {
 	t.Parallel()
 	store, pg := newCredLeaseStore(t)
@@ -339,6 +342,9 @@ func TestCredLeaseCiphertextAtRest(t *testing.T) {
 // every active lease backed by the revoked credential. With the lease
 // body encrypted (§12.9), the lookup matches the dedicated source-aware
 // credential-key columns rather than the JSONB body.
+// diagnosis: a failure means emergency revocation cannot find every
+// active lease backed by a revoked credential, so a compromised
+// credential's leases would survive revocation.
 func TestCredLeaseStoreByCredential(t *testing.T) {
 	t.Parallel()
 	store, _ := newCredLeaseStore(t)

@@ -7,9 +7,10 @@
 // gateway replicas racing to reserve a slot on the same pod cannot
 // transiently exceed the pod's maxConcurrent bound.
 //
-// The Sandbox.status.activeSlots field stays as an observable mirror
-// (writers update it after a successful Redis-side reservation or
-// release), but the Redis counter is the source of truth.
+// The Redis counter is the source of truth for intra-pod occupancy. The
+// gateway no longer mirrors the count onto Sandbox.status; the
+// WarmPoolController projects the pod's occupancy phase from the per-pod
+// SandboxClaim binding state (§4.6.1, §4.6.3).
 //
 // Post-recovery rehydration (§5.2 "Post-recovery rehydration
 // atomicity") is implemented: every reservation first checks the
@@ -28,6 +29,11 @@
 // rehydration sentinels carry no {tenant_id} segment. The breaker
 // store (pkg/gateway/breakerstore/redisstore) documents the same
 // exception class for its cb: prefix.
+//
+// The §6.57 / §12.4 Redis-outage Postgres fallback (the FallbackSource gate,
+// the bounded fail-closed window, and the Redis-connectivity detection) lives
+// in fallback.go; this file carries the Redis fast path and the §5.2
+// rehydration protocol.
 package slotcounter
 
 import (
@@ -105,6 +111,26 @@ type Counter struct {
 	// rehydration (seed-to-zero fallback).
 	source SlotSource
 
+	// fallback gates intra-pod capacity on Postgres during a Redis outage
+	// (§12.4). Nil disables the gate: a Redis outage then fails closed
+	// immediately.
+	fallback FallbackSource
+
+	// fallbackMaxWindow bounds the §12.4 Redis-outage fallback window. After
+	// Redis has been continuously unreachable longer than this, the gate
+	// fails closed.
+	fallbackMaxWindow time.Duration
+
+	// now supplies the wall clock for the §12.4 outage-window measurement.
+	// Injectable for tests; defaults to time.Now.
+	now func() time.Time
+
+	// outageMu guards outageSince, the first-observed time of the current
+	// Redis outage. Zero when Redis is reachable; stamped on the first
+	// reservation that observes Redis unreachable and cleared on recovery.
+	outageMu    sync.Mutex
+	outageSince time.Time
+
 	// rehydrationTimeout bounds the cross-replica spin-wait and the
 	// rehydrating lock TTL.
 	rehydrationTimeout time.Duration
@@ -144,6 +170,8 @@ func New(client redis.UniversalClient, opts ...Option) *Counter {
 	c := &Counter{
 		client:             client,
 		rehydrationTimeout: DefaultRehydrationTimeout,
+		fallbackMaxWindow:  DefaultPostgresFallbackMaxWindow,
+		now:                time.Now,
 		podLocks:           make(map[string]*sync.Mutex),
 	}
 	for _, opt := range opts {
@@ -249,8 +277,17 @@ func (c *Counter) Reserve(ctx context.Context, podID string, maxConcurrent int32
 	for attempt := 0; attempt < maxReserveAttempts; attempt++ {
 		res, runErr := reserveScript.Run(ctx, c.client, keys, maxConcurrent).Int64()
 		if runErr != nil {
+			if isRedisUnavailable(runErr) {
+				// spec: §12.4 line 208 — Redis is unreachable. Gate capacity
+				// on the Postgres fallback under a per-pod advisory lock,
+				// failing closed only after the bounded outage window.
+				return c.fallbackReserve(ctx, podID, maxConcurrent, rehydrated)
+			}
 			return 0, rehydrated, fmt.Errorf("slotcounter: reserve %s: %w", podID, runErr)
 		}
+		// Redis answered: the outage (if any) is over. Clear the outage
+		// marker so a later outage measures a fresh window.
+		c.clearOutage()
 		switch {
 		case res >= 1:
 			return int32(res), rehydrated, nil
@@ -259,6 +296,9 @@ func (c *Counter) Reserve(ctx context.Context, podID string, maxConcurrent int32
 		case res == resultRehydrate:
 			did, rErr := c.rehydrate(ctx, podID)
 			if rErr != nil {
+				if isRedisUnavailable(rErr) {
+					return c.fallbackReserve(ctx, podID, maxConcurrent, rehydrated)
+				}
 				return 0, rehydrated, rErr
 			}
 			rehydrated = rehydrated || did

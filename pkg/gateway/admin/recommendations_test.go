@@ -78,6 +78,7 @@ func (unavailableReader) CounterValue(string, map[string]string) (float64, bool)
 func (unavailableReader) HistogramQuantile(string, map[string]string, float64) (float64, bool) {
 	return 0, false
 }
+
 func (unavailableReader) WindowedRate(string, map[string]string, time.Duration) (float64, bool) {
 	return 0, false
 }

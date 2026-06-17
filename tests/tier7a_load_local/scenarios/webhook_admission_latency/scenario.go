@@ -6,8 +6,8 @@
 // pkg/admission/sandboxclaim_guard.Decide from N concurrent
 // goroutines, modelling the §17.2 webhook hot path. The invariant:
 // Decide is pure, returns within microseconds, and admits / rejects
-// according to the documented §5.2 + §4.6.1 rules independent of
-// goroutine ordering.
+// according to the §4.6.1 CREATE-only per-pod uniqueness rule
+// independent of goroutine ordering.
 //
 // TESTING.md §12.7.a component-isolated benches.
 package webhook_admission_latency
@@ -33,6 +33,7 @@ type Scenario struct {
 }
 
 func (s *Scenario) Name() string { return name }
+
 // RampProfiles enumerates ascending VU counts for capacity discovery
 // under LENNY_TIER7A_CAPACITY=1.
 func (s *Scenario) RampProfiles() []loadgen.Profile {
@@ -54,35 +55,32 @@ func (s *Scenario) Setup(ctx context.Context) error    { return nil }
 func (s *Scenario) Teardown(ctx context.Context) error { return nil }
 
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
-	// Three admission shapes, one per iteration mod 3.
-	switch iter % 3 {
+	// Two admission cases, one per iteration parity, covering the
+	// §4.6.1 CREATE-only per-pod uniqueness rule.
+	switch iter % 2 {
 	case 0:
-		// Slot-bearing CREATE on idle Sandbox — §5.2 admits.
+		// First claim for a fresh pod — §4.6.1 admits.
 		req := sandboxclaim_guard.Request{
-			Operation:    sandboxclaim_guard.OpCreate,
-			ClaimName:    fmt.Sprintf("claim-%d-%d", vu, iter),
-			SandboxRef:   "pod-c",
-			SandboxPhase: sandboxclaim_guard.PhaseIdle,
-			HasSlotID:    true,
+			Operation:  sandboxclaim_guard.OpCreate,
+			ClaimName:  fmt.Sprintf("claim-%d-%d", vu, iter),
+			SandboxRef: fmt.Sprintf("pod-%d-%d", vu, iter),
 		}
 		d, err := sandboxclaim_guard.Decide(req)
 		if err != nil {
 			return err
 		}
 		if !d.Allowed {
-			s.counters.Inc("slot_claim_rejected_unexpected")
-			return fmt.Errorf("§5.2 violated: slot claim rejected on idle Sandbox")
+			s.counters.Inc("first_claim_rejected_unexpected")
+			return fmt.Errorf("§4.6.1 violated: first per-pod claim rejected")
 		}
-		s.counters.Inc("slot_claim_admitted")
+		s.counters.Inc("first_claim_admitted")
 	case 1:
-		// Session-mode CREATE on claimed Sandbox with existing claim —
-		// §4.6.1 rejects (duplicate-claim rule).
+		// Second claim for a pod that already holds a non-terminal claim —
+		// §4.6.1 rejects (per-pod uniqueness, no concurrency exemption).
 		req := sandboxclaim_guard.Request{
-			Operation:    sandboxclaim_guard.OpCreate,
-			ClaimName:    fmt.Sprintf("claim-%d-%d", vu, iter),
-			SandboxRef:   "pod-s",
-			SandboxPhase: sandboxclaim_guard.PhaseClaimed,
-			HasSlotID:    false,
+			Operation:  sandboxclaim_guard.OpCreate,
+			ClaimName:  fmt.Sprintf("claim-dup-%d-%d", vu, iter),
+			SandboxRef: "pod-s",
 			ExistingClaims: []sandboxclaim_guard.ExistingClaim{{
 				Name:   "existing",
 				Status: sandboxclaim_guard.ClaimBound,
@@ -94,42 +92,23 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 		}
 		if d.Allowed {
 			s.counters.Inc("duplicate_admitted_unexpected")
-			return fmt.Errorf("§4.6.1 violated: duplicate session-mode claim admitted")
+			return fmt.Errorf("§4.6.1 violated: duplicate per-pod claim admitted")
 		}
 		s.counters.Inc("duplicate_rejected")
-	case 2:
-		// Slot-bearing CREATE on slot_active Sandbox — §5.2 admits.
-		req := sandboxclaim_guard.Request{
-			Operation:    sandboxclaim_guard.OpCreate,
-			ClaimName:    fmt.Sprintf("claim-%d-%d", vu, iter),
-			SandboxRef:   "pod-c2",
-			SandboxPhase: sandboxclaim_guard.PhaseSlotActive,
-			HasSlotID:    true,
-		}
-		d, err := sandboxclaim_guard.Decide(req)
-		if err != nil {
-			return err
-		}
-		if !d.Allowed {
-			s.counters.Inc("slot_active_rejected_unexpected")
-			return fmt.Errorf("§5.2 violated: slot claim rejected on slot_active Sandbox")
-		}
-		s.counters.Inc("slot_active_admitted")
 	}
 	return nil
 }
 
 func (s *Scenario) Assert(r *loadgen.Result) error {
 	s.counters.EmitTo(r)
-	for _, unexpected := range []string{"slot_claim_rejected_unexpected", "duplicate_admitted_unexpected", "slot_active_rejected_unexpected"} {
+	for _, unexpected := range []string{"first_claim_rejected_unexpected", "duplicate_admitted_unexpected"} {
 		if v := s.counters.Get(unexpected); v > 0 {
-			return fmt.Errorf("§5.2/§4.6.1 violated: %s=%d", unexpected, v)
+			return fmt.Errorf("§4.6.1 violated: %s=%d", unexpected, v)
 		}
 	}
-	if s.counters.Get("slot_claim_admitted") == 0 ||
-		s.counters.Get("duplicate_rejected") == 0 ||
-		s.counters.Get("slot_active_admitted") == 0 {
-		return fmt.Errorf("scenario must exercise all three admission shapes")
+	if s.counters.Get("first_claim_admitted") == 0 ||
+		s.counters.Get("duplicate_rejected") == 0 {
+		return fmt.Errorf("scenario must exercise both admission cases")
 	}
 	return nil
 }

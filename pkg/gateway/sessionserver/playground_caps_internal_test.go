@@ -23,9 +23,9 @@ func (f fakePlaygroundCaps) RuntimeVisible(name string) bool {
 	return f.hidden == "" || name != f.hidden
 }
 
-func (f fakePlaygroundCaps) EffectiveIdleSeconds(runtimeIdleSeconds int) int {
-	if runtimeIdleSeconds > 0 && runtimeIdleSeconds < f.idleSeconds {
-		return runtimeIdleSeconds
+func (f fakePlaygroundCaps) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
+	if maxClientIdleSeconds > 0 && maxClientIdleSeconds < f.idleSeconds {
+		return maxClientIdleSeconds
 	}
 	return f.idleSeconds
 }
@@ -47,8 +47,10 @@ func playgroundCtx() context.Context {
 // counter. F-27.3.3.
 func TestApplyPlaygroundCaps_NonPlaygroundNoOp_spec_27_6(t *testing.T) {
 	count := 0
-	s := &Server{playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30},
-		incPlaygroundSessionCreated: func(string) { count++ }}
+	s := &Server{
+		playgroundCaps:              fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30},
+		incPlaygroundSessionCreated: func(string) { count++ },
+	}
 
 	// no principal at all
 	row := sessionstore.Session{}
@@ -146,6 +148,59 @@ func TestApplyPlaygroundCaps_SubMinuteRuntimeNotLoosened_spec_27_6(t *testing.T)
 	s.applyPlaygroundCaps(playgroundCtx(), "tiny", &row)
 	if row.Timeouts.MaxSessionAgeSeconds != 30 {
 		t.Errorf("MaxSessionAgeSeconds = %d, want 30 (sub-minute runtime cap preserved)", row.Timeouts.MaxSessionAgeSeconds)
+	}
+}
+
+// TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6 — the
+// playground idle override resolves against the runtime's effective
+// sessionPolicy.maxClientIdleSeconds, not the removed limits.maxIdleTimeSeconds
+// knob. A runtime declaring a maxClientIdleSeconds tighter than the playground
+// cap keeps the runtime bound: min(maxClientIdleSeconds,
+// playground.maxIdleTimeSeconds). spec: §6.84, §3.1 (maxClientIdleSeconds
+// supersedes maxIdleTimeSeconds). F-27.6.1.
+func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name:          "tight-idle",
+		Type:          runtimestore.TypeAgent,
+		SessionPolicy: &runtimestore.SessionPolicy{MaxClientIdleSeconds: 120},
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	s := &Server{runtimes: runtimes, playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30}}
+	row := sessionstore.Session{}
+	s.applyPlaygroundCaps(playgroundCtx(), "tight-idle", &row)
+	if row.Timeouts == nil {
+		t.Fatal("timeouts not stamped")
+	}
+	if row.Timeouts.MaxIdleSeconds != 120 {
+		t.Errorf("MaxIdleSeconds = %d, want 120 (runtime maxClientIdleSeconds tighter than playground)", row.Timeouts.MaxIdleSeconds)
+	}
+}
+
+// TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6 — when the runtime
+// declares no sessionPolicy.maxClientIdleSeconds, the idle override resolves
+// against the runtime's effective maxSessionAgeSeconds (the §6.2 idle-clock
+// default). A maxSessionAgeSeconds tighter than the playground cap keeps the
+// session-age bound. spec: §6.84, §3.1 (idle defaults to effective
+// maxSessionAgeSeconds). F-27.6.1.
+func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name:   "age-only",
+		Type:   runtimestore.TypeAgent,
+		Limits: &runtimestore.Limits{MaxSessionAgeSeconds: 200},
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	s := &Server{runtimes: runtimes, playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30}}
+	row := sessionstore.Session{}
+	s.applyPlaygroundCaps(playgroundCtx(), "age-only", &row)
+	if row.Timeouts == nil {
+		t.Fatal("timeouts not stamped")
+	}
+	if row.Timeouts.MaxIdleSeconds != 200 {
+		t.Errorf("MaxIdleSeconds = %d, want 200 (idle defaults to effective maxSessionAgeSeconds)", row.Timeouts.MaxIdleSeconds)
 	}
 }
 

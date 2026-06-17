@@ -202,13 +202,13 @@ func TestClampSyncIntervalSeconds_spec_11_2_44(t *testing.T) {
 	cases := []struct {
 		in, want int
 	}{
-		{0, DefaultSyncIntervalSeconds},   // unset → 30s default
-		{-5, DefaultSyncIntervalSeconds},  // negative → default
-		{1, MinSyncIntervalSeconds},       // below floor → 10s
-		{9, MinSyncIntervalSeconds},       // just below floor → 10s
-		{MinSyncIntervalSeconds, 10},      // at floor → unchanged
-		{DefaultSyncIntervalSeconds, 30},  // default value → unchanged
-		{120, 120},                        // high-throughput operator value → unchanged
+		{0, DefaultSyncIntervalSeconds},  // unset → 30s default
+		{-5, DefaultSyncIntervalSeconds}, // negative → default
+		{1, MinSyncIntervalSeconds},      // below floor → 10s
+		{9, MinSyncIntervalSeconds},      // just below floor → 10s
+		{MinSyncIntervalSeconds, 10},     // at floor → unchanged
+		{DefaultSyncIntervalSeconds, 30}, // default value → unchanged
+		{120, 120},                       // high-throughput operator value → unchanged
 	}
 	for _, c := range cases {
 		if got := ClampSyncIntervalSeconds(c.in); got != c.want {

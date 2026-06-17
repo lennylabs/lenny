@@ -39,9 +39,11 @@ func (m *recordingMetrics) SetRuntimeUpgradeState(pool, phase string) {
 	m.state[pool] = phase
 	m.calls++
 }
+
 func (m *recordingMetrics) SetRuntimeUpgradePhaseDuration(pool, phase string, seconds float64) {
 	m.duration[pool] = seconds
 }
+
 func (m *recordingMetrics) SetRuntimeUpgradeDrainingSessions(pool string, n int) {
 	m.draining[pool] = n
 }

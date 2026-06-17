@@ -284,6 +284,91 @@ func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID strin
 	return pod, true, nil
 }
 
+// incrementSessionsServedSQL adds one to the pod's sessions_served
+// recycle counter, treating a NULL (never-written) counter as 0 with
+// COALESCE so the first increment yields 1. updated_at advances to now()
+// so the mirror-staleness gauge reflects the counter write. RETURNING
+// hands back the new value in the same round trip; no row updated means
+// the pod is unknown.
+const incrementSessionsServedSQL = `UPDATE agent_pod_state
+	SET sessions_served = COALESCE(sessions_served, 0) + 1, updated_at = now()
+	WHERE pod_id = $1
+	RETURNING sessions_served`
+
+// IncrementSessionsServed adds one to the pod's sessions_served counter
+// and returns the new value. A NULL counter is treated as 0, so the first
+// increment returns 1. A missing pod row returns (0, false, nil) without
+// writing: an empty podID can never match the NOT NULL primary key, so it
+// short-circuits without a round trip. spec: §4.7 (ReportSessionScrub
+// increments sessionsServed); §5.2 (evaluated against
+// recycle.maxSessionsPerPod).
+func (s *Store) IncrementSessionsServed(ctx context.Context, podID string) (int, bool, error) {
+	return s.incrementCounter(ctx, podID, incrementSessionsServedSQL, "sessions served")
+}
+
+// incrementScrubFailureCountSQL adds one to the pod's scrub_failure_count
+// recycle counter, with the same COALESCE-to-0 and updated_at advance as
+// the sessions_served increment.
+const incrementScrubFailureCountSQL = `UPDATE agent_pod_state
+	SET scrub_failure_count = COALESCE(scrub_failure_count, 0) + 1, updated_at = now()
+	WHERE pod_id = $1
+	RETURNING scrub_failure_count`
+
+// IncrementScrubFailureCount adds one to the pod's scrub_failure_count
+// counter and returns the new value. A NULL counter is treated as 0, so
+// the first increment returns 1. A missing pod row returns (0, false, nil)
+// without writing. spec: §4.7 (ReportPodScrub increments
+// scrubFailureCount); §5.2 (evaluated against recycle.maxScrubFailures).
+func (s *Store) IncrementScrubFailureCount(ctx context.Context, podID string) (int, bool, error) {
+	return s.incrementCounter(ctx, podID, incrementScrubFailureCountSQL, "scrub failure count")
+}
+
+// incrementCounter runs one RETURNING UPDATE that bumps a single recycle
+// counter and reads its new value back. It centralizes the empty-podID
+// short-circuit, the no-row-found mapping, and the error wrapping shared
+// by both recycle-counter increments. label names the counter for the
+// wrapped error.
+func (s *Store) incrementCounter(ctx context.Context, podID, query, label string) (int, bool, error) {
+	if podID == "" {
+		return 0, false, nil
+	}
+	var count int
+	err := s.pool.QueryRow(ctx, query, podID).Scan(&count)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("agentpodstate: increment %s for pod %s: %w", label, podID, err)
+	}
+	return count, true, nil
+}
+
+// recycleCountersSQL reads both recycle counters back for the disposition.
+// COALESCE maps a NULL (never-written) counter to 0 so the caller never
+// sees a sentinel; the §5.2 disposition reads plain integers.
+const recycleCountersSQL = `SELECT COALESCE(sessions_served, 0), COALESCE(scrub_failure_count, 0)
+	FROM agent_pod_state WHERE pod_id = $1`
+
+// RecycleCounters reads both recycle counters back for the §5.2 recycle
+// disposition. A NULL column reads back as 0. A missing pod row returns
+// (agentpodstate.RecycleCounters{}, false, nil); an empty podID
+// short-circuits without a round trip. spec: §12.6 (agent_pod_state
+// schema); §5.2 (recycle disposition).
+func (s *Store) RecycleCounters(ctx context.Context, podID string) (agentpodstate.RecycleCounters, bool, error) {
+	if podID == "" {
+		return agentpodstate.RecycleCounters{}, false, nil
+	}
+	var rc agentpodstate.RecycleCounters
+	err := s.pool.QueryRow(ctx, recycleCountersSQL, podID).Scan(&rc.SessionsServed, &rc.ScrubFailureCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agentpodstate.RecycleCounters{}, false, nil
+	}
+	if err != nil {
+		return agentpodstate.RecycleCounters{}, false, fmt.Errorf("agentpodstate: read recycle counters for pod %s: %w", podID, err)
+	}
+	return rc, true, nil
+}
+
 // nullable maps an empty string to a SQL NULL so the nullable
 // tenant_id, session_id, and node_name columns store NULL rather than
 // an empty string. A NULL keeps the partial indexes

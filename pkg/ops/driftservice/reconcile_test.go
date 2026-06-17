@@ -53,6 +53,7 @@ type recordingMetrics struct {
 func (m *recordingMetrics) DriftDetected(rt, sev string) {
 	m.detected = append(m.detected, [2]string{rt, sev})
 }
+
 func (m *recordingMetrics) Reconciled(rt, outcome string) {
 	m.reconciled = append(m.reconciled, [2]string{rt, outcome})
 }

@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -39,8 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
-	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -70,6 +68,11 @@ const (
 // the binder's StartSession call drives.
 type fakeRuntime struct {
 	started string
+	// onClose, when set, runs at the moment the adapter Shutdown RPC closes
+	// the runtime. A recycle-ordering test reads the claim binding state from
+	// it to assert the claim is already `recycling` when the whole-pod scrub
+	// signal arrives.
+	onClose func()
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -78,7 +81,12 @@ func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
 }
 func (f *fakeRuntime) WriteEnvelope(string, []byte) error            { return nil }
 func (f *fakeRuntime) Interrupt(context.Context, string, bool) error { return nil }
-func (f *fakeRuntime) Close(context.Context, string) error           { return nil }
+func (f *fakeRuntime) Close(context.Context, string) error {
+	if f.onClose != nil {
+		f.onClose()
+	}
+	return nil
+}
 
 func (f *fakeRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	ch := make(chan []byte)
@@ -166,6 +174,21 @@ func (m *fakeMirror) ClaimIdle(_ context.Context, poolID, sessionID, tenantID st
 	return claimed, true, nil
 }
 
+// The recycle-counter accessors are unused on the §4.6.1 fallback-claim
+// path the Binder exercises; the fake reports not-found so the contract is
+// satisfied without fabricating a counter.
+func (m *fakeMirror) IncrementSessionsServed(context.Context, string) (int, bool, error) {
+	return 0, false, nil
+}
+
+func (m *fakeMirror) IncrementScrubFailureCount(context.Context, string) (int, bool, error) {
+	return 0, false, nil
+}
+
+func (m *fakeMirror) RecycleCounters(context.Context, string) (agentpodstate.RecycleCounters, bool, error) {
+	return agentpodstate.RecycleCounters{}, false, nil
+}
+
 func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
 	// envtest backs the client with a real kube-apiserver so the
@@ -198,12 +221,13 @@ func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 			seedAfter = func() {
 				if sbStatus.Phase == "" && sbStatus.PodName == "" &&
 					sbStatus.NodeName == "" && sbStatus.PodIP == "" &&
-					sbStatus.TenantID == "" && sbStatus.ActiveSlots == 0 {
+					sbStatus.TenantID == "" {
 					return
 				}
 				// Split the seed by §4.6.3 field ownership. WPC owns
 				// Phase / PodName / NodeName / PodIP / ObservedGeneration;
-				// the gateway owns ActiveSlots / TenantID. Seeding each
+				// the gateway owns TenantID. The per-pod slot count lives in
+				// the Redis counter, not on Sandbox.status. Seeding each
 				// subset under its rightful manager keeps the production
 				// Apply paths conflict-free.
 				wpc := map[string]interface{}{}
@@ -230,10 +254,8 @@ func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 						t.Fatalf("seed WPC status Sandbox %s: %v", sb.Name, err)
 					}
 				}
-				if sbStatus.ActiveSlots > 0 || sbStatus.TenantID != "" {
-					gw := map[string]interface{}{
-						"activeSlots": int64(sbStatus.ActiveSlots),
-					}
+				if sbStatus.TenantID != "" {
+					gw := map[string]interface{}{}
 					if sbStatus.TenantID != "" {
 						gw["tenantId"] = sbStatus.TenantID
 					}
@@ -346,22 +368,26 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 		t.Errorf("runtime started for %q, want sess-1", rt.started)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// spec: §4.6.3 — a successful Bind records the acquisition on the per-pod
+	// claim's `bound` binding state; the gateway no longer writes
+	// Sandbox.status, and the WPC projects the coarse `claimed` phase from
+	// the claim. The session reaching `running` is a session-model state on
+	// the Postgres session row, not a CRD phase.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	// spec: §6.2 lines 83-94 — a successful Bind advances the Sandbox through
-	// the setup chain to attached.
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
 // spec: §5.1 line 42 — a runtime declaring integrationLevel `full` whose
 // adapter handshake is observed at Basic (no lifecycle channel, no MCP)
 // has its first session assignment rejected with
-// RUNTIME_LEVEL_UNDERPERFORMS, and the Sandbox is failed rather than
-// advanced to attached.
+// RUNTIME_LEVEL_UNDERPERFORMS, and the pod is reclaimed by draining it
+// (the pre-attached failure is a terminal claim disposition, §6.2)
+// rather than serving the session.
 func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -382,12 +408,14 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 		t.Errorf("error levels = declared %q / observed %q, want full / basic", underperf.Declared, underperf.Observed)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase == "attached" {
-		t.Error("Sandbox reached attached despite an underperforming runtime")
+	// The pre-attached failure is a terminal claim disposition: the gateway
+	// reclaims the pod by deleting its per-pod claim (§4.6.3); it does not
+	// write Sandbox.status.phase. The WarmPoolController projects draining
+	// from the claim DELETE on a recycle.enabled:false pod.
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after reclaim = %v, want NotFound (claim deleted)", gerr)
 	}
 }
 
@@ -411,12 +439,14 @@ func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// The gateway no longer writes Sandbox.status; the per-pod claim records
+	// the acquisition with binding state `bound`.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -503,12 +533,15 @@ func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 		t.Errorf("Mode = %q, want %q", res.Mode, "full")
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// The gateway no longer writes Sandbox.status; the per-pod occupancy
+	// claim records the acquisition with binding state `bound`, and the WPC
+	// projects the pod phase from it.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != "bound" {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -675,16 +708,17 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != "draining" {
-		t.Errorf("sandbox phase = %q, want draining after Release", sb.Status.Phase)
+	// The gateway releases the pod by deleting its per-pod claim; it does not
+	// write Sandbox.status.phase (§4.6.3). The WarmPoolController projects
+	// draining from the claim DELETE.
+	var claim lennyv1.SandboxClaim
+	err = c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", err)
 	}
 }
 
@@ -710,7 +744,7 @@ func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	if len(assigner.released) != 1 || assigner.released[0] != "sess-rel" {
@@ -739,7 +773,7 @@ func TestReleaseFailsWhenSandboxGone(t *testing.T) {
 	if err := c.Delete(context.Background(), &sb); err != nil {
 		t.Fatalf("delete sandbox: %v", err)
 	}
-	if err := binder.Release(context.Background(), res, state.Completed); err == nil {
+	if err := binder.Release(context.Background(), res, "completed"); err == nil {
 		t.Error("Release succeeded though the Sandbox was deleted, want an error")
 	}
 }
@@ -759,24 +793,26 @@ func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
 		t.Error("Bind succeeded though a staging RPC could not run, want a failure")
 	}
 
-	// spec: §6.2 lines 99-102 — a pre-attached setup-RPC failure best-effort
-	// moves the Sandbox to the `failed` phase (here finalizing_workspace →
-	// failed, after receiving_uploads → finalizing_workspace had advanced it).
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != string(state.Failed) {
-		t.Errorf("sandbox phase = %q, want failed after a pre-attached RPC failure", sb.Status.Phase)
+	// spec: §4.6.3 — a pre-attached setup-RPC failure is a terminal claim
+	// disposition: the gateway reclaims the pod by deleting its per-pod claim
+	// (it writes no Sandbox.status.phase); the WarmPoolController projects
+	// draining then terminated from the claim DELETE, so the warm-pool sizer
+	// provisions a replacement.
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after a pre-attached RPC failure = %v, want NotFound (claim deleted)", gerr)
 	}
 }
 
-// recordingPhaseClient wraps c so a test can assert the §6.2 transition
-// sequence the gateway wrote, including phases that are transient in the
-// final stored object (like the terminal disposition recorded just before
-// draining). It records the Sandbox phase of every status-subresource Update.
-// A wrapper struct is used rather than controller-runtime's interceptor.Funcs
-// because the envtest client is a plain client.Client, not a client.WithWatch.
+// recordingPhaseClient wraps c so a test can assert that the gateway wrote
+// no Sandbox.status.phase (§4.6.3: the gateway is not a writer of
+// Sandbox.status; the WarmPoolController projects occupancy from the per-pod
+// claim). It records the Sandbox phase of every status-subresource Update and
+// Apply, so a test can assert the recorded sequence is empty across Bind and
+// Release. A wrapper struct is used rather than controller-runtime's
+// interceptor.Funcs because the envtest client is a plain client.Client, not
+// a client.WithWatch.
 func recordingPhaseClient(c client.Client, phases *[]string) client.Client {
 	return &phaseRecorder{Client: c, phases: phases}
 }
@@ -805,11 +841,10 @@ func (w *phaseStatusWriter) Update(ctx context.Context, obj client.Object, opts 
 	return nil
 }
 
-// Patch records the §4.6.3 SSA Apply path the binder uses for the
-// gateway-claimed phases (claimed, receiving_uploads, finalizing_workspace,
-// running_setup, starting_session, attached, completed/failed/cancelled).
-// The drain step still uses Update (yields to WPC); both paths are
-// observed so the test asserts the full §6.2 transition sequence.
+// Patch records any §4.6.3 Sandbox.status.phase write that reaches the status
+// subresource through SSA Apply, so a test can assert the gateway writes none.
+// The gateway no longer writes Sandbox.status.phase on any path (acquisition
+// is recorded on the per-pod claim, drain deletes the claim).
 func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 	if err := w.SubResourceWriter.Patch(ctx, obj, patch, opts...); err != nil {
 		return err
@@ -822,12 +857,13 @@ func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch 
 	return nil
 }
 
-// TestBindWritesSetupChainPhases_spec_6_2 asserts Bind advances the Sandbox
-// through the full §6.2 lines 83-94 setup chain (claimed →
-// receiving_uploads → finalizing_workspace → running_setup →
-// starting_session → attached) so the authoritative state machine
-// (line 305) reflects each phase, not just claimed.
-func TestBindWritesSetupChainPhases_spec_6_2(t *testing.T) {
+// TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3 asserts Bind
+// runs the §4.7 setup chain without writing any Sandbox.status.phase: the
+// gateway no longer mirrors occupancy onto the Sandbox (§4.6.3); the
+// WarmPoolController projects the pod phase from the per-pod claim's binding
+// state. The acquisition is recorded as a `bound` binding state on the
+// per-pod SandboxClaim instead.
+func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -843,24 +879,26 @@ func TestBindWritesSetupChainPhases_spec_6_2(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	want := []string{"claimed", "receiving_uploads", "finalizing_workspace", "running_setup", "starting_session", "attached"}
-	if !equalStrings(phases, want) {
-		t.Errorf("setup-chain phase sequence = %v, want %v", phases, want)
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v, want none (the WPC projects occupancy from the claim)", phases)
 	}
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != string(state.Attached) {
-		t.Errorf("final sandbox phase = %q, want attached", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
-// TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2 asserts Release records
-// the session's terminal disposition on the Sandbox (§6.2 lines 105-117,
-// attached → completed) before draining the exclusive pod (→ draining), so
-// the state machine reflects how the session ended.
-func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
+// TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3 asserts
+// Release on a non-recycling pool releases the exclusive pod by deleting its
+// per-pod claim and writes no Sandbox.status field at all (§4.6.3 ownership
+// decomposition: the gateway is not a writer of Sandbox.status; the
+// WarmPoolController projects draining from the claim DELETE). The terminal
+// disposition fact lives on the Postgres session row (§7.2 / §8.8), so the
+// gateway records no Sandbox condition. F-6.2.12.
+func TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -875,38 +913,34 @@ func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	phases = phases[:0] // drop the setup-chain phases; assert the release sequence
-	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+	phases = phases[:0] // drop the acquisition phase; assert the release sequence
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
-	want := []string{"completed", "draining"}
-	if !equalStrings(phases, want) {
-		t.Errorf("release phase sequence = %v, want %v", phases, want)
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v on Release, want none (claim DELETE drives the projection)", phases)
+	}
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", gerr)
 	}
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != string(state.Draining) {
-		t.Errorf("final sandbox phase = %q, want draining", sb.Status.Phase)
-	}
-	// spec: §6.2 line 305 / §4.6.1 — the disposition is recorded as a
-	// Terminated condition (with reason Completed) before the drain, and
-	// survives the drain because it is owned by a distinct field manager.
-	// F-6.2.12.
-	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, sandboxcond.Terminated); cond == nil {
-		t.Errorf("F-6.2.12: missing %s condition; have %v", sandboxcond.Terminated, sb.Status.Conditions)
-	} else if cond.Reason != "Completed" {
-		t.Errorf("F-6.2.12: condition reason = %q, want Completed", cond.Reason)
+	// spec: §4.6.3 / §7.2 / §8.8 — the gateway writes no Sandbox condition for
+	// the terminal disposition; the fact lives on the session row. F-6.2.12.
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("gateway must write no Sandbox condition on Release; got %+v", sb.Status.Conditions)
 	}
 }
 
-// TestReleaseExpiredSkipsTerminalPhase_spec_6_2 asserts a disposition with no
-// §6.2 edge from the current phase (attached → expired, which the state
-// machine does not model) is skipped gracefully: Release drains the pod
-// without recording the terminal phase, so reclamation is never blocked.
-func TestReleaseExpiredSkipsTerminalPhase_spec_6_2(t *testing.T) {
+// TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3 asserts an
+// expired session's Release on a non-recycling pool deletes the per-pod claim
+// and writes no Sandbox.status field (§4.6.3).
+func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
@@ -922,26 +956,214 @@ func TestReleaseExpiredSkipsTerminalPhase_spec_6_2(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 	phases = phases[:0]
-	if err := binder.Release(context.Background(), res, state.Expired); err != nil {
+	if err := binder.Release(context.Background(), res, "expired"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
-	want := []string{"draining"}
-	if !equalStrings(phases, want) {
-		t.Errorf("release phase sequence = %v, want %v (expired has no edge from attached)", phases, want)
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v on Release, want none (claim DELETE drives the projection)", phases)
+	}
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", gerr)
+	}
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("gateway must write no Sandbox condition on Release; got %+v", sb.Status.Conditions)
 	}
 }
 
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+// TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4 asserts that on a
+// recycling pool a clean session release patches the per-pod claim
+// bound → recycling rather than deleting it: the adapter-executed whole-pod
+// scrub (reported via §4.7 ReportPodScrub) then drives the recycle-vs-retire
+// disposition. The gateway writes no Sandbox.status field. spec: §3.1, §3.4
+// (recycle on occupancy-zero); §4.6.1 (recycling binding state); §4.6.3.
+func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	var phases []string
+	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+	if !res.Recycle {
+		t.Fatalf("BindResult.Recycle = false, want true (carried from the request)")
+	}
+	phases = phases[:0]
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	if len(phases) != 0 {
+		t.Errorf("gateway wrote Sandbox.status.phase %v on recycle Release, want none", phases)
+	}
+	// The claim is NOT deleted: it is patched bound → recycling so the scrub
+	// report path can drive the disposition.
+	var claim lennyv1.SandboxClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim); err != nil {
+		t.Fatalf("per-pod claim get after recycle Release = %v, want the claim to survive", err)
+	}
+	if claim.Status.Phase != string(claimstate.Recycling) {
+		t.Errorf("claim binding state = %q, want recycling", claim.Status.Phase)
+	}
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if len(sb.Status.Conditions) != 0 {
+		t.Errorf("gateway must write no Sandbox condition on recycle Release; got %+v", sb.Status.Conditions)
+	}
+}
+
+// fakeRecycleBoundary records the §3.4 missing-report timeout arming the
+// binder requests at the bound → recycling patch.
+type fakeRecycleBoundary struct{ armed []string }
+
+func (f *fakeRecycleBoundary) OnRecycling(podID string) { f.armed = append(f.armed, podID) }
+
+// TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4 asserts that on the
+// recycle path Release arms the §3.4 gateway-side missing-report timeout for
+// the pod after patching the claim bound → recycling, so a hung or silent
+// adapter is bounded by cleanupTimeoutSeconds plus a grace rather than the
+// much longer orphan-GC window. spec: §3.4 (missing-report timeout).
+func TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	armer := &fakeRecycleBoundary{}
+	binder.RecycleBoundary = armer
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if len(armer.armed) != 1 || armer.armed[0] != res.SandboxName {
+		t.Errorf("armed missing-report timeouts = %v, want [%s]", armer.armed, res.SandboxName)
+	}
+}
+
+// TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4 asserts a failed session
+// on a recycling pool takes the retire path (deletes the claim) and does NOT
+// arm the missing-report timeout: there is no whole-pod scrub to await on a
+// retired pod. spec: §3.4; §6.2 lines 24, 157.
+func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	armer := &fakeRecycleBoundary{}
+	binder.RecycleBoundary = armer
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "failed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if len(armer.armed) != 0 {
+		t.Errorf("failed-session retire armed missing-report timeouts %v, want none", armer.armed)
+	}
+}
+
+// TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2 pins the §3.4
+// patch-then-scrub ordering: on the recycle path the claim is patched
+// bound → recycling BEFORE the adapter is signaled to run the whole-pod scrub.
+// The claim state machine admits recycling → reserved/released/failed but not
+// bound → reserved (§3.2), so the claim must already project `recycling` when
+// any ReportPodScrub arrives. The fakeRuntime's onClose hook runs inside the
+// adapter Shutdown RPC, which is the occupancy-zero scrub signal; reading the
+// claim binding state there observes the state at the moment the signal fires.
+// spec: §3.2 (claim state machine), §3.4 (recycle disposition, patch-then-scrub).
+func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+
+	// stateAtScrubSignal captures the claim binding state read at the moment
+	// the adapter Shutdown (the scrub signal) closes the runtime.
+	var stateAtScrubSignal string
+	rt := &fakeRuntime{}
+	rt.onClose = func() {
+		var claim lennyv1.SandboxClaim
+		if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+			stateAtScrubSignal = "get-error:" + err.Error()
+			return
 		}
+		stateAtScrubSignal = claim.Status.Phase
 	}
-	return true
+	srv.Runtime = rt
+
+	binder := newBinder(c, adapterDialer(t, srv))
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	if stateAtScrubSignal != string(claimstate.Recycling) {
+		t.Errorf("claim binding state at the scrub signal = %q, want %q (the claim must be patched bound → recycling before the whole-pod scrub is signaled, §3.2/§3.4)",
+			stateAtScrubSignal, claimstate.Recycling)
+	}
+}
+
+// TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4 asserts a failed/crashed
+// session on a recycling pool retires the pod (deletes the claim) rather than
+// recycling: §6.2 lines 24, 157 require a failed session to always retire its
+// pod regardless of recycle settings. spec: §3.4; §6.2 lines 24, 157.
+func TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, "failed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	// A failed session always retires: the claim is deleted.
+	var claim lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after failed Release = %v, want NotFound (failed session retires the pod)", gerr)
+	}
 }
 
 func TestBindStagesUploadFile(t *testing.T) {
@@ -1258,29 +1480,20 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 		t.Errorf("mirror claims = %+v, want one claim of sbx-fb for sess-1/acme", mirror.claims)
 	}
 
-	// The fallback created the binding SandboxClaim, so the
-	// lenny-sandboxclaim-guard webhook's CREATE-time check still guards
-	// the single-claim invariant.
+	// The fallback created the per-pod SandboxClaim (claim-<podName>), so the
+	// lenny-sandboxclaim-guard webhook's CREATE-time per-pod-uniqueness check
+	// still guards the single-claim invariant, and wrote its first `bound`
+	// binding state. The gateway no longer writes Sandbox.status.
 	var claim lennyv1.SandboxClaim
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "claim-sess-1"}, &claim); err != nil {
-		t.Fatalf("the fallback did not create a SandboxClaim: %v", err)
+		client.ObjectKey{Namespace: testNS, Name: "claim-sbx-fb"}, &claim); err != nil {
+		t.Fatalf("the fallback did not create a per-pod SandboxClaim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "sbx-fb" || claim.Spec.SessionID != "sess-1" ||
-		claim.Spec.TenantID != "acme" {
-		t.Errorf("SandboxClaim spec = %+v, want a binding of sess-1/acme to sbx-fb", claim.Spec)
+	if claim.Spec.SandboxRef != "sbx-fb" || claim.Spec.TenantID != "acme" {
+		t.Errorf("SandboxClaim spec = %+v, want a binding of acme to sbx-fb", claim.Spec)
 	}
-
-	// The fallback flipped the Sandbox idle → claimed, then the full Bind
-	// advanced it through the §6.2 setup chain to attached (the fallback
-	// claim feeds the same Bind path as a normal claim).
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "sbx-fb"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached after the fallback claim + Bind", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound after the fallback claim + Bind", claim.Status.Phase)
 	}
 }
 
@@ -1310,11 +1523,12 @@ func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	if res.Result.SandboxName != "sbx-fb" {
 		t.Errorf("resumed onto %q, want sbx-fb claimed via the fallback", res.Result.SandboxName)
 	}
-	// Resume and Bind share connect, so the fallback benefits both.
+	// Resume and Bind share connect, so the fallback benefits both. The
+	// per-pod claim is named claim-<podName>.
 	var claim lennyv1.SandboxClaim
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "claim-sess-1"}, &claim); err != nil {
-		t.Errorf("the fallback did not create a SandboxClaim for Resume: %v", err)
+		client.ObjectKey{Namespace: testNS, Name: "claim-sbx-fb"}, &claim); err != nil {
+		t.Errorf("the fallback did not create a per-pod SandboxClaim for Resume: %v", err)
 	}
 }
 

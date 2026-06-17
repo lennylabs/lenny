@@ -110,7 +110,7 @@ func (r scriptRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	*(dest[0].(*string)) = r.val
+	*dest[0].(*string) = r.val
 	return nil
 }
 

@@ -43,7 +43,8 @@ func authEnv(repoURL string, cred Credential) []string {
 	}
 	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+cred.Token))
 	key := "http." + authHeaderScope(repoURL) + ".extraHeader"
-	return append(env,
+	return append(
+		env,
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0="+key,
 		"GIT_CONFIG_VALUE_0="+header,

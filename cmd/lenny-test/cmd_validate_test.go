@@ -40,3 +40,75 @@ func TestHasNotImplementedSkipAfter(t *testing.T) {
 		}
 	}
 }
+
+// TestHasAnnotationBefore pins the §17.9 annotation-scan boundary: the
+// validate-diagnosis subcommand scans the function's own contiguous leading
+// doc-comment block (comment lines plus the blank lines that separate
+// paragraphs within it) for the // spec: / // diagnosis: markers. A thorough
+// multi-paragraph header keeps both annotations in range, while a blank-line
+// gap before unrelated code ends the scan so an annotation on a different
+// declaration is never mis-attributed.
+func TestHasAnnotationBefore(t *testing.T) {
+	cases := []struct {
+		name   string
+		lines  []string
+		marker string
+		want   bool
+	}{
+		{
+			name: "spec and diagnosis in one long block both found",
+			lines: []string{
+				"// spec: 4.6.1 (occupancy projection), 4.6.3 (ownership),",
+				"// 6.2 (coarse state machine), 3.3 (decomposition)",
+				"//",
+				"// diagnosis: a long multi-line diagnosis that, together with the",
+				"// spec block above, spans more than ten lines before the func so a",
+				"// fixed ten-line window would push the spec annotation out of range.",
+				"// It keeps going to be sure the block is comfortably over ten lines.",
+				"// And one more line for good measure.",
+				"func TestX(t *testing.T) {",
+			},
+			marker: "// spec:",
+			want:   true,
+		},
+		{
+			name: "diagnosis closest to func still found",
+			lines: []string{
+				"// spec: 4.6.1",
+				"//",
+				"// diagnosis: explains the failure mode",
+				"func TestX(t *testing.T) {",
+			},
+			marker: "// diagnosis:",
+			want:   true,
+		},
+		{
+			name: "annotation on a different declaration is not attributed",
+			lines: []string{
+				"// spec: 9.9 (some other test)",
+				"func TestOther(t *testing.T) {}",
+				"",
+				"// diagnosis: this func has a diagnosis but no spec of its own",
+				"func TestX(t *testing.T) {",
+			},
+			marker: "// spec:",
+			want:   false,
+		},
+		{
+			name: "no leading comment block at all",
+			lines: []string{
+				"x := 1",
+				"func TestX(t *testing.T) {",
+			},
+			marker: "// spec:",
+			want:   false,
+		},
+	}
+	for _, c := range cases {
+		idx := len(c.lines) - 1 // the func line
+		got := hasAnnotationBefore(c.lines, idx, c.marker)
+		if got != c.want {
+			t.Errorf("%s: hasAnnotationBefore(%q) = %v; want %v", c.name, c.marker, got, c.want)
+		}
+	}
+}

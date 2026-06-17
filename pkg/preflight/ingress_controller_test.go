@@ -114,7 +114,8 @@ func TestIngressControllerCheckSkipsPodHalfWithoutLabel_spec_13_2_292(t *testing
 // spec: §13.2 line 292 NET-038 — gatherIngressController reads the
 // namespace and a running labeled pod from the cluster.
 func TestGatherIngressControllerRunningPod_spec_13_2_292(t *testing.T) {
-	c := ingressClient(t,
+	c := ingressClient(
+		t,
 		ingressNamespace("ingress-nginx"),
 		ingressPod("ingress-nginx", "controller-0",
 			map[string]string{"app.kubernetes.io/name": "ingress-nginx"}, corev1.PodRunning),
@@ -132,7 +133,8 @@ func TestGatherIngressControllerRunningPod_spec_13_2_292(t *testing.T) {
 // Running phase (sidecar churn, crash loop) is not a usable controller
 // pod, so hasRunningPod is false.
 func TestGatherIngressControllerPendingPodNotCounted_spec_13_2_292(t *testing.T) {
-	c := ingressClient(t,
+	c := ingressClient(
+		t,
 		ingressNamespace("ingress-nginx"),
 		ingressPod("ingress-nginx", "controller-0",
 			map[string]string{"app.kubernetes.io/name": "ingress-nginx"}, corev1.PodPending),

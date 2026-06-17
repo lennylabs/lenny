@@ -365,7 +365,8 @@ func (r *Router) emitInterceptorFailPolicyTransition(ctx context.Context, p auth
 		// cost-attribution / compliance event under the operator's tenant.
 		r.appendBilling(ctx, billingfanout.InterceptorFailPolicy(
 			billingstore.EventInterceptorFailPolicyWeakened, p.TenantID, name,
-			string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, transitionTs, uint32(cooldown)))
+			string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, transitionTs, uint32(cooldown),
+		))
 		// spec: §8.3 line 218 — one weakening_cooldown_active per window
 		// entry (not per rejected request).
 		r.emit(ctx, p, string(audit.EventInterceptorWeakeningCooldownActive), name, map[string]any{
@@ -377,13 +378,15 @@ func (r *Router) emitInterceptorFailPolicyTransition(ctx context.Context, p auth
 		})
 		r.appendBilling(ctx, billingfanout.InterceptorFailPolicy(
 			billingstore.EventInterceptorWeakeningCooldownActive, p.TenantID, name,
-			string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, transitionTs, uint32(cooldown)))
+			string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, transitionTs, uint32(cooldown),
+		))
 		return
 	}
 	r.emit(ctx, p, string(audit.EventInterceptorFailPolicyStrengthened), name, detail)
 	r.appendBilling(ctx, billingfanout.InterceptorFailPolicy(
 		billingstore.EventInterceptorFailPolicyStrengthened, p.TenantID, name,
-		string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, "", 0))
+		string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, "", 0,
+	))
 }
 
 // interceptorAffectedPolicies counts the active DelegationPolicy

@@ -21,12 +21,14 @@
 #      that does not know the new column issues INSERTs that omit it, and a
 #      NOT NULL constraint without a default makes those INSERTs fail.
 #      spec: §10.5 line 415.
-#   5. Every Phase 3 migration (an .up.sql that DROPs a column) uses
-#      `DROP COLUMN IF EXISTS` (idempotency, §10.5 line 430) and begins
+#   5. Every Phase 3 contract migration (an .up.sql that DROPs a column)
+#      uses `DROP COLUMN IF EXISTS` (idempotency, §10.5 line 430) and begins
 #      with a PL/pgSQL `DO $$` preflight gate block that aborts when
 #      un-migrated rows remain (§10.5 line 417). A missing gate or a
 #      non-idempotent DROP is a violation; a missing `-- gate-index:`
-#      declaration is a non-blocking warning (§10.5 line 417).
+#      declaration is a non-blocking warning (§10.5 line 417). The gate
+#      requirement is unconditional: §10.5 line 417 mandates the preflight
+#      DO block for every Phase 3 migration regardless of expected row count.
 #
 # Exit code:
 #   0  success
@@ -129,11 +131,11 @@ done < <(find "${MIGRATIONS_DIR}" -type f -name '*.up.sql' | sort)
 # matter, then counts bare vs guarded DROP COLUMN clauses.
 while IFS= read -r up; do
     norm="$(sed -E 's/--.*$//' "${up}" | tr '\n' ' ' | tr '[:upper:]' '[:lower:]')"
-    total_drops="$(grep -oE 'drop[[:space:]]+column' <<<"${norm}" | wc -l | tr -d ' ')"
+    total_drops="$(grep -oE 'drop[[:space:]]+column' <<<"${norm}" | wc -l | tr -d ' ')" || total_drops=0
     if [[ "${total_drops}" == "0" ]]; then
         continue # not a Phase 3 migration
     fi
-    guarded_drops="$(grep -oE 'drop[[:space:]]+column[[:space:]]+if[[:space:]]+exists' <<<"${norm}" | wc -l | tr -d ' ')"
+    guarded_drops="$(grep -oE 'drop[[:space:]]+column[[:space:]]+if[[:space:]]+exists' <<<"${norm}" | wc -l | tr -d ' ')" || guarded_drops=0
     if (( total_drops > guarded_drops )); then
         report "§10.5 line 430: ${up} drops a column without IF EXISTS (Phase 3 DROP COLUMN is not idempotent; a re-run fails). Use DROP COLUMN IF EXISTS."
     fi

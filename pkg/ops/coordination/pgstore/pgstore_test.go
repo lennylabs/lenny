@@ -26,7 +26,7 @@ func setup(t *testing.T) (*pgstore.Store, *pgxpool.Pool, context.Context) {
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15499,
+		Port:         0, // ephemeral; §17.4 forbids hardcoded ports and they collide under parallel tests
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",
@@ -165,11 +165,15 @@ func TestPgReconcileSplitBrainPreOutageWins_spec_25_4(t *testing.T) {
 	now := time.Now().UTC()
 	redisLocks := []coordination.Lock{
 		// Post-outage Redis lock on the same scope (active) — the collision.
-		{ID: "lock-r1", Scope: "pool:p", Operation: "scale", AcquiredBy: "bob",
-			AcquiredAt: now, ExpiresAt: now.Add(5 * time.Minute), Epoch: 4},
+		{
+			ID: "lock-r1", Scope: "pool:p", Operation: "scale", AcquiredBy: "bob",
+			AcquiredAt: now, ExpiresAt: now.Add(5 * time.Minute), Epoch: 4,
+		},
 		// Redis-only scope — no pre-outage Postgres lock, so it is copied in.
-		{ID: "lock-r2", Scope: "pool:q", Operation: "scale", AcquiredBy: "carol",
-			AcquiredAt: now, ExpiresAt: now.Add(5 * time.Minute), Epoch: 4},
+		{
+			ID: "lock-r2", Scope: "pool:q", Operation: "scale", AcquiredBy: "carol",
+			AcquiredAt: now, ExpiresAt: now.Add(5 * time.Minute), Epoch: 4,
+		},
 	}
 	out, err := s.Reconcile(ctx, 4, redisLocks, now)
 	if err != nil {
@@ -220,8 +224,10 @@ func TestPgReconcileSplitBrainRedisWins_spec_25_4(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	redisLocks := []coordination.Lock{
-		{ID: "lock-r1", Scope: "pool:p", Operation: "scale", AcquiredBy: "bob",
-			AcquiredAt: now, ExpiresAt: now.Add(5 * time.Minute), Epoch: 9},
+		{
+			ID: "lock-r1", Scope: "pool:p", Operation: "scale", AcquiredBy: "bob",
+			AcquiredAt: now, ExpiresAt: now.Add(5 * time.Minute), Epoch: 9,
+		},
 	}
 	out, err := s.Reconcile(ctx, 9, redisLocks, now)
 	if err != nil {

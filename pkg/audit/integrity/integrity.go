@@ -44,15 +44,22 @@ const erasureRole = "lenny_erasure"
 
 // erasureTables is the closed set of tables on which lenny_erasure may
 // legitimately hold a grant per §11.7 item 7: the billing/audit ledgers
-// it pseudonymizes/deletes, the erasure_jobs queue it drives, and the
-// users table it marks processing-restricted. The spec mandates "no
-// grants on non-erasure tables"; any grant on a table outside this set
-// is drift that the startup verifier rejects.
+// it pseudonymizes/deletes, the erasure_jobs queue it drives, the users
+// table it marks processing-restricted, and the audit_redaction_receipts
+// table it writes when it redacts a dead-lettered audit row. The spec
+// mandates "no grants on non-erasure tables"; any grant on a table
+// outside this set is drift that the startup verifier rejects.
+//
+// spec: §12.8 line 830 — "audit_redaction_receipts is grant-restricted:
+// lenny_erasure holds INSERT only" (migration 0160). The erasure job
+// persists one signed RedactionReceipt per redacted row, so the INSERT
+// grant is an erasure-owned grant rather than scope drift.
 var erasureTables = map[string]bool{
-	"billing_events": true,
-	"audit_log":      true,
-	"erasure_jobs":   true,
-	"users":          true,
+	"billing_events":           true,
+	"audit_log":                true,
+	"erasure_jobs":             true,
+	"users":                    true,
+	"audit_redaction_receipts": true,
 }
 
 // ledgerTables are the §11.7 append-only ledgers: lenny_app may
@@ -187,6 +194,8 @@ func TenantGuardCoverageGaps(ctx context.Context, db Querier) ([]string, error) 
 	rows, err := db.Query(ctx, `
 		SELECT c.relname
 		FROM pg_class c
+		-- platform-admin-cross-tenant-justification: joins Postgres system catalogs (pg_class, pg_namespace), which carry no tenant_id; this is a schema-metadata coverage check, not a tenant-data query.
+		-- platform-admin-cross-tenant-allowed
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind = 'r'
 		  AND n.nspname = current_schema()

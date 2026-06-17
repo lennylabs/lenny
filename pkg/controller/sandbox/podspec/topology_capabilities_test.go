@@ -56,12 +56,19 @@ func TestBuildWithoutTopologyConstraints_spec_5_2_631(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 496 — to mitigate raw-socket sniffing between
-// concurrent slots the agent container's securityContext MUST drop
-// CAP_NET_RAW. The builder drops ALL capabilities (which subsumes
-// NET_RAW) and adds none on every container, so no agent pod — session,
-// task, or concurrent-workspace — can hold CAP_NET_RAW. This guards the
-// invariant against a regression that would narrow the drop list.
+// spec: §5.2 (concurrent-session acknowledgment), §13.1 (pod security)
+// — to mitigate cross-slot raw-socket sniffing on the shared network
+// namespace when maxConcurrentSessions > 1, the agent container's
+// securityContext MUST drop CAP_NET_RAW. §5.2 phrases this as a CRD
+// validation-webhook rejection, but the SandboxTemplate/SandboxWarmPool
+// CRD carries no pod-template securityContext for the webhook to inspect,
+// so the invariant is enforced here at pod materialization instead: the
+// builder is the sole author of the pod template and drops ALL
+// capabilities (which subsumes NET_RAW) while adding none on every
+// container. No agent pod — session or service mode, at any
+// maxConcurrentSessions — can hold CAP_NET_RAW. This guards the invariant
+// against a regression that would narrow the drop list or add a
+// capability back.
 func TestBuildDropsNetRawOnEveryContainer_spec_5_2_496(t *testing.T) {
 	pod, err := podspec.Build(inputs())
 	if err != nil {

@@ -436,12 +436,15 @@ func (t memTier) List(ctx context.Context) ([]Lock, error) { return t.m.List(ctx
 func (t memTier) Get(ctx context.Context, id string) (*Lock, error) {
 	return t.m.Get(ctx, id)
 }
+
 func (t memTier) Extend(ctx context.Context, id string, ttl int, caller string) (*Lock, error) {
 	return t.m.ExtendAs(ctx, id, ttl, caller)
 }
+
 func (t memTier) Release(ctx context.Context, id, caller string) error {
 	return t.m.ReleaseAs(ctx, id, caller)
 }
+
 func (t memTier) Steal(ctx context.Context, id string, req StealRequest) (*Lock, error) {
 	return t.m.Steal(ctx, id, req)
 }

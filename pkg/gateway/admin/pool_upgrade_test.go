@@ -22,7 +22,8 @@ func newUpgradeAdmin(t *testing.T) *admin.Router {
 	clk := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	store := runtimeupgradestore.NewMemory().WithClock(func() time.Time { return clk })
 	pools := fakeUpgradePool{specs: map[string][]byte{"claude-worker": []byte(`{"minWarm":2}`)}}
-	mgr := runtimeupgrade.NewManager(store,
+	mgr := runtimeupgrade.NewManager(
+		store,
 		runtimeupgrade.WithPoolReader(pools),
 		runtimeupgrade.WithClock(func() time.Time { return clk }),
 	)

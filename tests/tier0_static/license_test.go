@@ -91,7 +91,7 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 			"tests/results/",
 			"tests/testdata/",
 			"sdks/vendor/",
-			"compose/otel-config.yaml",    // upstream-style config; SPDX would clutter
+			"compose/otel-config.yaml",          // upstream-style config; SPDX would clutter
 			"tests/tier7b_load_kind/baselines/", // generated baselines
 		} {
 			if strings.HasPrefix(rel, prefix) {

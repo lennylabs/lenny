@@ -442,7 +442,8 @@ func tokenServiceRBACPatch(missing []string) string {
 	}
 	return fmt.Sprintf(
 		`kubectl patch role lenny-token-service-secrets -n lenny-system --type=json -p '[%s]'`,
-		strings.Join(ops, ","))
+		strings.Join(ops, ","),
+	)
 }
 
 // handleCreateCredentialPool implements POST /v1/admin/credential-pools.
@@ -1101,7 +1102,8 @@ func (r *Router) handleRevokeCredential(w http.ResponseWriter, req *http.Request
 	// spec: §11.2.1 — emergency credential revocation is a billing-stream
 	// cost-attribution / compliance event under the credential pool's tenant.
 	r.appendBilling(req.Context(), billingfanout.CredentialRevoked(
-		tenant, name, credID, principal.Subject, body.Reason, uint32(terminated)))
+		tenant, name, credID, principal.Subject, body.Reason, uint32(terminated),
+	))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"revokedCredential": credID,

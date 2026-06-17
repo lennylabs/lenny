@@ -318,9 +318,9 @@ func TestOldestRetainedSeqIsPerSession_spec_7_2(t *testing.T) {
 // fakeLastSeqStore implements both LastSeqPersister and LastSeqLoader
 // for the §7.3 line 397 durable counter wiring tests. F-7.3.3.
 type fakeLastSeqStore struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	persisted map[string]int64
-	loadErr  error
+	loadErr   error
 	loadCount int
 	advCount  int
 }

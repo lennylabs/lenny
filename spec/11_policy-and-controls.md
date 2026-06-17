@@ -196,7 +196,7 @@ The `correction_reason_code` enum is extensible via the admin API (`POST /v1/adm
 | Upload timeout                            | 300s    | `gateway.uploadTimeoutSeconds`                    | Yes                | [§7.1](07_session-lifecycle.md#71-normal-flow)           |
 | Setup command timeout                     | 300s    | `runtime.setupTimeoutSeconds`                     | Yes (per runtime)  | [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)           |
 | Max session age                           | 7200s   | `runtime.maxSessionAgeSeconds`                    | Yes (deployer cap) | [§6.2](06_warm-pod-model.md#62-pod-state-machine)           |
-| Max idle time                             | 600s    | `runtime.maxIdleTimeSeconds`                      | Yes                | [§6.2](06_warm-pod-model.md#62-pod-state-machine)           |
+| Max client idle time                      | Effective `maxSessionAgeSeconds` (7200s default) | `sessionPolicy.maxClientIdleSeconds`     | Yes (per pool)     | [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), [§6.2](06_warm-pod-model.md#62-pod-state-machine) |
 | Max resume window                         | 900s    | `runtime.maxResumeWindowSeconds`                  | Yes                | [§7.3](07_session-lifecycle.md#73-retry-and-resume)           |
 | Max awaiting client action                | 900s    | `runtime.maxAwaitingClientActionSeconds`           | Yes                | [§7.3](07_session-lifecycle.md#73-retry-and-resume)           |
 | Max elicitation wait                      | 600s    | `runtime.maxElicitationWaitSeconds`               | Yes (per pool)     | [§9.1](09_mcp-integration.md#91-where-mcp-is-used)           |
@@ -229,7 +229,6 @@ The `correction_reason_code` enum is extensible via the admin API (`POST /v1/adm
 | SandboxClaim orphan timeout               | 300s    | `--claim-orphan-timeout`                            | Yes                | [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)         |
 | Billing stream TTL                        | 3600s   | `billing.streamTTLSeconds`                          | Yes                | [§11.2.1](#1121-billing-event-stream)        |
 | Legal hold checkpoint reconciler interval | 900s    | (hard-coded; not configurable in v1)              | No                 | [§12.8](12_storage-architecture.md#128-compliance-interfaces)          |
-| `task_complete_acknowledged` timeout       | 30s     | (hard-coded; not configurable in v1)              | No                 | [§4.7](04_system-components.md#47-runtime-adapter)           |
 | Max suspended pod hold                    | 900s    | `gateway.maxSuspendedPodHoldSeconds`               | Yes (deploy + tenant, most restrictive wins) | [§6.2](06_warm-pod-model.md#62-pod-state-machine) |
 | Delegation budget key TTL                 | 259200s | `delegation.budgetKeyTTLSeconds`                   | Yes                | [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)           |
 

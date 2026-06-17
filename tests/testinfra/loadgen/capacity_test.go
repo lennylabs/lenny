@@ -17,8 +17,8 @@ type rampScenario struct {
 	calls    atomic.Int64
 }
 
-func (r *rampScenario) Name() string                { return "ramp-test" }
-func (r *rampScenario) DefaultProfile() Profile     { return r.profiles[0] }
+func (r *rampScenario) Name() string                     { return "ramp-test" }
+func (r *rampScenario) DefaultProfile() Profile          { return r.profiles[0] }
 func (r *rampScenario) Setup(_ context.Context) error    { return nil }
 func (r *rampScenario) Teardown(_ context.Context) error { return nil }
 func (r *rampScenario) Run(_ context.Context, _, _ int) error {

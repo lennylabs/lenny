@@ -306,9 +306,9 @@ func checkManifest(m *runtimeManifest) []string {
 	// agent runtimes carry the adapter-protocol surface; check the
 	// fields the §15.4 adapter spec and §5.1 expect on an agent.
 	if m.Type == "agent" {
-		if m.ExecutionMode != "" && m.ExecutionMode != "session" && m.ExecutionMode != "task" {
+		if m.ExecutionMode != "" && m.ExecutionMode != "session" && m.ExecutionMode != "service" {
 			f = append(f, fmt.Sprintf(
-				"runtime.yaml: executionMode %q is not one of session or task",
+				"runtime.yaml: executionMode %q is not one of session or service",
 				m.ExecutionMode,
 			))
 		}

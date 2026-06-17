@@ -170,7 +170,8 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 // reason. The row's FailureReason is stamped so the §16.1 retry counter
 // label and the §7.1 failed-row body carry the cause.
 func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Session, rep FailureReport,
-	classification session.FailureClassification, maxRetries int) (FailureDisposition, error) {
+	classification session.FailureClassification, maxRetries int,
+) (FailureDisposition, error) {
 	from := row.State
 
 	retryable := classification == session.FailureRetryable
@@ -203,7 +204,8 @@ func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Se
 // Both branches (re-enter resume_pending, write awaiting_client_action)
 // abort the in-flight resume's restoration RPCs, so both bump. F-7.1.14.
 func (s *Server) applyFailureFromResuming(ctx context.Context, row sessionstore.Session, rep FailureReport,
-	classification session.FailureClassification, maxRetries int) (FailureDisposition, error) {
+	classification session.FailureClassification, maxRetries int,
+) (FailureDisposition, error) {
 	from := row.State
 	retryable := classification == session.FailureRetryable
 	budgetLeft := row.RetryCount < int64(maxRetries)
@@ -227,7 +229,8 @@ func (s *Server) applyFailureFromResuming(ctx context.Context, row sessionstore.
 // RetryCount, stamps the failure reason on the row, and fires the
 // §16.1 retry counter + §11.7 audit row via recordSessionRetry.
 func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore.Session, rep FailureReport,
-	classification session.FailureClassification, maxRetries int) (FailureDisposition, error) {
+	classification session.FailureClassification, maxRetries int,
+) (FailureDisposition, error) {
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
 		if r.State == session.StateResumePending {
 			return nil
@@ -272,7 +275,8 @@ func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore
 // and fires the §7.3 line 427 webhook + §16.6 op event + §11.7 audit
 // row via emitAwaitingClientActionEntered.
 func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessionstore.Session, rep FailureReport,
-	classification session.FailureClassification, maxRetries int, from session.State) (FailureDisposition, error) {
+	classification session.FailureClassification, maxRetries int, from session.State,
+) (FailureDisposition, error) {
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
 		if r.State == session.StateAwaitingClientAction {
 			return nil
@@ -307,7 +311,8 @@ func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessi
 // an active (non-resuming) state per §6.2 line 174. The terminal hook
 // pipeline runs via recordSessionCompleted.
 func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Session, rep FailureReport,
-	classification session.FailureClassification, maxRetries int, from session.State) (FailureDisposition, error) {
+	classification session.FailureClassification, maxRetries int, from session.State,
+) (FailureDisposition, error) {
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
 		if session.IsTerminal(r.State) {
 			return nil

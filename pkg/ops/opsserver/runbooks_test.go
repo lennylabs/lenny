@@ -176,9 +176,9 @@ func TestRunbookMarkdownEndpoint_spec_25_7_3055(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	var got struct {
-		Name        string             `json:"name"`
+		Name        string               `json:"name"`
 		FrontMatter runbooks.FrontMatter `json:"frontMatter"`
-		Markdown    string             `json:"markdown"`
+		Markdown    string               `json:"markdown"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)

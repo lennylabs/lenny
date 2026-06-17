@@ -98,7 +98,7 @@ func translatableRow(tenant string, seq uint64, eventType string, at time.Time) 
 		TenantID: tenant,
 		Sequence: seq,
 		Input: ocsf.Input{
-			ID:        "id", Sequence: seq, TenantID: tenant,
+			ID: "id", Sequence: seq, TenantID: tenant,
 			EventType: eventType, Payload: []byte(`{}`),
 			CreatedAtUnixMs: at.UnixMilli(),
 		},

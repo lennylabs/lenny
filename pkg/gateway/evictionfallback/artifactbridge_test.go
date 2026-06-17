@@ -38,24 +38,31 @@ func (r *recordingCatalog) Tombstone(context.Context, string) error             
 func (r *recordingCatalog) HardPruneExpired(context.Context, time.Time) (int, error) {
 	return 0, nil
 }
+
 func (r *recordingCatalog) ListPrunable(context.Context, time.Time) ([]string, error) {
 	return nil, nil
 }
+
 func (r *recordingCatalog) HardPruneURIs(context.Context, []string) (int, error) {
 	return 0, nil
 }
+
 func (r *recordingCatalog) ListBySession(context.Context, string, string) ([]artifactcatalog.Record, error) {
 	return nil, nil
 }
+
 func (r *recordingCatalog) SetLegalHold(context.Context, string, bool, string, time.Time, string) error {
 	return nil
 }
+
 func (r *recordingCatalog) ListLegalHeld(context.Context, string) ([]artifactcatalog.Record, error) {
 	return nil, nil
 }
+
 func (r *recordingCatalog) IsLegalHeldAt(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+
 func (r *recordingCatalog) SessionsWithLegalHoldAndCheckpoints(context.Context) ([]artifactcatalog.SessionRef, error) {
 	return nil, nil
 }
@@ -150,4 +157,3 @@ func (r *recordingQuotaCounter) Adjust(_ context.Context, _ string, delta int64)
 	r.deltas = append(r.deltas, delta)
 	return nil
 }
-

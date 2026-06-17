@@ -24,7 +24,7 @@ func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 	oidc := &fakeOIDC{subject: OIDCSubject{
 		UserID:   "alice",
 		TenantID: "acme",
-		Scope:    "sessions:create",
+		Scope:    "tools:sessions:read",
 	}}
 	const bearerTTL = 900 * time.Second
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: bearerTTL}, Options{

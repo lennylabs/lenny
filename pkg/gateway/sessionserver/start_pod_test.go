@@ -12,7 +12,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -32,11 +34,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -158,22 +163,6 @@ func podBindTemplate(name, runtimeRef, isolationProfile string) *lennyv1.Sandbox
 	}
 }
 
-// podBindConcurrentTemplate is podBindTemplate's concurrent-mode
-// sibling: ExecutionMode is `concurrent` so the start path is forced
-// down the BindSlot dispatch branch (§5.2 stateless-concurrent).
-func podBindConcurrentTemplate(name, runtimeRef, isolationProfile string, maxConcurrent int32) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: podTestNS},
-		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:       runtimeRef,
-			IsolationProfile: isolationProfile,
-			ExecutionMode:    "concurrent",
-			ConcurrencyStyle: "stateless",
-			MaxConcurrent:    maxConcurrent,
-		},
-	}
-}
-
 func podBindIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -257,82 +246,17 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 		t.Errorf("adapter runtime started for %q, want sess-pod-1", rt.started)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// spec: §4.6.3 — a successful session-mode start records the acquisition
+	// on the per-pod claim's `bound` binding state; the gateway no longer
+	// writes Sandbox.status, and the WPC projects the coarse `claimed` phase.
+	// The session reaching `running` is a session-model state on the Postgres
+	// session row, not a CRD phase.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	// spec: §6.2 lines 83-94 — a successful session-mode start advances the
-	// Sandbox through the full setup chain to attached (no longer stuck at
-	// claimed).
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
-	}
-}
-
-// TestSessionStartDispatchesConcurrentRuntimeToSlotClaim is the
-// regression test for the dispatch bug observed on EKS where
-// `executionMode: concurrent` runtimes were routed through Bind
-// (session-claim) instead of BindSlot. The observable signature of
-// the bug: a concurrent-mode Sandbox ended up at phase=claimed with
-// activeSlots=0 (session-claim path) instead of phase=slot_active
-// with activeSlots=1 (slot-claim path per §5.2).
-func TestSessionStartDispatchesConcurrentRuntimeToSlotClaim(t *testing.T) {
-	rt := &podBindRuntime{}
-	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.Runtime = rt
-
-	cluster := podBindEnvtestClient(
-		t,
-		podBindWarmPool("cstateless-pool", "cstateless-tmpl"),
-		podBindConcurrentTemplate("cstateless-tmpl", "concurrent-runtime", string(isolation.ProfileSandboxed), 4),
-		podBindIdleSandbox("sbx-cn-1", "cstateless-pool", "10.244.3.7"),
-	)
-	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
-
-	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:                  func() string { return "sess-slot-1" },
-		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               binder,
-		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
-	})
-
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "concurrent-runtime", UserID: "alice@acme.com"})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
-	}
-
-	binding, ok := registry.Get("sess-slot-1")
-	if !ok {
-		t.Fatal("registry holds no binding for the concurrent-mode session")
-	}
-	if binding.SlotID == "" {
-		t.Errorf("binding.SlotID is empty — a slot-claim bind would record a non-empty SlotID (regression: dispatch went to Bind, not BindSlot)")
-	}
-	if binding.SandboxName != "sbx-cn-1" {
-		t.Errorf("binding.SandboxName = %q, want sbx-cn-1", binding.SandboxName)
-	}
-
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-cn-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
-	}
-	if sb.Status.Phase != "slot_active" {
-		t.Errorf("sandbox phase = %q, want slot_active (regression: session-claim path put it in `claimed` instead of §5.2 slot_active)", sb.Status.Phase)
-	}
-	if sb.Status.ActiveSlots != 1 {
-		t.Errorf("sandbox activeSlots = %d, want 1 after one slot reservation", sb.Status.ActiveSlots)
-	}
-	if sb.Status.TenantID != "acme" {
-		t.Errorf("sandbox tenantId = %q, want acme (§5.2 tenant pinning)", sb.Status.TenantID)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -471,14 +395,16 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 		t.Error("registry holds no binding after the two-step start")
 	}
 
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// spec: §4.6.3 — the two-step start records the acquisition on the
+	// per-pod claim's `bound` binding state (the gateway no longer writes
+	// Sandbox.status; the session's running state lives on the Postgres
+	// session row).
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	// spec: §6.2 lines 83-94 — the two-step start advances the Sandbox through
-	// the full setup chain to attached.
-	if sb.Status.Phase != "attached" {
-		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 
 	// The plan stored at create was re-parsed at start and materialized
@@ -615,12 +541,14 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 		t.Errorf("binding = %+v, want sbx-1 / 10.244.2.5", binding)
 	}
 
-	var sb lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
-		t.Fatalf("get sandbox: %v", err)
+	// The gateway no longer writes Sandbox.status; the resumed pod's
+	// acquisition is recorded on the per-pod claim's `bound` binding state.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
 }
 
@@ -984,5 +912,347 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 	}
 	if row.PodAssignment != "sbx-1" {
 		t.Errorf("after resume, PodAssignment = %q, want sbx-1", row.PodAssignment)
+	}
+}
+
+// poolBindQueuePool returns a poolstore pool that maps name onto runtimeRef
+// with sessionPolicy.onPoolExhausted: queue and the given wait bound, so the
+// §5.2 / §4.6.1 claim FIFO holds an exhausted request rather than rejecting it.
+func poolBindQueuePool(t *testing.T, name, runtimeRef string, waitSeconds int) poolstore.Store {
+	t.Helper()
+	pools := poolstore.NewMemory()
+	if err := pools.Create(context.Background(), poolstore.Pool{
+		Name:          name,
+		RuntimeRef:    runtimeRef,
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			OnPoolExhausted:     runtimestore.PoolExhaustedQueue,
+			MaxQueueWaitSeconds: waitSeconds,
+		},
+	}); err != nil {
+		t.Fatalf("create queue pool: %v", err)
+	}
+	return pools
+}
+
+// spec: §4.6.1 (Pool exhaustion behavior — queue holds the request in the
+// per-pool FIFO and re-enters acquisition as pods free); §5.2 (onPoolExhausted:
+// queue); §7.1 (session_id only on success).
+// diagnosis: a queue pool that does not re-enter acquisition would reject a
+// request a pod freeing within the wait bound should have served, so the queue
+// option would be inert. A failure here means the start path does not consult
+// the per-pool claim queue or the queue does not retry the bind.
+func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	// The pool starts with no idle Sandbox, so the first claim attempt
+	// exhausts both the claim path and (absent Postgres) the fallback.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-queue-1" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		Pools:                   poolBindQueuePool(t, "echo-pool", "echo", 30),
+		QueuePollInterval:       20 * time.Millisecond,
+	})
+
+	// Free a pod shortly after the request starts queueing so a poll re-enters
+	// acquisition and succeeds within the wait bound.
+	go func() {
+		time.Sleep(120 * time.Millisecond)
+		idle := podBindIdleSandbox("sbx-late", "echo-pool", "10.244.2.7")
+		idle.Status = lennyv1.SandboxStatus{}
+		if err := cluster.Create(context.Background(), idle); err != nil {
+			t.Errorf("create late idle sandbox: %v", err)
+			return
+		}
+		u := &unstructured.Unstructured{}
+		u.SetAPIVersion(lennyv1.GroupVersion.String())
+		u.SetKind("Sandbox")
+		u.SetName("sbx-late")
+		u.SetNamespace(podTestNS)
+		_ = unstructured.SetNestedField(u.Object, map[string]interface{}{
+			"phase": "idle", "podIP": "10.244.2.7",
+		}, "status")
+		if err := cluster.Status().Patch(context.Background(), u, client.Apply,
+			client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+			t.Errorf("seed late idle sandbox status: %v", err)
+		}
+	}()
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("queued start: status = %d, want 201 once a pod frees; body=%s", rr.Code, rr.Body.String())
+	}
+	binding, ok := registry.Get("sess-queue-1")
+	if !ok {
+		t.Fatal("registry holds no binding for the queued-then-served session")
+	}
+	if binding.SandboxName != "sbx-late" {
+		t.Errorf("binding sandbox = %q, want sbx-late (the pod that freed mid-wait)", binding.SandboxName)
+	}
+}
+
+// spec: §4.6.1 (Pool exhaustion behavior — queue-wait timeout returns
+// WARM_POOL_EXHAUSTED); §5.2 (maxQueueWaitSeconds bound); §15.1 (WARM_POOL_EXHAUSTED
+// carries a Retry-After header).
+// diagnosis: a queue pool whose wait bound elapses with no pod free must still
+// surface WARM_POOL_EXHAUSTED with Retry-After rather than hanging the client or
+// dropping the retry hint. A failure here means the wait bound is not enforced
+// or the timeout return value is not the exhaustion envelope.
+func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	// No idle Sandbox is ever added, so the queue exhausts its (tiny) wait
+	// bound and returns WARM_POOL_EXHAUSTED.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	var timeouts int32
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-queue-timeout" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		Pools:                   poolBindQueuePool(t, "echo-pool", "echo", 1),
+		QueuePollInterval:       20 * time.Millisecond,
+		IncPodClaimTimeout:      func(string) { atomic.AddInt32(&timeouts, 1) },
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+
+	start := time.Now()
+	srv.Handler().ServeHTTP(rr, req)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("queue timeout: status = %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("queue timeout: WARM_POOL_EXHAUSTED must carry a Retry-After header (§15.1)")
+	}
+	// The 1s wait bound must actually be observed (not an immediate reject).
+	if elapsed < 900*time.Millisecond {
+		t.Errorf("queue timeout returned after %s, want >= ~1s (the maxQueueWaitSeconds bound)", elapsed)
+	}
+	if atomic.LoadInt32(&timeouts) != 1 {
+		t.Errorf("queue timeout must increment lenny_pod_claim_timeout_total once, got %d", timeouts)
+	}
+	// §7.1: no session row is left behind on the atomic-create timeout.
+	if _, err := store.Get(context.Background(), "acme", "sess-queue-timeout"); err == nil {
+		t.Error("queue timeout must leave no session row (§7.1 atomicity)")
+	}
+}
+
+// spec: §4.6.1 (Pool exhaustion behavior — reject keeps the immediate-failure
+// behavior); §5.2 (onPoolExhausted default reject).
+// diagnosis: a reject pool that waited would change the documented behavior and
+// hide pool under-sizing behind a long wait. A failure here means the start
+// path queues a reject pool.
+func TestSessionStartRejectFailsImmediately(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	// A reject pool never enters the per-pool claim FIFO, so the §16.1
+	// lenny_pod_claim_queue_depth gauge is never published. Counting the gauge
+	// emissions is the deterministic signal that the request did not queue; a
+	// wall-clock elapsed bound flakes when a saturated -race run delays the
+	// single bind attempt past any fixed threshold.
+	var enqueued int32
+	// No Pools store wired: the disposition is empty, which defaults to reject.
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-reject" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		QueuePollInterval:       20 * time.Millisecond,
+		SetPodClaimQueueDepth:   func(string, int) { atomic.AddInt32(&enqueued, 1) },
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("reject pool: status = %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	// A reject pool returns on the first exhaustion without holding the request
+	// in the claim FIFO, so the queue-depth gauge is never touched.
+	if got := atomic.LoadInt32(&enqueued); got != 0 {
+		t.Errorf("reject pool published the claim-queue depth gauge %d times, want 0 (no queueing)", got)
+	}
+}
+
+// podBindServiceTemplate is podBindTemplate's service-mode sibling: a
+// SandboxTemplate whose §5.2 executionMode is `service`, so ResolvePool
+// reports a service-mode match and the start path takes the claimless
+// routing branch.
+func podBindServiceTemplate(name, runtimeRef, isolationProfile string) *lennyv1.SandboxTemplate {
+	tmpl := podBindTemplate(name, runtimeRef, isolationProfile)
+	tmpl.Spec.ExecutionMode = string(runtimestore.ExecutionModeService)
+	return tmpl
+}
+
+// podBindServicePool returns a poolstore mirror for a service-mode pool so
+// ResolvePool folds in the §5.2 per-pod request capacity (MaxConcurrent).
+func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int) poolstore.Store {
+	t.Helper()
+	pools := poolstore.NewMemory()
+	if err := pools.Create(context.Background(), poolstore.Pool{
+		Name:          name,
+		RuntimeRef:    runtimeRef,
+		ExecutionMode: runtimestore.ExecutionModeService,
+		MaxConcurrent: maxConcurrent,
+	}); err != nil {
+		t.Fatalf("create service pool: %v", err)
+	}
+	return pools
+}
+
+// spec: §5.2 (service mode is claimless: no SandboxClaim, no workspace
+// materialization), §3.6 (service-mode session contract), §7.1 line 74
+// (conversationContinuity).
+// diagnosis: a service-mode start that claims a Sandbox or binds a pod
+// breaks the §5.2 claimless contract — every service-mode session would
+// burn a warm pod and the tenant-affinity routing layer would never be
+// reached. A failure here means the start path did not take the claimless
+// branch for executionMode=service.
+func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	// The cluster carries a service-mode pool, its service-mode template, and
+	// one idle Sandbox. The claimless path must leave that Sandbox unclaimed.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("svc-pool", "svc-tmpl"),
+		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-svc-1" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "svc-runtime", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("service-mode start: status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// No binding is registered: a service-mode session is a connection handle,
+	// not a pod-bound session.
+	if b, ok := registry.Get("sess-svc-1"); ok {
+		t.Errorf("service-mode session registered a pod binding %+v; want none (claimless)", b)
+	}
+
+	// spec: §5.2 — no SandboxClaim is created for a service-mode session. The
+	// per-pod claim the session-claim path would have created (`claim-svc-sbx-1`)
+	// must be absent.
+	var claim lennyv1.SandboxClaim
+	err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-svc-sbx-1"}, &claim)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("service-mode start created/looked up claim-svc-sbx-1 (err=%v); want NotFound (claimless)", err)
+	}
+
+	// The idle Sandbox is untouched: still idle, no occupancy projected.
+	var sbx lennyv1.Sandbox
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "svc-sbx-1"}, &sbx); err != nil {
+		t.Fatalf("get service-mode idle sandbox: %v", err)
+	}
+	if sbx.Status.Phase != "idle" {
+		t.Errorf("service-mode idle sandbox phase = %q, want idle (claimless leaves it untouched)", sbx.Status.Phase)
+	}
+
+	// The response and persisted row carry the §7.1 / §5.2 service-mode
+	// envelope: executionMode=service, podReuse, residualStateWarning,
+	// scrubPolicy=none, conversationContinuity=none.
+	var resp sessionserver.SessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode service-mode start response: %v", err)
+	}
+	lvl := resp.SessionIsolationLevel
+	if lvl.ExecutionMode != "service" {
+		t.Errorf("executionMode = %q, want service", lvl.ExecutionMode)
+	}
+	if !lvl.PodReuse || !lvl.ResidualStateWarning {
+		t.Errorf("service-mode level = %+v, want podReuse and residualStateWarning true", lvl)
+	}
+	if lvl.ScrubPolicy != "none" {
+		t.Errorf("scrubPolicy = %q, want none", lvl.ScrubPolicy)
+	}
+	if lvl.ConversationContinuity != "none" {
+		t.Errorf("conversationContinuity = %q, want none", lvl.ConversationContinuity)
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess-svc-1")
+	if err != nil {
+		t.Fatalf("get persisted service-mode row: %v", err)
+	}
+	if row.ExecutionMode != "service" {
+		t.Errorf("row.ExecutionMode = %q, want service", row.ExecutionMode)
+	}
+	if row.ConversationContinuity != "none" {
+		t.Errorf("row.ConversationContinuity = %q, want none (frozen at create for the GET / List envelope)", row.ConversationContinuity)
+	}
+	if row.PodAssignment != "" {
+		t.Errorf("row.PodAssignment = %q, want empty (claimless: no pod bound)", row.PodAssignment)
 	}
 }

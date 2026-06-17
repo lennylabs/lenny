@@ -113,7 +113,8 @@ func (c CRDSchemaVersionCheck) Decide(ctx context.Context, reader client.Reader)
 	}
 	if len(reasons) == 0 {
 		return Decision{Passed: true, Reason: fmt.Sprintf(
-			"all %d Lenny CRDs match schema version %q", len(sorted), expected)}
+			"all %d Lenny CRDs match schema version %q", len(sorted), expected,
+		)}
 	}
 	return Decision{Reason: strings.Join(reasons, "; ")}
 }
@@ -131,7 +132,8 @@ func (c CRDSchemaVersionCheck) message(name, got, expected, kind string) string 
 		}
 		recover := fmt.Sprintf(
 			"Run: kubectl apply -f charts/lenny/crds/ && kubectl rollout restart deployment -l app.kubernetes.io/part-of=lenny -n %s. See docs/runbooks/crd-upgrade.md.",
-			ns)
+			ns,
+		)
 		switch kind {
 		case "missing":
 			return fmt.Sprintf("Post-upgrade CRD validation failed: CRD %q is missing. %s", name, recover)

@@ -24,13 +24,13 @@ type RampableScenario interface {
 
 // CapacityResult is the outcome of a single ramp.
 type CapacityResult struct {
-	Scenario     string
-	Knee         Profile     // last profile that passed
-	KneeResult   *Result     // the Result that passed
-	KneeFound    bool        // false when even the smallest profile failed
-	Breaking     Profile     // first profile that failed
+	Scenario       string
+	Knee           Profile // last profile that passed
+	KneeResult     *Result // the Result that passed
+	KneeFound      bool    // false when even the smallest profile failed
+	Breaking       Profile // first profile that failed
 	BreakingResult *Result
-	BreakingError error
+	BreakingError  error
 }
 
 // FindCapacityKnee runs each profile from s.RampProfiles() in order

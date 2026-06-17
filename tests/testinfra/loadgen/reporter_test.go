@@ -16,9 +16,11 @@ func TestFileReporterRecordAndFlush(t *testing.T) {
 	r := &FileReporter{Dir: dir}
 	r.Record("scenario_a", "default",
 		Profile{Kind: ConstantVU, VUs: 16, Duration: 2 * time.Second},
-		&Result{Iterations: 1000, Errors: 5, ErrorRate: 0.005, Throughput: 500.0,
+		&Result{
+			Iterations: 1000, Errors: 5, ErrorRate: 0.005, Throughput: 500.0,
 			Latency: HistogramSnapshot{P50: 0.001, P95: 0.005, P99: 0.010, Max: 0.020},
-			Custom:  map[string]float64{"ops": 999}})
+			Custom:  map[string]float64{"ops": 999},
+		})
 	r.Record("scenario_b", "capacity",
 		Profile{Kind: ConstantArrivalRate, VUs: 32, Rate: 100, Duration: 5 * time.Second},
 		&Result{Iterations: 500, Errors: 0, Throughput: 100.0})

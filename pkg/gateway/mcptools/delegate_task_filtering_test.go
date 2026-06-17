@@ -64,7 +64,7 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "sec-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 
 	// The caller is a member of security-team via the security-engineers
@@ -150,8 +150,8 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
-		State:       session.StateRunning,
-		RuntimeRef:  "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		State:      session.StateRunning,
+		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -205,7 +205,7 @@ func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","target":"fs-mcp","poolRef":"pool-b"}`)
@@ -267,7 +267,7 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 
 	// §8.3 / §10.6: delegating to a pool whose §5.3 isolation profile is

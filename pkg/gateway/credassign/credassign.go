@@ -311,11 +311,11 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) 
 	}
 
 	lease, err := credential.MintLease(credential.MintRequest{
-		SessionID:          sessionID,
-		Provider:           ps.pool.Provider,
-		Source:             credential.SourcePool,
-		PoolID:             poolName,
-		CredentialID:       selected.CredentialID,
+		SessionID:    sessionID,
+		Provider:     ps.pool.Provider,
+		Source:       credential.SourcePool,
+		PoolID:       poolName,
+		CredentialID: selected.CredentialID,
 		// spec: §4.9 line 1468 — record the lease's owning tenant on the
 		// lease record so the LLM proxy can attribute proxy-extracted
 		// usage to the right tenant without an out-of-band session

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // Compile-time binding of the §17.1 row 9 / §4.6.1 named default
@@ -111,11 +114,14 @@ func (r *AgentSandboxPoolReader) statusFromTemplate(ctx context.Context, tmpl *l
 		if sb.Spec.PoolRef != tmpl.Name {
 			continue
 		}
+		// spec: §6.2 — claimed and reserved are the occupied coarse phases.
+		// A reserved pod is held for its pinned tenant and excluded from idle
+		// inventory, so it counts as claimed for pool accounting; a pod
+		// serving any number of concurrent sessions projects claimed.
 		switch PodState(sb.Status.Phase) {
 		case PodStateIdle:
 			status.IdleCount++
-		case PodStateClaimed, PodStateSlotActive,
-			PodStateRunningSetup, PodStateStartingSession, PodStateAttached:
+		case PodStateClaimed, PodStateReserved:
 			status.ClaimedCount++
 		}
 	}
@@ -138,44 +144,62 @@ type AgentSandboxPodLifecycleManager struct {
 	AgentSandboxPoolReader
 }
 
-// ClaimPod implements PodLifecycleManager. The v1 default selects an
-// idle Sandbox from the pool and writes a SandboxClaim referencing it
-// with optimistic locking; on a conflict the caller retries (spec:
-// spec/04_system-components.md line 386).
+// ClaimPod implements PodLifecycleManager under the §4.6.1 per-pod
+// occupancy claim model. The v1 default selects an idle Sandbox from the
+// pool and creates the deterministic per-pod SandboxClaim
+// (`claim-<podName>`) that guards acquisition, then writes the claim's
+// first `bound` binding state. The CREATE under the deterministic name is
+// the authoritative single-claim guard: an AlreadyExists collision (or a
+// Forbidden from the lenny-sandboxclaim-guard webhook) means another writer
+// already bound the pod, surfaced as ErrClaimConflict so the caller
+// re-reads the idle inventory and retries with a different pod.
+//
+// The gateway does not write Sandbox.status: the WarmPoolController
+// projects the pod's coarse occupancy phase (claimed) from the claim's
+// binding state (§4.6.3 ownership decomposition, §4.6.1 occupancy
+// projection). The session-to-pod binding lives on the Postgres session
+// row's pod_assignment column rather than on the CRD, so the per-pod claim
+// carries no session identifier; the returned PodHandle echoes sessionID
+// for the caller's attribution alone.
+//
+// spec: spec/04_system-components.md lines 340-345, 386, 388 (occupancy
+// projection); §4.6.3 (gateway is not a Sandbox.status writer).
 func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName, sessionID string, opts ClaimOpts) (PodHandle, error) {
 	pod, err := m.findIdleSandbox(ctx, poolName)
 	if err != nil {
 		return PodHandle{}, err
 	}
-	// Optimistic CAS: stamp the session-claim annotations on the
-	// metadata, then write the phase transition on the status
-	// subresource. A concurrent claimer's PATCH on the same
-	// resourceVersion produces a 409 the API server rejects, which
-	// is translated to ErrClaimConflict so the caller retries with a
-	// fresh selection. spec: §4.6.1 line 386 — "ClaimPod
-	// implementations must use a resourceVersion-guarded
-	// compare-and-swap loop".
-	original := pod.DeepCopy()
-	if pod.Annotations == nil {
-		pod.Annotations = map[string]string{}
-	}
-	pod.Annotations["lenny.dev/session-id"] = sessionID
-	if opts.RequiresDemotion {
-		pod.Annotations["lenny.dev/sdk-warm-requires-demotion"] = "true"
-	}
-	if err := m.Client.Patch(ctx, pod, client.MergeFrom(original)); err != nil {
-		if apierrors.IsConflict(err) {
+	// Per-pod claim CREATE: the deterministic claim-<podName> name is the
+	// single-claim guard. AlreadyExists (the name collision) and Forbidden
+	// (the lenny-sandboxclaim-guard webhook flagging an existing claim for
+	// the same Sandbox) both mean another writer bound this pod, so the
+	// caller retries with a fresh idle pod via ErrClaimConflict.
+	claim := &lennyv1.SandboxClaim{}
+	claim.Namespace = pod.Namespace
+	claim.Name = podclaim.ClaimName(pod.Name)
+	claim.Spec.SandboxRef = pod.Name
+	// The claim's spec carries sandboxRef and tenantId (§3.2 / §6.5
+	// claim-spec contract); stamp the tenant the pod is pinned to.
+	claim.Spec.TenantID = opts.TenantID
+	if err := m.Client.Create(ctx, claim); err != nil {
+		if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
 			return PodHandle{}, ErrClaimConflict
 		}
-		return PodHandle{}, fmt.Errorf("podlifecycle: claim Sandbox %q: %w", pod.Name, err)
+		return PodHandle{}, fmt.Errorf("podlifecycle: create claim for Sandbox %q: %w", pod.Name, err)
 	}
-	statusOriginal := pod.DeepCopy()
-	pod.Status.Phase = string(PodStateClaimed)
-	if err := m.Client.Status().Patch(ctx, pod, client.MergeFrom(statusOriginal)); err != nil {
-		if apierrors.IsConflict(err) {
-			return PodHandle{}, ErrClaimConflict
-		}
-		return PodHandle{}, fmt.Errorf("podlifecycle: claim Sandbox %q status: %w", pod.Name, err)
+	// §4.6.1: the claim is created spec-only; write the first `bound`
+	// binding state with a subsequent status patch (the status subresource
+	// is not writable by Create), stamping the binding-state-transition time
+	// the orphan GC keys its live-binding-state reclaim on, matching the
+	// canonical pkg/gateway/podclaim writer's field set. A failure here
+	// deletes the partial claim so a retry is not blocked by a claim with
+	// empty status.
+	statusOriginal := claim.DeepCopy()
+	claim.Status.Phase = string(claimstate.Bound)
+	claim.Status.BindingStateTransitionTime = &metav1.Time{Time: time.Now().UTC()}
+	if err := m.Client.Status().Patch(ctx, claim, client.MergeFrom(statusOriginal)); err != nil {
+		_ = m.Client.Delete(ctx, claim)
+		return PodHandle{}, fmt.Errorf("podlifecycle: claim Sandbox %q bound status: %w", pod.Name, err)
 	}
 	return PodHandle{
 		SandboxName: pod.Name,
@@ -188,24 +212,24 @@ func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName
 	}, nil
 }
 
-// ReleasePod implements PodLifecycleManager. The v1 default rolls the
-// Sandbox back to idle (the §6.2 release transition); a missing
-// Sandbox is treated as already-released.
+// ReleasePod implements PodLifecycleManager under the §4.6.1 per-pod
+// occupancy claim model: releasing a pod deletes its per-pod SandboxClaim
+// (`claim-<podName>`), and the WarmPoolController returns the pod to idle
+// as a level-triggered projection of the claim's absence (§4.6.1 occupancy
+// projection). The gateway does not write Sandbox.status to roll the pod
+// back (§4.6.3). A missing claim is treated as already-released — release
+// is idempotent.
 func (m *AgentSandboxPodLifecycleManager) ReleasePod(ctx context.Context, handle PodHandle) error {
-	var pod lennyv1.Sandbox
-	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: handle.Namespace, Name: handle.SandboxName}, &pod); err != nil {
+	claim := &lennyv1.SandboxClaim{}
+	claim.Namespace = handle.Namespace
+	claim.Name = podclaim.ClaimName(handle.SandboxName)
+	if err := m.Client.Delete(ctx, claim); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("podlifecycle: get Sandbox %q: %w", handle.SandboxName, err)
+		return fmt.Errorf("podlifecycle: delete claim for Sandbox %q: %w", handle.SandboxName, err)
 	}
-	if pod.Status.Phase == string(PodStateIdle) {
-		return nil
-	}
-	original := pod.DeepCopy()
-	pod.Status.Phase = string(PodStateIdle)
-	delete(pod.Annotations, "lenny.dev/session-id")
-	return m.Client.Status().Patch(ctx, &pod, client.MergeFrom(original))
+	return nil
 }
 
 // DrainPod implements PodLifecycleManager. The v1 default sets the
@@ -247,12 +271,11 @@ func (m *AgentSandboxPodLifecycleManager) GetPodStatus(ctx context.Context, hand
 		return PodStatus{}, fmt.Errorf("podlifecycle: get Sandbox %q: %w", handle.SandboxName, err)
 	}
 	return PodStatus{
-		Phase:       PodState(pod.Status.Phase),
-		PodIP:       pod.Status.PodIP,
-		PodName:     pod.Status.PodName,
-		NodeName:    pod.Status.NodeName,
-		ActiveSlots: pod.Status.ActiveSlots,
-		TenantID:    pod.Status.TenantID,
+		Phase:    PodState(pod.Status.Phase),
+		PodIP:    pod.Status.PodIP,
+		PodName:  pod.Status.PodName,
+		NodeName: pod.Status.NodeName,
+		TenantID: pod.Status.TenantID,
 	}, nil
 }
 
@@ -616,25 +639,23 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// allowedTransition reports whether the §6.2 state machine admits a
-// from → to transition. The list here is the subset the interface
-// surface enforces; the runtime SDK-warm path adds the SDK-specific
-// transitions in pkg/controller/warmpool. spec: spec/06_warm-pod-model.md
-// §6.2.
+// allowedTransition reports whether the §6.2 coarse pod-occupancy state
+// machine admits a from → to transition. This mirror stays in lockstep with
+// pkg/sandbox/state.ValidTransitions(): the warm-fill paths, the
+// claim-driven occupancy projection (including the claimed → claimed
+// concurrent-occupancy self-edge), and the recycle edges (the occupancy-zero
+// re-warm, the same-tenant rebind, and the hold-expiry return to idle). The
+// fine session-lifecycle transitions live in the Postgres session model and
+// are not CRD edges (spec: §6.2, §6.37). spec: spec/06_warm-pod-model.md §6.2.
 func allowedTransition(from, to PodState) bool {
 	allowed := map[PodState]sets.Set[PodState]{
-		PodStateWarming:             sets.New(PodStateIdle, PodStateSDKConnecting, PodStateFailed),
-		PodStateSDKConnecting:       sets.New(PodStateIdle, PodStateFailed),
-		PodStateIdle:                sets.New(PodStateClaimed, PodStateSlotActive, PodStateDraining, PodStateTerminated),
-		PodStateClaimed:             sets.New(PodStateReceivingUploads, PodStateRunningSetup, PodStateAttached, PodStateIdle, PodStateDraining, PodStateFailed),
-		PodStateSlotActive:          sets.New(PodStateIdle, PodStateDraining, PodStateFailed),
-		PodStateReceivingUploads:    sets.New(PodStateFinalizingWorkspace, PodStateFailed),
-		PodStateFinalizingWorkspace: sets.New(PodStateRunningSetup, PodStateStartingSession, PodStateFailed),
-		PodStateRunningSetup:        sets.New(PodStateStartingSession, PodStateFailed),
-		PodStateStartingSession:     sets.New(PodStateAttached, PodStateFailed),
-		PodStateAttached:            sets.New(PodStateTaskCleanup, PodStateCompleted, PodStateFailed, PodStateCancelled, PodStateExpired, PodStateDraining),
-		PodStateTaskCleanup:         sets.New(PodStateIdle, PodStateDraining, PodStateTerminated),
-		PodStateDraining:            sets.New(PodStateTerminated),
+		PodStateWarming:       sets.New(PodStateIdle, PodStateSDKConnecting, PodStateFailed),
+		PodStateSDKConnecting: sets.New(PodStateIdle, PodStateFailed, PodStateTerminated, PodStateReserved),
+		PodStateIdle:          sets.New(PodStateClaimed, PodStateDraining),
+		PodStateClaimed:       sets.New(PodStateClaimed, PodStateDraining, PodStateSDKConnecting, PodStateReserved),
+		PodStateReserved:      sets.New(PodStateClaimed, PodStateIdle),
+		PodStateFailed:        sets.New(PodStateDraining),
+		PodStateDraining:      sets.New(PodStateTerminated),
 	}
 	if next, ok := allowed[from]; ok {
 		return next.Has(to)

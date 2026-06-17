@@ -3,7 +3,6 @@
 package sessionserver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -77,8 +76,18 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §7.2 / §8.8 — the Suspended session-condition fact lives on the
+	// Postgres session row, not on Sandbox.status.conditions (the gateway is
+	// not a Sandbox.status writer, §4.6.3). Stamp SuspendedAt/SuspendedReason
+	// in the same transaction that advances the row to `suspended` so the
+	// fact and the state never disagree. The reason distinguishes an
+	// acknowledged interrupt from a forced (timeout) one. F-6.2.12.
+	reason := suspendReason(timedOut)
+	now := s.clock()
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
 		transitionInterrupt(row)
+		row.SuspendedAt = now
+		row.SuspendedReason = reason
 		return nil
 	})
 	if err != nil {
@@ -88,15 +97,6 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	// spec: §7.2 line 137 — surface the running → suspended transition
 	// on the SSE stream alongside the row update.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
-	// spec: §6.2 line 214 — project the row's `running → suspended`
-	// transition onto Sandbox.status.phase so the operator-visible
-	// state matches the session row. The pod stays held while
-	// suspended (line 220+); the §6.2 line 234
-	// maxSuspendedPodHoldSeconds graceful-release path runs later.
-	// Best-effort: a Sandbox phase write that races with a concurrent
-	// recovery transition is logged but does not roll back the row
-	// transition that already advanced the session. F-6.2.13.
-	s.suspendSandboxForInterrupt(r.Context(), updated.ID, timedOut)
 	if timedOut {
 		// spec: §7.2 line 169 / §4.7 InterruptResponse.Status.
 		// Surface INTERRUPT_TIMEOUT to the caller so a UI can flag that
@@ -146,31 +146,15 @@ func (s *Server) signalAdapterInterrupt(r *http.Request, row sessionstore.Sessio
 	return st, st == adapterclient.InterruptStatusTimeout, true
 }
 
-// suspendSandboxForInterrupt drives the §6.2 line 214 `attached →
-// suspended` Sandbox phase transition after the interrupt handler has
-// written the session row to `suspended`. The gateway looks up the
-// session's bound Sandbox via the pod registry; a session with no live
-// binding (single-replica without a pod, or a coordinator handoff has
-// not re-bound) is the dev/minimal-gateway posture where no Sandbox
-// exists to update. Best-effort: a Sandbox phase write failure does not
-// roll back the row update. F-6.2.13.
-func (s *Server) suspendSandboxForInterrupt(ctx context.Context, sessionID string, timedOut bool) {
-	if s.podBinder == nil || s.podRegistry == nil {
-		return
-	}
-	bind, ok := s.podRegistry.Get(sessionID)
-	if !ok || bind == nil || bind.SandboxName == "" {
-		return
-	}
-	// spec: §7.2 lines 168-169 — distinguish the acknowledged interrupt
-	// from the forced (timeout) one in the §6.2 condition history.
-	reason := "InterruptAcknowledged"
+// suspendReason maps the §7.2 interrupt outcome to the coded reason stamped
+// on the session row's SuspendedReason field, distinguishing an acknowledged
+// interrupt from a forced (deadline-elapsed) one in the §7.2 / §8.8 session
+// condition history. F-6.2.12.
+func suspendReason(timedOut bool) string {
 	if timedOut {
-		reason = "InterruptTimeout"
+		return "InterruptTimeout"
 	}
-	if err := s.podBinder.Suspend(ctx, bind.SandboxName, reason); err != nil {
-		log.Printf("sessionserver: suspend sandbox %s for session %s: %v", bind.SandboxName, sessionID, err)
-	}
+	return "InterruptAcknowledged"
 }
 
 // interruptDeadline returns the §4.7 deadline the gateway grants the

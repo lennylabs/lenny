@@ -189,7 +189,8 @@ func TestRepublishInMemoryNotEligible_spec_25_9_3663(t *testing.T) {
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(string(body)))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(string(body))),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}

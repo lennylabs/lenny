@@ -112,7 +112,6 @@ lenny-compliance --binary ./my-agent --level full
 | `TestInterruptRequest` | `interrupt_request` -> `interrupt_acknowledged` |
 | `TestCredentialRotation` | `credentials_rotated` -> `credentials_acknowledged` |
 | `TestDeadlineApproaching` | Verify `deadline_approaching` is handled without error |
-| `TestTaskLifecycle` | `task_complete` -> `task_complete_acknowledged` -> `task_ready` |
 
 ---
 
@@ -275,7 +274,7 @@ The compliance report includes:
 | `TestShutdownDeadline` timeout | Runtime does not exit within `deadline_ms` | Ensure your shutdown handler finishes work and calls `exit()` within the deadline. |
 | `TestToolCallFormat` invalid JSON | Missing required fields in `tool_call` | Ensure `type`, `id`, `name`, and `arguments` are all present. |
 | `TestMcpConnect` refused | Running on macOS with `make run` | Abstract Unix sockets require Linux. Use `docker compose up` instead. |
-| `TestMcpNonce` rejected | Reading stale manifest | Re-read `/run/lenny/adapter-manifest.json` at startup --- nonce is regenerated per task. |
+| `TestMcpNonce` rejected | Reading stale manifest | Re-read `/run/lenny/adapter-manifest.json` at startup --- nonce is regenerated per session. |
 | `TestManifestRead` not found | Manifest path incorrect | Manifest is at `/run/lenny/adapter-manifest.json` (not `/workspace/`). |
 | `TestCheckpointCooperative` timeout | `checkpoint_ready` not sent within deadline | Ensure your checkpoint handler quiesces state and responds within `deadlineMs`. |
 | `TestResponseShorthand` rejected | Shorthand format not recognized | The shorthand `{"type":"response","text":"..."}` is normalized by the adapter --- ensure you are testing against the adapter, not directly. |

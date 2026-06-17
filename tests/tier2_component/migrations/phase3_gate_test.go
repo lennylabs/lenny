@@ -24,10 +24,14 @@ var (
 )
 
 // phase3Violations mirrors scripts/lint-migrations.sh Pass 5: a Phase 3
-// migration (an up-migration that DROPs a column) must drop idempotently
-// and front the DDL with a PL/pgSQL DO $$ preflight gate. The scan keeps
-// line comments only for the gate-index advisory; DROP/DO detection runs
-// against the comment-stripped body so a commented-out DROP does not count.
+// migration (an up-migration that DROPs a column) must drop idempotently and
+// front the DDL with a PL/pgSQL DO $$ preflight gate. The scan keeps line
+// comments only for the gate-index marker; DROP/DO detection runs against the
+// comment-stripped body so a commented-out DROP does not count.
+//
+// The gate requirement is unconditional: §10.5 line 417 mandates the DO $$
+// preflight block at the top of every Phase 3 up-migration regardless of the
+// expected row count. A migration that omits the gate trips the guard.
 //
 // spec: §10.5 line 417 (DO $$ preflight gate) + line 430 (DROP COLUMN IF
 // EXISTS idempotency).
@@ -59,10 +63,20 @@ func scanPhase3(src string) phase3Violations {
 }
 
 // TestPhase3MigrationsAreGuarded_spec_10_5_417 asserts that every Phase 3
-// migration in the tree drops columns idempotently and carries the
-// preflight gate. The tree currently has no Phase 3 migration, so this is
-// a forward-looking guard: the first DROP COLUMN author cannot ship a
-// migration that re-runs unsafely or skips the un-migrated-rows gate.
+// contract migration in the tree drops columns idempotently and carries the
+// preflight gate, keeping later DROP COLUMN authors from shipping a contract
+// migration that re-runs unsafely or skips the un-migrated-rows gate. The tree
+// has three Phase 3 (DROP COLUMN) migrations, each fronted by a DO $$ gate that
+// counts un-migrated rows: 0118 (ops_event_subscriptions secret/types reshape),
+// 0129 (credential_leases lease_token envelope conversion), and the §5.2
+// mode-collapse 0167 (sandbox_warm_pools.concurrency_style). §10.5 line 417's
+// gate requirement is unconditional: it applies to every migration that DROPs a
+// column regardless of the expected row count.
+//
+// diagnosis: a failure means a Phase 3 contract migration (one that DROPs a
+// column) either drops without IF EXISTS or omits the DO $$ preflight gate, so
+// a re-run would fail or the §10.5 un-migrated-rows guard is absent and the
+// contract could run before its data migration.
 //
 // spec: §10.5 line 417 / line 430.
 func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
@@ -95,6 +109,11 @@ func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
 
 // TestScanPhase3_spec_10_5_417 exercises the scanner against the boundary
 // cases the §10.5 Phase 3 rules turn on.
+//
+// spec: §10.5 lines 417, 430.
+// diagnosis: a failure means the Phase 3 scanner misclassifies a
+// boundary case, so the CI gate would miss a bare DROP COLUMN or a
+// Phase 3 migration with no preflight gate, or falsely flag a safe one.
 func TestScanPhase3_spec_10_5_417(t *testing.T) {
 	t.Parallel()
 	const goodGate = `-- gate-index: idx_sessions_legacy_token_partial

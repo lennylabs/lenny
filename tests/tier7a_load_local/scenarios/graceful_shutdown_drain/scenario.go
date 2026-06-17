@@ -33,11 +33,11 @@ func init() {
 // signal. When drainStarted is set, accept() returns errShuttingDown
 // for new requests but lets in-flight handlers complete.
 type server struct {
-	mu              sync.Mutex
-	drainStarted    bool
-	inFlight        atomic.Int64
+	mu                  sync.Mutex
+	drainStarted        bool
+	inFlight            atomic.Int64
 	completedAfterDrain atomic.Int64
-	droppedDuringDrain atomic.Int64
+	droppedDuringDrain  atomic.Int64
 }
 
 var errShuttingDown = errors.New("503 shutting down")
@@ -86,6 +86,7 @@ func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 8, Duration: 1 * time.Second},

@@ -741,7 +741,8 @@ func main() {
 				client:    dynClient,
 				namespace: envOr("POD_NAMESPACE", *leaderElectNS),
 				onExpiry:  setCertExpiry,
-			})
+			},
+		)
 	} else {
 		selfChecks[opsservice.CheckCertManager] = opsservice.CertManagerCheck(nil)
 	}
@@ -841,7 +842,8 @@ func main() {
 		escalationConfig{
 			RequireDurable:                *escalationRequireDurable,
 			ReconciliationWritesPerSecond: *escalationReconcileWPS,
-		})
+		},
+	)
 	driftSvc := buildDriftService(driftServiceConfig{
 		StaleWarningDays:        *driftSnapshotStaleWarningDays,
 		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,
@@ -922,7 +924,8 @@ func main() {
 	// the base; a runtime PUT overlays them (Postgres-backed when a pool is
 	// present). Also feeds the upgrade preflight's image-plan resolution.
 	registrySvc := buildRegistryService(pgPool, registryBaseConfig(
-		*registryURL, *registryPullSecret, *registryRequireDigest, *registryOverrides), auditRecorder)
+		*registryURL, *registryPullSecret, *registryRequireDigest, *registryOverrides,
+	), auditRecorder)
 	// §25.8 upgrade preflight (Phase 1 safety gates) and OpsRoll watchdog.
 	upgradePreflighter := buildPreflighter(upgradeStore, pgPool)
 	upgradeWatchdog := buildWatchdog(upgradeSvc, upgradeservice.WatchdogConfig{
@@ -940,7 +943,8 @@ func main() {
 	// lenny_platform_version_drift gauge on each aggregation.
 	versionAggregator := buildVersionAggregator(
 		buildVersion, *gatewayURL, gatewayHTTP, pgPool, clientset,
-		envOr("POD_NAMESPACE", *leaderElectNS))
+		envOr("POD_NAMESPACE", *leaderElectNS),
+	)
 	// §25.8 config diff/apply: the operator surface over the gateway's own
 	// config API. Wired only when a gateway client exists; otherwise the
 	// routes stay unmapped (404).

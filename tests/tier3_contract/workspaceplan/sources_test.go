@@ -163,6 +163,9 @@ func TestParserEmitsPathCollisionWarning(t *testing.T) {
 // the structured fields `path`, `winningSourceIndex`, and
 // `losingSourceIndex` so consumers can distinguish overwriter from
 // overwritten without re-parsing the plan. F-14.1.23.
+// diagnosis: a failure means the path-collision warning omits or
+// mislabels its structured fields, so consumers cannot tell the
+// overwriting source from the overwritten one without re-parsing.
 func TestPathCollisionWarningCarriesStructuredFields_spec_14_338(t *testing.T) {
 	body := `{
 		"schemaVersion": 1,
@@ -211,6 +214,9 @@ func TestPathCollisionWarningCarriesStructuredFields_spec_14_338(t *testing.T) {
 // (events, dashboards, alerts) key on the spec-named values. A future
 // rename would silently diverge from the spec; this test traps the
 // drift at compile time. F-14.1.22.
+// diagnosis: a failure means a parser WarningCode constant no longer
+// matches the spec catalog character-for-character, so observability
+// sinks keyed on the spec-named value would silently miss the warning.
 func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
 	// The closed §14 catalog: line 100 (strip-components-skip),
 	// line 334 (unknown-source-type), line 338 (path-collision).
@@ -239,6 +245,9 @@ func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
 // plan stored in Postgres carries the canonical value and downstream
 // consumers do not need to mirror the spec default themselves.
 // F-14.1.21.
+// diagnosis: a failure means the parser does not surface the gitClone.path
+// default of `.`, so the round-tripped plan would omit the canonical
+// value and force downstream consumers to mirror the spec default.
 func TestGitCloneDefaultPathIsDot_spec_14_91(t *testing.T) {
 	body := `{
 		"schemaVersion": 1,

@@ -61,6 +61,9 @@ func acmeEvents(stub *siemstub.Stub) int {
 // spec: §12.3 line 97 — the outbox forwarder reads committed rows past
 // the siem_delivery_state high-water mark, delivers them, and advances
 // the mark only after acknowledgement; a re-run delivers no duplicate.
+// diagnosis: a failure means the SIEM outbox forwarder advances the
+// high-water mark before acknowledgement or re-delivers acknowledged
+// rows, so audit events would be dropped or duplicated to the SIEM sink.
 func TestSIEMOutboxForwarder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

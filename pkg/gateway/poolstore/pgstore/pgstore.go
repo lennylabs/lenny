@@ -44,12 +44,10 @@ var _ poolstore.Store = (*Store)(nil)
 
 const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	resource_class, warm_count, max_session_age_seconds,
-	allow_standard_isolation, concurrency_style, max_concurrent,
-	acknowledge_process_level_isolation, cleanup_timeout_seconds,
-	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
-	pool_config_generation, task_policy, elicitation_policy, draining_since,
-	bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config,
-	concurrent_max_pod_uptime_seconds`
+	allow_standard_isolation, max_concurrent,
+	egress_profile, created_at, updated_at, deleted_at,
+	pool_config_generation, session_policy, elicitation_policy, draining_since,
+	bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -70,10 +68,10 @@ func validatePool(p poolstore.Pool) error {
 	if err := poolstore.ValidateEgressIsolation(p); err != nil {
 		return err
 	}
-	if err := poolstore.ValidateConcurrentConfig(p); err != nil {
+	if err := poolstore.ValidateServiceConfig(p); err != nil {
 		return err
 	}
-	if err := poolstore.ValidateTaskPolicy(p); err != nil {
+	if err := poolstore.ValidateSessionPolicy(p); err != nil {
 		return err
 	}
 	if err := poolstore.ValidateElicitationPolicy(p); err != nil {
@@ -172,72 +170,30 @@ func decodeElicitationPolicy(raw []byte, p *poolstore.Pool) error {
 	return nil
 }
 
-// taskPolicyJSON is the JSONB wire shape for a Pool.TaskPolicy. The
-// keys match the §5.2 spec yaml so a database operator inspecting the
-// row sees the same field names the deployer wrote.
-type taskPolicyJSON struct {
-	AcknowledgeBestEffortScrub      bool     `json:"acknowledgeBestEffortScrub,omitempty"`
-	MicrovmScrubMode                string   `json:"microvmScrubMode,omitempty"`
-	AcknowledgeMicrovmResidualState bool     `json:"acknowledgeMicrovmResidualState,omitempty"`
-	CleanupCommands                 []string `json:"cleanupCommands,omitempty"`
-	CleanupTimeoutSeconds           int      `json:"cleanupTimeoutSeconds,omitempty"`
-	OnCleanupFailure                string   `json:"onCleanupFailure,omitempty"`
-	MaxScrubFailures                int      `json:"maxScrubFailures,omitempty"`
-	MaxTasksPerPod                  int      `json:"maxTasksPerPod,omitempty"`
-	MaxPodUptimeSeconds             int      `json:"maxPodUptimeSeconds,omitempty"`
-	MaxTaskRetries                  *int     `json:"maxTaskRetries,omitempty"`
-}
-
-// encodeTaskPolicy returns the JSONB blob to persist or a nil byte
-// slice (rendered as SQL NULL) when no policy is set. spec: §5.2.
-func encodeTaskPolicy(tp *poolstore.TaskPolicy) ([]byte, error) {
-	if tp == nil {
+// encodeSessionPolicy returns the JSONB blob to persist for a Pool's §5.2
+// sessionPolicy mirror, or a nil byte slice (rendered as SQL NULL) when no
+// policy is set. The runtimestore.SessionPolicy JSON tags match the §5.2
+// spec yaml, so a database operator inspecting the session_policy column
+// sees the same field names the deployer wrote (maxConcurrentSessions,
+// recycle.*, the cleanup and exhaustion knobs). spec: §5.2.
+func encodeSessionPolicy(sp *runtimestore.SessionPolicy) ([]byte, error) {
+	if sp == nil {
 		return nil, nil
 	}
-	wire := taskPolicyJSON{
-		AcknowledgeBestEffortScrub:      tp.AcknowledgeBestEffortScrub,
-		MicrovmScrubMode:                string(tp.MicrovmScrubMode),
-		AcknowledgeMicrovmResidualState: tp.AcknowledgeMicrovmResidualState,
-		CleanupCommands:                 append([]string(nil), tp.CleanupCommands...),
-		CleanupTimeoutSeconds:           tp.CleanupTimeoutSeconds,
-		OnCleanupFailure:                string(tp.OnCleanupFailure),
-		MaxScrubFailures:                tp.MaxScrubFailures,
-		MaxTasksPerPod:                  tp.MaxTasksPerPod,
-		MaxPodUptimeSeconds:             tp.MaxPodUptimeSeconds,
-	}
-	if tp.MaxTaskRetries != nil {
-		n := *tp.MaxTaskRetries
-		wire.MaxTaskRetries = &n
-	}
-	return json.Marshal(wire)
+	return json.Marshal(sp)
 }
 
-// decodeTaskPolicy is the inverse of encodeTaskPolicy: a NULL row reads
-// as nil, an empty JSON object reads as a zero-value TaskPolicy.
-func decodeTaskPolicy(raw []byte) (*poolstore.TaskPolicy, error) {
+// decodeSessionPolicy is the inverse of encodeSessionPolicy: a NULL row
+// reads as nil, an empty JSON object reads as a zero-value SessionPolicy.
+func decodeSessionPolicy(raw []byte) (*runtimestore.SessionPolicy, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	var wire taskPolicyJSON
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, fmt.Errorf("poolstore: decode task_policy: %w", err)
+	var sp runtimestore.SessionPolicy
+	if err := json.Unmarshal(raw, &sp); err != nil {
+		return nil, fmt.Errorf("poolstore: decode session_policy: %w", err)
 	}
-	out := &poolstore.TaskPolicy{
-		AcknowledgeBestEffortScrub:      wire.AcknowledgeBestEffortScrub,
-		MicrovmScrubMode:                runtimestore.MicrovmScrubMode(wire.MicrovmScrubMode),
-		AcknowledgeMicrovmResidualState: wire.AcknowledgeMicrovmResidualState,
-		CleanupCommands:                 append([]string(nil), wire.CleanupCommands...),
-		CleanupTimeoutSeconds:           wire.CleanupTimeoutSeconds,
-		OnCleanupFailure:                runtimestore.CleanupFailureDisposition(wire.OnCleanupFailure),
-		MaxScrubFailures:                wire.MaxScrubFailures,
-		MaxTasksPerPod:                  wire.MaxTasksPerPod,
-		MaxPodUptimeSeconds:             wire.MaxPodUptimeSeconds,
-	}
-	if wire.MaxTaskRetries != nil {
-		n := *wire.MaxTaskRetries
-		out.MaxTaskRetries = &n
-	}
-	return out, nil
+	return &sp, nil
 }
 
 // Create inserts a new pool row after running the §5.2 name
@@ -260,7 +216,7 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 	if p.Generation == 0 {
 		p.Generation = 1
 	}
-	tpJSON, err := encodeTaskPolicy(p.TaskPolicy)
+	spJSON, err := encodeSessionPolicy(p.SessionPolicy)
 	if err != nil {
 		return err
 	}
@@ -275,20 +231,16 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 	_, err = s.pool.Exec(ctx, `INSERT INTO sandbox_warm_pools (
 		name, runtime_ref, isolation_profile, execution_mode,
 		resource_class, warm_count, max_session_age_seconds,
-		allow_standard_isolation, concurrency_style, max_concurrent,
-		acknowledge_process_level_isolation, cleanup_timeout_seconds,
-		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
-		pool_config_generation, task_policy, elicitation_policy, draining_since,
-		bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config,
-		concurrent_max_pod_uptime_seconds
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
+		allow_standard_isolation, max_concurrent,
+		egress_profile, created_at, updated_at, deleted_at,
+		pool_config_generation, session_policy, elicitation_policy, draining_since,
+		bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
-		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
-		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
-		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
-		p.ConcurrentMaxPodUptimeSeconds)
+		p.AllowStandardIsolation, p.MaxConcurrent,
+		string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
+		p.Generation, spJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -342,7 +294,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 	// every admin-API write so the gateway-side drift check can
 	// compare it to the CRD annotation.
 	p.Generation++
-	tpJSON, err := encodeTaskPolicy(p.TaskPolicy)
+	spJSON, err := encodeSessionPolicy(p.SessionPolicy)
 	if err != nil {
 		return poolstore.Pool{}, err
 	}
@@ -357,20 +309,16 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 	if _, err := tx.Exec(ctx, `UPDATE sandbox_warm_pools SET
 		runtime_ref = $2, isolation_profile = $3, execution_mode = $4,
 		resource_class = $5, warm_count = $6, max_session_age_seconds = $7,
-		allow_standard_isolation = $8, concurrency_style = $9, max_concurrent = $10,
-		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
-		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16,
-		pool_config_generation = $17, task_policy = $18, elicitation_policy = $19, draining_since = $20,
-		bootstrap_min_warm = $21, reconciliation_resume_epoch = $22, sdk_warm_config = $23,
-		concurrent_max_pod_uptime_seconds = $24
+		allow_standard_isolation = $8, max_concurrent = $9,
+		egress_profile = $10, updated_at = $11, deleted_at = $12,
+		pool_config_generation = $13, session_policy = $14, elicitation_policy = $15, draining_since = $16,
+		bootstrap_min_warm = $17, reconciliation_resume_epoch = $18, sdk_warm_config = $19
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
-		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
-		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
-		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-		p.Generation, tpJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
-		p.ConcurrentMaxPodUptimeSeconds); err != nil {
+		p.AllowStandardIsolation, p.MaxConcurrent,
+		string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
+		p.Generation, spJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -468,25 +416,22 @@ func (s *Store) BumpResumeEpoch(ctx context.Context, name string) (int64, error)
 // scanPool reads one row in selectList order into a Pool.
 func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	var (
-		p                                                                poolstore.Pool
-		isolationProfile, executionMode, concurrencyStyle, egressProfile string
-		deletedAt                                                        *time.Time
-		drainingSince                                                    *time.Time
-		taskPolicy                                                       []byte
-		elicitationPolicy                                                []byte
-		bootstrapMinWarm                                                 *int
-		sdkWarmConfig                                                    []byte
-		concurrentMaxPodUptime                                           *int
+		p                                              poolstore.Pool
+		isolationProfile, executionMode, egressProfile string
+		deletedAt                                      *time.Time
+		drainingSince                                  *time.Time
+		sessionPolicy                                  []byte
+		elicitationPolicy                              []byte
+		bootstrapMinWarm                               *int
+		sdkWarmConfig                                  []byte
 	)
 	if err := row.Scan(
 		&p.Name, &p.RuntimeRef, &isolationProfile, &executionMode,
 		&p.ResourceClass, &p.WarmCount, &p.MaxSessionAgeSeconds,
-		&p.AllowStandardIsolation, &concurrencyStyle, &p.MaxConcurrent,
-		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
-		&p.AllowCrossTenantReuse, &egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
-		&p.Generation, &taskPolicy, &elicitationPolicy, &drainingSince,
+		&p.AllowStandardIsolation, &p.MaxConcurrent,
+		&egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
+		&p.Generation, &sessionPolicy, &elicitationPolicy, &drainingSince,
 		&bootstrapMinWarm, &p.ReconciliationResumeEpoch, &sdkWarmConfig,
-		&concurrentMaxPodUptime,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}
@@ -494,12 +439,8 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		v := *bootstrapMinWarm
 		p.BootstrapMinWarm = &v
 	}
-	if concurrentMaxPodUptime != nil {
-		p.ConcurrentMaxPodUptimeSeconds = *concurrentMaxPodUptime
-	}
 	p.IsolationProfile = isolation.Profile(isolationProfile)
 	p.ExecutionMode = runtimestore.ExecutionMode(executionMode)
-	p.ConcurrencyStyle = poolstore.ConcurrencyStyle(concurrencyStyle)
 	p.EgressProfile = egress.Profile(egressProfile)
 	if deletedAt != nil {
 		p.DeletedAt = *deletedAt
@@ -507,11 +448,11 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	if drainingSince != nil {
 		p.DrainingSince = *drainingSince
 	}
-	tp, err := decodeTaskPolicy(taskPolicy)
+	sp, err := decodeSessionPolicy(sessionPolicy)
 	if err != nil {
 		return poolstore.Pool{}, err
 	}
-	p.TaskPolicy = tp
+	p.SessionPolicy = sp
 	if err := decodeElicitationPolicy(elicitationPolicy, &p); err != nil {
 		return poolstore.Pool{}, err
 	}

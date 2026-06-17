@@ -138,8 +138,8 @@ func TestRBACConfigRoundTripsExtraFields_spec_10_6_665(t *testing.T) {
 			IntrospectionClientSecret:    "s3cret",
 			IntrospectionCacheTTLSeconds: 15,
 		},
-		TokenPolicy: json.RawMessage(`{"accessTtlSeconds":900}`),
-		Capabilities:        []string{"search", "summarize"},
+		TokenPolicy:  json.RawMessage(`{"accessTtlSeconds":900}`),
+		Capabilities: []string{"search", "summarize"},
 		MCPAnnotationMapping: map[string][]string{
 			"dangerous_tool": {"read", "write"},
 		},

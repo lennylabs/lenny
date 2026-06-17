@@ -28,7 +28,15 @@ This page describes the security posture Lenny is built to. It is a companion to
 
 ### 1.1 The pod is the trust boundary
 
-Every session runs in its own Kubernetes pod. Pods do not share filesystems, credentials, or long-lived network paths. Cross-session leakage through `/tmp`, environment, or a shared in-process cache is architecturally impossible because nothing is shared. The gateway — not the pod — is the sole intermediary that sees cross-session context, and it sees only the slivers a given request requires.
+In the default configuration (`sessionPolicy.maxConcurrentSessions: 1`, `recycle.enabled: false`) every session runs in its own Kubernetes pod that is terminated when the session ends. Pods do not share filesystems, credentials, or long-lived network paths, and cross-session leakage through `/tmp`, environment, or a shared in-process cache cannot occur because nothing is reused. The gateway, rather than the pod, is the sole intermediary that sees cross-session context, and it sees only the slivers a given request requires.
+
+When a deployer opts into pod reuse, the trust boundary relaxes by acknowledgment. Credential leases are always per session, but residual state can survive between sessions:
+
+- `recycle.enabled: true` requires `recycle.acknowledgeBestEffortScrub: true`. A whole-pod scrub runs when occupancy reaches zero (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup, residual-process kill), but it is best-effort: DNS cache, TCP `TIME_WAIT`, and page cache may persist.
+- `maxConcurrentSessions > 1` requires `acknowledgeProcessLevelIsolation: true` and runs a per-slot cleanup at each session release plus a whole-pod scrub at occupancy zero. Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack.
+- `recycle.scrubProfile: in-place` (cross-tenant microvm reuse without a guest restart) requires `recycle.acknowledgeMicrovmResidualState: true`, because guest-kernel residual state crosses the tenant boundary.
+
+Each acknowledgment is fail-closed: the pool controller rejects a pool that opts into the reuse mode without the corresponding acknowledgment. The session creation response carries `sessionIsolationLevel.residualStateWarning: true` whenever a session runs on a pod that serves more than one session, so a client that requires strict isolation can reject it.
 
 ### 1.2 Default-deny networking
 
@@ -85,7 +93,7 @@ Each primitive below has a canonical configuration surface on the [Security](sec
 | **OIDC/OAuth 2.1 auth** | Every client request carries a validated IdP token; admin token managed separately. | [Security — OIDC / OAuth 2.1 Authentication](security#oidc--oauth-21-authentication) |
 | **Token Service** | Stateless credential lifecycle manager; KMS-backed; per-replica mTLS. | [Security — Token Service](security#token-service) |
 | **KMS envelope encryption** | AWS KMS / GCP KMS / Azure Key Vault / HashiCorp Vault; application-layer crypto for T3/T4 data. | [Security — KMS Integration](security#kms-integration) |
-| **Credential leasing** | Per-session / per-task / per-slot leases; emergency revocation API. | [Security — Credential Leasing](security#credential-leasing) |
+| **Credential leasing** | Per-session leases (including each session served by a recycling pod) and per-slot leases when `maxConcurrentSessions > 1`; emergency revocation API. | [Security — Credential Leasing](security#credential-leasing) |
 | **LLM Proxy** | For proxy-mode pools (the default), outbound provider traffic flows from the gateway, not from pods. Direct-mode pools bypass this subsystem and call the provider from the pod with a short-lived materialized credential. | [Security — LLM Proxy](security#llm-proxy) |
 | **Pod security controls** | PSS Restricted, non-root, read-only rootfs, dropped capabilities, adapter-agent boundary. | [Security — Pod Security Controls](security#pod-security-controls) |
 | **Default-deny NetworkPolicies** | Foundation policy denies everything; allowed paths added explicitly. | [Security — Network Policies](security#network-policies) |

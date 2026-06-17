@@ -587,7 +587,8 @@ func (s *Server) observeUploadDepth() {
 		return
 	}
 	s.uploadMetrics.SetUploadQueueDepth(
-		s.uploadSubsystem.Limiter.InFlight() + s.uploadSubsystem.Limiter.QueueDepth())
+		s.uploadSubsystem.Limiter.InFlight() + s.uploadSubsystem.Limiter.QueueDepth(),
+	)
 }
 
 // emitUploadRejected writes a §16.6 session.upload audit row with a

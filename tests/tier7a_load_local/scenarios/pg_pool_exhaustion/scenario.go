@@ -29,9 +29,9 @@ func init() {
 
 // pool is a tiny model of a bounded Postgres connection pool.
 type pool struct {
-	sem        chan struct{}
-	maxWait    time.Duration
-	holdTime   time.Duration
+	sem      chan struct{}
+	maxWait  time.Duration
+	holdTime time.Duration
 }
 
 func newPool(size int, hold time.Duration) *pool {

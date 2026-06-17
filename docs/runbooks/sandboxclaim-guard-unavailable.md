@@ -8,8 +8,8 @@ triggers:
 components:
   - admission
 symptoms:
-  - "SandboxClaim PATCH and PUT operations rejected by the failure policy"
-  - "new pod claims blocked"
+  - "SandboxClaim CREATE operations rejected by the failure policy"
+  - "new pod acquisition blocked"
   - "session creation fails"
 tags:
   - admission
@@ -23,7 +23,7 @@ related:
 
 # sandboxclaim-guard-unavailable
 
-The `lenny-sandboxclaim-guard` ValidatingAdmissionWebhook has been unreachable past its `failurePolicy: Fail` sustain window. SandboxClaim mutations are denied — new pod claims fail, halting session creation.
+The `lenny-sandboxclaim-guard` ValidatingAdmissionWebhook has been unreachable past its `failurePolicy: Fail` sustain window. Every `SandboxClaim` CREATE is denied, so new pod acquisition fails and session creation halts. Double-claim prevention is suspended until the webhook recovers.
 
 ## Trigger
 

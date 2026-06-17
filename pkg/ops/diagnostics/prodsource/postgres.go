@@ -37,12 +37,15 @@ func (r *PGReader) Session(ctx context.Context, sessionID string) (SessionRow, e
 		SELECT s.state, s.runtime_ref, s.pool_ref, s.failure_class, s.failure_reason,
 		       COALESCE(p.pod_id, ''), COALESCE(p.state, ''), COALESCE(p.node_name, '')
 		FROM sessions s
+		-- platform-admin-cross-tenant-justification: §25.6 operator diagnostics reads one session by its globally-unique UUID across tenants; the join is keyed by session_id, not tenant_id.
+		-- platform-admin-cross-tenant-allowed
 		LEFT JOIN agent_pod_state p ON p.session_id = s.id::text
 		WHERE s.id = $1`
 	var row SessionRow
 	err := r.pool.QueryRow(ctx, q, sessionID).Scan(
 		&row.State, &row.Runtime, &row.Pool, &row.FailureClass, &row.FailureReason,
-		&row.PodID, &row.PodState, &row.NodeName)
+		&row.PodID, &row.PodState, &row.NodeName,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionRow{Found: false}, nil
 	}

@@ -60,7 +60,7 @@ func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.SandboxWarm
 			MaxUnavailable: &maxUnavailable,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					LabelPool:       pool.Name,
+					LabelPool:        pool.Name,
 					state.LabelState: string(state.Idle),
 				},
 			},

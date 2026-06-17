@@ -36,7 +36,7 @@ func (f *fakeRows) Scan(dest ...any) error {
 	if f.scanErr != nil {
 		return f.scanErr
 	}
-	*(dest[0].(*string)) = f.vals[f.idx-1]
+	*dest[0].(*string) = f.vals[f.idx-1]
 	return nil
 }
 

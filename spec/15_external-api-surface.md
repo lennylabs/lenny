@@ -623,7 +623,7 @@ The REST API covers all non-interactive operations. It is the primary integratio
 | `POST /v1/sessions/{id}/derive`    | `completed`, `failed`, `cancelled`, `expired` (default); `running`, `suspended`, `resume_pending`, `awaiting_client_action` (requires `allowStale: true` in request body) | Creates a new session (original unchanged) | Terminal sessions use the sealed or last-checkpoint snapshot. Non-terminal sessions require `allowStale: true`; derive uses the most recent successful checkpoint snapshot. Response includes `workspaceSnapshotSource` and `workspaceSnapshotTimestamp`. See [Section 7.1](07_session-lifecycle.md#71-normal-flow) derive semantics. |
 | `DELETE /v1/sessions/{id}`         | Any non-terminal state                                             | `cancelled`                                                                            | Force-cancels the session and releases resources. Unlike `/terminate` (which marks the session `completed` as a graceful, successful end), `DELETE` always records a `cancelled` terminal state for audit and billing purposes. Use `/terminate` to signal normal completion; use `DELETE` to abandon a session. |
 
-**Externally visible vs. internal-only states.** The REST API (`GET /v1/sessions/{id}`) returns session states from the **session/task state model** ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model), 8.8), not the pod state model ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)). Pod states are internal implementation details not exposed to API callers.
+**Externally visible vs. internal-only states.** The REST API (`GET /v1/sessions/{id}`) returns session states from the **session state model** ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model), 8.8) rather than the pod state model ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)). Pod states are internal implementation details and are never exposed to API callers.
 
 | External session state (returned in API) | Description                                                   | Terminal? |
 | ---------------------------------------- | ------------------------------------------------------------- | --------- |
@@ -640,7 +640,7 @@ The REST API covers all non-interactive operations. It is the primary integratio
 | `cancelled`                              | Cancelled by client or parent                                 | Yes       |
 | `expired`                                | Lease, budget, or deadline exhausted                          | Yes       |
 
-Internal-only states (from the pod state machine in [Section 6.2](06_warm-pod-model.md#62-pod-state-machine)) such as `warming`, `idle`, `claimed`, `receiving_uploads`, `running_setup`, `sdk_connecting`, and `resuming` are **never** returned in external API responses. These are tracked in the `Sandbox` CRD `.status.phase` for controller reconciliation and operational monitoring only.
+Internal-only states are **never** returned in external API responses. The coarse pod phases from the pod state machine in [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) (`warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`) are tracked in the `Sandbox` CRD `.status.phase` for controller reconciliation and operational monitoring only. The fine session states `receiving_uploads`, `running_setup`, and `resuming` are tracked solely in the Postgres session model ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model), 8.8) and are likewise never returned in external API responses.
 
 **Session `failureClass` field and reachability.** When `state = "failed"`, the session response body includes a `failureClass` field (nullable string) classifying the failure origin. Values and semantics are authoritative in [§7.1](07_session-lifecycle.md#71-normal-flow) Session `failureClass` field. Callers can filter `GET /v1/sessions` by this field via `?failureClass=<value>` (repeatable).
 
@@ -1014,7 +1014,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `CONNECTOR_REQUEST_REJECTED` | `PERMANENT` | 403         | Connector tool call rejected by `PreConnectorRequest` interceptor. `details.reason` contains the interceptor's rejection reason ([Section 4.8](04_system-components.md#48-gateway-policy-engine)).                                                                                                           |
 | `CONNECTOR_RESPONSE_REJECTED` | `PERMANENT` | 502         | Connector response rejected by `PostConnectorResponse` interceptor. `details.reason` contains the interceptor's rejection reason ([Section 4.8](04_system-components.md#48-gateway-policy-engine)).                                                                                                          |
 | `INTERNAL_ERROR`            | `TRANSIENT` | 500         | Unexpected server error                                                                                                                                                                                                                                  |
-| `WARM_POOL_EXHAUSTED`       | `TRANSIENT` | 503         | No idle pods are available in the warm pool after exhausting both the API-server claim path and the Postgres fallback. Client should retry with exponential backoff. See [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle).                                                                  |
+| `WARM_POOL_EXHAUSTED`       | `TRANSIENT` | 503         | No idle pod could be acquired after exhausting both the API-server claim path and the Postgres fallback. On pools with `sessionPolicy.onPoolExhausted: queue`, the request additionally waited in the per-pool claim queue for up to `maxQueueWaitSeconds` before this error was returned. The response carries a `Retry-After` header; the client should retry with exponential backoff. See [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle) and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes). |
 | `INVALID_INTERCEPTOR_PRIORITY` | `PERMANENT` | 422      | External interceptor registration specifies `priority ≤ 100`, which is reserved for built-in security-critical interceptors. Set `priority > 100`. See [Section 4.8](04_system-components.md#48-gateway-policy-engine).                                                                                     |
 | `INVALID_INTERCEPTOR_PHASE` | `PERMANENT` | 422         | External interceptor registration includes the `PreAuth` phase, which is exclusively reserved for built-in interceptors. Remove `PreAuth` from the phase set. See [Section 4.8](04_system-components.md#48-gateway-policy-engine).                                                                          |
 | `CREDENTIAL_PROVIDER_MISMATCH`    | `POLICY`  | 422       | Cross-environment delegation with `credentialPropagation: inherit` rejected because the parent's credential pool providers and the child runtime's `supportedProviders` have no intersection. Use `credentialPropagation: independent` for cross-environment delegations where the runtimes use different providers. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
@@ -1437,8 +1437,8 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 
 | `type` field  | Description                                                                                                                                                         |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message`     | All content delivery: initial task, mid-session injection, reply to `request_input`, sibling notification. Carries optional `slotId` for concurrent-workspace mode. |
-| `tool_result` | The result of a tool call requested by the agent. Carries `slotId` in concurrent-workspace mode.                                                                    |
+| `message`     | All content delivery: initial task, mid-session injection, reply to `request_input`, sibling notification. Carries optional `slotId` on pods whose pool sets `maxConcurrentSessions > 1`. |
+| `tool_result` | The result of a tool call requested by the agent. Carries `slotId` when `maxConcurrentSessions > 1`. |
 | `heartbeat`   | Periodic liveness ping; agent must respond                                                                                                                          |
 | `shutdown`    | Graceful shutdown with no new task                                                                                                                                  |
 
@@ -1448,17 +1448,15 @@ The `message` type carries an `input` field containing an `OutputPart[]` array (
 
 | `type` field             | Description                                                                                           |
 | ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `response`               | Streamed or complete response carrying `OutputPart[]`. Carries `slotId` in concurrent-workspace mode. |
-| `tool_call`              | Agent requests execution of a tool. Carries `slotId` in concurrent-workspace mode.                    |
+| `response`               | Streamed or complete response carrying `OutputPart[]`. Carries `slotId` when `maxConcurrentSessions > 1`. |
+| `tool_call`              | Agent requests execution of a tool. Carries `slotId` when `maxConcurrentSessions > 1`. |
 | `heartbeat_ack`          | Acknowledges an inbound `heartbeat`. Protocol-level; no content payload.                              |
 | `status`                 | Optional status/trace update                                                                          |
 | `set_tracing_context`    | Registers tracing identifiers for propagation through delegation. Payload: `{"type": "set_tracing_context", "context": {"langsmith_run_id": "run_abc123"}}`. The adapter stores the context and automatically attaches it to all subsequent `lenny/delegate_task` gRPC requests. Validation rules ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)) are enforced by the gateway when the delegation request arrives. Available at all tiers. See [Section 16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. |
 
 **`input_required` outbound message type removed.** Replaced by `lenny/request_input` blocking MCP tool call on the platform MCP server.
 
-**`slotId` for concurrent-workspace multiplexing:** Session mode and task mode messages never carry `slotId` and runtimes for those modes never see it. Concurrent-workspace runtimes implement a dispatch loop keyed on `slotId` — each concurrent slot's messages carry a distinct `slotId` assigned by the adapter. This allows multiple independent concurrent task streams through a single stdin channel.
-
-**Task mode between-task signaling:** Adapter sends `{type: "task_complete", taskId: "..."}` on the lifecycle channel after a task completes. The runtime releases task-specific resources and replies with `{type: "task_complete_acknowledged", taskId: "..."}`. After deployer-defined `cleanupCommands` and Lenny scrub complete, the adapter sends `{type: "task_ready", taskId: "..."}` with the new task's ID. The runtime re-reads the adapter manifest (regenerated per task) and the next `{type: "message"}` on stdin is the start of the new task. This is distinct from `terminate`, which always means process exit.
+**`slotId` for concurrent-session multiplexing:** Messages on a pod whose pool sets `sessionPolicy.maxConcurrentSessions: 1` never carry `slotId`, and runtimes on those pods never see it. Runtimes serving a pool with `maxConcurrentSessions > 1` implement a dispatch loop keyed on `slotId`: each concurrent slot's messages carry a distinct `slotId` assigned by the adapter. This allows multiple independent concurrent session streams through a single stdin channel.
 
 **stderr** is captured by the adapter for logging and diagnostics but is **not** parsed as protocol messages.
 
@@ -1710,7 +1708,7 @@ The adapter populates `from.kind` and `from.id` from execution context before de
 
 - `requestId` in `lenny/request_input` — generated by the gateway; runtime only supplies `parts`
 
-**`slotId`** — optional string; present only in concurrent-workspace mode. Identifies the concurrent slot this message is addressed to. Session-mode and task-mode messages never carry `slotId`. See [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) and the `slotId` multiplexing note in the Protocol Reference.
+**`slotId`** — optional string; present only on pods whose pool sets `sessionPolicy.maxConcurrentSessions > 1` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). Identifies the concurrent slot this message is addressed to. Messages on pods serving one session at a time never carry `slotId`. See the `slotId` multiplexing note in the Protocol Reference.
 
 **`delivery`** — optional closed enum controlling interrupt behaviour. Defined values:
 
@@ -1815,7 +1813,7 @@ All **content** messages on stdin (type `message`) use the full `MessageEnvelope
 }
 ```
 
-Basic-level: read `type`, `id`, `input`. Ignore all other fields. `slotId` is optional — present only in concurrent-workspace mode.
+Basic-level: read `type`, `id`, `input`. Ignore all other fields. `slotId` is optional and is present only on pods with `maxConcurrentSessions > 1`.
 
 ##### Inbound: `heartbeat`
 
@@ -1843,7 +1841,7 @@ Schema:
   "id": "<string, required — matches the tool_call.id this result responds to>",
   "content": ["<OutputPart[], required — result content>"],
   "isError": "<boolean, optional — true if tool execution failed; defaults to false>",
-  "slotId": "<string, optional — present only in concurrent-workspace mode>"
+  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
 }
 ```
 
@@ -1876,7 +1874,7 @@ Example:
 {
   "type": "response",
   "output": [{ "type": "text", "inline": "The answer is 4." }],
-  "slotId": "<string, optional — present only in concurrent-workspace mode>"
+  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
 }
 ```
 
@@ -1900,7 +1898,7 @@ Schema:
   "id": "<string, required — unique call identifier; used to correlate the inbound tool_result>",
   "name": "<string, required — tool name>",
   "arguments": "<object, required — tool-specific parameters; validated by the adapter against the tool's input schema>",
-  "slotId": "<string, optional — present only in concurrent-workspace mode>"
+  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
 }
 ```
 
@@ -2077,7 +2075,7 @@ Standard-level runtimes connect to the adapter's local MCP servers as a standard
 - **Protocol version.** The adapter's local MCP servers speak **MCP 2025-03-26** (the platform's target MCP spec version; see [Section 15.2](#152-mcp-api) for version negotiation details). The local servers also accept **MCP 2024-11-05** for backward compatibility. Intra-pod MCP version support follows the same rolling two-version policy as the gateway ([Section 15.5](#155-api-versioning-and-stability) item 2): the oldest accepted version enters a 6-month deprecation window when a new MCP spec version is adopted, and removal applies only to new connection negotiations (active sessions on the deprecated version are not forcibly terminated).
 - **Client libraries.** Runtime authors should use an existing MCP client library for their language (e.g., `mcp-go` for Go, `@modelcontextprotocol/sdk` for TypeScript/Node.js, `mcp` for Python). These libraries work against the adapter's local servers with one Lenny-specific addition: the runtime must send the manifest nonce as the first message of the MCP `initialize` handshake (see Authentication below).
 - **Tool discovery.** The runtime calls `tools/list` on each MCP server (platform and connectors) to discover available tools. The platform MCP server exposes the tools listed in Part A of this section (e.g., `lenny/delegate_task`, `lenny/output`). Each connector server exposes that connector's tools.
-- **Authentication.** Intra-pod MCP connections require a manifest-nonce handshake, identical in mechanism to the lifecycle channel handshake ([Section 4.7](04_system-components.md#47-runtime-adapter), item 1). The adapter writes a random nonce into the adapter manifest (`/run/lenny/adapter-manifest.json`, read-only to the agent container) before spawning the runtime. The runtime must present this nonce as the first message of the MCP `initialize` handshake on each MCP connection (platform MCP server and every connector MCP server). The adapter rejects — with an immediate close — any MCP connection that does not present a valid nonce before dispatching tools. This prevents any process that has not read the manifest from connecting to a privileged MCP server, regardless of its UID. The nonce is stored in the manifest under the top-level key `mcpNonce` (a random 256-bit hex string, regenerated per task execution alongside the rest of the manifest).
+- **Authentication.** Intra-pod MCP connections require a manifest-nonce handshake, identical in mechanism to the lifecycle channel handshake ([Section 4.7](04_system-components.md#47-runtime-adapter), item 1). The adapter writes a random nonce into the adapter manifest (`/run/lenny/adapter-manifest.json`, read-only to the agent container) before spawning the runtime. The runtime must present this nonce as the first message of the MCP `initialize` handshake on each MCP connection (platform MCP server and every connector MCP server). The adapter rejects — with an immediate close — any MCP connection that does not present a valid nonce before dispatching tools. This prevents any process that has not read the manifest from connecting to a privileged MCP server, regardless of its UID. The nonce is stored in the manifest under the top-level key `mcpNonce` (a random 256-bit hex string, regenerated per session alongside the rest of the manifest).
 
   **Nonce wire format (v1 — intra-pod only).** The nonce is a Lenny-private convention for intra-pod MCP connections only; it does not appear on any external-facing MCP endpoint and is not part of the MCP specification. The canonical injection location is the top-level `_lennyNonce` field in the MCP `initialize` request's `params` object:
   ```json
@@ -2124,10 +2122,11 @@ The following matrix enumerates every level-sensitive capability with its behavi
 | **Credential rotation**                                                    | Checkpoint → pod restart → `AssignCredentials` with new lease → `Resume`. If checkpoint unsupported, in-flight context is lost ([Section 4.7](04_system-components.md#47-runtime-adapter)). | Checkpoint → pod restart → `AssignCredentials` with new lease → `Resume`. Brief session pause; client sees reconnect.                      | In-place rotation via `RotateCredentials` RPC and `credentials_rotated` lifecycle message. No session interruption.                             |
 | **Deadline / expiry warning**                                              | No advance warning. `DEADLINE_APPROACHING` signal requires lifecycle channel; Basic-level receives only `shutdown` at expiry.                | No advance warning. Same as Basic — no lifecycle channel to deliver `DEADLINE_APPROACHING`.                                                | `DEADLINE_APPROACHING` signal delivered on lifecycle channel before session expiry ([Section 10](10_gateway-internals.md)).                                                |
 | **Graceful drain (`DRAINING` state)**                                      | No drain coordination. Adapter sends `shutdown` with `deadline_ms`; SIGTERM on timeout.                                                       | No drain coordination. Same as Basic.                                                                                                      | `DRAINING` state via lifecycle channel enables graceful shutdown coordination before `shutdown`.                                                |
-| **Task mode pod reuse**                                                    | No pod reuse. Adapter sends `shutdown` on stdin after task; pod replaced from warm pool. Effectively `maxTasksPerPod: 1` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).       | No pod reuse. Same as Basic — no lifecycle channel for between-task signaling.                                                             | Full pod reuse via `task_complete` / `task_complete_acknowledged` / `task_ready` on lifecycle channel. Scrub + reuse cycle as described in [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes). |
 | **Simplified response shorthand** (`{type: "response", text: "..."}`)      | Yes — adapter normalizes to canonical `OutputPart` form ([Section 15.4.1](#1541-adapterbinary-protocol)).                                                                     | Yes — available but typically unused since Standard runtimes produce structured output.                                                    | Yes — available but typically unused.                                                                                                           |
 | **OutputPart minimal fields**                                              | Only `type` and `inline` required; all other fields optional with defaults ([Section 15.4.1](#1541-adapterbinary-protocol)).                                                  | Full `OutputPart` schema available.                                                                                                        | Full `OutputPart` schema available.                                                                                                             |
 | **MessageEnvelope fields**                                                 | Only `type`, `id`, `input` needed; all other envelope fields safely ignored ([Section 15.4.1](#1541-adapterbinary-protocol)).                                                 | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                       | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                            |
+
+Pod recycling under `sessionPolicy.recycle` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) is not a level-sensitive capability and does not appear in the matrix: the platform scrubs the pod and starts a fresh runtime process for each session, so recycling requires no runtime cooperation and is available at every integration level.
 
 > **Basic-level limitations — complete list:**
 > Basic-level runtimes operate without the lifecycle channel and without platform MCP server access. The following capabilities are **unavailable** at Basic level and have no fallback:
@@ -2369,7 +2368,7 @@ Runtime-author information is distributed across this specification. The followi
 
 **Full-level (lifecycle channel and production hardening):**
 
-11. **[Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)** — Pool Configuration and Execution Modes. Execution modes (session, task, concurrent-workspace), resource classes, and pool sizing.
+11. **[Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)** — Pool Configuration and Execution Modes. The `session` and `service` execution modes, the `sessionPolicy` block, resource classes, and pool sizing.
 12. **[Section 7.1](07_session-lifecycle.md#71-normal-flow)** — Session Lifecycle Normal Flow. End-to-end session flow from pod claim through teardown.
 13. **[Section 13.1](13_security-model.md#131-pod-security)–13.2** — Pod Security and Network Isolation. Security constraints your runtime operates under (seccomp, gVisor, egress rules).
 14. **[Section 14](14_workspace-plan-schema.md)** — Workspace Plan Schema. How workspace sources are declared and materialized before your binary starts.
@@ -2516,7 +2515,7 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
     - **Intra-pod abstract Unix sockets (Standard adds MCP; Full adds lifecycle).** Dial helpers for the Linux abstract-namespace sockets advertised in the adapter manifest (`/run/lenny/adapter-manifest.json`, [§4.7](04_system-components.md#47-runtime-adapter)): `@lenny-platform-mcp` (Standard: platform MCP proxy), `@lenny-connector-<id>` (Standard: per-connector MCP servers), and `@lenny-lifecycle` (Full: agent-side lifecycle channel). There is no `@lenny-<pod_id>-ctl` or equivalent catch-all control socket — every intra-pod channel is purpose-specific.
     - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request and on the lifecycle channel), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest and attach it automatically.
     - **Credential delivery.** Read-only access patterns for `/run/lenny/credentials.json` (present under both proxy and direct delivery modes per [§4.7](04_system-components.md#47-runtime-adapter) manifest `llm` fields), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the env-var export (`llm.apiKeyEnv`) for proxy mode.
-    - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from [§4.7](04_system-components.md#47-runtime-adapter) and [§15.4.1](#1541-adapterbinary-protocol), plus `task_complete` / `task_ready` handling on the lifecycle channel for Full-level task-mode runtimes.
+    - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from [§4.7](04_system-components.md#47-runtime-adapter) and [§15.4.1](#1541-adapterbinary-protocol).
     - **RPC vocabulary.** The `lenny.runtime.*` request/response vocabulary carried over the transports above.
 - **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined in [§4.7](04_system-components.md#47-runtime-adapter): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the platform MCP tool set; this list tracks it. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§15.4.1](#1541-adapterbinary-protocol)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
 - **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode env-var refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).
@@ -2565,11 +2564,12 @@ type CreateRequest struct {
     // ([§15 Shared Adapter Types](#shared-adapter-types)).
     SessionID string `json:"sessionId"`
 
-    // TaskID is the current task identifier. Matches `taskId` in the
-    // adapter manifest. In task-mode pools ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes))
-    // the SDK calls OnCreate again with a new TaskID after each
-    // `task_ready` lifecycle signal; in session-mode pools TaskID equals
-    // the root task ID.
+    // TaskID is the root task identifier for this session. Matches `taskId`
+    // in the adapter manifest. Each session has exactly one execution, and
+    // external protocols surface that execution as a Task
+    // ([§7.1](07_session-lifecycle.md#71-normal-flow)), so TaskID is frozen
+    // for the session's lifetime and OnCreate is invoked once with this
+    // value.
     TaskID string `json:"taskId"`
 
     // RuntimeOptions is the effective options map passed by the caller in
@@ -2583,8 +2583,9 @@ type CreateRequest struct {
     // WorkspacePlan is a reference to the materialized workspace plan for
     // this task ([§14](14_workspace-plan-schema.md)). The files and
     // directories described here have already been staged under
-    // `/workspace/current` (or the per-slot path in concurrent-workspace
-    // mode) before OnCreate is invoked; runtimes typically read this value
+    // `/workspace/current` (or the per-slot path when the pool sets
+    // `maxConcurrentSessions > 1`) before OnCreate is invoked; runtimes
+    // typically read this value
     // for metadata (sources, setup commands actually run) rather than to
     // drive materialization themselves.
     WorkspacePlan *WorkspacePlan `json:"workspacePlan,omitempty"`
@@ -2630,9 +2631,9 @@ type Message struct {
     // CreateRequest.SessionID.
     SessionID string `json:"sessionId"`
 
-    // TaskID is the active task the message belongs to. Populated from
-    // `taskId` in the adapter manifest; equals CreateRequest.TaskID at the
-    // time OnMessage is invoked.
+    // TaskID is the root task identifier of the session the message belongs
+    // to. Populated from `taskId` in the adapter manifest; always equals
+    // CreateRequest.TaskID, which is frozen for the session's lifetime.
     TaskID string `json:"taskId"`
 
     // Sequence is a monotonically increasing, SDK-assigned, per-task

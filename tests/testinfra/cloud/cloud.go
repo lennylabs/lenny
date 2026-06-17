@@ -44,8 +44,8 @@ import (
 type Provider string
 
 const (
-	ProviderGCP Provider = "gcp"
-	ProviderAWS Provider = "aws"
+	ProviderGCP   Provider = "gcp"
+	ProviderAWS   Provider = "aws"
 	ProviderAzure Provider = "azure"
 	// Backwards-compat aliases (LENNY_CLOUD_PROVIDER originally used
 	// the K8s-flavor name; the cloud-broad name is canonical now).

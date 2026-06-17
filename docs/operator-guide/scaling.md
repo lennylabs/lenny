@@ -182,13 +182,16 @@ target_minWarm = ceil(base_demand_p95 × safety_factor × (failover_seconds + po
 
 ### Mode Adjustment Factor
 
-For task and concurrent execution modes, the formula includes a `mode_factor` divisor:
+Pod recycling, concurrent sessions, and service mode change the relationship between pod count and effective capacity, so the formula includes a per-pool `mode_factor` divisor derived from `sessionPolicy` properties (session mode) or from `maxConcurrent` (service mode):
 
-| Mode | `mode_factor` | `burst_mode_factor` |
+| Configuration | `mode_factor` | `burst_mode_factor` |
 |---|---|---|
-| `session` | 1.0 | 1.0 |
-| `task` | `avg_tasks_per_pod_lifetime` (converges toward `maxTasksPerPod`) | 1.0 |
-| `concurrent` | `maxConcurrent` | `maxConcurrent` |
+| `session`, `maxConcurrentSessions: 1`, `recycle.enabled: false` | 1.0 | 1.0 |
+| `session`, `maxConcurrentSessions: 1`, `recycle.enabled: true` | expected sessions per pod lifetime (`lenny_pod_session_reuse_count` p50, converges toward `recycle.maxSessionsPerPod`) | `maxConcurrentSessions` (1) |
+| `session`, `maxConcurrentSessions: N` | expected sessions per pod lifetime | `maxConcurrentSessions` (N) |
+| `service` | `maxConcurrent` | `maxConcurrent` |
+
+`mode_factor` is the expected number of sessions a pod serves over its lifetime in session mode; on a recycling pool the controller uses the observed `lenny_pod_session_reuse_count` p50, falling back to `mode_factor = 1.0` during cold start (default: 100 completed sessions) and bounded above by `recycle.maxSessionsPerPod`. `burst_mode_factor` reflects how many simultaneous arrivals a single pod can absorb: `maxConcurrentSessions` in session mode (1 for a one-session-per-pod or recycling pod) and `maxConcurrent` in service mode.
 
 **Adjusted formula:**
 

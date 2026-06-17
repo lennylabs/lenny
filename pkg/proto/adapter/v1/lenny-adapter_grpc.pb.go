@@ -1213,6 +1213,8 @@ const (
 	GatewayControl_ListSessionConnectors_FullMethodName = "/lenny.adapter.v1.GatewayControl/ListSessionConnectors"
 	GatewayControl_ListConnectorTools_FullMethodName    = "/lenny.adapter.v1.GatewayControl/ListConnectorTools"
 	GatewayControl_CallConnectorTool_FullMethodName     = "/lenny.adapter.v1.GatewayControl/CallConnectorTool"
+	GatewayControl_ReportSessionScrub_FullMethodName    = "/lenny.adapter.v1.GatewayControl/ReportSessionScrub"
+	GatewayControl_ReportPodScrub_FullMethodName        = "/lenny.adapter.v1.GatewayControl/ReportPodScrub"
 )
 
 // GatewayControlClient is the client API for GatewayControl service.
@@ -1280,6 +1282,32 @@ type GatewayControlClient interface {
 	// tool-level failure is an is_error result rather than a gRPC error.
 	// spec: §9.3 lines 142-164.
 	CallConnectorTool(ctx context.Context, in *CallConnectorToolRequest, opts ...grpc.CallOption) (*CallConnectorToolResponse, error)
+	// ReportSessionScrub reports the outcome of the per-slot cleanup the
+	// adapter runs on every session release (§5.2), across the
+	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
+	// RELEASED when the slot's runtime, credential timers, and per-slot
+	// directory tree were torn down cleanly, or LEAKED when a resource could
+	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
+	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
+	// annotation (§4.6.3). The adapter initiates this RPC; a transport
+	// failure is a gRPC status error.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model.
+	ReportSessionScrub(ctx context.Context, in *ReportSessionScrubRequest, opts ...grpc.CallOption) (*ReportSessionScrubResponse, error)
+	// ReportPodScrub reports the binary outcome of the whole-pod scrub the
+	// adapter runs when occupancy reaches zero on a recycling pod and the
+	// gateway has patched the pod's SandboxClaim to recycling (§5.2). The
+	// outcome is SUCCEEDED when the §5.2 scrub sequence completed, or
+	// FAILED otherwise. The gateway resolves the pod from pod_id; on FAILED
+	// it increments scrubFailureCount on the agent_pod_state row and
+	// computes the recycle disposition against sessionPolicy (§4.6.3), and
+	// on SUCCEEDED it records the rewarmStartedAt stamp and coordinates the
+	// SDK re-warm on a preConnect pool, or patches the claim directly to
+	// reserved otherwise. A missing report is bounded by a gateway-side
+	// timeout (cleanupTimeoutSeconds plus a grace period). The adapter
+	// initiates this RPC; a transport failure is a gRPC status error.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+	ReportPodScrub(ctx context.Context, in *ReportPodScrubRequest, opts ...grpc.CallOption) (*ReportPodScrubResponse, error)
 }
 
 type gatewayControlClient struct {
@@ -1344,6 +1372,26 @@ func (c *gatewayControlClient) CallConnectorTool(ctx context.Context, in *CallCo
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CallConnectorToolResponse)
 	err := c.cc.Invoke(ctx, GatewayControl_CallConnectorTool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayControlClient) ReportSessionScrub(ctx context.Context, in *ReportSessionScrubRequest, opts ...grpc.CallOption) (*ReportSessionScrubResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportSessionScrubResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_ReportSessionScrub_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gatewayControlClient) ReportPodScrub(ctx context.Context, in *ReportPodScrubRequest, opts ...grpc.CallOption) (*ReportPodScrubResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportPodScrubResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_ReportPodScrub_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1415,6 +1463,32 @@ type GatewayControlServer interface {
 	// tool-level failure is an is_error result rather than a gRPC error.
 	// spec: §9.3 lines 142-164.
 	CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error)
+	// ReportSessionScrub reports the outcome of the per-slot cleanup the
+	// adapter runs on every session release (§5.2), across the
+	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
+	// RELEASED when the slot's runtime, credential timers, and per-slot
+	// directory tree were torn down cleanly, or LEAKED when a resource could
+	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
+	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
+	// annotation (§4.6.3). The adapter initiates this RPC; a transport
+	// failure is a gRPC status error.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model.
+	ReportSessionScrub(context.Context, *ReportSessionScrubRequest) (*ReportSessionScrubResponse, error)
+	// ReportPodScrub reports the binary outcome of the whole-pod scrub the
+	// adapter runs when occupancy reaches zero on a recycling pod and the
+	// gateway has patched the pod's SandboxClaim to recycling (§5.2). The
+	// outcome is SUCCEEDED when the §5.2 scrub sequence completed, or
+	// FAILED otherwise. The gateway resolves the pod from pod_id; on FAILED
+	// it increments scrubFailureCount on the agent_pod_state row and
+	// computes the recycle disposition against sessionPolicy (§4.6.3), and
+	// on SUCCEEDED it records the rewarmStartedAt stamp and coordinates the
+	// SDK re-warm on a preConnect pool, or patches the claim directly to
+	// reserved otherwise. A missing report is bounded by a gateway-side
+	// timeout (cleanupTimeoutSeconds plus a grace period). The adapter
+	// initiates this RPC; a transport failure is a gRPC status error.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+	ReportPodScrub(context.Context, *ReportPodScrubRequest) (*ReportPodScrubResponse, error)
 }
 
 // UnimplementedGatewayControlServer should be embedded to have
@@ -1441,6 +1515,12 @@ func (UnimplementedGatewayControlServer) ListConnectorTools(context.Context, *Li
 }
 func (UnimplementedGatewayControlServer) CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CallConnectorTool not implemented")
+}
+func (UnimplementedGatewayControlServer) ReportSessionScrub(context.Context, *ReportSessionScrubRequest) (*ReportSessionScrubResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportSessionScrub not implemented")
+}
+func (UnimplementedGatewayControlServer) ReportPodScrub(context.Context, *ReportPodScrubRequest) (*ReportPodScrubResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportPodScrub not implemented")
 }
 func (UnimplementedGatewayControlServer) testEmbeddedByValue() {}
 
@@ -1570,6 +1650,42 @@ func _GatewayControl_CallConnectorTool_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GatewayControl_ReportSessionScrub_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportSessionScrubRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).ReportSessionScrub(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_ReportSessionScrub_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).ReportSessionScrub(ctx, req.(*ReportSessionScrubRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GatewayControl_ReportPodScrub_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportPodScrubRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).ReportPodScrub(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_ReportPodScrub_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).ReportPodScrub(ctx, req.(*ReportPodScrubRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GatewayControl_ServiceDesc is the grpc.ServiceDesc for GatewayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1600,6 +1716,14 @@ var GatewayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CallConnectorTool",
 			Handler:    _GatewayControl_CallConnectorTool_Handler,
+		},
+		{
+			MethodName: "ReportSessionScrub",
+			Handler:    _GatewayControl_ReportSessionScrub_Handler,
+		},
+		{
+			MethodName: "ReportPodScrub",
+			Handler:    _GatewayControl_ReportPodScrub_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -9,11 +9,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// TestCoarseState_spec_6_2 covers the §6.2 lines 305-313 coarse pod-state
-// mapping: the lenny.dev/state pod label carries only idle/active/draining.
-// idle maps to idle, draining to draining, every claimed/serving phase to
-// active, and the pre-ready (warming, sdk_connecting) and terminal phases
-// have no coarse value (so the reconciler omits the label).
+// TestCoarseState_spec_6_2 covers the §6.2 coarse pod-state mapping: the
+// lenny.dev/state pod label carries only idle/active/draining. idle maps to
+// idle, draining to draining, the occupied phases (claimed, reserved) to
+// active, and the pre-ready (warming, sdk_connecting) and terminal (failed,
+// terminated) phases have no coarse value (so the reconciler omits the
+// label). reserved maps to active: a recycled pod held for its pinned tenant
+// is excluded from idle inventory, so claimed and reserved both project
+// active and the label never leaves active across the recycle and hold
+// window (spec §6.2 "reserved hold semantics"). sdk_connecting stays
+// unmapped on the recycle SDK re-warm leg exactly as it is on the warm-fill
+// leg, because the phase cannot distinguish an occupied recycling pod from
+// unclaimed pre-idle inventory (spec §6.2).
 func TestCoarseState_spec_6_2(t *testing.T) {
 	cases := []struct {
 		phase state.State
@@ -22,26 +29,18 @@ func TestCoarseState_spec_6_2(t *testing.T) {
 	}{
 		{state.Idle, "idle", true},
 		{state.Draining, "draining", true},
+		// reserved: recycled pod held for its pinned tenant, excluded from
+		// idle inventory, so the PDB idle selector must not match it.
+		{state.Reserved, "active", true},
 		{state.Claimed, "active", true},
-		{state.ReceivingUploads, "active", true},
-		{state.FinalizingWorkspace, "active", true},
-		{state.RunningSetup, "active", true},
-		{state.StartingSession, "active", true},
-		{state.Attached, "active", true},
-		{state.TaskCleanup, "active", true},
-		{state.SlotActive, "active", true},
-		{state.Resuming, "active", true},
-		{state.Suspended, "active", true},
-		{state.ResumePending, "active", true},
-		{state.AwaitingClientAction, "active", true},
 		// Pre-ready: not yet claimable, no coarse operational value.
 		{state.Warming, "", false},
+		// sdk_connecting is unmapped on both the warm-fill leg and the
+		// recycle SDK re-warm leg, so the reconciler removes the label in
+		// both windows. spec §6.2.
 		{state.SDKConnecting, "", false},
-		// Terminal: the pod is gone, no coarse value.
-		{state.Completed, "", false},
+		// Terminal: the pod is gone or being reclaimed, no coarse value.
 		{state.Failed, "", false},
-		{state.Cancelled, "", false},
-		{state.Expired, "", false},
 		{state.Terminated, "", false},
 	}
 	for _, tc := range cases {
@@ -51,7 +50,112 @@ func TestCoarseState_spec_6_2(t *testing.T) {
 		}
 		// The label must only ever hold one of the three documented values.
 		if ok && got != state.CoarseIdle && got != state.CoarseActive && got != state.CoarseDraining {
-			t.Errorf("CoarseState(%q) = %q, which is outside the §6.2 line 309 value set", tc.phase, got)
+			t.Errorf("CoarseState(%q) = %q, which is outside the §6.2 value set", tc.phase, got)
+		}
+	}
+}
+
+// TestCoarseStateReservedAndSDKConnecting_spec_6_2 pins the two §6.2
+// recycle-window mappings this proposal turns on. reserved projects active
+// exactly as claimed does, so the §4.6.1 PDB idle selector never matches a
+// held recycled pod and the label does not oscillate as same-tenant
+// sessions rebind within the hold; sdk_connecting stays unmapped on the
+// recycle SDK re-warm leg exactly as on the warm-fill leg, so the
+// reconciler removes the label in that window because the phase cannot
+// distinguish an occupied recycling pod from unclaimed pre-idle inventory.
+func TestCoarseStateReservedAndSDKConnecting_spec_6_2(t *testing.T) {
+	t.Parallel()
+	reserved, reservedOK := state.CoarseState(state.Reserved)
+	claimed, claimedOK := state.CoarseState(state.Claimed)
+	if !reservedOK || reserved != state.CoarseActive {
+		t.Errorf("CoarseState(reserved) = (%q, %v), want (%q, true)", reserved, reservedOK, state.CoarseActive)
+	}
+	if reserved != claimed || reservedOK != claimedOK {
+		t.Errorf("CoarseState(reserved) = (%q, %v), want parity with CoarseState(claimed) = (%q, %v)",
+			reserved, reservedOK, claimed, claimedOK)
+	}
+	if got, ok := state.CoarseState(state.SDKConnecting); ok || got != "" {
+		t.Errorf("CoarseState(sdk_connecting) = (%q, %v), want (\"\", false) — unmapped on warm-fill and re-warm legs", got, ok)
+	}
+}
+
+// TestConcurrentOccupancyCollapsesToClaimed_spec_6_2 pins the removal of the
+// former slot_active phase. With the coarse occupancy enum the phase carries
+// no separate concurrent-occupancy value: a pod serving any number of
+// concurrent sessions projects claimed, which maps to active, so concurrency
+// is observable through the Redis slot counter and metrics rather than a
+// distinct phase or pod-label value. The phase string "slot_active" must
+// therefore not appear in All(), must carry no coarse mapping, and must have
+// no valid transitions. The claimed → claimed self-edge represents an
+// additional or completing session while occupancy stays nonzero.
+func TestConcurrentOccupancyCollapsesToClaimed_spec_6_2(t *testing.T) {
+	t.Parallel()
+	const slotActive state.State = "slot_active"
+	for _, s := range state.All() {
+		if s == slotActive {
+			t.Fatal("state.All() still contains slot_active — concurrent occupancy must collapse to claimed")
+		}
+	}
+	if got, ok := state.CoarseState(slotActive); ok || got != "" {
+		t.Errorf("CoarseState(slot_active) = (%q, %v), want (\"\", false) — the phase no longer exists", got, ok)
+	}
+	// No transition may name slot_active as a source or target.
+	for _, tr := range state.ValidTransitions() {
+		if tr.From == slotActive || tr.To == slotActive {
+			t.Errorf("ValidTransitions() still contains a slot_active edge %q → %q", tr.From, tr.To)
+		}
+	}
+	// Concurrent occupancy projects claimed (active) and cycles through the
+	// claimed → claimed self-edge as sessions are added or complete.
+	if got, ok := state.CoarseState(state.Claimed); !ok || got != state.CoarseActive {
+		t.Errorf("CoarseState(claimed) = (%q, %v), want (%q, true) — concurrent occupancy collapses to claimed→active", got, ok, state.CoarseActive)
+	}
+	if err := state.IsValid(state.Claimed, state.Claimed); err != nil {
+		t.Errorf("IsValid(claimed, claimed) = %v, want nil — concurrent-occupancy self-edge", err)
+	}
+}
+
+// TestCoarseEnumIsTheAuthoritativeSet_spec_6_2 pins that All() is exactly the
+// §6.2 coarse pod-occupancy enum and that the fine session/setup states the
+// proposal moved to the Postgres session model (spec §6.2, §6.37) are no
+// longer coarse CRD phases: they carry no coarse mapping and no transition.
+func TestCoarseEnumIsTheAuthoritativeSet_spec_6_2(t *testing.T) {
+	t.Parallel()
+	want := map[state.State]bool{
+		state.Warming: true, state.SDKConnecting: true, state.Idle: true,
+		state.Reserved: true, state.Claimed: true, state.Failed: true,
+		state.Draining: true, state.Terminated: true,
+	}
+	got := map[state.State]bool{}
+	for _, s := range state.All() {
+		got[s] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("All() = %v, want exactly the %d coarse §6.2 phases", got, len(want))
+	}
+	for s := range want {
+		if !got[s] {
+			t.Errorf("All() is missing coarse phase %q", s)
+		}
+	}
+	// The fine session/setup states moved to the Postgres session model.
+	removed := []state.State{
+		"receiving_uploads", "finalizing_workspace", "running_setup",
+		"starting_session", "attached", "task_cleanup", "resuming",
+		"suspended", "resume_pending", "awaiting_client_action",
+		"completed", "cancelled", "expired",
+	}
+	for _, s := range removed {
+		if got[s] {
+			t.Errorf("All() still contains removed fine state %q — it moved to the Postgres session model", s)
+		}
+		if _, ok := state.CoarseState(s); ok {
+			t.Errorf("CoarseState(%q) is mapped — the fine state must carry no coarse label value", s)
+		}
+		for _, tr := range state.ValidTransitions() {
+			if tr.From == s || tr.To == s {
+				t.Errorf("ValidTransitions() still contains a %q edge %q → %q — the fine state must have no CRD edge", s, tr.From, tr.To)
+			}
 		}
 	}
 }
@@ -63,8 +167,7 @@ func TestCoarseState_spec_6_2(t *testing.T) {
 func TestCoarseStateCoversEveryPhase_spec_6_2(t *testing.T) {
 	noCoarse := map[state.State]bool{
 		state.Warming: true, state.SDKConnecting: true,
-		state.Completed: true, state.Failed: true, state.Cancelled: true,
-		state.Expired: true, state.Terminated: true,
+		state.Failed: true, state.Terminated: true,
 	}
 	for _, s := range state.All() {
 		_, ok := state.CoarseState(s)
@@ -74,171 +177,54 @@ func TestCoarseStateCoversEveryPhase_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: 6.2
-// diagnosis: A canonical Sandbox state from spec §6.2 is missing from
-//
-//	state.All(). Phase 1 introduces suspended, resume_pending,
-//	awaiting_client_action, resuming, task_cleanup, and the
-//	sdk_connecting fork.
-func TestAllStatesIncludePhase1Additions(t *testing.T) {
+// TestRecycleEdges_spec_6_2 covers the §6.2 recycle edges this proposal adds:
+// the occupancy-zero re-warm (claimed → sdk_connecting on preConnect pools),
+// the non-preConnect reserve (claimed → reserved), the re-warm completion
+// (sdk_connecting → reserved), the same-tenant rebind (reserved → claimed),
+// the hold-expiry return to idle (reserved → idle), and the retire edge
+// (claimed → draining). spec §6.2 "Recycle edges".
+func TestRecycleEdges_spec_6_2(t *testing.T) {
 	t.Parallel()
-	required := []state.State{
-		state.Suspended, state.ResumePending, state.AwaitingClientAction,
-		state.Resuming, state.TaskCleanup, state.SDKConnecting,
+	edges := []state.Transition{
+		{From: state.Claimed, To: state.SDKConnecting},
+		{From: state.Claimed, To: state.Reserved},
+		{From: state.SDKConnecting, To: state.Reserved},
+		{From: state.Reserved, To: state.Claimed},
+		{From: state.Reserved, To: state.Idle},
+		{From: state.Claimed, To: state.Draining},
 	}
-	got := map[state.State]bool{}
-	for _, s := range state.All() {
-		got[s] = true
-	}
-	for _, s := range required {
-		if !got[s] {
-			t.Errorf("state.All() is missing %q (added/required in Phase 1)", s)
-		}
-	}
-}
-
-// spec: 5.2
-// diagnosis: the concurrent-mode (§5.2) slot_active phase or one of its
-// §6.2 transitions is missing from the Sandbox state machine. Phase 12c
-// adds slot_active: a concurrent-mode pod hosts up to maxConcurrent
-// slots, entering slot_active on the first slot and returning to idle
-// when the last slot drains.
-func TestSlotActivePhaseAndTransitions(t *testing.T) {
-	t.Parallel()
-	found := false
-	for _, s := range state.All() {
-		if s == state.SlotActive {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("state.All() is missing slot_active (added in Phase 12c)")
-	}
-	// §6.2 concurrent-mode slot edges.
-	required := []state.Transition{
-		{From: state.Idle, To: state.SlotActive},       // first slot
-		{From: state.SlotActive, To: state.SlotActive}, // further slot / sibling drains
-		{From: state.SlotActive, To: state.Idle},       // last slot drains
-		{From: state.SlotActive, To: state.Draining},   // unhealthy threshold / uptime
-	}
-	for _, tr := range required {
-		if err := state.IsValid(tr.From, tr.To); err != nil {
-			t.Errorf("IsValid(%q, %q) = %v, want nil — concurrent-mode edge", tr.From, tr.To, err)
-		}
-	}
-	// slot_active is not a terminal phase.
-	if state.IsTerminal(state.SlotActive) {
-		t.Error("slot_active must not be a terminal phase")
-	}
-}
-
-// spec: 6.2
-// diagnosis: the §6.2 line 87 starting_session phase (between
-// running_setup and attached on the pod-warm path) or one of its edges is
-// missing from the Sandbox state machine. spec §6.2 lines 102-103 require
-// starting_session → failed (retries exhausted) and starting_session →
-// resume_pending (post-attached visibility, retries remain); line 87
-// requires running_setup → starting_session → attached.
-func TestStartingSessionPhaseAndTransitions_spec_6_2(t *testing.T) {
-	t.Parallel()
-	found := false
-	for _, s := range state.All() {
-		if s == state.StartingSession {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("state.All() is missing starting_session (spec §6.2 line 87)")
-	}
-	required := []state.Transition{
-		{From: state.RunningSetup, To: state.StartingSession},  // §6.2 line 87
-		{From: state.StartingSession, To: state.Attached},      // §6.2 line 87
-		{From: state.StartingSession, To: state.Failed},        // §6.2 line 102
-		{From: state.StartingSession, To: state.ResumePending}, // §6.2 line 103
-	}
-	for _, tr := range required {
-		if err := state.IsValid(tr.From, tr.To); err != nil {
-			t.Errorf("IsValid(%q, %q) = %v, want nil — §6.2 starting_session edge", tr.From, tr.To, err)
-		}
-	}
-	if state.IsTerminal(state.StartingSession) {
-		t.Error("starting_session must not be a terminal phase")
-	}
-}
-
-// TestSessionTerminalDrainEdges_spec_6_2 covers the pod-reclamation drain
-// edges from the §6.2 session-terminal phases. A session-mode pod is
-// exclusive (§6.2 line 194), so once its session reaches a terminal phase the
-// gateway records the disposition and then drains the pod for replacement.
-// The terminal phases therefore carry an outgoing pod-cleanup edge to
-// draining while remaining session-terminal for the §6.2 line 269 timer
-// accounting; the two axes coexist.
-func TestSessionTerminalDrainEdges_spec_6_2(t *testing.T) {
-	t.Parallel()
-	for _, from := range []state.State{state.Completed, state.Failed, state.Cancelled, state.Expired} {
-		from := from
-		t.Run(string(from), func(t *testing.T) {
+	for _, tr := range edges {
+		tr := tr
+		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
 			t.Parallel()
-			if err := state.IsValid(from, state.Draining); err != nil {
-				t.Errorf("IsValid(%q, draining) = %v, want nil — session-terminal pod reclamation edge", from, err)
-			}
-			// The drain edge does not make the phase non-terminal: the
-			// session-timer axis is independent of the pod-cleanup axis.
-			if !state.IsTerminal(from) {
-				t.Errorf("IsTerminal(%q) = false, want true — drain edge must not flip session terminality", from)
-			}
-			// The drain is the only outgoing edge: a terminal phase still
-			// cannot return to the claimable set.
-			if err := state.IsValid(from, state.Idle); err == nil {
-				t.Errorf("IsValid(%q, idle) = nil, want error — a terminal phase must not return to idle", from)
+			if err := state.IsValid(tr.From, tr.To); err != nil {
+				t.Errorf("IsValid(%q, %q) = %v, want nil — §6.2 recycle edge", tr.From, tr.To, err)
 			}
 		})
 	}
 }
 
-// spec: §6.2 line 146 — cancelled → task_cleanup is the task-mode
-// cancellation edge: an acknowledged cancellation runs the same scrub as
-// a completed task, then rejoins or retires per the task_cleanup
-// disposition. The edge leaves a session-terminal phase (cancelled stays
-// terminal), exactly like the cancelled → draining reclamation edge.
-func TestCancelledTaskCleanupEdge_spec_6_2(t *testing.T) {
-	t.Parallel()
-	if err := state.IsValid(state.Cancelled, state.TaskCleanup); err != nil {
-		t.Errorf("IsValid(cancelled, task_cleanup) = %v, want nil — §6.2 line 146 task-mode cancellation edge", err)
-	}
-	if !state.IsTerminal(state.Cancelled) {
-		t.Errorf("IsTerminal(cancelled) = false, want true — the task_cleanup edge must not flip session terminality")
-	}
-	// task_cleanup advances to exactly the four §6.2 disposition phases.
-	for _, to := range []state.State{state.Idle, state.SDKConnecting, state.Draining, state.Failed} {
-		if err := state.IsValid(state.TaskCleanup, to); err != nil {
-			t.Errorf("IsValid(task_cleanup, %q) = %v, want nil", to, err)
-		}
-	}
-}
-
 // spec: 6.2
-// diagnosis: state.IsTerminal returned the wrong value. Sandbox terminal
+// diagnosis: state.IsTerminal returned the wrong value. The coarse §6.2
 //
-//	states per spec §6.2 are the four session-terminal states (line 269:
-//	completed, failed, cancelled, expired) plus the pod-lifecycle terminal
-//	terminated. completed is terminal (§6.2 lines 96-99 attached/suspended
-//	→ completed with no edge back out). Pods in `draining` are not terminal.
+//	terminal phases are failed (warm-fill / re-warm failure) and terminated
+//	(pod-lifecycle terminal). The fine session-terminal states moved to the
+//	Postgres session model. Pods in draining or any live occupancy phase are
+//	not terminal.
 func TestIsTerminal(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		s    state.State
 		want bool
 	}{
-		{state.Completed, true},
 		{state.Failed, true},
-		{state.Cancelled, true},
-		{state.Expired, true},
 		{state.Terminated, true},
 		{state.Draining, false},
 		{state.Idle, false},
-		{state.Suspended, false},
-		{state.StartingSession, false},
+		{state.Claimed, false},
+		{state.Reserved, false},
+		{state.Warming, false},
+		{state.SDKConnecting, false},
 	}
 	for _, c := range cases {
 		c := c
@@ -272,19 +258,21 @@ func TestIsValidCanonicalTransitions(t *testing.T) {
 // spec: 6.2
 // diagnosis: IsValid accepted a transition that is not in
 //
-//	ValidTransitions(). Sandbox state machine forbids these
-//	edges per §6.2.
+//	ValidTransitions(). The coarse §6.2 state machine forbids these edges,
+//	including any edge naming a removed fine session/setup state.
 func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 	t.Parallel()
 	illegal := []state.Transition{
-		{state.Idle, state.Attached},
+		{state.Idle, state.Reserved},
 		{state.Failed, state.Idle},
 		{state.Terminated, state.Idle},
 		{state.Warming, state.Claimed},
-		// spec §6.2 line 87: the pod-warm chain routes running_setup →
-		// starting_session → attached, so a direct running_setup → attached
-		// edge is no longer valid.
-		{state.RunningSetup, state.Attached},
+		// A terminal phase cannot return to the claimable set.
+		{state.Terminated, state.Draining},
+		// The fine session/setup states are not CRD phases, so no edge names
+		// them (spec §6.2, §6.37).
+		{state.Claimed, "attached"},
+		{state.Claimed, "task_cleanup"},
 	}
 	for _, tr := range illegal {
 		tr := tr

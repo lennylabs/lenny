@@ -22,16 +22,17 @@ type stubPreAuth struct {
 	fail   interceptor.FailPolicy
 }
 
-func (s stubPreAuth) Name() string                   { return "stub" }
-func (s stubPreAuth) Priority() int32                { return 100 }
-func (s stubPreAuth) Builtin() bool                  { return true }
-func (s stubPreAuth) Timeout() time.Duration         { return 0 }
+func (s stubPreAuth) Name() string           { return "stub" }
+func (s stubPreAuth) Priority() int32        { return 100 }
+func (s stubPreAuth) Builtin() bool          { return true }
+func (s stubPreAuth) Timeout() time.Duration { return 0 }
 func (s stubPreAuth) FailPolicy() interceptor.FailPolicy {
 	if s.fail == "" {
 		return interceptor.FailClosed
 	}
 	return s.fail
 }
+
 func (s stubPreAuth) Intercept(_ context.Context, _ interceptor.Request) (interceptor.Result, error) {
 	if s.err != nil {
 		return interceptor.Result{}, s.err

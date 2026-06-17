@@ -35,15 +35,16 @@ func init() {
 }
 
 type Scenario struct {
-	counters     *scenkit.Counters
-	server       *httptest.Server
-	innerServed  atomic.Int64
+	counters    *scenkit.Counters
+	server      *httptest.Server
+	innerServed atomic.Int64
 }
 
 func (s *Scenario) Name() string { return name }
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second}
 }
+
 func (s *Scenario) RampProfiles() []loadgen.Profile {
 	return []loadgen.Profile{
 		{Kind: loadgen.ConstantVU, VUs: 16, Duration: 1 * time.Second},
@@ -93,6 +94,9 @@ func (s *Scenario) Teardown(ctx context.Context) error {
 	if s.server != nil {
 		s.server.Close()
 	}
+	// Evict the shared client's idle connections to the now-closed test
+	// server so they do not linger across the back-to-back battery.
+	scenkit.CloseIdleConnections()
 	return nil
 }
 
@@ -103,26 +107,27 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	if iter%2 == 0 {
 		op = "uploads"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.server.URL+"/v1/test?op="+op, nil)
-	if err != nil {
-		s.counters.Inc("client_error")
-		return nil
-	}
-	resp, err := s.server.Client().Do(req)
+	// Drive the breaker handler through the shared scenkit client: its
+	// MaxConnsPerHost cap forces the high-rate run to reuse a bounded
+	// connection pool and drains every response body, so the back-to-back
+	// SLO battery does not exhaust the loopback ephemeral port range
+	// ("connect: can't assign requested address"). The default httptest
+	// client opened a fresh socket per breaker-reject (503) request and
+	// blew the 49152-65535 range within one 2s run.
+	status, _, err := scenkit.DoJSON(ctx, http.MethodPost, s.server.URL+"/v1/test?op="+op, nil)
 	if err != nil {
 		s.counters.Inc("transport_error")
 		return nil
 	}
-	_ = resp.Body.Close()
 	switch {
-	case op == "uploads" && resp.StatusCode == http.StatusServiceUnavailable:
+	case op == "uploads" && status == http.StatusServiceUnavailable:
 		s.counters.Inc("uploads_rejected")
-	case op == "uploads" && resp.StatusCode == http.StatusOK:
+	case op == "uploads" && status == http.StatusOK:
 		s.counters.Inc("uploads_admitted_unexpected")
 		return fmt.Errorf("§11.6 violated: uploads request admitted through open breaker")
-	case op == "session_creation" && resp.StatusCode == http.StatusOK:
+	case op == "session_creation" && status == http.StatusOK:
 		s.counters.Inc("session_admitted")
-	case op == "session_creation" && resp.StatusCode == http.StatusServiceUnavailable:
+	case op == "session_creation" && status == http.StatusServiceUnavailable:
 		s.counters.Inc("session_rejected_unexpected")
 		return fmt.Errorf("§11.6 violated: session_creation rejected by an unrelated breaker")
 	default:

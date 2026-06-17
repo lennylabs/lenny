@@ -26,7 +26,8 @@ func TestTransportSSRFGuard_spec_25_5(t *testing.T) {
 
 	// Rejecting guard: the receiver is never contacted.
 	rejecting := webhookdelivery.NewTransport(2 * time.Second).WithSSRFGuard(
-		func(context.Context, string) error { return errors.New("resolved to private range") })
+		func(context.Context, string) error { return errors.New("resolved to private range") },
+	)
 	out := rejecting.Deliver(context.Background(), webhookdelivery.Delivery{
 		CallbackURL: srv.URL, Body: []byte("{}"), Secret: []byte("s"),
 	})
@@ -39,7 +40,8 @@ func TestTransportSSRFGuard_spec_25_5(t *testing.T) {
 
 	// Passing guard: the delivery reaches the receiver.
 	allowing := webhookdelivery.NewTransport(2 * time.Second).WithSSRFGuard(
-		func(context.Context, string) error { return nil })
+		func(context.Context, string) error { return nil },
+	)
 	out = allowing.Deliver(context.Background(), webhookdelivery.Delivery{
 		CallbackURL: srv.URL, Body: []byte("{}"), Secret: []byte("s"),
 	})
