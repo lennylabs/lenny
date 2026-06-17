@@ -2,15 +2,19 @@
 
 //go:build load_cloud
 
-// concurrent-workspace mode cloud-load tests. §5.2's `concurrent` +
-// `concurrencyStyle: workspace` mode multiplexes multiple sessions
-// onto one pod, each session bound to its own materialized
+// concurrent-workspace cloud-load tests. §5.2's session mode with
+// sessionPolicy.maxConcurrentSessions > 1 multiplexes multiple
+// sessions onto one pod, each session bound to its own materialized
 // workspace slot. The runtime fixture
 // (agent-workload-load.yaml.tmpl::load-cworkspace-template) declares
-// maxConcurrent=${LOAD_CWORKSPACE_SLOTS} so each warm pod hosts
-// that many concurrent sessions. The scenarios stress the §4.6
-// slot-claim path (vs. the session-mode pod-claim path) and the
-// §5.2 concurrentWorkspacePolicy cleanup loop.
+// executionMode: session; the per-pod slot count
+// (maxConcurrentSessions) and the acknowledgeProcessLevelIsolation
+// acknowledgment live in the gateway poolstore per the §4.6.3
+// ownership boundary rather than on the CRD template. The scenarios
+// stress the §4.6 slot-claim path (the per-slot claim that the
+// gateway's SlotClaimer drives when maxConcurrentSessions > 1, vs.
+// the one-session-per-pod claim path) and the §5.2 per-slot cleanup
+// loop.
 
 package tier12_load_cloud_test
 
@@ -28,10 +32,9 @@ const cworkspaceModeRuntime = "load-cworkspace-runtime"
 // session creation against the concurrent-workspace pool. The
 // gateway routes each session to a free slot on an existing warm
 // pod (via §4.6 SlotClaimer's CAS) rather than claiming a new pod;
-// pod density should match LOAD_CWORKSPACE_SLOTS per pod. A failure
-// means slot-claim regressed past the per-claim SLO or the §5.2
-// cleanupTimeoutSeconds budget exhausted under sustained slot
-// churn.
+// pod density should match the pool's maxConcurrentSessions per pod.
+// A failure means slot-claim regressed past the per-claim SLO or the
+// §5.2 per-slot cleanup budget exhausted under sustained slot churn.
 func TestCloudConcurrentWorkspaceSlotClaim(t *testing.T) {
 	_ = requireCloudLoad(t)
 	s := loadScale(t)

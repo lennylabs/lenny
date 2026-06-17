@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: MIT
 #
 # Tier-7 cloud-load runtime fixture. Adds one §5.2 runtime + template
-# + warm pool per execution mode (session, concurrent-workspace,
-# concurrent-stateless, task) so the cloud-load scenarios exercise
-# every mode the spec defines, not only `session`. The image is
-# lenny-runtime-echo (a test stub that echoes; no LLM, no
-# credentials), aliased to per-mode names so the scenarios target
-# the mode directly.
+# + warm pool per execution profile (session, concurrent-workspace,
+# concurrent-stateless, task) so the cloud-load scenarios exercise the
+# pool profiles the spec defines. The image is lenny-runtime-echo (a
+# test stub that echoes; no LLM, no credentials), aliased to per-profile
+# names so the scenarios target the profile directly. The
+# concurrent-workspace profile is session mode with
+# sessionPolicy.maxConcurrentSessions > 1; the slot count and the
+# acknowledgeProcessLevelIsolation acknowledgment live in the gateway
+# poolstore (§4.6.3) rather than on the CRD template.
 #
 # This file is a `envsubst` template. scripts/cloud/<provider>/run-load.sh
 # resolves the LOAD_* placeholders from LENNY_LOAD_SCALE and
@@ -19,7 +22,6 @@
 #   ${LOAD_SESSION_MAX}        — session pool maxWarm.
 #   ${LOAD_CWORKSPACE_MIN}     — concurrent-workspace pool minWarm.
 #   ${LOAD_CWORKSPACE_MAX}     — concurrent-workspace pool maxWarm.
-#   ${LOAD_CWORKSPACE_SLOTS}   — per-pod slot count for concurrent-workspace.
 #   ${LOAD_CSTATELESS_MIN}     — concurrent-stateless pool minWarm.
 #   ${LOAD_CSTATELESS_MAX}     — concurrent-stateless pool maxWarm.
 #   ${LOAD_CSTATELESS_SLOTS}   — per-pod slot count for concurrent-stateless.
@@ -28,12 +30,14 @@
 #   ${LOAD_TASK_MAX_PER_POD}   — task pool MaxTasksPerPod cap.
 #
 # The session-mode runtime maps `runtimeRef: load-session-runtime`
-# on the create body to a real warm pod. The concurrent-* runtimes
-# require the deployer-acknowledgment fields per §5.2 and the
-# §13.1 pool-config admission webhook; the task runtime requires
-# acknowledgeBestEffortScrub + MaxTasksPerPod. All four are
-# isolationProfile: standard so the gateway's --default-isolation-profile
-# matches without an explicit override on every scenario.
+# on the create body to a real warm pod. The concurrent-workspace
+# pool's maxConcurrentSessions and acknowledgeProcessLevelIsolation
+# acknowledgment live in the gateway poolstore (§4.6.3), so its CRD
+# template carries executionMode: session with no acknowledgment
+# field; the task runtime requires acknowledgeBestEffortScrub +
+# MaxTasksPerPod on the template. All four pools are isolationProfile:
+# standard so the gateway's --default-isolation-profile matches
+# without an explicit override on every scenario.
 
 ---
 apiVersion: lenny.dev/v1alpha1
@@ -68,9 +72,13 @@ spec:
   minWarm: ${LOAD_SESSION_MIN}
   maxWarm: ${LOAD_SESSION_MAX}
 ---
-# concurrent-workspace: one pod hosts multiple sessions, each with
-# its own materialized workspace. The deployer acknowledges that
-# slots share the pod's process namespace.
+# concurrent-workspace: one pod hosts multiple concurrent sessions,
+# each with its own materialized workspace slot. This is session mode
+# with sessionPolicy.maxConcurrentSessions > 1. The slot count and the
+# acknowledgeProcessLevelIsolation deployer acknowledgment live in the
+# gateway poolstore per the §4.6.3 ownership boundary, so the CRD
+# template carries executionMode: session only; the runtime container
+# materializes a per-slot workspace under /workspace/slots/{slotId}/.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -79,7 +87,7 @@ spec:
   type: agent
   image: ${LOAD_RUNTIME_IMAGE}
   integrationLevel: basic
-  executionMode: concurrent
+  executionMode: session
   isolationProfile: standard
   deploymentModel: sidecar
 ---
@@ -91,12 +99,7 @@ metadata:
 spec:
   runtimeRef: load-cworkspace-runtime
   isolationProfile: standard
-  executionMode: concurrent
-  concurrencyStyle: workspace
-  maxConcurrent: ${LOAD_CWORKSPACE_SLOTS}
-  concurrentWorkspacePolicy:
-    acknowledgeProcessLevelIsolation: true
-    cleanupTimeoutSeconds: 60
+  executionMode: session
 ---
 apiVersion: lenny.dev/v1alpha1
 kind: SandboxWarmPool
