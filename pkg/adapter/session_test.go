@@ -43,8 +43,12 @@ type fakeRuntime struct {
 	// one runtime process per pod serves every slot over one connection,
 	// so each concurrent Attach stream sees the runtime's full output and
 	// demultiplexes by slotId. fanOnce starts the single fan-out reader on
-	// the first Output call.
+	// the first Output call. subCond signals every change to len(subs) so a
+	// concurrent-slot test can wait for both Attach handlers to subscribe
+	// before writing to f.output, since a frame written before a slot
+	// subscribes is not delivered to that slot's later subscription.
 	subs    []chan []byte
+	subCond *sync.Cond
 	fanOnce sync.Once
 }
 
@@ -93,6 +97,10 @@ func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error)
 	sub := make(chan []byte, 8)
 	f.mu.Lock()
 	f.subs = append(f.subs, sub)
+	if f.subCond == nil {
+		f.subCond = sync.NewCond(&f.mu)
+	}
+	f.subCond.Broadcast()
 	f.mu.Unlock()
 	f.fanOnce.Do(func() {
 		go func() {
@@ -142,6 +150,39 @@ func (f *fakeRuntime) interruptsSnapshot() []bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]bool(nil), f.interrupts...)
+}
+
+// waitForSubscribers blocks until at least n Output subscribers have
+// registered. A concurrent-slot test calls this before writing to f.output
+// so every per-slot Attach handler has subscribed to the single fan-out
+// first; the production SocketRuntimeProcess delivers each frame only to the
+// subscribers present when the frame arrives, so a frame written before a
+// slot subscribes would be lost to that slot. The timeout fails the test
+// rather than hanging when a handler never subscribes.
+func (f *fakeRuntime) waitForSubscribers(t *testing.T, n int) {
+	t.Helper()
+	f.mu.Lock()
+	if f.subCond == nil {
+		f.subCond = sync.NewCond(&f.mu)
+	}
+	// A watchdog goroutine wakes the wait so a missing subscriber surfaces
+	// as a test failure instead of a deadlock.
+	timedOut := false
+	timer := time.AfterFunc(5*time.Second, func() {
+		f.mu.Lock()
+		timedOut = true
+		f.subCond.Broadcast()
+		f.mu.Unlock()
+	})
+	defer timer.Stop()
+	for len(f.subs) < n && !timedOut {
+		f.subCond.Wait()
+	}
+	got := len(f.subs)
+	f.mu.Unlock()
+	if got < n {
+		t.Fatalf("only %d of %d Output subscribers registered before timeout", got, n)
+	}
 }
 
 // envelopesSnapshot returns a copy of the frames written to the runtime

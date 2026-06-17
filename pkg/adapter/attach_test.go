@@ -242,6 +242,14 @@ func TestAttachDemultiplexesConcurrentSlotsBySlotID_spec_6_4(t *testing.T) {
 	streamA := open("slot-a")
 	streamB := open("slot-b")
 
+	// Both Attach handlers must have subscribed to the single fan-out before
+	// any frame is written: the runtime delivers each frame only to the
+	// subscribers present when it arrives, so a frame written before a slot
+	// subscribes would never reach that slot's stream. The bind Send above is
+	// asynchronous, so the server-side Output subscription may not have
+	// happened yet when open() returns.
+	rt.waitForSubscribers(t, 2)
+
 	// The runtime interleaves slotId-tagged frames for both slots over the
 	// one connection (each stamped by the runtime's dispatch loop). The
 	// adapter must route each frame to the slot that owns it.
