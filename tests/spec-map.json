@@ -411,7 +411,8 @@
         "tests/tier12_load_cloud/task_mode_test.go",
         "tests/tier2_component/poolresume/concurrent_uptime_test.go",
         "tests/tier12_load_cloud/session_mode_test.go",
-        "tests/tier9_security/concurrent_slot_isolation_test.go::TestConcurrentCrossTenantReuseRejected_spec_6_28"
+        "tests/tier9_security/concurrent_slot_isolation_test.go::TestConcurrentCrossTenantReuseRejected_spec_6_28",
+        "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -500,7 +501,8 @@
       "tests": [
         "pkg/controller/sandbox/podspec/...",
         "pkg/adapter/workspace/materialize_test.go",
-        "pkg/adapter/staging_test.go"
+        "pkg/adapter/staging_test.go",
+        "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
       ],
       "packages": [
         "pkg/workspace"
@@ -1979,7 +1981,8 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterToolResultCorrelation",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal",
-        "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix"
+        "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
+        "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
       ],
       "packages": [
         "cmd/runtimes/echo",
