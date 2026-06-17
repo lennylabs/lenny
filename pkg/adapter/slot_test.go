@@ -67,20 +67,65 @@ func TestStartSessionSlotCreatesTreeAndStartsRuntime_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §5.2 concurrent mode; spec/05:509 — two distinct slots coexist on
-// one pod, both served by the single pod-global runtime.
+// spec: §5.2 concurrent mode; spec/05:509, spec/05:511 — two distinct slots
+// are served concurrently over the single pod-global runtime connection,
+// each with its own isolated per-slot workspace tree. With the mode flag and
+// the per-slot RuntimeFactory removed, the per-slot path activates on slotId
+// presence alone, one runtime process per pod multiplexes both slots on
+// slotId, and each slot's /workspace/slots/{slotId}/current/ is materialized
+// independently so one slot's files never appear in the other's workspace.
 func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 	s, rt := concurrentServer(t)
-	if _, err := s.StartSession(context.Background(), slotStartReq("sess-a", "slot-a")); err != nil {
+	ctx := context.Background()
+	if _, err := s.StartSession(ctx, slotStartReq("sess-a", "slot-a")); err != nil {
 		t.Fatalf("StartSession(slot-a): %v", err)
 	}
-	if _, err := s.StartSession(context.Background(), slotStartReq("sess-b", "slot-b")); err != nil {
+	if _, err := s.StartSession(ctx, slotStartReq("sess-b", "slot-b")); err != nil {
 		t.Fatalf("StartSession(slot-b): %v", err)
 	}
 	// One runtime process per pod serves both slots: it sees both sessions
 	// started, multiplexed on slotId over the single connection.
 	if got := rt.started; len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
 		t.Fatalf("pod runtime sessions = %v, want [sess-a sess-b]", got)
+	}
+
+	// Each slot materializes distinct content into its own per-slot
+	// workspace, proving the two concurrent slots have isolated workspaces
+	// rather than a shared /workspace/current.
+	finalize := func(session, slot, content string) {
+		t.Helper()
+		req := &adapterv1.FinalizeWorkspaceRequest{
+			SessionId: &adapterv1.SessionId{Value: session},
+			SlotId:    &adapterv1.SlotId{Value: slot},
+			WorkspacePlan: &adapterv1.WorkspacePlan{
+				SchemaVersion: 1,
+				Sources: []*adapterv1.WorkspaceSource{
+					{Type: "inlineFile", Path: "marker.txt", Content: content, Mode: "0644"},
+				},
+			},
+		}
+		if _, err := s.FinalizeWorkspace(ctx, req); err != nil {
+			t.Fatalf("FinalizeWorkspace(%s): %v", slot, err)
+		}
+	}
+	finalize("sess-a", "slot-a", "from-slot-a")
+	finalize("sess-b", "slot-b", "from-slot-b")
+
+	// Each slot's marker holds only that slot's content; neither slot's file
+	// leaked into the sibling slot's workspace.
+	for slot, want := range map[string]string{"slot-a": "from-slot-a", "slot-b": "from-slot-b"} {
+		path := filepath.Join(s.WorkspaceBase, "slots", slot, "current", "marker.txt")
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s workspace marker: %v", slot, err)
+		}
+		if string(got) != want {
+			t.Errorf("%s workspace marker = %q, want %q; per-slot workspaces are not isolated", slot, got, want)
+		}
+	}
+	// The global whole-pod /workspace/current was never used by either slot.
+	if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "current", "marker.txt")); !os.IsNotExist(err) {
+		t.Errorf("global workspace/current was written; concurrent slots are not isolated")
 	}
 }
 
