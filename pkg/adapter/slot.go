@@ -49,17 +49,14 @@ type SlotRuntimePaths struct {
 	CredentialsDir string
 }
 
-// CapabilityConcurrentWorkspace is the §6.4 capability token a
-// concurrent-workspace adapter advertises during version negotiation so
-// the gateway drives it through the slot-qualified bind sequence.
-const CapabilityConcurrentWorkspace = "concurrentWorkspace"
-
 // useSlot reports whether the adapter should take the §6.4 per-slot path
-// for slotID: the adapter is in concurrent-workspace mode and the RPC
-// carries a non-empty slot id. The single-session base layout
-// (maxConcurrentSessions == 1, slotID == "") is left untouched.
+// for slotID: the RPC carries a non-empty slot id. A slotId-bearing frame
+// is by definition a concurrent-pool frame (spec/15:1459: runtimes on
+// maxConcurrentSessions == 1 pods never see a slotId), so the per-slot
+// decision keys on slotId presence alone. The single-session base layout
+// (slotID == "") is left untouched.
 func (s *Server) useSlot(slotID string) bool {
-	return s.ConcurrentWorkspace && slotID != ""
+	return slotID != ""
 }
 
 // concurrentRoots derives the §6.4 base directories the per-slot trees

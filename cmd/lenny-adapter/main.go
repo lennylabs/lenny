@@ -33,7 +33,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"log"
 	"net"
@@ -58,13 +57,6 @@ import (
 // version is the adapter build version, reported during gateway
 // version negotiation.
 var version = "0.1.0"
-
-// errNoConcurrentRuntimeTransport is returned by the §6.4 concurrent-
-// workspace RuntimeFactory when neither --runtime-socket nor --runtime-bin
-// was configured, so a per-slot runtime cannot be built.
-var errNoConcurrentRuntimeTransport = errors.New(
-	"concurrent-workspace mode requires --runtime-socket or --runtime-bin",
-)
 
 // resolveRuntimeUID returns the agent runtime UID for the §4.7/§13
 // SO_PEERCRED MCP peer check. The --runtime-uid flag takes precedence; a
@@ -116,11 +108,6 @@ func main() {
 	artifactsRoot := flag.String("artifacts-root", "/artifacts",
 		"§6.4 /artifacts base the per-slot concurrent-workspace artifact "+
 			"trees (/artifacts/{slotId}) nest under")
-	concurrencyStyle := flag.String("concurrency-style", "",
-		"§5.2/§6.4 concurrency style: `workspace` enables the concurrent-"+
-			"workspace per-slot layout (slot-qualified RPCs materialize into "+
-			"/workspace/slots/{slotId}/ and /run/lenny/slots/{slotId}/). Empty "+
-			"(session mode, one session per pod) keeps the one-session-only base layout")
 	stagingDir := flag.String("staging-dir", "/workspace/.staging",
 		"directory PrepareWorkspace streams uploaded files into before "+
 			"FinalizeWorkspace materializes them; empty leaves PrepareWorkspace "+
@@ -255,6 +242,14 @@ func main() {
 
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
+	// §6.4 lines 385-409: the per-slot `slots/{slotId}` workspace and
+	// `/artifacts/{slotId}` trees nest under the parent of --workspace-root
+	// (production /workspace) and --artifacts-root (production /artifacts).
+	// These roots feed slotlayout.Resolve, which gates per-slot tree
+	// construction on each being non-empty; they are set unconditionally
+	// so a slotId-bearing frame always materializes its per-slot tree.
+	adapterSrv.WorkspaceBase = filepath.Dir(*workspaceRoot)
+	adapterSrv.ArtifactsRoot = *artifactsRoot
 	adapterSrv.SessionsRoot = *sessionsRoot
 	adapterSrv.StagingDir = *stagingDir
 	// spec: §10.1 lines 47-52 — the coordinator-loss hold window and the
@@ -341,32 +336,6 @@ func main() {
 		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
 			BinPath: *runtimeBin,
 		})
-	}
-
-	// §6.4: concurrent-workspace mode materializes a per-slot directory
-	// tree under /workspace/slots/{slotId}/ and writes per-slot credential
-	// files; each active slot runs its own runtime process. The slot trees
-	// nest under the parent of --workspace-root (e.g. /workspace) and the
-	// configured /sessions, /artifacts, and /run/lenny roots.
-	if *concurrencyStyle == "workspace" {
-		adapterSrv.ConcurrentWorkspace = true
-		adapterSrv.WorkspaceBase = filepath.Dir(*workspaceRoot)
-		adapterSrv.ArtifactsRoot = *artifactsRoot
-		runtimeSocketBase := *runtimeSocket
-		runtimeBinPath := *runtimeBin
-		adapterSrv.RuntimeFactory = func(slotID string, _ adapter.SlotRuntimePaths) (adapter.RuntimeProcess, error) {
-			switch {
-			case runtimeSocketBase != "":
-				// Each slot's concurrent-aware runtime dials a per-slot socket
-				// derived from the base socket name.
-				return adapter.NewSocketRuntimeProcess(runtimeSocketBase + "-" + slotID)
-			case runtimeBinPath != "":
-				return executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: runtimeBinPath}), nil
-			default:
-				return nil, errNoConcurrentRuntimeTransport
-			}
-		}
-		log.Printf("lenny-adapter: §6.4 concurrent-workspace per-slot layout enabled (base %s)", adapterSrv.WorkspaceBase)
 	}
 
 	// §15.4.6: when a lifecycle socket is configured, the adapter listens

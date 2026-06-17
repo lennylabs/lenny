@@ -63,32 +63,16 @@ type Server struct {
 	// WorkspaceRoot is the directory StartSession materializes the
 	// session workspace into — the pod's /workspace/current.
 	WorkspaceRoot string
-	// ConcurrentWorkspace selects the §6.4 concurrent-workspace per-slot
-	// layout: a slot-qualified workspace/credential RPC materializes into
-	// the per-slot tree under /workspace/slots/{slotId}/ and writes the
-	// per-slot credential file /run/lenny/slots/{slotId}/credentials.json
-	// rather than the single /workspace/current and /run/lenny/credentials.json.
-	// False (the single-session layout, maxConcurrentSessions == 1) keeps
-	// the one-session-only base layout.
-	// spec: §6.4 lines 385-409; §6.1 line 28.
-	ConcurrentWorkspace bool
 	// WorkspaceBase is the §6.4 base the per-slot `slots/{slotId}` trees
 	// nest under (production /workspace), the parent of the single
-	// WorkspaceRoot. Empty disables per-slot workspace materialization.
+	// WorkspaceRoot. A slotId-bearing frame routes to the per-slot path,
+	// so cmd/lenny-adapter sets this unconditionally. Empty disables
+	// per-slot workspace materialization.
 	WorkspaceBase string
 	// ArtifactsRoot is the §6.4 base the per-slot `/artifacts/{slotId}`
 	// trees nest under (production /artifacts). Empty omits the per-slot
 	// artifacts directory.
 	ArtifactsRoot string
-	// RuntimeFactory builds a fresh single-session RuntimeProcess for a
-	// §6.4 concurrent-workspace slot, scoped to the slot's
-	// /workspace/slots/{slotId}/current cwd. StartSession calls it once per
-	// slot so a concurrent-workspace pod runs one runtime process per
-	// active slot (the §6.4 "N concurrent runtime processes per pod"
-	// topology). Nil leaves concurrent StartSession returning
-	// FailedPrecondition; the single-slot Runtime field is used in the
-	// single-session layout (maxConcurrentSessions == 1).
-	RuntimeFactory func(slotID string, paths SlotRuntimePaths) (RuntimeProcess, error)
 	// SessionsRoot is the §6.4 line 380 /sessions tmpfs the runtime
 	// writes its session file into (conversation logs, native SDK
 	// session state). When set, Checkpoint bundles it into the workspace
@@ -352,10 +336,10 @@ type Server struct {
 	expiryTimers map[string]*expiryTimer
 
 	// slots holds the §6.4 concurrent-workspace per-slot state, keyed by
-	// slotId. Non-empty only when ConcurrentWorkspace is set and at least
-	// one slot has been assigned. Each slot is independent of its
-	// siblings: its own workspace tree, runtime process, and credential
-	// lease set. Guarded by mu. spec: §6.4 lines 385-409.
+	// slotId. Populated when a slot bind assigns a slot. Each slot owns its
+	// own workspace tree, state, and credential lease set; one pod-global
+	// runtime serves every slot, multiplexed on slotId over the single
+	// runtime connection. Guarded by mu. spec: §6.4 lines 385-409.
 	slots map[string]*slotState
 }
 
@@ -398,11 +382,6 @@ func (s *Server) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVer
 // ConfigureWorkspace rather than StartSession.
 func (s *Server) advertisedCapabilities() []string {
 	caps := s.Capabilities
-	// §6.4: a concurrent-workspace adapter advertises concurrentWorkspace so
-	// the gateway drives it through the slot-qualified bind sequence.
-	if s.ConcurrentWorkspace && !containsCapability(caps, CapabilityConcurrentWorkspace) {
-		caps = append(append([]string(nil), caps...), CapabilityConcurrentWorkspace)
-	}
 	if _, ok := s.sdkWarmRuntime(); !ok {
 		return caps
 	}
