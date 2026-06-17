@@ -106,12 +106,12 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 
 // MessageRequest is the §15.1 POST /v1/sessions/{id}/messages body. It
 // carries a §7.2 batch of `MessageEnvelope` payloads; the per-message
-// `delivery`, `inReplyTo`, and `slotId` semantics live on the payload
-// so a batch can mix immediate and queued messages on the same call.
+// `delivery` and `inReplyTo` semantics live on the payload so a batch can
+// mix immediate and queued messages on the same call.
 // spec: §15.4 lines 1672-1721 (`MessageEnvelope`); F-7.2.14.
 type MessageRequest struct {
 	// Messages is the §7.2 inbound message envelope batch. The
-	// gateway evaluates each one's `delivery`/`inReplyTo`/`slotId`
+	// gateway evaluates each one's `delivery`/`inReplyTo`
 	// fields independently and delivers them in order.
 	Messages []MessagePayload `json:"messages"`
 }
@@ -141,13 +141,13 @@ type MessagePayload struct {
 	// spec: §15.4 lines 1715-1723.
 	Delivery string `json:"delivery,omitempty"`
 
-	// SlotID is the §5.2 concurrent-workspace slot identifier. Pods
-	// serving one session at a time never see it; concurrent-workspace
-	// runtimes route incoming messages by slot. The minimal gateway
-	// accepts and forwards the field but does not yet implement the
-	// slot-aware routing (tracked under F-5.2 concurrent-workspace
-	// build-out). spec: §15.4 line 1713.
-	SlotID string `json:"slotId,omitempty"`
+	// The §5.2 slotId is deliberately absent from the request body. slotId is
+	// adapter-injected (§15.4) and internal: a client addresses a message by
+	// session_id (the path parameter on POST /v1/sessions/{id}/messages), and
+	// the gateway derives the bound slot from the session, stamping it on the
+	// outbound adapter envelope. A client-supplied slotId is silently ignored
+	// because the field does not deserialize onto the payload. spec: §7.2
+	// (per-slot routing), §15.4.
 }
 
 // MessageResponse is the §15.1 message-injection response. It wraps
@@ -197,10 +197,14 @@ type MessageResponse struct {
 //   - the §7.2 inter-replica `ForwardMessage` gRPC,
 //   - the §7.2 inbox + DLQ persistence (F-7.2.4),
 //   - the §7.2 delivery: immediate atomic resume-and-deliver path,
-//   - cross-replica coordinator routing,
-//   - per-slot routing for concurrent-workspace pods (the SlotID is
-//     accepted on the wire and surfaced in the publish payload, but
-//     dispatch is deferred until concurrent-workspace mode lands).
+//   - cross-replica coordinator routing.
+//
+// Per-slot routing for §5.2 concurrent-workspace pods is internal: the
+// client never supplies a slotId, the gateway derives the bound slot from
+// the session, and the executor stamps the resolved slotId on the outbound
+// adapter envelope (see pkg/gateway/executor). A concurrent-session bind
+// that resolves no slot fails closed with the §7.2 SLOT_ID_REQUIRED
+// invariant rather than misdelivering.
 //
 // Production wires these as the gateway moves from in-memory to
 // Redis + Postgres backings.

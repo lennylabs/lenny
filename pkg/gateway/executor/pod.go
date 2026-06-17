@@ -5,6 +5,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -12,6 +13,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 )
+
+// ErrSlotIDRequired is the §7.2 SLOT_ID_REQUIRED fail-closed invariant. It is
+// internal: a client never supplies a slotId, so this is not a client-facing
+// rejection. The gateway derives a session's slot from its bind, so a
+// well-routed concurrent-session bind (maxConcurrentSessions > 1) always
+// carries a non-empty SlotID. ErrSlotIDRequired fires only when per-slot
+// dispatch is reached for a concurrent-session pod whose bind resolved no slot
+// (MaxConcurrentSessions > 1 with an empty SlotID, a routing bug): the
+// executor fails closed rather than misdelivering the message to another
+// session's slot. A maxConcurrentSessions <= 1 bind never triggers it; it
+// keeps whole-pod routing with no slotId. spec: §7.2 (per-slot routing,
+// SLOT_ID_REQUIRED), §5.2.
+var ErrSlotIDRequired = errors.New("podexec: SLOT_ID_REQUIRED: concurrent-session bind resolved no slot for the session")
 
 // PodExecutor is the Executor backed by Kubernetes agent pods. It
 // drives a session's bound pod over the §4.7 Attach content stream:
@@ -120,6 +134,17 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 	bind, ok := e.registry.Get(sessionID)
 	if !ok {
 		return nil, fmt.Errorf("podexec: session %s is not bound to a pod", sessionID)
+	}
+	// spec: §7.2 (per-slot routing, SLOT_ID_REQUIRED) — per-slot dispatch on a
+	// maxConcurrentSessions > 1 pod requires a resolved slot. The gateway
+	// derives the slot from the session, so a well-routed concurrent-session
+	// bind always carries a non-empty SlotID; an empty SlotID on such a bind
+	// is a routing bug. Fail closed rather than open an Attach stream with no
+	// slotId, which the adapter would route to the pod's whole-pod base path
+	// and misdeliver into another session's slot. A maxConcurrentSessions <= 1
+	// bind keeps whole-pod routing with no slotId.
+	if bind.MaxConcurrentSessions > 1 && bind.SlotID == "" {
+		return nil, fmt.Errorf("podexec: session %s: %w", sessionID, ErrSlotIDRequired)
 	}
 	// A concurrent-pool bind (SlotID != "") carries the adapter-assigned slot
 	// onto the Attach stream so the reconciled adapter and the runtime's

@@ -3,7 +3,6 @@
 package sessionserver_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -51,7 +50,15 @@ func seedRunningSession(t *testing.T, store sessionstore.Store, id string) {
 func sendMessageRequest(t *testing.T, h http.Handler, id string, body sessionserver.MessageRequest) *httptest.ResponseRecorder {
 	t.Helper()
 	buf, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/messages", bytes.NewReader(buf))
+	return sendRawMessageRequest(t, h, id, string(buf))
+}
+
+// sendRawMessageRequest posts a verbatim JSON body so a test can drive
+// request fields the typed MessageRequest no longer carries (such as a stray
+// client-supplied slotId the gateway must ignore).
+func sendRawMessageRequest(t *testing.T, h http.Handler, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/messages", strings.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -528,18 +535,27 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	}
 }
 
-// TestMessagesSlotIDFieldRoundTripsThroughBody — the §15.4 slotId is
-// accepted on the wire (concurrent-workspace routing lands with the
-// F-5.2 build-out). The minimal gateway must not reject the field.
-// spec: §15.4 line 1713; F-7.2.14.
-func TestMessagesSlotIDFieldRoundTripsThroughBody(t *testing.T) {
+// TestMessagesClientSlotIDIsIgnored — the §5.2 slotId is internal and
+// adapter-injected: the client addresses a message by session_id and never
+// supplies a slotId. A slotId in the request body does not deserialize onto
+// the payload, so it is silently ignored while the message still delivers.
+// spec: §7.2 (per-slot routing), §15.4.
+func TestMessagesClientSlotIDIsIgnored(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_slot")
-	rr := sendMessageRequest(t, srv.Handler(), "sess_slot", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "ok", SlotID: "slot_01"}},
-	})
+	// A raw body that carries a stray client slotId. The gateway must accept
+	// the message (the field is ignored, not rejected) and deliver it.
+	rr := sendRawMessageRequest(t, srv.Handler(), "sess_slot",
+		`{"messages":[{"content":"ok","slotId":"slot_01"}]}`)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("slotId accepted: got %d, body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("client slotId rejected: got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.MessageResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
+		t.Errorf("delivery status = %q, want delivered", resp.DeliveryReceipt.Status)
 	}
 }
 

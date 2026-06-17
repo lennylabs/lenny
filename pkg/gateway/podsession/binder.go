@@ -454,6 +454,16 @@ type BindResult struct {
 	// where the pod is claimed exclusively for the session. It is non-empty
 	// only for a BindSlot result.
 	SlotID string
+	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
+	// bound of the pod's pool, carried from the bind request. It is 0 (or 1)
+	// for an exclusive session-mode bind and > 1 for a BindSlot result on a
+	// concurrent-session pool. The gateway's per-slot message routing keys on
+	// it: a bind reporting maxConcurrentSessions > 1 with an empty SlotID is
+	// the §7.2 SLOT_ID_REQUIRED routing-bug case, where per-slot dispatch is
+	// reached for a concurrent pod but the gateway resolved no slot for the
+	// session, so the executor fails closed rather than misdelivering to
+	// another slot. spec: §7.2 (per-slot routing, SLOT_ID_REQUIRED), §5.2.
+	MaxConcurrentSessions int32
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried
 	// from the bind request so the release path can apply the §3.4 recycle
 	// disposition without re-resolving the pool. On a recycling session-mode

@@ -175,11 +175,18 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 			fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err))
 	}
 	return &BindResult{
-		SessionID:             req.SessionID,
-		TenantID:              req.TenantID,
-		SandboxName:           sandboxName,
-		PodIP:                 podIP,
-		SlotID:                slotID,
+		SessionID:   req.SessionID,
+		TenantID:    req.TenantID,
+		SandboxName: sandboxName,
+		PodIP:       podIP,
+		SlotID:      slotID,
+		// spec: §7.2 (per-slot routing) — carry the pool's
+		// maxConcurrentSessions bound onto the binding so the executor's
+		// per-slot message routing can detect the SLOT_ID_REQUIRED
+		// routing-bug case (a concurrent pod with no resolved slot) and fail
+		// closed rather than misdeliver. A BindSlot result is by definition a
+		// maxConcurrentSessions > 1 bind.
+		MaxConcurrentSessions: req.MaxConcurrentSessions,
 		Adapter:               cl,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
