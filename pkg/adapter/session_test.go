@@ -34,9 +34,18 @@ type fakeRuntime struct {
 	closeHadDL   bool
 	interrupts   []bool // the hard flag of each Interrupt call
 	interruptErr error
-	output       chan []byte // when set, Output returns it
+	output       chan []byte // when set, Output fans this stream out to subscribers
 	outputErr    error
 	echoInput    bool // when set, WriteEnvelope echoes the envelope to output
+
+	// subs holds the per-Output subscriber channels the single f.output
+	// stream fans out to, mirroring the production SocketRuntimeProcess:
+	// one runtime process per pod serves every slot over one connection,
+	// so each concurrent Attach stream sees the runtime's full output and
+	// demultiplexes by slotId. fanOnce starts the single fan-out reader on
+	// the first Output call.
+	subs    []chan []byte
+	fanOnce sync.Once
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -72,12 +81,38 @@ func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error)
 	if f.outputErr != nil {
 		return nil, f.outputErr
 	}
-	if f.output != nil {
-		return f.output, nil
+	if f.output == nil {
+		ch := make(chan []byte)
+		close(ch)
+		return ch, nil
 	}
-	ch := make(chan []byte)
-	close(ch)
-	return ch, nil
+	// Subscribe to the fanned-out stream. The first Output call starts the
+	// single reader that broadcasts f.output to every subscriber, so two
+	// concurrent per-slot Attach streams each receive the full output and
+	// demultiplex by slotId (matching SocketRuntimeProcess).
+	sub := make(chan []byte, 8)
+	f.mu.Lock()
+	f.subs = append(f.subs, sub)
+	f.mu.Unlock()
+	f.fanOnce.Do(func() {
+		go func() {
+			for line := range f.output {
+				f.mu.Lock()
+				subs := append([]chan []byte(nil), f.subs...)
+				f.mu.Unlock()
+				for _, s := range subs {
+					s <- line
+				}
+			}
+			f.mu.Lock()
+			subs := append([]chan []byte(nil), f.subs...)
+			f.mu.Unlock()
+			for _, s := range subs {
+				close(s)
+			}
+		}()
+	})
+	return sub, nil
 }
 
 func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {

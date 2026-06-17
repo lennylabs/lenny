@@ -51,15 +51,25 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	}
 	wsRoot := s.workspaceRootForSlot(slotID)
 	if env := first.GetEnvelopeJson(); len(env) > 0 {
-		if err := rt.WriteEnvelope(sessionID, env); err != nil {
+		if err := s.writeSlotEnvelope(rt, sessionID, slotID, env); err != nil {
 			return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 		}
 	}
 
 	ctx := stream.Context()
-	out, err := rt.Output(ctx, sessionID)
+	rawOut, err := rt.Output(ctx, sessionID)
 	if err != nil {
 		return status.Errorf(codes.Internal, "open runtime output: %v", err)
+	}
+	// spec: §15.4.1 line 1459 — the single pod-global runtime serves every
+	// slot over one connection, so its output stream interleaves frames for
+	// all slots tagged by slotId. Demultiplex by slotId so this Attach
+	// stream sees only its slot's frames; a no-slotId frame serves the
+	// whole-pod base path. A single-session (no-slot) Attach reads the raw
+	// stream unfiltered.
+	out := rawOut
+	if s.useSlot(slotID) {
+		out = demuxSlotOutput(ctx, rawOut, slotID)
 	}
 
 	// spec: §15.4.1 lines 1442/1826 — the adapter probes runtime liveness
@@ -77,7 +87,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	// loop has stopped selecting on it.
 	recvErr := make(chan error, 1)
 	go func() {
-		recvErr <- s.attachRecvLoop(stream, sessionID, rt)
+		recvErr <- s.attachRecvLoop(stream, sessionID, slotID, rt)
 	}()
 
 	for {
@@ -111,7 +121,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// mcp.external_tool_call; the adapter-local dispatch below is
 			// the pod-side tool invocation that §16.3 attributes to the Pod.
 			if result, handled := HandleToolCall(line, wsRoot); handled {
-				if err := s.emitLocalToolCall(ctx, sessionID, line, result, rt); err != nil {
+				if err := s.emitLocalToolCall(ctx, sessionID, slotID, line, result, rt); err != nil {
 					return err
 				}
 				continue
@@ -156,7 +166,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 // attribute (a tool identifier, never arguments) and records an UPSTREAM
 // error when the local tool reported isError, so a failing read of a
 // missing file or a denied write surfaces on the trace. F-16.3.6.
-func (s *Server) emitLocalToolCall(ctx context.Context, sessionID string, frame, result []byte, rt RuntimeProcess) error {
+func (s *Server) emitLocalToolCall(ctx context.Context, sessionID, slotID string, frame, result []byte, rt RuntimeProcess) error {
 	// spec: §16.3 line 343 — `session.tool_call`, emitted by the Pod, one
 	// span per tool invocation. NewTracer(nil) resolves the process-global
 	// provider cmd/lenny-adapter installs; correlation fields auto-project.
@@ -178,7 +188,7 @@ func (s *Server) emitLocalToolCall(ctx context.Context, sessionID string, frame,
 			tracing.CategoryUpstream,
 		))
 	}
-	if err := rt.WriteEnvelope(sessionID, result); err != nil {
+	if err := s.writeSlotEnvelope(rt, sessionID, slotID, result); err != nil {
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
 	}
@@ -229,17 +239,76 @@ func stripRuntimeFrom(line []byte) []byte {
 }
 
 // attachRecvLoop forwards each client envelope on the Attach stream to
-// the runtime's stdin until the stream ends.
-func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse], sessionID string, rt RuntimeProcess) error {
+// the runtime's stdin until the stream ends. Each envelope is stamped
+// with the slot's slotId (when this is a per-slot Attach) so the shared
+// runtime's dispatch loop routes it to the slot's cwd.
+func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse], sessionID, slotID string, rt RuntimeProcess) error {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
 			return err
 		}
 		if env := msg.GetEnvelopeJson(); len(env) > 0 {
-			if err := rt.WriteEnvelope(sessionID, env); err != nil {
+			if err := s.writeSlotEnvelope(rt, sessionID, slotID, env); err != nil {
 				return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 			}
 		}
 	}
+}
+
+// writeSlotEnvelope stamps the slot's slotId onto an outbound envelope and
+// forwards it to the shared runtime over the single connection. On the
+// single-session base path (slotID == "") the envelope is written verbatim,
+// preserving the one-runtime-per-pod whole-pod behavior. spec: §6.4 lines
+// 401-405; §15.4.1 line 1459 — inbound frames carry slotId when
+// maxConcurrentSessions > 1.
+func (s *Server) writeSlotEnvelope(rt RuntimeProcess, sessionID, slotID string, envelope []byte) error {
+	if s.useSlot(slotID) {
+		stamped, err := stampSlotID(envelope, slotID)
+		if err != nil {
+			return err
+		}
+		envelope = stamped
+	}
+	return rt.WriteEnvelope(sessionID, envelope)
+}
+
+// demuxSlotOutput filters the shared runtime's interleaved output stream
+// down to the frames carrying slotID, so a per-slot Attach stream receives
+// only its slot's output. The single pod-global runtime serves every slot
+// over one connection (spec/05:509, spec/15:1459), so each Attach stream
+// subscribes to the same fan-out and drops frames addressed to a sibling
+// slot. Protocol-level frames the adapter consumes per session
+// (heartbeat_ack) carry no slotId; they pass through so each slot's
+// heartbeat monitor still sees its ack on a no-slotId frame. ctx bounds the
+// filter goroutine so a stalled consumer does not leak it. spec: §15.4.1
+// line 1459.
+func demuxSlotOutput(ctx context.Context, in <-chan []byte, slotID string) <-chan []byte {
+	out := make(chan []byte)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case line, ok := <-in:
+				if !ok {
+					return
+				}
+				// A frame tagged for a different slot belongs to a sibling
+				// Attach stream; drop it. A frame with no slotId (a
+				// protocol-level ack or a base-path frame) is delivered so
+				// the per-session heartbeat path still observes it.
+				if fs := frameSlotID(line); fs != "" && fs != slotID {
+					continue
+				}
+				select {
+				case out <- line:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
 }

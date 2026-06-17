@@ -152,7 +152,11 @@ func TestSocketRuntimeProcessOutputClosesOnRuntimeDisconnect(t *testing.T) {
 	}
 }
 
-func TestSocketRuntimeProcessRejectsWrongSession(t *testing.T) {
+// spec: §5.2 line 509, §15.4.1 line 1459 — one runtime process per pod
+// serves every slot over the single connection, so a second Start for a
+// sibling slot's session reuses the live connection rather than accepting
+// a new one, and WriteEnvelope writes any slot's session over it.
+func TestSocketRuntimeProcessStartIsIdempotentAcrossSlots_spec_5_2(t *testing.T) {
 	socket := runtimeSocketAddr(t)
 	sp, err := adapter.NewSocketRuntimeProcess(socket)
 	if err != nil {
@@ -162,15 +166,77 @@ func TestSocketRuntimeProcessRejectsWrongSession(t *testing.T) {
 
 	connCh := make(chan net.Conn, 1)
 	go func() { connCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
-	if err := sp.Start(context.Background(), "s1"); err != nil {
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Start(sess-a): %v", err)
+	}
+	runtimeConn := <-connCh
+	defer runtimeConn.Close()
+
+	// A second Start, for a sibling slot's session, reuses the connection.
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b) must reuse the live connection: %v", err)
+	}
+
+	// Each session writes over the one connection; the runtime reads both.
+	reader := bufio.NewReader(runtimeConn)
+	for _, frame := range []string{`{"type":"message","slotId":"slot-a"}`, `{"type":"message","slotId":"slot-b"}`} {
+		if err := sp.WriteEnvelope("ignored", []byte(frame)); err != nil {
+			t.Fatalf("WriteEnvelope(%s): %v", frame, err)
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("runtime read: %v", err)
+		}
+		if strings.TrimSpace(line) != frame {
+			t.Errorf("runtime received %q, want %q", strings.TrimSpace(line), frame)
+		}
+	}
+}
+
+// spec: §15.4.1 line 1459 — the single runtime connection fans every frame
+// out to all Output subscribers, so two concurrent per-slot Attach streams
+// each receive the runtime's full output and demultiplex by slotId. A
+// subscriber that arrives after Start still sees frames written after it
+// subscribes.
+func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing.T) {
+	socket := runtimeSocketAddr(t)
+	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	defer sp.Close(context.Background(), "s1")
+
+	connCh := make(chan net.Conn, 1)
+	go func() { connCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer (<-connCh).Close()
+	runtimeConn := <-connCh
+	defer runtimeConn.Close()
 
-	if err := sp.WriteEnvelope("other", []byte(`{}`)); err == nil {
-		t.Error("WriteEnvelope must reject a session the socket is not bound to")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outA, err := sp.Output(ctx, "sess-a")
+	if err != nil {
+		t.Fatalf("Output(sess-a): %v", err)
 	}
-	if _, err := sp.Output(context.Background(), "other"); err == nil {
-		t.Error("Output must reject a session the socket is not bound to")
+	outB, err := sp.Output(ctx, "sess-b")
+	if err != nil {
+		t.Fatalf("Output(sess-b): %v", err)
+	}
+
+	frame := `{"type":"response","slotId":"slot-a"}`
+	if _, err := runtimeConn.Write([]byte(frame + "\n")); err != nil {
+		t.Fatalf("runtime write: %v", err)
+	}
+	for name, out := range map[string]<-chan []byte{"sess-a": outA, "sess-b": outB} {
+		select {
+		case got := <-out:
+			if string(got) != frame {
+				t.Errorf("%s subscriber received %q, want %q", name, got, frame)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s subscriber did not receive the fanned-out frame", name)
+		}
 	}
 }

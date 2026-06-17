@@ -39,8 +39,15 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 // with LENNY_ADAPTER_SOCKET pointing at the bound socket, so one host
 // can exercise the sidecar transport without a pod.
 //
-// SocketRuntimeProcess drives one session at a time, matching the §6.1
-// one-session-per-pod model and the lifetime of a single pod.
+// One runtime process per pod serves every slot, multiplexed on slotId
+// over the single connection (spec/05:509, spec/15:1459). Start is
+// idempotent across slots: the first call accepts the connection and
+// starts the fan-out reader, and a later Start for a sibling slot's
+// session reuses the live connection. WriteEnvelope writes any slot's
+// slotId-tagged envelope over that one connection, and each Output
+// subscriber receives every frame the runtime emits; the Attach handler
+// demultiplexes by slotId. Interrupt and Close stay session-keyed and act
+// on the shared connection.
 type SocketRuntimeProcess struct {
 	listener net.Listener
 
@@ -53,11 +60,74 @@ type SocketRuntimeProcess struct {
 	// connect. Zero defaults to 30s.
 	AcceptTimeout time.Duration
 
-	mu      sync.Mutex
-	session string
-	conn    net.Conn
-	scanner *bufio.Scanner
-	cmd     *exec.Cmd
+	mu          sync.Mutex
+	connected   bool
+	conn        net.Conn
+	cmd         *exec.Cmd
+	subscribers map[*subscriber]struct{}
+}
+
+// subscriber is one Output consumer of the shared runtime connection. The
+// fan-out reader hands each frame to feed; a dedicated pump goroutine
+// drains feed into out, so one slow per-slot Attach stream never blocks the
+// reader from delivering a sibling slot's frames. done closes the pump and
+// out when the consumer's Output context is cancelled or the runtime
+// connection closes. spec: §15.4.1 line 1459.
+type subscriber struct {
+	feed chan []byte
+	out  chan []byte
+	done chan struct{}
+}
+
+// newSubscriber starts a subscriber and its pump. The pump forwards each
+// fed frame to out and closes out when done is closed, so the Attach demux
+// observes the runtime's connection close.
+func newSubscriber() *subscriber {
+	s := &subscriber{
+		feed: make(chan []byte, 64),
+		out:  make(chan []byte),
+		done: make(chan struct{}),
+	}
+	go s.pump()
+	return s
+}
+
+// pump drains the buffered feed into out until done is closed, then closes
+// out so the consumer observes the stream end.
+func (s *subscriber) pump() {
+	defer close(s.out)
+	for {
+		select {
+		case line := <-s.feed:
+			select {
+			case s.out <- line:
+			case <-s.done:
+				return
+			}
+		case <-s.done:
+			return
+		}
+	}
+}
+
+// send hands one frame to the subscriber's buffered feed, abandoning it if
+// the subscriber is done so the shared reader never blocks on a dead
+// consumer. A full buffer blocks only this subscriber's pump, never the
+// reader's delivery to siblings, since each send targets a distinct feed.
+func (s *subscriber) send(line []byte) {
+	select {
+	case s.feed <- line:
+	case <-s.done:
+	}
+}
+
+// close stops the pump and closes out exactly once.
+func (s *subscriber) close() {
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
 }
 
 // NewSocketRuntimeProcess binds the adapter's runtime socket and returns
@@ -80,22 +150,20 @@ func (p *SocketRuntimeProcess) SocketPath() string {
 	return p.listener.Addr().String()
 }
 
-// Start binds the session to the socket and waits for the runtime to
-// connect. When SpawnPath is set Start first execs that binary with
+// Start makes the runtime live and ensures the single connection is up.
+// When SpawnPath is set the first Start execs that binary with
 // LENNY_ADAPTER_SOCKET pointing at the bound socket. Start is the §4.7
-// startup-sequence step that makes the runtime live; it returns once the
-// runtime has connected or the accept times out.
-func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) error {
+// startup-sequence step; it returns once the runtime has connected or the
+// accept times out. Start is idempotent across slots: one runtime process
+// per pod serves every slot over the one connection (spec/05:509), so a
+// second Start (for a sibling slot's session) reuses the live connection
+// rather than accepting a new one.
+func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 	p.mu.Lock()
-	if p.session == sessionID && p.conn != nil {
+	if p.connected {
 		p.mu.Unlock()
 		return nil
 	}
-	if p.session != "" && p.session != sessionID {
-		p.mu.Unlock()
-		return fmt.Errorf("adapter: socket runtime already bound to session %s", p.session)
-	}
-	p.session = sessionID
 	spawn := p.SpawnPath
 	timeout := p.AcceptTimeout
 	p.mu.Unlock()
@@ -106,7 +174,6 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 
 	if spawn != "" {
 		if err := p.spawn(spawn); err != nil {
-			p.clearSession()
 			return err
 		}
 	}
@@ -114,7 +181,6 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	conn, err := p.accept(ctx, timeout)
 	if err != nil {
 		p.killSpawned()
-		p.clearSession()
 		return err
 	}
 
@@ -128,9 +194,63 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 
 	p.mu.Lock()
 	p.conn = conn
-	p.scanner = scanner
+	p.connected = true
+	p.subscribers = map[*subscriber]struct{}{}
 	p.mu.Unlock()
+
+	// One reader goroutine over the single connection fans every frame out
+	// to all subscribers, so concurrent per-slot Attach streams each see
+	// the runtime's full output and demultiplex by slotId. spec: §15.4.1
+	// line 1459.
+	go p.fanOut(scanner)
 	return nil
+}
+
+// fanOut reads every §15.4.1 JSONL frame the runtime writes and broadcasts
+// it to all registered Output subscribers. It closes each subscriber
+// channel when the runtime closes the connection, so a per-slot Attach
+// stream observes the EOF. Each subscriber owns its own buffered intake
+// (subscriber.feed), so a slow or dead consumer on one slot's Attach
+// stream never head-of-line-blocks the reader from delivering a sibling
+// slot's frames. spec: §15.4.1 line 1459.
+func (p *SocketRuntimeProcess) fanOut(scanner *bufio.Scanner) {
+	defer p.closeSubscribers()
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		p.broadcast(line)
+	}
+}
+
+// broadcast hands one frame to every current subscriber. Each subscriber
+// has a dedicated pump goroutine draining its buffered feed into its Output
+// channel, so the send to one subscriber never blocks delivery to another.
+func (p *SocketRuntimeProcess) broadcast(line []byte) {
+	p.mu.Lock()
+	subs := make([]*subscriber, 0, len(p.subscribers))
+	for s := range p.subscribers {
+		subs = append(subs, s)
+	}
+	p.mu.Unlock()
+	for _, s := range subs {
+		s.send(line)
+	}
+}
+
+// closeSubscribers shuts every still-registered subscriber down so its
+// Output channel closes and the per-slot Attach stream observes the
+// runtime's connection close. A subscriber the consumer already
+// unsubscribed is absent from the map, so each closes exactly once.
+func (p *SocketRuntimeProcess) closeSubscribers() {
+	p.mu.Lock()
+	subs := make([]*subscriber, 0, len(p.subscribers))
+	for s := range p.subscribers {
+		subs = append(subs, s)
+		delete(p.subscribers, s)
+	}
+	p.mu.Unlock()
+	for _, s := range subs {
+		s.close()
+	}
 }
 
 // accept waits for the runtime's connection, bounded by timeout and ctx.
@@ -173,17 +293,16 @@ func (p *SocketRuntimeProcess) spawn(path string) error {
 }
 
 // WriteEnvelope forwards a pre-encoded §15.4.1 message envelope to the
-// runtime over the socket, terminated by a newline.
-func (p *SocketRuntimeProcess) WriteEnvelope(sessionID string, envelope []byte) error {
+// runtime over the single connection, terminated by a newline. The
+// envelope already carries its slotId (stamped by the Attach handler on a
+// concurrent pod), so WriteEnvelope is session-agnostic: every slot's
+// frames share the one connection. spec: §15.4.1 line 1459.
+func (p *SocketRuntimeProcess) WriteEnvelope(_ string, envelope []byte) error {
 	p.mu.Lock()
 	conn := p.conn
-	bound := p.session
 	p.mu.Unlock()
-	if bound != sessionID {
-		return fmt.Errorf("adapter: session %s is not bound to this socket runtime", sessionID)
-	}
 	if conn == nil {
-		return fmt.Errorf("adapter: socket runtime for session %s is not connected", sessionID)
+		return fmt.Errorf("adapter: socket runtime is not connected")
 	}
 	if _, err := conn.Write(append(envelope, '\n')); err != nil {
 		return fmt.Errorf("adapter: write envelope to runtime socket: %w", err)
@@ -191,50 +310,54 @@ func (p *SocketRuntimeProcess) WriteEnvelope(sessionID string, envelope []byte) 
 	return nil
 }
 
-// Output streams every §15.4.1 JSONL frame the runtime writes on the
-// socket. The channel closes when the runtime closes the connection;
-// ctx cancellation stops the reader so a stalled consumer does not leak
-// the goroutine.
-func (p *SocketRuntimeProcess) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
+// Output subscribes to the runtime's output. It returns a channel carrying
+// every §15.4.1 JSONL frame the runtime writes on the single connection;
+// the Attach handler demultiplexes by slotId so each per-slot stream keeps
+// only its slot's frames (spec/15:1459). The channel closes when the
+// runtime closes the connection, and ctx cancellation unsubscribes so a
+// stalled consumer does not stall the shared reader.
+func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []byte, error) {
 	p.mu.Lock()
-	scanner := p.scanner
-	bound := p.session
+	if !p.connected {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("adapter: socket runtime is not connected")
+	}
+	sub := newSubscriber()
+	p.subscribers[sub] = struct{}{}
 	p.mu.Unlock()
-	if bound != sessionID {
-		return nil, fmt.Errorf("adapter: session %s is not bound to this socket runtime", sessionID)
-	}
-	if scanner == nil {
-		return nil, fmt.Errorf("adapter: socket runtime for session %s is not connected", sessionID)
-	}
-	ch := make(chan []byte)
+
+	// Unsubscribe and stop the pump on ctx cancellation so a closed Attach
+	// stream stops the fan-out from delivering to a dead consumer.
 	go func() {
-		defer close(ch)
-		for scanner.Scan() {
-			line := append([]byte(nil), scanner.Bytes()...)
-			select {
-			case ch <- line:
-			case <-ctx.Done():
-				return
-			}
-		}
+		<-ctx.Done()
+		p.unsubscribe(sub)
 	}()
-	return ch, nil
+	return sub.out, nil
+}
+
+// unsubscribe removes a subscriber and stops its pump. close() is
+// idempotent, so a concurrent closeSubscribers (on EOF) and a ctx-cancel
+// unsubscribe both resolve to a single out-channel close. spec: §15.4.1
+// line 1459.
+func (p *SocketRuntimeProcess) unsubscribe(sub *subscriber) {
+	p.mu.Lock()
+	delete(p.subscribers, sub)
+	p.mu.Unlock()
+	sub.close()
 }
 
 // Interrupt terminates the runtime. The §4.7 sidecar model has no host
 // process to signal when the runtime runs in a separate container, so
-// Interrupt closes the socket: the runtime observes the §15.4 socket
-// EOF and exits. When SpawnPath spawned the runtime as a child, a hard
-// interrupt also kills that process.
-func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, hard bool) error {
+// Interrupt closes the socket: the runtime observes the §15.4 socket EOF
+// and exits. When SpawnPath spawned the runtime as a child, a hard
+// interrupt also kills that process. One runtime process per pod serves
+// every slot (spec/05:509), so Interrupt acts on the shared connection;
+// the session id is accepted for the interface contract.
+func (p *SocketRuntimeProcess) Interrupt(_ context.Context, _ string, hard bool) error {
 	p.mu.Lock()
 	conn := p.conn
 	cmd := p.cmd
-	bound := p.session
 	p.mu.Unlock()
-	if bound != sessionID {
-		return fmt.Errorf("adapter: session %s is not bound to this socket runtime", sessionID)
-	}
 	if conn != nil {
 		_ = conn.Close()
 	}
@@ -246,21 +369,28 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 	return nil
 }
 
-// Close tears the runtime down: it closes the socket connection (the
-// §15.4 clean-exit signal), waits the resolved grace window for a
-// spawned child to exit, and closes the listener.
+// Close tears the runtime down: it closes the shared socket connection
+// (the §15.4 clean-exit signal), waits the resolved grace window for a
+// spawned child to exit, and closes the listener. One runtime process per
+// pod serves every slot over the one connection (spec/05:509), so Close
+// tears that single connection down. It is idempotent: a second per-slot
+// Close after the connection is already gone is a no-op, since the §6.1
+// concurrent pod is terminated and replaced once its sessions end.
 //
 // The grace window is derived from the §4.7 ShutdownRequest.deadline_ms
 // the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
 // A context with no deadline falls back to defaultSocketShutdownGrace,
 // preserving the historical 10s behavior. spec: §11.4 line 258.
-func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) error {
+func (p *SocketRuntimeProcess) Close(ctx context.Context, _ string) error {
 	p.mu.Lock()
+	if !p.connected {
+		p.mu.Unlock()
+		return nil
+	}
 	conn := p.conn
 	cmd := p.cmd
 	p.conn = nil
-	p.scanner = nil
-	p.session = ""
+	p.connected = false
 	p.mu.Unlock()
 
 	if conn != nil {
@@ -284,13 +414,6 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 // socket runtime falls back to when Close has no plumbed deadline. It
 // matches the §11.4 step-3 10s default the gateway sends.
 const defaultSocketShutdownGrace = 10 * time.Second
-
-// clearSession resets the bound session after a failed Start.
-func (p *SocketRuntimeProcess) clearSession() {
-	p.mu.Lock()
-	p.session = ""
-	p.mu.Unlock()
-}
 
 // killSpawned kills a child started by spawn during a failed Start.
 func (p *SocketRuntimeProcess) killSpawned() {
