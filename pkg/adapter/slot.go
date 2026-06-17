@@ -8,10 +8,12 @@ import (
 )
 
 // slotState is one §6.4 concurrent-workspace slot's independent state: the
-// session bound to the slot, its resolved per-slot filesystem tree, the
-// runtime process driving it, and its §6.1 per-slot credential lease set.
-// Sibling slots share none of this, so a rotation, teardown, or workspace
-// change on one slot does not disturb another. spec: §6.4 lines 385-409;
+// session bound to the slot, its resolved per-slot filesystem tree, and
+// its §6.1 per-slot credential lease set. Sibling slots share none of this,
+// so a rotation, teardown, or workspace change on one slot does not disturb
+// another. The single pod-global runtime serves every slot, multiplexed on
+// slotId over the one runtime connection (spec/05:509, spec/15:1459), so a
+// slot owns no runtime process of its own. spec: §6.4 lines 385-409;
 // §6.1 line 28.
 type slotState struct {
 	// sessionID is the session assigned to this slot. The gateway uses
@@ -20,33 +22,12 @@ type slotState struct {
 	sessionID string
 	// paths is the slot's resolved per-slot directory tree.
 	paths slotlayout.SlotPaths
-	// runtime is the slot's runtime process, created by RuntimeFactory at
-	// StartSession. Nil until StartSession claims the slot.
-	runtime RuntimeProcess
 	// creds is the slot's independent credential lease set, keyed by
 	// provider. Written to paths.CredentialsFile.
 	creds map[string]*adapterv1.CredentialLease
 	// timers holds the slot's §4.9 direct-mode lease-expiry timers, keyed
 	// by provider, independent of sibling slots and the single-slot set.
 	timers map[string]*expiryTimer
-}
-
-// SlotRuntimePaths carries the §6.4 per-slot directory tree to a
-// RuntimeFactory so the slot's runtime process is configured against its
-// own cwd (/workspace/slots/{slotId}/current) and credential file rather
-// than the pod-global paths. spec: §6.4 lines 385-405; §6.1 line 28.
-type SlotRuntimePaths struct {
-	// Current is the slot's cwd, /workspace/slots/{slotId}/current.
-	Current string
-	// Staging is the slot's upload staging area.
-	Staging string
-	// Sessions is the slot's session-file tmpfs, /sessions/{slotId}.
-	Sessions string
-	// Artifacts is the slot's artifact tree, /artifacts/{slotId}.
-	Artifacts string
-	// CredentialsDir is the slot's credential directory,
-	// /run/lenny/slots/{slotId}.
-	CredentialsDir string
 }
 
 // useSlot reports whether the adapter should take the §6.4 per-slot path
@@ -153,20 +134,20 @@ func removeSlotTree(st *slotState) error {
 	return slotlayout.RemoveTree(st.paths)
 }
 
-// runtimeForSlot returns the runtime process that drives slotID. For the
-// single-session base layout (slotID == "" or non-concurrent mode) it
-// returns the pod-global Runtime unchanged, so the single-session hot path
-// is byte-for-byte identical. For an assigned concurrent slot it returns
-// the slot's own runtime; for an unknown slot it returns nil so the
-// caller surfaces a FailedPrecondition.
+// runtimeForSlot returns the runtime process that drives slotID. The
+// single pod-global Runtime serves every slot, multiplexed on slotId over
+// the one runtime connection (spec/05:509, spec/15:1459), so an assigned
+// concurrent slot resolves to the same Runtime as the single-session base
+// layout. An unknown (unassigned) slot returns nil so the caller surfaces
+// a FailedPrecondition.
 func (s *Server) runtimeForSlot(slotID string) RuntimeProcess {
 	if !s.useSlot(slotID) {
 		return s.Runtime
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, ok := s.slots[slotID]; ok {
-		return st.runtime
+	if _, ok := s.slots[slotID]; ok {
+		return s.Runtime
 	}
 	return nil
 }

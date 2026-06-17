@@ -15,18 +15,20 @@ import (
 // startSessionSlot is the §6.4 concurrent-workspace counterpart of
 // StartSession: it claims one of the pod's slots rather than the whole
 // pod. It ensures the slot's per-slot directory tree exists, registers
-// the slot alongside any sibling slots, builds a runtime process scoped
-// to the slot's cwd via RuntimeFactory, and starts it. Unlike the
-// one-session-only base path, two distinct slot ids may be active at
-// once; re-claiming an already-active slot id is rejected with
-// Unavailable.
+// the slot alongside any sibling slots, and starts the session on the
+// single pod-global runtime. Per spec/05:509 and spec/15:1459 one
+// runtime process per pod serves every slot, multiplexed on slotId over
+// the single LENNY_ADAPTER_SOCKET connection, so a slot does not own a
+// runtime process. Unlike the one-session-only base path, two distinct
+// slot ids may be active at once; re-claiming an already-active slot id
+// is rejected with Unavailable.
 //
-// spec: §6.4 lines 385-405; §5.2 concurrent mode.
+// spec: §6.4 lines 385-405; §5.2 concurrent mode; spec/05:509; spec/15:1459.
 func (s *Server) startSessionSlot(ctx context.Context, req *adapterv1.StartSessionRequest, slotID string) (*adapterv1.StartSessionResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
-	if s.RuntimeFactory == nil {
+	if s.Runtime == nil {
 		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured for concurrent-workspace slots")
+			"adapter is not configured with a runtime")
 	}
 
 	s.mu.Lock()
@@ -41,26 +43,9 @@ func (s *Server) startSessionSlot(ctx context.Context, req *adapterv1.StartSessi
 			"slot %s is not idle: session %s is already assigned", slotID, st.sessionID)
 	}
 	st.sessionID = sessionID
-	paths := st.paths
 	s.mu.Unlock()
 
-	rt, err := s.RuntimeFactory(slotID, SlotRuntimePaths{
-		Current:        paths.Current,
-		Staging:        paths.Staging,
-		Sessions:       paths.Sessions,
-		Artifacts:      paths.Artifacts,
-		CredentialsDir: paths.CredentialsDir,
-	})
-	if err != nil {
-		s.releaseSlot(ctx, slotID)
-		return nil, status.Errorf(codes.Internal, "build slot %s runtime: %v", slotID, err)
-	}
-
-	s.mu.Lock()
-	st.runtime = rt
-	s.mu.Unlock()
-
-	if err := rt.Start(ctx, sessionID); err != nil {
+	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSlot(ctx, slotID)
 		return nil, status.Errorf(codes.Internal, "start slot %s runtime: %v", slotID, err)
 	}
@@ -68,10 +53,13 @@ func (s *Server) startSessionSlot(ctx context.Context, req *adapterv1.StartSessi
 }
 
 // shutdownSlot tears down one §6.4 concurrent-workspace slot: it closes
-// the slot's runtime, cancels its expiry timers, removes the slot's
-// per-slot directory tree (the §6.4 "removes it during slot cleanup"
-// responsibility), and deregisters the slot so a sibling slot is
-// unaffected. spec: §6.4 lines 401-405.
+// the slot's session on the single pod-global runtime, cancels the
+// slot's expiry timers, removes the slot's per-slot directory tree (the
+// §6.4 "removes it during slot cleanup" responsibility), and deregisters
+// the slot so a sibling slot is unaffected. One runtime process per pod
+// serves every slot (spec/05:509), so the close is scoped to the slot's
+// session id rather than tearing the shared process down.
+// spec: §6.4 lines 401-405; spec/05:509.
 func (s *Server) shutdownSlot(ctx context.Context, sessionID, slotID string, deadlineMs int32) (*adapterv1.ShutdownResponse, error) {
 	s.mu.Lock()
 	st, ok := s.slotStateLocked(slotID)
@@ -84,16 +72,15 @@ func (s *Server) shutdownSlot(ctx context.Context, sessionID, slotID string, dea
 		return nil, status.Errorf(codes.NotFound,
 			"session %s is not assigned to slot %s", sessionID, slotID)
 	}
-	rt := st.runtime
 	for provider := range st.timers {
 		s.cancelSlotExpiryTimerLocked(st, provider)
 	}
 	s.mu.Unlock()
 
 	closeErr := error(nil)
-	if rt != nil {
+	if s.Runtime != nil {
 		closeCtx, cancel := contextWithGraceDeadline(ctx, time.Duration(deadlineMs)*time.Millisecond)
-		closeErr = rt.Close(closeCtx, sessionID)
+		closeErr = s.Runtime.Close(closeCtx, sessionID)
 		cancel()
 	}
 	s.releaseSlot(ctx, slotID)
