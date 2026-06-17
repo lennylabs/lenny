@@ -66,7 +66,7 @@ type StateTransition struct {
 }
 
 // ClaimOpts describes a §4.6.1 ClaimPod request: the pool to claim
-// from, the tenant to pin the pod to (concurrent / task modes), and
+// from, the tenant to pin the pod to (recycling or concurrent-workspace pods), and
 // the session id that will run on the pod. spec: §12.6 line 424.
 type ClaimOpts struct {
 	PoolID    PoolID

@@ -108,7 +108,7 @@ type PoolMatch struct {
 	WorkspaceSizeLimitBytes int64
 	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
 	// pod-uptime retirement cap copied from the SandboxTemplate's
-	// concurrentWorkspacePolicy. Zero leaves uptime retirement off. The
+	// sessionPolicy.recycle.maxPodUptimeSeconds. Zero leaves uptime retirement off. The
 	// slot-claim path drains an over-uptime pod before its next slot
 	// assignment. Zero on non-concurrent pools.
 	MaxPodUptimeSeconds int64

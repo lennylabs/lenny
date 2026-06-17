@@ -3,7 +3,7 @@
 // Package slotlayout derives and materializes the §6.4 concurrent-workspace
 // per-slot directory tree and the §6.1 per-slot credential path.
 //
-// In `executionMode: concurrent` with `concurrencyStyle: workspace` the
+// Under session mode with `sessionPolicy.maxConcurrentSessions > 1` the
 // single `/workspace/current` layout does not apply. Instead each active
 // slot owns an isolated tree the adapter creates on slot assignment and
 // removes on slot cleanup (spec §6.4 lines 385-405):

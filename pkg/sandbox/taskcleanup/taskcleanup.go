@@ -37,7 +37,7 @@ package taskcleanup
 
 import "github.com/lennylabs/lenny/pkg/sandbox/state"
 
-// DefaultMaxScrubFailures is the §5.2 taskPolicy.maxScrubFailures
+// DefaultMaxScrubFailures is the §5.2 sessionPolicy.recycle.maxScrubFailures
 // default applied when Inputs.MaxScrubFailures is unset (<= 0).
 // spec: spec/05_runtime-registry-and-pool-model.md — "default is 3".
 const DefaultMaxScrubFailures = 3
@@ -59,7 +59,7 @@ const (
 	ScrubFailed
 )
 
-// CleanupFailurePolicy mirrors §5.1 taskPolicy.onCleanupFailure. An
+// CleanupFailurePolicy mirrors §5.2 sessionPolicy.recycle.onScrubFailure. An
 // empty policy is treated as OnCleanupWarn (the spec default disposition
 // returns the pod to the pool with a scrub_warning rather than retiring).
 type CleanupFailurePolicy string
@@ -86,7 +86,7 @@ type Inputs struct {
 	// Scrub is the reported outcome of this task's Lenny scrub.
 	Scrub ScrubResult
 
-	// OnCleanupFailure is taskPolicy.onCleanupFailure (warn or fail).
+	// OnCleanupFailure is sessionPolicy.recycle.onScrubFailure (warn or fail).
 	OnCleanupFailure CleanupFailurePolicy
 
 	// ScrubFailureCount is the pod's cumulative scrub-failure count
@@ -94,7 +94,7 @@ type Inputs struct {
 	// MaxScrubFailures. spec: §5.2 lenny_pod_scrub_failure_count.
 	ScrubFailureCount int
 
-	// MaxScrubFailures is taskPolicy.maxScrubFailures. A value <= 0 is
+	// MaxScrubFailures is sessionPolicy.recycle.maxScrubFailures. A value <= 0 is
 	// treated as DefaultMaxScrubFailures.
 	MaxScrubFailures int
 
@@ -111,7 +111,7 @@ type Inputs struct {
 	// PodUptimeSeconds is the pod's wall-clock uptime in seconds.
 	PodUptimeSeconds int64
 
-	// MaxPodUptimeSeconds is taskPolicy.maxPodUptimeSeconds. A value
+	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds. A value
 	// <= 0 means no uptime cap. spec: §6.2 line 151.
 	MaxPodUptimeSeconds int64
 

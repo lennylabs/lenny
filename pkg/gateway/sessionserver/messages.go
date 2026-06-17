@@ -142,7 +142,7 @@ type MessagePayload struct {
 	Delivery string `json:"delivery,omitempty"`
 
 	// SlotID is the §5.2 concurrent-workspace slot identifier. Pods
-	// in session-mode or task-mode never see it; concurrent-workspace
+	// serving one session at a time never see it; concurrent-workspace
 	// runtimes route incoming messages by slot. The minimal gateway
 	// accepts and forwards the field but does not yet implement the
 	// slot-aware routing (tracked under F-5.2 concurrent-workspace

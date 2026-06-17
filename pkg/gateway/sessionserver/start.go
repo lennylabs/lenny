@@ -1193,9 +1193,10 @@ func poolDescriptor(p credentialpoolstore.CredentialPool) credrouter.PoolDescrip
 
 // startOnPod places a started session on a Kubernetes warm pod. It
 // resolves the warm pool serving the session's runtime and §5.3
-// isolation profile, then dispatches by the pool's executionMode:
-// session and task modes claim an idle pod through podBinder.Bind,
-// concurrent mode reserves a slot on a shared pod through
+// isolation profile, then dispatches by the pool's sessionPolicy:
+// an exclusive pool (maxConcurrentSessions=1) claims an idle pod
+// through podBinder.Bind, a concurrent-workspace pool
+// (maxConcurrentSessions>1) reserves a slot on a shared pod through
 // podBinder.BindSlot (§5.2). The pod's §4.7 adapter runs the
 // per-mode assignment sequence; the BindResult is returned for the
 // caller to register and persist after its own atomicity gates pass.
@@ -1591,7 +1592,7 @@ func (s *Server) publishParsePlanWarnings(tenantID, sessionID string, warnings [
 
 // rollbackBinding releases a successful startOnPod result whose
 // caller has decided to abort the §7.1 line 28 atomic-creation flow
-// before the session row was persisted. Session-mode and task-mode
+// before the session row was persisted. Exclusive session-mode
 // bindings drop through Binder.Release with a `failed` disposition;
 // concurrent-slot bindings drop through ReleaseSlot. Best-effort:
 // the §6.2 reclaim path runs regardless, so a release error here is

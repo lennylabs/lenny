@@ -16,8 +16,8 @@
 // IP, the lenny.dev/tenant-id label SSA, the readiness-driven slot
 // signal) acts.
 //
-// spec: §5.2 line 500 (concurrencyStyle: stateless routing), §5.2 line
-// 502 (tenant isolation), §5.2 line 573 (stateless demand metrics).
+// spec: §5.2 (service-mode routing, tenant isolation, and service-mode
+// demand metrics).
 package tenantaffinity
 
 import (

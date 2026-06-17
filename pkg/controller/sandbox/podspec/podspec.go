@@ -501,8 +501,8 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Image: in.AdapterImage,
 			Args: append([]string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
-				// spec: §6.4 line 407 — session-mode and task-mode pods use the
-				// single `/workspace/current` cwd. The concurrent-workspace
+				// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
+				// use the single `/workspace/current` cwd. The concurrent-workspace
 				// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
 				// in v1 (tracked under F-6.4.2); when it lands, the builder will
 				// select the workspace root from the resolved Runtime layout
@@ -586,8 +586,8 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Image: in.RuntimeImage,
 			Args: append([]string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
-				// spec: §6.4 line 407 — session-mode and task-mode pods use the
-				// single `/workspace/current` cwd. The concurrent-workspace
+				// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
+				// use the single `/workspace/current` cwd. The concurrent-workspace
 				// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
 				// in v1 (tracked under F-6.4.2); when it lands, the builder will
 				// select the workspace root from the resolved Runtime layout

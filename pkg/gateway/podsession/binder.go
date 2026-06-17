@@ -449,9 +449,9 @@ type BindResult struct {
 	SandboxName string
 	// PodIP is the bound pod's address.
 	PodIP string
-	// SlotID identifies the concurrent-mode (§5.2) slot the session was
-	// placed on. It is empty for a session-mode or task-mode bind, where
-	// the pod is claimed exclusively for the session. It is non-empty
+	// SlotID identifies the §5.2 concurrent-workspace slot the session was
+	// placed on. It is empty for an exclusive (maxConcurrentSessions=1) bind,
+	// where the pod is claimed exclusively for the session. It is non-empty
 	// only for a BindSlot result.
 	SlotID string
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried

@@ -3971,7 +3971,7 @@ bootstrap:
   #   - name: echo
   #     type: agent
   #     image: ghcr.io/lennylabs/echo:latest
-  #     executionMode: direct
+  #     executionMode: session
   # pools:
   #   - name: echo-pool
   #     runtimeRef: echo

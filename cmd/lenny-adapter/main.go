@@ -120,7 +120,7 @@ func main() {
 		"§5.2/§6.4 concurrency style: `workspace` enables the concurrent-"+
 			"workspace per-slot layout (slot-qualified RPCs materialize into "+
 			"/workspace/slots/{slotId}/ and /run/lenny/slots/{slotId}/). Empty "+
-			"(session/task mode) keeps the one-session-only base layout")
+			"(session mode, one session per pod) keeps the one-session-only base layout")
 	stagingDir := flag.String("staging-dir", "/workspace/.staging",
 		"directory PrepareWorkspace streams uploaded files into before "+
 			"FinalizeWorkspace materializes them; empty leaves PrepareWorkspace "+

@@ -106,7 +106,7 @@ type StartSessionParams struct {
 	MinPlatformVersion string
 	// SlotID, when set, claims a §6.4 concurrent-workspace slot rather than
 	// the whole pod: the adapter starts the slot's runtime against
-	// /workspace/slots/{slotId}/current. Empty in session/task mode.
+	// /workspace/slots/{slotId}/current. Empty in session mode (maxConcurrentSessions=1).
 	// spec: §6.4 lines 385-405.
 	SlotID string
 }

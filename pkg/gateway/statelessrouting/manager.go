@@ -9,11 +9,10 @@
 // The route is built lazily (rather than from a startup pool snapshot)
 // so a stateless pool created through the admin API after the gateway
 // started becomes routable without a restart. A pool that does not
-// exist, or that is not executionMode=concurrent /
-// concurrencyStyle=stateless, is rejected so the stateless ingress never
-// proxies to a session- or task-mode pool.
+// exist, or that is not executionMode=service, is rejected so the
+// stateless ingress never proxies to a session-mode pool.
 //
-// spec: §5.2 line 500.
+// spec: §5.2.
 package statelessrouting
 
 import (
@@ -30,10 +29,9 @@ import (
 )
 
 // PoolInfo describes a resolved stateless pool. Stateless is false for a
-// pool that exists but is not executionMode=concurrent /
-// concurrencyStyle=stateless.
+// pool that exists but is not executionMode=service.
 type PoolInfo struct {
-	// Stateless is true only for a concurrent-stateless pool.
+	// Stateless is true only for a service-mode pool.
 	Stateless bool
 	// MaxConcurrent is the pod slot cap (informational here; the pod's
 	// readiness probe enforces it).

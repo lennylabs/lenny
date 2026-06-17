@@ -55,7 +55,7 @@ const (
 	Failed
 )
 
-// DefaultCleanupTimeout is the §5.1 taskPolicy.cleanupTimeoutSeconds
+// DefaultCleanupTimeout is the §5.2 sessionPolicy.cleanupTimeoutSeconds
 // default applied when Config.CleanupTimeout is unset. The example pool in
 // spec §5.2 uses 30s.
 const DefaultCleanupTimeout = 30 * time.Second
@@ -117,13 +117,13 @@ type Config struct {
 	PrevProvider string
 	PrevLeaseID  string
 
-	// CleanupCommands are the deployer-defined taskPolicy.cleanupCommands
+	// CleanupCommands are the deployer-defined sessionPolicy.cleanupCommands
 	// run after the credential purge and before steps 1-6. They have
-	// access to task state but not the previous task's credential file.
+	// access to session state but not the previous session's credential file.
 	CleanupCommands []string
 
 	// CleanupTimeout bounds the whole cleanupCommands phase
-	// (taskPolicy.cleanupTimeoutSeconds). Zero applies DefaultCleanupTimeout.
+	// (sessionPolicy.cleanupTimeoutSeconds). Zero applies DefaultCleanupTimeout.
 	CleanupTimeout time.Duration
 
 	// ShellMode selects the cleanup command execution mode: true wraps each
