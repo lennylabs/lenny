@@ -7,8 +7,8 @@
 // unhealthy and §6.2 drains it as a whole.
 //
 // spec: §5.2 "Concurrent-workspace slot retry policy" (whole-pod
-// replacement trigger); §6.2 line 165 (slot_active → draining on the
-// unhealthy-slot threshold), §6.2 line 179 (failed_slots + leaked_slots
+// replacement trigger); §6.2 (claimed → draining on the
+// unhealthy-slot threshold), §6.2 (failed_slots + leaked_slots
 // >= ceil(maxConcurrent/2) within the rolling window).
 package slothealth
 

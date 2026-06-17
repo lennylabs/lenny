@@ -1358,8 +1358,8 @@ func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindR
 //     or an exhausted retry returns the §5.2 structured SlotFailedError.
 //   - A transient reason retries once on a fresh slot.
 //
-// spec: §5.2 "Concurrent-workspace slot retry policy"; §6.2 line 165
-// (slot_active → draining on the unhealthy-slot threshold); §6.2 line 176/179
+// spec: §5.2 "Concurrent-workspace slot retry policy"; §6.2
+// (claimed → draining on the unhealthy-slot threshold); §6.2
 // (a slot whose cleanup does not reclaim it is leaked and feeds the per-pod
 // lenny_adapter_leaked_slots gauge).
 func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothealth.Tracker, slots *slotstate.Registry, replacement func(pool string), leakGauge func(pod, pool string, leaked int), req podsession.SlotBindRequest) (*podsession.BindResult, error) {
