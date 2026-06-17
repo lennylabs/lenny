@@ -46,8 +46,17 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 // session reuses the live connection. WriteEnvelope writes any slot's
 // slotId-tagged envelope over that one connection, and each Output
 // subscriber receives every frame the runtime emits; the Attach handler
-// demultiplexes by slotId. Interrupt and Close stay session-keyed and act
-// on the shared connection.
+// demultiplexes by slotId.
+//
+// Interrupt and Close are scoped to the named session: each Start
+// registers the session in the active set, and Close (or a hard Interrupt)
+// releases it. The shared connection, the spawned child, and the listener
+// are torn down only when the last active session is released, so a
+// per-slot teardown of one slot leaves sibling slots running over the same
+// connection (spec/05:534 — "Slots fail independently"; spec/05:537 —
+// per-slot teardown and release). A clean Interrupt is the §15.4.1 line
+// 1826 heartbeat-hung SIGTERM for one slot; it ends only that slot when
+// siblings remain active.
 type SocketRuntimeProcess struct {
 	listener net.Listener
 
@@ -65,6 +74,11 @@ type SocketRuntimeProcess struct {
 	conn        net.Conn
 	cmd         *exec.Cmd
 	subscribers map[*subscriber]struct{}
+	// active is the set of sessions/slots Start has registered and Close
+	// or a hard Interrupt has not yet released. The shared connection is
+	// torn down only when this set empties, so per-slot teardown is scoped
+	// to the named slot and siblings keep running. spec: §5.2 line 534.
+	active map[string]struct{}
 }
 
 // subscriber is one Output consumer of the shared runtime connection. The
@@ -77,6 +91,12 @@ type subscriber struct {
 	feed chan []byte
 	out  chan []byte
 	done chan struct{}
+	// closeOnce guards done so the two concurrent closers — closeSubscribers
+	// when the fan-out reader hits EOF (a per-slot Close or Interrupt that
+	// closes the shared connection), and unsubscribe on the Output context's
+	// cancellation — resolve to a single close(done) rather than racing into
+	// a double close. spec: §15.4.1 line 1459.
+	closeOnce sync.Once
 }
 
 // newSubscriber starts a subscriber and its pump. The pump forwards each
@@ -121,13 +141,12 @@ func (s *subscriber) send(line []byte) {
 	}
 }
 
-// close stops the pump and closes out exactly once.
+// close stops the pump and closes out exactly once. closeOnce makes it
+// safe under the concurrent closers: closeSubscribers on the runtime EOF
+// and unsubscribe on the Output context cancellation can both call it, and
+// only the first closes done.
 func (s *subscriber) close() {
-	select {
-	case <-s.done:
-	default:
-		close(s.done)
-	}
+	s.closeOnce.Do(func() { close(s.done) })
 }
 
 // NewSocketRuntimeProcess binds the adapter's runtime socket and returns
@@ -157,10 +176,14 @@ func (p *SocketRuntimeProcess) SocketPath() string {
 // accept times out. Start is idempotent across slots: one runtime process
 // per pod serves every slot over the one connection (spec/05:509), so a
 // second Start (for a sibling slot's session) reuses the live connection
-// rather than accepting a new one.
-func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
+// rather than accepting a new one. Each Start registers the session in the
+// active set so a later per-slot Close releases only that slot and the
+// connection survives until the last active session ends. spec: §5.2 line
+// 534.
+func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
 	if p.connected {
+		p.addActiveLocked(sessionID)
 		p.mu.Unlock()
 		return nil
 	}
@@ -196,6 +219,7 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 	p.conn = conn
 	p.connected = true
 	p.subscribers = map[*subscriber]struct{}{}
+	p.addActiveLocked(sessionID)
 	p.mu.Unlock()
 
 	// One reader goroutine over the single connection fans every frame out
@@ -346,15 +370,42 @@ func (p *SocketRuntimeProcess) unsubscribe(sub *subscriber) {
 	sub.close()
 }
 
-// Interrupt terminates the runtime. The §4.7 sidecar model has no host
-// process to signal when the runtime runs in a separate container, so
-// Interrupt closes the socket: the runtime observes the §15.4 socket EOF
-// and exits. When SpawnPath spawned the runtime as a child, a hard
-// interrupt also kills that process. One runtime process per pod serves
-// every slot (spec/05:509), so Interrupt acts on the shared connection;
-// the session id is accepted for the interface contract.
-func (p *SocketRuntimeProcess) Interrupt(_ context.Context, _ string, hard bool) error {
+// addActiveLocked records sessionID as an active slot/session. The shared
+// connection is kept up while any active session remains. Callers hold
+// p.mu. spec: §5.2 line 534.
+func (p *SocketRuntimeProcess) addActiveLocked(sessionID string) {
+	if p.active == nil {
+		p.active = map[string]struct{}{}
+	}
+	p.active[sessionID] = struct{}{}
+}
+
+// releaseActiveLocked removes sessionID from the active set and reports
+// whether the set is now empty, i.e. whether this release was the last
+// active session and the shared connection may be torn down. Callers hold
+// p.mu. spec: §5.2 line 534.
+func (p *SocketRuntimeProcess) releaseActiveLocked(sessionID string) (last bool) {
+	delete(p.active, sessionID)
+	return len(p.active) == 0
+}
+
+// Interrupt signals the runtime for one slot. The §4.7 sidecar model has
+// no host process to signal when the runtime runs in a separate container,
+// so the slot-independent teardown (spec/05:534) is achieved by scoping
+// the interrupt to the named session: a clean interrupt (the §15.4.1 line
+// 1826 heartbeat-hung SIGTERM) on one slot while siblings remain active is
+// a no-op on the shared connection, because closing it would EOF every
+// sibling's stream and contradict spec/05:536 ("Other slots continue
+// unaffected"). Only when the named session is the last active one does
+// Interrupt close the socket (the §15.4 EOF that exits the runtime) and,
+// on a hard interrupt of a spawned child, kill that process.
+func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, hard bool) error {
 	p.mu.Lock()
+	last := p.releaseActiveLocked(sessionID)
+	if !last {
+		p.mu.Unlock()
+		return nil
+	}
 	conn := p.conn
 	cmd := p.cmd
 	p.mu.Unlock()
@@ -369,21 +420,31 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, _ string, hard bool)
 	return nil
 }
 
-// Close tears the runtime down: it closes the shared socket connection
-// (the §15.4 clean-exit signal), waits the resolved grace window for a
-// spawned child to exit, and closes the listener. One runtime process per
-// pod serves every slot over the one connection (spec/05:509), so Close
-// tears that single connection down. It is idempotent: a second per-slot
-// Close after the connection is already gone is a no-op, since the §6.1
-// concurrent pod is terminated and replaced once its sessions end.
+// Close tears down one slot's session. One runtime process per pod serves
+// every slot over the single connection (spec/05:509), so Close is scoped
+// to the named session: it releases that slot's bookkeeping, and only when
+// the last active session is released does it close the shared socket
+// connection (the §15.4 clean-exit signal), wait the resolved grace window
+// for a spawned child to exit, and close the listener. A Close for one slot
+// while siblings remain active leaves the connection up so the siblings'
+// streams survive (spec/05:534 — "Slots fail independently"; spec/05:536 —
+// "Other slots continue unaffected"). It is idempotent: a Close for a
+// session not in the active set (already released, or after the connection
+// is gone) is a no-op.
 //
 // The grace window is derived from the §4.7 ShutdownRequest.deadline_ms
 // the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
 // A context with no deadline falls back to defaultSocketShutdownGrace,
 // preserving the historical 10s behavior. spec: §11.4 line 258.
-func (p *SocketRuntimeProcess) Close(ctx context.Context, _ string) error {
+func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
 	if !p.connected {
+		p.mu.Unlock()
+		return nil
+	}
+	if !p.releaseActiveLocked(sessionID) {
+		// A sibling slot is still active; leave the shared connection up so
+		// its stream survives. spec: §5.2 line 534.
 		p.mu.Unlock()
 		return nil
 	}
