@@ -309,9 +309,6 @@
     "pkg/session/state": {
       "unit": ["pkg/session/state/..."]
     },
-    "pkg/task/state": {
-      "unit": ["pkg/task/state/..."]
-    },
     "pkg/sandbox/state": {
       "unit": ["pkg/sandbox/state/..."]
     },

@@ -85,7 +85,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
-	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
 
 // mcpStateForSession returns the §8.8 MCP-protocol state spelling for
@@ -103,21 +102,13 @@ func mcpStateForSession(s session.State) string {
 // any supplementary-table metadata annotations for a §7.2 session-level
 // Lenny state. The metadata map is nil when no annotation applies (the
 // caller omits the `metadata` field from the wire payload via the
-// `omitempty` JSON tag). F-8.8.7 / F-8.8.9.
-// spec: §8.8 lines 855-883.
+// `omitempty` JSON tag). §8.8 defines the canonical task machine as the
+// §7.2 session machine, so every state routes through the single
+// sessionstate.MCPProtocolState projection; the terminal and
+// input_required spellings are byte-identical to the former task-level
+// table. F-8.8.7 / F-8.8.9.
+// spec: §8.8 lines 855-883, §7.2.
 func nodeProtocolState(s session.State) (string, map[string]any) {
-	switch s {
-	case session.StateInputRequired:
-		return taskstate.MCPProtocolState(taskstate.InputRequired), nil
-	case session.StateCompleted:
-		return taskstate.MCPProtocolState(taskstate.Completed), nil
-	case session.StateFailed:
-		return taskstate.MCPProtocolState(taskstate.Failed), nil
-	case session.StateCancelled:
-		return taskstate.MCPProtocolState(taskstate.Cancelled), nil
-	case session.StateExpired:
-		return taskstate.MCPProtocolState(taskstate.Expired), nil
-	}
 	return sessionstate.MCPProtocolState(sessionstate.State(s))
 }
 

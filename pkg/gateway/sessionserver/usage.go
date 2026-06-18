@@ -24,7 +24,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
-	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
 
 // releaseExecutor tears down a terminal session's executor state. When the
@@ -951,22 +950,14 @@ func taskErrorForSession(sess sessionstore.Session) *sessionrecord.Error {
 
 // mcpStateForSession mirrors the §8.8 MCP projection used by the MCP
 // taskResult builder so an archived row produces the same protocol
-// state string a live row produces. The session-level supplementary
-// table is delegated to sessionstate.MCPProtocolState; the task-level
-// table is delegated to taskstate.MCPProtocolState. F-8.8.7.
+// state string a live row produces. §8.8 defines the canonical task
+// machine as the §7.2 session machine, so every state routes through
+// the single sessionstate.MCPProtocolState projection; the metadata
+// annotations are discarded on this single-string path. The terminal
+// and input_required spellings are byte-identical to the former
+// task-level table. F-8.8.7.
+// spec: §8.8 lines 855-883, §7.2.
 func mcpStateForSession(s session.State) string {
-	switch s {
-	case session.StateInputRequired:
-		return taskstate.MCPProtocolState(taskstate.InputRequired)
-	case session.StateCompleted:
-		return taskstate.MCPProtocolState(taskstate.Completed)
-	case session.StateFailed:
-		return taskstate.MCPProtocolState(taskstate.Failed)
-	case session.StateCancelled:
-		return taskstate.MCPProtocolState(taskstate.Cancelled)
-	case session.StateExpired:
-		return taskstate.MCPProtocolState(taskstate.Expired)
-	}
 	proto, _ := sessionstate.MCPProtocolState(sessionstate.State(s))
 	return proto
 }

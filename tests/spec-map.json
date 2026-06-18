@@ -607,11 +607,11 @@
       "tests": [
         "pkg/delegation/cycle/...",
         "pkg/delegation/lease/...",
-        "pkg/task/state/..."
+        "pkg/session/state/..."
       ],
       "packages": [
         "pkg/delegation",
-        "pkg/task/state"
+        "pkg/session/state"
       ],
       "blocked_until_phase": "9",
       "notes": "\u00a78 is the umbrella section for recursive delegation. The behavioral surface lives in subsections \u00a78.2 (cycle detection + lease budgets) and \u00a78.8 (TaskRecord state machine); the tests listed here mirror those subsection entries so a dashboard query for \u00a78 surfaces the same coverage."
@@ -719,12 +719,11 @@
       "title": "TaskRecord and TaskResult \u2014 state machine",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/task/state/state_test.go::TestAllStatesIncludeInputRequired",
-        "pkg/task/state/state_test.go::TestMCPProtocolStateMapping",
-        "pkg/task/state/state_test.go::TestIsValidCanonicalTransitions"
+        "pkg/session/state/state_test.go::TestMCPProtocolStateSessionMapping_spec_8_8_871",
+        "pkg/session/state/state_test.go::TestMCPProtocolStateUnknownStateReturnsEmpty_spec_8_8_871"
       ],
       "packages": [
-        "pkg/task/state"
+        "pkg/session/state"
       ],
       "blocked_until_phase": "1"
     },
