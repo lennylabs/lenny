@@ -123,7 +123,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - Adapter binary protocol implementation against the Phase 1 wire contracts.
 - `make run` local dev mode launching the gateway against an in-memory store and the `echo` runtime.
 - `pkg/common/registry/resolver.go` (`ImageResolver` with override > url > default precedence and digest enforcement).
-- Adapter `SO_PEERCRED` startup self-test per [§4.7](04_system-components.md#47-runtime-adapter) (runs on every pod start before the READY signal; ships with `lenny_adapter_sopeercred_selftest_failed_total` and the `adapter.requireSoPeercred` flag).
+- Adapter `SO_PEERCRED` startup self-test per [§4.7](04_system-components.md#47-runtime-adapter) (runs on every pod start before the READY signal; ships with `lenny_adapter_sopeercred_selftest_failed_total` and the adapter binary's `--require-so-peercred` process flag, default `true`).
 - Per-connection HMAC challenge-response (nonce handshake) for the adapter↔agent socket per [§4.7](04_system-components.md#47-runtime-adapter), plus the `lenny_adapter_sopeercred_disabled_total` counter for the nonce-only fallback path.
 - Startup-latency benchmark harness in `tests/tier7b_load_kind/scenarios/startup_latency` with a first baseline committed under `tests/tier7b_load_kind/baselines/startup_latency.json`.
 - SQLite-dev-mode schema for `make run` use.
@@ -179,7 +179,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - WarmPoolController write path that mirrors `Sandbox` CRD status into the Phase 1.5 `agent_pod_state` Postgres table on every state transition per [§4.6.1](04_system-components.md#46-pod-lifecycle-controllers), including the `lenny_agent_pod_state_mirror_lag_seconds` gauge and the `statusUpdateDeduplicationWindow` controller flag.
 - WarmPoolController cluster-CIDR drift detection per NET-022 ([§13.2](13_security-model.md#132-network-isolation)): re-reads cluster pod and service CIDRs every 5 minutes, compares against the rendered `egressCIDRs`, and fires the `NetworkPolicyCIDRDrift` alert on divergence. Phase 14 adds the preflight half (NET-065 cluster-CIDR/IMDS symmetry across all three egress surfaces).
 - `SDK-warm circuit breaker` surfaced on `SandboxWarmPool.status.sdkWarmCircuitBreaker.{openedAt,openedReason,minOpenUntil}` per [§4.6.3](04_system-components.md#46-pod-lifecycle-controllers) ownership matrix, with the PSC leader-failover persistence carve-out.
-- `SecurityDegradedMode=True` condition surfaced by the PSC on `SandboxTemplate` when the `requireSoPeercred` self-test or nonce-only fallback is active per [§4.7](04_system-components.md#47-runtime-adapter).
+- Nonce-only-mode activation vertical (controller side) per [§4.7](04_system-components.md#47-runtime-adapter): the `Runtime.spec.requireSoPeercred` CRD field with RuntimeReconciler validation (`Registered=False`/`InvalidRuntime` on an embedded runtime setting `requireSoPeercred: false`), the WarmPoolController podspec render of `--require-so-peercred=false` gated on the pool acknowledgment mirrored onto `SandboxTemplate.spec`, and the `SOPeercredDisabled=True` condition on each nonce-only `Sandbox` and `SecurityDegradedMode=True` on the `SandboxTemplate`, both written by the WarmPoolController per the [§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) ownership table.
 - `RuntimeProvider` abstraction per [§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles) (extension point for future backends; default implementation wraps `kubernetes-sigs/agent-sandbox`).
 - Adapter-side `DemoteSDK` and `ConfigureWorkspace` gRPC stubs per [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) and [§6.2](06_warm-pod-model.md#62-pod-state-machine); the gateway-side caller wires in Phase 8 alongside checkpoint quiescence.
 - mTLS PKI via cert-manager per [§10.3](10_gateway-internals.md#103-mtls-pki), including the documented CA rotation procedure with the 24-hour overlap window.
@@ -257,6 +257,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - `ConnectorDefinition` admin resource per [§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc): `POST /v1/admin/connectors`, `GET`, `PUT`, `DELETE`, `pkg/connector` package, secret-ref resolver, and the registration-time validators.
 - OAuth/OIDC `state` and `code_verifier` storage with TTL in Redis per [§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc), plus the `/v1/oauth/callback` handler.
 - `lenny-ctl policy audit-isolation` subcommand per [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease).
+- Nonce-only-mode acknowledgment gate (gateway side) per [§4.7](04_system-components.md#47-runtime-adapter): the `acknowledgeNonceOnlyAuth` pool configuration flag ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)) with the pool admission rejection at create and at update, plus the runtime registry column and CRD-to-store mirror of `requireSoPeercred` the gate evaluates.
 
 **Prerequisites.** Phase 4 exit gate.
 

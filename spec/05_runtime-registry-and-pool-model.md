@@ -2,7 +2,7 @@
 
 ### 5.1 Runtime
 
-`Runtime` and `SessionTemplate` are unified into a single **`Runtime`** concept. A Runtime is either **standalone** (has an `image`) or **derived** (has a `baseRuntime` reference). All runtimes are registered via the admin API as static configuration.
+`Runtime` and `SessionTemplate` are unified into a single **`Runtime`** concept. A Runtime is either **standalone** (has an `image`) or **derived** (has a `baseRuntime` reference). A runtime is registered as static configuration either declaratively through a `Runtime` custom resource, which the RuntimeReconciler validates and mirrors into the gateway runtime registry, or through the admin API, which writes the same registry directly.
 
 Every Runtime has a **`type`** field and an optional **`capabilities`** field:
 
@@ -64,6 +64,7 @@ capabilities:
     modes: [immediate, queued]
 executionMode: session
 isolationProfile: sandboxed
+requireSoPeercred: true # optional; set false only for confirmed gVisor SO_PEERCRED divergence — sidecar model only; see §4.7
 allowedResourceClasses: [small, medium, large]
 delegationPolicyRef: orchestrator-policy
 allowSelfRecursion: false  # when true AND platform+DelegationPolicy agree, this runtime's (runtime_name, pool_name) identity may repeat in its own delegation lineage (self-decomposition pattern); see [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) cycle detection
@@ -110,6 +111,8 @@ labels:
   team: platform
   approved: "true"
 ```
+
+**`requireSoPeercred`** — gates the `SO_PEERCRED` adapter-agent boundary self-test ([§4.7](04_system-components.md#47-runtime-adapter)). Optional; defaults to `true`. Set `false` only for confirmed gVisor `SO_PEERCRED` divergence on a `deploymentModel: sidecar` runtime, which activates nonce-only mode. The field is settable only through `Runtime` CRD registration: the admin registration payload does not model it, so a runtime registered only through the admin API runs with the default of `true`.
 
 #### Derived Runtime
 
@@ -169,7 +172,7 @@ minPlatformVersion: "1.4.0" # optional; gateway rejects registration if platform
 
 #### Inheritance Rules
 
-**Never overridable on derived runtime:** `type`, `executionMode`, `isolationProfile`, `capabilities.interaction`, `allowedResourceClasses`, `integrationLevel`. (`allowStandardIsolation` is a pool configuration flag ([Section 5.3](#53-isolation-profiles)), not a Runtime definition field — it is not subject to inheritance.)
+**Never overridable on derived runtime:** `type`, `executionMode`, `isolationProfile`, `capabilities.interaction`, `allowedResourceClasses`, `integrationLevel`, `requireSoPeercred`. (`allowStandardIsolation` is a pool configuration flag ([Section 5.3](#53-isolation-profiles)), not a Runtime definition field — it is not subject to inheritance.)
 
 **Independently configurable on derived runtime:** Pool settings, `workspaceDefaults`, `setupCommands`, `setupPolicy.timeoutSeconds` (gateway takes maximum of base and derived), `agentInterface`, `delegationPolicyRef` (restrict only), `publishedMetadata`, `labels`, `sessionPolicy`.
 
@@ -190,6 +193,7 @@ When the gateway resolves a derived runtime, it applies the following per-field 
 | `capabilities.interaction` | **Prohibited** — derived may not set | |
 | `capabilities.injection` | **Prohibited** — derived may not set | |
 | `integrationLevel` | **Inherited** — derived may not set | Level is a property of the runtime binary image, which is inherited; derived runtimes cannot re-declare a different level. Gateway rejects registration with `INVALID_DERIVED_RUNTIME: integrationLevel is prohibited on derived runtimes` if present. |
+| `requireSoPeercred` | **Inherited** — derived may not set | The authentication-boundary posture is a property of the base runtime's image and isolation environment, matching the `integrationLevel` classification. Enforcement is structural: the merge takes the value from the base, so a derived runtime resolved against a nonce-only base inherits the base posture and cannot independently flip the field. |
 | `supportedProviders` | **Override** — derived value replaces base if set; otherwise base value applies | Derived may restrict but not expand beyond base |
 | `credentialCapabilities` | **Override** — derived value replaces base if set | |
 | `limits` | **Override** — derived value replaces base if set; otherwise base value applies | |
@@ -666,6 +670,8 @@ Lenny uses standard Kubernetes `RuntimeClass` for isolation:
 | `microvm`   | `kata`       | Higher-risk, semi-trusted, or multi-tenant workloads                                                 | No       |
 
 **Security note:** `runc` provides no protection against kernel exploits. Even trusted developers can introduce malicious dependencies. `gvisor` is the minimum recommended isolation for any workload processing untrusted input (which includes all LLM-generated code execution). Deployers must explicitly opt in to `runc` via a pool configuration flag (`allowStandardIsolation: true`).
+
+**`acknowledgeNonceOnlyAuth`** — a pool configuration flag, of the same opt-in class as `allowStandardIsolation`, that acknowledges nonce-only mode for the pool ([§4.7](04_system-components.md#47-runtime-adapter)). A pool referencing a runtime with `requireSoPeercred: false` is rejected by the gateway pool admission path unless the pool sets `acknowledgeNonceOnlyAuth: true`. The check is unconditional and applies in every tenancy mode; the rejection is a descriptive error referencing [§4.7](04_system-components.md#47-runtime-adapter). The PoolScalingController mirrors the flag onto `SandboxTemplate.spec` per the [§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) ownership table, and the WarmPoolController renders nonce-only mode only for acknowledged pools, so a `Runtime` resource applied directly with `kubectl` cannot activate nonce-only mode on a pool that has not acknowledged it. The `lenny-pool-config-validator` webhook is unchanged: it is a pure in-object validator that cannot resolve the pool's `runtimeRef` to read `requireSoPeercred`.
 
 Each `RuntimeClass` should define `Pod Overhead` so scheduling accounts for the isolation cost. Reference overhead values:
 
