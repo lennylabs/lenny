@@ -7,7 +7,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // buildTaskRecord projects the §8.8 TaskRecord envelope for a session
@@ -27,16 +27,16 @@ import (
 // subtree rollup (null until every descendant settles per §8.8 line 917).
 //
 // spec: §8.8 lines 806-823, 897-917; §4.2 line 157. F-8.8.3.
-func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) *task.Record {
+func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) *sessionrecord.Record {
 	if s.transcripts == nil {
 		return nil
 	}
-	rec := &task.Record{
-		SchemaVersion: task.SchemaVersion,
+	rec := &sessionrecord.Record{
+		SchemaVersion: sessionrecord.SchemaVersion,
 		TaskID:        row.ID,
 		SessionID:     row.ID,
 		State:         mcpStateForSession(row.State),
-		Messages:      []task.Message{},
+		Messages:      []sessionrecord.Message{},
 	}
 	entries, err := s.transcripts.Get(ctx, row.TenantID, row.ID)
 	if err != nil {
@@ -44,15 +44,15 @@ func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) 
 	}
 	lastAgent := -1
 	for _, e := range entries {
-		role := task.RoleAgent
+		role := sessionrecord.RoleAgent
 		if e.Role == "user" {
-			role = task.RoleCaller
+			role = sessionrecord.RoleCaller
 		}
-		rec.Messages = append(rec.Messages, task.Message{
+		rec.Messages = append(rec.Messages, sessionrecord.Message{
 			Role:  role,
-			Parts: []task.OutputPart{task.TextPart(e.Content)},
+			Parts: []sessionrecord.OutputPart{sessionrecord.TextPart(e.Content)},
 		})
-		if role == task.RoleAgent {
+		if role == sessionrecord.RoleAgent {
 			lastAgent = len(rec.Messages) - 1
 		}
 	}

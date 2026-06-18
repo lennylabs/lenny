@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // fakeCatalog is a minimal artifactcatalog.Store: only ListBySession is
@@ -58,8 +58,8 @@ func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 	res := srv.materializeTaskResult(context.Background(),
 		sessionstore.Session{ID: "sess_c", TenantID: "acme", State: session.StateCompleted}, 0)
 
-	if res.SchemaVersion != task.SchemaVersion || res.State != "completed" || res.Error != nil {
-		t.Fatalf("result = %+v, want schemaVersion=%d state=completed error=nil", res, task.SchemaVersion)
+	if res.SchemaVersion != sessionrecord.SchemaVersion || res.State != "completed" || res.Error != nil {
+		t.Fatalf("result = %+v, want schemaVersion=%d state=completed error=nil", res, sessionrecord.SchemaVersion)
 	}
 	if res.Usage != nil || res.TreeUsage != nil {
 		t.Errorf("usage/treeUsage = %+v/%+v, want nil when no TaskUsage Builder is wired", res.Usage, res.TreeUsage)
@@ -165,7 +165,7 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 	srv := New(store, Options{Clock: taskResultClock, TreeArchive: archive})
 
 	// A prior writer recorded this node at schema version 7.
-	prior, _ := json.Marshal(task.Result{SchemaVersion: 7, TaskID: "sess_c", State: "completed"})
+	prior, _ := json.Marshal(sessionrecord.Result{SchemaVersion: 7, TaskID: "sess_c", State: "completed"})
 	if err := archive.Archive(context.Background(), treearchive.ArchivedNode{
 		TenantID: "acme", RootSessionID: "sess_p", NodeSessionID: "sess_c",
 		ParentSessionID: "sess_p", State: "completed", Result: string(prior),
@@ -185,8 +185,8 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 	srv.archiveSettledChild(context.Background(), sessionstore.Session{
 		ID: "sess_d", TenantID: "acme", State: session.StateCompleted, ParentSessionID: "sess_p",
 	})
-	if got := archivedSchemaVersion(t, archive, "sess_d"); got != task.SchemaVersion {
-		t.Errorf("fresh schemaVersion = %d, want producer %d", got, task.SchemaVersion)
+	if got := archivedSchemaVersion(t, archive, "sess_d"); got != sessionrecord.SchemaVersion {
+		t.Errorf("fresh schemaVersion = %d, want producer %d", got, sessionrecord.SchemaVersion)
 	}
 
 	// The materialize helper preserves an explicit prior version directly.
@@ -250,7 +250,7 @@ func archivedSchemaVersion(t *testing.T, archive treearchive.Store, nodeID strin
 	if err != nil {
 		t.Fatalf("GetByNode %s: %v", nodeID, err)
 	}
-	var res task.Result
+	var res sessionrecord.Result
 	if err := json.Unmarshal([]byte(node.Result), &res); err != nil {
 		t.Fatalf("decode archived body %q: %v", node.Result, err)
 	}

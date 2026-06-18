@@ -23,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
 
@@ -526,7 +526,7 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 	alreadyArchived := false
 	if prev, err := s.treeArchive.GetByNode(ctx, sess.TenantID, sess.ID); err == nil {
 		alreadyArchived = true
-		var prevResult task.Result
+		var prevResult sessionrecord.Result
 		if json.Unmarshal([]byte(prev.Result), &prevResult) == nil {
 			existingVer = prevResult.SchemaVersion
 		}
@@ -849,9 +849,9 @@ func (s *Server) subtreeSessionIDs(ctx context.Context, tenantID string, root se
 // protocol spelling so a resumed parent replaying the archive sees the
 // same value a live row would yield.
 // spec: §8.8 lines 855-940. F-8.8.2 / F-8.8.3 / F-8.8.4 / F-8.8.7 / F-8.8.11.
-func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Session, existingSchemaVersion int) task.Result {
-	res := task.Result{
-		SchemaVersion: task.ReconcileSchemaVersion(existingSchemaVersion, task.SchemaVersion),
+func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Session, existingSchemaVersion int) sessionrecord.Result {
+	res := sessionrecord.Result{
+		SchemaVersion: sessionrecord.ReconcileSchemaVersion(existingSchemaVersion, sessionrecord.SchemaVersion),
 		TaskID:        sess.ID,
 		State:         mcpStateForSession(sess.State),
 	}
@@ -875,8 +875,8 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 // present (possibly empty) when output is set, per the §8.8 / §15.4.1
 // contract.
 // spec: §8.8 lines 888-896; §15.4.1. F-8.8.2.
-func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session) *task.Output {
-	out := &task.Output{Parts: []task.OutputPart{}, ArtifactRefs: []string{}}
+func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session) *sessionrecord.Output {
+	out := &sessionrecord.Output{Parts: []sessionrecord.OutputPart{}, ArtifactRefs: []string{}}
 	if s.transcripts != nil {
 		if entries, err := s.transcripts.Get(ctx, sess.TenantID, sess.ID); err == nil {
 			for i := len(entries) - 1; i >= 0; i-- {
@@ -884,7 +884,7 @@ func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session)
 				// to caller; assistant/system map to agent. The child's
 				// emitted result is its final agent turn.
 				if entries[i].Role != "user" {
-					out.Parts = append(out.Parts, task.TextPart(entries[i].Content))
+					out.Parts = append(out.Parts, sessionrecord.TextPart(entries[i].Content))
 					break
 				}
 			}
@@ -931,7 +931,7 @@ func isDeliverableArtifact(r artifactcatalog.Record) bool {
 // so the await path sees identical error blocks whether it reads the
 // archived body or the live row.
 // spec: §8.8 lines 922-940; §15.2.1. F-8.8.4.
-func taskErrorForSession(sess sessionstore.Session) *task.Error {
+func taskErrorForSession(sess sessionstore.Session) *sessionrecord.Error {
 	code := sess.FailureReason
 	if code == "" {
 		code = "CHILD_" + strings.ToUpper(string(sess.State))
@@ -941,11 +941,11 @@ func taskErrorForSession(sess sessionstore.Session) *task.Error {
 	if sess.RetryPolicy != nil {
 		maxRetries = sess.RetryPolicy.MaxRetries
 	}
-	return &task.Error{
+	return &sessionrecord.Error{
 		Code:             code,
 		Category:         string(cat),
 		Message:          "child session ended in state " + string(sess.State),
-		RetriesExhausted: task.RetriesExhausted(sess.RetryCount, maxRetries),
+		RetriesExhausted: sessionrecord.RetriesExhausted(sess.RetryCount, maxRetries),
 	}
 }
 

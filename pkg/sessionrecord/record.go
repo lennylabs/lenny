@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 
-// Package task models the §8.8 TaskRecord and TaskResult envelopes —
-// the durable, protocol-bridging contract for a delegated task. The
-// types here are the canonical Go representation of the §8.8 JSON
-// schemas (TaskRecord, TaskResult) and the §15.4.1 OutputPart content
-// envelope. The gateway projects a TaskRecord on read (from the session
-// row plus its transcript) and writes a TaskResult into the §8.10 tree
-// archive when a child settles; both routes go through these types so
-// the wire envelope is identical across surfaces.
+// Package sessionrecord models the §8.8 TaskRecord and TaskResult
+// envelopes: the durable, protocol-bridging contract for a delegated
+// task. The types here are the canonical Go representation of the §8.8
+// JSON schemas (TaskRecord, TaskResult) and the §15.4.1 OutputPart
+// content envelope. The gateway projects a TaskRecord on read (from the
+// session row plus its transcript) and writes a TaskResult into the
+// §8.10 tree archive when a child settles; both routes go through these
+// types so the wire envelope is identical across surfaces. The package
+// name carries Lenny's own session vocabulary; the exported type names
+// (Record, Result) and the JSON wire tags (taskId, etc.) keep the
+// external-protocol Task vocabulary the §8.8 schemas define.
 //
 // The package depends on nothing outside the standard library so the
 // domain model stays free of gateway-layer dependencies. Projection
@@ -16,7 +19,7 @@
 //
 // spec: §8.8 lines 804-940 (TaskRecord / TaskResult); §15.4.1 lines
 // 1479-1540 (OutputPart).
-package task
+package sessionrecord
 
 import (
 	"fmt"

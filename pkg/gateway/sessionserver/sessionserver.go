@@ -82,7 +82,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
@@ -2128,7 +2128,7 @@ type SessionResponse struct {
 	// omits it to avoid a transcript fetch per row. Absent when the
 	// gateway has no transcript store wired. F-8.8.1.
 	// spec: §8.8 lines 806-823.
-	TaskRecord *task.Record `json:"taskRecord,omitempty"`
+	TaskRecord *sessionrecord.Record `json:"taskRecord,omitempty"`
 }
 
 // SetupOutputEntry is one §7.5 setup-command record on the §15.1 session

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // spec: §8.2 lines 12-28 — the opaque `target` resolver and the
@@ -16,14 +16,14 @@ import (
 func TestFlattenTaskInput_spec_8_2(t *testing.T) {
 	cases := []struct {
 		name  string
-		parts []task.OutputPart
+		parts []sessionrecord.OutputPart
 		want  string
 	}{
 		{"nil", nil, ""},
-		{"single text", []task.OutputPart{{Type: "text", Inline: "do work"}}, "do work"},
+		{"single text", []sessionrecord.OutputPart{{Type: "text", Inline: "do work"}}, "do work"},
 		{
 			"multiple text concatenated in order",
-			[]task.OutputPart{
+			[]sessionrecord.OutputPart{
 				{Type: "text", Inline: "part one "},
 				{Type: "text", Inline: "part two"},
 			},
@@ -31,7 +31,7 @@ func TestFlattenTaskInput_spec_8_2(t *testing.T) {
 		},
 		{
 			"non-text parts skipped",
-			[]task.OutputPart{
+			[]sessionrecord.OutputPart{
 				{Type: "text", Inline: "keep"},
 				{Type: "image", Ref: "blob://x"},
 				{Type: "file", Ref: "blob://y"},
@@ -40,16 +40,16 @@ func TestFlattenTaskInput_spec_8_2(t *testing.T) {
 		},
 		{
 			"nested parts flattened",
-			[]task.OutputPart{
+			[]sessionrecord.OutputPart{
 				{Type: "text", Inline: "a"},
-				{Type: "group", Parts: []task.OutputPart{
+				{Type: "group", Parts: []sessionrecord.OutputPart{
 					{Type: "text", Inline: "b"},
 					{Type: "text", Inline: "c"},
 				}},
 			},
 			"abc",
 		},
-		{"empty inline text contributes nothing", []task.OutputPart{{Type: "text", Inline: ""}}, ""},
+		{"empty inline text contributes nothing", []sessionrecord.OutputPart{{Type: "text", Inline: ""}}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

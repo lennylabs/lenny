@@ -30,7 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // Builder assembles §8.8 usage / treeUsage. A nil *Builder is valid: its
@@ -61,7 +61,7 @@ func New(sessions sessionstore.Store, tokens sessionusage.Store, archive treearc
 // row. A nil Builder or a nil token store yields a usage with zero tokens
 // and the derived time dimensions.
 // spec: §8.8 lines 897-903.
-func (b *Builder) Usage(ctx context.Context, sess sessionstore.Session) *task.Usage {
+func (b *Builder) Usage(ctx context.Context, sess sessionstore.Session) *sessionrecord.Usage {
 	if b == nil {
 		return nil
 	}
@@ -77,9 +77,9 @@ func (b *Builder) Usage(ctx context.Context, sess sessionstore.Session) *task.Us
 // create-to-now for a not-yet-terminal session); podMinutes and
 // credentialLeaseMinutes derive from it when a pod was bound, since in
 // session mode the pod and credential lease span the session lifetime.
-func (b *Builder) usageFrom(sess sessionstore.Session, tok sessionusage.Tokens) *task.Usage {
+func (b *Builder) usageFrom(sess sessionstore.Session, tok sessionusage.Tokens) *sessionrecord.Usage {
 	wall := b.wallClockSeconds(sess)
-	u := &task.Usage{
+	u := &sessionrecord.Usage{
 		InputTokens:      tok.Input,
 		OutputTokens:     tok.Output,
 		WallClockSeconds: wall,
@@ -120,7 +120,7 @@ func (b *Builder) wallClockSeconds(sess sessionstore.Session) float64 {
 // puts on TaskResult.usage); passing it avoids a second token lookup and
 // keeps the leaf node's usage and treeUsage consistent.
 // spec: §8.8 lines 904-917.
-func (b *Builder) TreeUsage(ctx context.Context, sess sessionstore.Session, rootUsage *task.Usage) *task.TreeUsage {
+func (b *Builder) TreeUsage(ctx context.Context, sess sessionstore.Session, rootUsage *sessionrecord.Usage) *sessionrecord.TreeUsage {
 	if b == nil || b.sessions == nil || rootUsage == nil {
 		return nil
 	}
@@ -174,7 +174,7 @@ func (b *Builder) TreeUsage(ctx context.Context, sess sessionstore.Session, root
 
 	// DFS the subtree rooted at sess, accumulating each node's own usage.
 	// A non-terminal descendant collapses the whole rollup to null.
-	var sum task.TreeUsage
+	var sum sessionrecord.TreeUsage
 	seen := map[string]bool{}
 	var walk func(id string, isRoot bool) bool
 	walk = func(id string, isRoot bool) bool {
@@ -218,16 +218,16 @@ func (b *Builder) nodeUsage(
 	id string,
 	isRoot bool,
 	root sessionstore.Session,
-	rootUsage *task.Usage,
+	rootUsage *sessionrecord.Usage,
 	liveByID map[string]sessionstore.Session,
 	archByID map[string]treearchive.ArchivedNode,
-) (task.Usage, bool) {
+) (sessionrecord.Usage, bool) {
 	if isRoot {
 		return *rootUsage, true
 	}
 	if row, ok := liveByID[id]; ok {
 		if !session.IsTerminal(row.State) {
-			return task.Usage{}, false
+			return sessionrecord.Usage{}, false
 		}
 		var tok sessionusage.Tokens
 		if b.tokens != nil {
@@ -238,7 +238,7 @@ func (b *Builder) nodeUsage(
 	if n, ok := archByID[id]; ok {
 		return archivedUsage(n), true
 	}
-	return task.Usage{}, false
+	return sessionrecord.Usage{}, false
 }
 
 // archivedUsage extracts the usage block a node baked into its archived
@@ -246,13 +246,13 @@ func (b *Builder) nodeUsage(
 // metering existed (or with a malformed body) contributes zero usage but
 // still counts as settled, so the rollup degrades to a token undercount
 // rather than a perpetual null.
-func archivedUsage(n treearchive.ArchivedNode) task.Usage {
+func archivedUsage(n treearchive.ArchivedNode) sessionrecord.Usage {
 	if n.Result == "" {
-		return task.Usage{}
+		return sessionrecord.Usage{}
 	}
-	var res task.Result
+	var res sessionrecord.Result
 	if err := json.Unmarshal([]byte(n.Result), &res); err != nil || res.Usage == nil {
-		return task.Usage{}
+		return sessionrecord.Usage{}
 	}
 	return *res.Usage
 }

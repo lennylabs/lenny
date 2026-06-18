@@ -84,7 +84,7 @@ import (
 	obstracing "github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
 
@@ -1477,7 +1477,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if settled {
 				body, _ := json.Marshal(struct {
-					Results []task.Result `json:"results"`
+					Results []sessionrecord.Result `json:"results"`
 				}{Results: results})
 				return textResult(string(body)), nil
 			}
@@ -2450,7 +2450,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				// OutputPart[] and the §8.7 workspaceFiles.export specs.
 				// F-8.2.1.
 				Task struct {
-					Input          []task.OutputPart `json:"input"`
+					Input          []sessionrecord.OutputPart `json:"input"`
 					WorkspaceFiles struct {
 						Export []struct {
 							Source     string `json:"source"`
@@ -3937,8 +3937,8 @@ func callerTenantID(ctx context.Context, fallback string) string {
 // archived body.
 // spec: §8.8 line 855-867 (MCP state spelling), lines 922-940
 // (error: code, category, message, retriesExhausted). F-8.8.4.
-func toTaskResult(s sessionstore.Session) task.Result {
-	tr := task.Result{SchemaVersion: task.SchemaVersion, TaskID: s.ID, State: mcpStateForSession(s.State)}
+func toTaskResult(s sessionstore.Session) sessionrecord.Result {
+	tr := sessionrecord.Result{SchemaVersion: sessionrecord.SchemaVersion, TaskID: s.ID, State: mcpStateForSession(s.State)}
 	if s.State != session.StateCompleted {
 		tr.Error = taskErrorForRow(s)
 	}
@@ -3952,7 +3952,7 @@ func toTaskResult(s sessionstore.Session) task.Result {
 // retryable) pair rather than an invented category — the §8.8 example's
 // RUNTIME_CRASH → TRANSIENT mapping is exactly this fallback.
 // spec: §8.8 lines 922-940; §15.2.1. F-8.8.4.
-func taskErrorForRow(s sessionstore.Session) *task.Error {
+func taskErrorForRow(s sessionstore.Session) *sessionrecord.Error {
 	code := s.FailureReason
 	if code == "" {
 		code = "CHILD_" + strings.ToUpper(string(s.State))
@@ -3962,11 +3962,11 @@ func taskErrorForRow(s sessionstore.Session) *task.Error {
 	if s.RetryPolicy != nil {
 		maxRetries = s.RetryPolicy.MaxRetries
 	}
-	return &task.Error{
+	return &sessionrecord.Error{
 		Code:             code,
 		Category:         string(cat),
 		Message:          "child session ended in state " + string(s.State),
-		RetriesExhausted: task.RetriesExhausted(s.RetryCount, maxRetries),
+		RetriesExhausted: sessionrecord.RetriesExhausted(s.RetryCount, maxRetries),
 	}
 }
 
@@ -3976,7 +3976,7 @@ func taskErrorForRow(s sessionstore.Session) *task.Error {
 type childOutcome struct {
 	parentID string
 	state    session.State
-	result   task.Result
+	result   sessionrecord.Result
 	// settledAt is the wall-clock instant the child reached its terminal
 	// state. Sourced from the live row's UpdatedAt (the row mutates on
 	// terminal transition) or, when the row is gone, the §8.10 archive's
@@ -4022,7 +4022,7 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 			// written. F-8.8.2.
 			if archive != nil {
 				if node, gerr := archive.GetByNode(ctx, tenant, childID); gerr == nil {
-					var tr task.Result
+					var tr sessionrecord.Result
 					if json.Unmarshal([]byte(node.Result), &tr) == nil && tr.TaskID != "" {
 						oc.result = tr
 					}
@@ -4038,9 +4038,9 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 	if archiveErr != nil {
 		return childOutcome{}, fmt.Errorf("child %s lookup: %w", childID, err)
 	}
-	var tr task.Result
+	var tr sessionrecord.Result
 	if json.Unmarshal([]byte(node.Result), &tr) != nil {
-		tr = task.Result{SchemaVersion: task.SchemaVersion, State: mcpStateForSession(session.State(node.State))}
+		tr = sessionrecord.Result{SchemaVersion: sessionrecord.SchemaVersion, State: mcpStateForSession(session.State(node.State))}
 	}
 	if tr.TaskID == "" {
 		tr.TaskID = childID
@@ -4103,11 +4103,11 @@ func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputReq
 // spec: §8.8 lines 945-949
 func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
 	tenant string, childIDs []string, mode string,
-) ([]task.Result, bool, error) {
+) ([]sessionrecord.Result, bool, error) {
 	type settled struct {
 		at     time.Time
 		idx    int
-		result task.Result
+		result sessionrecord.Result
 	}
 	var terminal []settled
 	allTerminal := true
@@ -4137,7 +4137,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 				first = c
 			}
 		}
-		return []task.Result{first.result}, true, nil
+		return []sessionrecord.Result{first.result}, true, nil
 	}
 	if allTerminal {
 		// spec: §8.10 line 1062 — the re-await protocol streams settled
@@ -4154,7 +4154,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 			}
 			return terminal[i].at.Before(terminal[j].at)
 		})
-		out := make([]task.Result, len(terminal))
+		out := make([]sessionrecord.Result, len(terminal))
 		for i, t := range terminal {
 			out[i] = t.result
 		}
@@ -4366,8 +4366,8 @@ func archiveCancelled(ctx context.Context, archive treearchive.Store,
 	// so classify once before the loop. F-8.8.4.
 	cancelCat, _ := errorclassify.Classify("CHILD_CANCELLED")
 	for _, id := range cancelled {
-		result, _ := json.Marshal(task.Result{
-			SchemaVersion: task.SchemaVersion,
+		result, _ := json.Marshal(sessionrecord.Result{
+			SchemaVersion: sessionrecord.SchemaVersion,
 			TaskID:        id,
 			// spec: §8.8 line 857 — the result body's state uses the MCP
 			// protocol spelling (`canceled`), matching the settle-path
@@ -4378,7 +4378,7 @@ func archiveCancelled(ctx context.Context, archive treearchive.Store,
 			// error block; category routes through the §15.2.1 classifier.
 			// retriesExhausted stays false: a parent-cancelled child did not
 			// consume its automatic-recovery budget. F-8.8.4.
-			Error: &task.Error{
+			Error: &sessionrecord.Error{
 				Code:     "CHILD_CANCELLED",
 				Category: string(cancelCat),
 				Message:  "child session ended in state cancelled",

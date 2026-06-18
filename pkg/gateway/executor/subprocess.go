@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // SubprocessExecutor runs a §15.4 Basic-level runtime binary as a
@@ -288,7 +288,7 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 		// clean (code 0) exit with no response is a protocol error, not a
 		// crash.
 		if code, ok := exitCodeOf(sess.wait()); ok && code != 0 {
-			ch <- result{err: task.RuntimeCrash(code, sess.stderr.String())}
+			ch <- result{err: sessionrecord.RuntimeCrash(code, sess.stderr.String())}
 			return
 		}
 		ch <- result{err: fmt.Errorf("executor: runtime closed stdout before responding")}

@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 func mustCreate(t *testing.T, store *memstore.Store, s sessionstore.Session) {
@@ -215,9 +215,9 @@ func TestTreeUsageReadsArchivedDescendant_spec_8_8_904(t *testing.T) {
 
 	// The child's live row is gone (reclaimed); only its archived
 	// TaskResult survives, with usage baked in.
-	childResult, _ := json.Marshal(task.Result{
-		SchemaVersion: task.SchemaVersion, TaskID: "kid", State: "completed",
-		Usage: &task.Usage{InputTokens: 500, OutputTokens: 50, WallClockSeconds: 30, PodMinutes: 0.5, CredentialLeaseMinutes: 0.5},
+	childResult, _ := json.Marshal(sessionrecord.Result{
+		SchemaVersion: sessionrecord.SchemaVersion, TaskID: "kid", State: "completed",
+		Usage: &sessionrecord.Usage{InputTokens: 500, OutputTokens: 50, WallClockSeconds: 30, PodMinutes: 0.5, CredentialLeaseMinutes: 0.5},
 	})
 	if err := archive.Archive(ctx, treearchive.ArchivedNode{
 		TenantID: "acme", RootSessionID: "root", NodeSessionID: "kid",
@@ -269,7 +269,7 @@ func TestNilBuilderSafe(t *testing.T) {
 	if u := b.Usage(context.Background(), sess); u != nil {
 		t.Fatalf("nil builder Usage = %+v, want nil", u)
 	}
-	if tu := b.TreeUsage(context.Background(), sess, &task.Usage{}); tu != nil {
+	if tu := b.TreeUsage(context.Background(), sess, &sessionrecord.Usage{}); tu != nil {
 		t.Fatalf("nil builder TreeUsage = %+v, want nil", tu)
 	}
 }

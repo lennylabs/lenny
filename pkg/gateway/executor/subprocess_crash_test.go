@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // writeRuntimeScript drops an executable POSIX sh runtime that consumes
@@ -42,9 +42,9 @@ func TestSubprocessExecutorSynthesizesRuntimeCrash_spec_15_4_1_1889(t *testing.T
 	if err == nil {
 		t.Fatal("Send against a crashing runtime returned no error")
 	}
-	var te *task.Error
+	var te *sessionrecord.Error
 	if !errors.As(err, &te) {
-		t.Fatalf("error is not a *task.Error RUNTIME_CRASH: %v", err)
+		t.Fatalf("error is not a *sessionrecord.Error RUNTIME_CRASH: %v", err)
 	}
 	if te.Code != "RUNTIME_CRASH" {
 		t.Errorf("code = %q, want RUNTIME_CRASH", te.Code)
@@ -75,7 +75,7 @@ func TestSubprocessExecutorCleanExitNoResponseIsNotCrash_spec_15_4_1_1889(t *tes
 	if err == nil {
 		t.Fatal("Send against a runtime that exits without responding returned no error")
 	}
-	var te *task.Error
+	var te *sessionrecord.Error
 	if errors.As(err, &te) {
 		t.Errorf("a clean exit was mislabeled a RUNTIME_CRASH: %v", te)
 	}

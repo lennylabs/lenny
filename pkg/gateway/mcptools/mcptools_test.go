@@ -31,7 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 func newMCP(t *testing.T) (*mcp.Server, sessionstore.Store) {
@@ -2125,10 +2125,10 @@ func TestAwaitChildrenSettledBlocksUntilAll_spec_8_8_945(t *testing.T) {
 
 // awaitResults parses the lenny/await_children JSON body into the §8.8
 // TaskResult list the tool returns. F-8.8.2 / F-8.8.4.
-func awaitResults(t *testing.T, text string) []task.Result {
+func awaitResults(t *testing.T, text string) []sessionrecord.Result {
 	t.Helper()
 	var body struct {
-		Results []task.Result `json:"results"`
+		Results []sessionrecord.Result `json:"results"`
 	}
 	if err := json.Unmarshal([]byte(text), &body); err != nil {
 		t.Fatalf("decode await_children body %q: %v", text, err)
@@ -2198,12 +2198,12 @@ func TestAwaitChildrenPrefersArchivedRichBody_spec_8_8_2(t *testing.T) {
 	srv, store, archive := newMCPForArchive(t)
 	mkSession(t, store, "sess_p", session.StateRunning, "")
 	mkSession(t, store, "sess_c", session.StateCompleted, "sess_p")
-	rich, _ := json.Marshal(task.Result{
-		SchemaVersion: task.SchemaVersion,
+	rich, _ := json.Marshal(sessionrecord.Result{
+		SchemaVersion: sessionrecord.SchemaVersion,
 		TaskID:        "sess_c",
 		State:         "completed",
-		Output: &task.Output{
-			Parts:        []task.OutputPart{task.TextPart("ANSWER42")},
+		Output: &sessionrecord.Output{
+			Parts:        []sessionrecord.OutputPart{sessionrecord.TextPart("ANSWER42")},
 			ArtifactRefs: []string{"lenny-blob://acme/workspace/sess_c/part_1"},
 		},
 	})
@@ -2244,7 +2244,7 @@ func TestArchiveCancelledMCPSpellingAndCategory_spec_8_8_7(t *testing.T) {
 	if err != nil {
 		t.Fatalf("archive GetByNode: %v", err)
 	}
-	var res task.Result
+	var res sessionrecord.Result
 	if err := json.Unmarshal([]byte(node.Result), &res); err != nil {
 		t.Fatalf("decode archived body %q: %v", node.Result, err)
 	}

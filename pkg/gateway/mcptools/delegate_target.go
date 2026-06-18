@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/task"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // delegationTargetKind classifies a resolved §8.2 delegation target. The
@@ -84,7 +84,7 @@ func resolveDelegationTarget(ctx context.Context, deps Deps, target string) (ref
 //
 // spec: §8.2 lines 25-28 (TaskSpec.input is OutputPart[]); §15.4.1
 // lines 1483-1540 (OutputPart envelope, v1 `text` parts).
-func flattenTaskInput(parts []task.OutputPart) string {
+func flattenTaskInput(parts []sessionrecord.OutputPart) string {
 	var b strings.Builder
 	for _, p := range parts {
 		appendPartText(&b, p)
@@ -92,7 +92,7 @@ func flattenTaskInput(parts []task.OutputPart) string {
 	return b.String()
 }
 
-func appendPartText(b *strings.Builder, p task.OutputPart) {
+func appendPartText(b *strings.Builder, p sessionrecord.OutputPart) {
 	if p.Type == "text" && p.Inline != "" {
 		b.WriteString(p.Inline)
 	}

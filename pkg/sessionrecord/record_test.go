@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package task
+package sessionrecord
 
 import (
 	"encoding/json"
