@@ -9,7 +9,7 @@ allowed-tools: Workflow Agent Bash Read Write Edit Grep Glob TaskStop
 
 This skill takes an approved spec proposal and carries it through to implementation. It applies the staged spec edits to `spec/` and verifies exact alignment, then implements the spec change in code through the `implement-proposal-build` subworkflow (blast radius, ordered build sequence, step-by-step implementation with tests), and closes the findings that reference the proposal. The spec always lands and is verified before any code.
 
-It is the implementation stage of the proposal pipeline: `spec-proposal` writes and converges a proposal, a human approves it, and `implement-proposal` lands the spec and implements the code. It unifies the former `spec-apply` (land and verify spec) and `spec-implement` (plan, build code, close findings) into one entry point.
+It is the implementation stage of the proposal pipeline: `change-proposal` writes and converges a proposal, a human approves it, and `implement-proposal` lands the spec and implements the code. It unifies the former `spec-apply` (land and verify spec) and `spec-implement` (plan, build code, close findings) into one entry point.
 
 ## Modes
 

@@ -1,9 +1,9 @@
 export const meta = {
-  name: "spec-proposal",
+  name: "change-proposal",
   description:
-    "Validate a spec problem, draft and write a proposal (new mode), then adversarially review and fix it until two consecutive clean rounds",
+    "Validate a problem, draft and write a change proposal — spec edits and/or core-product or test-infra code changes (new mode) — then adversarially review and fix it until two consecutive clean rounds",
   whenToUse:
-    "Write a spec change proposal from a problem statement, or converge an existing proposals/*.md before sign-off",
+    "Write a change proposal (spec and/or implementation: core product or test infra) from a problem statement, or converge an existing proposals/*.md before sign-off",
 };
 
 let input = args;
@@ -298,7 +298,7 @@ if (mode === "new") {
     .join("\n");
 
   const draft = await agent(
-    "Draft a spec change proposal.\n\n" +
+    "Draft a change proposal.\n\n" +
       "Problem:\n" +
       problem +
       "\n\n" +
@@ -315,8 +315,8 @@ if (mode === "new") {
       "Read " +
       exemplar +
       " for the level of specificity expected, and read the spec sections each change targets. " +
-      "Produce: a title; kind (fix corrects or reconciles existing spec text, new adds a capability the spec lacks); a problem restatement grounded in the confirmed evidence; the review decisions that constrain the design; the change set (each change names its target spec files and sections, the rationale, and a concrete sketch of the staged edit); non-goals; open questions only for decisions that genuinely belong to the human reviewer. " +
-      "Set viable: false with whyNotViable when the confirmed evidence shows no spec change is needed.",
+      "Produce: a title; kind (fix corrects or reconciles existing behavior — spec text, core-product code, or test infrastructure; new adds a capability the spec or implementation lacks); a problem restatement grounded in the confirmed evidence; the review decisions that constrain the design; the change set (each change names its targets — spec files and sections, code packages and files, or test files — the rationale, and a concrete sketch of the staged edit); non-goals; open questions only for decisions that genuinely belong to the human reviewer. " +
+      "Set viable: false with whyNotViable when the confirmed evidence shows no change is needed.",
     { schema: DRAFT, label: "draft" },
   );
 
@@ -334,7 +334,7 @@ if (mode === "new") {
       draft.changes.map(
         (c) => () =>
           agent(
-            "Adversarially challenge one proposed spec change. Your default posture is that the change is unnecessary.\n\n" +
+            "Adversarially challenge one proposed change. Your default posture is that the change is unnecessary.\n\n" +
               "Full draft for context:\n" +
               JSON.stringify(draft, null, 2) +
               "\n\n" +
@@ -411,10 +411,10 @@ if (mode === "new") {
   path = repo + "/proposals/" + num + "_" + draft.kind + "_" + slug + ".md";
 
   await agent(
-    "Write a spec change proposal file.\n\n" +
+    "Write a change proposal file.\n\n" +
       "HARD CONSTRAINT: the only file you may create or edit is " +
       path +
-      ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/. The proposal stages spec edits as fenced markdown blocks; it never applies them.\n\n" +
+      ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/. The proposal stages its changes — spec edits, code changes, and test changes — as fenced markdown blocks or precise change descriptions; it never applies them.\n\n" +
       "Draft (apply the challenge revisions in each sketch verbatim):\n" +
       JSON.stringify({ ...draft, changes: kept }, null, 2) +
       "\n\n" +
@@ -426,7 +426,7 @@ if (mode === "new") {
       "\n" +
       "Format: follow the structure of " +
       exemplar +
-      ' exactly (read it first): the "# Proposal:" title; Status ("Draft for review."), Date, and Scope bullets; the staging boilerplate paragraph; numbered sections (Problem with file:line citations and any finding IDs the input named; Decisions; design sections; Proposed spec changes with one subsection per target file and an anchor instruction plus a fenced block of the exact text to insert; Non-goals; Testing; Findings closed on application; Resolved in adversarial review, initially noting that review rounds populate it; Open decisions for review when the draft has open questions; Files touched on application consistent with the staged changes).\n' +
+      ' exactly (read it first): the "# Proposal:" title; Status ("Draft for review."), Date, and Scope bullets; the staging boilerplate paragraph; numbered sections (Problem with file:line citations and any finding IDs the input named; Decisions; design sections; Proposed changes with one subsection per target (spec file and section, code package, or test) and an anchor instruction plus a fenced block of the exact text to insert or a precise change description; Non-goals; Testing; Findings closed on application; Resolved in adversarial review, initially noting that review rounds populate it; Open decisions for review when the draft has open questions; Files touched on application consistent with the staged changes).\n' +
       "Prose rules: follow " +
       repo +
       "/.claude/rules/doc-style.md (read it first). " +
@@ -520,6 +520,10 @@ const LENSES = [
     key: "client-surface",
     text: "Lens: client-facing surface integrity. Always run. Identify every externally-consumed contract the proposal adds, changes, or removes, and verify the change is intentional and complete across all of its parallel representations. The client-facing surfaces are the REST API (section 15.1) and its hand-authored OpenAPI document (pkg/gateway/openapi/openapi.json, which the served MCP create_session tool schema and the client SDKs derive from); the MCP and A2A external-protocol surfaces (section 15.2), the lenny/* tool names, and their input schemas; the OpenAI-completions surface; the gateway-to-adapter wire proto (schemas/lenny-adapter.proto) and the JSONL and lifecycle-events schemas (schemas/*.json) with their tier-3 wire-contract tests; the adapter manifest field set (section 4.7) the runtime reads; the runtime and client SDK type files in every language (sdks/runtime/{go,python,typescript}, sdks/client/{go,python,typescript}); the CRD schemas operators apply (charts/lenny/crds and the pkg/embedded/crds copies); client-visible enums, error codes, and event types clients branch on; and the client-facing docs (docs/api/*, docs/client-guide/*, docs/runtime-author-guide/*). A change to one representation that is not mirrored in its parallels is a finding: a REST field missing from the OpenAPI document, the MCP tool schema, an SDK language, or the docs; a wire, proto, or JSONL change that omits a language SDK or its tier-3 contract test; a removed or renamed client-facing field still advertised by the served schema, an SDK, a CRD, or a doc; an enum or error-code value clients consume changed without every emitter and consumer updated. Also enforce the origin rule: a name an external standard defines (the MCP or A2A Task primitive and the protocol vocabulary clients interact with) must not be renamed, while Lenny-defined client surfaces may change; a rename that breaks the standard-aligned surface, or that leaves one client vocabulary half-renamed across representations, is a finding. The platform is pre-deployment with no backward-compatibility shims, so a deliberate, complete breaking change is not itself a finding; an incomplete or inconsistent client-facing change, or an internal surface changed while a parallel client surface still serves the old contract, is.",
   },
+  {
+    key: "docs-alignment",
+    text: "Lens: documentation alignment. Always run. The docs/ tree is downstream of the spec and the implementation: docs follow the spec and the code and are never the source of truth for a spec or core-product decision. Identify every behavior the proposal changes — a spec edit, a code change, a renamed, removed, or added identifier, a changed default, error code, endpoint, flag, metric, alert, or lifecycle step — and verify it is reflected in a staged docs/ edit wherever docs/ currently describes that behavior, and that the staged docs edits leave docs/ internally consistent and consistent with the post-change spec. The docs surfaces are the concept and guide pages (docs/, docs/api/, docs/client-guide/, docs/runtime-author-guide/), the reference pages (docs/reference/, notably docs/reference/metrics.md), and the docs/runbooks/ pages that tests/tier11_docs resolves (alert-to-runbook slug resolution and examples). A docs/ page left describing superseded behavior, an added alert or metric missing its docs/runbooks or docs/reference companion, or a staged docs edit that contradicts the post-change spec, is a finding. Two hard guardrails on this lens: (1) never raise a finding that asks the spec or the implementation to change to match an existing doc; when a doc and the spec disagree the doc is the defect and is reconciled toward the spec, so a finding here is always a missing or wrong docs edit, never a spec or code edit. (2) A doc-described scenario may be cited as a candidate test case only after that doc has been verified against the spec, never as evidence for what the product should do.",
+  },
 ];
 
 const EXTRAS = [
@@ -551,7 +555,7 @@ function reviewPrompt(lens, round, fixedTitles, rejected) {
   return (
     "You are an adversarial reviewer in round " +
     round +
-    " of an iterative convergence loop for a spec change proposal.\n\n" +
+    " of an iterative convergence loop for a change proposal.\n\n" +
     CONTEXT +
     "\n\n" +
     READ_ONLY +
@@ -611,7 +615,7 @@ function fixPrompt(confirmed, round) {
     PRINCIPLES +
     "), and record the rationale in the proposal.\n" +
     "- When a fix changes a trigger predicate or invariant, propagate the exact same predicate to every section that states it (design sections, summary tables, constant comments, proposed spec text, and tests) so no drift is introduced.\n" +
-    "- Keep the Proposed spec changes section and the Files touched section consistent with your edits.\n" +
+    "- Keep the proposed-changes section (however the proposal titles it) and any files-touched section consistent with your edits.\n" +
     '- Append a new subsection to the proposal\'s "Resolved in adversarial review" section titled "### Pass <N> (' +
     date +
     ', automated)", where <N> continues the existing pass numbering (read the section to determine it; create the section before the open-decisions section if it does not exist), with one bullet per finding fixed, matching the format of any existing entries.\n' +

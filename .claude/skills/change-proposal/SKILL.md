@@ -1,13 +1,13 @@
 ---
-name: spec-proposal
-description: Write an adversarially validated spec change proposal under proposals/ from an inline problem statement, or adversarially review and fix an existing proposal until it converges. Use when the user reports a spec defect, contradiction, or gap, asks for a spec fix or extension proposal, or asks to validate an existing proposal before sign-off. The proposal stages spec edits for sign-off; it never modifies spec/ itself.
+name: change-proposal
+description: Write an adversarially validated change proposal under proposals/, staging spec edits and/or core-product or test-infrastructure code changes, from an inline problem statement, or adversarially review and fix an existing proposal until it converges. Use when the user reports a spec or implementation defect, contradiction, or gap, asks for a fix or extension proposal, or asks to validate an existing proposal before sign-off. The proposal stages its changes for sign-off; it never modifies spec/, pkg/, or docs/ itself.
 argument-hint: <problem statement | path to notes | path to proposals/*.md>
 allowed-tools: Workflow Agent Bash Read Write Edit Grep Glob TaskStop
 ---
 
-# Spec proposal writer and convergence loop
+# Change proposal writer and convergence loop
 
-This skill produces a reviewed proposal document in `proposals/` and converges it against the spec and the code. It has two modes sharing one workflow:
+This skill produces a reviewed proposal document in `proposals/` and converges it against the spec and the code. A proposal may stage spec edits, core-product code changes, test-infrastructure changes, or a combination; the review loop validates whichever it stages. It has two modes sharing one workflow:
 
 - **new**: the input is a problem statement. The workflow validates the problem's premises, drafts a change set, adversarially challenges each change, writes the proposal file, and then enters the review loop.
 - **review**: the input is the path of an existing proposal under `proposals/`. The workflow enters the review loop directly.
@@ -16,10 +16,10 @@ The review loop is shared: rounds of multi-lens adversarial review, two-skeptic 
 
 ## Hard constraints
 
-- The run creates or edits exactly one file: the proposal (the new file in new mode, the given file in review mode). Nothing under `spec/`, `docs/`, `pkg/`, `charts/`, or `schemas/` is modified. A proposal stages spec edits as fenced markdown blocks to apply after sign-off.
+- The run creates or edits exactly one file: the proposal (the new file in new mode, the given file in review mode). Nothing under `spec/`, `docs/`, `pkg/`, `charts/`, or `schemas/` is modified. A proposal stages its changes (spec edits and/or code or test changes) as fenced markdown blocks or precise change descriptions to apply after sign-off.
 - All problem input is inline (the argument and the conversation). The skill reads no tracking documents; evidence comes from `spec/`, `schemas/`, `pkg/`, `cmd/`, `charts/`, and git history. Progress-tracking and audit prose elsewhere in the repository are leads to verify, never evidence.
 - Prose follows `.claude/rules/doc-style.md`.
-- New proposal file names are `NNNN_[new|fix]_<kebab-slug>.md`. `NNNN` is the next free zero-padded number among existing numbered proposals. `fix` is for proposals that correct or reconcile existing spec text (contradictions, wrong ownership assignments, unreachable features). `new` is for proposals that add a capability or component the spec does not describe.
+- New proposal file names are `NNNN_[new|fix]_<kebab-slug>.md`. `NNNN` is the next free zero-padded number among existing numbered proposals. `fix` is for proposals that correct or reconcile existing behavior — spec text, core-product code, or test infrastructure (contradictions, wrong ownership assignments, unreachable features, code-to-spec divergences). `new` is for proposals that add a capability or component the spec or implementation does not yet provide.
 - Review findings are real errors only: false citations, infeasible actor assignments, contradictions, missing edit sites, and broken mechanisms. Style preferences, optional improvements, and hypothetical hardening are excluded by construction (the materiality skeptic refuses them); conventions are handled by a dedicated one-shot pass outside the error loop.
 
 ## Proposal format conventions
@@ -29,12 +29,12 @@ The writer and reviewer agents receive these conventions. They are derived from 
 - Title line: `# Proposal: <title>`.
 - Header bullets: `**Status:**`, `**Date:**`, `**Scope:**` (one- or two-sentence summary naming the finding IDs from the inline input when applicable).
 - Status lifecycle: the writer creates the proposal with "Draft for review."; the workflow replaces the state with "Verified (<date>). Converged after N adversarial review rounds (M findings fixed); awaiting sign-off." when the review loop converges, and leaves it untouched otherwise. Sign-off (an approved state) is recorded by a human, or by the `build-gaps-spec-unblock` pipeline when it resolves a converged proposal's open decisions; `implement-proposal` acts only on approved proposals.
-- Staging boilerplate paragraph: "This document stages the proposed spec … edits. It does not modify any spec file. Apply the changes in the … section after sign-off."
-- Numbered sections in this order, omitting the ones with no content: Problem; Decisions; Design overview; Detailed design; Observability surface; CRD and RBAC changes; Proposed spec changes; Non-goals; Testing; Findings closed on application; Resolved in adversarial review; Open decisions for review; Files touched on application.
+- Staging boilerplate paragraph: "This document stages the proposed … changes. It does not modify any spec, code, or doc file. Apply the changes in the … section after sign-off."
+- Numbered sections in this order, omitting the ones with no content: Problem; Decisions; Design overview; Detailed design; Observability surface; CRD and RBAC changes; Proposed changes (titled for the change type, e.g. "Proposed spec changes", with one subsection per target); Non-goals; Testing; Findings closed on application; Resolved in adversarial review; Open decisions for review; Files touched on application.
 - The Problem section cites spec text as `spec/<file>.md:<line>` or `§X.Y` relative links, cites code as `pkg/...:<line>`, and names the finding IDs the proposal unblocks, if the inline input provided any.
-- The Proposed spec changes section has one subsection per target file and section, each with an anchor instruction ("Append after …", "Replace the row …") and a fenced block containing the exact text to insert, written so it can be applied mechanically after sign-off.
+- The Proposed changes section has one subsection per target (spec file and section, code package, or test file), each with an anchor instruction ("Append after …", "Replace the row …") and a fenced block containing the exact text to insert or a precise change description, written so it can be applied mechanically after sign-off.
 - Non-goals records the alternatives that were considered and dropped, with the reason.
-- Files touched on application is consistent with the Proposed spec changes section.
+- Files touched on application is consistent with the Proposed changes section.
 
 ## Why the review loop is built this way
 
@@ -44,7 +44,7 @@ These design points come from convergence runs on prior proposals in this reposi
 - **Two skeptics per finding, both must confirm.** One re-derives the evidence from the files; one judges materiality assuming the evidence is true, with instructions to default to refuted. The split kills plausible-but-wrong findings and nitpicks separately.
 - **Refuted findings are remembered and injected into later rounds.** Without the memory, a refuted finding resurfaces in a later round, wastes verification, and can block convergence.
 - **Dedup before verification.** Independent lenses converge on the same root error under different phrasings; verifying duplicates multiplies cost for nothing.
-- **Security, Kubernetes, performance, and client-facing surfaces are always-on fixed lenses.** Every round runs the structural lenses (citations, feasibility, edit-sites, mechanism) plus the non-functional lenses that must be present every round: `security` (control regression AND the trust boundary / durability of any security-bounding value), `kubernetes` (controller-runtime and API-convention soundness), `performance` (top-tier write rates, bottlenecks, and failure-mode reliability under store outage and coordinator handoff), and `client-surface` (client-facing contract integrity). Security, Kubernetes, and performance were promoted to always-on after dedicated passes caught a showstopper (a residual-state security bound sourced from an untrusted pod self-report with no durable fallback) that the rotating-lens loop had converged past. The `client-surface` lens verifies that a change to one client-facing representation (the REST API and its OpenAPI document, the MCP/A2A surfaces and `lenny/*` tool schemas, the wire proto and JSONL schemas, the adapter manifest, the per-language SDK types, the CRD schemas, client-visible enums and error codes, and the client-facing docs) is mirrored across every parallel representation, and that a name an external standard defines is not renamed while one client vocabulary is left half-renamed; the `edit-sites` lens checks internal edit completeness but not the parallel-client-representation and standard-vs-Lenny-defined boundary this lens owns. Do not demote any of them to rotating.
+- **Security, Kubernetes, performance, client-facing surfaces, and documentation alignment are always-on fixed lenses.** Every round runs the structural lenses (citations, feasibility, edit-sites, mechanism) plus the non-functional lenses that must be present every round: `security` (control regression AND the trust boundary / durability of any security-bounding value), `kubernetes` (controller-runtime and API-convention soundness), `performance` (top-tier write rates, bottlenecks, and failure-mode reliability under store outage and coordinator handoff), `client-surface` (client-facing contract integrity), and `docs-alignment` (the docs/ tree reflects every changed behavior and never drives a spec or product decision). Security, Kubernetes, and performance were promoted to always-on after dedicated passes caught a showstopper (a residual-state security bound sourced from an untrusted pod self-report with no durable fallback) that the rotating-lens loop had converged past. The `client-surface` lens verifies that a change to one client-facing representation (the REST API and its OpenAPI document, the MCP/A2A surfaces and `lenny/*` tool schemas, the wire proto and JSONL schemas, the adapter manifest, the per-language SDK types, the CRD schemas, client-visible enums and error codes, and the client-facing docs) is mirrored across every parallel representation, and that a name an external standard defines is not renamed while one client vocabulary is left half-renamed; the `edit-sites` lens checks internal edit completeness but not the parallel-client-representation and standard-vs-Lenny-defined boundary this lens owns. The `docs-alignment` lens verifies that every behavior the proposal changes is mirrored in the docs/ pages that describe it, under the rule that docs follow the spec and the implementation and are never used to decide what the spec or product should do; a doc-described scenario may seed a test case only after the doc is verified against the spec. Do not demote any of them to rotating.
 - **A rotating extra lens, on top of the fixed set.** The fixed lenses develop shared blind spots over rounds because they re-read the same document. One extra lens rotates per round (operational consistency, then fresh holistic read) and has found confirmed errors in rounds the fixed lenses passed.
 
 ## Error classes with a record of surviving verification
@@ -63,6 +63,7 @@ The lens prompts in the script enumerate these. They are the classes that have p
 - A client-facing contract changed in one representation but not its parallels: a REST field missing from `pkg/gateway/openapi/openapi.json`, the MCP tool schema, a language SDK, or the docs; a `schemas/lenny-adapter.proto` or JSONL change missing a language SDK or its tier-3 wire-contract test; a removed or renamed client-facing field still advertised by the served schema, an SDK, a CRD, or a doc; a standard-defined name (an MCP/A2A primitive) renamed, or one client vocabulary left half-renamed across the surface.
 - A field defined in one spec section cross-referenced as living in another.
 - An alert defined on a metric that no spec-defined evaluation surface collects.
+- A behavior the proposal changes (a renamed or removed field, a changed default, a new error code, lifecycle step, metric, or alert) left undocumented or misdescribed in the `docs/` page that covers it: a `docs/` page describing superseded behavior, or an added metric or alert missing its `docs/reference/metrics.md` or `docs/runbooks/` companion. The fix is always a docs edit; docs follow the spec and never drive a spec or product change.
 
 ## Procedure
 
@@ -85,7 +86,7 @@ The lens prompts in the script enumerate these. They are the classes that have p
 
 ### Step 2: Run the workflow
 
-The workflow script lives at `.claude/workflows/spec-proposal.js` and is invoked by name. Call `Workflow({name: "spec-proposal", args: …})` with the mode-appropriate args:
+The workflow script lives at `.claude/workflows/change-proposal.js` and is invoked by name. Call `Workflow({name: "change-proposal", args: …})` with the mode-appropriate args:
 
 ```json
 {
@@ -130,4 +131,4 @@ Agents inherit the session model and effort level. Run this skill with the stron
 
 ## Maintenance
 
-The workflow script is canonical at `.claude/workflows/spec-proposal.js`; this file carries the procedure, conventions, and rationale only. Other workflows invoke the script by name (`workflow("spec-proposal", args)`; the `build-gaps-spec-unblock` workflow does), so script edits must keep the args contract stable. When a convergence run surfaces a confirmed error class this file does not list, add it to the error-class list here and, when it fits an existing lens, to that lens's prompt in the script. Keep the finding bar's DO-NOT-report list intact; it is what keeps the loop from converging on nitpicks. When the proposal format conventions and the existing files in `proposals/` disagree, the existing files win; update the conventions list here.
+The workflow script is canonical at `.claude/workflows/change-proposal.js`; this file carries the procedure, conventions, and rationale only. Other workflows invoke the script by name (`workflow("change-proposal", args)`), so script edits must keep the args contract stable. When a convergence run surfaces a confirmed error class this file does not list, add it to the error-class list here and, when it fits an existing lens, to that lens's prompt in the script. Keep the finding bar's DO-NOT-report list intact; it is what keeps the loop from converging on nitpicks. When the proposal format conventions and the existing files in `proposals/` disagree, the existing files win; update the conventions list here.

@@ -7,10 +7,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=$(jq -r '(.tool_input.file_path // .tool_input.notebook_path) // empty'); case \"$f\" in /Users/joan/projects/lenny/spec/*|spec/*|./spec/*) if grep -q '^- \\*\\*Status:\\*\\* Approved' /Users/joan/projects/lenny/proposals/*.md 2>/dev/null; then exit 0; fi; echo \"blocked: spec/ is read-only unless an approved spec proposal under proposals/ is pending application. Stage edits via the spec-proposal skill, record approval, then apply with the implement-proposal skill. Path: $f\" >&2; exit 2 ;; esac"
+            "command": "f=$(jq -r '(.tool_input.file_path // .tool_input.notebook_path) // empty'); case \"$f\" in /Users/joan/projects/lenny/spec/*|spec/*|./spec/*) if grep -q '^- \\*\\*Status:\\*\\* Approved' /Users/joan/projects/lenny/proposals/*.md 2>/dev/null; then exit 0; fi; echo \"blocked: spec/ is read-only unless an approved spec proposal under proposals/ is pending application. Stage edits via the change-proposal skill, record approval, then apply with the implement-proposal skill. Path: $f\" >&2; exit 2 ;; esac"
           }
         ]
       }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "mcp__codegraph__codegraph_explore",
+      "mcp__codegraph__codegraph_search",
+      "mcp__codegraph__codegraph_node",
+      "mcp__codegraph__codegraph_callers",
+      "mcp__codegraph__codegraph_callees",
+      "mcp__codegraph__codegraph_impact",
+      "mcp__codegraph__codegraph_files",
+      "mcp__codegraph__codegraph_status"
     ]
   }
 }

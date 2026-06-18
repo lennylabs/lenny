@@ -16,7 +16,7 @@ export const meta = {
 //   }})
 //
 // Proposals are generated, reviewed, and approved OUTSIDE this workflow (the
-// spec-proposal skill plus human sign-off). This workflow
+// change-proposal skill plus human sign-off). This workflow
 // neither writes nor approves proposals, and never opens, re-opens, or creates
 // a finding — it only CLOSES findings that already reference an approved
 // proposal. The per-finding work lives in close-build-gaps.sh, the single

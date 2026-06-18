@@ -16,7 +16,7 @@ All new code aligns to the spec. Every behavior in `pkg/`, `cmd/`, `sdks/`, `mig
 
 Change the spec first, through the proposal pipeline, then write the code:
 
-1. `spec-proposal` writes and adversarially converges a proposal under `proposals/` that stages the spec edits.
+1. `change-proposal` writes and adversarially converges a proposal under `proposals/` that stages the spec edits.
 2. A human approves it.
 3. `implement-proposal` lands the staged spec edits in `spec/`, verifies them, and then implements the code against the now-current spec.
 
@@ -31,7 +31,7 @@ Never let code lead the spec. A spec change lands and is verified before the cod
 ## Where this rule applies
 
 - All Go under `pkg/`, `cmd/`, `sdks/`, and `migrations/`, the chart under `charts/`, and the tests under `tests/`.
-- It governs the proposal pipeline skills (`spec-proposal`, `implement-proposal`) and the build loop (`close-build-gaps.sh`), which exist to keep code and spec in lockstep.
+- It governs the proposal pipeline skills (`change-proposal`, `implement-proposal`) and the build loop (`close-build-gaps.sh`), which exist to keep code and spec in lockstep.
 
 ## How to apply when implementing a change
 
