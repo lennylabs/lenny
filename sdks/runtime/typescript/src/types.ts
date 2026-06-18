@@ -134,9 +134,10 @@ export interface AdapterManifest {
   version?: number;
   // sessionId is the session this runtime instance is bound to.
   sessionId?: string;
-  // taskId is the root task identifier for this session. Each session
-  // has exactly one execution, so the manifest is per-session and taskId
-  // is frozen for the session's lifetime.
+  // taskId is the session's external-protocol task identifier. Each
+  // session has exactly one execution, so it equals the session id; the
+  // adapter derives it from sessionId. The manifest is per-session and
+  // taskId is frozen for the session's lifetime.
   // spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
   taskId?: string;
   // mcpNonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
@@ -185,8 +186,9 @@ export interface TerminationReason {
 export interface CreateRequest {
   // sessionId is the session this runtime instance is bound to.
   sessionId: string;
-  // taskId is the root task identifier for this session. Each session
-  // has exactly one execution, so taskId is frozen for the session's
+  // taskId is the session's external-protocol task identifier. Each
+  // session has exactly one execution, so it equals the session id; the
+  // adapter derives it from sessionId. taskId is frozen for the session's
   // lifetime and onCreate is invoked once with this value.
   // spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
   taskId: string;
@@ -211,9 +213,10 @@ export interface Message {
   envelope: MessageEnvelope;
   // sessionId is the session the message was delivered to.
   sessionId: string;
-  // taskId is the root task identifier of the session the message belongs
-  // to. It always equals CreateRequest.taskId, which is frozen for the
-  // session's lifetime.
+  // taskId is the external-protocol task identifier of the session the
+  // message belongs to. It equals the session id (the adapter derives it
+  // from sessionId) and always equals CreateRequest.taskId, which is
+  // frozen for the session's lifetime.
   // spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
   taskId: string;
   // sequence is a monotonic, SDK-assigned per-task counter ordering

@@ -264,8 +264,9 @@ class AdapterManifest:
     version: int = 0
     # session_id is the session this runtime instance is bound to.
     session_id: str = ""
-    # task_id is the root task identifier for this session. Each session
-    # has exactly one execution, so the manifest is per-session and
+    # task_id is the session's external-protocol task identifier. Each
+    # session has exactly one execution, so it equals the session id; the
+    # adapter derives it from session_id. The manifest is per-session and
     # task_id is frozen for the session's lifetime.
     # spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
     task_id: str = ""
@@ -361,9 +362,10 @@ class CreateRequest:
 
     # session_id is the session this runtime instance is bound to.
     session_id: str = ""
-    # task_id is the root task identifier for this session. Each session
-    # has exactly one execution, so task_id is frozen for the session's
-    # lifetime and on_create is invoked once with this value.
+    # task_id is the session's external-protocol task identifier. Each
+    # session has exactly one execution, so it equals the session id; the
+    # adapter derives it from session_id. task_id is frozen for the
+    # session's lifetime and on_create is invoked once with this value.
     # spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
     task_id: str = ""
     # runtime_options is the effective caller options map.
@@ -391,9 +393,10 @@ class Message:
     envelope: MessageEnvelope
     # session_id is the session the message was delivered to.
     session_id: str = ""
-    # task_id is the root task identifier of the session the message
-    # belongs to. It always equals CreateRequest.task_id, which is frozen
-    # for the session's lifetime.
+    # task_id is the external-protocol task identifier of the session the
+    # message belongs to. It equals the session id (the adapter derives it
+    # from session_id) and always equals CreateRequest.task_id, which is
+    # frozen for the session's lifetime.
     # spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
     task_id: str = ""
     # sequence is a monotonic, SDK-assigned per-task counter ordering

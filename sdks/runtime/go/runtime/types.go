@@ -119,8 +119,9 @@ type AdapterManifest struct {
 	Version int `json:"version,omitempty"`
 	// SessionID is the session this runtime instance is bound to.
 	SessionID string `json:"sessionId,omitempty"`
-	// TaskID is the root task identifier for this session. Each session
-	// has exactly one execution, so the manifest is per-session and
+	// TaskID is the session's external-protocol task identifier. Each
+	// session has exactly one execution, so it equals the session id; the
+	// adapter derives it from SessionID. The manifest is per-session and
 	// TaskID is frozen for the session's lifetime.
 	// spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
 	TaskID string `json:"taskId,omitempty"`
@@ -195,8 +196,9 @@ type TerminationReason struct {
 type CreateRequest struct {
 	// SessionID is the session this runtime instance is bound to.
 	SessionID string `json:"sessionId"`
-	// TaskID is the root task identifier for this session. Each session
-	// has exactly one execution, so TaskID is frozen for the session's
+	// TaskID is the session's external-protocol task identifier. Each
+	// session has exactly one execution, so it equals the session id; the
+	// adapter derives it from SessionID. TaskID is frozen for the session's
 	// lifetime and OnCreate is invoked once with this value.
 	// spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
 	TaskID string `json:"taskId"`
@@ -224,9 +226,10 @@ type Message struct {
 	Envelope *MessageEnvelope `json:"envelope"`
 	// SessionID is the session the message was delivered to.
 	SessionID string `json:"sessionId"`
-	// TaskID is the root task identifier of the session the message
-	// belongs to. It always equals CreateRequest.TaskID, which is frozen
-	// for the session's lifetime.
+	// TaskID is the external-protocol task identifier of the session the
+	// message belongs to. It equals the session id (the adapter derives it
+	// from SessionID) and always equals CreateRequest.TaskID, which is
+	// frozen for the session's lifetime.
 	// spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
 	TaskID string `json:"taskId"`
 	// Sequence is a monotonic, SDK-assigned per-task counter ordering

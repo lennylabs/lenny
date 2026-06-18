@@ -469,7 +469,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
     }
   ],
   "sessionId": "sess_abc",
-  "taskId": "task_root",
+  "taskId": "sess_abc",
   "mcpNonce": "a3f1...c7e2",
   "observability": {
     "otlpEndpoint": "http://otel-collector.lenny-system:4317"
@@ -496,7 +496,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 | `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
 | `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
 | `sessionId` | The session identifier for this pod. |
-| `taskId` | The session's external-protocol task identifier, frozen equal to the root task identifier. |
+| `taskId` | The session's external-protocol task identifier. A session has exactly one execution, so it equals the session id; the adapter derives it from `sessionId`. |
 | `mcpNonce` | Hex nonce for authenticating MCP connections. |
 | `observability.otlpEndpoint` | OTLP collector endpoint for runtime-emitted OpenTelemetry spans. |
 

@@ -103,7 +103,7 @@ Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`
 ```json
 {
   "sessionId": "sess_abc123",
-  "taskId": "task_xyz",
+  "taskId": "sess_abc123",
   "platformMcpServer": {
     "socket": "@lenny-platform-mcp"
   },
