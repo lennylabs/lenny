@@ -338,8 +338,20 @@ helm upgrade --install "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
 # 5. Apply the load fixture and run the suite.
 echo "==[5/5] apply load fixture + run lenny-test --tier load_cloud==" >&2
 export LOAD_RUNTIME_IMAGE="${ACR_REGISTRY}/lenny-runtime-echo:${IMAGE_TAG}"
+# §6.3 startup-latency SDK-warm pool image (cmd/runtimes/preconnect-echo),
+# pushed alongside lenny-runtime-echo. The load fixture always renders the
+# runc/standard SDK-warm pool, so this must resolve.
+export LOAD_PRECONNECT_RUNTIME_IMAGE="${LOAD_PRECONNECT_RUNTIME_IMAGE:-${ACR_REGISTRY}/lenny-runtime-preconnect-echo:${IMAGE_TAG}}"
 envsubst < "${REPO_ROOT}/tests/testinfra/k8s/agent-workload-load.yaml.tmpl" \
   | kubectl apply -f -
+# §6.3 per-runtime-class benchmark: provision gVisor/Kata node pools +
+# RuntimeClasses + SDK-warm pools when requested.
+if [[ "${LENNY_BENCH_RUNTIME_CLASSES:-runc}" == *gvisor* || "${LENNY_BENCH_RUNTIME_CLASSES:-runc}" == *kata* ]]; then
+  AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-}" LENNY_RELEASE="${RELEASE}" \
+    LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES}" \
+    LOAD_PRECONNECT_RUNTIME_IMAGE="${LOAD_PRECONNECT_RUNTIME_IMAGE}" \
+    bash "${SCRIPT_DIR}/up-runtimeclass-pools.sh"
+fi
 for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
   echo "  waiting for ${pool} to scale to minWarm..." >&2
   until [[ "$(kubectl -n lenny-agents get sandboxwarmpool "${pool}" -o jsonpath='{.status.readyCount}' 2>/dev/null)" -ge 1 ]]; do
@@ -356,4 +368,5 @@ sleep 3
 LENNY_GATEWAY_BASE_URL="http://127.0.0.1:28080" \
   LENNY_LOAD_CLOUD_PROVIDERS=azure \
   LENNY_LOAD_SCALE="${LENNY_LOAD_SCALE}" \
+  LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES:-runc}" \
   go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/tier12_load_cloud/..."

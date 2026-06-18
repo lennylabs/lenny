@@ -286,6 +286,13 @@ kubectl -n "${LENNY_NAMESPACE}" wait --for=condition=complete job/lenny-load-mig
 # does not exist, so these resources must be present before the
 # load fixture creates SandboxWarmPools at step 5. Same pattern as
 # scripts/cloud/aws/run-e2e.sh step 5c.
+# Only the runc RuntimeClass is created here; the standard-profile load
+# scenarios use it. The gvisor and kata RuntimeClasses are not placeholders
+# here: a `gvisor` object with handler runsc would shadow GKE Sandbox's
+# managed gvisor RuntimeClass, and the §5.3 microvm profile maps to `kata`
+# (not the old `kata-containers` name). The §6.3 per-runtime-class benchmark
+# provisions the correct gvisor (GKE-managed) and kata RuntimeClasses through
+# scripts/cloud/gcp/up-runtimeclass-pools.sh when its arms are requested.
 kubectl apply -f - <<'RUNTIMECLASSES'
 ---
 apiVersion: node.k8s.io/v1
@@ -296,24 +303,6 @@ metadata:
     app.kubernetes.io/name: lenny
     lenny.dev/component: runtime-class
 handler: runc
----
-apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: gvisor
-  labels:
-    app.kubernetes.io/name: lenny
-    lenny.dev/component: runtime-class
-handler: runsc
----
-apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: kata-containers
-  labels:
-    app.kubernetes.io/name: lenny
-    lenny.dev/component: runtime-class
-handler: kata
 RUNTIMECLASSES
 
 helm upgrade --install "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
@@ -323,8 +312,19 @@ helm upgrade --install "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
 
 echo "==[5/5] apply load fixture + run lenny-test --tier load_cloud==" >&2
 export LOAD_RUNTIME_IMAGE="${AR_REGISTRY}/lenny-runtime-echo:${IMAGE_TAG}"
+# §6.3 startup-latency SDK-warm pool image (cmd/runtimes/preconnect-echo),
+# pushed alongside lenny-runtime-echo. The main load fixture always renders
+# the runc/standard SDK-warm pool, so this must resolve.
+export LOAD_PRECONNECT_RUNTIME_IMAGE="${LOAD_PRECONNECT_RUNTIME_IMAGE:-${AR_REGISTRY}/lenny-runtime-preconnect-echo:${IMAGE_TAG}}"
 envsubst < "${REPO_ROOT}/tests/testinfra/k8s/agent-workload-load.yaml.tmpl" \
   | kubectl apply -f -
+# §6.3 per-runtime-class benchmark: provision the gVisor/Kata node pools +
+# RuntimeClasses + SDK-warm pools when requested.
+if [[ "${LENNY_BENCH_RUNTIME_CLASSES:-runc}" == *gvisor* || "${LENNY_BENCH_RUNTIME_CLASSES:-runc}" == *kata* ]]; then
+  LENNY_RELEASE="${RELEASE}" LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES}" \
+    LOAD_PRECONNECT_RUNTIME_IMAGE="${LOAD_PRECONNECT_RUNTIME_IMAGE}" \
+    bash "${SCRIPT_DIR}/up-runtimeclass-pools.sh"
+fi
 for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
   echo "  waiting for ${pool} to scale to minWarm..." >&2
   until [[ "$(kubectl -n lenny-agents get sandboxwarmpool "${pool}" -o jsonpath='{.status.readyCount}' 2>/dev/null)" -ge 1 ]]; do
@@ -341,4 +341,5 @@ sleep 3
 LENNY_GATEWAY_BASE_URL="http://127.0.0.1:28080" \
   LENNY_LOAD_CLOUD_PROVIDERS=gcp \
   LENNY_LOAD_SCALE="${LENNY_LOAD_SCALE}" \
+  LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES:-runc}" \
   go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/tier12_load_cloud/..."

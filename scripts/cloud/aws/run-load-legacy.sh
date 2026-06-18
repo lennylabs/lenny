@@ -246,11 +246,23 @@ ECR_REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.e
 LOAD_IMAGE_TAG="$("${SCRIPT_DIR}/source-hash.sh")"
 export LOAD_RUNTIME_IMAGE="${ECR_REGISTRY}/lenny-runtime-echo:${LOAD_IMAGE_TAG}"
 echo "  LOAD_RUNTIME_IMAGE=${LOAD_RUNTIME_IMAGE}" >&2
+# §6.3 startup-latency SDK-warm pool image (cmd/runtimes/preconnect-echo),
+# pushed alongside lenny-runtime-echo. The load fixture always renders the
+# runc/standard SDK-warm pool, so this must resolve.
+export LOAD_PRECONNECT_RUNTIME_IMAGE="${LOAD_PRECONNECT_RUNTIME_IMAGE:-${ECR_REGISTRY}/lenny-runtime-preconnect-echo:${LOAD_IMAGE_TAG}}"
 
 # 4. Render + apply the per-mode runtime fixture.
 echo "==[4/5] apply tier-7 load runtime fixture==" >&2
 envsubst < "${REPO_ROOT}/tests/testinfra/k8s/agent-workload-load.yaml.tmpl" \
   | kubectl apply -f -
+# §6.3 per-runtime-class benchmark: provision gVisor/Kata node groups +
+# RuntimeClasses + SDK-warm pools when requested.
+if [[ "${LENNY_BENCH_RUNTIME_CLASSES:-runc}" == *gvisor* || "${LENNY_BENCH_RUNTIME_CLASSES:-runc}" == *kata* ]]; then
+  AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
+    LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES}" \
+    LOAD_PRECONNECT_RUNTIME_IMAGE="${LOAD_PRECONNECT_RUNTIME_IMAGE}" \
+    bash "${SCRIPT_DIR}/up-runtimeclass-pools.sh"
+fi
 # Wait for each pool to reach minWarm before driving load against it.
 for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
   echo "  waiting for ${pool} to scale to minWarm..." >&2
@@ -273,4 +285,5 @@ sleep 3
 LENNY_GATEWAY_BASE_URL="http://127.0.0.1:28080" \
   LENNY_LOAD_CLOUD_PROVIDERS=aws \
   LENNY_LOAD_SCALE="${LENNY_LOAD_SCALE}" \
+  LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES:-runc}" \
   go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/tier12_load_cloud/..."

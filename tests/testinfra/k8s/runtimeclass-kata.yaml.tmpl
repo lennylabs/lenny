@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT
+#
+# Kata RuntimeClass (§5.3 microvm → kata). Applied by
+# up-runtimeclass-pools.sh on every provider, since the Kata RuntimeClass
+# is operator-defined (no managed equivalent). The Kata node pool must
+# expose /dev/kvm (hardware or nested virtualization) and carry
+# kata-containers plus the NoSchedule taint the up script applies.
+#
+# Placeholders:
+#   ${KATA_HANDLER}              containerd runtime handler (kata / kata-qemu / kata-fc).
+#   ${KATA_NODE_LABEL_KEY} / ${KATA_NODE_LABEL_VALUE}  the dedicated Kata node-pool label.
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata
+handler: ${KATA_HANDLER}
+# spec: §5.3 — Kata Pod Overhead (VM boot + guest kernel).
+overhead:
+  podFixed:
+    cpu: "500m"
+    memory: "500Mi"
+# spec: §17.2 — Kata pods run on a dedicated node pool. The RuntimeClass
+# scheduling pins them to the labelled nodes and adds the toleration for
+# the NoSchedule taint the node pool carries; the WarmPoolController
+# injects the hard node affinity.
+scheduling:
+  nodeSelector:
+    ${KATA_NODE_LABEL_KEY}: "${KATA_NODE_LABEL_VALUE}"
+  tolerations:
+    - key: "lenny.dev/isolation"
+      operator: "Equal"
+      value: "kata"
+      effect: "NoSchedule"

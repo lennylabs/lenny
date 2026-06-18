@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: MIT
+#
+# §6.1 SDK-warm pool for the §6.3 startup-latency benchmark's Kata arm.
+# scripts/cloud/<provider>/up-runtimeclass-pools.sh `envsubst`-renders and
+# kubectl-applies this after the Kata node pool and the kata RuntimeClass
+# exist. The RuntimeClass itself lives in runtimeclass-kata.yaml.tmpl.
+#
+# Placeholders:
+#   ${LOAD_PRECONNECT_RUNTIME_IMAGE}  SDK-warm runtime image.
+#   ${LOAD_SESSION_MIN} / ${LOAD_SESSION_MAX}  pool sizing.
+---
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: load-preconnect-runtime-kata
+spec:
+  type: agent
+  image: ${LOAD_PRECONNECT_RUNTIME_IMAGE}
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: microvm
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: load-preconnect-template-kata
+  namespace: lenny-agents
+spec:
+  runtimeRef: load-preconnect-runtime-kata
+  isolationProfile: microvm
+  executionMode: session
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: load-preconnect-pool-kata
+  namespace: lenny-agents
+spec:
+  templateRef: load-preconnect-template-kata
+  minWarm: ${LOAD_SESSION_MIN}
+  maxWarm: ${LOAD_SESSION_MAX}

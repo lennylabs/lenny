@@ -291,6 +291,90 @@ func TestPodClaimLatency(t *testing.T) {
 	assertScenarioRan(t, "pod_claim_latency", res)
 }
 
+// startupOptions builds the load.Options for a §6.3 startup_latency arm.
+// The profile is deliberately low-VU: the §6.3 claim-to-ready SLO is the
+// latency of a single client request hitting an already-warm pod, not a
+// concurrent-claim throughput test (that is pod_claim_latency). Two VUs
+// keep the smoke-sized warm pool from exhausting while still producing a
+// sample stream over the run. runtime selects the pool, and thereby the
+// warming model and runtime class; the warming-model and runtime-class
+// tags ride into the k6 summary for the arm identity.
+func startupOptions(baseURL, runtime, warmingModel, runtimeClass string) load.Options {
+	return load.Options{
+		Duration: 30 * time.Second,
+		VUs:      2,
+		BaseURL:  baseURL,
+		ExtraEnv: map[string]string{
+			"LENNY_TENANT":        loadTenant,
+			"LENNY_ROLES":         "tenant-admin",
+			"LENNY_USER":          "alice",
+			"LENNY_RUNTIME":       runtime,
+			"LENNY_WARMING_MODEL": warmingModel,
+			"LENNY_RUNTIME_CLASS": runtimeClass,
+		},
+	}
+}
+
+// recordClaimToReadyP95 reads the §6.3 claim-to-ready histogram delta for
+// the arm that just ran and logs its P95 against the per-class budget. The
+// snapshot is keyed by runtime_class only (both runc arms aggregate across
+// pools), so the before/after window isolates an arm only because the two
+// startup_latency tests run sequentially; they must not be marked
+// t.Parallel, or one arm's sessions would leak into the other's window.
+// The histogram lenny_session_startup_duration_seconds is PodClaim +
+// CredentialAssignment + AgentSessionStart, the precise 2s runc / 5s
+// gVisor envelope §6.3 bounds, narrower than the client wall-clock that
+// also carries workspace materialization. The §6.3 budget is an
+// indicative planning target until the Tier-2 gate clears in a controlled
+// benchmark environment, and a Kind smoke run reached over a port-forward
+// is latency-noisy, so an overshoot is logged as a warning rather than
+// failed (matching pod_claim_latency's stance). A window with no
+// observations is a real setup failure: the arm started no session.
+func recordClaimToReadyP95(t *testing.T, baseURL string, before load.StartupBuckets, runtimeClass string, budgetSeconds float64) {
+	t.Helper()
+	after := load.ScrapeStartupBuckets(t, baseURL, runtimeClass)
+	p95, ok := load.P95Delta(before, after)
+	if !ok {
+		t.Fatalf("§6.3 startup_latency: no claim-to-ready observations recorded for runtime_class=%s; the arm started no session", runtimeClass)
+	}
+	if p95 > budgetSeconds {
+		t.Logf("§6.3 startup_latency: WARNING runtime_class=%s claim-to-ready P95 %.3fs over the %.1fs indicative budget (Kind smoke is noisy; the gate clears in the controlled run)", runtimeClass, p95, budgetSeconds)
+		return
+	}
+	t.Logf("§6.3 startup_latency: runtime_class=%s claim-to-ready P95 %.3fs (within the %.1fs budget)", runtimeClass, p95, budgetSeconds)
+}
+
+// spec: 6.3 (startup_latency pod-warm — runc claim-to-ready)
+// diagnosis: the §6.3 startup benchmark pod-warm arm regressed or failed.
+// The scenario drives POST /v1/sessions/start against the runc/standard
+// echo pool; a failure means session start errored under the smoke load
+// or the arm started no session (the claim-to-ready histogram had no new
+// observations). The gate-canonical P95 is logged from
+// lenny_session_startup_duration_seconds{runtime_class="runc"}. Inspect
+// the k6 output and the gateway logs.
+func TestStartupLatencyPodWarm(t *testing.T) {
+	_, baseURL := prepareGateway(t)
+	before := load.ScrapeStartupBuckets(t, baseURL, "runc")
+	res := load.RunScenario(t, "startup_latency", startupOptions(baseURL, "echo-runtime-sidecar", "pod_warm", "runc"))
+	assertScenarioRan(t, "startup_latency_pod_warm", res)
+	recordClaimToReadyP95(t, baseURL, before, "runc", 2.0)
+}
+
+// spec: 6.3 (startup_latency SDK-warm — runc warming-model comparison)
+// diagnosis: the §6.3 startup benchmark SDK-warm arm regressed or failed.
+// The scenario drives POST /v1/sessions/start against the runc/standard
+// preconnect-echo (capabilities.preConnect) pool, so the measured
+// claim-to-ready skips agent session start. A failure means the SDK-warm
+// path errored or the arm started no session. SDK-warm must not exceed
+// the pod-warm budget, so the same 2s ceiling is recorded.
+func TestStartupLatencySDKWarm(t *testing.T) {
+	_, baseURL := prepareGateway(t)
+	before := load.ScrapeStartupBuckets(t, baseURL, "runc")
+	res := load.RunScenario(t, "startup_latency", startupOptions(baseURL, "preconnect-echo-runtime", "sdk_warm", "runc"))
+	assertScenarioRan(t, "startup_latency_sdk_warm", res)
+	recordClaimToReadyP95(t, baseURL, before, "runc", 2.0)
+}
+
 // spec: 12.7 (concurrent_workspace_slots — per-slot isolation)
 // diagnosis: the §12.7 concurrent_workspace_slots scenario has no
 // client-reachable surface. It asserts per-slot credential isolation

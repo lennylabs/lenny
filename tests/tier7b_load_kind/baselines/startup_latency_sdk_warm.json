@@ -1,0 +1,17 @@
+{
+  "scenario": "startup_latency_sdk_warm",
+  "version": "0.1.0",
+  "recorded_at": "2026-06-18T00:00:00Z",
+  "duration": "30s",
+  "vus": 2,
+  "metric_ms": {
+    "avg": 0,
+    "p50": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0
+  },
+  "error_rate": 0,
+  "throughput_per_sec": 0,
+  "notes": "§6.3 SDK-warm arm, runc/standard, preconnect-echo (capabilities.preConnect). Reference capture pending: seed from the first real Kind run with LENNY_UPDATE_BASELINE=1. SDK-warm removes agent session start, so its claim-to-ready P95 is expected at or below the pod-warm arm; this pair is the §6.3 line 352 warming-model comparison on runc. The zero metrics here mean no measured baseline yet."
+}

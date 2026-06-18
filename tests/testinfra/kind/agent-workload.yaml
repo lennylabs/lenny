@@ -86,6 +86,47 @@ spec:
   minWarm: 1
   maxWarm: 2
 ---
+# §6.1 SDK-warm reference runtime. preconnect-echo declares
+# capabilities.preConnect, so the WarmPoolController warms its pods
+# through the warming → sdk_connecting → idle path and the gateway drives
+# them via ConfigureWorkspace / DemoteSDK. The §6.3 startup_latency
+# benchmark drives a session against this pool as the SDK-warm arm and
+# against echo-pool-sidecar as the pod-warm arm, on the runc/standard
+# class the Kind cluster carries. spec: §6.1, §6.3.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: preconnect-echo-runtime
+spec:
+  type: agent
+  image: lenny-runtime-preconnect-echo:e2e
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: preconnect-echo-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: preconnect-echo-runtime
+  isolationProfile: standard
+  executionMode: session
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: preconnect-echo-pool
+  namespace: lenny-agents
+spec:
+  templateRef: preconnect-echo-template
+  minWarm: 1
+  maxWarm: 2
+---
 # §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
 # image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ
 # works, and the runtime declares credentialPoolRefs so the §4.9

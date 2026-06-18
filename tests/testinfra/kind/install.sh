@@ -93,6 +93,10 @@ BINARIES=(
 RUNTIME_IMAGES=(
   "lenny-runtime-echo=runtimes/echo"
   "lenny-runtime-echo-embedded=runtimes/echo-embedded"
+  # §6.1 SDK-warm reference runtime. preconnect-echo declares
+  # capabilities.preConnect; the §6.3 startup_latency benchmark drives
+  # its pool as the SDK-warm arm against the pod-warm echo pool.
+  "lenny-runtime-preconnect-echo=runtimes/preconnect-echo"
   # §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
   # /bin/sh for the credential-leakage probes; elicitation-echo
   # raises §9.2 elicitations through the platform MCP fabric.
@@ -343,12 +347,19 @@ log "MinIO bucket ${MINIO_BUCKET} is present"
 log "applying the lenny.dev CRDs"
 kc apply -f "${CHART_DIR}/crds/"
 
+# --server-side=false forces client-side apply. Helm 4 defaults to
+# server-side apply, whose strict (containerPort, protocol) list-map key
+# rejects the chart's named http+metrics ports sharing one containerPort
+# (§16.9 line 723); helm 3 used client-side apply and tolerated it. The
+# Kind e2e pins client-side apply so it installs identically under helm 3
+# and helm 4 without depending on the chart's server-side-apply posture.
 if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; then
   log "Helm release lenny is already installed in lenny-system; upgrading"
   helm upgrade lenny "${CHART_DIR}" \
     -n lenny-system \
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
+    --server-side=false \
     --timeout 420s
 else
   log "installing the Lenny Helm chart"
@@ -356,6 +367,7 @@ else
     -n lenny-system \
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
+    --server-side=false \
     --timeout 420s
 fi
 
