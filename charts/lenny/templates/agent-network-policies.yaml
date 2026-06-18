@@ -97,6 +97,30 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if and (not $.Values.coredns.deploy) $.Values.global.devMode }}
+    # Dev-mode fallback (§13.2 line 488): when the dedicated CoreDNS
+    # instance is not deployed (coredns.deploy=false), the dedicated-DNS
+    # peer above selects nothing, so every managed agent pod loses DNS.
+    # The controller skips the dnsPolicy:None/dnsConfig stamping in that
+    # case (it has no --dedicated-dns-cluster-ip), leaving pods on the
+    # default ClusterFirst resolver, which is kube-system kube-dns. This
+    # rule re-admits that egress so agent pods resolve through kube-system
+    # CoreDNS. Gated on global.devMode so production rendering (devMode
+    # false) is unchanged; a production install always deploys the
+    # dedicated instance and routes agent DNS through it.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
   policyTypes: [Egress]
 ---
 apiVersion: networking.k8s.io/v1

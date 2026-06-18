@@ -152,14 +152,27 @@ poolScalingController:
     tag: e2e
     pullPolicy: Never
 
-# The dedicated §13.2 CoreDNS image is the prebuilt ghcr.io/lennylabs/
-# lenny-coredns (with the ratelimit/filter plugins compiled in); it is not
-# a Go binary install.sh builds. install.sh pre-pulls and `kind load`s it,
-# so pull it Never and use the loaded image rather than re-pulling from the
-# unauthenticated cluster kubelet.
+# The dedicated §13.2 CoreDNS instance is disabled on the Kind e2e. Its
+# image (ghcr.io/lennylabs/lenny-coredns) bundles the coredns-ratelimit and
+# coredns-filter plugins; coredns-ratelimit has no public Go module source
+# (github.com/coredns/ratelimit 404s on the module proxy), so the image
+# cannot be built offline and the private ghcr image cannot be pulled by the
+# air-gapped Kind kubelet. Left enabled it sits in ImagePullBackOff and the
+# install hangs on `helm install --wait`. The tier-7 startup_latency
+# benchmark creates sessions on echo runtimes that do no DNS lookups, so the
+# dedicated DNS path is not exercised.
+#
+# With coredns.deploy=false the chart skips the CoreDNS Deployment, Service,
+# ConfigMap, and PDB, and the controller-deployment omits the
+# --dedicated-dns-cluster-ip flag (it is gated on coredns.deploy AND
+# coredns.clusterIP). The Sandbox reconciler's applyDedicatedDNS then returns
+# early without an IP, so agent pods keep the default ClusterFirst resolver
+# (kube-system kube-dns) rather than dnsPolicy:None. The agent-namespace
+# allow-pod-egress-base NetworkPolicy re-admits kube-system DNS egress under
+# global.devMode when coredns.deploy is false, so echo agent pods resolve
+# normally. clusterIP and image.pullPolicy are unused while deploy is false.
 coredns:
-  image:
-    pullPolicy: Never
+  deploy: false
 
 bootstrap:
   image:
@@ -193,14 +206,6 @@ bootstrap:
   # write to those resources: only the PoolScalingController service
   # account may create them, and it does so by reconciling each seeded
   # Postgres pool row. spec: §17.6, §4.6.2, §13.1.
-
-# §13.2 (K8S-033): the dedicated CoreDNS Service ClusterIP. Kind's
-# default service CIDR is 10.96.0.0/12 with kube-dns at 10.96.0.10;
-# 10.96.0.53 is a free address the controller stamps into every agent
-# pod's dnsConfig. The chart fails the render when this is empty while
-# agentNamespaces is configured.
-coredns:
-  clusterIP: 10.96.0.53
 
 # Dev mode stays on for e2e so the gateway keeps its dev-header auth
 # shortcuts. The data stores below are real in-cluster services, so

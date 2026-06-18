@@ -206,24 +206,21 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   log "loading ${#images[@]} images onto cluster ${CLUSTER}"
   kind load docker-image --name "${CLUSTER}" "${images[@]}"
   # External prebuilt images the chart references that install.sh does not
-  # build: the §13.2 dedicated CoreDNS (ghcr.io/lennylabs/lenny-coredns,
-  # built from build/coredns-plugins/) and the MinIO client the bucket
-  # lifecycle Job runs. Pull and load them so the offline cluster's
-  # pullPolicy: Never resolves. A pull failure (e.g. ghcr auth) is fatal
-  # here so the cause is obvious rather than surfacing later as
-  # ImagePullBackOff.
+  # build: the MinIO client the bucket lifecycle Job runs. Pull and load it
+  # so the offline cluster's pullPolicy: Never resolves.
+  #
+  # The §13.2 dedicated CoreDNS image (ghcr.io/lennylabs/lenny-coredns) is
+  # deliberately absent: e2e-values sets coredns.deploy=false, so the chart
+  # renders no agent-dns Deployment. The image bundles the coredns-ratelimit
+  # plugin, which has no public Go module source (github.com/coredns/ratelimit
+  # 404s on the module proxy), so build/coredns-plugins cannot build offline,
+  # and the private ghcr image cannot be pulled by the air-gapped kubelet.
   EXTERNAL_IMAGES=(
-    "ghcr.io/lennylabs/lenny-coredns:1.11.3-lenny1"
     "minio/mc:latest"
   )
   for img in "${EXTERNAL_IMAGES[@]}"; do
     if ! docker image inspect "${img}" >/dev/null 2>&1; then
       log "pulling external image ${img}"
-      # lenny-coredns is a private ghcr image; a host without ghcr auth
-      # cannot pull it. Tolerate a pull failure and fall back to whatever
-      # is already loaded on the cluster, so a credential gap does not
-      # abort the whole install. A genuinely-absent image surfaces later
-      # as a clear ImagePullBackOff on the dependent pod.
       if ! docker pull "${img}"; then
         log "WARNING: could not pull ${img}; relying on a pre-loaded image on ${CLUSTER}"
         continue
@@ -589,13 +586,13 @@ fi
 log "applying the PoolScalingController egress NetworkPolicy"
 kc apply -f "${PSC_EGRESS_MANIFEST}"
 
-# Wait for the core control-plane pods to become Ready. The selector
-# excludes lenny.dev/component: coredns: the dedicated §13.2 CoreDNS image
-# is the private ghcr.io/lennylabs/lenny-coredns, which a host without
-# ghcr auth cannot pull, so those pods sit in ImagePullBackOff. That is a
-# known, separately-tracked gap; excluding them here keeps the Ready wait
-# meaningful for the gateway, controller, token-service, and webhooks
-# without blocking the install on the CoreDNS pull.
+# Wait for the core control-plane pods to become Ready. The dedicated
+# §13.2 CoreDNS instance is disabled on this overlay (e2e-values sets
+# coredns.deploy=false), so no lenny.dev/component: coredns pods are
+# rendered; the Ready wait covers the gateway, controller, token-service,
+# and webhooks. The component!=coredns selector clause is retained as a
+# guard so a future re-enable of the dedicated instance does not silently
+# block the install on a CoreDNS image gap.
 log "waiting for the lenny-system control-plane pods to become Ready"
 kc -n lenny-system wait --for=condition=Ready pod \
   -l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns \
