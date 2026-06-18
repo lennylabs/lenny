@@ -72,6 +72,13 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		ExecutionMode:        string(p.ExecutionMode),
 		MaxConcurrent:        int32(p.MaxConcurrent),
 		MaxSessionAgeSeconds: int64(p.MaxSessionAgeSeconds),
+		// spec: §4.7 / §5.3 — the PSC is the §4.6.3 Postgres→CRD channel
+		// for pool configuration. Mirror the §5.3 nonce-only acknowledgment
+		// onto SandboxTemplate.spec so the WarmPoolController render gate can
+		// require it before rendering --require-so-peercred=false; a Runtime
+		// CR applied directly therefore cannot put an unacknowledged pool
+		// into nonce-only mode.
+		AcknowledgeNonceOnlyAuth: p.AcknowledgeNonceOnlyAuth,
 	}
 	if sp := sessionPolicyToCRD(p.SessionPolicy); sp != nil {
 		spec.SessionPolicy = sp

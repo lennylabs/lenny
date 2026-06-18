@@ -277,3 +277,47 @@ func TestPoolStoreSourceLeavesSessionPolicyNilWithoutScrubControl(t *testing.T) 
 		t.Errorf("SessionPolicy = %#v, want nil for a pool with no scrub control", sp)
 	}
 }
+
+// TestPoolStoreSourceMirrorsNonceOnlyAck verifies the PoolStoreSource, the
+// §4.6.3 Postgres→CRD channel, copies the §5.3 acknowledgeNonceOnlyAuth opt-in
+// from the store row onto SandboxTemplate.spec so the WarmPoolController render
+// gate can require it before rendering --require-so-peercred=false. A pool
+// carrying the acknowledgment maps to a SandboxTemplate spec with the flag set;
+// a pool without it maps to a spec with the flag false.
+//
+// spec: §4.7, §5.3.
+func TestPoolStoreSourceMirrorsNonceOnlyAck(t *testing.T) {
+	store := newMemoryStore(
+		t,
+		poolstore.Pool{
+			Name:                     "nonce-ack",
+			RuntimeRef:               "gvisor-runtime",
+			IsolationProfile:         isolation.ProfileSandboxed,
+			ExecutionMode:            runtimestore.ExecutionModeSession,
+			WarmCount:                1,
+			AcknowledgeNonceOnlyAuth: true,
+		},
+		poolstore.Pool{
+			Name:             "no-ack",
+			RuntimeRef:       "gvisor-runtime",
+			IsolationProfile: isolation.ProfileSandboxed,
+			ExecutionMode:    runtimestore.ExecutionModeSession,
+			WarmCount:        1,
+		},
+	)
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	byName := map[string]bool{}
+	for _, c := range configs {
+		byName[c.Name] = c.Template.AcknowledgeNonceOnlyAuth
+	}
+	if got, ok := byName["nonce-ack"]; !ok || !got {
+		t.Errorf("nonce-ack template acknowledgeNonceOnlyAuth = %v (present=%v), want true", got, ok)
+	}
+	if got, ok := byName["no-ack"]; !ok || got {
+		t.Errorf("no-ack template acknowledgeNonceOnlyAuth = %v (present=%v), want false", got, ok)
+	}
+}
