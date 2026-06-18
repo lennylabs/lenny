@@ -16,7 +16,7 @@
 //	  → step 7 (microvm + restart mode only): guest VM restart, re-verify
 //
 // Run is the orchestrator. It reports a Result the §6.2 disposition decider
-// (pkg/sandbox/taskcleanup) consumes to choose the next pod phase. The host
+// (pkg/sandbox/podscrub) consumes to choose the next pod phase. The host
 // operations (kill -9 -1 as the sandbox user, ipcrm --all=shm, filesystem
 // stat/remove) are isolated behind the Ops seam so the ordering, the
 // best-effort failure semantics, and the post-scrub verification can be
@@ -38,7 +38,7 @@ import (
 )
 
 // Result is the §5.2 scrub outcome the adapter reports after a task
-// finishes. It maps to pkg/sandbox/taskcleanup.ScrubResult, which the §6.2
+// finishes. It maps to pkg/sandbox/podscrub.ScrubResult, which the §6.2
 // disposition decider reads to choose the next phase.
 type Result int
 

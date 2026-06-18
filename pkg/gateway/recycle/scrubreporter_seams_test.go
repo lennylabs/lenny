@@ -28,7 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	"github.com/lennylabs/lenny/pkg/sandbox/taskcleanup"
+	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 )
 
 const testNS = "lenny-agents"
@@ -198,7 +198,7 @@ func TestInspectForRecyclePreConnectRecyclingPool_spec_5_2(t *testing.T) {
 	if !policy.PreConnect {
 		t.Error("PreConnect = false, want true")
 	}
-	if policy.OnScrubFailure != taskcleanup.OnCleanupWarn {
+	if policy.OnScrubFailure != podscrub.OnCleanupWarn {
 		t.Errorf("OnScrubFailure = %q, want warn", policy.OnScrubFailure)
 	}
 	if policy.MaxScrubFailures != 3 || policy.MaxSessionsPerPod != 50 || policy.MaxPodUptimeSeconds != 3600 {
@@ -691,7 +691,7 @@ func TestRetirementMetricsMapsReasonToLabel_spec_16_1(t *testing.T) {
 	m := recycle.NewRetirementMetrics(sink)
 	m.IncScrubFailureTotal("agents", "gvisor")
 	m.SetScrubFailureCount("pod-1", "agents", "gvisor", 3)
-	m.IncRetirement(taskcleanup.ReasonScrubFailuresExhausted, "agents", "gvisor")
+	m.IncRetirement(podscrub.ReasonScrubFailuresExhausted, "agents", "gvisor")
 	if len(sink.totals) != 1 || sink.totals[0] != "agents/gvisor" {
 		t.Errorf("totals = %v, want one agents/gvisor", sink.totals)
 	}

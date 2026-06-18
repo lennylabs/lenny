@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	"github.com/lennylabs/lenny/pkg/sandbox/taskcleanup"
+	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 )
 
 // fakeScrubReports is a leasecontrol.ScrubReportService double that records
@@ -308,7 +308,7 @@ type retireCall struct {
 	podID        string
 	failed       bool
 	scrubWarning bool
-	reason       taskcleanup.RetireReason
+	reason       podscrub.RetireReason
 	detail       string
 }
 
@@ -324,7 +324,7 @@ func (f *fakeDriver) Recycle(_ context.Context, podID string, preConnect, scrubW
 	return f.recycleErr
 }
 
-func (f *fakeDriver) Retire(_ context.Context, podID string, failed, scrubWarning bool, reason taskcleanup.RetireReason, detail string) error {
+func (f *fakeDriver) Retire(_ context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error {
 	f.retires = append(f.retires, retireCall{podID, failed, scrubWarning, reason, detail})
 	return f.retireErr
 }
@@ -332,7 +332,7 @@ func (f *fakeDriver) Retire(_ context.Context, podID string, failed, scrubWarnin
 // retirementCall records one lenny_pod_retirement_total emission with its
 // §16.1 reason, pool, and runtime_class labels.
 type retirementCall struct {
-	reason       taskcleanup.RetireReason
+	reason       podscrub.RetireReason
 	pool         string
 	runtimeClass string
 }
@@ -374,7 +374,7 @@ func (m *recordingRetireMetrics) SetScrubFailureCount(podID, pool, runtimeClass 
 	m.gauges[podID] = scrubGauge{pool, runtimeClass, count}
 }
 
-func (m *recordingRetireMetrics) IncRetirement(r taskcleanup.RetireReason, pool, runtimeClass string) {
+func (m *recordingRetireMetrics) IncRetirement(r podscrub.RetireReason, pool, runtimeClass string) {
 	m.retirements = append(m.retirements, retirementCall{r, pool, runtimeClass})
 }
 
@@ -442,7 +442,7 @@ func TestReporterPodScrubReuseNonPreConnect_spec_3_4(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		PreConnect: false, OnScrubFailure: taskcleanup.OnCleanupWarn,
+		PreConnect: false, OnScrubFailure: podscrub.OnCleanupWarn,
 		MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
@@ -468,7 +468,7 @@ func TestReporterPodScrubReusePreConnectReWarm_spec_6_2(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		PreConnect: true, OnScrubFailure: taskcleanup.OnCleanupWarn,
+		PreConnect: true, OnScrubFailure: podscrub.OnCleanupWarn,
 		MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
@@ -492,7 +492,7 @@ func TestReporterPodScrubFailedIncrementsAndWarns_spec_5_2(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		PreConnect: false, OnScrubFailure: taskcleanup.OnCleanupWarn,
+		PreConnect: false, OnScrubFailure: podscrub.OnCleanupWarn,
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
@@ -528,7 +528,7 @@ func TestReporterPodScrubScrubFailuresExhaustedRetires_spec_5_2(t *testing.T) {
 	c.served["pod-1"] = 1
 	c.scrub["pod-1"] = 2 // this failure makes 3
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure:   taskcleanup.OnCleanupWarn,
+		OnScrubFailure:   podscrub.OnCleanupWarn,
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
@@ -542,8 +542,8 @@ func TestReporterPodScrubScrubFailuresExhaustedRetires_spec_5_2(t *testing.T) {
 	if got.failed {
 		t.Errorf("retire failed = true, want false: scrub_failure_limit drains to the `released` terminal, not `failed`")
 	}
-	if got.reason != taskcleanup.ReasonScrubFailuresExhausted {
-		t.Errorf("retire reason = %q, want %q", got.reason, taskcleanup.ReasonScrubFailuresExhausted)
+	if got.reason != podscrub.ReasonScrubFailuresExhausted {
+		t.Errorf("retire reason = %q, want %q", got.reason, podscrub.ReasonScrubFailuresExhausted)
 	}
 }
 
@@ -561,7 +561,7 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure:   taskcleanup.OnCleanupFail,
+		OnScrubFailure:   podscrub.OnCleanupFail,
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
@@ -572,7 +572,7 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 		t.Fatalf("retires = %+v, want one failed terminal for fail policy", d.retires)
 	}
 	got := d.retires[0]
-	if !got.failed || got.reason != taskcleanup.ReasonCleanupFailPolicy {
+	if !got.failed || got.reason != podscrub.ReasonCleanupFailPolicy {
 		t.Errorf("retire = %+v, want failed terminal for fail policy", got)
 	}
 	if got.detail != "shred timed out on /tmp" {
@@ -598,7 +598,7 @@ func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testin
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure:   taskcleanup.OnCleanupWarn,
+		OnScrubFailure:   podscrub.OnCleanupWarn,
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100,
 		HostSchedulable: false, // cordoned host, warn policy
 		Pool:            "agents-pool", RuntimeClass: "gvisor",
@@ -611,7 +611,7 @@ func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testin
 		t.Fatalf("retires = %+v, want one cordon-drain retire", d.retires)
 	}
 	got := d.retires[0]
-	if got.failed || got.reason != taskcleanup.ReasonHostUnschedulable {
+	if got.failed || got.reason != podscrub.ReasonHostUnschedulable {
 		t.Errorf("retire = %+v, want released retire for host_unschedulable", got)
 	}
 	if !got.scrubWarning {
@@ -635,7 +635,7 @@ func TestReporterPodScrubUnschedulableHostRetiresBothPools_spec_6_39(t *testing.
 		c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 		c.served["pod-1"] = 1
 		i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-			PreConnect: preConnect, OnScrubFailure: taskcleanup.OnCleanupWarn,
+			PreConnect: preConnect, OnScrubFailure: podscrub.OnCleanupWarn,
 			MaxScrubFailures: 3, MaxSessionsPerPod: 100,
 			HostSchedulable: false, // cordoned, no limit reached
 		}}
@@ -643,7 +643,7 @@ func TestReporterPodScrubUnschedulableHostRetiresBothPools_spec_6_39(t *testing.
 		if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
 			t.Fatalf("preConnect=%v: RecordPodScrub: %v", preConnect, err)
 		}
-		if len(d.retires) != 1 || d.retires[0].failed || d.retires[0].reason != taskcleanup.ReasonHostUnschedulable {
+		if len(d.retires) != 1 || d.retires[0].failed || d.retires[0].reason != podscrub.ReasonHostUnschedulable {
 			t.Errorf("preConnect=%v: retires = %+v, want one released retire for host_unschedulable", preConnect, d.retires)
 		}
 		if len(d.recycles) != 0 {
@@ -716,7 +716,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	c.served["pod-1"] = 1
 	c.scrub["pod-1"] = 2 // this failure makes 3, exhausting maxScrubFailures
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxScrubFailures: 3,
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxScrubFailures: 3,
 		MaxSessionsPerPod: 100, HostSchedulable: true,
 		Pool: "agents-pool", RuntimeClass: "gvisor",
 	}}
@@ -740,7 +740,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	if len(m.retirements) != 1 {
 		t.Fatalf("retirements = %v, want one", m.retirements)
 	}
-	if got := m.retirements[0]; got.reason != taskcleanup.ReasonScrubFailuresExhausted || got.pool != "agents-pool" || got.runtimeClass != "gvisor" {
+	if got := m.retirements[0]; got.reason != podscrub.ReasonScrubFailuresExhausted || got.pool != "agents-pool" || got.runtimeClass != "gvisor" {
 		t.Errorf("retirement = %+v, want scrub_failure_limit labeled agents-pool/gvisor", got)
 	}
 }
@@ -763,7 +763,7 @@ func TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1(t *testin
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxScrubFailures: 3,
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxScrubFailures: 3,
 		MaxSessionsPerPod: 100, HostSchedulable: false, // cordoned, no limit reached
 		Pool: "agents-pool", RuntimeClass: "gvisor",
 	}}
@@ -778,7 +778,7 @@ func TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1(t *testin
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	// The pod is drained on the cordon-drain disposition.
-	if len(d.retires) != 1 || d.retires[0].reason != taskcleanup.ReasonHostUnschedulable {
+	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonHostUnschedulable {
 		t.Fatalf("retires = %+v, want one host_unschedulable cordon-drain", d.retires)
 	}
 	// But the retirement counter is NOT incremented: host_unschedulable is
@@ -802,7 +802,7 @@ func TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1(t *testing
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure: taskcleanup.OnCleanupFail, MaxScrubFailures: 3,
+		OnScrubFailure: podscrub.OnCleanupFail, MaxScrubFailures: 3,
 		MaxSessionsPerPod: 100, HostSchedulable: true,
 		Pool: "agents-pool", RuntimeClass: "gvisor",
 	}}
@@ -816,7 +816,7 @@ func TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1(t *testing
 	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "shred failed"); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
-	if len(d.retires) != 1 || !d.retires[0].failed || d.retires[0].reason != taskcleanup.ReasonCleanupFailPolicy {
+	if len(d.retires) != 1 || !d.retires[0].failed || d.retires[0].reason != podscrub.ReasonCleanupFailPolicy {
 		t.Fatalf("retires = %+v, want one failed-terminal cleanup_fail_policy retire", d.retires)
 	}
 	if len(m.retirements) != 0 {
@@ -841,7 +841,7 @@ func TestReporterPodScrubSuccessEmitsNoScrubFailureMetrics_spec_5_2(t *testing.T
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxSessionsPerPod: 100,
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxSessionsPerPod: 100,
 		HostSchedulable: true, Pool: "agents-pool", RuntimeClass: "runc",
 	}}
 	m := newRecordingRetireMetrics()
@@ -875,7 +875,7 @@ func TestReporterPodScrubCounterReadErrorPropagates_spec_4_7(t *testing.T) {
 	c.served["pod-1"] = 1
 	c.readErr = errors.New("postgres unavailable")
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxSessionsPerPod: 100, HostSchedulable: true,
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
 	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err == nil {
@@ -902,7 +902,7 @@ func TestReporterPodScrubDriverErrorPropagates_spec_3_4(t *testing.T) {
 	c, l := newFakeCounters(), &fakeLedger{}
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
-		OnScrubFailure: taskcleanup.OnCleanupWarn, MaxSessionsPerPod: 100, HostSchedulable: true,
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	d := &fakeDriver{recycleErr: errors.New("ssa patch conflict")}
 	r := newReporter(t, c, l, i, d)

@@ -11,8 +11,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	"github.com/lennylabs/lenny/pkg/sandbox/taskcleanup"
 )
 
 // ScrubReportService is the gateway-side surface the §4.7 scrub-report RPCs
@@ -22,12 +22,12 @@ import (
 // effects the spec assigns to the gateway: the per-pod recycle-counter
 // writes on agent_pod_state, the unhealthy-threshold drain ledger behind
 // the lenny.dev/drain-request annotation, the §6.39 host-node
-// schedulability read, the taskcleanup recycle disposition, and the
+// schedulability read, the podscrub recycle disposition, and the
 // SandboxClaim binding-state patches that drive the recycle or retire.
 //
 // The interface is defined at the consumer so leasecontrol stays free of a
 // direct dependency on the Kubernetes client, agentpodstate, slothealth,
-// podclaim, and taskcleanup. The gateway wires a concrete implementation;
+// podclaim, and podscrub. The gateway wires a concrete implementation;
 // tests pass a fake.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §5.2 (scrub model,
@@ -49,7 +49,7 @@ type ScrubReportService interface {
 	// disposition. When failed is true it increments scrubFailureCount on
 	// the pod's agent_pod_state row. It then reads the pod's
 	// lenny.dev/host-schedulable label, computes the disposition against the
-	// pool's sessionPolicy and the pod's uptime via taskcleanup.Decide, and
+	// pool's sessionPolicy and the pod's uptime via podscrub.Decide, and
 	// drives it: on recycle, a preConnect pod stamps rewarmStartedAt and
 	// coordinates the SDK re-warm before reserving, a non-preConnect pod
 	// patches the claim directly to reserved; on retire (a limit reached, or
@@ -204,9 +204,9 @@ type PodRecyclePolicy struct {
 	// sdk_connecting before reserving. spec: §6.2.
 	PreConnect bool
 	// OnScrubFailure is sessionPolicy.recycle.onScrubFailure (warn or fail).
-	OnScrubFailure taskcleanup.CleanupFailurePolicy
+	OnScrubFailure podscrub.CleanupFailurePolicy
 	// MaxScrubFailures is recycle.maxScrubFailures (default applied by
-	// taskcleanup when <= 0).
+	// podscrub when <= 0).
 	MaxScrubFailures int
 	// MaxSessionsPerPod is recycle.maxSessionsPerPod (required, >= 1).
 	MaxSessionsPerPod int
@@ -283,7 +283,7 @@ type ClaimDispositionDriver interface {
 	// adapter-side failure description retained in the audit trail on a FAILED
 	// outcome. spec: §3.4 (retire disposition), §6.39, §5.2 (audit retention of
 	// the failed pod's metadata).
-	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason taskcleanup.RetireReason, detail string) error
+	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error
 }
 
 // RetirementMetrics records the §16.1 pod-retirement and scrub-failure
@@ -311,7 +311,7 @@ type RetirementMetrics interface {
 	// termination drain without a retirement-counter increment, so a sink
 	// never observes an out-of-vocabulary reason value. spec: §16.1
 	// (lenny_pod_retirement_total reason label set), §16.1.1.
-	IncRetirement(reason taskcleanup.RetireReason, pool, runtimeClass string)
+	IncRetirement(reason podscrub.RetireReason, pool, runtimeClass string)
 }
 
 // ErrPodNotInMirror is returned by the ScrubReporter when a scrub report
@@ -322,7 +322,7 @@ var ErrPodNotInMirror = errors.New("leasecontrol: pod not found in agent_pod_sta
 
 // ScrubReporter is the gateway-side ScrubReportService implementation. It
 // wires the §4.7 recycle-counter writes, the §5.2 unhealthy-threshold drain
-// ledger, the §6.39 host-node schedulability read, the pure taskcleanup
+// ledger, the §6.39 host-node schedulability read, the pure podscrub
 // recycle disposition, and the §3.4 claim binding-state patches behind the
 // narrow seams above so leasecontrol stays free of the Kubernetes client.
 //
@@ -406,7 +406,7 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ stri
 }
 
 // RecordPodScrub increments scrubFailureCount on a failed scrub, resolves
-// the §3.4 / §6.39 recycle disposition through taskcleanup.Decide against
+// the §3.4 / §6.39 recycle disposition through podscrub.Decide against
 // the pod's recycle counters, sessionPolicy, uptime, and host-node
 // schedulability, and drives the resulting disposition onto the claim
 // binding state. detail carries an optional adapter-side failure
@@ -432,7 +432,7 @@ func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed
 		return err
 	}
 
-	d := taskcleanup.Decide(taskcleanup.Inputs{
+	d := podscrub.Decide(podscrub.Inputs{
 		PreConnect:          policy.PreConnect,
 		Scrub:               scrubInput(failed),
 		OnCleanupFailure:    policy.OnScrubFailure,
@@ -496,7 +496,7 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 // is incremented only for a reason the §16.1 inventory declares (the three
 // retirement-limit triggers); the §6.39 cordon-drain and the fail-policy
 // termination drain without a counter increment. spec: §3.4, §6.39, §16.1.
-func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runtimeClass, detail string, preConnect bool, d taskcleanup.Disposition) error {
+func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runtimeClass, detail string, preConnect bool, d podscrub.Disposition) error {
 	if d.Retire {
 		// lenny_pod_retirement_total{reason} is frozen to the three §16.1
 		// retirement-limit triggers (session_count_limit, uptime_limit,
@@ -537,14 +537,14 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runti
 	return nil
 }
 
-// scrubInput maps the binary failed flag to the taskcleanup scrub result
+// scrubInput maps the binary failed flag to the podscrub scrub result
 // the disposition reads. The pending case never reaches the gateway: a
 // ReportPodScrub always carries a resolved outcome.
-func scrubInput(failed bool) taskcleanup.ScrubResult {
+func scrubInput(failed bool) podscrub.ScrubResult {
 	if failed {
-		return taskcleanup.ScrubFailed
+		return podscrub.ScrubFailed
 	}
-	return taskcleanup.ScrubSucceeded
+	return podscrub.ScrubSucceeded
 }
 
 // noopRetirementMetrics discards every retirement metric, the default sink
@@ -553,7 +553,7 @@ type noopRetirementMetrics struct{}
 
 func (noopRetirementMetrics) IncScrubFailureTotal(string, string)              {}
 func (noopRetirementMetrics) SetScrubFailureCount(string, string, string, int) {}
-func (noopRetirementMetrics) IncRetirement(taskcleanup.RetireReason, string, string) {
+func (noopRetirementMetrics) IncRetirement(podscrub.RetireReason, string, string) {
 }
 
 // Compile-time assertion that ScrubReporter satisfies the service seam.

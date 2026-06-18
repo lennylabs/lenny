@@ -17,7 +17,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
-	"github.com/lennylabs/lenny/pkg/sandbox/taskcleanup"
+	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
@@ -404,7 +404,7 @@ func (c *RecycleBoundaryCoordinator) expireMissingReport(podID string) {
 	}
 	c.log.LogAttrs(ctx, slog.LevelWarn, "recycle: pod retired on missing whole-pod scrub report",
 		slog.String("pod_id", podID),
-		slog.String("reason", string(taskcleanup.ReasonScrubReportTimeout)))
+		slog.String("reason", string(podscrub.ReasonScrubReportTimeout)))
 }
 
 // startRewarmPoll launches the preConnect re-warm completion poll for podID.

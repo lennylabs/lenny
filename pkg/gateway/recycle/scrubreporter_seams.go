@@ -3,7 +3,7 @@
 // Package recycle wires the concrete gateway-side seams the §4.7
 // ScrubReporter (pkg/gateway/leasecontrol) drives. The ScrubReporter
 // itself holds the pure orchestration — increment the recycle counters,
-// run the taskcleanup disposition, drive the claim binding state — behind
+// run the podscrub disposition, drive the claim binding state — behind
 // five narrow interfaces defined at that consumer. This package supplies
 // the concrete implementations so leasecontrol stays free of the
 // Kubernetes client, agentpodstate, slothealth, podclaim, poolstore,
@@ -36,7 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	"github.com/lennylabs/lenny/pkg/sandbox/taskcleanup"
+	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
@@ -430,13 +430,13 @@ func poolRecyclePolicy(p poolstore.Pool) *runtimestore.RecyclePolicy {
 }
 
 // onScrubFailure maps the runtimestore disposition enum onto the
-// taskcleanup policy the disposition reads. An empty or unrecognized value
+// podscrub policy the disposition reads. An empty or unrecognized value
 // is treated as the warn default. spec: §5.2 (onScrubFailure).
-func onScrubFailure(d runtimestore.CleanupFailureDisposition) taskcleanup.CleanupFailurePolicy {
+func onScrubFailure(d runtimestore.CleanupFailureDisposition) podscrub.CleanupFailurePolicy {
 	if d == runtimestore.CleanupFailureFail {
-		return taskcleanup.OnCleanupFail
+		return podscrub.OnCleanupFail
 	}
-	return taskcleanup.OnCleanupWarn
+	return podscrub.OnCleanupWarn
 }
 
 // effectiveProfile resolves the pool's §5.3 isolation profile: the pool's
@@ -702,7 +702,7 @@ func (d *claimDispositionDriver) signalBoundary(podID string, preConnect bool) {
 // phase. spec: §3.4 (retire disposition), §4.6.3 (released vs failed
 // terminals), §6.39 (cordon-drain retains the scrub_warning marker), §5.2
 // (the failed pod's metadata is retained in the audit log).
-func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason taskcleanup.RetireReason, detail string) error {
+func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error {
 	// The §6.39 cordon-drain-under-warn path retains the residual-state
 	// marker on the draining pod; stamp it before the terminal write so the
 	// audit trail sees the annotation on the pod. A stamp failure aborts the
@@ -780,7 +780,7 @@ func (m *retirementMetrics) SetScrubFailureCount(podID, pool, runtimeClass strin
 	m.sink.SetScrubFailureCount(podID, pool, runtimeClass, count)
 }
 
-func (m *retirementMetrics) IncRetirement(reason taskcleanup.RetireReason, pool, runtimeClass string) {
+func (m *retirementMetrics) IncRetirement(reason podscrub.RetireReason, pool, runtimeClass string) {
 	m.sink.IncRetirement(string(reason), pool, runtimeClass)
 }
 

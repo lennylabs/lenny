@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package taskcleanup implements the §6.2 recycle disposition branching
+// Package podscrub implements the §6.2 recycle disposition branching
 // for a recycling session-mode pod (spec: spec/06_warm-pod-model.md
 // §6.2 recycle disposition, §6.39 host-node schedulability retire). When
 // a recycling pod's occupancy reaches zero the gateway patches the claim
@@ -33,7 +33,7 @@
 // transition per §6.39) and writes the resulting binding state is the
 // gateway scrub-report handler; this package holds no Kubernetes client
 // and emits no metrics, it only decides.
-package taskcleanup
+package podscrub
 
 import "github.com/lennylabs/lenny/pkg/sandbox/state"
 
