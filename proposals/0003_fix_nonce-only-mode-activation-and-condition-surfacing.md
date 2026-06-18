@@ -179,7 +179,7 @@ Define `acknowledgeNonceOnlyAuth` in §5.3 as a pool configuration flag alongsid
 
 ### 7.6 `spec/13_security-model.md` line 14
 
-The row already states that nonce-only mode requires the `SecurityDegradedMode=True` pool condition and alert. No change beyond confirming the cross-reference resolves to the §4.7 text above.
+No edit. The §13.1 "Adapter-agent boundary" row already states that nonce-only mode requires the `SecurityDegradedMode=True` pool condition and alert, with a relative cross-reference to §4.7; the revised §4.7 text (Section 7.1) is the resolution target, so this file is left unchanged. This subsection records the confirmation only and stages no spec edit.
 
 ### 7.7 `pkg/apis/lenny/v1alpha1/runtime_types.go`
 
