@@ -245,13 +245,17 @@ spec:
       {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
-        # fsGroup makes the mounted mTLS Secret group-owned by this GID and
-        # adds it as a supplemental group on the process, so the non-root
-        # container can read the cert-manager-issued cert/key (mounted
-        # group-readable at defaultMode 0440 below). Without it the 0400
-        # root-owned files are unreadable and the gateway fails to load
-        # /etc/lenny/mtls/tls.crt with "permission denied".
+        {{- if .Values.global.devMode }}
+        # Dev-only: fsGroup makes the mounted mTLS Secret group-owned by this
+        # GID and adds it as a supplemental group on the process, so the
+        # non-root container can read the cert-manager-issued cert/key
+        # (mounted group-readable at defaultMode 0440 below). Without it the
+        # 0400 root-owned files are unreadable and the gateway fails to load
+        # /etc/lenny/mtls/tls.crt with "permission denied". Gated to devMode
+        # so production rendering is unchanged; the underlying mount-mode bug
+        # is tracked separately for a deliberate production-facing fix.
         fsGroup: 65532
+        {{- end }}
         seccompProfile:
           type: RuntimeDefault
       {{- /*
@@ -288,10 +292,10 @@ spec:
         - name: lenny-gateway-tls
           secret:
             secretName: lenny-gateway-tls
-            # 0440 (group-readable) so the non-root container reads the cert
-            # via the fsGroup supplemental group set above; 0400 was readable
-            # only by root and failed under runAsNonRoot.
-            defaultMode: 0440
+            # devMode mounts 0440 (group-readable, paired with the fsGroup
+            # above) so the non-root container can read the cert; production
+            # keeps the original 0400 so its rendering is unchanged.
+            defaultMode: {{ if .Values.global.devMode }}0440{{ else }}0400{{ end }}
         {{- end }}
       {{- end }}
       {{- /*

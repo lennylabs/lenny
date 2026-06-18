@@ -80,12 +80,15 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: minio-secret-key
-            # mc writes its config under $HOME/.mc by default; with
-            # readOnlyRootFilesystem and no home dir for uid 1000 that
-            # mkdir fails ("/.mc: read-only file system"). Point the config
-            # at the writable emptyDir mounted below.
+            {{- if $.Values.global.devMode }}
+            # Dev-only: mc writes its config under $HOME/.mc by default; with
+            # readOnlyRootFilesystem and no home dir for uid 1000 that mkdir
+            # fails ("/.mc: read-only file system"). Point the config at the
+            # writable emptyDir mounted below. Gated to devMode so production
+            # rendering is unchanged.
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
+            {{- end }}
           command:
             - /bin/sh
             - -c
@@ -113,10 +116,14 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
+          {{- if $.Values.global.devMode }}
           volumeMounts:
             - name: mc-config
               mountPath: /tmp
+          {{- end }}
+      {{- if $.Values.global.devMode }}
       volumes:
         - name: mc-config
           emptyDir: {}
+      {{- end }}
 {{- end }}
