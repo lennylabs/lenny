@@ -16,7 +16,7 @@ import (
 )
 
 // startupDurationMetric is the §6.3 claim-to-ready histogram. Per
-// recordStartupMetrics in pkg/gateway/sessionserver/start.go it is
+// recordStartupDuration in pkg/gateway/sessionserver/start.go it is
 // PodClaim + CredentialAssignment + AgentSessionStart and excludes
 // workspace materialization and setup commands, so its P95 is the
 // gate-canonical 2s/5s SLO envelope (spec §6.3 line 348). The benchmark

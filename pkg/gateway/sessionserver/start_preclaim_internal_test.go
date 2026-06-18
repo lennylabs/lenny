@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -253,21 +254,18 @@ func TestClaimAtCreateServiceModeClaimless(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1216-1218, §7.1 step 3 — the credential availability
-// pre-check runs at create AHEAD of the step-4 claim. An exclusive pool
-// whose only credential source is exhausted fails the pre-check, so
-// claimAtCreate returns ErrNoCredentialAvailable before the (SSA) Claim
-// runs. The fake client cannot satisfy a real claim, so reaching the claim
-// would surface a different error; ErrNoCredentialAvailable proves the
-// pre-check gated the claim.
-func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
-	const ns = "lenny-agents"
+// credPolicyStores wires the tenant, runtime, and credential-pool stores a
+// §4.9 pre-check needs for a single-provider (anthropic_direct) session, so
+// the claimAtCreate pre-check tests share one setup. The named credential
+// pool is seeded with credStatus.
+func credPolicyStores(t *testing.T, credStatus credentialpoolstore.CredentialStatus) (tenantstore.Store, runtimestore.Store, credentialpoolstore.Store) {
+	t.Helper()
+	ctx := context.Background()
 	policy := credential.CredentialPolicy{
 		ProviderPools: map[string]credential.ProviderPool{
 			"anthropic_direct": {DefaultPool: "primary"},
 		},
 	}
-	ctx := context.Background()
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
 		t.Fatalf("create tenant: %v", err)
@@ -277,9 +275,23 @@ func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
 		t.Fatalf("create runtime: %v", err)
 	}
 	credPools := credentialpoolstore.NewMemory()
-	if err := credPools.Create(ctx, poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialRevoked)); err != nil {
+	if err := credPools.Create(ctx, poolFixture("primary", "anthropic_direct", credStatus)); err != nil {
 		t.Fatalf("create credential pool: %v", err)
 	}
+	return tenants, runtimes, credPools
+}
+
+// spec: §4.9 lines 1216-1218, §7.1 step 3 — the credential availability
+// pre-check runs at create AHEAD of the step-4 claim. An exclusive pool
+// whose only credential source is exhausted fails the pre-check, so
+// claimAtCreate returns ErrNoCredentialAvailable before the (SSA) Claim
+// runs. The fake client cannot satisfy a real claim, so reaching the claim
+// would surface a different error; ErrNoCredentialAvailable proves the
+// pre-check gated the claim.
+func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
+	const ns = "lenny-agents"
+	ctx := context.Background()
+	tenants, runtimes, credPools := credPolicyStores(t, credentialpoolstore.CredentialRevoked)
 
 	pool := &lennyv1.SandboxWarmPool{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
@@ -304,6 +316,91 @@ func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
 	}, workspaceplan.Plan{})
 	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 		t.Errorf("claimAtCreate = %v, want ErrNoCredentialAvailable (pre-check gates the claim)", err)
+	}
+}
+
+// concurrentClaimServer builds a Server whose resolved pool is a
+// concurrent-workspace pool (sessionPolicy.maxConcurrentSessions = 4), with
+// the §4.9 credential stores wired. The CRD pair and the poolstore mirror
+// share the pool name "conc-pool" so ResolvePool folds in
+// MaxConcurrentSessions > 1.
+func concurrentClaimServer(t *testing.T, ns string, credStatus credentialpoolstore.CredentialStatus) *Server {
+	t.Helper()
+	ctx := context.Background()
+	tenants, runtimes, credPools := credPolicyStores(t, credStatus)
+
+	pool := &lennyv1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: "conc-pool", Namespace: ns},
+		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
+	}
+	tmpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "conc-tmpl", Namespace: ns},
+		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
+	}
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+
+	pools := poolstore.NewMemory()
+	if err := pools.Create(ctx, poolstore.Pool{
+		Name:          "conc-pool",
+		RuntimeRef:    "claude-code",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            4,
+			AcknowledgeProcessLevelIsolation: true,
+		},
+	}); err != nil {
+		t.Fatalf("create concurrent pool mirror: %v", err)
+	}
+
+	return &Server{
+		podBinder:      &podsession.Binder{Client: c, Namespace: ns},
+		agentNamespace: ns,
+		pools:          pools,
+		tenants:        tenants,
+		runtimes:       runtimes,
+		credPools:      credPools,
+		credRouter:     credrouter.NewDefault(),
+	}
+}
+
+// spec: §4.9 lines 1216-1218, §7.1 step 3 — the §7.1 step-3 credential
+// availability pre-check runs at create for a concurrent-workspace pool
+// (maxConcurrentSessions > 1) too, AHEAD of the slot-deferral short-circuit.
+// An exhausted credential source therefore rejects the create with
+// CREDENTIAL_POOL_EXHAUSTED (ErrNoCredentialAvailable) before the client
+// uploads, rather than admitting the session to `created` and discovering
+// exhaustion only at /start. This pins the §2 fail-fast contract for the
+// concurrent pool class, whose slot reservation is deferred to /start.
+func TestClaimAtCreateConcurrentPoolPreCheckRuns(t *testing.T) {
+	s := concurrentClaimServer(t, "lenny-agents", credentialpoolstore.CredentialRevoked)
+	_, err := s.claimAtCreate(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code", IsolationProfile: isolation.ProfileSandboxed,
+	}, workspaceplan.Plan{})
+	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
+		t.Errorf("claimAtCreate (concurrent pool) = %v, want ErrNoCredentialAvailable (pre-check runs at create for concurrent pools)", err)
+	}
+}
+
+// spec: §5.2, §7.1 step 3-4 — when the concurrent-workspace pool's
+// credential pre-check passes, claimAtCreate returns the resolved level with
+// a nil ClaimResult: the per-session slot reservation is deferred to /start,
+// but the §7.1 step-3 availability gate has already run at create. The nil
+// Claim proves the create-time claim is skipped for the concurrent class,
+// while the absence of an error proves the pre-check passed rather than
+// being skipped.
+func TestClaimAtCreateConcurrentPoolDefersSlotAfterPreCheck(t *testing.T) {
+	s := concurrentClaimServer(t, "lenny-agents", credentialpoolstore.CredentialActive)
+	out, err := s.claimAtCreate(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code", IsolationProfile: isolation.ProfileSandboxed,
+	}, workspaceplan.Plan{})
+	if err != nil {
+		t.Fatalf("claimAtCreate (concurrent pool, available credential): %v", err)
+	}
+	if out.Claim != nil {
+		t.Errorf("concurrent-pool claim = %+v, want nil (slot reservation deferred to /start)", out.Claim)
+	}
+	if out.Level.ExecutionMode != "session" {
+		t.Errorf("level.ExecutionMode = %q, want session", out.Level.ExecutionMode)
 	}
 }
 

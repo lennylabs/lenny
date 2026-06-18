@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
@@ -1239,20 +1240,28 @@ type claimOutcome struct {
 // the step-4 pod claim inside the create atomic unit, before the session
 // row is persisted. It resolves the pool serving the row's runtime and
 // §5.3 profile, derives the §7.1 sessionIsolationLevel from the actual
-// resolved pool, and — for an exclusive (one-session-per-pod) session-mode
-// pool — runs the §4.9 pre-claim check and then the §4.1 (proposal) Claim
-// phase, returning the durable binding for the caller to persist on
-// row.PodAssignment + row.PoolRef.
+// resolved pool, runs the §4.9 pre-claim credential availability check for
+// every pool class, and — for an exclusive (one-session-per-pod)
+// session-mode pool — runs the §4.1 (proposal) Claim phase, returning the
+// durable binding for the caller to persist on row.PodAssignment +
+// row.PoolRef.
+//
+// The §7.1 step-3 credential availability pre-check runs for every pool
+// class ahead of the service-mode and concurrent-workspace short-circuits,
+// so an exhausted-credential session is rejected at create regardless of
+// the pool's session policy (the §2 fail-fast contract).
 //
 // A service-mode pool is claimless (§5.2): no pod is claimed and the
 // returned ClaimResult is nil. A concurrent-workspace pool
-// (maxConcurrentSessions>1) is not decomposed into a create-time claim;
-// its slot reservation runs at /start, so claimAtCreate returns a nil
-// ClaimResult and the resolved level only. Pool warming, pool exhaustion,
-// and a credential-availability miss are returned as their typed errors
-// for writePodClaimError to map (503 SESSION_CREATION_FAILED +
-// Retry-After, or the credential-specific envelopes), so the client learns
-// of the failure before uploading and no row is persisted.
+// (maxConcurrentSessions>1) reserves a per-session slot rather than
+// claiming a pod exclusively, and that slot reservation (BindSlot) is not
+// decomposed into a create-time claim phase; the slot reservation runs at
+// /start, so claimAtCreate returns a nil ClaimResult and the resolved
+// level only after running the credential pre-check. Pool warming, pool
+// exhaustion, and a credential-availability miss are returned as their
+// typed errors for writePodClaimError to map (503 SESSION_CREATION_FAILED
+// + Retry-After, or the credential-specific envelopes), so the client
+// learns of the failure before uploading and no row is persisted.
 //
 // spec: §4.1 (proposal), §7.1 steps 3-5, line 75; §4.9 lines 1216-1218.
 func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*claimOutcome, error) {
@@ -1268,6 +1277,18 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	if match.PoolWarmingUp {
 		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
+	// spec: §7.1 step 3 / §4.9 lines 1216-1218 — the §7.1 step-3 credential
+	// availability pre-check runs at create ahead of the step-4 claim, for
+	// every pool class. It is ordered before the service-mode and
+	// concurrent-workspace short-circuits below (the same ordering startOnPod
+	// uses at /start), so a session that would fail at credential assignment
+	// is rejected (CREDENTIAL_POOL_EXHAUSTED / USER_CREDENTIAL_NOT_FOUND)
+	// before the client wastes an upload, regardless of the pool's session
+	// policy. Surfacing the gate at create rather than at /start is the §2
+	// fail-fast contract this proposal establishes.
+	if _, _, err := s.resolveCredentialPools(ctx, row); err != nil {
+		return nil, err
+	}
 	// spec: §5.2 — service mode is claimless: a service-mode session is a
 	// connection handle routed through the pool's Service/EndpointSlice, with
 	// no SandboxClaim and no workspace materialization. No pod is claimed at
@@ -1278,17 +1299,14 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// spec: §5.2 — a concurrent-workspace pool (maxConcurrentSessions>1)
 	// reserves a fresh per-session slot rather than claiming a pod
 	// exclusively, and that slot reservation (BindSlot) is not decomposed
-	// into a create-time claim phase. Defer the claim to /start; the row
-	// persists with no PodAssignment so startOnPod takes the slot path.
+	// into a create-time claim phase. Defer the slot claim to /start; the row
+	// persists with no PodAssignment so startOnPod takes the slot path. The
+	// §7.1 step-3 credential availability gate above has already run for this
+	// session, so an exhausted-credential concurrent session is rejected at
+	// create per the §2 fail-fast contract; only the per-session slot
+	// reservation is deferred to /start.
 	if match.MaxConcurrentSessions > 1 {
 		return &claimOutcome{Level: level}, nil
-	}
-	// spec: §4.9 lines 1216-1218 — the pre-claim credential availability
-	// check runs ahead of the step-4 claim, so a session that would fail at
-	// credential assignment is rejected (CREDENTIAL_POOL_EXHAUSTED /
-	// USER_CREDENTIAL_NOT_FOUND) before a warm pod is claimed.
-	if _, _, err := s.resolveCredentialPools(ctx, row); err != nil {
-		return nil, err
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	// The Claim phase only needs the pool, session, and tenant; the plan and
@@ -1307,9 +1325,12 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	if err != nil {
 		return nil, err
 	}
-	// spec: §6.3 — record the pod-claim phase timing at /create, its new
-	// boundary in the decomposed lifecycle (§5 of the proposal).
-	s.recordStartupMetrics(match, podsession.BindTimings{PodClaim: claim.PodClaim})
+	// spec: §6.3 — record only the pod_claim phase timing at /create, its
+	// new boundary in the decomposed lifecycle (§5 of the proposal). The
+	// end-to-end lenny_session_startup_duration_seconds is emitted once at
+	// the launch boundary (recordStartupDuration), not here, so a single
+	// logical start does not double-count the envelope.
+	s.recordStartupPhases(match, podsession.BindTimings{PodClaim: claim.PodClaim})
 	return &claimOutcome{Claim: claim, Level: level}, nil
 }
 
@@ -1438,7 +1459,11 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if err != nil {
 		return nil, err
 	}
-	s.recordStartupMetrics(match, result.Timings)
+	// The whole-sequence Bind (resume-rebuild) claims and launches in one
+	// call, so result.Timings carries every §6.3 phase including PodClaim;
+	// record the phases and the end-to-end envelope once at this boundary.
+	s.recordStartupPhases(match, result.Timings)
+	s.recordStartupDuration(match, result.Timings)
 	return result, nil
 }
 
@@ -1508,7 +1533,15 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 	result.WorkspacePlanWarnings = prep.WorkspacePlanWarnings
 	result.SetupOutputs = prep.SetupOutputs
 	result.WorkspaceRoot = prep.WorkspaceRoot
-	s.recordStartupMetrics(match, result.Timings)
+	// spec: §6.3 / §5 (0007 proposal) — record the prepare/launch phases
+	// measured here (workspace_materialization, setup_commands,
+	// credential_assignment, agent_session_start). result.Timings.PodClaim is
+	// zero on this reconnect path, so recordStartupPhases skips it rather than
+	// re-emitting a spurious 0s pod_claim sample; pod_claim was recorded once
+	// at /create. The end-to-end lenny_session_startup_duration_seconds is
+	// emitted exactly once here, at the launch boundary.
+	s.recordStartupPhases(match, result.Timings)
+	s.recordStartupDuration(match, result.Timings)
 	return result, nil
 }
 
@@ -1821,39 +1854,77 @@ func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResul
 	}
 }
 
-// recordStartupMetrics observes the §6.3 startup-latency histograms for
-// a successful session-mode start. It records each instrumented
-// hot-path phase on lenny_session_startup_phase_duration_seconds
-// (§6.3 line 372) and the end-to-end pod-warm envelope on
-// lenny_session_startup_duration_seconds (§6.3 line 348). Per §6.3 line
-// 348 the end-to-end metric is pod claim through agent session ready
-// excluding workspace materialization; setup commands are also excluded
-// because they are deployer-controlled (§6.3 line 363) and the 2s runc /
-// 5s gVisor SLO budgets only the platform phases (claim ≤100ms +
-// credential ≤100ms + agent start ≤1.5s/4.5s). The end-to-end total is
-// therefore PodClaim + CredentialAssignment + AgentSessionStart.
+// recordStartupPhases observes the §6.3 line 372 per-phase
+// lenny_session_startup_phase_duration_seconds histogram for the phases
+// the caller actually measured. The decomposed create → finalize →
+// start lifecycle records each §6.3 phase at the boundary where it runs:
+// pod_claim at /create, workspace_materialization / setup_commands /
+// credential_assignment at the /finalize prepare barrier, and
+// agent_session_start at /start (§5 of the 0007 proposal). A phase whose
+// duration is zero was not measured at this boundary, so it is skipped
+// rather than recorded as a spurious 0s sample that would skew that
+// phase's distribution; this keeps each phase a single observation per
+// logical start without changing the histogram structure.
 // The first-prompt/TTFT phase is tracked separately (F-6.3.3,
 // lenny_session_time_to_first_token_seconds) because it needs runtime
 // streaming feedback the start path does not see.
-// spec: §6.3 lines 348, 358, 372.
-func (s *Server) recordStartupMetrics(match podsession.PoolMatch, t podsession.BindTimings) {
+// spec: §6.3 lines 358, 372.
+func (s *Server) recordStartupPhases(match podsession.PoolMatch, t podsession.BindTimings) {
 	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
 	if !ok {
 		// An unrecognized profile would mislabel the series; skip rather
 		// than emit an empty runtime_class.
 		return
 	}
-	if s.observeStartupPhase != nil {
-		s.observeStartupPhase("pod_claim", runtimeClass, t.PodClaim.Seconds())
-		s.observeStartupPhase("workspace_materialization", runtimeClass, t.WorkspaceMaterialization.Seconds())
-		s.observeStartupPhase("setup_commands", runtimeClass, t.SetupCommands.Seconds())
-		s.observeStartupPhase("credential_assignment", runtimeClass, t.CredentialAssignment.Seconds())
-		s.observeStartupPhase("agent_session_start", runtimeClass, t.AgentSessionStart.Seconds())
+	if s.observeStartupPhase == nil {
+		return
 	}
-	if s.observeStartupDuration != nil {
-		total := t.PodClaim + t.CredentialAssignment + t.AgentSessionStart
-		s.observeStartupDuration(match.Pool, runtimeClass, match.IsolationProfile, total.Seconds())
+	phases := []struct {
+		name string
+		d    time.Duration
+	}{
+		{"pod_claim", t.PodClaim},
+		{"workspace_materialization", t.WorkspaceMaterialization},
+		{"setup_commands", t.SetupCommands},
+		{"credential_assignment", t.CredentialAssignment},
+		{"agent_session_start", t.AgentSessionStart},
 	}
+	for _, p := range phases {
+		if p.d <= 0 {
+			// A zero duration means the phase did not run at this boundary
+			// (for example pod_claim is recorded at /create, not re-attributed
+			// at the launch boundary). Skip it so the phase histogram is not
+			// polluted with a spurious 0s sample.
+			continue
+		}
+		s.observeStartupPhase(p.name, runtimeClass, p.d.Seconds())
+	}
+}
+
+// recordStartupDuration observes the §6.3 line 348 end-to-end pod-warm
+// envelope on lenny_session_startup_duration_seconds exactly once per
+// logical start, at the launch boundary, with the full assembled
+// timings. Per §6.3 line 348 the metric is pod claim through agent
+// session ready excluding workspace materialization; setup commands are
+// also excluded because they are deployer-controlled (§6.3 line 363) and
+// the 2s runc / 5s gVisor SLO budgets only the platform phases (claim
+// ≤100ms + credential ≤100ms + agent start ≤1.5s/4.5s). The end-to-end
+// total is therefore PodClaim + CredentialAssignment + AgentSessionStart.
+// The /create boundary records only the pod_claim phase via
+// recordStartupPhases and does not emit this end-to-end metric, so a
+// single logical start observes lenny_session_startup_duration_seconds
+// once rather than once at create and again at launch.
+// spec: §6.3 lines 348, 358.
+func (s *Server) recordStartupDuration(match podsession.PoolMatch, t podsession.BindTimings) {
+	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
+	if !ok {
+		return
+	}
+	if s.observeStartupDuration == nil {
+		return
+	}
+	total := t.PodClaim + t.CredentialAssignment + t.AgentSessionStart
+	s.observeStartupDuration(match.Pool, runtimeClass, match.IsolationProfile, total.Seconds())
 }
 
 // persistPodAssignment writes the bound pod's SandboxName back to the
