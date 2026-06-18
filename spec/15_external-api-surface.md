@@ -2564,10 +2564,11 @@ type CreateRequest struct {
     // ([§15 Shared Adapter Types](#shared-adapter-types)).
     SessionID string `json:"sessionId"`
 
-    // TaskID is the root task identifier for this session. Matches `taskId`
-    // in the adapter manifest. Each session has exactly one execution, and
-    // external protocols surface that execution as a Task
-    // ([§7.1](07_session-lifecycle.md#71-normal-flow)), so TaskID is frozen
+    // TaskID is the session's external-protocol task identifier. Matches
+    // `taskId` in the adapter manifest. Each session has exactly one
+    // execution, and external protocols surface that execution as a Task
+    // ([§7.1](07_session-lifecycle.md#71-normal-flow)), so TaskID equals the
+    // session id; the adapter derives it from `sessionId`. TaskID is frozen
     // for the session's lifetime and OnCreate is invoked once with this
     // value.
     TaskID string `json:"taskId"`
@@ -2631,9 +2632,11 @@ type Message struct {
     // CreateRequest.SessionID.
     SessionID string `json:"sessionId"`
 
-    // TaskID is the root task identifier of the session the message belongs
-    // to. Populated from `taskId` in the adapter manifest; always equals
-    // CreateRequest.TaskID, which is frozen for the session's lifetime.
+    // TaskID is the external-protocol task identifier of the session the
+    // message belongs to. Populated from `taskId` in the adapter manifest;
+    // it equals the session id (the adapter derives it from `sessionId`) and
+    // always equals CreateRequest.TaskID, which is frozen for the session's
+    // lifetime.
     TaskID string `json:"taskId"`
 
     // Sequence is a monotonically increasing, SDK-assigned, per-task
