@@ -301,7 +301,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/adapter/...",
-        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go"
+        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
+        "tests/tier3_contract/crd_schema/nonce_only_fields_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -430,7 +431,8 @@
         "pkg/sandbox/isolation/...",
         "pkg/gateway/poolstore/...",
         "pkg/gateway/admin/pools_test.go",
-        "pkg/admission/webhook/direct_mode_isolation_test.go"
+        "pkg/admission/webhook/direct_mode_isolation_test.go",
+        "tests/tier3_contract/crd_schema/nonce_only_fields_test.go"
       ],
       "packages": [
         "pkg/isolation"
@@ -444,7 +446,8 @@
         "pkg/sandbox/state/state_test.go::TestAllStatesIncludePhase1Additions",
         "pkg/sandbox/state/state_test.go::TestIsTerminal",
         "pkg/sandbox/state/state_test.go::TestIsValidCanonicalTransitions",
-        "tests/tier7b_load_kind/scenarios/startup_latency"
+        "tests/tier7b_load_kind/scenarios/startup_latency",
+        "tests/tier3_contract/crd_schema/nonce_only_fields_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
