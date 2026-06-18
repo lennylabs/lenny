@@ -251,6 +251,19 @@ type Inputs struct {
 	// Runtime.spec.deploymentModel. An empty value defaults to the
 	// sidecar model.
 	DeploymentModel string
+
+	// RequireSoPeercred is the §4.7 nonce-only-mode activation decision the
+	// Sandbox reconciler resolves from the runtime's
+	// Runtime.spec.requireSoPeercred and the pool's acknowledgment
+	// (Sandbox.spec.requireSoPeercred carries it down). An explicitly false
+	// value renders --require-so-peercred=false into the sidecar adapter
+	// container, putting the adapter in nonce-only mode. A nil or true value
+	// renders no flag, so the adapter default of true (require SO_PEERCRED,
+	// crash on a failed self-test) governs. The field applies to the sidecar
+	// model only: buildEmbedded never renders it, and the RuntimeReconciler
+	// rejects an embedded runtime that sets requireSoPeercred: false (§4.1).
+	// spec: §4.7.
+	RequireSoPeercred *bool
 	// EgressCapture is the §12.9.8 tier-9 egress-capture sidecar
 	// configuration. Non-nil injects an additional container running
 	// lenny-egress-capture into the pod, plus a shared emptyDir mounted
@@ -517,7 +530,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				// §4.7 sidecar transport: the adapter binds the abstract
 				// runtime socket the runtime container dials.
 				"--runtime-socket=" + RuntimeSocketName,
-			}, append(sharedAssetsArgs(in), platformMCPArgs(in)...)...),
+			}, append(append(sharedAssetsArgs(in), platformMCPArgs(in)...), nonceOnlyArgs(in)...)...),
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    adapterMounts,
 			SecurityContext: containerSecurityContext(in.adapterUID()),
@@ -741,6 +754,20 @@ func platformMCPArgs(in Inputs) []string {
 		"--mcp-socket=" + PlatformMCPSocketName,
 		"--gateway-grpc-addr=" + in.GatewayGRPCAddr,
 	}
+}
+
+// nonceOnlyArgs returns the §4.7 nonce-only-mode adapter flag. It renders
+// --require-so-peercred=false only when the Sandbox reconciler resolved the
+// activation decision to an explicit false (a deploymentModel: sidecar
+// runtime carrying requireSoPeercred: false in an acknowledged pool, §4.7).
+// A nil or true value renders no flag: the adapter's own default of true
+// (require SO_PEERCRED, crash on a failed self-test) then governs, so the
+// builder fails closed on the security boundary. spec: §4.7.
+func nonceOnlyArgs(in Inputs) []string {
+	if in.RequireSoPeercred != nil && !*in.RequireSoPeercred {
+		return []string{"--require-so-peercred=false"}
+	}
+	return nil
 }
 
 // podVolumes returns the §6.1 / §6.4 / §13.1 pod volumes: the
