@@ -1241,7 +1241,7 @@ The `resourceNames` list is populated at install time from all `secretRef` value
 
 Before claiming a warm pod ([Section 7.1](07_session-lifecycle.md#71-normal-flow), step 4), the gateway computes the intersection of the Runtime's `supportedProviders` and the tenant's `credentialPolicy.providerPools` keys. For each provider in the intersection, it verifies that the resolved credential source (pool, user, or fallback chain) has at least one assignable credential, evaluating pool utilization (`active leases < maxConcurrentSessions` for at least one credential), cooldown status, and health scores. If **no provider** in the intersection has an available credential, the gateway rejects the request immediately with `CREDENTIAL_POOL_EXHAUSTED` (category: `POLICY`) — no pod is claimed, preventing a pod from being wasted on a session that would fail at credential assignment. The session can proceed if at least one provider has an available credential.
 
-Because the availability check and the actual lease assignment are not atomic, a race condition exists where a credential becomes unavailable between the check and the assignment. If this occurs, the gateway releases the claimed pod back to the warm pool and returns `CREDENTIAL_POOL_EXHAUSTED` to the client. The metric `lenny_gateway_credential_preclaim_mismatch_total` (counter, labeled by pool and provider) tracks how often the pre-claim check passes but the subsequent assignment fails, letting operators detect pool contention and tune pool sizing.
+Because the availability check (at create, before the claim) and the actual lease assignment (at finalize, after the upload window) are widely separated across the create → upload → finalize window, a race condition exists where a credential becomes unavailable between the check and the assignment. The mismatch window therefore spans the whole upload window rather than a narrow interval at create. If a credential that was available at the create-time check is no longer assignable at finalize, the gateway surfaces the mismatch at `/finalize`: it releases the claimed pod back to the warm pool and returns `CREDENTIAL_POOL_EXHAUSTED` to the client. The metric `lenny_gateway_credential_preclaim_mismatch_total` (counter, labeled by pool and provider) tracks how often the pre-claim check passes but the subsequent assignment fails, letting operators detect pool contention and tune pool sizing.
 
 #### Credential Lease
 
@@ -1347,7 +1347,7 @@ credentialPolicy:
   userCredentialsEnabled: true  # whether user-scoped credentials (pre-registered via POST /v1/credentials) are used
 ```
 
-**Intersection at session creation.** When a session is created, the gateway computes the set of authorized providers as the intersection of the Runtime's `supportedProviders` ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) and the tenant's `credentialPolicy.providerPools` keys. Only providers present in both sets are eligible for credential assignment. If the intersection is empty, session creation fails with `CREDENTIAL_POOL_EXHAUSTED`. The gateway then assigns a `CredentialLease` for each provider in the intersection that has an available credential (see "Multi-provider lease assignment" below). A session can start if at least one provider in the intersection has a successfully assigned credential — providers without available credentials are skipped, and the session receives credentials only for the providers that were successfully assigned.
+**Intersection at session creation.** When a session is created, the gateway computes the set of authorized providers as the intersection of the Runtime's `supportedProviders` ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) and the tenant's `credentialPolicy.providerPools` keys. Only providers present in both sets are eligible for credential assignment. If the intersection is empty, session creation fails with `CREDENTIAL_POOL_EXHAUSTED`. At session creation the gateway runs the availability pre-check over the intersection (see "Pre-Claim Credential Availability Check" above); the `CredentialLease` for each provider in the intersection that has an available credential is assigned at finalize (see "Multi-provider lease assignment" below). A session can start if at least one provider in the intersection has a successfully assigned credential — providers without available credentials are skipped, and the session receives credentials only for the providers that were successfully assigned.
 
 #### Three Credential Modes
 
@@ -1384,7 +1384,7 @@ The pre-authorized flow allows users to register their own credentials once per 
 **Resolution at session creation:**
 
 - When a session is created and the `credentialPolicy.preferredSource` includes user credentials (`prefer-user-then-pool`, `prefer-pool-then-user`, or `user` only), the gateway calls the Token Service to look up a credential for `(tenant_id, user_id, provider)` for each provider in the intersection of the Runtime's `supportedProviders` and the tenant's `credentialPolicy.providerPools`.
-- If found: the Token Service decrypts it and materializes a `CredentialLease` — same as pool-managed credentials.
+- If found: the source resolution completes at session creation, and the Token Service materializes the `CredentialLease` at finalize — same as pool-managed credentials — decrypting the credential and issuing the lease there. A materialization failure at finalize surfaces as `CREDENTIAL_MATERIALIZATION_ERROR`, which is rendered to the client as `CREDENTIAL_POOL_EXHAUSTED` (see the "Validation" note in the `materializedConfig` schema above).
 - If not found: depends on fallback configuration. With fallback enabled, falls through to pool. Without fallback, session creation fails with `USER_CREDENTIAL_NOT_FOUND` (see error catalog, [Section 15.1](15_external-api-surface.md#151-rest-api)).
 - `last_used_at` is updated on each successful resolution.
 - **Revoked credentials** (`revoked` status) are treated identically to not-found: the gateway skips the revoked credential and falls through to pool per the fallback configuration.
@@ -1581,7 +1581,7 @@ Default Redis-backed implementation. Fully replaceable by deployers. Disabled by
 
 #### `CredentialRouter` Interface
 
-The CredentialRouter is a pluggable interface invoked at two points: (1) session creation ([Section 7.1](07_session-lifecycle.md#71-normal-flow), step 6) when the gateway assigns initial credential leases, and (2) rotation time (Fallback Flow, step 4) when the gateway selects a replacement credential for a failed provider.
+The CredentialRouter is a pluggable interface invoked at two points: (1) finalize ([Section 7.1](07_session-lifecycle.md#71-normal-flow), step 13, finalize block) when the gateway assigns initial credential leases, and (2) rotation time (Fallback Flow, step 4) when the gateway selects a replacement credential for a failed provider.
 
 **Input:**
 

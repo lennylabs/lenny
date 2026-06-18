@@ -458,7 +458,7 @@ Root (depth 0)
 ```
 
 In this tree:
-- Root uses its own credential (assigned at session creation).
+- Root uses its own credential (assigned at finalize, per [§15.1](15_external-api-surface.md#151-rest-api)).
 - Child A is assigned a credential from the **same pool** as Root (inherit from Root → Child A hop).
 - Child B is assigned a **new credential** from the tenant's credential policy (independent at Child A → Child B hop).
 - If Child B were to delegate further with `deny`, its children would receive no LLM credentials.
@@ -872,7 +872,7 @@ Notes: A2A's `unknown` state maps to a gateway-level error (task ID not found or
 
 | Lenny session state        | MCP Tasks surface              | A2A surface (future)           | Notes                                                                                          |
 | -------------------------- | ------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `created`                  | `submitted`                    | `submitted`                    | Session created; warm pod claimed and credentials assigned, awaiting workspace uploads or finalization (see [§15](15_external-api-surface.md#151-rest-api) for canonical description). |
+| `created`                  | `submitted`                    | `submitted`                    | Session created; warm pod claimed and credential availability pre-checked, the credential lease is assigned at finalize, awaiting workspace uploads or finalization (see [§15](15_external-api-surface.md#151-rest-api) for canonical description). |
 | `finalizing`               | `submitted`                    | `submitted`                    | Workspace materialization and setup commands in progress.                                     |
 | `ready`                    | `submitted`                    | `submitted`                    | Setup complete, awaiting `start`.                                                             |
 | `starting`                 | `submitted`                    | `submitted`                    | Agent runtime is launching.                                                                   |
