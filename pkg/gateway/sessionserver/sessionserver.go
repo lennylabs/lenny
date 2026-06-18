@@ -59,6 +59,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
@@ -68,7 +69,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
@@ -271,7 +271,7 @@ type Server struct {
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
 	treeArchive           treearchive.Store
-	taskUsage             *taskusage.Builder
+	taskUsage             *resultrollup.Builder
 	treeBudgetReturner    TreeBudgetReturner
 	// leaseRegistrar, when set, registers a newly created root session
 	// with the §8.6 lease-extension budget source so a later adapter
@@ -1258,7 +1258,7 @@ type Options struct {
 	// TaskResult.treeUsage rollups stamped on every materialized result.
 	// Nil leaves both absent (the pre-metering behaviour).
 	// spec: §8.8 lines 897-917.
-	TaskUsage *taskusage.Builder
+	TaskUsage *resultrollup.Builder
 
 	// TreeBudgetReturner, when set, releases the §12.4 delegation tree
 	// budget a settled child consumed: the §8.2 line 130 maxTreeMemoryBytes

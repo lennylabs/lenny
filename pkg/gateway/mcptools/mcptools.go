@@ -70,13 +70,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -439,7 +439,7 @@ type Deps struct {
 	// lenny/await_children child result resolved from the live row (the
 	// archived body already carries them). Optional — nil leaves the
 	// row-only result without rollups. spec: §8.8 lines 897-917.
-	TaskUsage *taskusage.Builder
+	TaskUsage *resultrollup.Builder
 
 	// DeadlockTracker records the §8.8 await edges (which session awaits
 	// which children) so the subtree deadlock detector can decide whether
@@ -3991,7 +3991,7 @@ type childOutcome struct {
 // live session row, falling back to the §8.10 archive when the row is
 // gone — a child that settled and was reclaimed, or whose pod failed
 // while its resumed parent re-awaits it.
-func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *taskusage.Builder,
+func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
 	tenant, childID string,
 ) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
@@ -4101,7 +4101,7 @@ func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputReq
 // at the head of the list. A child whose live row is gone is resolved
 // from the §8.10 archive. F-8.8.12.
 // spec: §8.8 lines 945-949
-func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *taskusage.Builder,
+func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
 	tenant string, childIDs []string, mode string,
 ) ([]task.Result, bool, error) {
 	type settled struct {

@@ -253,6 +253,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/redistopology"
+	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
@@ -286,7 +287,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -3525,7 +3525,7 @@ func main() {
 	// spec: §8.8 lines 897-917 — the shared usage Builder both the
 	// sessionserver materialization path and the MCP lenny/await_children
 	// path use to stamp usage / treeUsage on every TaskResult.
-	taskUsageBuilder := taskusage.New(sessions, sessionUsage, treeArchive, clockinject.Now)
+	taskUsageBuilder := resultrollup.New(sessions, sessionUsage, treeArchive, clockinject.Now)
 
 	// ----- §4.8 policy interceptor chain -----
 	// The PostAuth chain runs the built-in §4.8 QuotaEvaluator (priority

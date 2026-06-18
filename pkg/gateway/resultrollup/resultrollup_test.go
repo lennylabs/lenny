@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package taskusage_test
+package resultrollup_test
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
-	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/task"
 )
@@ -47,7 +47,7 @@ func TestUsageDerivesTimeDimensions_spec_8_8_897(t *testing.T) {
 	mustCreate(t, sessions, sess)
 	_ = tokens.Add(ctx, "acme", "child1", 15000, 8000)
 
-	b := taskusage.New(sessions, tokens, archive, fixedNow(terminal))
+	b := resultrollup.New(sessions, tokens, archive, fixedNow(terminal))
 	u := b.Usage(ctx, sess)
 	if u == nil {
 		t.Fatal("Usage returned nil")
@@ -77,7 +77,7 @@ func TestUsageNoPodLeavesPodAndLeaseZero(t *testing.T) {
 		CreatedAt: created, UpdatedAt: created.Add(60 * time.Second),
 	}
 	mustCreate(t, sessions, sess)
-	b := taskusage.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
 	u := b.Usage(ctx, sess)
 	if u.WallClockSeconds != 60 {
 		t.Fatalf("wallClock = %v, want 60", u.WallClockSeconds)
@@ -102,7 +102,7 @@ func TestTreeUsageLeaf_spec_8_8_904(t *testing.T) {
 	}
 	mustCreate(t, sessions, sess)
 	_ = tokens.Add(ctx, "acme", "leaf", 100, 50)
-	b := taskusage.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
 	u := b.Usage(ctx, sess)
 	tu := b.TreeUsage(ctx, sess, u)
 	if tu == nil {
@@ -147,7 +147,7 @@ func TestTreeUsageSumsSettledSubtree_spec_8_8_904(t *testing.T) {
 	_ = tokens.Add(ctx, "acme", "a", 2000, 200)
 	_ = tokens.Add(ctx, "acme", "b", 3000, 300)
 
-	b := taskusage.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created))
 	u := b.Usage(ctx, root)
 	tu := b.TreeUsage(ctx, root, u)
 	if tu == nil {
@@ -188,7 +188,7 @@ func TestTreeUsageNullWhenDescendantUnsettled_spec_8_8_917(t *testing.T) {
 	}
 	mustCreate(t, sessions, root)
 	mustCreate(t, sessions, running)
-	b := taskusage.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created.Add(90*time.Second)))
+	b := resultrollup.New(sessions, tokens, treearchive.NewMemory(), fixedNow(created.Add(90*time.Second)))
 	u := b.Usage(ctx, root)
 	if tu := b.TreeUsage(ctx, root, u); tu != nil {
 		t.Fatalf("treeUsage = %+v, want nil (descendant unsettled)", tu)
@@ -227,7 +227,7 @@ func TestTreeUsageReadsArchivedDescendant_spec_8_8_904(t *testing.T) {
 		t.Fatalf("archive: %v", err)
 	}
 
-	b := taskusage.New(sessions, tokens, archive, fixedNow(created))
+	b := resultrollup.New(sessions, tokens, archive, fixedNow(created))
 	u := b.Usage(ctx, root)
 	tu := b.TreeUsage(ctx, root, u)
 	if tu == nil {
@@ -253,7 +253,7 @@ func TestTreeUsageNilWhenRootNonTerminal_spec_8_8_917(t *testing.T) {
 		CreatedAt: created, UpdatedAt: created.Add(5 * time.Second),
 	}
 	mustCreate(t, sessions, root)
-	b := taskusage.New(sessions, sessionusage.NewMemory(), treearchive.NewMemory(), fixedNow(created.Add(10*time.Second)))
+	b := resultrollup.New(sessions, sessionusage.NewMemory(), treearchive.NewMemory(), fixedNow(created.Add(10*time.Second)))
 	u := b.Usage(ctx, root)
 	if tu := b.TreeUsage(ctx, root, u); tu != nil {
 		t.Fatalf("treeUsage = %+v, want nil (root non-terminal)", tu)
@@ -264,7 +264,7 @@ func TestTreeUsageNilWhenRootNonTerminal_spec_8_8_917(t *testing.T) {
 // than panicking, so a gateway wired without the accumulator degrades
 // cleanly.
 func TestNilBuilderSafe(t *testing.T) {
-	var b *taskusage.Builder
+	var b *resultrollup.Builder
 	sess := sessionstore.Session{ID: "x", State: session.StateCompleted}
 	if u := b.Usage(context.Background(), sess); u != nil {
 		t.Fatalf("nil builder Usage = %+v, want nil", u)

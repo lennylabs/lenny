@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 
-// Package taskusage assembles the §8.8 TaskResult.usage and
+// Package resultrollup assembles the §8.8 TaskResult.usage and
 // TaskResult.treeUsage rollups from the per-session token accumulator
 // (pkg/gateway/sessionusage), the session row, and the §8.10 tree archive
-// (pkg/gateway/treearchive).
+// (pkg/gateway/treearchive). The name deconflicts with the per-session
+// token accumulator in pkg/gateway/sessionusage.
 //
 // usage is the settling task's own consumption: token counts from the
 // session's accumulator, plus wallClockSeconds / podMinutes /
 // credentialLeaseMinutes derived from the session row. In v1 (session
 // execution mode) a pod and a credential lease are each bound to a session
 // for its whole lifetime, so podMinutes and credentialLeaseMinutes derive
-// from the session's create-to-terminal wall-clock span; the dedicated
-// timers land with the task/concurrent execution modes.
+// from the session's create-to-terminal wall-clock span.
 //
 // treeUsage is the sum of a task's own usage plus every descendant's. Per
 // §8.8 line 917 it is null until every descendant has settled, so the
@@ -19,7 +19,7 @@
 // when any descendant is still non-terminal.
 //
 // spec: §8.8 lines 897-917.
-package taskusage
+package resultrollup
 
 import (
 	"context"

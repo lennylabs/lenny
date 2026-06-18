@@ -10,10 +10,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
-	"github.com/lennylabs/lenny/pkg/gateway/taskusage"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/task"
@@ -222,7 +222,7 @@ func TestMaterializeTaskResultStampsUsage_spec_8_8_3(t *testing.T) {
 		t.Fatalf("add tokens: %v", err)
 	}
 
-	builder := taskusage.New(store, tokens, archive, func() time.Time { return terminal })
+	builder := resultrollup.New(store, tokens, archive, func() time.Time { return terminal })
 	srv := New(store, Options{Clock: taskResultClock, TreeArchive: archive, TaskUsage: builder})
 
 	res := srv.materializeTaskResult(ctx, sess, 0)
