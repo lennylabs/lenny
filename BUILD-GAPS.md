@@ -1744,7 +1744,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — OPEN
+### - [x] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — CLOSED
 
 **Severity: Medium.** Operability gap; the nonce-only mode is not surfaced.
 
@@ -1765,6 +1765,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 - Code per its Sections 4 and 13: `Runtime.spec.requireSoPeercred` with RuntimeReconciler sidecar-only validation (`Registered=False`/`InvalidRuntime`) and CRD-to-store mirror; the PSC mirror of `acknowledgeNonceOnlyAuth` onto `SandboxTemplate.spec`; the WPC acknowledgment-gated render through the `Sandbox.spec.requireSoPeercred` carrier; the `SOPeercredDisabled` (`Sandbox.status`) and `SecurityDegradedMode` (`SandboxTemplate.status`) condition writes with the Section 4.5 revert semantics (the pool condition clears only when the runtime field is `true` AND no member Sandbox carries the condition); the `lenny_pool_security_degraded` gauge and its bundled alert in `pkg/alerting/rules` (NOT on the adapter counter, which no default scrape surface collects — proposal Section 5.3); the gateway pool-admission gate at create and update; and the docs/runbook sync per Section 7.10.
 - Tests per its Section 9, including the negative cases (unacknowledged pool renders no flag and gets no condition; acknowledged pool with an embedded runtime CR carrying `false` renders no flag, gets no condition, publishes gauge `0`).
 F-5.3.14 closes with the same application (proposal Section 10); do not wire its `SecurityDegradedMode` surfacing independently of this batch.
+
+**Resolution (proposal 0003, applied 2026-06-18):** Implemented the full nonce-only-mode activation and condition-surfacing vertical exactly as staged. `Runtime.spec.requireSoPeercred` activates per runtime, with RuntimeReconciler sidecar-only validation (`Registered=False`/`InvalidRuntime` on an embedded runtime carrying `false`) and the CRD-to-store mirror through `applyCRDFields`. The PoolScalingController mirrors the `acknowledgeNonceOnlyAuth` pool flag onto `SandboxTemplate.spec`; the gateway pool admission path rejects an unacknowledged pool that references a nonce-only runtime at create and at update. The Sandbox reconciler resolves the render decision, records it on `Sandbox.spec.requireSoPeercred`, renders `--require-so-peercred=false` into the adapter container, and writes `SOPeercredDisabled=True` on the `Sandbox` status; the WarmPoolController writes `SecurityDegradedMode=True` on the `SandboxTemplate` status with the Section 4.5 revert semantics (the pool condition clears only when no member `Sandbox` carries the carrier or the condition) and publishes the `lenny_pool_security_degraded` gauge. The bundled `PoolSecurityDegraded` warning alert (`lenny_pool_security_degraded == 1`) fires on the controller-published gauge rather than the adapter counter, which no default scrape surface reaches; `docs/runbooks/nonce-only-mode.md` is its runbook. The §10.3 zero-RBAC agent-pod posture is unchanged: no adapter Kubernetes client was added. The adapter counter (`lenny_adapter_sopeercred_disabled_total`) remains the deployer-side adapter-scrape signal. Docs synced per proposal Section 7.10: the §16.1 metric rows and §16.5 alert row in `spec/`, the mirror in `docs/reference/metrics.md`, the `PoolSecurityDegraded` rows in `docs/operator-guide/observability.md` and `docs/runbooks/index.md`, and the opt-in rewrite of `docs/operator-guide/security.md`. Built across steps S1–S11 of the 0003 build sequence.
 
 ---
 
@@ -4204,7 +4206,7 @@ Consequence: operators flipping a pool to runc via the explicit opt-in do not se
 
 **Resolution (re-verified, no code change):** Confirmed the finding's own conclusion. The monotonicity helpers are correct and `AtLeastAsRestrictive` fails closed on unknown values, and the call sites guard with `isolation.IsValid` first (`experimentrouter.go:344`, `experiments.go:148/157/197`, `derive.go`, `replay.go`). The "short-circuit caching" is a micro-optimization with no behavioral or correctness implication; there is no spec basis to add it. Closed as a positive confirmation.
 
-### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — OPEN
+### - [x] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — CLOSED
 
 `pkg/apis/lenny/v1/sandboxtemplate_types.go:213` mentions `SecurityDegradedMode` as a condition the WarmPoolController may set. Greps for `SecurityDegradedMode` in `pkg/controller/warmpool/` return nothing — the condition exists in the comment but is not produced by any reconciler. This intersects with H-1 (no RuntimeClass startup validation): the `Degraded` condition the spec wants for missing RuntimeClass would be the natural use of this otherwise-orphan condition string.
 
@@ -4232,6 +4234,8 @@ that is never set. Blocker unchanged; re-attempt in the cluster-bound batch that
 **Re-triaged (this batch) — DEFERRED (rule P, spec change required).** Transitively blocked on F-4.7.15, which is itself DEFERRED on the §4.7-vs-§10.3 spec contradiction (the adapter cannot write the `SOPeercredDisabled` pod condition under the §10.3 no-apiserver posture, and nonce-only mode has no v1 activation path). `SecurityDegradedMode` is the controller-side surfacing of that condition; with no producer it cannot be wired without authoring dead code. Closing this requires the same `spec/` reconciliation named in F-4.7.15.
 
 **Unblocked 2026-06-09 — heading DEFERRED → OPEN.** The spec reconciliation named above is resolved by the approved proposal **`proposals/0003_fix_nonce-only-mode-activation-and-condition-surfacing.md`**, which MUST be implemented as written. Its application closes this finding together with F-4.7.15 (proposal Section 10): the WarmPoolController surfaces `SecurityDegradedMode` on the `SandboxTemplate` for pools rendering nonce-only pods, with the full producer chain (the `Runtime.spec.requireSoPeercred` field, the acknowledgment-gated render, the `SOPeercredDisabled` condition on `Sandbox.status`, the revert semantics, and the `lenny_pool_security_degraded` gauge) defined there. Implement under the F-4.7.15 batch; do not wire the surfacing independently or against RuntimeClass absence (the finding's original suggestion is spec-incorrect per the 2026-06-07 entry above — `Degraded` covers RuntimeClass absence, and `SecurityDegradedMode` is reserved for the §4.7 nonce-only state).
+
+**Resolution (proposal 0003, applied 2026-06-18):** Closed together with F-4.7.15. The WarmPoolController now produces the `SecurityDegradedMode=True` condition on the `SandboxTemplate` for pools that render nonce-only pods (a `deploymentModel: sidecar` runtime carrying `requireSoPeercred: false` in an `acknowledgeNonceOnlyAuth: true` pool), reading the WarmPoolController-owned member `Sandbox` objects rather than the Runtime CR for the trigger, with the revert semantics that hold the condition `True` until the last nonce-only `Sandbox` is replaced. The surfacing is not wired against RuntimeClass absence (that is `Degraded`, already covered by F-5.3.1). See the F-4.7.15 resolution above for the full producer chain. Built across steps S1–S11 of the 0003 build sequence.
 
 ### - [x] F-5.3.15 — The §5.3 `Profile`/`RuntimeClass` model is otherwise faithful [Info] — CLOSED
 
@@ -23615,10 +23619,10 @@ replayable static nonce "with no per-connection forward security" — is
 eliminated. The one residual sub-bullet (the `SOPeercredDisabled`/
 `SecurityDegradedMode` Kubernetes pod condition, an operator-visible
 degraded-mode signal beyond the already-emitted counter) is the §4.7
-escalation-observability item tracked under **F-4.7.15** (DEFERRED: the
-adapter has no in-cluster Kubernetes client, so a pod-condition writer needs
-a clientset + RBAC + controller reconciler — a standalone effort that does
-not affect the §13.1 security boundary).
+escalation-observability item tracked under **F-4.7.15** (CLOSED via
+proposal 0003 2026-06-18: the WarmPoolController, not the adapter, writes
+`SOPeercredDisabled` on the `Sandbox` and `SecurityDegradedMode` on the
+`SandboxTemplate`, keeping the §10.3 zero-RBAC agent-pod posture intact).
 
 ### - [x] F-13.1.4 — 1-03 — `lenny-preflight` does not verify `fsGroup` / `supplementalGroups` presence on agent-pod templates [High] — CLOSED
 

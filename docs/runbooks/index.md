@@ -111,6 +111,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `BackupStorageHigh` | [backup-storage-high](backup-storage-high.html) | `backup`, `objectStore` |
 | `MinIOArtifactReplicationLagHigh` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
 | `MinIOArtifactReplicationFailed` | [minio-replication-lag](minio-replication-lag.html) | `objectStore` |
+| `PoolSecurityDegraded` | [nonce-only-mode](nonce-only-mode.html) | `warmPools`, `runtimes` |
 
 ### SLO burn-rate alerts
 
@@ -247,6 +248,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 
 **Session data plane — warm pools, pods, pool scaling**
 - [checkpoint-stale](checkpoint-stale.html)
+- [nonce-only-mode](nonce-only-mode.html)
 - [pool-bootstrap-mode](pool-bootstrap-mode.html)
 - [pool-config-drift](pool-config-drift.html)
 - [sdk-connect-timeout](sdk-connect-timeout.html)

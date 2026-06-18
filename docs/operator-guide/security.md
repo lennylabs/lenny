@@ -277,7 +277,7 @@ The adapter-agent connection within a pod is secured via:
 - **Primary:** `SO_PEERCRED` UID check + manifest nonce
 - **Fallback (gVisor):** Nonce + per-connection HMAC challenge-response
 
-If `SO_PEERCRED` is unavailable (gVisor divergence), the pool is marked with `SecurityDegradedMode=True` and an alert fires.
+Nonce-only mode is an operator opt-in for a confirmed gVisor `SO_PEERCRED` divergence, rather than an automatic reaction. After confirming the divergence (the Phase 3.5 `SO_PEERCRED` integration tests), the operator sets `Runtime.spec.requireSoPeercred: false` on the affected runtime, and the pool that references it must carry `acknowledgeNonceOnlyAuth: true`. A pool referencing a nonce-only runtime without the acknowledgment is rejected by the gateway pool admission path. When an acknowledged pool renders nonce-only pods, the platform surfaces the state: the WarmPoolController sets `SOPeercredDisabled=True` on each `Sandbox` and `SecurityDegradedMode=True` on the `SandboxTemplate`, and the bundled `PoolSecurityDegraded` alert fires on the `lenny_pool_security_degraded` gauge. The setting returns to `requireSoPeercred: true` when the divergence is fixed, and is re-evaluated when the container runtime version changes. See [nonce-only-mode](../runbooks/nonce-only-mode.md).
 
 ---
 
