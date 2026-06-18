@@ -106,6 +106,42 @@ func TestMergeInheritsSecurityFieldsFromBase(t *testing.T) {
 	}
 }
 
+// TestMergeInheritsRequireSoPeercred_spec_4_7 covers the §4.7 / §5.1
+// Inherited classification of requireSoPeercred: a derived runtime takes
+// the base nonce-only posture, and the merge result does not share the
+// base's pointer so a later mutation of one cannot affect the other.
+//
+// spec: §4.7, §5.1.
+func TestMergeInheritsRequireSoPeercred_spec_4_7(t *testing.T) {
+	nonceOnly := false
+	base := runtimestore.Runtime{
+		Name: "base", Type: runtimestore.TypeAgent,
+		Image:             "lenny/base@sha256:abc",
+		RequireSoPeercred: &nonceOnly,
+	}
+	derived := runtimestore.Runtime{Name: "derived", BaseRuntime: "base"}
+	eff := runtimestore.Merge(base, derived)
+
+	if eff.RequireSoPeercred == nil || *eff.RequireSoPeercred {
+		t.Fatalf("derived runtime must inherit the base nonce-only posture: %v", eff.RequireSoPeercred)
+	}
+	if eff.RequiresSoPeercred() {
+		t.Error("RequiresSoPeercred() must report false on a runtime inheriting a nonce-only base")
+	}
+	// The inherited pointer must not alias the base input.
+	if eff.RequireSoPeercred == base.RequireSoPeercred {
+		t.Error("merge must deep-copy requireSoPeercred, not share the base pointer")
+	}
+
+	// A base that keeps the default (unset) yields an unset effective field
+	// that the accessor reads as required.
+	plainBase := runtimestore.Runtime{Name: "pbase", Type: runtimestore.TypeAgent, Image: "lenny/p@sha256:abc"}
+	plainEff := runtimestore.Merge(plainBase, runtimestore.Runtime{Name: "pd", BaseRuntime: "pbase"})
+	if !plainEff.RequiresSoPeercred() {
+		t.Error("a derived runtime of a default base must require SO_PEERCRED")
+	}
+}
+
 func TestMergeOverrideFields(t *testing.T) {
 	base := runtimestore.Runtime{
 		Name: "base", Type: runtimestore.TypeAgent,

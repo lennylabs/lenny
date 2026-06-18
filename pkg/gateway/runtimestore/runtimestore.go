@@ -58,6 +58,18 @@ type Runtime struct {
 	// treated as T3.
 	WorkspaceTier WorkspaceTier
 
+	// RequireSoPeercred is the §4.7 nonce-only activation field mirrored
+	// from Runtime.spec.requireSoPeercred. A nil value (the default) and an
+	// explicit true both require the SO_PEERCRED adapter-agent boundary
+	// self-test; only an explicit false activates nonce-only mode, and only
+	// then for a deploymentModel: sidecar runtime on a pool carrying the
+	// §5.3 acknowledgeNonceOnlyAuth acknowledgment. ApplyDefaults resolves a
+	// nil value to true so the registry row matches the migration column's
+	// NOT NULL DEFAULT true and the gate fails closed. The §5.1 merge
+	// classifies it Inherited: a derived runtime takes the base posture.
+	// spec: §4.7.
+	RequireSoPeercred *bool
+
 	// AllowedResourceClasses is the §5.1 set of resource classes the
 	// runtime permits (for example small, medium, large). The §5.1 merge
 	// table classifies it Prohibited on derived runtimes: a derived
@@ -241,6 +253,16 @@ func (r Runtime) IsDerived() bool { return r.BaseRuntime != "" }
 // accept injection.
 func (r Runtime) InjectionSupported() bool {
 	return r.Capabilities != nil && r.Capabilities.Injection.Supported
+}
+
+// RequiresSoPeercred reports whether the runtime keeps the §4.7
+// SO_PEERCRED adapter-agent boundary self-test. A nil RequireSoPeercred
+// (unset) and an explicit true both require it; only an explicit false
+// activates nonce-only mode. The accessor fails closed: an unresolved
+// (nil) field reads as "required", so the nonce-only gate never opens on
+// a runtime that did not explicitly opt out. spec: §4.7.
+func (r Runtime) RequiresSoPeercred() bool {
+	return r.RequireSoPeercred == nil || *r.RequireSoPeercred
 }
 
 // RuntimeInteraction is the §5.1 capabilities.interaction enum: whether
@@ -1334,6 +1356,14 @@ func ApplyDefaults(r *Runtime, devMode bool) {
 	if r.CapabilityInferenceMode == "" {
 		r.CapabilityInferenceMode = capabilityinference.DefaultMode
 	}
+	// spec: §4.7 — requireSoPeercred defaults to true. An unset (nil) field
+	// resolves to true so the persisted registry row matches the migration
+	// column's NOT NULL DEFAULT true and the nonce-only gate fails closed:
+	// only an explicit false reaches the store as false.
+	if r.RequireSoPeercred == nil {
+		t := true
+		r.RequireSoPeercred = &t
+	}
 	// §5.1 line 24: sdkWarmBlockingPaths defaults to ["CLAUDE.md",
 	// ".claude/*"] when capabilities.preConnect is true and the runtime
 	// declares no list. The field is ignored when preConnect is false, so
@@ -1368,6 +1398,10 @@ func cloneRuntime(r Runtime) Runtime {
 			m[k] = append([]capabilityinference.Capability(nil), v...)
 		}
 		r.ToolCapabilityOverrides = m
+	}
+	if r.RequireSoPeercred != nil {
+		v := *r.RequireSoPeercred
+		r.RequireSoPeercred = &v
 	}
 	r.SetupPolicy = r.SetupPolicy.Clone()
 	r.Capabilities = r.Capabilities.Clone()

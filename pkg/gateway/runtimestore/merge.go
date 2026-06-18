@@ -34,8 +34,8 @@ func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
 //
 //   - Inherited / Prohibited fields (image, type, executionMode,
 //     isolationProfile, integrationLevel, capabilities,
-//     allowedResourceClasses) are always taken from the base; a derived
-//     runtime may not set them.
+//     allowedResourceClasses, workspaceTier, requireSoPeercred) are always
+//     taken from the base; a derived runtime may not set them.
 //   - Override fields (description, delegationPolicyRef, agentInterface,
 //     sessionPolicy, capabilityInferenceMode, toolCapabilityOverrides,
 //     minPlatformVersion, supportedProviders, credentialCapabilities,
@@ -69,6 +69,12 @@ func Merge(base, derived Runtime) Runtime {
 	// §12.9 / §5.2: workspaceTier is a property of the base image's data
 	// classification, so a derived runtime inherits the base's tier.
 	eff.WorkspaceTier = cb.WorkspaceTier
+	// §4.7 / §5.1: requireSoPeercred is Inherited (derived may not set).
+	// The SO_PEERCRED authentication-boundary posture is a property of the
+	// base runtime's image and isolation environment, so a derived runtime
+	// resolved against a nonce-only base inherits that posture; cb was
+	// deep-copied by cloneRuntime, so the pointer is not shared with base.
+	eff.RequireSoPeercred = cb.RequireSoPeercred
 	eff.Capabilities = cb.Capabilities
 	eff.AllowedResourceClasses = append([]string(nil), cb.AllowedResourceClasses...)
 	// §5.1 lines 22-24: sdkWarmBlockingPaths is the companion of the

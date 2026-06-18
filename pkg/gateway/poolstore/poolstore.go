@@ -599,6 +599,15 @@ func RuntimePreConnect(rt runtimestore.Runtime) bool {
 	return rt.Capabilities != nil && rt.Capabilities.PreConnect
 }
 
+// RuntimeRequireSoPeercred reports whether rt keeps the §4.7 SO_PEERCRED
+// adapter-agent boundary self-test. It fails closed: an unresolved (nil)
+// field reads as "required", so the nonce-only acknowledgment gate only
+// trips for a runtime whose registry definition carries an explicit
+// requireSoPeercred: false. spec: §4.7.
+func RuntimeRequireSoPeercred(rt runtimestore.Runtime) bool {
+	return rt.RequiresSoPeercred()
+}
+
 // RuntimeMultiTurn reports whether rt declares the §5.1
 // capabilities.interaction: multi_turn model. A multi_turn runtime bound to
 // a service-mode pool is permitted but warned: service mode preserves no

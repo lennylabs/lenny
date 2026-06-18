@@ -239,6 +239,40 @@ func TestApplyDefaultsIsolationDevMode_spec_5_3(t *testing.T) {
 	}
 }
 
+// TestApplyDefaultsRequireSoPeercred_spec_4_7 covers the §4.7 nonce-only
+// activation default: an unset requireSoPeercred resolves to true so the
+// gate fails closed, an explicit true is preserved, and an explicit false
+// (the only value that activates nonce-only mode) survives ApplyDefaults.
+//
+// spec: §4.7.
+func TestApplyDefaultsRequireSoPeercred_spec_4_7(t *testing.T) {
+	unset := runtimestore.Runtime{Name: "rt"}
+	runtimestore.ApplyDefaults(&unset, false)
+	if unset.RequireSoPeercred == nil {
+		t.Fatal("ApplyDefaults left requireSoPeercred nil; an unset field must resolve to true")
+	}
+	if !*unset.RequireSoPeercred || !unset.RequiresSoPeercred() {
+		t.Errorf("unset requireSoPeercred = %v, want true (fail closed)", *unset.RequireSoPeercred)
+	}
+
+	explicitTrue := true
+	rtTrue := runtimestore.Runtime{Name: "t", RequireSoPeercred: &explicitTrue}
+	runtimestore.ApplyDefaults(&rtTrue, false)
+	if rtTrue.RequireSoPeercred == nil || !*rtTrue.RequireSoPeercred {
+		t.Errorf("explicit true overwritten: %v", rtTrue.RequireSoPeercred)
+	}
+
+	explicitFalse := false
+	rtFalse := runtimestore.Runtime{Name: "f", RequireSoPeercred: &explicitFalse}
+	runtimestore.ApplyDefaults(&rtFalse, false)
+	if rtFalse.RequireSoPeercred == nil || *rtFalse.RequireSoPeercred {
+		t.Errorf("explicit false overwritten by ApplyDefaults: %v", rtFalse.RequireSoPeercred)
+	}
+	if rtFalse.RequiresSoPeercred() {
+		t.Error("RequiresSoPeercred() must report false for an explicit false (nonce-only) runtime")
+	}
+}
+
 func TestRuntimeToolCapabilityOverridesRoundTripAndIsolation(t *testing.T) {
 	// §5.1: a runtime carries a toolCapabilityOverrides map. The store
 	// must deep-copy it so it never shares mutable state with a caller.

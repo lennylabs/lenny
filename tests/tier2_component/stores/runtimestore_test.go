@@ -387,6 +387,63 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: 4.7 (nonce-only activation)
+	// diagnosis: the require_so_peercred column did not round-trip through
+	// the Postgres runtime registry. A runtime registered without the field
+	// must read back as true (the migration's NOT NULL DEFAULT, fail
+	// closed), an explicit false must persist as false (the only value that
+	// activates §4.7 nonce-only mode), and Update must be able to flip it.
+	t.Run("requireSoPeercred round-trips with a fail-closed default", func(t *testing.T) {
+		// A runtime created without the field reads back as the NOT NULL
+		// column default of true.
+		def := sampleRuntime(runtimeName(t))
+		if err := store.Create(ctx, def); err != nil {
+			t.Fatalf("Create default: %v", err)
+		}
+		gotDef, err := store.Get(ctx, def.Name)
+		if err != nil {
+			t.Fatalf("Get default: %v", err)
+		}
+		if gotDef.RequireSoPeercred == nil || !*gotDef.RequireSoPeercred {
+			t.Errorf("default requireSoPeercred = %v, want true (fail closed)", gotDef.RequireSoPeercred)
+		}
+		if !gotDef.RequiresSoPeercred() {
+			t.Error("RequiresSoPeercred() must report true for a default-registered runtime")
+		}
+
+		// An explicit false persists as false (nonce-only activation).
+		nonceOnly := false
+		nonce := sampleRuntime(runtimeName(t))
+		nonce.RequireSoPeercred = &nonceOnly
+		if err := store.Create(ctx, nonce); err != nil {
+			t.Fatalf("Create nonce-only: %v", err)
+		}
+		gotNonce, err := store.Get(ctx, nonce.Name)
+		if err != nil {
+			t.Fatalf("Get nonce-only: %v", err)
+		}
+		if gotNonce.RequireSoPeercred == nil || *gotNonce.RequireSoPeercred {
+			t.Errorf("explicit false lost through the round-trip: %v", gotNonce.RequireSoPeercred)
+		}
+
+		// Update can flip the persisted value back to required.
+		updated, err := store.Update(ctx, nonce.Name, func(rt *runtimestore.Runtime) error {
+			required := true
+			rt.RequireSoPeercred = &required
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update flip: %v", err)
+		}
+		if updated.RequireSoPeercred == nil || !*updated.RequireSoPeercred {
+			t.Errorf("Update did not flip requireSoPeercred to true: %v", updated.RequireSoPeercred)
+		}
+		reread, _ := store.Get(ctx, nonce.Name)
+		if reread.RequireSoPeercred == nil || !*reread.RequireSoPeercred {
+			t.Errorf("flipped value did not persist: %v", reread.RequireSoPeercred)
+		}
+	})
+
 	t.Run("list applies type, delete, and ordering", func(t *testing.T) {
 		marker := newUUID(t)[:8]
 		names := []string{marker + "-a", marker + "-b", marker + "-c"}
