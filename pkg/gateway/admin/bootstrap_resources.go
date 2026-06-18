@@ -35,11 +35,15 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
-		// Capture the runtime's §12.9 tier and §6.1 preConnect posture so
-		// the cross-resource invariants below can be checked, mirroring
-		// handleCreatePool.
+		// Capture the runtime's §12.9 tier, §6.1 preConnect posture, and §4.7
+		// SO_PEERCRED posture so the cross-resource invariants below can be
+		// checked, mirroring handleCreatePool. requireSoPeercred defaults to
+		// true (the fail-closed posture) for an unresolved runtime, so the
+		// nonce-only gate only trips for a runtime whose registry definition
+		// carries an explicit requireSoPeercred: false.
 		var runtimeTier runtimestore.WorkspaceTier
 		var runtimePreConnect bool
+		runtimeRequireSoPeercred := true
 		if r.runtimes != nil && p.RuntimeRef != "" {
 			rt, err := r.runtimes.Get(req.Context(), p.RuntimeRef)
 			if err != nil {
@@ -49,6 +53,7 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			}
 			runtimeTier = rt.WorkspaceTier
 			runtimePreConnect = poolstore.RuntimePreConnect(rt)
+			runtimeRequireSoPeercred = poolstore.RuntimeRequireSoPeercred(rt)
 		}
 		pl := r.poolFromPayload(p)
 		// spec: §5.2 line 430, §6.1 lines 77-78 — an SDK-warm runtime cannot
@@ -60,6 +65,17 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 		// spec: §5.2 line 396 — cross-tenant reuse is rejected on a pool
 		// whose runtime is T4.
 		if err := poolstore.ValidateCrossTenantReuseTier(pl, runtimeTier); err != nil {
+			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+			continue
+		}
+		// spec: §4.7, §5.3 — a pool bound to a nonce-only runtime
+		// (requireSoPeercred: false) is rejected without the
+		// acknowledgeNonceOnlyAuth opt-in. The §17.6 bootstrap.pools seed
+		// list is the second gateway pool-admission write path, so it holds
+		// the same fail-closed gate as the POST /v1/admin/pools handler: an
+		// unacknowledged nonce-only pool never enters the registry through
+		// the bootstrap seed.
+		if err := poolstore.ValidateNonceOnlyAcknowledgment(runtimeRequireSoPeercred, pl); err != nil {
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
@@ -115,6 +131,7 @@ func applyPoolSeed(stored *poolstore.Pool, desired poolstore.Pool) {
 	stored.WarmCount = desired.WarmCount
 	stored.MaxSessionAgeSeconds = desired.MaxSessionAgeSeconds
 	stored.AllowStandardIsolation = desired.AllowStandardIsolation
+	stored.AcknowledgeNonceOnlyAuth = desired.AcknowledgeNonceOnlyAuth
 	stored.EgressProfile = desired.EgressProfile
 	stored.UpdatedAt = desired.UpdatedAt
 }

@@ -96,6 +96,66 @@ func TestBootstrapPoolRejectsUnknownRuntime_spec_17_6_408(t *testing.T) {
 	}
 }
 
+// TestBootstrapPoolRejectsUnacknowledgedNonceOnly_spec_4_7 covers the
+// §4.7 / §5.3 nonce-only acknowledgment gate on the bootstrap seed path,
+// the second gateway pool-admission write path. A seed pool bound to a
+// runtime carrying requireSoPeercred: false is rejected unless it sets
+// acknowledgeNonceOnlyAuth: true, so an unacknowledged nonce-only pool
+// never enters the registry through POST /v1/admin/bootstrap. An
+// acknowledged seed pool is admitted, ruling out a blanket rejection.
+//
+// diagnosis: the bootstrap seed path admitted a nonce-only pool without
+// the acknowledgment, bypassing the gate handleCreatePool enforces and
+// violating the §4.7 fail-closed invariant that an unacknowledged
+// nonce-only pool never enters the registry.
+// spec: 4.7, 5.3, 17.6
+func TestBootstrapPoolRejectsUnacknowledgedNonceOnly_spec_4_7(t *testing.T) {
+	s := newFullBootstrapRouter(t, false)
+	nonceOnly := false
+	if err := s.runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "nonce-rt", RequireSoPeercred: &nonceOnly,
+	}); err != nil {
+		t.Fatalf("seed nonce-only runtime: %v", err)
+	}
+
+	// Unacknowledged seed pool bound to the nonce-only runtime: rejected,
+	// not persisted.
+	rec, resp := postBootstrap(t, s.router, admin.BootstrapRequest{
+		Pools: []admin.PoolPayload{
+			{Name: "nonce-noack", RuntimeRef: "nonce-rt", IsolationProfile: "sandboxed"},
+		},
+	}, "")
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("status: got %d, want 207 (partial); body=%s", rec.Code, rec.Body.String())
+	}
+	if len(resp.Pools.Errors) != 1 || resp.Pools.Errors[0].Code != "SEED_VALIDATION" {
+		t.Fatalf("expected one SEED_VALIDATION error, got %+v", resp.Pools.Errors)
+	}
+	if _, err := s.pools.Get(context.Background(), "nonce-noack"); err == nil {
+		t.Error("§4.7: an unacknowledged nonce-only seed pool must not be persisted")
+	}
+
+	// Acknowledged seed pool: admitted.
+	rec, resp = postBootstrap(t, s.router, admin.BootstrapRequest{
+		Pools: []admin.PoolPayload{
+			{Name: "nonce-ack", RuntimeRef: "nonce-rt", IsolationProfile: "sandboxed", AcknowledgeNonceOnlyAuth: true},
+		},
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if resp.Pools.CreatedCount != 1 {
+		t.Fatalf("acknowledged nonce-only pool createdCount = %d, want 1; resp=%+v", resp.Pools.CreatedCount, resp.Pools)
+	}
+	row, err := s.pools.Get(context.Background(), "nonce-ack")
+	if err != nil {
+		t.Fatalf("acknowledged nonce-only seed pool not stored: %v", err)
+	}
+	if !row.AcknowledgeNonceOnlyAuth {
+		t.Errorf("§5.3: stored pool must carry the acknowledgment, got %+v", row)
+	}
+}
+
 // TestBootstrapPoolBlocksIsolationDowngrade_spec_17_6_451 covers the
 // security-critical field rule: a re-run that changes an existing pool's
 // isolationProfile is blocked regardless of --force-update.
