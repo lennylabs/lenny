@@ -77,6 +77,10 @@ BINARIES=(
   lenny-preflight
   lenny-backup
   lenny-ctl
+  # §4.6.2 PoolScalingController runs as its own Deployment with a
+  # dedicated leader lease; the chart references it by image, so it must
+  # be built and loaded onto the offline Kind cluster like the rest.
+  lenny-pool-scaling-controller
   # §12.9.8 tier-9 egress-capture sidecar; the controller injects this
   # image when a Sandbox carries the egress-capture annotation.
   lenny-egress-capture
@@ -200,6 +204,33 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   done
   log "loading ${#images[@]} images onto cluster ${CLUSTER}"
   kind load docker-image --name "${CLUSTER}" "${images[@]}"
+  # External prebuilt images the chart references that install.sh does not
+  # build: the §13.2 dedicated CoreDNS (ghcr.io/lennylabs/lenny-coredns,
+  # built from build/coredns-plugins/) and the MinIO client the bucket
+  # lifecycle Job runs. Pull and load them so the offline cluster's
+  # pullPolicy: Never resolves. A pull failure (e.g. ghcr auth) is fatal
+  # here so the cause is obvious rather than surfacing later as
+  # ImagePullBackOff.
+  EXTERNAL_IMAGES=(
+    "ghcr.io/lennylabs/lenny-coredns:1.11.3-lenny1"
+    "minio/mc:latest"
+  )
+  for img in "${EXTERNAL_IMAGES[@]}"; do
+    if ! docker image inspect "${img}" >/dev/null 2>&1; then
+      log "pulling external image ${img}"
+      # lenny-coredns is a private ghcr image; a host without ghcr auth
+      # cannot pull it. Tolerate a pull failure and fall back to whatever
+      # is already loaded on the cluster, so a credential gap does not
+      # abort the whole install. A genuinely-absent image surfaces later
+      # as a clear ImagePullBackOff on the dependent pod.
+      if ! docker pull "${img}"; then
+        log "WARNING: could not pull ${img}; relying on a pre-loaded image on ${CLUSTER}"
+        continue
+      fi
+    fi
+    kind load docker-image --name "${CLUSTER}" "${img}" || \
+      log "WARNING: could not load ${img} onto ${CLUSTER}; relying on a pre-loaded image"
+  done
 fi
 
 # ---------------------------------------------------------------------

@@ -144,6 +144,23 @@ backups:
     tag: e2e
     pullPolicy: Never
 
+# The §4.6.2 PoolScalingController Deployment image, built and loaded by
+# install.sh like the other control-plane components.
+poolScalingController:
+  image:
+    repository: lenny-pool-scaling-controller
+    tag: e2e
+    pullPolicy: Never
+
+# The dedicated §13.2 CoreDNS image is the prebuilt ghcr.io/lennylabs/
+# lenny-coredns (with the ratelimit/filter plugins compiled in); it is not
+# a Go binary install.sh builds. install.sh pre-pulls and `kind load`s it,
+# so pull it Never and use the loaded image rather than re-pulling from the
+# unauthenticated cluster kubelet.
+coredns:
+  image:
+    pullPolicy: Never
+
 bootstrap:
   image:
     repository: lenny-ctl
@@ -235,6 +252,13 @@ minio:
   secretKey: "lennyminio123"
   bucket: "lenny-artifacts"
   useSSL: false
+  # The in-cluster e2e MinIO serves plaintext HTTP. The chart derives the
+  # gateway and bucket-lifecycle Job MinIO scheme from minio.tls.enabled, and
+  # the §12.5 assertion permits tls.enabled: false on a non-embedded backend
+  # only under global.devMode (set below). Without this the bucket-lifecycle
+  # Job speaks HTTPS to the plaintext endpoint and fails.
+  tls:
+    enabled: false
 
 # Enable the feature-gated admission webhooks so the tier-5
 # admission_featuregated tests can exercise their behavioural half:

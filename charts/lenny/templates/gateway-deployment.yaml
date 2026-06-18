@@ -81,8 +81,8 @@ only the env vars it can satisfy.
 {{- if and (not $minioUseSSL) $regulated -}}
 {{- fail (printf "§12.5 line 279: minio.tls.enabled MUST be true when complianceProfile is %q (regulated)." $complianceProfile) -}}
 {{- end -}}
-{{- if and (not $minioUseSSL) (ne $backends "embedded") -}}
-{{- fail "§12.5 line 279: minio.tls.enabled may default to false only when backends: embedded; set tls.enabled: true on any other backends value." -}}
+{{- if and (not $minioUseSSL) (ne $backends "embedded") (not $.Values.global.devMode) -}}
+{{- fail "§12.5 line 279: minio.tls.enabled may default to false only when backends: embedded or global.devMode is set; set tls.enabled: true on any other backends value." -}}
 {{- end -}}
 {{- /* §12.5 line 307 — the continuous T4 KMS probe cadence is bounded
    below by 60s to prevent excessive KMS API spend. Enforce the floor at
@@ -245,6 +245,13 @@ spec:
       {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
+        # fsGroup makes the mounted mTLS Secret group-owned by this GID and
+        # adds it as a supplemental group on the process, so the non-root
+        # container can read the cert-manager-issued cert/key (mounted
+        # group-readable at defaultMode 0440 below). Without it the 0400
+        # root-owned files are unreadable and the gateway fails to load
+        # /etc/lenny/mtls/tls.crt with "permission denied".
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       {{- /*
@@ -281,7 +288,10 @@ spec:
         - name: lenny-gateway-tls
           secret:
             secretName: lenny-gateway-tls
-            defaultMode: 0400
+            # 0440 (group-readable) so the non-root container reads the cert
+            # via the fsGroup supplemental group set above; 0400 was readable
+            # only by root and failed under runAsNonRoot.
+            defaultMode: 0440
         {{- end }}
       {{- end }}
       {{- /*
@@ -529,6 +539,10 @@ spec:
             {{- end }}
             {{- if .Values.global.devMode }}
             - --dev-mode
+            # §12.4 requires Redis AUTH; a dev install backed by a plaintext
+            # no-password Redis would otherwise fail the gateway startup
+            # invariant. Dev mode acknowledges the insecure dev Redis.
+            - --redis-allow-insecure
             {{- else }}
             # §17.4 line 268 — the production Deployment+Service+Ingress
             # topology (§17 line 7) terminates TLS at the ingress in front
