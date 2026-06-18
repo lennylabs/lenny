@@ -70,6 +70,19 @@ const (
 	// rejects) that no requeue can resolve.
 	reasonMirrored = "Mirrored"
 	reasonInvalid  = "InvalidRuntime"
+
+	// deploymentModelSidecar is the §4.7 sidecar deployment model, the
+	// only model the nonce-only requireSoPeercred opt-in is valid on. An
+	// empty deploymentModel defaults to sidecar at registration time (the
+	// Runtime CRD enum permits sidecar, embedded, or empty), so the guard
+	// below treats empty as sidecar.
+	deploymentModelSidecar = "sidecar"
+
+	// errNonceOnlyEmbedded is the §4.7 message the RuntimeReconciler sets
+	// on the Registered condition when an embedded runtime carries
+	// requireSoPeercred: false. The embedded model is a single trusted
+	// process with no adapter-agent socket boundary to fall back from.
+	errNonceOnlyEmbedded = "requireSoPeercred: false is only valid on deploymentModel: sidecar runtimes"
 )
 
 // Reconciler mirrors §5.1 Runtime CRDs into the gateway runtime
@@ -157,6 +170,19 @@ func (r *Reconciler) mirror(ctx context.Context, rt *lennyv1.Runtime) error {
 	if err := runtimestore.ValidateName(rt.Name); err != nil {
 		return &permanentError{err}
 	}
+	// spec: §4.7 — requireSoPeercred: false (nonce-only mode) weakens the
+	// adapter-agent authentication boundary and is valid only on the
+	// sidecar deployment model, which has the adapter-agent socket boundary
+	// to fall back from. The embedded model is a single trusted process
+	// with no such boundary, so an embedded runtime that sets the field is
+	// a permanent registration error: it is marked Registered=False
+	// (InvalidRuntime) and is not mirrored into the registry. A nil or
+	// explicit true is identical to the default and is permitted on either
+	// model. An empty deploymentModel defaults to sidecar.
+	if rt.Spec.RequireSoPeercred != nil && !*rt.Spec.RequireSoPeercred &&
+		rt.Spec.DeploymentModel != "" && rt.Spec.DeploymentModel != deploymentModelSidecar {
+		return &permanentError{errors.New(errNonceOnlyEmbedded)}
+	}
 
 	_, err := r.Store.Get(ctx, rt.Name)
 	switch {
@@ -226,6 +252,14 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// §6.4 T4 dedicated-node injection both see the same value the deployer
 	// declared on the Runtime resource.
 	dst.WorkspaceTier = runtimestore.WorkspaceTier(rt.Spec.WorkspaceTier)
+	// spec: §4.7 — requireSoPeercred is mirrored from the CRD into the
+	// gateway registry, where the §5.3 pool admission gate evaluates it. A
+	// nil (unset) CRD field resolves to true so the persisted row matches
+	// the migration column's NOT NULL DEFAULT true and the nonce-only gate
+	// fails closed: only an explicit false reaches the store as false. The
+	// embedded + false combination is rejected before mirroring (mirror),
+	// so an embedded runtime never reaches this copy carrying false.
+	dst.RequireSoPeercred = requireSoPeercredFromCRD(rt.Spec.RequireSoPeercred)
 	// spec: §5.1 / §7.5 lines 481-490 — setupCommandPolicy is mirrored from
 	// the CRD so the §7.5 gateway-side enforcement (F-7.5.1) reads the same
 	// policy the deployer declared on the Runtime resource. F-7.5.10.
@@ -383,6 +417,23 @@ func archivePolicyFromCRD(p *lennyv1.ArchivePolicy) *runtimestore.ArchivePolicy 
 	return &runtimestore.ArchivePolicy{
 		AllowSymlinks: p.AllowSymlinks,
 	}
+}
+
+// requireSoPeercredFromCRD maps the §4.7 requireSoPeercred field from the
+// CRD onto the registry runtime, resolving a nil (unset) pointer to an
+// explicit true. The default of true keeps the SO_PEERCRED adapter-agent
+// boundary self-test mandatory; only an explicit false activates
+// nonce-only mode, and only then for a deploymentModel: sidecar runtime on
+// an acknowledged pool. Returning an explicit pointer (rather than copying
+// nil through) makes the registry row match the migration column's NOT NULL
+// DEFAULT true and keeps the gate fail-closed. spec: §4.7.
+func requireSoPeercredFromCRD(p *bool) *bool {
+	if p == nil {
+		t := true
+		return &t
+	}
+	v := *p
+	return &v
 }
 
 // capabilitiesFromCRD maps the §5.1 capabilities block. A nil CRD block

@@ -3,7 +3,9 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -506,6 +508,173 @@ func TestApplyCRDFields_MirrorsCodingAgentBlocks_spec_26_2(t *testing.T) {
 	if dst.AgentInterface == nil || dst.AgentInterface.Description != "Claude Code" {
 		t.Errorf("AgentInterface not plumbed: %+v", dst.AgentInterface)
 	}
+}
+
+// TestRequireSoPeercredFromCRD_spec_4_7 verifies the §4.7 nil→true
+// normalization of the requireSoPeercred mirror: a nil (unset) CRD field
+// resolves to an explicit true so the persisted row matches the migration
+// column's NOT NULL DEFAULT true and the nonce-only gate fails closed; an
+// explicit true and an explicit false round-trip unchanged; and the
+// returned pointer is not aliased to the CRD source. spec: §4.7.
+func TestRequireSoPeercredFromCRD_spec_4_7(t *testing.T) {
+	if got := requireSoPeercredFromCRD(nil); got == nil || !*got {
+		t.Errorf("nil field = %v, want explicit true", got)
+	}
+	tru := true
+	if got := requireSoPeercredFromCRD(&tru); got == nil || !*got {
+		t.Errorf("explicit true = %v, want true", got)
+	}
+	fls := false
+	got := requireSoPeercredFromCRD(&fls)
+	if got == nil || *got {
+		t.Errorf("explicit false = %v, want false", got)
+	}
+	// The returned pointer must not alias the CRD source.
+	*got = true
+	if fls {
+		t.Error("returned pointer aliased to CRD source: mutation leaked back")
+	}
+}
+
+// TestApplyCRDFields_MirrorsRequireSoPeercred_spec_4_7 verifies the §4.7
+// requireSoPeercred mirror lands on the registry runtime through
+// applyCRDFields: an explicit false reaches the store as false (nonce-only
+// activation), an explicit true as true, and an unset CRD field resolves to
+// the default true. spec: §4.7.
+func TestApplyCRDFields_MirrorsRequireSoPeercred_spec_4_7(t *testing.T) {
+	fls := false
+	tru := true
+	for _, c := range []struct {
+		name string
+		in   *bool
+		want bool
+	}{
+		{"explicit-false-activates", &fls, false},
+		{"explicit-true", &tru, true},
+		{"unset-defaults-true", nil, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+				Type:              "agent",
+				Image:             "img@sha256:" + hex64,
+				IntegrationLevel:  "basic",
+				DeploymentModel:   "sidecar",
+				RequireSoPeercred: c.in,
+			}}
+			var dst runtimestore.Runtime
+			applyCRDFields(&dst, rt)
+			if dst.RequireSoPeercred == nil {
+				t.Fatalf("RequireSoPeercred = nil, want %v", c.want)
+			}
+			if *dst.RequireSoPeercred != c.want {
+				t.Errorf("RequireSoPeercred = %v, want %v", *dst.RequireSoPeercred, c.want)
+			}
+		})
+	}
+}
+
+// TestMirror_RejectsEmbeddedNonceOnly_spec_4_7 verifies the §4.7 / §4.1
+// permanent-error guard: a deploymentModel: embedded runtime carrying
+// requireSoPeercred: false is rejected as a permanentError carrying the
+// spec-required message and is not mirrored into the registry. An embedded
+// runtime with the field unset or explicitly true mirrors normally, and a
+// sidecar runtime carrying false mirrors with the field propagated
+// CRD-to-store. spec: §4.7, §4.1.
+func TestMirror_RejectsEmbeddedNonceOnly_spec_4_7(t *testing.T) {
+	fls := false
+	tru := true
+	const img = "img@sha256:" + hex64
+
+	t.Run("embedded+false is a permanent error and not mirrored", func(t *testing.T) {
+		store := runtimestore.NewMemory()
+		r := &Reconciler{Store: store}
+		rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+			Type: "agent", Image: img, IntegrationLevel: "basic",
+			DeploymentModel: "embedded", RequireSoPeercred: &fls,
+		}}
+		rt.Name = "embedded-nonce-only"
+
+		err := r.mirror(context.Background(), rt)
+		var perm *permanentError
+		if !errors.As(err, &perm) {
+			t.Fatalf("mirror error = %v, want permanentError", err)
+		}
+		if perm.Error() != errNonceOnlyEmbedded {
+			t.Errorf("message = %q, want %q", perm.Error(), errNonceOnlyEmbedded)
+		}
+		if _, gerr := store.Get(context.Background(), rt.Name); !errors.Is(gerr, runtimestore.ErrNotFound) {
+			t.Errorf("embedded+false runtime was mirrored: get err = %v", gerr)
+		}
+	})
+
+	for _, c := range []struct {
+		name string
+		req  *bool
+	}{
+		{"embedded+unset mirrors", nil},
+		{"embedded+true mirrors", &tru},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := runtimestore.NewMemory()
+			r := &Reconciler{Store: store}
+			rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+				Type: "agent", Image: img, IntegrationLevel: "basic",
+				DeploymentModel: "embedded", RequireSoPeercred: c.req,
+			}}
+			rt.Name = "embedded-ok"
+			if err := r.mirror(context.Background(), rt); err != nil {
+				t.Fatalf("mirror = %v, want nil", err)
+			}
+			got, err := store.Get(context.Background(), rt.Name)
+			if err != nil {
+				t.Fatalf("store.Get: %v", err)
+			}
+			// ApplyDefaults resolves the field to the default true.
+			if got.RequireSoPeercred == nil || !*got.RequireSoPeercred {
+				t.Errorf("RequireSoPeercred = %v, want true", got.RequireSoPeercred)
+			}
+		})
+	}
+
+	t.Run("sidecar+false mirrors with the field propagated", func(t *testing.T) {
+		store := runtimestore.NewMemory()
+		r := &Reconciler{Store: store}
+		rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+			Type: "agent", Image: img, IntegrationLevel: "basic",
+			DeploymentModel: "sidecar", RequireSoPeercred: &fls,
+		}}
+		rt.Name = "sidecar-nonce-only"
+		if err := r.mirror(context.Background(), rt); err != nil {
+			t.Fatalf("mirror = %v, want nil", err)
+		}
+		got, err := store.Get(context.Background(), rt.Name)
+		if err != nil {
+			t.Fatalf("store.Get: %v", err)
+		}
+		if got.RequireSoPeercred == nil || *got.RequireSoPeercred {
+			t.Errorf("RequireSoPeercred = %v, want explicit false (nonce-only)", got.RequireSoPeercred)
+		}
+	})
+
+	t.Run("empty deploymentModel+false defaults to sidecar and mirrors", func(t *testing.T) {
+		store := runtimestore.NewMemory()
+		r := &Reconciler{Store: store}
+		rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+			Type: "agent", Image: img, IntegrationLevel: "basic",
+			RequireSoPeercred: &fls,
+		}}
+		rt.Name = "empty-model-nonce-only"
+		if err := r.mirror(context.Background(), rt); err != nil {
+			t.Fatalf("mirror = %v, want nil (empty deploymentModel defaults to sidecar)", err)
+		}
+		got, err := store.Get(context.Background(), rt.Name)
+		if err != nil {
+			t.Fatalf("store.Get: %v", err)
+		}
+		if got.RequireSoPeercred == nil || *got.RequireSoPeercred {
+			t.Errorf("RequireSoPeercred = %v, want explicit false", got.RequireSoPeercred)
+		}
+	})
 }
 
 // hex64 is a 64-hex digest body used to satisfy the §5.3 digest-pinned

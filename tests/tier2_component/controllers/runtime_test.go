@@ -172,6 +172,106 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		}
 	})
 
+	t.Run("embedded runtime with requireSoPeercred false is rejected and not mirrored", func(t *testing.T) {
+		// spec: §4.7 / §4.1 — requireSoPeercred: false (nonce-only mode)
+		// is valid only on the sidecar deployment model. The embedded
+		// model is a single trusted process with no adapter-agent socket
+		// boundary, so the RuntimeReconciler marks it Registered=False
+		// (InvalidRuntime) and does not mirror it into the registry.
+		const name = "embedded-nonce-only"
+		falseVal := false
+		mustCreate(t, ctx, c, &lennyv1.Runtime{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: lennyv1.RuntimeSpec{
+				Type:              "agent",
+				Image:             "img@sha256:" + digest64,
+				IntegrationLevel:  "basic",
+				DeploymentModel:   "embedded",
+				RequireSoPeercred: &falseVal,
+			},
+		})
+		reconcile(name)
+
+		if _, err := store.Get(ctx, name); err == nil {
+			t.Error("embedded+requireSoPeercred:false runtime was mirrored into the registry")
+		}
+		var live lennyv1.Runtime
+		if err := c.Get(ctx, client.ObjectKey{Name: name}, &live); err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		cond := meta.FindStatusCondition(live.Status.Conditions, "Registered")
+		if cond == nil || cond.Status != metav1.ConditionFalse {
+			t.Fatalf("Registered condition = %+v, want False", cond)
+		}
+		if cond.Reason != "InvalidRuntime" {
+			t.Errorf("Registered reason = %q, want InvalidRuntime", cond.Reason)
+		}
+		if cond.Message != "requireSoPeercred: false is only valid on deploymentModel: sidecar runtimes" {
+			t.Errorf("Registered message = %q, want the §4.7 nonce-only embedded message", cond.Message)
+		}
+	})
+
+	t.Run("sidecar runtime with requireSoPeercred false mirrors with the field propagated", func(t *testing.T) {
+		// spec: §4.7 / §4.2 — a deploymentModel: sidecar runtime carrying
+		// requireSoPeercred: false mirrors normally, with the explicit
+		// false propagated CRD-to-store so the §5.3 pool admission gate
+		// sees the nonce-only posture.
+		const name = "sidecar-nonce-only"
+		falseVal := false
+		mustCreate(t, ctx, c, &lennyv1.Runtime{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: lennyv1.RuntimeSpec{
+				Type:              "agent",
+				Image:             "img@sha256:" + digest64,
+				IntegrationLevel:  "basic",
+				DeploymentModel:   "sidecar",
+				RequireSoPeercred: &falseVal,
+			},
+		})
+		reconcile(name)
+
+		got, err := store.Get(ctx, name)
+		if err != nil {
+			t.Fatalf("store.Get: %v", err)
+		}
+		if got.RequireSoPeercred == nil || *got.RequireSoPeercred {
+			t.Errorf("mirrored RequireSoPeercred = %v, want explicit false (nonce-only)", got.RequireSoPeercred)
+		}
+		var live lennyv1.Runtime
+		if err := c.Get(ctx, client.ObjectKey{Name: name}, &live); err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		cond := meta.FindStatusCondition(live.Status.Conditions, "Registered")
+		if cond == nil || cond.Status != metav1.ConditionTrue {
+			t.Fatalf("Registered condition = %+v, want True", cond)
+		}
+	})
+
+	t.Run("sidecar runtime with requireSoPeercred unset mirrors the default true", func(t *testing.T) {
+		// spec: §4.7 — an unset field resolves to the default true through
+		// the CRD-to-store mirror, so the registry row keeps the
+		// SO_PEERCRED self-test mandatory.
+		const name = "sidecar-default"
+		mustCreate(t, ctx, c, &lennyv1.Runtime{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: lennyv1.RuntimeSpec{
+				Type:             "agent",
+				Image:            "img@sha256:" + digest64,
+				IntegrationLevel: "basic",
+				DeploymentModel:  "sidecar",
+			},
+		})
+		reconcile(name)
+
+		got, err := store.Get(ctx, name)
+		if err != nil {
+			t.Fatalf("store.Get: %v", err)
+		}
+		if got.RequireSoPeercred == nil || !*got.RequireSoPeercred {
+			t.Errorf("mirrored RequireSoPeercred = %v, want default true", got.RequireSoPeercred)
+		}
+	})
+
 	t.Run("invalid name marks Registered False without requeue", func(t *testing.T) {
 		// A dotted name is a valid DNS-1123 subdomain (so the API server
 		// accepts it) but violates the §5.1 registry-name pattern.
