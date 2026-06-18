@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MIT
+#
+# gVisor RuntimeClass (§5.3 sandboxed → gvisor). Applied by
+# up-runtimeclass-pools.sh only on self-managed node pools that carry a
+# runsc installation. GKE Sandbox provisions an equivalent "gvisor"
+# RuntimeClass automatically, so the GKE up script skips this apply to
+# avoid overwriting the managed object.
+#
+# Placeholders:
+#   ${GVISOR_HANDLER}            containerd runtime handler (runsc).
+#   ${GVISOR_NODE_LABEL_KEY} / ${GVISOR_NODE_LABEL_VALUE}  the gVisor node
+#                                pool label used as the scheduling nodeSelector.
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: ${GVISOR_HANDLER}
+# spec: §5.3 — gVisor Pod Overhead so the scheduler accounts for the
+# userspace-kernel cost.
+overhead:
+  podFixed:
+    cpu: "200m"
+    memory: "200Mi"
+# spec: §17.2 — RuntimeClass scheduling pins gVisor pods to the labelled
+# node pool with no per-pod configuration.
+scheduling:
+  nodeSelector:
+    ${GVISOR_NODE_LABEL_KEY}: "${GVISOR_NODE_LABEL_VALUE}"

@@ -16,9 +16,9 @@
 //	})
 //	load.AssertBaseline(t, "streaming_reconnect", res, load.Threshold{P99: 0.15})
 //
-// The baseline file format mirrors the structure tests/tier7b_load_kind/
-// baselines/startup_latency.json already uses: a JSON document with
-// per-percentile latency, throughput, and error rate.
+// The baseline file format is a JSON document with per-percentile latency,
+// throughput, and error rate; see tests/tier7b_load_kind/baselines/
+// pod_claim_latency.json for an example.
 //
 // # Environment variables
 //

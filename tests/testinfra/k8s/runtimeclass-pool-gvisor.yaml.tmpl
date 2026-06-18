@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: MIT
+#
+# §6.1 SDK-warm pool for the §6.3 startup-latency benchmark's gVisor arm.
+# scripts/cloud/<provider>/up-runtimeclass-pools.sh `envsubst`-renders and
+# kubectl-applies this after the gVisor node pool and the gvisor
+# RuntimeClass exist. The RuntimeClass itself lives in
+# runtimeclass-gvisor.yaml.tmpl and is applied only on self-managed node
+# pools; GKE Sandbox provisions its own "gvisor" RuntimeClass, so the up
+# script skips the RuntimeClass apply there and applies only this pool.
+#
+# Placeholders:
+#   ${LOAD_PRECONNECT_RUNTIME_IMAGE}  SDK-warm runtime image.
+#   ${LOAD_SESSION_MIN} / ${LOAD_SESSION_MAX}  pool sizing.
+---
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: load-preconnect-runtime-gvisor
+spec:
+  type: agent
+  image: ${LOAD_PRECONNECT_RUNTIME_IMAGE}
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: sandboxed
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: load-preconnect-template-gvisor
+  namespace: lenny-agents
+spec:
+  runtimeRef: load-preconnect-runtime-gvisor
+  isolationProfile: sandboxed
+  executionMode: session
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: load-preconnect-pool-gvisor
+  namespace: lenny-agents
+spec:
+  templateRef: load-preconnect-template-gvisor
+  minWarm: ${LOAD_SESSION_MIN}
+  maxWarm: ${LOAD_SESSION_MAX}

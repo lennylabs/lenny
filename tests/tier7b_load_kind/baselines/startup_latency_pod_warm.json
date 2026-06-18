@@ -1,0 +1,17 @@
+{
+  "scenario": "startup_latency_pod_warm",
+  "version": "0.1.0",
+  "recorded_at": "2026-06-18T00:00:00Z",
+  "duration": "30s",
+  "vus": 2,
+  "metric_ms": {
+    "avg": 0,
+    "p50": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0
+  },
+  "error_rate": 0,
+  "throughput_per_sec": 0,
+  "notes": "§6.3 pod-warm arm, runc/standard. Reference capture pending: seed from the first real Kind run with LENNY_UPDATE_BASELINE=1. The smoke test gates on error rate (assertScenarioRan) and logs the gate-canonical claim-to-ready P95 read from lenny_session_startup_duration_seconds{runtime_class=runc}; the zero metrics here mean no measured baseline yet, and compareBaseline skips a zero-base percentile rather than flagging a false regression. §6.3 indicative runc target: P95 claim-to-ready <= 2s."
+}

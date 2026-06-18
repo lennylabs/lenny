@@ -51,6 +51,9 @@ IMAGES=(
   "lenny-adapter:lenny-adapter"
   "lenny-migrate:lenny-migrate"
   "lenny-runtime-echo:runtimes/echo"
+  # §6.1 SDK-warm reference runtime; the §6.3 startup-latency benchmark's
+  # SDK-warm pools run it.
+  "lenny-runtime-preconnect-echo:runtimes/preconnect-echo"
 )
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"

@@ -18,6 +18,11 @@
 #   ${LOAD_RUNTIME_IMAGE}      — runtime image. The render script
 #                                 sets it to the ECR-pushed
 #                                 lenny-runtime-echo digest.
+#   ${LOAD_PRECONNECT_RUNTIME_IMAGE} — §6.1 SDK-warm runtime image. The
+#                                 render script sets it to the pushed
+#                                 lenny-runtime-preconnect-echo digest;
+#                                 the §6.3 startup-latency benchmark
+#                                 drives the SDK-warm pool it warms.
 #   ${LOAD_SESSION_MIN}        — session pool minWarm.
 #   ${LOAD_SESSION_MAX}        — session pool maxWarm.
 #   ${LOAD_CWORKSPACE_MIN}     — concurrent-workspace pool minWarm.
@@ -187,3 +192,46 @@ spec:
   templateRef: load-task-template
   minWarm: ${LOAD_TASK_MIN}
   maxWarm: ${LOAD_TASK_MAX}
+---
+# §6.1 SDK-warm runtime (capabilities.preConnect) for the §6.3
+# startup-latency benchmark. This block is the runc/standard SDK-warm arm,
+# always rendered. The gVisor (sandboxed) and Kata (microvm) SDK-warm
+# runtimes and pools are registered by
+# scripts/cloud/<provider>/up-runtimeclass-pools.sh alongside their
+# RuntimeClass and dedicated node pool, because envsubst cannot
+# conditionally omit a block and those classes exist only when the
+# operator provisioned them. The image is the preconnect-echo runtime
+# (cmd/runtimes/preconnect-echo), which tears the SDK down on SIGTERM.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: load-preconnect-runtime
+spec:
+  type: agent
+  image: ${LOAD_PRECONNECT_RUNTIME_IMAGE}
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: load-preconnect-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: load-preconnect-runtime
+  isolationProfile: standard
+  executionMode: session
+---
+apiVersion: lenny.dev/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: load-preconnect-pool
+  namespace: lenny-agents
+spec:
+  templateRef: load-preconnect-template
+  minWarm: ${LOAD_SESSION_MIN}
+  maxWarm: ${LOAD_SESSION_MAX}
