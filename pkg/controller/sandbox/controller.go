@@ -22,6 +22,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -390,6 +391,15 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	if err != nil {
 		return fmt.Errorf("encode shared assets for runtime %s: %w", sb.Spec.RuntimeRef, err)
 	}
+	// spec: §4.7 — resolve the nonce-only-mode render decision. The flag is
+	// rendered only when the resolved Runtime is a deploymentModel: sidecar
+	// runtime carrying requireSoPeercred: false AND the pool's
+	// SandboxTemplate carries the PSC-mirrored acknowledgeNonceOnlyAuth
+	// acknowledgment. The gate is fail-closed: a missing acknowledgment, a
+	// non-sidecar deployment model, or an unset/true runtime field all leave
+	// the flag off, so the adapter default of true (enforce SO_PEERCRED)
+	// governs.
+	nonceOnly := r.resolveNonceOnly(ctx, sb, &rt)
 	pod, err := podspec.Build(podspec.Inputs{
 		Name:         sb.Name,
 		Namespace:    sb.Namespace,
@@ -407,7 +417,11 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// without requiring rename of in-cluster RuntimeClass objects.
 		RuntimeClassNameOverrides: r.RuntimeClassNameOverrides,
 		DeploymentModel:           rt.Spec.DeploymentModel,
-		EgressCapture:             r.resolveEgressCapture(sb),
+		// spec: §4.7 — the resolved nonce-only render decision. When false,
+		// the builder renders --require-so-peercred=false into the sidecar
+		// adapter container; nil leaves the adapter default of true in force.
+		RequireSoPeercred: nonceOnly,
+		EgressCapture:     r.resolveEgressCapture(sb),
 		// spec: §5.2 line 516 — the SandboxTemplate's deployer-set
 		// terminationGracePeriodSeconds replaces the 120s default base, and
 		// the maxTerminationGracePeriodSeconds ceiling clamps the pod's
@@ -482,7 +496,107 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	if err := r.Client.Create(ctx, pod); err != nil {
 		return fmt.Errorf("create pod: %w", err)
 	}
+	// spec: §4.7 — record the resolved render decision on the
+	// Sandbox.spec.requireSoPeercred carrier for pods actually rendered in
+	// nonce-only mode. The carrier is WPC-owned (§4.6.3 Sandbox.spec.*), so
+	// the write adds no RBAC. It lets the pool-level SecurityDegradedMode
+	// trigger read the decision back from the member Sandboxes without
+	// resolving the Runtime CR (§4.5), and the SOPeercredDisabled=True
+	// pod-level condition is derived from it in buildSandboxStatusPatch (the
+	// single WPC status apply), so the two same-manager status applies in this
+	// reconcile do not clobber each other. The in-memory carrier is set after
+	// the write so the syncStatus pass later in this reconcile observes it.
+	if nonceOnly != nil && !*nonceOnly {
+		if err := r.recordNonceOnlyCarrier(ctx, sb); err != nil {
+			return fmt.Errorf("record nonce-only decision for sandbox %s: %w", sb.Name, err)
+		}
+		sb.Spec.RequireSoPeercred = nonceOnly
+	}
 	return nil
+}
+
+// resolveNonceOnly computes the §4.7 nonce-only-mode render decision for a
+// Sandbox's pod. It returns a pointer to false only when the resolved
+// Runtime is a deploymentModel: sidecar runtime carrying
+// requireSoPeercred: false AND the pool's SandboxTemplate carries the
+// PSC-mirrored acknowledgeNonceOnlyAuth acknowledgment; otherwise it returns
+// nil, which leaves the adapter default of true (enforce SO_PEERCRED) in
+// force. The gate is fail-closed: any unresolved precondition leaves the
+// flag off. spec: §4.7.
+func (r *Reconciler) resolveNonceOnly(ctx context.Context, sb *lennyv1.Sandbox, rt *lennyv1.Runtime) *bool {
+	// The activation field applies to the sidecar model only; the embedded
+	// model has no adapter-agent socket boundary to fall back from (§4.7),
+	// and the RuntimeReconciler refuses to mirror an embedded runtime that
+	// sets the field. An empty deploymentModel defaults to sidecar.
+	if rt.Spec.DeploymentModel == string(podspec.DeploymentEmbedded) {
+		return nil
+	}
+	if rt.Spec.RequireSoPeercred == nil || *rt.Spec.RequireSoPeercred {
+		return nil
+	}
+	// The render gate requires the PSC-mirrored pool acknowledgment. Without
+	// it the pool keeps full SO_PEERCRED enforcement even when the runtime
+	// requests nonce-only mode (the §4.7 two-point gate against a Runtime CR
+	// applied directly with kubectl).
+	if !r.poolAcknowledgesNonceOnly(ctx, sb) {
+		return nil
+	}
+	disabled := false
+	return &disabled
+}
+
+// poolAcknowledgesNonceOnly reports whether the Sandbox's pool carries the
+// §5.3 acknowledgeNonceOnlyAuth acknowledgment, mirrored by the
+// PoolScalingController onto the pool's SandboxTemplate.spec. It walks
+// Sandbox → SandboxWarmPool → SandboxTemplate; any missing resource fails
+// closed (no acknowledgment), so a transient lookup miss leaves full
+// SO_PEERCRED enforcement rather than activating nonce-only mode. spec:
+// §4.7, §5.3.
+func (r *Reconciler) poolAcknowledgesNonceOnly(ctx context.Context, sb *lennyv1.Sandbox) bool {
+	if sb.Spec.PoolRef == "" {
+		return false
+	}
+	var pool lennyv1.SandboxWarmPool
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: sb.Spec.PoolRef}, &pool); err != nil {
+		return false
+	}
+	if pool.Spec.TemplateRef == "" {
+		return false
+	}
+	var tmpl lennyv1.SandboxTemplate
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: pool.Spec.TemplateRef}, &tmpl); err != nil {
+		return false
+	}
+	return tmpl.Spec.AcknowledgeNonceOnlyAuth
+}
+
+// recordNonceOnlyCarrier records the render decision on
+// Sandbox.spec.requireSoPeercred. The carrier is the pool-level
+// SecurityDegradedMode trigger's source, so the WarmPoolController can read
+// the decision back from the member Sandboxes without resolving the Runtime
+// CR (§4.5). The write is skipped when the carrier already records false.
+func (r *Reconciler) recordNonceOnlyCarrier(ctx context.Context, sb *lennyv1.Sandbox) error {
+	if sb.Spec.RequireSoPeercred != nil && !*sb.Spec.RequireSoPeercred {
+		return nil
+	}
+	// The carrier is a single optional Sandbox.spec field. A typed SSA apply
+	// patch built from a Go struct would serialize the required runtimeRef
+	// and poolRef fields as empty strings, which SSA reads as an intent to
+	// set them and which conflicts with the field manager that created the
+	// Sandbox (the WarmPool reconciler's plain Create). A raw apply patch
+	// carrying only spec.requireSoPeercred claims that one field without
+	// touching the required fields, so it coexists with the creating manager.
+	body := []byte(fmt.Sprintf(
+		`{"apiVersion":%q,"kind":"Sandbox","metadata":{"name":%q,"namespace":%q},"spec":{"requireSoPeercred":false}}`,
+		lennyv1.GroupVersion.String(), sb.Name, sb.Namespace,
+	))
+	patch := &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace},
+	}
+	return retryOnConflictSSA(ctx, func(int) error {
+		return r.Client.Patch(ctx, patch, client.RawPatch(types.ApplyPatchType, body),
+			client.FieldOwner(string(ownership.WarmPoolController)))
+	})
 }
 
 // podStateLabel returns the coarse lenny.dev/state label value for a
@@ -682,7 +796,17 @@ func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision,
 			want.PodIP = pod.Status.PodIP
 		}
 	}
-	if want.Phase == before.Phase &&
+	// spec: §4.7 / §4.4 — the SOPeercredDisabled condition is derived from
+	// the WPC-owned Sandbox.spec.requireSoPeercred carrier rather than written
+	// in a separate status apply. Folding it into the single WPC status apply
+	// keeps the two same-manager applies in one reconcile from clobbering each
+	// other (an apply from a field manager sets exactly that manager's owned
+	// field set, so a later apply omitting the condition would drop it).
+	conds := nonceOnlyConditions(live)
+	conditionsChanged := !equalSOPeercredCondition(before.Conditions, conds)
+
+	if !conditionsChanged &&
+		want.Phase == before.Phase &&
 		want.PodName == before.PodName &&
 		want.NodeName == before.NodeName &&
 		want.PodIP == before.PodIP &&
@@ -704,7 +828,49 @@ func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision,
 	patch.Status.NodeName = want.NodeName
 	patch.Status.PodIP = want.PodIP
 	patch.Status.ObservedGeneration = want.ObservedGeneration
+	patch.Status.Conditions = conds
 	return patch
+}
+
+// nonceOnlyConditions returns the WPC-owned condition entries derived from
+// the Sandbox's §4.7 nonce-only carrier. A Sandbox whose
+// Sandbox.spec.requireSoPeercred is explicitly false was rendered in
+// nonce-only mode, so it carries SOPeercredDisabled=True; any other carrier
+// value carries no entry, so the WPC owns no SOPeercredDisabled condition and
+// the apply removes a stale one. The condition is the authoritative pod-level
+// signal: the adapter holds no apiserver access (§10.3), so the render
+// decision and the pod's runtime state coincide. spec: §4.4, §4.7.
+func nonceOnlyConditions(live *lennyv1.Sandbox) []metav1.Condition {
+	if live.Spec.RequireSoPeercred == nil || *live.Spec.RequireSoPeercred {
+		return nil
+	}
+	return []metav1.Condition{{
+		Type:               lennyv1.SandboxConditionSOPeercredDisabled,
+		Status:             metav1.ConditionTrue,
+		Reason:             "NonceOnlyMode",
+		Message:            "Pod rendered with --require-so-peercred=false; SO_PEERCRED enforcement is disabled.",
+		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: live.Generation,
+	}}
+}
+
+// equalSOPeercredCondition reports whether the live conditions already carry
+// the desired SOPeercredDisabled state, ignoring LastTransitionTime so an
+// unchanged condition does not force a status write every reconcile.
+func equalSOPeercredCondition(live, want []metav1.Condition) bool {
+	find := func(cs []metav1.Condition) *metav1.Condition {
+		for i := range cs {
+			if cs[i].Type == lennyv1.SandboxConditionSOPeercredDisabled {
+				return &cs[i]
+			}
+		}
+		return nil
+	}
+	lc, wc := find(live), find(want)
+	if lc == nil || wc == nil {
+		return lc == nil && wc == nil
+	}
+	return lc.Status == wc.Status && lc.Reason == wc.Reason && lc.Message == wc.Message
 }
 
 // sandboxStatusFields is the in-memory carrier for the per-attempt
