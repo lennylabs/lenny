@@ -1065,6 +1065,14 @@ groups:
           annotations:
             description: 'A pool with minWarm > 0 has status.conditionPoolWarmingUp = True for more than warmupDeadlineSeconds. Possible causes: image pull errors, node resource pressure, or insufficient quota.'
             summary: A pool has not reached its minWarm target
+        - alert: PoolSecurityDegraded
+          expr: lenny_pool_security_degraded == 1
+          labels:
+            severity: warning
+          annotations:
+            description: 'A pool is rendering §4.7 nonce-only pods: its deploymentModel: sidecar runtime sets requireSoPeercred: false and the pool carries the acknowledgeNonceOnlyAuth acknowledgment, or a nonce-only pod remains after the operator reverted the runtime field. The adapter-agent SO_PEERCRED authentication boundary is in its degraded fallback for this pool. Deployers who wire a scrape target for adapter metrics should additionally alert on lenny_adapter_sopeercred_disabled_total > 0.'
+            runbook_url: https://docs.lenny.dev/runbooks/nonce-only-mode
+            summary: A pool is rendering nonce-only SO_PEERCRED pods
         - alert: CRDSSAConflictStuck
           expr: increase(lenny_crd_ssa_conflict_total[5m]) > 10
           labels:

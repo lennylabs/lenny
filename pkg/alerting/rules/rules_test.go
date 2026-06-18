@@ -275,7 +275,8 @@ var spec165WarningAlerts = []string{
 	"WarmPoolIdleCostHigh", "SandboxClaimOrphanRateHigh", "OrphanTasksPerTenantHigh",
 	"EtcdQuotaNearLimit", "EtcdWriteLatencyHigh", "ControllerWorkQueueDepthHigh", "WorkspaceSealStuck",
 	"InboxDrainFailure", "DurableInboxRedisUnavailable", "FinalizerStuck", "DedicatedDNSDegraded",
-	"AuditSIEMDeliveryLag", "AuditPartitionDropBlocked", "WarmPoolBootstrapping", "CRDSSAConflictStuck",
+	"AuditSIEMDeliveryLag", "AuditPartitionDropBlocked", "WarmPoolBootstrapping", "PoolSecurityDegraded",
+	"CRDSSAConflictStuck",
 	"ExperimentTargetingCircuitOpen", "LLMUpstreamEgressAnomaly", "InterceptorMTLSHandshakeFailure",
 	"PgAuditSinkDeliveryFailed", "OCSFTranslationBacklog", "AuditLockContention",
 	"EventBusPublishDropped", "EventBusPublishFinalFailure", "TokenStoreUnavailable",
@@ -384,6 +385,45 @@ func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
 			t.Errorf("expression %q is missing required fragment %q "+
 				"(§16.5 burst-exceedance count_over_time calibration)", got.Expr, frag)
 		}
+	}
+}
+
+// TestPoolSecurityDegradedRule pins the §16.5 / §4.7 PoolSecurityDegraded
+// warning alert to the WarmPoolController-published gauge and to its
+// nonce-only-mode runbook. The rule is defined on
+// lenny_pool_security_degraded == 1 rather than on the adapter counter
+// because no default scrape surface reaches agent pods (§16.9), so a
+// counter rule would evaluate an empty vector. The runbook slug must
+// resolve to docs/runbooks/nonce-only-mode.md (the tier-11 docs gate
+// cross-checks this).
+//
+// spec: §4.7 (escalation requirement); §16.5 (PoolSecurityDegraded);
+// §17.7 (runbook). F-5.3.14.
+func TestPoolSecurityDegradedRule(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "PoolSecurityDegraded" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("PoolSecurityDegraded missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	if got.Expr != "lenny_pool_security_degraded == 1" {
+		t.Errorf("expr = %q, want the WarmPoolController gauge lenny_pool_security_degraded == 1", got.Expr)
+	}
+	if strings.Contains(got.Expr, "lenny_adapter_sopeercred_disabled_total") {
+		t.Errorf("expr %q must not key off the agent-pod adapter counter; no default scrape surface reaches agent pods (§16.9)", got.Expr)
+	}
+	if got.RunbookSlug() != "nonce-only-mode" {
+		t.Errorf("runbook slug = %q, want nonce-only-mode", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("PoolSecurityDegraded does not validate: %v", err)
 	}
 }
 

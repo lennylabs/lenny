@@ -1428,6 +1428,25 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
+			// §4.7 nonce-only mode is an audited security-degradation
+			// state under a human-review SLA. The bundled rule is defined
+			// on the WarmPoolController-published gauge rather than on
+			// lenny_adapter_sopeercred_disabled_total because no default
+			// scrape surface reaches agent pods, so a rule on the adapter
+			// counter would evaluate an empty vector forever (the gauge is
+			// published by a §16.9 scrape target). Deployers who wire an
+			// adapter scrape target additionally alert on the counter.
+			Name:        "PoolSecurityDegraded",
+			Expr:        `lenny_pool_security_degraded == 1`,
+			Severity:    SeverityWarning,
+			Summary:     "A pool is rendering nonce-only SO_PEERCRED pods",
+			Description: "A pool is rendering §4.7 nonce-only pods: its deploymentModel: sidecar runtime sets requireSoPeercred: false and the pool carries the acknowledgeNonceOnlyAuth acknowledgment, or a nonce-only pod remains after the operator reverted the runtime field. The adapter-agent SO_PEERCRED authentication boundary is in its degraded fallback for this pool. Deployers who wire a scrape target for adapter metrics should additionally alert on lenny_adapter_sopeercred_disabled_total > 0.",
+			// spec: §17.7 — slug matches docs/runbooks/nonce-only-mode.md.
+			RunbookURL:       runbook("nonce-only-mode"),
+			RunbookShortName: "nonce-only-mode",
+			SpecRef:          "§16.5",
+		},
+		{
 			Name:        "CRDSSAConflictStuck",
 			Expr:        `increase(lenny_crd_ssa_conflict_total[5m]) > 10`,
 			Severity:    SeverityWarning,
