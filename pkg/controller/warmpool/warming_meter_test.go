@@ -124,31 +124,29 @@ func TestForgetPoolSecurityDegraded_spec_4_7(t *testing.T) {
 	t.Cleanup(func() { forgetPoolSecurityDegraded(pool) })
 }
 
-// TestSecurityDegradedConditionDrivesGauge_spec_4_7 binds the gauge to the
-// exact condition-status expression the reconcile uses at the call site, so
-// a True condition yields gauge=1 and a False condition yields gauge=0.
+// TestSecurityDegradedNonceOnlyDrivesGauge_spec_4_7 binds the gauge to the
+// live nonce-only state the reconcile publishes at the call site
+// (setPoolSecurityDegraded(pool, nonceOnly)), independent of the condition
+// write decision: a nonce-only pool yields gauge=1, a clean pool yields
+// gauge=0. The gauge always reflects the live state, even for a clean pool
+// that gets no condition write.
 //
 // spec: §4.7; §16.5.
-func TestSecurityDegradedConditionDrivesGauge_spec_4_7(t *testing.T) {
+func TestSecurityDegradedNonceOnlyDrivesGauge_spec_4_7(t *testing.T) {
 	const pool = "security-gauge-condition"
 	t.Cleanup(func() { forgetPoolSecurityDegraded(pool) })
 
 	cases := []struct {
-		name             string
-		degraded         bool
-		wantGauge        float64
-		wantConditionVal metav1.ConditionStatus
+		name      string
+		nonceOnly bool
+		wantGauge float64
 	}{
-		{"nonce-only pool renders degraded", true, 1, metav1.ConditionTrue},
-		{"enforcing pool renders clean", false, 0, metav1.ConditionFalse},
+		{"nonce-only pool publishes 1", true, 1},
+		{"clean pool publishes 0", false, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cond := securityDegradedCondition(tc.degraded)
-			if cond.Status != tc.wantConditionVal {
-				t.Fatalf("condition status = %v, want %v", cond.Status, tc.wantConditionVal)
-			}
-			setPoolSecurityDegraded(pool, cond.Status == metav1.ConditionTrue)
+			setPoolSecurityDegraded(pool, tc.nonceOnly)
 			if g := testutil.ToFloat64(poolSecurityDegraded.WithLabelValues(pool)); g != tc.wantGauge {
 				t.Fatalf("gauge = %v, want %v", g, tc.wantGauge)
 			}

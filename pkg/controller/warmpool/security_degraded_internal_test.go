@@ -97,13 +97,20 @@ func TestPoolNonceOnly_spec_4_5(t *testing.T) {
 }
 
 // TestSecurityDegradedCondition_spec_4_7 verifies the condition builder
-// yields True/NonceOnlyMode while degraded and an explicit
-// False/SOPeercredEnforced on recovery so a previously-degraded pool
-// reports a clean posture once its last nonce-only pod is replaced.
+// yields True/NonceOnlyMode while degraded, no condition (nil) for a clean
+// pool that was never degraded, and an explicit False/SOPeercredEnforced on
+// recovery of a pool that already carried the condition. The nil case mirrors
+// evaluateRuntimeClass leaving the condition list untouched when the check
+// does not apply; the explicit False is reserved for the recovery transition.
 //
-// spec: §4.7; §4.5 (explicit False on full recovery).
+// spec: §4.7; §4.5 (no condition for non-nonce-only pools; explicit False
+// only on full recovery of a previously-degraded pool).
 func TestSecurityDegradedCondition_spec_4_7(t *testing.T) {
-	deg := securityDegradedCondition(true)
+	// Degraded: True regardless of whether the condition is already present.
+	deg := securityDegradedCondition(true, false)
+	if deg == nil {
+		t.Fatal("degraded condition is nil, want a True condition")
+	}
 	if deg.Type != conditionSecurityDegradedMode || deg.Status != metav1.ConditionTrue {
 		t.Errorf("degraded condition = {%s,%s}, want {%s,True}", deg.Type, deg.Status, conditionSecurityDegradedMode)
 	}
@@ -111,11 +118,20 @@ func TestSecurityDegradedCondition_spec_4_7(t *testing.T) {
 		t.Error("degraded condition carries no reason")
 	}
 
-	clean := securityDegradedCondition(false)
-	if clean.Type != conditionSecurityDegradedMode || clean.Status != metav1.ConditionFalse {
-		t.Errorf("clean condition = {%s,%s}, want {%s,False}", clean.Type, clean.Status, conditionSecurityDegradedMode)
+	// Clean and never degraded: no condition write at all.
+	if cond := securityDegradedCondition(false, false); cond != nil {
+		t.Errorf("clean never-degraded condition = %+v, want nil (no write)", cond)
 	}
-	if clean.Reason == "" {
-		t.Error("clean condition carries no reason")
+
+	// Clean but previously degraded: the explicit False recovery transition.
+	recovery := securityDegradedCondition(false, true)
+	if recovery == nil {
+		t.Fatal("recovery condition is nil, want an explicit False")
+	}
+	if recovery.Type != conditionSecurityDegradedMode || recovery.Status != metav1.ConditionFalse {
+		t.Errorf("recovery condition = {%s,%s}, want {%s,False}", recovery.Type, recovery.Status, conditionSecurityDegradedMode)
+	}
+	if recovery.Reason == "" {
+		t.Error("recovery condition carries no reason")
 	}
 }

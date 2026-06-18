@@ -771,11 +771,13 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 // pods and at least one pod still warming; the gateway reads it to answer
 // session requests with a 503 during the bootstrap window.
 //
-// SecurityDegradedMode is True while the pool renders §4.7 nonce-only pods,
-// derived from the member Sandboxes the reconcile already listed
-// (poolNonceOnly) so the WarmPoolController reads no Runtime CR. The §4.5
-// latch keeps it True across a Runtime-field revert until the last
-// nonce-only pod is replaced, then transitions to an explicit False.
+// SecurityDegradedMode is written only for a pool that is, or recently was,
+// in §4.7 nonce-only mode, derived from the member Sandboxes the reconcile
+// already listed (poolNonceOnly) so the WarmPoolController reads no Runtime
+// CR. A pool that never rendered a nonce-only pod gets no condition; the §4.5
+// latch keeps it True across a Runtime-field revert until the last nonce-only
+// pod is replaced, then transitions to an explicit False only because the
+// live SandboxTemplate already carried the condition.
 //
 // Both conditions are merged into the live condition list and applied
 // together so the second condition's apply does not prune the first from
@@ -796,8 +798,11 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 	warmingCond := poolWarmingUpCondition(int(pool.Spec.MinWarm), warm, ready)
 	setPoolWarmingUp(pool.Name, warmingCond.Status == metav1.ConditionTrue)
 
-	securityCond := securityDegradedCondition(poolNonceOnly(sandboxes))
-	setPoolSecurityDegraded(pool.Name, securityCond.Status == metav1.ConditionTrue)
+	// The gauge reflects the live nonce-only state and is published every
+	// reconcile, even for a clean pool that gets no condition write, so the
+	// bundled rule has a 0 series after a controller restart.
+	nonceOnly := poolNonceOnly(sandboxes)
+	setPoolSecurityDegraded(pool.Name, nonceOnly)
 
 	key := client.ObjectKeyFromObject(tmpl)
 	return retryOnConflictSSA(ctx, func(attempt int) error {
@@ -809,8 +814,16 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 		}
 		mergedConditions := append([]metav1.Condition{}, live.Status.Conditions...)
 		changed := false
-		for _, cond := range []metav1.Condition{warmingCond, securityCond} {
-			desired := cond
+		// The security condition is derived against the live status so the
+		// recovery False is written only for a pool that was previously
+		// degraded; a clean pool that was never degraded gets no condition.
+		securityPresent := meta.FindStatusCondition(live.Status.Conditions, conditionSecurityDegradedMode) != nil
+		conds := []*metav1.Condition{&warmingCond, securityDegradedCondition(nonceOnly, securityPresent)}
+		for _, cond := range conds {
+			if cond == nil {
+				continue
+			}
+			desired := *cond
 			desired.ObservedGeneration = live.Generation
 			if meta.SetStatusCondition(&mergedConditions, desired) {
 				changed = true
@@ -898,21 +911,41 @@ func poolNonceOnly(sandboxes []lennyv1.Sandbox) bool {
 }
 
 // securityDegradedCondition derives the §4.7 SecurityDegradedMode condition
-// from the pool's nonce-only state. The explicit False on recovery mirrors
-// the §5.3 RuntimeClass Degraded recovery so a previously-degraded pool
-// reports a clean posture once its last nonce-only pod is replaced.
+// from the pool's nonce-only state, mirroring the evaluateRuntimeClass
+// restraint: it writes the condition only for a pool that is, or recently
+// was, in nonce-only mode. It returns nil (leave the condition list
+// untouched) for a pool that is not in nonce-only mode and does not already
+// carry the condition, so a SandboxTemplate that has never rendered a
+// nonce-only pod gets no SecurityDegradedMode stamp. This matches the §4.5
+// "no condition" rule for unacknowledged, enforcing, and embedded-runtime
+// pools, where the gauge (0) is the only clean-pool signal.
 //
-// spec: §4.7; §4.5.
-func securityDegradedCondition(degraded bool) metav1.Condition {
+// When the pool is in nonce-only mode it returns the True condition. The
+// explicit False is reserved for the recovery transition of a pool that was
+// previously True: it is written only when the live SandboxTemplate already
+// carries SecurityDegradedMode, so a clean pool that was never degraded is
+// left untouched. This mirrors the §5.3 RuntimeClass Degraded recovery in
+// evaluateRuntimeClass, which writes Degraded=False only when a RuntimeClass
+// is actually resolved.
+//
+// spec: §4.7; §4.5 (no condition for non-nonce-only pools; explicit False
+// only on full recovery of a previously-degraded pool).
+func securityDegradedCondition(degraded, present bool) *metav1.Condition {
 	if degraded {
-		return metav1.Condition{
+		return &metav1.Condition{
 			Type:    conditionSecurityDegradedMode,
 			Status:  metav1.ConditionTrue,
 			Reason:  "NonceOnlyMode",
 			Message: "Pool renders nonce-only adapter pods; SO_PEERCRED enforcement is disabled.",
 		}
 	}
-	return metav1.Condition{
+	if !present {
+		// The pool is not and was not in nonce-only mode; leave the
+		// condition list untouched, like evaluateRuntimeClass returning nil
+		// when the RuntimeClass check does not apply.
+		return nil
+	}
+	return &metav1.Condition{
 		Type:    conditionSecurityDegradedMode,
 		Status:  metav1.ConditionFalse,
 		Reason:  "SOPeercredEnforced",

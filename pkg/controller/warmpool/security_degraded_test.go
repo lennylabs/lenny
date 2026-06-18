@@ -92,12 +92,10 @@ func TestSecurityDegradedUnacknowledgedPoolNoCondition(t *testing.T) {
 
 	reconcile(t, c, s)
 
-	cond, ok := securityDegradedCondition(t, getTemplate(t, c))
-	if !ok {
-		t.Fatalf("template carries no SecurityDegradedMode condition; want explicit False")
-	}
-	if cond.Status != metav1.ConditionFalse {
-		t.Errorf("SecurityDegradedMode = %s, want False (no nonce-only members)", cond.Status)
+	// A pool that never rendered a nonce-only pod gets no SecurityDegradedMode
+	// condition at all; the gauge (0) is the only clean-pool signal.
+	if _, ok := securityDegradedCondition(t, getTemplate(t, c)); ok {
+		t.Errorf("template carries a SecurityDegradedMode condition; want none for an unacknowledged pool")
 	}
 	if g := warmpool.SecurityDegradedGaugeForTest(testPool); g != 0 {
 		t.Errorf("lenny_pool_security_degraded gauge = %v, want 0", g)
@@ -124,9 +122,10 @@ func TestSecurityDegradedEmbeddedRuntimePoolNoCondition(t *testing.T) {
 
 	reconcile(t, c, s)
 
-	cond, _ := securityDegradedCondition(t, getTemplate(t, c))
-	if cond.Status == metav1.ConditionTrue {
-		t.Errorf("SecurityDegradedMode = True for an embedded-runtime pool; want not True")
+	// The embedded runtime never sets the carrier or condition, so the pool
+	// runs zero nonce-only pods and gets no SecurityDegradedMode condition.
+	if _, ok := securityDegradedCondition(t, getTemplate(t, c)); ok {
+		t.Errorf("template carries a SecurityDegradedMode condition; want none for an embedded-runtime pool")
 	}
 	if g := warmpool.SecurityDegradedGaugeForTest(testPool); g != 0 {
 		t.Errorf("lenny_pool_security_degraded gauge = %v, want 0", g)
@@ -171,9 +170,16 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 
 	reconcile(t, c, s)
 
+	// The explicit False is written only because the pool was previously
+	// True: the live SandboxTemplate carried SecurityDegradedMode, so the
+	// recovery transition fires. A pool that was never degraded would get no
+	// condition at all (TestSecurityDegradedUnacknowledgedPoolNoCondition).
 	cond, ok = securityDegradedCondition(t, getTemplate(t, c))
 	if !ok || cond.Status != metav1.ConditionFalse {
 		t.Fatalf("SecurityDegradedMode = %+v, want explicit False after the last nonce-only pod is replaced", cond)
+	}
+	if cond.Reason != "SOPeercredEnforced" {
+		t.Errorf("recovery reason = %q, want SOPeercredEnforced", cond.Reason)
 	}
 	if g := warmpool.SecurityDegradedGaugeForTest(testPool); g != 0 {
 		t.Errorf("gauge = %v, want 0 after recovery", g)
