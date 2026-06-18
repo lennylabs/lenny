@@ -12,9 +12,26 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
+
+// dialerFailingAfter wraps a working adapter dialer so the first ok dials
+// succeed and every dial after that returns a transient error. The decomposed
+// §7.1 lifecycle reconnects to the claimed pod once per phase (Claim, Prepare,
+// Launch), so failing the (ok+1)-th dial injects a transient reconnect failure
+// at a chosen phase boundary while the earlier phases complete normally.
+func dialerFailingAfter(ok int, dial func(string) (*adapterclient.Client, error)) func(string) (*adapterclient.Client, error) {
+	n := 0
+	return func(addr string) (*adapterclient.Client, error) {
+		n++
+		if n > ok {
+			return nil, errors.New("transient dial failure (pod unreachable mid-window)")
+		}
+		return dial(addr)
+	}
+}
 
 // startFailRuntime is a fakeRuntime whose Start RPC fails, so the adapter's
 // StartSession returns an error and the binder's Launch phase aborts after
@@ -232,6 +249,115 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_3(t *testing.T) {
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after prepare failure = %v, want NotFound (claim deleted)", gerr)
+	}
+}
+
+// spec: §4.6 (proposal), §7.1 step 23 (lease release) — when Launch fails to
+// reconnect to the bound pod (a transient dial/handshake failure between
+// /finalize and /start), the pod claimed at /create AND the §4.9 lease Prepare
+// assigned are reclaimed before the error returns, so a reconnect failure does
+// not strand the pod or leak the credential's active-session slot (Gap 2). The
+// original monolith held one connection through StartSession and always reached
+// failPhase on any post-claim failure; the decomposition must restore that
+// invariant for its new reconnect-failure point.
+// diagnosis: a failure means a transient Launch reconnect leaks both the warm
+// pod and the finalize-assigned lease on the live /start path, drifting the
+// §4.9 pool active counter and starving the warm pool.
+func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.CredentialsDir = t.TempDir()
+	srv.Runtime = rt
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	// Claim dials once and Prepare dials once; fail the third dial so Launch's
+	// reconnect fails after Prepare assigned the lease.
+	binder := newBinder(c, dialerFailingAfter(2, adapterDialer(t, srv)))
+	assigner := &fakeAssigner{}
+	binder.Credentials = assigner
+
+	req := podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-reconn", TenantID: "acme", Runtime: "claude-code",
+		CredentialPools: map[string]string{"anthropic": "claude-prod"},
+	}
+	claim, err := binder.Claim(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	req.SandboxName = claim.SandboxName
+	prep, err := binder.Prepare(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if len(assigner.released) != 0 {
+		t.Fatalf("assigner released %v before Launch, want none", assigner.released)
+	}
+
+	req.Demoted = prep.Demoted
+	if _, err := binder.Launch(context.Background(), req); err == nil {
+		t.Fatal("Launch succeeded though the reconnect dial fails, want a failure")
+	}
+
+	// The runtime never started: the failure is at reconnect, before any RPC.
+	if rt.started != "" {
+		t.Errorf("runtime started %q on a reconnect failure, want no start", rt.started)
+	}
+	// Gap 2: the reconnect reclaim revoked the lease Prepare assigned.
+	if len(assigner.released) != 1 || assigner.released[0] != "sess-reconn" {
+		t.Errorf("ReleaseSession calls after Launch reconnect failure = %v, want [sess-reconn]", assigner.released)
+	}
+	// The pod is reclaimed by deleting its per-pod claim.
+	var sc lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after Launch reconnect failure = %v, want NotFound (claim deleted)", gerr)
+	}
+}
+
+// spec: §4.6 (proposal) — when Prepare fails to reconnect to the bound pod (a
+// transient dial/handshake failure between /create and /finalize), the pod
+// claimed at /create is reclaimed before the error returns, so a reconnect
+// failure does not strand the reserved pod. No lease is assigned before Prepare
+// runs, so the reclaim's lease revoke is a no-op.
+// diagnosis: a failure means a transient Prepare reconnect strands the pod the
+// create handler reserved, leaking warm-pool capacity until the orphan GC
+// collects it.
+func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	// Claim dials once; fail the second dial so Prepare's reconnect fails.
+	binder := newBinder(c, dialerFailingAfter(1, adapterDialer(t, srv)))
+	assigner := &fakeAssigner{}
+	binder.Credentials = assigner
+
+	req := podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-reconn", TenantID: "acme", Runtime: "claude-code",
+		CredentialPools: map[string]string{"anthropic": "claude-prod"},
+	}
+	claim, err := binder.Claim(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	req.SandboxName = claim.SandboxName
+	if _, err := binder.Prepare(context.Background(), req); err == nil {
+		t.Fatal("Prepare succeeded though the reconnect dial fails, want a failure")
+	}
+
+	// No lease was ever assigned (the reconnect fails before assignCredentials),
+	// so the reclaim's revoke is a no-op that assigns nothing back.
+	if len(assigner.calls) != 0 {
+		t.Errorf("assigner served %d assign calls on a reconnect failure, want 0", len(assigner.calls))
+	}
+	// The pod claimed at /create is reclaimed by deleting its per-pod claim.
+	var sc lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after Prepare reconnect failure = %v, want NotFound (claim deleted)", gerr)
 	}
 }
 

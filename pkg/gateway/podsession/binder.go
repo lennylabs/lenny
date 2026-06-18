@@ -704,8 +704,10 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	req.Demoted = prep.Demoted
 	res, err := b.Launch(ctx, req)
 	if err != nil {
-		// Launch already reclaimed the pod and the lease via its failPhase
-		// reclaim; surface the error so the caller retries on a fresh pod.
+		// Launch already reclaimed the pod and any assigned lease on every
+		// failure path: a launch-step failure via its failPhase reclaim, and a
+		// reconnect failure before the first launch step via ReclaimClaimed.
+		// Surface the error so the caller retries on a fresh pod.
 		return nil, err
 	}
 	// Reassemble the monolithic BindResult: the live adapter and launch
@@ -762,6 +764,16 @@ func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, erro
 func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, error) {
 	sb, cl, neg, err := b.reconnect(ctx, req)
 	if err != nil {
+		// A reconnect failure (resolve/dial/handshake against the bound pod
+		// fails transiently between /create and /finalize) strands the pod
+		// claimed at /create with no live BindResult covering it. Reclaim it
+		// from the persisted binding so the monolith invariant — any post-claim
+		// failure reclaims the pod — holds for the Bind composition. No lease is
+		// assigned before Prepare runs, so the ReclaimClaimed lease revoke is a
+		// no-op here. spec: §4.6 (proposal), §6.2 (claimed → draining).
+		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
+			log.Printf("podsession: reclaim claimed pod %s after Prepare reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
+		}
 		return nil, err
 	}
 	sandboxName := sb.Name
@@ -885,6 +897,18 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, error) {
 	sb, cl, neg, err := b.reconnect(ctx, req)
 	if err != nil {
+		// A reconnect failure (dial/handshake against the bound pod fails
+		// transiently between /finalize and /start) strands the pod claimed at
+		// /create AND the §4.9 lease Prepare assigned, since by Launch the
+		// finalize block has always assigned it. Reclaim from the persisted
+		// binding so the monolith invariant — any post-claim failure reclaims
+		// the pod, and a post-AssignCredentials failure revokes the lease
+		// (Gap 2) — holds before the first launch RPC runs. ReclaimClaimed
+		// revokes the lease (keyed by sessionID) and deletes the per-pod claim.
+		// spec: §4.6 (proposal), §7.1 step 23 (lease release).
+		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
+			log.Printf("podsession: reclaim claimed pod %s after Launch reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
+		}
 		return nil, err
 	}
 	sandboxName := sb.Name
