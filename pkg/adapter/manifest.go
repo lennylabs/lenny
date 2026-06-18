@@ -105,12 +105,10 @@ type ManifestLLM struct {
 type Manifest struct {
 	Version   int    `json:"version"`
 	SessionID string `json:"sessionId"`
-	// TaskID is the §4.7 task identifier, frozen to the session's root
-	// task identifier. The session/task mapping is 1:1 (each session has
-	// exactly one execution), so the manifest is regenerated per session
-	// and TaskID never changes for the manifest's lifetime; it defaults to
-	// the session id when the gateway supplies none.
-	// spec: §7.2 (session/task 1:1, TaskID frozen), §4.7 (per-session manifest)
+	// TaskID is the §4.7 manifest taskId, the session's external-protocol
+	// task identifier. A session has exactly one execution, so this equals
+	// the session id; the adapter derives it from sessionId.
+	// spec: §7.2 (session/task 1:1), §4.7 (per-session manifest)
 	TaskID            string                     `json:"taskId"`
 	ExperimentContext *ManifestExperimentContext `json:"experimentContext,omitempty"`
 	// TracingContext is the §8.3 opaque tracing-identifier map the
@@ -218,7 +216,6 @@ func WriteManifest(dir string, m Manifest) error {
 // writeSessionManifest to assemble.
 type manifestInputs struct {
 	sessionID          string
-	taskID             string
 	experimentContext  *adapterv1.ExperimentContext
 	tracingContext     map[string]string
 	agentInterface     []byte // opaque JSON; nil writes a null manifest field
@@ -247,17 +244,12 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// spec: §7.2 — the session/task mapping is 1:1, so the manifest taskId
-	// is frozen to the session's root task identifier and defaults to the
-	// session id when the gateway supplies none.
-	taskID := in.taskID
-	if taskID == "" {
-		taskID = in.sessionID
-	}
+	// spec: §7.2 — a session has exactly one execution, so the manifest
+	// taskId equals the session id; the adapter derives it from sessionId.
 	m := Manifest{
 		Version:            ManifestVersion,
 		SessionID:          in.sessionID,
-		TaskID:             taskID,
+		TaskID:             in.sessionID,
 		ExperimentContext:  manifestExperimentContext(in.experimentContext),
 		TracingContext:     in.tracingContext,
 		MCPNonce:           nonce,

@@ -290,9 +290,10 @@ func TestWriteSessionManifestWrites(t *testing.T) {
 }
 
 // TestWriteSessionManifestTaskIDFrozenToSessionID pins the §7.2 session/task
-// 1:1 freeze: when the gateway supplies no taskId the per-session manifest
-// freezes it to the session id (the session is its single execution).
-// spec: §7.2 (session/task 1:1, TaskID frozen), §4.7 (per-session manifest)
+// 1:1 invariant: the per-session manifest taskId equals the session id because
+// a session has exactly one execution, and the adapter derives it from
+// sessionId.
+// spec: §7.2 (session/task 1:1), §4.7 (per-session manifest)
 func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
@@ -301,26 +302,25 @@ func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
 	}
 	m := readManifestForTest(t, dir)
 	if m.TaskID != "sess-frozen" {
-		t.Errorf("manifest taskId = %q, want the session id sess-frozen when the gateway supplies none", m.TaskID)
+		t.Errorf("manifest taskId = %q, want the session id sess-frozen", m.TaskID)
 	}
 }
 
 // TestWriteSessionManifestTaskIDStableAcrossRegeneration pins the §4.7
 // per-session manifest contract: regenerating the manifest for the same
-// session keeps taskId frozen to the supplied root task identifier. The
-// removed task-mode pods rewrote taskId before each between-task cycle; a
-// per-session manifest never does.
-// spec: §7.2 (TaskID frozen to root task), §4.7 (per-session manifest regen)
+// session keeps taskId equal to the session id. A session has exactly one
+// execution, so the adapter derives taskId from sessionId on every write.
+// spec: §7.2 (session/task 1:1), §4.7 (per-session manifest regen)
 func TestWriteSessionManifestTaskIDStableAcrossRegeneration(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
-	in := manifestInputs{sessionID: "sess-r", taskID: "task_root"}
+	in := manifestInputs{sessionID: "sess-r"}
 	for i := 0; i < 3; i++ {
 		if _, err := srv.writeSessionManifest(in); err != nil {
 			t.Fatalf("writeSessionManifest #%d: %v", i, err)
 		}
-		if m := readManifestForTest(t, dir); m.TaskID != "task_root" {
-			t.Errorf("regen #%d: manifest taskId = %q, want frozen task_root", i, m.TaskID)
+		if m := readManifestForTest(t, dir); m.TaskID != "sess-r" {
+			t.Errorf("regen #%d: manifest taskId = %q, want the session id sess-r", i, m.TaskID)
 		}
 	}
 }

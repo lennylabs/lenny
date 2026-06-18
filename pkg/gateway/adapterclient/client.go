@@ -89,9 +89,6 @@ func (c *Client) GetObservedIntegrationLevel(ctx context.Context, waitMs int32) 
 type StartSessionParams struct {
 	SessionID string
 	Runtime   string
-	// TaskID is the §4.7 manifest taskId. Empty in session mode, where the
-	// adapter defaults it to the session id.
-	TaskID string
 	// ExperimentContext is the session's §8.3 / §10.7 experiment enrollment
 	// (nil for an unenrolled session).
 	ExperimentContext *adapterv1.ExperimentContext
@@ -578,7 +575,6 @@ type ResumeParams struct {
 	SessionID          string
 	Runtime            string
 	CheckpointID       string
-	TaskID             string
 	ExperimentContext  *adapterv1.ExperimentContext
 	TracingContext     map[string]string
 	AgentInterface     []byte
