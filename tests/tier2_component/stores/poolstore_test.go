@@ -251,6 +251,41 @@ func TestPoolStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §5.3 / §4.7 — the acknowledge_nonce_only_auth column persists
+	// the nonce-only acknowledgment across a store round-trip and through an
+	// Update, so the gateway pool admission gate and the PoolScalingController
+	// mirror see the deployer opt-in after a gateway restart.
+	t.Run("acknowledge_nonce_only_auth round-trips through create and update", func(t *testing.T) {
+		name := poolName(t)
+		if err := store.Create(ctx, poolstore.Pool{
+			Name: name, RuntimeRef: "claude", AcknowledgeNonceOnlyAuth: true,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.AcknowledgeNonceOnlyAuth {
+			t.Error("acknowledgeNonceOnlyAuth did not round-trip through Create/Get")
+		}
+		// An Update that toggles it off must persist the cleared flag.
+		updated, err := store.Update(ctx, name, func(p *poolstore.Pool) error {
+			p.AcknowledgeNonceOnlyAuth = false
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if updated.AcknowledgeNonceOnlyAuth {
+			t.Error("Update did not clear acknowledgeNonceOnlyAuth")
+		}
+		reread, _ := store.Get(ctx, name)
+		if reread.AcknowledgeNonceOnlyAuth {
+			t.Error("cleared acknowledgeNonceOnlyAuth did not persist through Get")
+		}
+	})
+
 	t.Run("list filters, ordering, delete, and idempotency", func(t *testing.T) {
 		marker := newUUID(t)[:8]
 		ids := []string{marker + "-a", marker + "-b", marker + "-c"}

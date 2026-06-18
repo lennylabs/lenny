@@ -84,6 +84,16 @@ type Pool struct {
 	// per §5.3 security note.
 	AllowStandardIsolation bool
 
+	// AcknowledgeNonceOnlyAuth is the §5.3 deployer opt-in, of the same
+	// class as AllowStandardIsolation, that acknowledges §4.7 nonce-only
+	// mode for the pool. A pool referencing a runtime with
+	// requireSoPeercred: false is rejected by the gateway pool admission
+	// path unless this flag is set. The check is unconditional and
+	// applies in every tenancy mode. The PoolScalingController mirrors
+	// the flag onto SandboxTemplate.spec so the WarmPoolController renders
+	// nonce-only mode only for acknowledged pools. spec: §5.3, §4.7.
+	AcknowledgeNonceOnlyAuth bool
+
 	// EgressProfile is the §13.2 per-pool egress profile (`restricted`,
 	// `provider-direct`, `internet`). Empty resolves to the §13.2
 	// default (`restricted`) at admission. The store rejects an
@@ -606,6 +616,37 @@ func RuntimePreConnect(rt runtimestore.Runtime) bool {
 // requireSoPeercred: false. spec: §4.7.
 func RuntimeRequireSoPeercred(rt runtimestore.Runtime) bool {
 	return rt.RequiresSoPeercred()
+}
+
+// ValidateNonceOnlyAcknowledgment enforces the §4.7 / §5.3 nonce-only
+// acknowledgment gate at pool admission. Nonce-only mode
+// (requireSoPeercred: false on the pool's runtime) weakens the
+// adapter-agent authentication boundary, so it is a deployer security
+// opt-in of the same class as allowStandardIsolation: a pool referencing
+// a runtime whose registry definition keeps SO_PEERCRED disabled is
+// admitted only when the pool sets acknowledgeNonceOnlyAuth: true.
+//
+// requireSoPeercred is the resolved registry posture of the pool's
+// runtime; the caller looks it up (the pure poolstore record carries no
+// runtime) via RuntimeRequireSoPeercred, which fails closed on an
+// unresolved field. The check is unconditional and applies in every
+// tenancy mode, matching acknowledgeBestEffortScrub. It is a no-op when
+// the runtime keeps SO_PEERCRED enforcement (the common case), so a pool
+// only trips it when bound to an explicitly nonce-only runtime.
+//
+// spec: §4.7 — "A pool referencing a runtime with requireSoPeercred:
+// false is rejected by the gateway pool admission path unless the pool
+// sets acknowledgeNonceOnlyAuth: true"; §5.3 (acknowledgeNonceOnlyAuth).
+func ValidateNonceOnlyAcknowledgment(requireSoPeercred bool, p Pool) error {
+	if requireSoPeercred {
+		return nil
+	}
+	if p.AcknowledgeNonceOnlyAuth {
+		return nil
+	}
+	return errors.New("poolstore: a pool referencing a runtime with requireSoPeercred: false " +
+		"requires acknowledgeNonceOnlyAuth: true; nonce-only mode weakens the §4.7 adapter-agent " +
+		"authentication boundary (§5.3)")
 }
 
 // RuntimeMultiTurn reports whether rt declares the §5.1

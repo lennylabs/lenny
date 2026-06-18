@@ -99,6 +99,12 @@ type PoolPayload struct {
 	MaxSessionAgeSeconds   int    `json:"maxSessionAgeSeconds,omitempty"`
 	AllowStandardIsolation bool   `json:"allowStandardIsolation,omitempty"`
 
+	// AcknowledgeNonceOnlyAuth is the §5.3 deployer opt-in that admits a
+	// pool referencing a §4.7 nonce-only runtime (requireSoPeercred:
+	// false). Without it the gateway pool admission path rejects such a
+	// pool at create and at update. spec: §5.3, §4.7.
+	AcknowledgeNonceOnlyAuth bool `json:"acknowledgeNonceOnlyAuth,omitempty"`
+
 	// EgressProfile is the §13.2 per-pool egress profile (`restricted`,
 	// `provider-direct`, `internet`). Empty on create resolves to the
 	// §13.2 default (`restricted`).
@@ -221,17 +227,22 @@ type PoolSyncStatus struct {
 
 // UpdatePoolRequest is the §15.1 PUT body.
 type UpdatePoolRequest struct {
-	RuntimeRef             *string                     `json:"runtimeRef,omitempty"`
-	IsolationProfile       *string                     `json:"isolationProfile,omitempty"`
-	ExecutionMode          *string                     `json:"executionMode,omitempty"`
-	ResourceClass          *string                     `json:"resourceClass,omitempty"`
-	WarmCount              *int                        `json:"warmCount,omitempty"`
-	BootstrapMinWarm       *int                        `json:"bootstrapMinWarm,omitempty"`
-	MaxSessionAgeSeconds   *int                        `json:"maxSessionAgeSeconds,omitempty"`
-	AllowStandardIsolation *bool                       `json:"allowStandardIsolation,omitempty"`
-	EgressProfile          *string                     `json:"egressProfile,omitempty"`
-	MaxConcurrent          *int                        `json:"maxConcurrent,omitempty"`
-	SessionPolicy          *runtimestore.SessionPolicy `json:"sessionPolicy,omitempty"`
+	RuntimeRef             *string `json:"runtimeRef,omitempty"`
+	IsolationProfile       *string `json:"isolationProfile,omitempty"`
+	ExecutionMode          *string `json:"executionMode,omitempty"`
+	ResourceClass          *string `json:"resourceClass,omitempty"`
+	WarmCount              *int    `json:"warmCount,omitempty"`
+	BootstrapMinWarm       *int    `json:"bootstrapMinWarm,omitempty"`
+	MaxSessionAgeSeconds   *int    `json:"maxSessionAgeSeconds,omitempty"`
+	AllowStandardIsolation *bool   `json:"allowStandardIsolation,omitempty"`
+	// AcknowledgeNonceOnlyAuth is the §5.3 nonce-only opt-in as a tri-state
+	// pointer so a PUT can toggle it: setting it false on a pool bound to a
+	// §4.7 nonce-only runtime is rejected, the same as a runtimeRef swap to
+	// a nonce-only runtime without the acknowledgment. spec: §5.3, §4.7.
+	AcknowledgeNonceOnlyAuth *bool                       `json:"acknowledgeNonceOnlyAuth,omitempty"`
+	EgressProfile            *string                     `json:"egressProfile,omitempty"`
+	MaxConcurrent            *int                        `json:"maxConcurrent,omitempty"`
+	SessionPolicy            *runtimestore.SessionPolicy `json:"sessionPolicy,omitempty"`
 	// ClearSessionPolicy, when true, removes the persisted sessionPolicy
 	// block in the same PUT. A non-nil SessionPolicy with
 	// ClearSessionPolicy set is rejected (the two operations are mutually
@@ -256,20 +267,21 @@ type UpdatePoolRequest struct {
 
 func fromPool(p poolstore.Pool) PoolPayload {
 	out := PoolPayload{
-		Name:                   p.Name,
-		RuntimeRef:             p.RuntimeRef,
-		IsolationProfile:       string(p.IsolationProfile),
-		ExecutionMode:          string(p.ExecutionMode),
-		ResourceClass:          p.ResourceClass,
-		WarmCount:              p.WarmCount,
-		MaxSessionAgeSeconds:   p.MaxSessionAgeSeconds,
-		AllowStandardIsolation: p.AllowStandardIsolation,
-		EgressProfile:          string(p.EgressProfile),
-		MaxConcurrent:          p.MaxConcurrent,
-		SessionPolicy:          p.SessionPolicy.Clone(),
-		CreatedAt:              rfc3339Nano(p.CreatedAt),
-		UpdatedAt:              rfc3339Nano(p.UpdatedAt),
-		DeletedAt:              rfc3339Nano(p.DeletedAt),
+		Name:                     p.Name,
+		RuntimeRef:               p.RuntimeRef,
+		IsolationProfile:         string(p.IsolationProfile),
+		ExecutionMode:            string(p.ExecutionMode),
+		ResourceClass:            p.ResourceClass,
+		WarmCount:                p.WarmCount,
+		MaxSessionAgeSeconds:     p.MaxSessionAgeSeconds,
+		AllowStandardIsolation:   p.AllowStandardIsolation,
+		AcknowledgeNonceOnlyAuth: p.AcknowledgeNonceOnlyAuth,
+		EgressProfile:            string(p.EgressProfile),
+		MaxConcurrent:            p.MaxConcurrent,
+		SessionPolicy:            p.SessionPolicy.Clone(),
+		CreatedAt:                rfc3339Nano(p.CreatedAt),
+		UpdatedAt:                rfc3339Nano(p.UpdatedAt),
+		DeletedAt:                rfc3339Nano(p.DeletedAt),
 		// spec: §15.1 line 1207 — the ETag is the quoted decimal
 		// pool_config_generation (the per-resource version column).
 		ETag: formatETag(p.Generation),
@@ -326,6 +338,7 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 		WarmCount:                  body.WarmCount,
 		MaxSessionAgeSeconds:       body.MaxSessionAgeSeconds,
 		AllowStandardIsolation:     body.AllowStandardIsolation,
+		AcknowledgeNonceOnlyAuth:   body.AcknowledgeNonceOnlyAuth,
 		EgressProfile:              egress.Profile(body.EgressProfile),
 		ElicitationDepthPolicy:     elicitation.DepthPolicy(body.ElicitationDepthPolicy),
 		ElicitationSuppressAtDepth: body.ElicitationSuppressAtDepth,
@@ -480,6 +493,12 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	var runtimeTier runtimestore.WorkspaceTier
 	var runtimePreConnect bool
 	var runtimeMultiTurn bool
+	// runtimeRequireSoPeercred is the resolved §4.7 SO_PEERCRED posture of
+	// the pool's runtime. It fails closed (true) when no runtime is wired
+	// or resolved, so the nonce-only acknowledgment gate only trips for a
+	// runtime whose registry definition carries an explicit
+	// requireSoPeercred: false. spec: §4.7.
+	runtimeRequireSoPeercred := true
 	if r.runtimes != nil && body.RuntimeRef != "" {
 		rt, err := r.runtimes.Get(req.Context(), body.RuntimeRef)
 		if err != nil {
@@ -491,6 +510,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		runtimeTier = rt.WorkspaceTier
 		runtimePreConnect = poolstore.RuntimePreConnect(rt)
 		runtimeMultiTurn = poolstore.RuntimeMultiTurn(rt)
+		runtimeRequireSoPeercred = poolstore.RuntimeRequireSoPeercred(rt)
 	}
 
 	pl := r.poolFromPayload(body)
@@ -509,6 +529,16 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	if err := poolstore.ValidateCrossTenantReuseTier(pl, runtimeTier); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 			map[string]any{"runtimeRef": body.RuntimeRef, "workspaceTier": string(runtimeTier)})
+		return
+	}
+	// spec: §4.7, §5.3 — reject a pool bound to a nonce-only runtime
+	// (requireSoPeercred: false) that does not carry the
+	// acknowledgeNonceOnlyAuth opt-in, the same deployer security gate as
+	// allowStandardIsolation, before storage so an unacknowledged pool
+	// never enters the registry.
+	if err := poolstore.ValidateNonceOnlyAcknowledgment(runtimeRequireSoPeercred, pl); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
 	}
 	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
@@ -1039,6 +1069,9 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.AllowStandardIsolation != nil {
 		p.AllowStandardIsolation = *body.AllowStandardIsolation
 	}
+	if body.AcknowledgeNonceOnlyAuth != nil {
+		p.AcknowledgeNonceOnlyAuth = *body.AcknowledgeNonceOnlyAuth
+	}
 	if body.EgressProfile != nil {
 		p.EgressProfile = egress.Profile(*body.EgressProfile)
 	}
@@ -1409,6 +1442,23 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 					map[string]any{"runtimeRef": effRef})
 				return
 			}
+			// spec: §4.7, §5.3 — reject a PUT that would leave the pool bound
+			// to a nonce-only runtime (requireSoPeercred: false) without the
+			// acknowledgment. The gate evaluates the EFFECTIVE post-update
+			// runtimeRef (effRef, the body when set else stored) AND the
+			// effective post-update acknowledgeNonceOnlyAuth (the body when set
+			// else stored, resolved via the shared merge), so a runtimeRef swap
+			// to a nonce-only runtime without the ack, or toggling the ack off,
+			// is rejected.
+			effPoolNonce := current
+			applyPoolUpdateMerge(&effPoolNonce, body)
+			if err := poolstore.ValidateNonceOnlyAcknowledgment(
+				poolstore.RuntimeRequireSoPeercred(rt), effPoolNonce,
+			); err != nil {
+				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+					map[string]any{"runtimeRef": effRef})
+				return
+			}
 		}
 	}
 	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
@@ -1600,6 +1650,9 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.AllowStandardIsolation != nil {
 		out = append(out, "allowStandardIsolation")
+	}
+	if b.AcknowledgeNonceOnlyAuth != nil {
+		out = append(out, "acknowledgeNonceOnlyAuth")
 	}
 	if b.EgressProfile != nil {
 		out = append(out, "egressProfile")
