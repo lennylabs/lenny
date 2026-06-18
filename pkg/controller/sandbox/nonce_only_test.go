@@ -269,3 +269,158 @@ func TestReconcileRecoversNonceOnlyCarrierWriteFailure_spec_4_4(t *testing.T) {
 		t.Fatalf("Sandbox.status %s = %v after recovery, want True", lennyv1.SandboxConditionSOPeercredDisabled, cond)
 	}
 }
+
+// podCreateFailClient wraps a client and fails the first Pod Create while
+// passing every other call through. It models the §4.5 revert window: the
+// nonce-only carrier write succeeds, then the pod Create fails, so the
+// Sandbox is left carrying a stale false carrier with no backing pod.
+type podCreateFailClient struct {
+	client.Client
+	fail *bool
+}
+
+// Create fails a Pod create while *fail is true; every other create passes
+// through. The carrier write is an SSA Patch (not a Create), so it is not
+// intercepted and succeeds before the pod create fails.
+func (c *podCreateFailClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if c.fail != nil && *c.fail {
+		if _, ok := obj.(*corev1.Pod); ok {
+			return errors.New("apiserver hiccup on pod create")
+		}
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
+
+// TestReconcileClearsStaleCarrierAfterRevert_spec_4_5 verifies the §4.5 revert
+// invariant on the narrow create-fail-then-revert-then-recreate sequence: a
+// carrier write that lands before a failed pod Create leaves a stale
+// Sandbox.spec.requireSoPeercred: false carrier; if the operator then reverts
+// the Runtime field before the create retry, the next reconcile resolves no
+// flag and MUST clear the stale carrier so the carrier and the pod's actual
+// (SO_PEERCRED-enforcing) render decision coincide. A pod created without the
+// flag must carry neither the false carrier nor SOPeercredDisabled=True, so the
+// pool-level SecurityDegradedMode trigger does not latch on an enforcing pod.
+//
+// diagnosis: a failure means the no-flag render path never clears a stale
+// nonce-only carrier, so a reverted Sandbox reused across a create failure
+// keeps requireSoPeercred: false and SOPeercredDisabled=True while its pod
+// enforces SO_PEERCRED — the §4.4 coincidence and §4.5 revert invariants are
+// violated and the pool falsely reports degraded.
+//
+// spec: §4.3, §4.4, §4.5, §4.7.
+func TestReconcileClearsStaleCarrierAfterRevert_spec_4_5(t *testing.T) {
+	c := nonceOnlyFixture(t, "sidecar", ptr.To(false), true)
+	s := newScheme(t)
+
+	fail := true
+	wrapped := &podCreateFailClient{Client: c, fail: &fail}
+	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
+
+	// First reconcile: the carrier write succeeds, then the pod Create fails.
+	if _, err := r.Reconcile(context.Background(), req); err == nil {
+		t.Fatal("expected the pod-create failure to surface as a reconcile error")
+	}
+	// The carrier is now persisted as false, but no pod exists.
+	sb := getSandbox(t, c)
+	if sb.Spec.RequireSoPeercred == nil || *sb.Spec.RequireSoPeercred {
+		t.Fatalf("after the create failure Sandbox.spec.requireSoPeercred = %v, want explicit false (stale carrier)", sb.Spec.RequireSoPeercred)
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); !apierrors.IsNotFound(err) {
+		t.Fatalf("pod get after failed create = %v, want NotFound", err)
+	}
+
+	// The operator reverts the Runtime field to the SO_PEERCRED-enforcing
+	// default before the create retry.
+	var rt lennyv1.Runtime
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "claude-code"}, &rt); err != nil {
+		t.Fatalf("get runtime: %v", err)
+	}
+	rt.Spec.RequireSoPeercred = ptr.To(true)
+	if err := c.Update(context.Background(), &rt); err != nil {
+		t.Fatalf("revert runtime field: %v", err)
+	}
+
+	// Second reconcile: the create succeeds; resolveNonceOnly now returns no
+	// flag, so the stale carrier must be cleared before the pod is created.
+	fail = false
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("recovery Reconcile: %v", err)
+	}
+
+	// The pod must NOT carry the nonce-only flag (it enforces SO_PEERCRED).
+	if args := adapterArgs(t, c); hasArg(args, requireSoPeercredFalseFlag) {
+		t.Errorf("adapter args %v carry %q after revert, want absent", args, requireSoPeercredFalseFlag)
+	}
+	// The stale carrier must be cleared (back to nil).
+	sb = getSandbox(t, c)
+	if sb.Spec.RequireSoPeercred != nil {
+		t.Errorf("Sandbox.spec.requireSoPeercred = %v after revert, want nil (stale carrier cleared)", *sb.Spec.RequireSoPeercred)
+	}
+	// No SOPeercredDisabled=True condition on an enforcing pod.
+	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, lennyv1.SandboxConditionSOPeercredDisabled); cond != nil {
+		t.Errorf("Sandbox.status carries %s after revert, want absent (pod enforces SO_PEERCRED)", lennyv1.SandboxConditionSOPeercredDisabled)
+	}
+}
+
+// TestReconcileStaleCarrierClearFailureIsRecoverable_spec_4_5 verifies that a
+// failed §4.5 carrier-clear apply leaves the pod uncreated and surfaces as a
+// reconcile error, so the create-retry re-enters ActionCreatePod and retries
+// the clear idempotently. This mirrors the record-failure recovery for the
+// symmetric revert path: the clear is persisted before the pod is created, so a
+// clear failure cannot leave a SO_PEERCRED-enforcing pod running with a stale
+// false carrier and SOPeercredDisabled=True.
+//
+// diagnosis: a failure means the carrier clear runs after the pod is created
+// (or its error is swallowed), so a clear-write error on the revert path is
+// unrecoverable and the pod runs enforcing SO_PEERCRED while the carrier and
+// condition falsely report nonce-only mode.
+//
+// spec: §4.3, §4.5, §4.7.
+func TestReconcileStaleCarrierClearFailureIsRecoverable_spec_4_5(t *testing.T) {
+	// Seed a Sandbox already carrying the stale false carrier (the state left
+	// by a prior carrier write that preceded a failed pod create), then revert
+	// the Runtime field so the next reconcile resolves no flag and must clear.
+	c := nonceOnlyFixture(t, "sidecar", ptr.To(true), true)
+	s := newScheme(t)
+
+	// Persist the stale false carrier directly under the WPC field manager.
+	seed := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS}}
+	body := []byte(`{"apiVersion":"` + lennyv1.GroupVersion.String() + `","kind":"Sandbox","metadata":{"name":"` + testName + `","namespace":"` + testNS + `"},"spec":{"requireSoPeercred":false}}`)
+	if err := c.Patch(context.Background(), seed, client.RawPatch(types.ApplyPatchType, body), client.FieldOwner("lenny-warm-pool-controller")); err != nil {
+		t.Fatalf("seed stale carrier: %v", err)
+	}
+
+	fail := true
+	wrapped := &carrierPatchFailClient{
+		Client: c,
+		err:    errors.New("apiserver hiccup on carrier clear"),
+		fail:   &fail,
+	}
+	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
+
+	// First reconcile: the carrier-clear apply fails before the pod is created.
+	if _, err := r.Reconcile(context.Background(), req); err == nil {
+		t.Fatal("expected the carrier-clear failure to surface as a reconcile error")
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); !apierrors.IsNotFound(err) {
+		t.Fatalf("pod get after failed carrier clear = %v, want NotFound (pod must not be created)", err)
+	}
+
+	// Second reconcile: the apiserver recovers; the carrier is cleared and the
+	// SO_PEERCRED-enforcing pod is created without the flag.
+	fail = false
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("recovery Reconcile: %v", err)
+	}
+	if args := adapterArgs(t, c); hasArg(args, requireSoPeercredFalseFlag) {
+		t.Errorf("adapter args %v carry %q after recovery, want absent", args, requireSoPeercredFalseFlag)
+	}
+	sb := getSandbox(t, c)
+	if sb.Spec.RequireSoPeercred != nil {
+		t.Errorf("Sandbox.spec.requireSoPeercred = %v after recovery, want nil (stale carrier cleared)", *sb.Spec.RequireSoPeercred)
+	}
+}

@@ -516,11 +516,37 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	// write idempotently (recordNonceOnlyCarrier no-ops once the carrier records
 	// false). The in-memory carrier is then set so the syncStatus pass later in
 	// this reconcile derives the condition from it.
+	//
+	// The symmetric revert case uses the same persist-first ordering. When the
+	// render decision is no longer nonce-only (resolveNonceOnly returns nil) but
+	// the Sandbox already carries a stale false carrier — the narrow window where
+	// a carrier write succeeded, the pod Create failed, the operator reverted the
+	// Runtime field, and the create-retry re-enters here — the else branch clears
+	// the carrier before Create so the carrier and the pod's render decision stay
+	// coincident (§4.4) and a reverted, SO_PEERCRED-enforcing pod does not latch
+	// SOPeercredDisabled=True or the pool-level SecurityDegradedMode (§4.5).
 	if nonceOnly != nil && !*nonceOnly {
 		if err := r.recordNonceOnlyCarrier(ctx, sb); err != nil {
 			return fmt.Errorf("record nonce-only decision for sandbox %s: %w", sb.Name, err)
 		}
 		sb.Spec.RequireSoPeercred = nonceOnly
+	} else if sb.Spec.RequireSoPeercred != nil && !*sb.Spec.RequireSoPeercred {
+		// spec: §4.5 revert invariant — the no-flag render path must clear a
+		// stale carrier so the carrier and the pod's actual render decision
+		// coincide (§4.4). A Sandbox object reused across a carrier write that
+		// preceded a failed pod Create plus an operator revert of the Runtime
+		// field reaches this branch on the create retry: resolveNonceOnly now
+		// returns nil (the reverted Runtime renders no flag), but the persisted
+		// false carrier would otherwise survive and drive SOPeercredDisabled=True
+		// in buildSandboxStatusPatch and latch the pool-level SecurityDegradedMode
+		// (§4.5) on a pod that enforces SO_PEERCRED. Clear the carrier BEFORE the
+		// pod is created, mirroring the persist-first ordering: a failed clear
+		// leaves the pod uncreated, so the next reconcile re-enters
+		// ActionCreatePod and retries the clear idempotently.
+		if err := r.clearNonceOnlyCarrier(ctx, sb); err != nil {
+			return fmt.Errorf("clear nonce-only decision for sandbox %s: %w", sb.Name, err)
+		}
+		sb.Spec.RequireSoPeercred = nil
 	}
 	if err := r.Client.Create(ctx, pod); err != nil {
 		return fmt.Errorf("create pod: %w", err)
@@ -601,6 +627,30 @@ func (r *Reconciler) recordNonceOnlyCarrier(ctx context.Context, sb *lennyv1.San
 	// touching the required fields, so it coexists with the creating manager.
 	body := []byte(fmt.Sprintf(
 		`{"apiVersion":%q,"kind":"Sandbox","metadata":{"name":%q,"namespace":%q},"spec":{"requireSoPeercred":false}}`,
+		lennyv1.GroupVersion.String(), sb.Name, sb.Namespace,
+	))
+	patch := &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace},
+	}
+	return retryOnConflictSSA(ctx, func(int) error {
+		return r.Client.Patch(ctx, patch, client.RawPatch(types.ApplyPatchType, body),
+			client.FieldOwner(string(ownership.WarmPoolController)))
+	})
+}
+
+// clearNonceOnlyCarrier drops a stale Sandbox.spec.requireSoPeercred carrier
+// when the resolved render decision is no longer nonce-only (§4.5 revert
+// invariant). It re-applies the WarmPoolController's SSA patch with an empty
+// spec, which removes the WPC-owned requireSoPeercred field from the live
+// object so the carrier returns to nil and the SOPeercredDisabled condition
+// and the pool-level SecurityDegradedMode trigger no longer derive from it.
+// The same raw-patch reasoning as recordNonceOnlyCarrier applies: a typed SSA
+// apply would serialize the required runtimeRef and poolRef fields as empty
+// strings and conflict with the creating manager, so the patch body carries
+// only the (now empty) spec, claiming no field while dropping the carrier.
+func (r *Reconciler) clearNonceOnlyCarrier(ctx context.Context, sb *lennyv1.Sandbox) error {
+	body := []byte(fmt.Sprintf(
+		`{"apiVersion":%q,"kind":"Sandbox","metadata":{"name":%q,"namespace":%q},"spec":{}}`,
 		lennyv1.GroupVersion.String(), sb.Name, sb.Namespace,
 	))
 	patch := &lennyv1.Sandbox{
