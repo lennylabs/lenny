@@ -68,8 +68,13 @@ spec:
           image: {{ $mcImage | quote }}
           imagePullPolicy: IfNotPresent
           env:
-            - name: MC_HOST_lenny
-              value: "{{ $scheme }}://$(MINIO_ACCESS_KEY):$(MINIO_SECRET_KEY)@{{ $minio.endpoint }}"
+            # MINIO_ACCESS_KEY and MINIO_SECRET_KEY are declared before
+            # MC_HOST_lenny because Kubernetes $(VAR) env substitution only
+            # expands a reference to a variable defined earlier in the list.
+            # A forward reference is left literal, so MC_HOST_lenny would
+            # otherwise carry the unexpanded text "$(MINIO_ACCESS_KEY)" as
+            # the access key and mc would fail with "The Access Key Id you
+            # provided does not exist in our records." Keep these two first.
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -80,6 +85,8 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: minio-secret-key
+            - name: MC_HOST_lenny
+              value: "{{ $scheme }}://$(MINIO_ACCESS_KEY):$(MINIO_SECRET_KEY)@{{ $minio.endpoint }}"
             {{- if $.Values.global.devMode }}
             # Dev-only: mc writes its config under $HOME/.mc by default; with
             # readOnlyRootFilesystem and no home dir for uid 1000 that mkdir

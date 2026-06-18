@@ -69,6 +69,35 @@ tests:
           path: spec.template.spec.containers[0].command[2]
           pattern: "--noncurrentversion-expiration-days 7"
 
+  - it: declares MINIO_ACCESS_KEY and MINIO_SECRET_KEY before MC_HOST_lenny so $(VAR) substitution resolves
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      # Kubernetes $(VAR) env substitution expands only a reference to a
+      # variable defined earlier in the env list; a forward reference is
+      # left literal. MC_HOST_lenny embeds $(MINIO_ACCESS_KEY) and
+      # $(MINIO_SECRET_KEY), so both credential vars must come before it,
+      # or mc receives the literal text "$(MINIO_ACCESS_KEY)" as the
+      # access key and fails with "The Access Key Id you provided does not
+      # exist in our records." Pin the order at indices 0, 1, then 2.
+      - equal:
+          path: spec.template.spec.containers[0].env[0].name
+          value: MINIO_ACCESS_KEY
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: MINIO_SECRET_KEY
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: MC_HOST_lenny
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[2].value
+          pattern: '\$\(MINIO_ACCESS_KEY\):\$\(MINIO_SECRET_KEY\)@minio.lenny-system:9000$'
+
   - it: skips when minio.lifecycle.enabled is explicitly false
     template: minio-bucket-lifecycle-job.yaml
     set:
@@ -115,7 +144,7 @@ tests:
           enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 279: minio.tls.enabled may default to false only when backends: embedded; set tls.enabled: true on any other backends value."
+          errorMessage: "§12.5 line 279: minio.tls.enabled may default to false only when backends: embedded or global.devMode is set; set tls.enabled: true on any other backends value."
 
   - it: §12.5 line 279 — embedded backends permits minio.tls.enabled=false
     template: gateway-deployment.yaml

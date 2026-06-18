@@ -457,11 +457,13 @@ spec:
 # carries the chart's default-deny-all policy, which would otherwise
 # block every connection to and from these test-fixture pods. These two
 # policies re-admit exactly the data-store traffic: ingress to the
-# store pods from anything in the namespace, and egress to the store
-# pods from anything in the namespace. They are additive, so they do
-# not weaken the default-deny for any other destination — in
-# particular the tier-9 NetworkPolicy adversarial test still observes
-# the gateway as unreachable from an unlabelled pod.
+# store pods from anything in the namespace, and egress from anything in
+# the namespace to the store pods plus kube-system CoreDNS on port 53 so
+# a pod can resolve a store's Service DNS name before dialing it. They
+# are additive, so they do not weaken the default-deny for any other
+# destination: the tier-9 NetworkPolicy adversarial test still observes
+# the gateway as unreachable from an unlabelled pod, and DNS resolution
+# alone grants no data-plane reach to any non-datastore peer.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -512,4 +514,27 @@ spec:
         - port: 9000
           protocol: TCP
         - port: 9090
+          protocol: TCP
+    # Egress to kube-system CoreDNS on UDP/TCP 53. Pods in lenny-system
+    # that address a data store by its Service DNS name (for example the
+    # chart's post-install lenny-minio-bucket-lifecycle Job, which hits
+    # lenny-minio.lenny-system.svc:9000) must resolve that name first.
+    # Without this rule the default-deny-all policy blocks the lookup and
+    # mc fails intermittently with a DNS i/o timeout, surfacing as the
+    # misleading "Access Key Id does not exist" error. The peer uses the
+    # canonical CoreDNS namespaceSelector/podSelector the chart's own
+    # egress policies use. install.sh's one-shot bucket pod sidesteps DNS
+    # by dialing the MinIO pod IP, but a chart-rendered Job has no pod IP
+    # to substitute, so it needs the DNS path open.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
           protocol: TCP
