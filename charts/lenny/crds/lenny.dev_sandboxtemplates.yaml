@@ -61,6 +61,17 @@ spec:
               pool definitions that the admin API treats as the source of truth.
             x-kubernetes-preserve-unknown-fields: true
             properties:
+              acknowledgeNonceOnlyAuth:
+                description: |-
+                  AcknowledgeNonceOnlyAuth is the §5.3 deployer opt-in that admits a
+                  pool whose runtime sets requireSoPeercred: false into §4.7 nonce-only
+                  mode. The PoolScalingController mirrors it from the Postgres pool
+                  definition (the §4.6.3 channel for pool configuration to reach the
+                  controllers), and the WarmPoolController's render gate requires it
+                  before rendering --require-so-peercred=false, so a Runtime CR applied
+                  directly cannot put an unacknowledged pool into nonce-only mode.
+                  spec: §4.7, §5.3.
+                type: boolean
               checkpointBarrierAckTimeoutSeconds:
                 description: |-
                   CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline

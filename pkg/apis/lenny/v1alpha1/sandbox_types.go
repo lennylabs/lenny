@@ -16,6 +16,11 @@ import (
 // the Terminating state. spec: §4.6.1 "Sandbox finalizers".
 const FinalizerSessionCleanup = "lenny.dev/session-cleanup"
 
+// SandboxConditionSOPeercredDisabled marks a Sandbox running in §4.7
+// nonce-only mode. Set by the WarmPoolController; the adapter has no
+// apiserver access (§10.3).
+const SandboxConditionSOPeercredDisabled = "SOPeercredDisabled"
+
 // SandboxSpec is the desired state of a Sandbox — one managed agent
 // pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
 // created from the pool's SandboxTemplate, and these fields pin the
@@ -87,6 +92,18 @@ type SandboxSpec struct {
 	// constraints (defaults or deployer override) down to the pod.
 	// +optional
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+
+	// RequireSoPeercred carries the resolved §4.7 nonce-only render
+	// decision the WarmPoolController's Sandbox reconciler computes from
+	// the referenced Runtime's requireSoPeercred, its deploymentModel, and
+	// the pool's acknowledgeNonceOnlyAuth. An explicit false records that
+	// the pod was rendered with --require-so-peercred=false (nonce-only
+	// mode); a nil value records the default SO_PEERCRED-enforcing render.
+	// The pool-level SecurityDegradedMode trigger reads this field back
+	// from the member Sandboxes without resolving the Runtime CR. spec:
+	// §4.7.
+	// +optional
+	RequireSoPeercred *bool `json:"requireSoPeercred,omitempty"`
 }
 
 // SandboxStatus is the observed state of a Sandbox. status.phase is

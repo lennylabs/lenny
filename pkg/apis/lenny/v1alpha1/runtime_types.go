@@ -55,6 +55,21 @@ type RuntimeSpec struct {
 	// +optional
 	DeploymentModel string `json:"deploymentModel,omitempty"`
 
+	// RequireSoPeercred gates the §4.7 SO_PEERCRED adapter-agent boundary
+	// self-test. A nil or true value (the default) requires SO_PEERCRED to
+	// be functional; a failed self-test crashes the pod. Set false only
+	// when gVisor SO_PEERCRED divergence is confirmed (Phase 3.5) and
+	// nonce-only mode is explicitly accepted. Sidecar model only: the
+	// RuntimeReconciler marks an embedded runtime carrying false
+	// Registered=False (InvalidRuntime) and does not mirror it; derived
+	// runtimes inherit the base value through the §5.1 merge. The
+	// WarmPoolController renders --require-so-peercred=false for pools
+	// carrying the §5.3 acknowledgeNonceOnlyAuth acknowledgment and
+	// surfaces SOPeercredDisabled / SecurityDegradedMode per §4.6.3.
+	// spec: §4.7.
+	// +optional
+	RequireSoPeercred *bool `json:"requireSoPeercred,omitempty"`
+
 	// AllowedResourceClasses lists the §5 resource classes a session
 	// of this runtime may request.
 	// +optional

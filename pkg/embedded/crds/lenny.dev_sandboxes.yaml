@@ -96,6 +96,18 @@ spec:
                 description: PoolRef names the SandboxWarmPool this pod is a member
                   of.
                 type: string
+              requireSoPeercred:
+                description: |-
+                  RequireSoPeercred carries the resolved §4.7 nonce-only render
+                  decision the WarmPoolController's Sandbox reconciler computes from
+                  the referenced Runtime's requireSoPeercred, its deploymentModel, and
+                  the pool's acknowledgeNonceOnlyAuth. An explicit false records that
+                  the pod was rendered with --require-so-peercred=false (nonce-only
+                  mode); a nil value records the default SO_PEERCRED-enforcing render.
+                  The pool-level SecurityDegradedMode trigger reads this field back
+                  from the member Sandboxes without resolving the Runtime CR. spec:
+                  §4.7.
+                type: boolean
               resourceClass:
                 description: |-
                   ResourceClass is the §5.1/§5.2 resource class (small, medium,

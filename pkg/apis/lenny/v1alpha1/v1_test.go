@@ -8,6 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
@@ -49,6 +50,82 @@ func TestSandboxDeepCopyIsolatesTheCopy(t *testing.T) {
 	cp.Status.Phase = "claimed"
 	if orig.Spec.RuntimeRef != "claude-code" || orig.Status.Phase != "idle" {
 		t.Errorf("DeepCopy did not isolate the copy; the original was mutated: %+v", orig)
+	}
+}
+
+// TestRuntimeDeepCopyIsolatesRequireSoPeercred exercises the §4.7
+// nonce-only activation pointer on RuntimeSpec so a shallow pointer copy
+// in the generated DeepCopy is caught. A pointer distinguishes the
+// default (nil, treated as true) from an explicit false that activates
+// nonce-only mode.
+// spec: §4.7 (nonce-only mode activation field).
+func TestRuntimeDeepCopyIsolatesRequireSoPeercred(t *testing.T) {
+	orig := &lennyv1.Runtime{
+		Spec: lennyv1.RuntimeSpec{
+			Type:              "agent",
+			DeploymentModel:   "sidecar",
+			RequireSoPeercred: ptr.To(false),
+		},
+	}
+	cp := orig.DeepCopy()
+	*cp.Spec.RequireSoPeercred = true
+	if orig.Spec.RequireSoPeercred == nil || *orig.Spec.RequireSoPeercred {
+		t.Errorf("DeepCopy shared the RequireSoPeercred pointer; original was mutated: %+v", orig.Spec.RequireSoPeercred)
+	}
+}
+
+// TestSandboxDeepCopyIsolatesRequireSoPeercred exercises the §4.7
+// resolved-decision carrier on SandboxSpec. The WarmPoolController writes
+// it with the resolved render decision; a shallow pointer copy would let
+// one Sandbox's decision leak into another.
+// spec: §4.7 (resolved nonce-only render decision carrier).
+func TestSandboxDeepCopyIsolatesRequireSoPeercred(t *testing.T) {
+	orig := &lennyv1.Sandbox{
+		Spec: lennyv1.SandboxSpec{
+			RuntimeRef:        "claude-code",
+			PoolRef:           "default",
+			RequireSoPeercred: ptr.To(false),
+		},
+	}
+	cp := orig.DeepCopy()
+	*cp.Spec.RequireSoPeercred = true
+	if orig.Spec.RequireSoPeercred == nil || *orig.Spec.RequireSoPeercred {
+		t.Errorf("DeepCopy shared the RequireSoPeercred pointer; original was mutated: %+v", orig.Spec.RequireSoPeercred)
+	}
+}
+
+// TestSandboxTemplateAcknowledgeNonceOnlyAuthDeepCopies exercises the
+// §5.3 PSC-mirrored acknowledgment scalar on SandboxTemplateSpec that the
+// WarmPoolController render gate reads.
+// spec: §4.7, §5.3 (nonce-only acknowledgment gate).
+func TestSandboxTemplateAcknowledgeNonceOnlyAuthDeepCopies(t *testing.T) {
+	orig := &lennyv1.SandboxTemplate{
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:               "claude-code",
+			AcknowledgeNonceOnlyAuth: true,
+		},
+	}
+	cp := orig.DeepCopy()
+	cp.Spec.AcknowledgeNonceOnlyAuth = false
+	if !orig.Spec.AcknowledgeNonceOnlyAuth {
+		t.Errorf("DeepCopy did not isolate AcknowledgeNonceOnlyAuth: %+v", orig.Spec)
+	}
+}
+
+// TestNonceOnlyConditionTypeConstants pins the §7.8 condition-type
+// constant values the WarmPoolController writes and the surfacing
+// predicate reads back. The string values are the wire-visible condition
+// types on the Sandbox and SandboxTemplate status; a rename would silently
+// break the §13.1 security posture surfacing.
+// spec: §4.7, §7.8 (SOPeercredDisabled / SecurityDegradedMode conditions).
+func TestNonceOnlyConditionTypeConstants(t *testing.T) {
+	if lennyv1.SandboxConditionSOPeercredDisabled != "SOPeercredDisabled" {
+		t.Errorf("SandboxConditionSOPeercredDisabled = %q, want SOPeercredDisabled",
+			lennyv1.SandboxConditionSOPeercredDisabled)
+	}
+	if lennyv1.SandboxTemplateConditionSecurityDegradedMode != "SecurityDegradedMode" {
+		t.Errorf("SandboxTemplateConditionSecurityDegradedMode = %q, want SecurityDegradedMode",
+			lennyv1.SandboxTemplateConditionSecurityDegradedMode)
 	}
 }
 

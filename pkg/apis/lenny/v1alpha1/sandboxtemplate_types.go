@@ -7,6 +7,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// SandboxTemplateConditionSecurityDegradedMode marks a pool rendering
+// nonce-only pods (§4.7): its deploymentModel: sidecar runtime sets
+// requireSoPeercred: false and the pool carries the §5.3
+// acknowledgeNonceOnlyAuth acknowledgment. A pool that still runs a
+// nonce-only pod after a revert keeps the condition. Set by the
+// WarmPoolController per the §4.6.3 ownership table.
+const SandboxTemplateConditionSecurityDegradedMode = "SecurityDegradedMode"
+
 // SessionPolicy parameterizes session-mode pod reuse (§5.2). One
 // mechanism replaces the former session, task, and concurrent-workspace
 // modes: `maxConcurrentSessions` sets simultaneous sessions per pod and
@@ -198,6 +206,17 @@ type SandboxTemplateSpec struct {
 	// that take the default one-session-per-pod configuration.
 	// +optional
 	SessionPolicy *SessionPolicy `json:"sessionPolicy,omitempty"`
+
+	// AcknowledgeNonceOnlyAuth is the §5.3 deployer opt-in that admits a
+	// pool whose runtime sets requireSoPeercred: false into §4.7 nonce-only
+	// mode. The PoolScalingController mirrors it from the Postgres pool
+	// definition (the §4.6.3 channel for pool configuration to reach the
+	// controllers), and the WarmPoolController's render gate requires it
+	// before rendering --require-so-peercred=false, so a Runtime CR applied
+	// directly cannot put an unacknowledged pool into nonce-only mode.
+	// spec: §4.7, §5.3.
+	// +optional
+	AcknowledgeNonceOnlyAuth bool `json:"acknowledgeNonceOnlyAuth,omitempty"`
 
 	// TopologySpreadConstraints distribute the pool's pods across zones
 	// and nodes. The PoolScalingController writes soft per-zone and
