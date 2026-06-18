@@ -88,11 +88,13 @@ import (
 )
 
 // mcpStateForSession returns the §8.8 MCP-protocol state spelling for
-// a §7.2 session-level Lenny state. Terminal and `input_required`
-// states route through the §8.8 line 857 task-level table; all other
-// session-level states fall through to the §8.8 line 871-883
-// supplementary table. F-8.8.7.
-// spec: §8.8 lines 857-883.
+// a §7.2 session-level Lenny state by delegating to nodeProtocolState.
+// §8.8 defines the canonical task machine as the §7.2 session machine,
+// so every state routes through the single sessionstate.MCPProtocolState
+// projection; the metadata is discarded on this single-string path. The
+// terminal and input_required spellings are byte-identical to the former
+// task-level table. F-8.8.7.
+// spec: §8.8 lines 855-883, §7.2.
 func mcpStateForSession(s session.State) string {
 	proto, _ := nodeProtocolState(s)
 	return proto
