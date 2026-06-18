@@ -167,10 +167,9 @@ bootstrap:
     tag: e2e
     pullPolicy: Never
   # Seed the §17.6 Day-1 fixture data the tier-3/4/7 scenarios assume:
-  # an `acme` tenant, an `alice@acme.com` user with tenant-admin, and
-  # the `claude-code` and `echo` runtimes the tier-7 scenarios use as
-  # session runtimeRef. The bootstrap Job is idempotent; re-runs are
-  # safe and the Job runs on every helm install/upgrade.
+  # an `acme` tenant and an `alice@acme.com` user with tenant-admin.
+  # The bootstrap Job is idempotent; re-runs are safe and the Job runs
+  # on every helm install/upgrade.
   tenants:
     - id: acme
       displayName: Acme Corp
@@ -179,37 +178,21 @@ bootstrap:
       tenantId: acme
       roles:
         - tenant-admin
-  runtimes:
-    - name: claude-code
-      type: agent
-      image: lenny-runtime-echo:e2e@sha256:67004f3e8d61a71973397685b58933e013089ff61cf5eb59833a0e47eba4a069
-      integrationLevel: basic
-      executionMode: session
-      isolationProfile: standard
-    - name: echo
-      type: agent
-      image: lenny-runtime-echo:e2e@sha256:67004f3e8d61a71973397685b58933e013089ff61cf5eb59833a0e47eba4a069
-      integrationLevel: basic
-      executionMode: session
-      isolationProfile: standard
-    # The §4.7 sidecar / embedded reference runtimes the tier-5/8
-    # sessiondriver harness drives by name. Their Runtime CRDs are
-    # applied via agent-workload.yaml; the runtimestore copy here
-    # makes the gateway's runtime lookup succeed when the test posts
-    # POST /v1/sessions with runtimeRef = echo-runtime-sidecar /
-    # echo-runtime-embedded.
-    - name: echo-runtime-sidecar
-      type: agent
-      image: lenny-runtime-echo:e2e@sha256:67004f3e8d61a71973397685b58933e013089ff61cf5eb59833a0e47eba4a069
-      integrationLevel: basic
-      executionMode: session
-      isolationProfile: standard
-    - name: echo-runtime-embedded
-      type: agent
-      image: lenny-runtime-echo-embedded:e2e@sha256:98579a97400b6a3134ec46cfeed4095f96c018a8ca9ec0df9fd477793de7bc4d
-      integrationLevel: basic
-      executionMode: session
-      isolationProfile: standard
+  # bootstrap.runtimes and bootstrap.pools are NOT declared here. Their
+  # runtime images must be digest-pinned (§13.1) to the freshly-built
+  # lenny-runtime-*:e2e images, whose digests change on every build, so a
+  # hardcoded digest goes stale and ImagePullBackOffs. install.sh resolves
+  # each image's current digest with `docker image inspect` and writes a
+  # generated overlay (bootstrap-overlay.gen.yaml) carrying the full
+  # bootstrap.runtimes and bootstrap.pools lists with the resolved
+  # digests. Helm replaces a list value wholesale when a later -f sets it,
+  # so the overlay's lists supersede anything declared here while the
+  # tenants/users maps above deep-merge through. The pools are seeded into
+  # Postgres (rather than applied as SandboxTemplate/SandboxWarmPool CRs)
+  # because the pool-config-validator webhook rejects any manual kubectl
+  # write to those resources: only the PoolScalingController service
+  # account may create them, and it does so by reconciling each seeded
+  # Postgres pool row. spec: §17.6, §4.6.2, §13.1.
 
 # §13.2 (K8S-033): the dedicated CoreDNS Service ClusterIP. Kind's
 # default service CIDR is 10.96.0.0/12 with kube-dns at 10.96.0.10;
