@@ -2495,6 +2495,47 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 
+	// spec: §7.1 steps 3-5 — when the gateway is wired with a pod binder,
+	// the create atomic unit runs the credential availability pre-check
+	// (step 3) and claims an idle warm pod (step 4) synchronously, before
+	// the row persist (step 5). The claim surfaces pool exhaustion
+	// immediately so the client learns of it before uploading, and the
+	// claimed pod's binding (PodAssignment + PoolRef) is persisted on the
+	// row so a later /finalize and /start reconnect to it (§4.6). A claim
+	// failure leaves no row behind per the §7.1 line 28 atomicity contract.
+	// A service-mode pool is claimless; a concurrent-workspace pool defers
+	// its slot reservation to /start (claimAtCreate returns a nil claim).
+	var createClaim *podsession.ClaimResult
+	if s.podBinder != nil {
+		outcome, err := s.claimAtCreate(r.Context(), row, parsedPlan)
+		if err != nil {
+			// spec: §7.1 line 28 — the pre-check or claim failed before any
+			// row was persisted; surface SESSION_CREATION_FAILED (or the
+			// credential / pool-warming envelope) with no session_id. No pod
+			// is held: the pre-check is claimless and the Claim phase reclaims
+			// its own pod on failure.
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
+			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
+				"could not place the session on a warm pod")
+			return
+		}
+		// spec: §7.1 line 75 — the returned level reflects the actual resolved
+		// pool's profile, tightening the create-response accuracy guarantee.
+		level = outcome.Level
+		row.ExecutionMode = level.ExecutionMode
+		row.ScrubPolicy = level.ScrubPolicy
+		row.ConversationContinuity = level.ConversationContinuity
+		if outcome.Claim != nil {
+			createClaim = outcome.Claim
+			// spec: §4.6 (proposal) — persist the durable binding so the claim
+			// survives a coordinator handoff during the create → finalize →
+			// start window; PodAssignment + PoolRef plus the session id
+			// reconstruct the deterministic claim and lease key.
+			row.PodAssignment = createClaim.SandboxName
+			row.PoolRef = createClaim.Pool
+		}
+	}
+
 	// spec: §7.1 line 28 — atomicity. Mint the §7.1 step 8 uploadToken
 	// BEFORE the row is persisted: on failure no session row exists, so
 	// the client receives no session_id (matching the "does NOT persist
@@ -2508,6 +2549,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// createdsweeper's Timeout. F-7.4.7.
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
+		// spec: §7.1 line 28 — the mint failed before the row persist, so roll
+		// back the create-time pod claim rather than leak it past a "no
+		// session_id returned" failure.
+		s.rollbackClaim(r.Context(), createClaim, row.ID)
 		// spec: §16.3 line 336 — the uploadToken mint failed before any row
 		// was persisted; record it on the create span (PERMANENT: a bad
 		// session id does not become valid on retry).
@@ -2523,10 +2568,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		// spec: §7.1 line 28 — persistence failure leaves no row behind;
 		// the minted upload token's digest is never referenced because
 		// the finalize/upload paths look up the digest off the
-		// (non-existent) row. Return SESSION_CREATION_FAILED so the
+		// (non-existent) row. Roll back the create-time pod claim so no pod
+		// leaks past the failure, then return SESSION_CREATION_FAILED so the
 		// client retries.
 		// spec: §16.3 line 336 — a store INSERT failure is retryable
 		// (TRANSIENT: the client receives a 503 + Retry-After).
+		s.rollbackClaim(r.Context(), createClaim, row.ID)
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
 		return

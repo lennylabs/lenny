@@ -10,6 +10,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
@@ -17,6 +22,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
 // preclaimFixture builds a Server wired with a tenant credentialPolicy,
@@ -197,6 +204,106 @@ func TestResolveCredentialPoolsNoRegistries(t *testing.T) {
 	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil || got != nil {
 		t.Errorf("got (%v, %v), want (nil, nil) with no registries", got, err)
+	}
+}
+
+// claimAtCreateScheme builds the scheme the fake binder client needs to
+// hold the §5 warm-pool CRDs claimAtCreate resolves a pool from.
+func claimAtCreateScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := lennyv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	return s
+}
+
+// spec: §5.2 (service mode is claimless), §7.1 step 4, line 75.
+// claimAtCreate resolves a service-mode pool and returns a nil ClaimResult
+// (no pod claimed) plus the service-mode §7.1 level, so the create path
+// persists the row with no PodAssignment and never touches the SSA claim.
+func TestClaimAtCreateServiceModeClaimless(t *testing.T) {
+	const ns = "lenny-agents"
+	pool := &lennyv1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
+		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
+	}
+	tmpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       "svc-runtime",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			ExecutionMode:    string(runtimestore.ExecutionModeService),
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	s := &Server{podBinder: &podsession.Binder{Client: c, Namespace: ns}, agentNamespace: ns}
+
+	out, err := s.claimAtCreate(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,
+	}, workspaceplan.Plan{})
+	if err != nil {
+		t.Fatalf("claimAtCreate (service mode): %v", err)
+	}
+	if out.Claim != nil {
+		t.Errorf("service-mode claim = %+v, want nil (claimless)", out.Claim)
+	}
+	if out.Level.ExecutionMode != "service" {
+		t.Errorf("level.ExecutionMode = %q, want service", out.Level.ExecutionMode)
+	}
+}
+
+// spec: §4.9 lines 1216-1218, §7.1 step 3 — the credential availability
+// pre-check runs at create AHEAD of the step-4 claim. An exclusive pool
+// whose only credential source is exhausted fails the pre-check, so
+// claimAtCreate returns ErrNoCredentialAvailable before the (SSA) Claim
+// runs. The fake client cannot satisfy a real claim, so reaching the claim
+// would surface a different error; ErrNoCredentialAvailable proves the
+// pre-check gated the claim.
+func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
+	const ns = "lenny-agents"
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "primary"},
+		},
+	}
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "claude-code", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialRevoked)); err != nil {
+		t.Fatalf("create credential pool: %v", err)
+	}
+
+	pool := &lennyv1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
+		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
+	}
+	tmpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
+		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
+	}
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	s := &Server{
+		podBinder:      &podsession.Binder{Client: c, Namespace: ns},
+		agentNamespace: ns,
+		tenants:        tenants,
+		runtimes:       runtimes,
+		credPools:      credPools,
+		credRouter:     credrouter.NewDefault(),
+	}
+
+	_, err := s.claimAtCreate(ctx, sessionstore.Session{
+		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code", IsolationProfile: isolation.ProfileSandboxed,
+	}, workspaceplan.Plan{})
+	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
+		t.Errorf("claimAtCreate = %v, want ErrNoCredentialAvailable (pre-check gates the claim)", err)
 	}
 }
 
