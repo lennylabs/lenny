@@ -493,24 +493,37 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	if err := ctrl.SetControllerReference(sb, pod, r.Scheme); err != nil {
 		return fmt.Errorf("set controller reference: %w", err)
 	}
-	if err := r.Client.Create(ctx, pod); err != nil {
-		return fmt.Errorf("create pod: %w", err)
-	}
-	// spec: §4.7 — record the resolved render decision on the
-	// Sandbox.spec.requireSoPeercred carrier for pods actually rendered in
-	// nonce-only mode. The carrier is WPC-owned (§4.6.3 Sandbox.spec.*), so
-	// the write adds no RBAC. It lets the pool-level SecurityDegradedMode
-	// trigger read the decision back from the member Sandboxes without
-	// resolving the Runtime CR (§4.5), and the SOPeercredDisabled=True
-	// pod-level condition is derived from it in buildSandboxStatusPatch (the
-	// single WPC status apply), so the two same-manager status applies in this
-	// reconcile do not clobber each other. The in-memory carrier is set after
-	// the write so the syncStatus pass later in this reconcile observes it.
+	// spec: §4.7 / §4.4 — record the resolved render decision on the
+	// Sandbox.spec.requireSoPeercred carrier BEFORE creating the pod, so the
+	// decision is recoverable. The carrier is WPC-owned (§4.6.3 Sandbox.spec.*),
+	// so the write adds no RBAC. It lets the pool-level SecurityDegradedMode
+	// trigger read the decision back from the member Sandboxes without resolving
+	// the Runtime CR (§4.5), and the SOPeercredDisabled=True pod-level condition
+	// is derived from it in buildSandboxStatusPatch (the single WPC status
+	// apply), so the two same-manager status applies in this reconcile do not
+	// clobber each other.
+	//
+	// Persisting the carrier first is what makes "set the condition for every
+	// Sandbox rendered with the flag" (§4.4) crash-safe. The carrier is the sole
+	// source of the SOPeercredDisabled condition, and createPod is reached only
+	// on lifecycle.ActionCreatePod, which the planner emits only while the pod is
+	// absent. If the carrier write failed after Create, a requeue would find the
+	// pod present, never re-enter createPod, and leave the pod running in
+	// nonce-only mode with no carrier and no condition forever (fail-open on a
+	// security-degradation surfacing path). Writing the carrier first means a
+	// failure leaves the pod uncreated, so the next reconcile re-enters
+	// ActionCreatePod (pod still absent), re-resolves, and retries the carrier
+	// write idempotently (recordNonceOnlyCarrier no-ops once the carrier records
+	// false). The in-memory carrier is then set so the syncStatus pass later in
+	// this reconcile derives the condition from it.
 	if nonceOnly != nil && !*nonceOnly {
 		if err := r.recordNonceOnlyCarrier(ctx, sb); err != nil {
 			return fmt.Errorf("record nonce-only decision for sandbox %s: %w", sb.Name, err)
 		}
 		sb.Spec.RequireSoPeercred = nonceOnly
+	}
+	if err := r.Client.Create(ctx, pod); err != nil {
+		return fmt.Errorf("create pod: %w", err)
 	}
 	return nil
 }

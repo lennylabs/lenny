@@ -4,15 +4,20 @@ package sandbox_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 )
 
 const requireSoPeercredFalseFlag = "--require-so-peercred=false"
@@ -178,5 +183,89 @@ func TestReconcileSkipsNonceOnlyForEmbeddedRuntime_spec_4_7(t *testing.T) {
 	}
 	if cond := apimeta.FindStatusCondition(sb.Status.Conditions, lennyv1.SandboxConditionSOPeercredDisabled); cond != nil {
 		t.Errorf("Sandbox.status carries %s condition for an embedded runtime", lennyv1.SandboxConditionSOPeercredDisabled)
+	}
+}
+
+// carrierPatchFailClient wraps a client and fails the §4.7 nonce-only carrier
+// write (the spec.requireSoPeercred SSA Apply patch on a Sandbox) while
+// passing every other call through. It models an apiserver hiccup on the
+// carrier write that is not a 409 conflict, the failure mode the create-then-
+// persist ordering could not recover from.
+type carrierPatchFailClient struct {
+	client.Client
+	err  error
+	fail *bool
+}
+
+// Patch fails a carrier apply (an ApplyPatchType patch targeting a Sandbox,
+// not its status subresource) while *fail is true; status applies and other
+// patches pass through. The carrier write is the only non-status Sandbox apply
+// the reconciler issues, so matching on the type and object is sufficient.
+func (c *carrierPatchFailClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	if c.fail != nil && *c.fail && patch.Type() == types.ApplyPatchType {
+		if _, ok := obj.(*lennyv1.Sandbox); ok {
+			return c.err
+		}
+	}
+	return c.Client.Patch(ctx, obj, patch, opts...)
+}
+
+// TestReconcileRecoversNonceOnlyCarrierWriteFailure_spec_4_4 verifies that a
+// carrier-write failure does not leave a nonce-only pod permanently without
+// its §4.4 SOPeercredDisabled condition and §4.3 carrier. The carrier is
+// persisted before the pod is created, so a failed carrier write leaves the
+// pod uncreated; the next reconcile re-enters ActionCreatePod (pod still
+// absent), re-resolves, retries the carrier write idempotently, creates the
+// pod, and surfaces the condition.
+//
+// diagnosis: a failure means the carrier and SOPeercredDisabled condition are
+// written after the pod is created, so a carrier-write error after a
+// successful pod create is unrecoverable — the pod runs in nonce-only mode
+// with no carrier and no condition forever, failing open on the §4.4
+// security-degradation surfacing invariant.
+//
+// spec: §4.3, §4.4, §4.7.
+func TestReconcileRecoversNonceOnlyCarrierWriteFailure_spec_4_4(t *testing.T) {
+	c := nonceOnlyFixture(t, "sidecar", ptr.To(false), true)
+	s := newScheme(t)
+
+	fail := true
+	wrapped := &carrierPatchFailClient{
+		Client: c,
+		err:    errors.New("apiserver hiccup on carrier write"),
+		fail:   &fail,
+	}
+	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
+
+	// First reconcile: the carrier write fails before the pod is created.
+	if _, err := r.Reconcile(context.Background(), req); err == nil {
+		t.Fatal("expected the carrier-write failure to surface as a reconcile error")
+	}
+	// The pod must NOT exist: persisting the carrier first means a carrier
+	// failure leaves the pod uncreated, so the next reconcile re-enters
+	// ActionCreatePod and the decision is recoverable.
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); !apierrors.IsNotFound(err) {
+		t.Fatalf("pod get after failed carrier write = %v, want NotFound (pod must not be created)", err)
+	}
+
+	// Second reconcile: the apiserver recovers; the carrier write succeeds,
+	// the pod is created, and the condition surfaces.
+	fail = false
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("recovery Reconcile: %v", err)
+	}
+
+	if args := adapterArgs(t, c); !hasArg(args, requireSoPeercredFalseFlag) {
+		t.Errorf("adapter args %v missing %q after recovery", args, requireSoPeercredFalseFlag)
+	}
+	sb := getSandbox(t, c)
+	if sb.Spec.RequireSoPeercred == nil || *sb.Spec.RequireSoPeercred {
+		t.Errorf("Sandbox.spec.requireSoPeercred = %v, want explicit false after recovery", sb.Spec.RequireSoPeercred)
+	}
+	cond := apimeta.FindStatusCondition(sb.Status.Conditions, lennyv1.SandboxConditionSOPeercredDisabled)
+	if cond == nil || cond.Status != metav1.ConditionTrue {
+		t.Fatalf("Sandbox.status %s = %v after recovery, want True", lennyv1.SandboxConditionSOPeercredDisabled, cond)
 	}
 }
