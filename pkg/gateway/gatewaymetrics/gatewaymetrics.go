@@ -767,12 +767,12 @@ type Metrics struct {
 	// Emitter lands with F-5.2.3.
 	statelessConcurrentActive *prometheus.GaugeVec
 
-	// taskReuseCount is the §5.2 / §16.1 histogram of sessions served by
+	// sessionReuseCount is the §5.2 / §16.1 histogram of sessions served by
 	// a single pod under recycle.enabled. The PoolScalingController reads
 	// `histogram_quantile(0.50, ...)` as the mode-adjusted `mode_factor`
 	// for recycling session-mode pools so the scaling formula converges
 	// on observed reuse. Labeled by `pool` and `k8s_pod_name` per §16.1.
-	taskReuseCount *prometheus.HistogramVec
+	sessionReuseCount *prometheus.HistogramVec
 
 	// delegationLeaseExtension is the §16 line 66 counter for §8.6
 	// lease extensions. Labelled by `tenant_id` and `outcome` (one of
@@ -2608,7 +2608,7 @@ func New() (*Metrics, error) {
 	// histogram of sessions served on a single pod under recycle.enabled.
 	// The PoolScalingController reads the median over the rolling window
 	// as the mode-adjusted `mode_factor` for recycling session-mode pools.
-	taskReuseCount, err := metrics.NewHistogram(prometheus.HistogramOpts{
+	sessionReuseCount, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_pod_session_reuse_count",
 		Help:    "Sessions served by a single pod under recycle.enabled (§5.2 / §16.1).",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
@@ -2784,7 +2784,7 @@ func New() (*Metrics, error) {
 		orphanTasksActivePerTenant,
 		orphanSessionReconciliations, agentPodStateMirrorLag,
 		treeRecoveryDuration, treeRecoveryTimeout,
-		statelessRequests, statelessConcurrentActive, taskReuseCount,
+		statelessRequests, statelessConcurrentActive, sessionReuseCount,
 		delegationLeaseExtension,
 		exportFileScans, exportFileScanDuration,
 		interceptorMTLSHandshake,
@@ -3063,7 +3063,7 @@ func New() (*Metrics, error) {
 		treeRecoveryTimeout:                  treeRecoveryTimeout,
 		statelessRequests:                    statelessRequests,
 		statelessConcurrentActive:            statelessConcurrentActive,
-		taskReuseCount:                       taskReuseCount,
+		sessionReuseCount:                    sessionReuseCount,
 		delegationLeaseExtension:             delegationLeaseExtension,
 		exportFileScans:                      exportFileScans,
 		exportFileScanDuration:               exportFileScanDuration,
@@ -3167,24 +3167,24 @@ func (m *Metrics) SetStatelessConcurrentActive(pool string, value float64) {
 	m.statelessConcurrentActive.WithLabelValues(pool).Set(value)
 }
 
-// ObserveTaskReuseCount records the served-session count of a retiring
+// ObserveSessionReuseCount records the served-session count of a retiring
 // recycling session-mode pod into lenny_pod_session_reuse_count. `pool`
 // is the SandboxTemplate name and `k8sPodName` is the pod whose
 // retirement triggered the observation. spec: §5.2 / §16.1.
-func (m *Metrics) ObserveTaskReuseCount(pool, k8sPodName string, count int) {
+func (m *Metrics) ObserveSessionReuseCount(pool, k8sPodName string, count int) {
 	if m == nil {
 		return
 	}
-	m.taskReuseCount.WithLabelValues(pool, k8sPodName).Observe(float64(count))
+	m.sessionReuseCount.WithLabelValues(pool, k8sPodName).Observe(float64(count))
 }
 
-// TaskReuseQuantile reads the in-process median of the
+// SessionReuseQuantile reads the in-process median of the
 // lenny_pod_session_reuse_count histogram for one pool. The
 // PoolScalingController uses it as the mode-adjusted `mode_factor` for
 // recycling session-mode pools (§5.2). q must be in (0,1]. ok is false
 // until at least one observation has been recorded for the pool (cold
 // start). spec: §5.2.
-func (m *Metrics) TaskReuseQuantile(pool string, q float64) (value float64, ok bool) {
+func (m *Metrics) SessionReuseQuantile(pool string, q float64) (value float64, ok bool) {
 	if m == nil {
 		return 0, false
 	}
@@ -3257,7 +3257,7 @@ func (m *Metrics) TaskReuseQuantile(pool string, q float64) (value float64, ok b
 }
 
 // bucketSample is one (upper_bound, cumulative_count) pair from a
-// histogram sample. Used by TaskReuseQuantile to merge per-pod
+// histogram sample. Used by SessionReuseQuantile to merge per-pod
 // histograms before computing the in-process median. spec: §5.2.
 type bucketSample struct {
 	ub    float64

@@ -2039,11 +2039,11 @@ func TestAdapterLeakedSlotsGauge_spec_6_2_179(t *testing.T) {
 	nilM.SetAdapterLeakedSlots("pod-a", "p", 1)
 }
 
-// TestTaskReuseHistogramRegistered_spec_5_2_569 covers the §5.2 / §16.1
+// TestSessionReuseHistogramRegistered_spec_5_2_569 covers the §5.2 / §16.1
 // lenny_pod_session_reuse_count histogram registration + observation +
-// the in-process TaskReuseQuantile helper the PoolScalingController
+// the in-process SessionReuseQuantile helper the PoolScalingController
 // consumes as mode_factor.
-func TestTaskReuseHistogramRegistered_spec_5_2_569(t *testing.T) {
+func TestSessionReuseHistogramRegistered_spec_5_2_569(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -2051,43 +2051,43 @@ func TestTaskReuseHistogramRegistered_spec_5_2_569(t *testing.T) {
 	// Two pods on the same pool: pod-1 retired after 4 sessions, pod-2
 	// after 16. The cross-series median should be ~10 (the
 	// linear-interpolation midpoint between 8 and 16 buckets).
-	m.ObserveTaskReuseCount("tp", "pod-1", 4)
-	m.ObserveTaskReuseCount("tp", "pod-2", 16)
+	m.ObserveSessionReuseCount("tp", "pod-1", 4)
+	m.ObserveSessionReuseCount("tp", "pod-2", 16)
 	body := scrapeMetrics(t, m)
 	if !strings.Contains(body, `lenny_pod_session_reuse_count_count{k8s_pod_name="pod-1",pool="tp"} 1`) {
 		t.Errorf("/metrics missing pod-1 sample: %s", body)
 	}
-	med, ok := m.TaskReuseQuantile("tp", 0.5)
+	med, ok := m.SessionReuseQuantile("tp", 0.5)
 	if !ok {
-		t.Fatal("TaskReuseQuantile reported !ok with observations recorded")
+		t.Fatal("SessionReuseQuantile reported !ok with observations recorded")
 	}
 	// With ExponentialBuckets(1, 2, 10) the buckets are 1,2,4,8,16,32,...
 	// Pod-1 (4) lands in [2,4]; pod-2 (16) lands in [8,16]. Combined
 	// cumulative counts: 4→1, 8→1, 16→2. Median at threshold 1 sits at
 	// the 8 upper bound after interpolation.
 	if med <= 0 {
-		t.Errorf("TaskReuseQuantile returned non-positive median: %v", med)
+		t.Errorf("SessionReuseQuantile returned non-positive median: %v", med)
 	}
 }
 
-// TestTaskReuseQuantileBeforeObservation_spec_5_2_569 confirms a
+// TestSessionReuseQuantileBeforeObservation_spec_5_2_569 confirms a
 // PoolScalingController querying the histogram before any observation
 // sees ok=false — the bootstrap-mode fallback path.
-func TestTaskReuseQuantileBeforeObservation_spec_5_2_569(t *testing.T) {
+func TestSessionReuseQuantileBeforeObservation_spec_5_2_569(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, ok := m.TaskReuseQuantile("never-observed", 0.5); ok {
+	if _, ok := m.SessionReuseQuantile("never-observed", 0.5); ok {
 		t.Error("expected ok=false before any observation")
 	}
 }
 
-// TestTaskReuseNilSafe_spec_5_2_569 confirms nil receivers do not panic.
-func TestTaskReuseNilSafe_spec_5_2_569(t *testing.T) {
+// TestSessionReuseNilSafe_spec_5_2_569 confirms nil receivers do not panic.
+func TestSessionReuseNilSafe_spec_5_2_569(t *testing.T) {
 	var m *gatewaymetrics.Metrics
-	m.ObserveTaskReuseCount("any", "pod", 5)
-	if v, ok := m.TaskReuseQuantile("any", 0.5); ok || v != 0 {
+	m.ObserveSessionReuseCount("any", "pod", 5)
+	if v, ok := m.SessionReuseQuantile("any", 0.5); ok || v != 0 {
 		t.Errorf("nil receiver: got (%v, %v), want (0, false)", v, ok)
 	}
 }
