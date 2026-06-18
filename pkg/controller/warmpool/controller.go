@@ -234,6 +234,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			r.idle.forget(req.NamespacedName.String())
 			r.fill.forget(req.NamespacedName.String(), req.NamespacedName.Name)
 			forgetPoolWarmingUp(req.NamespacedName.Name)
+			forgetPoolSecurityDegraded(req.NamespacedName.Name)
 			forgetIdlePods(req.NamespacedName.Name)
 			forgetReservedPods(req.NamespacedName.Name)
 		}
@@ -302,7 +303,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.updateStatus(ctx, &pool, decision, degraded); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update pool %s status: %w", pool.Name, err)
 	}
-	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
+	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision, sandboxes.Items); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update template %s status: %w", tmpl.Name, err)
 	}
 	if err := r.reconcilePDB(ctx, &pool); err != nil {
@@ -762,22 +763,42 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 	})
 }
 
-// updateTemplateCondition writes the §5.2 PoolWarmingUp condition to
-// the SandboxTemplate status. The condition is True while a pool with
-// a positive minWarm has no idle pods and at least one pod still
-// warming; the gateway reads it to answer session requests with a 503
-// during the bootstrap window. The write is skipped when neither the
-// condition nor the observed generation changed.
-func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool, decision plan.Plan) error {
+// updateTemplateCondition writes the WarmPoolController-owned conditions
+// to the SandboxTemplate status in a single SSA apply: the §5.2
+// PoolWarmingUp condition and the §4.7 SecurityDegradedMode condition.
+//
+// PoolWarmingUp is True while a pool with a positive minWarm has no idle
+// pods and at least one pod still warming; the gateway reads it to answer
+// session requests with a 503 during the bootstrap window.
+//
+// SecurityDegradedMode is True while the pool renders §4.7 nonce-only pods,
+// derived from the member Sandboxes the reconcile already listed
+// (poolNonceOnly) so the WarmPoolController reads no Runtime CR. The §4.5
+// latch keeps it True across a Runtime-field revert until the last
+// nonce-only pod is replaced, then transitions to an explicit False.
+//
+// Both conditions are merged into the live condition list and applied
+// together so the second condition's apply does not prune the first from
+// this manager's owned field set. The write is skipped when neither
+// condition nor the observed generation changed. The alert-support gauges
+// are published every reconcile, independent of whether the condition value
+// changed, so the bundled rules have live series after a controller
+// restart.
+//
+// spec: §5.2 line 627 (PoolWarmingUp + lenny_pool_warming_up gauge); §4.5,
+// §4.7 (SecurityDegradedMode + lenny_pool_security_degraded gauge); §4.6.3
+// (SandboxTemplate.status owned by the WarmPoolController).
+func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool, decision plan.Plan, sandboxes []lennyv1.Sandbox) error {
 	drained := len(decision.Drain)
 	warm := decision.WarmCount + decision.Create - drained
 	ready := decision.ReadyCount - drained
 
-	cond := poolWarmingUpCondition(int(pool.Spec.MinWarm), warm, ready)
-	// Publish the alert-support gauge every reconcile, independent of
-	// whether the condition value changed, so the WarmPoolBootstrapping
-	// rule has a live `lenny_pool_warming_up` series. spec: §5.2 line 627.
-	setPoolWarmingUp(pool.Name, cond.Status == metav1.ConditionTrue)
+	warmingCond := poolWarmingUpCondition(int(pool.Spec.MinWarm), warm, ready)
+	setPoolWarmingUp(pool.Name, warmingCond.Status == metav1.ConditionTrue)
+
+	securityCond := securityDegradedCondition(poolNonceOnly(sandboxes))
+	setPoolSecurityDegraded(pool.Name, securityCond.Status == metav1.ConditionTrue)
+
 	key := client.ObjectKeyFromObject(tmpl)
 	return retryOnConflictSSA(ctx, func(attempt int) error {
 		var live lennyv1.SandboxTemplate
@@ -786,10 +807,15 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 		} else if err := r.Client.Get(ctx, key, &live); err != nil {
 			return err
 		}
-		desired := cond
-		desired.ObservedGeneration = live.Generation
 		mergedConditions := append([]metav1.Condition{}, live.Status.Conditions...)
-		changed := meta.SetStatusCondition(&mergedConditions, desired)
+		changed := false
+		for _, cond := range []metav1.Condition{warmingCond, securityCond} {
+			desired := cond
+			desired.ObservedGeneration = live.Generation
+			if meta.SetStatusCondition(&mergedConditions, desired) {
+				changed = true
+			}
+		}
 		if live.Status.ObservedGeneration != live.Generation {
 			changed = true
 		}
@@ -838,6 +864,59 @@ func poolWarmingUpCondition(minWarm, warm, ready int) metav1.Condition {
 			Reason:  "Available",
 			Message: fmt.Sprintf("Pool has %d idle pods.", ready),
 		}
+	}
+}
+
+// conditionSecurityDegradedMode is the §4.7 nonce-only degradation
+// condition the WarmPoolController maintains on SandboxTemplate.status.
+const conditionSecurityDegradedMode = lennyv1.SandboxTemplateConditionSecurityDegradedMode
+
+// poolNonceOnly reports whether any member Sandbox places the pool in §4.7
+// nonce-only mode. A pool is in nonce-only mode when a member Sandbox
+// carries the WPC-resolved render decision `Sandbox.spec.requireSoPeercred:
+// false` (the Sandbox reconciler set it from a deploymentModel: sidecar
+// runtime and the pool acknowledgment, §4.3) or still carries the
+// SOPeercredDisabled=True status condition. The trigger reads both signals
+// so the §4.5 latch holds across a revert: after an operator reverts the
+// Runtime field, newly created Sandboxes carry neither signal, but
+// pre-revert pods keep both until they are replaced, so the pool stays in
+// nonce-only mode until the last one is gone.
+//
+// spec: §4.5 (pool-level surfacing trigger from member Sandboxes); §4.7
+// (revert latch: degraded until the last nonce-only pod is replaced).
+func poolNonceOnly(sandboxes []lennyv1.Sandbox) bool {
+	for i := range sandboxes {
+		sb := &sandboxes[i]
+		if sb.Spec.RequireSoPeercred != nil && !*sb.Spec.RequireSoPeercred {
+			return true
+		}
+		if meta.IsStatusConditionTrue(sb.Status.Conditions, lennyv1.SandboxConditionSOPeercredDisabled) {
+			return true
+		}
+	}
+	return false
+}
+
+// securityDegradedCondition derives the §4.7 SecurityDegradedMode condition
+// from the pool's nonce-only state. The explicit False on recovery mirrors
+// the §5.3 RuntimeClass Degraded recovery so a previously-degraded pool
+// reports a clean posture once its last nonce-only pod is replaced.
+//
+// spec: §4.7; §4.5.
+func securityDegradedCondition(degraded bool) metav1.Condition {
+	if degraded {
+		return metav1.Condition{
+			Type:    conditionSecurityDegradedMode,
+			Status:  metav1.ConditionTrue,
+			Reason:  "NonceOnlyMode",
+			Message: "Pool renders nonce-only adapter pods; SO_PEERCRED enforcement is disabled.",
+		}
+	}
+	return metav1.Condition{
+		Type:    conditionSecurityDegradedMode,
+		Status:  metav1.ConditionFalse,
+		Reason:  "SOPeercredEnforced",
+		Message: "Pool renders no nonce-only adapter pods; SO_PEERCRED enforcement is active.",
 	}
 }
 

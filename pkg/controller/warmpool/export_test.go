@@ -25,6 +25,19 @@ func ForgetReservedPodsForTest(pool string) {
 	forgetReservedPods(pool)
 }
 
+// SecurityDegradedGaugeForTest reads the current §4.7
+// lenny_pool_security_degraded gauge value for a pool so the package's
+// external (component) tests can assert the controller published it.
+func SecurityDegradedGaugeForTest(pool string) float64 {
+	return testutil.ToFloat64(poolSecurityDegraded.WithLabelValues(pool))
+}
+
+// ForgetSecurityDegradedForTest clears a pool's security-degraded gauge
+// series so a component test can establish a clean baseline.
+func ForgetSecurityDegradedForTest(pool string) {
+	forgetPoolSecurityDegraded(pool)
+}
+
 // PodsOnNodeForTest exposes the §4.6.1 Node→Pod fan-out mapping for the
 // package's external tests.
 func (r *PodReconciler) PodsOnNodeForTest(ctx context.Context, node client.Object) []reconcile.Request {

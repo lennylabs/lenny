@@ -53,3 +53,49 @@ func setPoolWarmingUp(pool string, warming bool) {
 func forgetPoolWarmingUp(pool string) {
 	poolWarmingUp.DeleteLabelValues(pool)
 }
+
+// poolSecurityDegraded is the alert-support gauge backing the
+// SecurityDegradedMode bundled rule. It is 1 while a pool's
+// SecurityDegradedMode condition is True (the pool renders §4.7 nonce-only
+// pods, or a nonce-only pod remains after a revert) and 0 otherwise. The
+// WarmPoolController is the sole writer; it sets the gauge in the same
+// reconcile step that writes the SecurityDegradedMode condition, so the
+// alert's `lenny_pool_security_degraded == 1` expression has a live
+// producer. The adapter counter the spec also names lives inside agent
+// pods, which no default scrape target reaches, so this gateway-side gauge
+// is the collectible series the bundled rule evaluates.
+//
+// spec: §4.7 (escalation: nonce-only operation MUST be covered by an alert,
+// satisfied by `lenny_pool_security_degraded == 1`); §16.5.
+var poolSecurityDegraded = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_pool_security_degraded",
+		Help: "1 while a warm pool's SecurityDegradedMode condition is True, 0 otherwise.",
+	}, []string{"pool"})
+	if err != nil {
+		panic(fmt.Sprintf("warmpool: build pool-security-degraded gauge: %v", err))
+	}
+	metrics.MustRegister(ctrlmetrics.Registry, g)
+	return g
+}()
+
+// setPoolSecurityDegraded publishes the security-degraded gauge for a pool
+// from the SecurityDegradedMode condition status the reconcile derived. It
+// runs on every reconcile (not only on a condition change) so a controller
+// restart re-establishes the series.
+//
+// spec: §4.7; §16.5.
+func setPoolSecurityDegraded(pool string, degraded bool) {
+	v := 0.0
+	if degraded {
+		v = 1.0
+	}
+	poolSecurityDegraded.WithLabelValues(pool).Set(v)
+}
+
+// forgetPoolSecurityDegraded clears a deleted pool's security-degraded
+// gauge series so a removed pool does not leave a stale
+// `lenny_pool_security_degraded` series behind.
+func forgetPoolSecurityDegraded(pool string) {
+	poolSecurityDegraded.DeleteLabelValues(pool)
+}

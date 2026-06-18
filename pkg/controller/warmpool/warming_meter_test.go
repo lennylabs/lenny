@@ -84,3 +84,74 @@ func TestPoolWarmingUpConditionDrivesGauge_spec_5_2_627(t *testing.T) {
 		})
 	}
 }
+
+// TestSetPoolSecurityDegraded_spec_4_7 verifies the §4.7 alert-support
+// gauge tracks the degraded flag so the bundled
+// `lenny_pool_security_degraded == 1` rule has a live producer.
+//
+// spec: §4.7 (nonce-only operation MUST be covered by an alert); §16.5.
+func TestSetPoolSecurityDegraded_spec_4_7(t *testing.T) {
+	const pool = "security-gauge-set"
+	t.Cleanup(func() { forgetPoolSecurityDegraded(pool) })
+
+	setPoolSecurityDegraded(pool, true)
+	if g := testutil.ToFloat64(poolSecurityDegraded.WithLabelValues(pool)); g != 1 {
+		t.Fatalf("security-degraded gauge after true = %v, want 1", g)
+	}
+
+	setPoolSecurityDegraded(pool, false)
+	if g := testutil.ToFloat64(poolSecurityDegraded.WithLabelValues(pool)); g != 0 {
+		t.Fatalf("security-degraded gauge after false = %v, want 0", g)
+	}
+}
+
+// TestForgetPoolSecurityDegraded_spec_4_7 verifies a deleted pool's gauge
+// series is removed so a removed pool leaves no stale series behind.
+//
+// spec: §4.7; §16.5.
+func TestForgetPoolSecurityDegraded_spec_4_7(t *testing.T) {
+	const pool = "security-gauge-forget"
+	setPoolSecurityDegraded(pool, true)
+	if c := testutil.CollectAndCount(poolSecurityDegraded); c == 0 {
+		t.Fatalf("expected at least one series after set, got %d", c)
+	}
+	forgetPoolSecurityDegraded(pool)
+	if m, err := poolSecurityDegraded.GetMetricWithLabelValues(pool); err != nil {
+		t.Fatalf("GetMetricWithLabelValues: %v", err)
+	} else if v := testutil.ToFloat64(m); v != 0 {
+		t.Fatalf("security-degraded gauge after forget = %v, want 0 (re-created series)", v)
+	}
+	t.Cleanup(func() { forgetPoolSecurityDegraded(pool) })
+}
+
+// TestSecurityDegradedConditionDrivesGauge_spec_4_7 binds the gauge to the
+// exact condition-status expression the reconcile uses at the call site, so
+// a True condition yields gauge=1 and a False condition yields gauge=0.
+//
+// spec: §4.7; §16.5.
+func TestSecurityDegradedConditionDrivesGauge_spec_4_7(t *testing.T) {
+	const pool = "security-gauge-condition"
+	t.Cleanup(func() { forgetPoolSecurityDegraded(pool) })
+
+	cases := []struct {
+		name             string
+		degraded         bool
+		wantGauge        float64
+		wantConditionVal metav1.ConditionStatus
+	}{
+		{"nonce-only pool renders degraded", true, 1, metav1.ConditionTrue},
+		{"enforcing pool renders clean", false, 0, metav1.ConditionFalse},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cond := securityDegradedCondition(tc.degraded)
+			if cond.Status != tc.wantConditionVal {
+				t.Fatalf("condition status = %v, want %v", cond.Status, tc.wantConditionVal)
+			}
+			setPoolSecurityDegraded(pool, cond.Status == metav1.ConditionTrue)
+			if g := testutil.ToFloat64(poolSecurityDegraded.WithLabelValues(pool)); g != tc.wantGauge {
+				t.Fatalf("gauge = %v, want %v", g, tc.wantGauge)
+			}
+		})
+	}
+}
