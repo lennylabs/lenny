@@ -489,6 +489,15 @@ var prodMigrationSchema = []struct {
 		"conversation_continuity", "terminated_at", "terminated_reason",
 		"suspended_at", "suspended_reason",
 	}},
+	// 0169 adds the §4.7 / §5.1 require_so_peercred runtime-registry mirror
+	// of the Runtime.spec.requireSoPeercred nonce-only activation field the
+	// gateway pool admission gate evaluates. spec: §4.7, §5.1.
+	{migration: "0169", table: "runtime_definitions", columns: []string{"require_so_peercred"}},
+	// 0170 adds the §4.7 / §5.3 acknowledge_nonce_only_auth pool-level
+	// opt-in flag, of the same class as allow_standard_isolation, that the
+	// gateway pool admission path requires before a pool may reference a
+	// nonce-only runtime. spec: §4.7, §5.3.
+	{migration: "0170", table: "sandbox_warm_pools", columns: []string{"acknowledge_nonce_only_auth"}},
 }
 
 // spec: 12.2, 18.5
