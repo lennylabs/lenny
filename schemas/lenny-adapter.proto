@@ -852,9 +852,12 @@ message SetupCommandOutput {
 message StartSessionRequest {
   // Field 3 (workspace_plan) and field 7 (setup_policy) were removed
   // when workspace materialization and setup-command execution moved to
-  // the FinalizeWorkspace and RunSetup staging RPCs (§4.7).
-  reserved 3, 7;
-  reserved "workspace_plan", "setup_policy";
+  // the FinalizeWorkspace and RunSetup staging RPCs (§4.7). Field 8
+  // (task_id) was removed when the dead gateway-supplied task identifier
+  // was dropped: a session has exactly one execution, so the adapter
+  // derives the manifest taskId from the session id (§4.7).
+  reserved 3, 7, 8;
+  reserved "workspace_plan", "setup_policy", "task_id";
   SessionId session_id = 1;
   string runtime = 2;
   map<string, string> labels = 4;
@@ -866,14 +869,6 @@ message StartSessionRequest {
   // runtime receives in the adapter manifest to stitch its native
   // traces into the parent's trace tree. Empty when none is set.
   map<string, string> tracing_context = 6;
-  // task_id is the §4.7 task identifier written into the adapter
-  // manifest. A session has exactly one execution, so task_id is frozen
-  // equal to the session's root task identifier ("Task" is the external
-  // protocol name for the session: an MCP or A2A Task, or a
-  // lenny/delegate_task child). Empty when the gateway sets no explicit
-  // task identifier, where the adapter defaults the manifest taskId to
-  // the session id. spec: §3.5 session and task.
-  string task_id = 8;
   // agent_interface is the runtime's §5.1 agentInterface descriptor,
   // JSON-encoded, written verbatim into the adapter manifest's
   // agentInterface field. Empty when the runtime declares none (the
@@ -1053,6 +1048,11 @@ message SignalDeadlineResponse {
 }
 
 message ResumeRequest {
+  // Field 6 (task_id) was removed when the dead gateway-supplied task
+  // identifier was dropped: the adapter derives the manifest taskId from
+  // the session id (§4.7), the same as StartSessionRequest.
+  reserved 6;
+  reserved "task_id";
   SessionId session_id = 1;
   string runtime = 2;        // runtime name, as in StartSessionRequest
   string checkpoint_id = 3;  // checkpoint to restore the workspace from
@@ -1062,11 +1062,10 @@ message ResumeRequest {
   // pod. Absent when unset.
   ExperimentContext experiment_context = 4;
   map<string, string> tracing_context = 5;
-  // task_id, agent_interface, and min_platform_version are re-delivered to
-  // the restored runtime in the adapter manifest, the same as
+  // agent_interface and min_platform_version are re-delivered to the
+  // restored runtime in the adapter manifest, the same as
   // StartSessionRequest, so a resume onto a fresh pod reproduces the
   // §15.4 manifest field set.
-  string task_id = 6;
   bytes agent_interface = 7;
   string min_platform_version = 8;
   // recovery_generation is the session's §4.2 / §7.3 pod-recovery

@@ -2727,14 +2727,6 @@ type StartSessionRequest struct {
 	// runtime receives in the adapter manifest to stitch its native
 	// traces into the parent's trace tree. Empty when none is set.
 	TracingContext map[string]string `protobuf:"bytes,6,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// task_id is the §4.7 task identifier written into the adapter
-	// manifest. A session has exactly one execution, so task_id is frozen
-	// equal to the session's root task identifier ("Task" is the external
-	// protocol name for the session: an MCP or A2A Task, or a
-	// lenny/delegate_task child). Empty when the gateway sets no explicit
-	// task identifier, where the adapter defaults the manifest taskId to
-	// the session id. spec: §3.5 session and task.
-	TaskId string `protobuf:"bytes,8,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	// agent_interface is the runtime's §5.1 agentInterface descriptor,
 	// JSON-encoded, written verbatim into the adapter manifest's
 	// agentInterface field. Empty when the runtime declares none (the
@@ -2819,13 +2811,6 @@ func (x *StartSessionRequest) GetTracingContext() map[string]string {
 		return x.TracingContext
 	}
 	return nil
-}
-
-func (x *StartSessionRequest) GetTaskId() string {
-	if x != nil {
-		return x.TaskId
-	}
-	return ""
 }
 
 func (x *StartSessionRequest) GetAgentInterface() []byte {
@@ -3919,11 +3904,10 @@ type ResumeRequest struct {
 	// pod. Absent when unset.
 	ExperimentContext *ExperimentContext `protobuf:"bytes,4,opt,name=experiment_context,json=experimentContext,proto3" json:"experiment_context,omitempty"`
 	TracingContext    map[string]string  `protobuf:"bytes,5,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// task_id, agent_interface, and min_platform_version are re-delivered to
-	// the restored runtime in the adapter manifest, the same as
+	// agent_interface and min_platform_version are re-delivered to the
+	// restored runtime in the adapter manifest, the same as
 	// StartSessionRequest, so a resume onto a fresh pod reproduces the
 	// §15.4 manifest field set.
-	TaskId             string `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	AgentInterface     []byte `protobuf:"bytes,7,opt,name=agent_interface,json=agentInterface,proto3" json:"agent_interface,omitempty"`
 	MinPlatformVersion string `protobuf:"bytes,8,opt,name=min_platform_version,json=minPlatformVersion,proto3" json:"min_platform_version,omitempty"`
 	// recovery_generation is the session's §4.2 / §7.3 pod-recovery
@@ -4030,13 +4014,6 @@ func (x *ResumeRequest) GetTracingContext() map[string]string {
 		return x.TracingContext
 	}
 	return nil
-}
-
-func (x *ResumeRequest) GetTaskId() string {
-	if x != nil {
-		return x.TaskId
-	}
-	return ""
 }
 
 func (x *ResumeRequest) GetAgentInterface() []byte {
@@ -5959,15 +5936,14 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x06stderr\x18\x04 \x01(\tR\x06stderr\x12\x1f\n" +
 	"\vduration_ms\x18\x05 \x01(\x03R\n" +
 	"durationMs\x12\x1c\n" +
-	"\ttruncated\x18\x06 \x01(\bR\ttruncated\"\xbd\x05\n" +
+	"\ttruncated\x18\x06 \x01(\bR\ttruncated\"\xb3\x05\n" +
 	"\x13StartSessionRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
 	"\aruntime\x18\x02 \x01(\tR\aruntime\x12I\n" +
 	"\x06labels\x18\x04 \x03(\v21.lenny.adapter.v1.StartSessionRequest.LabelsEntryR\x06labels\x12R\n" +
 	"\x12experiment_context\x18\x05 \x01(\v2#.lenny.adapter.v1.ExperimentContextR\x11experimentContext\x12b\n" +
-	"\x0ftracing_context\x18\x06 \x03(\v29.lenny.adapter.v1.StartSessionRequest.TracingContextEntryR\x0etracingContext\x12\x17\n" +
-	"\atask_id\x18\b \x01(\tR\x06taskId\x12'\n" +
+	"\x0ftracing_context\x18\x06 \x03(\v29.lenny.adapter.v1.StartSessionRequest.TracingContextEntryR\x0etracingContext\x12'\n" +
 	"\x0fagent_interface\x18\t \x01(\fR\x0eagentInterface\x120\n" +
 	"\x14min_platform_version\x18\n" +
 	" \x01(\tR\x12minPlatformVersion\x121\n" +
@@ -5977,7 +5953,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x03\x10\x04J\x04\b\a\x10\bR\x0eworkspace_planR\fsetup_policy\"k\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x03\x10\x04J\x04\b\a\x10\bJ\x04\b\b\x10\tR\x0eworkspace_planR\fsetup_policyR\atask_id\"k\n" +
 	"\vSetupPolicy\x12'\n" +
 	"\x0ftimeout_seconds\x18\x01 \x01(\x05R\x0etimeoutSeconds\x12\x1d\n" +
 	"\n" +
@@ -6064,15 +6040,14 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\fremaining_ms\x18\x02 \x01(\x05R\vremainingMs\x12\x18\n" +
 	"\atrigger\x18\x03 \x01(\tR\atrigger\"6\n" +
 	"\x16SignalDeadlineResponse\x12\x1c\n" +
-	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xd3\x05\n" +
+	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xc9\x05\n" +
 	"\rResumeRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
 	"\aruntime\x18\x02 \x01(\tR\aruntime\x12#\n" +
 	"\rcheckpoint_id\x18\x03 \x01(\tR\fcheckpointId\x12R\n" +
 	"\x12experiment_context\x18\x04 \x01(\v2#.lenny.adapter.v1.ExperimentContextR\x11experimentContext\x12\\\n" +
-	"\x0ftracing_context\x18\x05 \x03(\v23.lenny.adapter.v1.ResumeRequest.TracingContextEntryR\x0etracingContext\x12\x17\n" +
-	"\atask_id\x18\x06 \x01(\tR\x06taskId\x12'\n" +
+	"\x0ftracing_context\x18\x05 \x03(\v23.lenny.adapter.v1.ResumeRequest.TracingContextEntryR\x0etracingContext\x12'\n" +
 	"\x0fagent_interface\x18\a \x01(\fR\x0eagentInterface\x120\n" +
 	"\x14min_platform_version\x18\b \x01(\tR\x12minPlatformVersion\x12/\n" +
 	"\x13recovery_generation\x18\t \x01(\x03R\x12recoveryGeneration\x128\n" +
@@ -6082,7 +6057,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x17expected_workspace_root\x18\f \x01(\tR\x15expectedWorkspaceRoot\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"|\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aR\atask_id\"|\n" +
 	"\x0eResumeResponse\x12%\n" +
 	"\x0erestored_bytes\x18\x01 \x01(\x03R\rrestoredBytes\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12/\n" +

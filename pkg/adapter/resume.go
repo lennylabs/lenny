@@ -113,7 +113,6 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// same §4.7 / §8.3 fields as before the resume.
 	nonce, err := s.writeSessionManifest(manifestInputs{
 		sessionID:          sessionID,
-		taskID:             req.GetTaskId(),
 		experimentContext:  req.GetExperimentContext(),
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),

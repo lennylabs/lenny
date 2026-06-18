@@ -119,7 +119,6 @@ func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
 	req := &adapterv1.StartSessionRequest{
 		SessionId:          &adapterv1.SessionId{Value: p.SessionID},
 		Runtime:            p.Runtime,
-		TaskId:             p.TaskID,
 		ExperimentContext:  p.ExperimentContext,
 		TracingContext:     p.TracingContext,
 		AgentInterface:     p.AgentInterface,
@@ -630,7 +629,6 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 		SessionId:               &adapterv1.SessionId{Value: p.SessionID},
 		Runtime:                 p.Runtime,
 		CheckpointId:            p.CheckpointID,
-		TaskId:                  p.TaskID,
 		ExperimentContext:       p.ExperimentContext,
 		TracingContext:          p.TracingContext,
 		AgentInterface:          p.AgentInterface,
