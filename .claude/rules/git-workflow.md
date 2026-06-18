@@ -8,7 +8,7 @@ Integration history is explicit and branches are short-lived. Every feature bran
 
 ## Merge with a merge commit, not a fast-forward
 
-- Integrate a feature branch into a long-lived branch (`main`, `impl/*`) with `git merge --no-ff`, so the integration is a single merge commit that names the branch and groups its commits. Do not fast-forward a feature branch into a long-lived branch, even when the long-lived branch has not advanced.
+- Integrate a feature branch into a long-lived branch (parent branch unless the user asks for something else) with `git merge --no-ff`, so the integration is a single merge commit that names the branch and groups its commits. Do not fast-forward a feature branch into a long-lived branch, even when the long-lived branch has not advanced.
 - The merge commit message names the proposal, finding, or feature the branch implemented, so the integration point is greppable from the first-parent history.
 - A merge that conflicts is resolved on the feature branch (rebase or merge the target in, resolve, re-run the reached test tiers), then integrated with `--no-ff`. Do not resolve conflicts directly in the merge into a long-lived branch.
 
@@ -20,7 +20,7 @@ Integration history is explicit and branches are short-lived. Every feature bran
 
 ## Where these rules apply
 
-- Every merge of a feature branch into `main` or an `impl/*` integration branch.
+- Every merge.
 - Branch cleanup after a merge.
 
 ## How to apply when merging
