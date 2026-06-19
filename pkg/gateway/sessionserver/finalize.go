@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -171,10 +173,22 @@ func sourceUploadRefField(i int, _ string) string {
 // (FinalizeWorkspace), runs the plan's setup commands (RunSetup), and assigns
 // the §4.9 credential lease (AssignCredentials), recording the §6.3
 // workspace_materialization / setup_commands / credential_assignment phase
-// timings. On any step failure the binder reclaims the pod (and any lease
-// assigned earlier in the phase) via the §6.2 pre-attached disposition and
-// returns the corresponding workspace-validation, setup-command, or credential
-// error for handleFinalize to surface (writePodClaimError).
+// timings.
+//
+// On any failure the create-time pod is reclaimed via the §6.2 pre-attached
+// disposition so no pod leaks past a finalize-barrier failure (§4.3). A
+// through-Prepare failure (workspace validation, setup command, or lease
+// assignment) is reclaimed by the binder's lease-aware failPhase, which revokes
+// the lease when AssignCredentials had already run. A pre-Prepare failure (pool
+// resolution, or a credential source that was available at the create-time
+// pre-check but gone by finalize) never engages the binder, so this function
+// reclaims the claimed pod itself before returning; no lease is assigned yet, so
+// the revoke is a no-op. A finalize-time credential availability miss is the
+// §4.9 line 1220 check-to-assignment mismatch (the source vanished across the
+// upload window), so it is remapped to CREDENTIAL_POOL_EXHAUSTED rather than the
+// create-only USER_CREDENTIAL_NOT_FOUND (§7.6). The returned error is the
+// corresponding workspace-validation, setup-command, or credential error for
+// handleFinalize to surface (writePodClaimError).
 //
 // It returns (nil, nil) for the dispositions that perform no finalize-time
 // preparation:
@@ -206,6 +220,12 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
+		// spec: §4.3 (proposal: finalize-failure reclaim) / §6.2 — a pre-Prepare
+		// failure (pool resolution) never engages the binder, so its internal
+		// failPhase reclaim cannot run. Reclaim the create-time pod here so a
+		// pool that was deleted during the upload window does not leak the claim
+		// past the §4.6.1 orphan-claim GC timeout.
+		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
 		return nil, err
 	}
 	// spec: §5.2 — service mode is claimless and materializes no workspace;
@@ -222,7 +242,19 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	// resolves the assignment inputs the prepare phase's AssignCredentials uses.
 	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
 	if err != nil {
-		return nil, err
+		// spec: §4.3 (proposal: finalize-failure reclaim) / §6.2 — the
+		// resolution ran before the binder engaged, so reclaim the create-time
+		// pod here (no lease is assigned yet, so the revoke is a no-op).
+		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
+		// spec: §7.6 line 153 (proposal) — a credential source that was
+		// available at the create-time pre-check but is gone at finalize is the
+		// check-to-assignment mismatch the proposal requires to surface as
+		// CREDENTIAL_POOL_EXHAUSTED at /finalize, not the create-only
+		// USER_CREDENTIAL_NOT_FOUND (404) or pre-claim envelope. The mismatch
+		// window spans the whole create → upload → finalize window (§4.9), and
+		// the lenny_credential_preclaim_mismatch_total counter records the same
+		// pre-check-passes-then-assignment-fails event, now observed at finalize.
+		return nil, mapFinalizeCredentialMismatch(err)
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
@@ -241,6 +273,38 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	// /start, so each phase is observed once per logical start.
 	s.recordStartupPhases(match, prep.Timings)
 	return prep, nil
+}
+
+// mapFinalizeCredentialMismatch translates a finalize-time credential
+// availability miss into the §4.9 line 1220 check-to-assignment mismatch so
+// writePodClaimError surfaces it as CREDENTIAL_POOL_EXHAUSTED (assignment_race)
+// and increments lenny_credential_preclaim_mismatch_total, rather than the
+// create-only USER_CREDENTIAL_NOT_FOUND (404) or pre-claim CREDENTIAL_POOL_EXHAUSTED
+// envelopes.
+//
+// The §7.6 division is "check at create, assignment at finalize": a credential
+// source present at the create-time pre-check that is gone by finalize is the
+// race the proposal attributes to the upload window, not a create-time
+// not-found. Both credrouter sentinels (ErrUserCredentialNotFound, which the
+// without-fallback create-time pre-check already rejects before any pod is
+// claimed, and ErrNoCredentialAvailable) collapse to the same finalize-time
+// mismatch; any other error (a store read failure, a proxy-dialect mismatch)
+// is returned unchanged so it keeps its own envelope.
+//
+// spec: §4.9 line 1220 (check-to-assignment race); §7.3 line 138, §7.6 line 153
+// (proposal: USER_CREDENTIAL_NOT_FOUND is not a finalize trigger; the mismatch
+// surfaces as CREDENTIAL_POOL_EXHAUSTED at /finalize).
+func mapFinalizeCredentialMismatch(err error) error {
+	if errors.Is(err, credrouter.ErrUserCredentialNotFound) || errors.Is(err, credrouter.ErrNoCredentialAvailable) {
+		// Wrap the message rather than the sentinel itself: writePodClaimError
+		// routes ErrUserCredentialNotFound to a create-only 404 before it reaches
+		// the CredentialAssignmentError case, so a CredentialAssignmentError that
+		// unwrapped to the sentinel would still surface as USER_CREDENTIAL_NOT_FOUND.
+		// Keeping the sentinel out of the unwrap chain forces the assignment-race
+		// (CREDENTIAL_POOL_EXHAUSTED) envelope the proposal requires at finalize.
+		return &podsession.CredentialAssignmentError{Err: errors.New(err.Error())}
+	}
+	return err
 }
 
 // storedWorkspacePlanForFinalize returns the §14 WorkspacePlan the finalize

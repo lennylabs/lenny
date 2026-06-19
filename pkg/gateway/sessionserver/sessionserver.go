@@ -3178,6 +3178,13 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// mode, a concurrent-workspace slot, or a row with no live binding).
 	plan, perr := storedWorkspacePlanForFinalize(updated, hasPlan, planJSON)
 	if perr != nil {
+		// spec: §4.3 (proposal: any finalize-barrier failure reclaims the
+		// create-time pod via the §6.2 pre-attached disposition) — the parse
+		// failed before the prepare phase engaged the binder, so its internal
+		// failPhase reclaim cannot run. Reclaim the claimed pod here (no lease
+		// is assigned yet, so the revoke is a no-op) before failing the row, so
+		// a finalize-barrier failure does not leak the pod claimed at /create.
+		s.reclaimFinalizedPod(r.Context(), updated.PodAssignment, id)
 		s.failSession(r.Context(), tenantID, id)
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"stored workspace plan could not be parsed: "+perr.Error(), nil)
@@ -3185,12 +3192,17 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 	prep, err := s.prepareAtFinalize(r.Context(), updated, plan)
 	if err != nil {
-		// spec: §4.3 / §6.2 — the prepare step failed; the binder already
-		// reclaimed the claimed pod (and any lease assigned earlier in the
-		// phase) via the §6.2 pre-attached disposition. Transition the row to
-		// the terminal `failed` state (finalizing → failed) so a retry of
-		// finalize cannot run against a pod that no longer exists, then surface
-		// the workspace-validation, setup-command, or credential error. A
+		// spec: §4.3 / §6.2 — the finalize barrier failed; the claimed pod has
+		// already been reclaimed via the §6.2 pre-attached disposition. A
+		// through-Prepare failure (workspace validation, setup command, or
+		// lease assignment) is reclaimed by the binder's lease-aware failPhase,
+		// which revokes the lease when AssignCredentials had already run; a
+		// pre-Prepare failure (pool resolution, or the check-to-assignment
+		// credential mismatch) is reclaimed by prepareAtFinalize itself before it
+		// returns. Either way no pod leaks. Transition the row to the terminal
+		// `failed` state (finalizing → failed) so a retry of finalize cannot run
+		// against a pod that no longer exists, then surface the
+		// workspace-validation, setup-command, or credential error. A
 		// materialization or check-to-assignment credential failure surfaces as
 		// CREDENTIAL_POOL_EXHAUSTED via writePodClaimError.
 		s.failSession(r.Context(), tenantID, id)

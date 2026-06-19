@@ -4,6 +4,8 @@ package sessionserver
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
+	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
@@ -193,6 +197,87 @@ func TestFinalizeRejectsMalformedBody(t *testing.T) {
 	if row.State != session.StateCreated {
 		t.Errorf("state = %q, want created (unchanged after rejection)", row.State)
 	}
+}
+
+// TestMapFinalizeCredentialMismatch confirms that the §4.9 check-to-assignment
+// mismatch surfaced at /finalize remaps the create-time credential sentinels
+// (ErrUserCredentialNotFound, ErrNoCredentialAvailable) to the
+// CredentialAssignmentError envelope so writePodClaimError reports
+// CREDENTIAL_POOL_EXHAUSTED rather than the create-only USER_CREDENTIAL_NOT_FOUND
+// or pre-claim envelope. Per §7.6 the user-credential lookup and the
+// without-fallback not-found rejection stay a POST /v1/sessions error; a source
+// that vanishes across the upload window is the finalize-time mismatch. An
+// unrelated error passes through unchanged so it keeps its own envelope.
+// spec: §4.9 line 1220; §7.3 line 138, §7.6 line 153 (proposal).
+func TestMapFinalizeCredentialMismatch(t *testing.T) {
+	otherErr := errors.New("kube-api read failure")
+	cases := []struct {
+		name       string
+		in         error
+		wantCredAs bool
+	}{
+		{"user-credential-not-found becomes mismatch", credrouter.ErrUserCredentialNotFound, true},
+		{"no-credential-available becomes mismatch", credrouter.ErrNoCredentialAvailable, true},
+		{"unrelated error passes through", otherErr, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapFinalizeCredentialMismatch(tc.in)
+			var credAs *podsession.CredentialAssignmentError
+			if errors.As(got, &credAs) != tc.wantCredAs {
+				t.Fatalf("mapFinalizeCredentialMismatch(%v) credAs=%v, want %v", tc.in, !tc.wantCredAs, tc.wantCredAs)
+			}
+			if !tc.wantCredAs && !errors.Is(got, tc.in) {
+				t.Errorf("unrelated error not preserved: got %v, want %v", got, tc.in)
+			}
+		})
+	}
+}
+
+// TestFinalizeCredentialMismatchSurfacesPoolExhausted confirms that the
+// remapped finalize-time credential mismatch routes through writePodClaimError
+// to the §4.9 CREDENTIAL_POOL_EXHAUSTED envelope with the assignment_race
+// reason and emits the preclaim-mismatch metric, rather than the create-only
+// USER_CREDENTIAL_NOT_FOUND 404. This pins the §7.3 line 138 / §7.6 line 153
+// rule that USER_CREDENTIAL_NOT_FOUND is not a finalize trigger.
+// spec: §4.9 line 1220; §7.3 line 138; §7.6 line 153 (proposal).
+func TestFinalizeCredentialMismatchSurfacesPoolExhausted(t *testing.T) {
+	var gotPool, gotProvider string
+	mismatchCalled := false
+	s := &Server{preclaimMismatch: func(pool, provider string) {
+		gotPool, gotProvider, mismatchCalled = pool, provider, true
+	}}
+	rr := httptest.NewRecorder()
+	// A user-only miss observed at finalize is the check-to-assignment mismatch,
+	// not a create-time not-found.
+	s.writePodClaimError(rr, mapFinalizeCredentialMismatch(credrouter.ErrUserCredentialNotFound),
+		"SESSION_CREATION_FAILED", "workspace finalization failed")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (CREDENTIAL_POOL_EXHAUSTED), not 404 USER_CREDENTIAL_NOT_FOUND; body=%s",
+			rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != "CREDENTIAL_POOL_EXHAUSTED" {
+		t.Errorf("code = %q, want CREDENTIAL_POOL_EXHAUSTED", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "assignment_race" {
+		t.Errorf("reason = %v, want assignment_race", env.Error.Details["reason"])
+	}
+	// The mismatch metric is emitted, counting the same pre-check-passes-then-
+	// assignment-fails event now observed at finalize (§7.6 line 153).
+	if !mismatchCalled {
+		t.Errorf("preclaim-mismatch metric not emitted for the finalize credential mismatch")
+	}
+	_ = gotPool
+	_ = gotProvider
 }
 
 // TestFinalizeBindsUploadFilePlan confirms a uploadFile source is also

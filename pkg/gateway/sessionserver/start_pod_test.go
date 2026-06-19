@@ -739,6 +739,122 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	}
 }
 
+// spec: §4.9 line 1220 (check-to-assignment race), §7.3 line 138 / §7.6 line
+// 153 (proposal: USER_CREDENTIAL_NOT_FOUND is not a finalize trigger; a
+// check-to-assignment mismatch surfaces as CREDENTIAL_POOL_EXHAUSTED at
+// /finalize), §4.3 (proposal: a finalize-step failure reclaims the create-time
+// pod), §6.2 (pre-attached disposition).
+// diagnosis: a credential source present at the create-time §7.1-step-3
+// pre-check but gone by /finalize is the check-to-assignment mismatch. It must
+// (a) surface as CREDENTIAL_POOL_EXHAUSTED rather than the create-only
+// USER_CREDENTIAL_NOT_FOUND or pre-claim envelope, and (b) reclaim the pod
+// claimed at /create (delete the per-pod SandboxClaim) even though the binder's
+// prepare phase never ran, so the pod does not leak to the §4.6.1 orphan-claim
+// GC. A failure here means either the finalize re-resolution surfaced
+// USER_CREDENTIAL_NOT_FOUND (a 404 the proposal forbids at finalize) or the
+// create-time pod was left holding its claim after the pre-Prepare resolution
+// failed.
+func TestFinalizeCredentialMismatchReclaimsPod_spec_7_6(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-fin-credmiss" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        credrouter.NewDefault(),
+	})
+	h := srv.Handler()
+
+	// Create succeeds: the credential is active at the §7.1-step-3 pre-check, so
+	// the pod is claimed.
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+
+	// The credential vanishes during the upload window: revoke the pool's only
+	// credential so the finalize re-resolution finds none assignable.
+	if _, err := credPools.Update(ctx, "acme", "claude-prod", func(p *credentialpoolstore.CredentialPool) error {
+		p.Credentials[0].Status = credentialpoolstore.CredentialRevoked
+		return nil
+	}); err != nil {
+		t.Fatalf("revoke credential: %v", err)
+	}
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-credmiss/finalize", nil)
+	// The mismatch surfaces as CREDENTIAL_POOL_EXHAUSTED (503), not the
+	// create-only USER_CREDENTIAL_NOT_FOUND (404).
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("finalize with a vanished credential: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("CREDENTIAL_POOL_EXHAUSTED")) {
+		t.Errorf("finalize error body = %s, want CREDENTIAL_POOL_EXHAUSTED", rr.Body.String())
+	}
+
+	// The session transitioned to the terminal failed state.
+	row, err := store.Get(ctx, "acme", "sess-fin-credmiss")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the finalize credential mismatch", row.State)
+	}
+	// The create-time pod was reclaimed: the per-pod SandboxClaim is deleted,
+	// even though the binder's prepare phase never ran (the mismatch was a
+	// pre-Prepare resolution failure).
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+		t.Errorf("per-pod claim still present after the failed finalize; the create-time pod was not reclaimed")
+	}
+}
+
 func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 	srv, registry, _, _ := podBindServer(t, "sess-2step-early")
 	h := srv.Handler()
