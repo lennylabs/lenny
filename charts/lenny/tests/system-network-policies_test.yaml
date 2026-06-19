@@ -8,10 +8,12 @@ tests:
   - it: renders the full lenny-system policy set including the new policies
     asserts:
       # default-deny-all plus the per-component allow-lists, including
-      # allow-gateway-ingress, allow-bootstrap-egress, allow-ops, and the
-      # named lenny-ops-deny-all-ingress baseline (F-17.2.16).
+      # allow-gateway-ingress, allow-bootstrap-egress, allow-ops, the
+      # allow-deployment-config-sync-egress policy (rendered because
+      # deploymentAudit.enabled defaults to true), and the named
+      # lenny-ops-deny-all-ingress baseline (F-17.2.16).
       - hasDocuments:
-          count: 15
+          count: 16
 
   # spec: §25.4 line 1123; §17.2 line 31 — the operability-vs-agent
   # boundary names lenny-ops-deny-all-ingress explicitly; render it by
@@ -249,6 +251,47 @@ tests:
           content:
             port: 53
             protocol: TCP
+
+  # spec: §16.7 (deployment-transition audit emitter) + §13.2 — the
+  # deployment-config-sync hook Job posts to the gateway under default-deny,
+  # so it needs an egress allow-list mirroring allow-bootstrap-egress.
+  - it: scopes allow-deployment-config-sync-egress to its component, egress-only
+    documentSelector:
+      path: metadata.name
+      value: allow-deployment-config-sync-egress
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: deployment-config-sync
+      - equal:
+          path: spec.policyTypes
+          value: [Egress]
+
+  - it: allows deployment-config-sync egress to the gateway internal HTTP port
+    documentSelector:
+      path: metadata.name
+      value: allow-deployment-config-sync-egress
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 8080
+      - equal:
+          path: spec.egress[0].ports[0].protocol
+          value: TCP
+
+  - it: omits allow-deployment-config-sync-egress when deploymentAudit is disabled
+    set:
+      deploymentAudit.enabled: false
+    asserts:
+      # The Job is gated on deploymentAudit.enabled, so its egress policy
+      # must render if and only if the Job does. Disabling drops it (16 -> 15).
+      - hasDocuments:
+          count: 15
+      - notExists:
+          path: $[?(@.metadata.name == "allow-deployment-config-sync-egress")]
 
   - it: scopes allow-ops to the lenny-ops pods with ingress and egress
     documentSelector:

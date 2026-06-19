@@ -31,8 +31,7 @@ import (
 // socket) on every §6.4 warm pod. When the chmod fails this way but the
 // directory already carries the required permission bits the failure is
 // benign and treated as success; any other error, or a benign error on a
-// directory whose mode is still wrong, is returned. spec: §6.4 line 409 —
-// F-6.4.3.
+// directory whose mode is still wrong, is returned. spec: §6.4.
 func chmodWarmDir(dir string, mode os.FileMode) error {
 	return chmodWarmDirWith(dir, mode, os.Chmod)
 }
@@ -129,7 +128,7 @@ func (s *Server) EnsureWarmWorkspaceLayout() error {
 // the step entirely (the pod spec still mounts the volume read-only), so
 // an adapter wired without the layout still starts.
 //
-// spec: §6.4 line 409 — F-6.4.3.
+// spec: §6.4.
 func (s *Server) ensureSharedAssets() error {
 	if s.SharedAssetsDir == "" {
 		return nil
