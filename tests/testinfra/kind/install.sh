@@ -475,7 +475,14 @@ kc apply -f "${CHART_DIR}/crds/"
 # into SandboxTemplate/SandboxWarmPool CRD pairs in lenny-agents. Each pool
 # is standard-isolation (the §13.1 Kind cluster has no Kata/microVM runtime
 # class) with allowStandardIsolation: true, the §5.3 deployer opt-in a
-# standard-isolation pool requires. spec: §17.6, §4.6.2, §13.1.
+# standard-isolation pool requires. Each pool also sets the §13.2 per-pool
+# DNS opt-out (dnsPolicy: cluster-default): the dedicated lenny-system
+# CoreDNS instance is disabled on this overlay (coredns.deploy=false,
+# because the lenny-coredns image is unbuildable offline), so the
+# WarmPoolController stamps the lenny.dev/dns-policy: cluster-default label
+# and the supplemental allow-pod-egress-kube-dns NetworkPolicy (rendered by
+# coredns.allowClusterDefaultOptOut in e2e-values.yaml) admits the pods'
+# kube-system DNS egress. spec: §17.6, §4.6.2, §13.1, §13.2.
 BOOTSTRAP_OVERLAY="${REPO_ROOT}/tests/testinfra/kind/bootstrap-overlay.gen.yaml"
 log "generating the bootstrap overlay with resolved runtime digests"
 cat >"${BOOTSTRAP_OVERLAY}" <<EOF
@@ -569,12 +576,14 @@ bootstrap:
       executionMode: session
       warmCount: 6
       allowStandardIsolation: true
+      dnsPolicy: cluster-default
     - name: echo-pool-embedded
       runtimeRef: echo-runtime-embedded
       isolationProfile: standard
       executionMode: session
       warmCount: 1
       allowStandardIsolation: true
+      dnsPolicy: cluster-default
     # §6.3 SDK-warm arm: the preconnect runtime drives the warming ->
     # sdk_connecting -> idle path. warmCount is 6 for the same reason as
     # echo-pool-sidecar above: the benchmark's 2-VU smoke run exhausts a
@@ -587,18 +596,21 @@ bootstrap:
       executionMode: session
       warmCount: 6
       allowStandardIsolation: true
+      dnsPolicy: cluster-default
     - name: cred-shell-echo-pool
       runtimeRef: cred-shell-echo-runtime
       isolationProfile: standard
       executionMode: session
       warmCount: 1
       allowStandardIsolation: true
+      dnsPolicy: cluster-default
     - name: elicitation-echo-pool
       runtimeRef: elicitation-echo-runtime
       isolationProfile: standard
       executionMode: session
       warmCount: 1
       allowStandardIsolation: true
+      dnsPolicy: cluster-default
 EOF
 
 # --server-side=false forces client-side apply. Helm 4 defaults to

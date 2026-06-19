@@ -216,12 +216,27 @@ poolScalingController:
 # --dedicated-dns-cluster-ip flag (it is gated on coredns.deploy AND
 # coredns.clusterIP). The Sandbox reconciler's applyDedicatedDNS then returns
 # early without an IP, so agent pods keep the default ClusterFirst resolver
-# (kube-system kube-dns) rather than dnsPolicy:None. The agent-namespace
-# allow-pod-egress-base NetworkPolicy re-admits kube-system DNS egress under
-# global.devMode when coredns.deploy is false, so echo agent pods resolve
-# normally. clusterIP and image.pullPolicy are unused while deploy is false.
+# (kube-system kube-dns) rather than dnsPolicy:None.
+#
+# §13.2 forbids the broad allow-pod-egress-base policy (podSelector
+# lenny.dev/managed: "true") from carrying a kube-system DNS peer: the broad
+# selector would let every managed agent pod bypass the dedicated instance's
+# query logging, rate limiting, and response filtering. The §13.2-sanctioned
+# fallback is the per-pool opt-out. Each e2e pool sets dnsPolicy:
+# cluster-default (in the bootstrap overlay install.sh generates), so the
+# WarmPoolController stamps the lenny.dev/dns-policy: cluster-default label on
+# its pods, and allowClusterDefaultOptOut below renders the supplemental
+# allow-pod-egress-kube-dns NetworkPolicy scoped to that label, which admits
+# only the opted-out pods' kube-system DNS egress. clusterIP and
+# image.pullPolicy are unused while deploy is false.
 coredns:
   deploy: false
+  # Render the §13.2 allow-pod-egress-kube-dns NetworkPolicy, scoped to the
+  # lenny.dev/dns-policy: cluster-default label, so the e2e pools that opt out
+  # of the (disabled) dedicated CoreDNS instance resolve through kube-system
+  # CoreDNS. Without it the agent pods carry the opt-out label but
+  # default-deny-all blocks their DNS egress and every lookup fails.
+  allowClusterDefaultOptOut: true
 
 # The §16.7 deployment-config-sync post-install hook is disabled on the Kind
 # e2e. The hook runs lenny-ctl `admin deployment sync-config` against the

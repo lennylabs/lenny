@@ -48,7 +48,7 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	egress_profile, created_at, updated_at, deleted_at,
 	pool_config_generation, session_policy, elicitation_policy, draining_since,
 	bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config,
-	acknowledge_nonce_only_auth`
+	acknowledge_nonce_only_auth, dns_policy`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -67,6 +67,9 @@ func validatePool(p poolstore.Pool) error {
 		return errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
 	}
 	if err := poolstore.ValidateEgressIsolation(p); err != nil {
+		return err
+	}
+	if err := poolstore.ValidateDNSPolicy(p); err != nil {
 		return err
 	}
 	if err := poolstore.ValidateServiceConfig(p); err != nil {
@@ -236,14 +239,14 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 		egress_profile, created_at, updated_at, deleted_at,
 		pool_config_generation, session_policy, elicitation_policy, draining_since,
 		bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config,
-		acknowledge_nonce_only_auth
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+		acknowledge_nonce_only_auth, dns_policy
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, p.MaxConcurrent,
 		string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
 		p.Generation, spJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
-		p.AcknowledgeNonceOnlyAuth)
+		p.AcknowledgeNonceOnlyAuth, p.DNSPolicy)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -316,14 +319,14 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		egress_profile = $10, updated_at = $11, deleted_at = $12,
 		pool_config_generation = $13, session_policy = $14, elicitation_policy = $15, draining_since = $16,
 		bootstrap_min_warm = $17, reconciliation_resume_epoch = $18, sdk_warm_config = $19,
-		acknowledge_nonce_only_auth = $20
+		acknowledge_nonce_only_auth = $20, dns_policy = $21
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, p.MaxConcurrent,
 		string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
 		p.Generation, spJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
-		p.AcknowledgeNonceOnlyAuth); err != nil {
+		p.AcknowledgeNonceOnlyAuth, p.DNSPolicy); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -437,7 +440,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		&egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
 		&p.Generation, &sessionPolicy, &elicitationPolicy, &drainingSince,
 		&bootstrapMinWarm, &p.ReconciliationResumeEpoch, &sdkWarmConfig,
-		&p.AcknowledgeNonceOnlyAuth,
+		&p.AcknowledgeNonceOnlyAuth, &p.DNSPolicy,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}

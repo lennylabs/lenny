@@ -110,6 +110,15 @@ type PoolPayload struct {
 	// §13.2 default (`restricted`).
 	EgressProfile string `json:"egressProfile,omitempty"`
 
+	// DNSPolicy is the §13.2 per-pool DNS opt-out. The only accepted value
+	// is `cluster-default`: the pool's pods revert to the Kubernetes
+	// default ClusterFirst resolver (kube-system CoreDNS) instead of the
+	// dedicated lenny-system CoreDNS instance, and the WarmPoolController
+	// stamps the lenny.dev/dns-policy: cluster-default label. Empty (the
+	// default) routes the pool through the dedicated instance. Opting out
+	// is permitted only for `standard` (runc) pools (§13.2).
+	DNSPolicy string `json:"dnsPolicy,omitempty"`
+
 	// MaxConcurrent is the §5.2 service-mode per-pod request capacity. It
 	// is meaningful only on a `service`-mode pool; the pool store's
 	// ValidateServiceConfig rejects it on any other pool. The session-mode
@@ -241,6 +250,7 @@ type UpdatePoolRequest struct {
 	// a nonce-only runtime without the acknowledgment. spec: §5.3, §4.7.
 	AcknowledgeNonceOnlyAuth *bool                       `json:"acknowledgeNonceOnlyAuth,omitempty"`
 	EgressProfile            *string                     `json:"egressProfile,omitempty"`
+	DNSPolicy                *string                     `json:"dnsPolicy,omitempty"`
 	MaxConcurrent            *int                        `json:"maxConcurrent,omitempty"`
 	SessionPolicy            *runtimestore.SessionPolicy `json:"sessionPolicy,omitempty"`
 	// ClearSessionPolicy, when true, removes the persisted sessionPolicy
@@ -277,6 +287,7 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		AllowStandardIsolation:   p.AllowStandardIsolation,
 		AcknowledgeNonceOnlyAuth: p.AcknowledgeNonceOnlyAuth,
 		EgressProfile:            string(p.EgressProfile),
+		DNSPolicy:                p.DNSPolicy,
 		MaxConcurrent:            p.MaxConcurrent,
 		SessionPolicy:            p.SessionPolicy.Clone(),
 		CreatedAt:                rfc3339Nano(p.CreatedAt),
@@ -340,6 +351,7 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 		AllowStandardIsolation:     body.AllowStandardIsolation,
 		AcknowledgeNonceOnlyAuth:   body.AcknowledgeNonceOnlyAuth,
 		EgressProfile:              egress.Profile(body.EgressProfile),
+		DNSPolicy:                  body.DNSPolicy,
 		ElicitationDepthPolicy:     elicitation.DepthPolicy(body.ElicitationDepthPolicy),
 		ElicitationSuppressAtDepth: body.ElicitationSuppressAtDepth,
 		URLModeElicitation:         urlModeFromWire(body.URLModeElicitation),
@@ -397,6 +409,9 @@ func validatePoolForStore(p poolstore.Pool) error {
 		return errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
 	}
 	if err := poolstore.ValidateEgressIsolation(p); err != nil {
+		return err
+	}
+	if err := poolstore.ValidateDNSPolicy(p); err != nil {
 		return err
 	}
 	if err := poolstore.ValidateServiceConfig(p); err != nil {
@@ -463,6 +478,9 @@ func (p PoolPayload) validateEnums() error {
 	}
 	if p.EgressProfile != "" && !egress.IsValid(egress.Profile(p.EgressProfile)) {
 		return errors.New("egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)")
+	}
+	if p.DNSPolicy != "" && p.DNSPolicy != poolstore.DNSPolicyClusterDefault {
+		return errors.New("dnsPolicy is not a recognised §13.2 value (only cluster-default opts out of the dedicated CoreDNS instance)")
 	}
 	if p.ElicitationDepthPolicy != "" && !elicitation.DepthPolicy(p.ElicitationDepthPolicy).IsValid() {
 		return errors.New("elicitationDepthPolicy is not a recognised §9.2 policy (allow_all, suppress_at_depth, block_all)")
@@ -1075,6 +1093,9 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.EgressProfile != nil {
 		p.EgressProfile = egress.Profile(*body.EgressProfile)
 	}
+	if body.DNSPolicy != nil {
+		p.DNSPolicy = *body.DNSPolicy
+	}
 	if body.MaxConcurrent != nil {
 		p.MaxConcurrent = *body.MaxConcurrent
 	}
@@ -1347,6 +1368,12 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 		!egress.IsValid(egress.Profile(*body.EgressProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)", nil)
+		return
+	}
+	if body.DNSPolicy != nil && *body.DNSPolicy != "" &&
+		*body.DNSPolicy != poolstore.DNSPolicyClusterDefault {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"dnsPolicy is not a recognised §13.2 value (only cluster-default opts out of the dedicated CoreDNS instance)", nil)
 		return
 	}
 	if body.ClearSessionPolicy && body.SessionPolicy != nil {
@@ -1656,6 +1683,9 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.EgressProfile != nil {
 		out = append(out, "egressProfile")
+	}
+	if b.DNSPolicy != nil {
+		out = append(out, "dnsPolicy")
 	}
 	if b.MaxConcurrent != nil {
 		out = append(out, "maxConcurrent")
