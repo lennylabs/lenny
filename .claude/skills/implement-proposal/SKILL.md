@@ -20,7 +20,7 @@ It is the implementation stage of the proposal pipeline: `change-proposal` write
 
 - Spec first. The staged spec edits are applied and verified, and committed as their own commit, before any code is written.
 - Spec edits are applied only through this skill's verified apply loop, never by hand. The guard hook blocks direct `spec/` writes unless an approved proposal is pending; once the proposal reads "Applied to spec" the hook blocks spec writes again, so the code phase cannot touch `spec/`.
-- Spec content rules hold over verbatim application: the spec never references source code paths, and cross-references other spec content by section number, never line number. The apply loop rephrases or drops staged text that would violate these and records the deviation.
+- Spec content rules hold over verbatim application: the spec never references source code paths, and cross-references other spec content by section number, never line number. A new section or subsection is appended at the end of its level and numbered as the next ordinal, never inserted between existing siblings, so existing numbering and cross-references stay stable. The apply loop rephrases or drops staged text that would violate these and records the deviation.
 - Code changes follow `.claude/rules/spec-driven-development.md`, `.claude/rules/code-best-practices.md`, and `.claude/rules/test-coverage.md`: every behavior traces to a spec section, tests run across every tier the change reaches, and they pass.
 - Findings close only after the implementation verifies green. The skill never opens or re-opens a finding. A proposal with no referencing finding still implements; the close step is a no-op.
 

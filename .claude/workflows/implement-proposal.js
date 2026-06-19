@@ -33,7 +33,6 @@ export const meta = {
   phases: [
     { title: "Plan", detail: "read the proposal, gate on approval, extract staged spec edits and findings" },
     { title: "Apply spec", detail: "land the staged spec edits and verify exact alignment until clean" },
-    { title: "Implement", detail: "implement-proposal-build subworkflow: blast radius, build sequence, tests" },
     { title: "Close findings", detail: "mark associated BUILD-GAPS.md findings CLOSED" },
   ],
 };
@@ -59,6 +58,7 @@ const SPEC_RULES =
   "- The spec never references source code files or implementation paths (pkg/, cmd/, charts/, sdks/, tests/, migrations/, .go or other source files). Rephrase staged text carrying such a reference into behavioral spec language, or drop the reference.\n" +
   "- The spec cross-references other spec content by section number only: §X.Y or a relative markdown link to a section anchor. Replace a line-number cross-reference in staged text with the containing section's number.\n" +
   "- Line numbers in the proposal's ANCHOR INSTRUCTIONS are location hints for you and never become spec content. Locate anchors by the quoted text and section headings; line numbers drift.\n" +
+  "- A staged edit that introduces a brand-new section or subsection is appended at the end of its level, after the last existing sibling at that level, and numbered as the next ordinal. Never insert a new section or subsection between existing ones: inserting in the middle forces every following section to be renumbered and breaks existing cross-references. When a staged anchor instruction would place a new section or subsection between existing ones, append it at the end of that level instead, renumber it to the next ordinal, and record the deviation. Editing the body of an existing section in place is unaffected by this rule; it applies only to introducing a new numbered section or subsection.\n" +
   "- Apply staged prose as written otherwise; do not restyle it.";
 
 const PLAN = {
@@ -306,10 +306,11 @@ if (plan.specEdits.length === 0) {
     round +
     ".\n\nYou are a read-only verifier; do not edit any file. Work in " +
     repo +
-    ".\n\nRun `git diff -- spec/` and inspect ONLY the added lines (lines starting with '+'). Flag as a discrepancy:\n" +
-    "- any reference to source code files or implementation paths: pkg/, cmd/, charts/, sdks/, tests/, migrations/, or a source file extension such as .go;\n" +
-    "- any cross-reference by line number ('line 123', 'lines 45-48') to spec or any other file. Cross-references only; incidental prose is fine.\n" +
-    "Pre-existing text (context and removed lines) is out of scope. Quote each offending added line exactly, name its file, and give the rule-conformant replacement." +
+    ".\n\nRun `git diff -- spec/`. Inspect the added lines (lines starting with '+') for the first two checks below, and compare added against removed lines (lines starting with '-') for the renumbering check. Flag as a discrepancy:\n" +
+    "- any reference to source code files or implementation paths: pkg/, cmd/, charts/, sdks/, tests/, migrations/, or a source file extension such as .go (added lines only);\n" +
+    "- any cross-reference by line number ('line 123', 'lines 45-48') to spec or any other file. Cross-references only; incidental prose is fine (added lines only);\n" +
+    "- any sign that a new section or subsection was inserted between existing ones instead of appended at the end of its level: an existing heading whose number changed (the diff removes a heading at one number and adds the same titled heading at a higher number), or a new heading inserted ahead of an existing sibling so the following siblings are renumbered. Renumbering an existing section breaks its cross-references; a new section or subsection belongs at the end of its level. Quote the renumbered headings, name the file, and give the fix (append the new section or subsection at the end of its level and restore the original numbering of the rest).\n" +
+    "Pre-existing text that the diff leaves unchanged is out of scope. Quote each offending line exactly, name its file, and give the rule-conformant replacement." +
     DEVIATION_NOTE;
 
   const fixPrompt = (f, found, round) =>
@@ -426,7 +427,11 @@ if (!implementCode) {
   };
 }
 
-phase("Implement");
+// The implement-proposal-build subworkflow IS the implement stage: it runs
+// inline and brings its own phase group (Plan, Build, Verify, Review) under a
+// "▸ implement-proposal-build" heading, so no redundant parent "Implement"
+// phase wraps it.
+log("Implementing the spec change via the implement-proposal-build subworkflow");
 let build;
 try {
   build = await workflow("implement-proposal-build", {
