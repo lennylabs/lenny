@@ -3020,7 +3020,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if fromState == session.StateResuming {
 		s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
 	}
-	s.recordSessionCompleted(r.Context(), updated)
+	s.recordSessionCompleted(r.Context(), fromState, updated)
 	s.writeSession(w, http.StatusOK, updated)
 }
 
@@ -3070,7 +3070,7 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 			if fromState == session.StateResuming {
 				s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
 			}
-			s.recordSessionCompleted(r.Context(), updated)
+			s.recordSessionCompleted(r.Context(), fromState, updated)
 		} else {
 			// spec: §7.2 line 137 — surface a non-terminal transition
 			// (e.g. interrupt → suspended) on the SSE stream. Terminal

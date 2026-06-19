@@ -178,7 +178,7 @@ func TestRecordSessionCompletedEmitsTerminalAuditEvent_spec_7_1_10(t *testing.T)
 		if tc.state == session.StateFailed {
 			row.FailureClass = session.FailureClass("runtime_failure")
 		}
-		srv.recordSessionCompleted(context.Background(), row)
+		srv.recordSessionCompleted(context.Background(), session.StateRunning, row)
 
 		var got *SessionLifecycleEvent
 		for i := range sink.events {
@@ -198,7 +198,7 @@ func TestRecordSessionCompletedEmitsTerminalAuditEvent_spec_7_1_10(t *testing.T)
 func TestRecordSessionCompletedNonTerminalNoAudit_spec_7_1_10(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(memstore.New(), Options{LifecycleAuditSink: sink})
-	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateRunning,
 	})
 	if len(sink.events) != 0 {
@@ -210,7 +210,7 @@ func TestLifecycleAuditNilSinkIsSafe_spec_7_1_10(t *testing.T) {
 	srv := New(memstore.New(), Options{})
 	// Neither path may panic with a nil sink.
 	srv.recordSessionCreated(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateCreated})
-	srv.recordSessionCompleted(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
 }
 
 // --- F-7.1.11 / F-7.2.2: status_change + session_complete SSE ----------
@@ -221,7 +221,7 @@ func TestTerminalTransitionEmitsStatusChangeAndComplete_spec_7_2_2(t *testing.T)
 	} {
 		bus := sessionevents.NewBus(64)
 		srv := New(memstore.New(), Options{Events: bus})
-		srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+		srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 			ID: "s", TenantID: "acme", State: st,
 		})
 
@@ -249,7 +249,7 @@ func TestTerminalTransitionEmitsStatusChangeAndComplete_spec_7_2_2(t *testing.T)
 func TestSessionCompleteCarriesTaskResult_spec_7_2_2(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	srv := New(memstore.New(), Options{Events: bus})
-	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateFailed,
 		FailureReason: "RUNTIME_CRASH",
 	})
@@ -278,7 +278,7 @@ func TestSessionCompleteCarriesTaskResult_spec_7_2_2(t *testing.T) {
 func TestNonTerminalRecordCompletedNoSSE_spec_7_2_2(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	srv := New(memstore.New(), Options{Events: bus})
-	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateRunning,
 	})
 	if n := len(bus.History("s", 0)); n != 0 {

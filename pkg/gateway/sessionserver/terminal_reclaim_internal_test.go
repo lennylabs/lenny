@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -78,7 +79,7 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 func TestTerminalReclaimPreRunningReleasesPodAndLease(t *testing.T) {
 	s, c, assigner := reclaimTestServer(t, "sbx-pre")
 
-	ran := s.terminalReclaimPreRunning(context.Background(), sessionstore.Session{
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateFinalizing, sessionstore.Session{
 		ID: "sess-pre", TenantID: "acme", PodAssignment: "sbx-pre", PoolRef: "pool-a",
 	})
 	if !ran {
@@ -95,27 +96,93 @@ func TestTerminalReclaimPreRunningReleasesPodAndLease(t *testing.T) {
 	}
 }
 
-// spec: §4.6 (durable binding) — a bound (running/resuming) session has a live
-// BindResult in the registry, so its lease is revoked through the binder's
-// Release on the executor path. terminalReclaimPreRunning must not claim it as a
-// pre-running session: it returns false and leaves the claim untouched so the
-// executor release is not double-driven.
-func TestTerminalReclaimPreRunningSkipsBoundSession(t *testing.T) {
+// spec: §4.6 (durable binding) — a created/finalizing/ready session that
+// nonetheless holds a live BindResult in the registry (an SDK-warm preConnect
+// pod attached at finalize) is released through the binder's Release on the
+// executor path. terminalReclaimPreRunning must not reclaim it by name: it
+// returns false and leaves the claim untouched so the executor release is not
+// double-driven.
+func TestTerminalReclaimPreRunningSkipsLocallyBoundSession(t *testing.T) {
 	s, c, assigner := reclaimTestServer(t, "sbx-bound")
-	// A live BindResult marks the session as launched (running).
+	// A live BindResult marks the session as attached on this replica.
 	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-bound", TenantID: "acme", SandboxName: "sbx-bound"})
 
-	ran := s.terminalReclaimPreRunning(context.Background(), sessionstore.Session{
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateReady, sessionstore.Session{
 		ID: "sess-bound", TenantID: "acme", PodAssignment: "sbx-bound",
 	})
 	if ran {
-		t.Fatalf("terminalReclaimPreRunning = true for a bound session, want false (executor path owns the release)")
+		t.Fatalf("terminalReclaimPreRunning = true for a locally-bound session, want false (executor path owns the release)")
 	}
 	if !claimExists(t, c, "sbx-bound") {
-		t.Errorf("per-pod claim deleted for a bound session, want untouched (the executor release owns it)")
+		t.Errorf("per-pod claim deleted for a locally-bound session, want untouched (the executor release owns it)")
 	}
 	if len(assigner.released) != 0 {
 		t.Errorf("ReleaseSession calls = %v, want none (the executor release revokes the lease)", assigner.released)
+	}
+}
+
+// spec: §4.6 (durable binding, scoped to created/finalizing/ready); §6.2
+// (recycle disposition); §10.1 (running-session handoff) — a running session
+// always carries a persisted PodAssignment (set at create-time claim and
+// /start), and the per-replica registry misses it after a coordinator handoff.
+// terminalReclaimPreRunning must NOT reclaim such a session by name even though
+// this replica holds no live BindResult: the by-name claim DELETE would bypass
+// the §6.2 recycle disposition the binder's Release applies. Gating on the
+// pre-terminal state (running) keeps it on the executor release path. This is
+// the regression the design-conformance review identified: a maxSessionAge-
+// expired handed-off running session must not be retired by the pre-running
+// reclaim.
+func TestTerminalReclaimPreRunningSkipsHandedOffRunningSession(t *testing.T) {
+	s, c, assigner := reclaimTestServer(t, "sbx-run")
+	// No registry entry: the running session's BindResult lives on another
+	// replica (coordinator handoff), so this replica's registry misses it.
+
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateRunning, sessionstore.Session{
+		ID: "sess-run", TenantID: "acme", PodAssignment: "sbx-run", PoolRef: "pool-a",
+	})
+	if ran {
+		t.Fatalf("terminalReclaimPreRunning = true for a handed-off running session, want false " +
+			"(the executor recycle path owns the release; the by-name reclaim would bypass the §6.2 recycle disposition)")
+	}
+	if !claimExists(t, c, "sbx-run") {
+		t.Errorf("per-pod claim deleted for a running session, want untouched (the §6.2 recycle path owns it)")
+	}
+	if len(assigner.released) != 0 {
+		t.Errorf("ReleaseSession calls = %v, want none (the running-session reclaim does not run the by-name lease revoke)", assigner.released)
+	}
+}
+
+// spec: §4.6 — a resuming session is likewise excluded from the by-name reclaim
+// even when this replica holds no live BindResult (the §10.4 handoff case).
+func TestTerminalReclaimPreRunningSkipsResumingSession(t *testing.T) {
+	s, c, _ := reclaimTestServer(t, "sbx-resume")
+
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateResuming, sessionstore.Session{
+		ID: "sess-resume", TenantID: "acme", PodAssignment: "sbx-resume", PoolRef: "pool-a",
+	})
+	if ran {
+		t.Fatalf("terminalReclaimPreRunning = true for a resuming session, want false")
+	}
+	if !claimExists(t, c, "sbx-resume") {
+		t.Errorf("per-pod claim deleted for a resuming session, want untouched")
+	}
+}
+
+// spec: §4.6 — a starting session is mid-launch on the launching replica, which
+// holds (or is establishing) a live BindResult, so its teardown follows the
+// §6.2 executor recycle path. terminalReclaimPreRunning excludes starting from
+// the by-name reclaim scope.
+func TestTerminalReclaimPreRunningSkipsStartingSession(t *testing.T) {
+	s, c, _ := reclaimTestServer(t, "sbx-start")
+
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateStarting, sessionstore.Session{
+		ID: "sess-start", TenantID: "acme", PodAssignment: "sbx-start", PoolRef: "pool-a",
+	})
+	if ran {
+		t.Fatalf("terminalReclaimPreRunning = true for a starting session, want false")
+	}
+	if !claimExists(t, c, "sbx-start") {
+		t.Errorf("per-pod claim deleted for a starting session, want untouched")
 	}
 }
 
@@ -126,7 +193,7 @@ func TestTerminalReclaimPreRunningSkipsBoundSession(t *testing.T) {
 func TestTerminalReclaimPreRunningNoPodBindingIsSkipped(t *testing.T) {
 	s, _, assigner := reclaimTestServer(t, "sbx-none")
 
-	ran := s.terminalReclaimPreRunning(context.Background(), sessionstore.Session{
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateCreated, sessionstore.Session{
 		ID: "sess-none", TenantID: "acme", PodAssignment: "",
 	})
 	if ran {
@@ -143,10 +210,34 @@ func TestTerminalReclaimPreRunningNoPodBindingIsSkipped(t *testing.T) {
 // through to the executor path, which is the echo/subprocess teardown).
 func TestTerminalReclaimPreRunningNoBinderIsSkipped(t *testing.T) {
 	s := &Server{} // podBinder and podRegistry nil
-	ran := s.terminalReclaimPreRunning(context.Background(), sessionstore.Session{
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateCreated, sessionstore.Session{
 		ID: "sess-x", TenantID: "acme", PodAssignment: "sbx-x",
 	})
 	if ran {
 		t.Fatalf("terminalReclaimPreRunning = true with no binder, want false")
+	}
+}
+
+// spec: §4.6 — a created session that holds a pod claim but is force-terminated
+// while the gateway has a binder reclaims the pod by name. This pins the
+// created state (the most common pre-running abandon case) to the by-name
+// reclaim path so the §4.5 created-expiry sweeper and /terminate share it.
+func TestTerminalReclaimPreRunningCreatedStateReclaims(t *testing.T) {
+	s, c, assigner := reclaimTestServer(t, "sbx-created")
+
+	ran := s.terminalReclaimPreRunning(context.Background(), session.StateCreated, sessionstore.Session{
+		ID: "sess-created", TenantID: "acme", PodAssignment: "sbx-created", PoolRef: "pool-a",
+	})
+	if !ran {
+		t.Fatalf("terminalReclaimPreRunning = false for a created session, want true")
+	}
+	if claimExists(t, c, "sbx-created") {
+		t.Errorf("per-pod claim still present after reclaim of a created session, want deleted")
+	}
+	// A created session never assigned a lease, but the revoke is still issued
+	// (a no-op keyed by sessionID), so the path fails closed for the
+	// finalizing/ready case that always holds one.
+	if len(assigner.released) != 1 || assigner.released[0] != "sess-created" {
+		t.Errorf("ReleaseSession calls = %v, want [sess-created]", assigner.released)
 	}
 }

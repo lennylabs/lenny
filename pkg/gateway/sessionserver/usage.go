@@ -294,10 +294,14 @@ func terminalSessionEvent(st session.State) (et events.EventType, severity strin
 // §5.2 line 519 — audit, SSE, billing, archive). It adapts the private
 // recordSessionCompleted so background sweepers force-terminating a
 // session emit the same signals exactly once as a session terminated by
-// REST. spec: §5.2 line 519; §6.2 lines 105-117; §11.7; §7.2 lines 137,
+// REST. fromState is the session's pre-terminal state, which the sweeper
+// captured before it forced the row terminal; the terminal pod-release path
+// keys off it so a maxSessionAge-expired running session is released through
+// the §6.2 executor recycle path rather than the by-name reclaim (§4.6).
+// spec: §5.2 line 519; §6.2 lines 105-117; §11.7; §7.2 lines 137,
 // 141. Closes F-5.2.26.
-func (s *Server) OnSessionTerminal(ctx context.Context, sess sessionstore.Session) {
-	s.recordSessionCompleted(ctx, sess)
+func (s *Server) OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session) {
+	s.recordSessionCompleted(ctx, fromState, sess)
 }
 
 // OnSessionExpiredFromAwaitingClientAction is the watchdog's
@@ -360,7 +364,15 @@ func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, 
 // the runtime down and reclaims the pod — and emits the §11.2.1
 // `session.completed` billing event. All are best-effort: a failure
 // never fails the transition that triggered it.
-func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
+//
+// fromState is the session's pre-terminal state, captured by the caller
+// before it overwrote the row with the terminal value. The terminal
+// pod-release path keys off it: a session that was created/finalizing/ready
+// before termination never launched and holds only a §4.6 claim, so its pod
+// is reclaimed by name; a running/resuming session holds a live BindResult
+// and is released through the executor path so the §6.2 recycle disposition
+// is preserved (§4.6). spec: §15.1 line 620; §4.6.
+func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.State, sess sessionstore.Session) {
 	// spec: §7.2 / §8.8 — record the Terminated session-condition fact on the
 	// Postgres session row (the gateway is not a Sandbox.status writer, §4.6.3,
 	// so the terminal disposition is a session-row field rather than a
@@ -426,12 +438,16 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	// (PodExecutor.Release no-op), leaking both the claim and any lease the
 	// finalize barrier assigned. Reclaim the claimed pod and revoke the lease
 	// from the persisted binding instead, the same claimless reclaim the §4.5
-	// created-expiry sweeper runs. A bound (running/resuming) session has a live
-	// BindResult, so it falls through to the executor release, which revokes the
-	// lease through the binder's Release. terminalReclaimPreRunning reports true
-	// only when it ran the reclaim, so the executor release (the no-bind no-op
-	// for a pre-running session) is skipped in that case.
-	if !s.terminalReclaimPreRunning(ctx, sess) && s.executor != nil {
+	// created-expiry sweeper runs. A running/resuming session is released through
+	// the executor path so its pod follows the §6.2 recycle disposition that
+	// the binder's Release applies; the by-name reclaim is scoped to the
+	// pre-running states (§4.6) by gating on fromState rather than on the mere
+	// absence of a local BindResult, because a coordinator-handed-off running
+	// session also lacks a local BindResult yet must not be reclaimed by name.
+	// terminalReclaimPreRunning reports true only when it ran the reclaim, so the
+	// executor release (the no-bind no-op for a pre-running session) is skipped
+	// in that case.
+	if !s.terminalReclaimPreRunning(ctx, fromState, sess) && s.executor != nil {
 		if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
 			// recordSessionCompleted is best-effort by design (a failed
 			// teardown does not unwind the terminal-state transition), but
@@ -519,6 +535,22 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	})
 }
 
+// isPreRunningClaimState reports whether st is one of the §4.6 pre-running
+// states (created/finalizing/ready) in which a session holds a pod claimed at
+// /create but never launched a runtime, so the durable binding is the persisted
+// SandboxName alone. It deliberately excludes `starting`: a `starting` session
+// is mid-launch and the launching replica holds (or is establishing) a live
+// BindResult, so its teardown follows the §6.2 executor-release recycle path
+// rather than the by-name reclaim. spec: §4.6 (durable binding, scoped to
+// created/finalizing/ready).
+func isPreRunningClaimState(st session.State) bool {
+	switch st {
+	case session.StateCreated, session.StateFinalizing, session.StateReady:
+		return true
+	}
+	return false
+}
+
 // terminalReclaimPreRunning releases the pod a session claimed at /create
 // and revokes any lease the finalize barrier assigned when the session
 // reaches a terminal state before it ever launched (created/finalizing/ready).
@@ -527,26 +559,42 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 // the claim and the lease. It reports true when it ran the reclaim so the
 // caller skips the no-bind executor release.
 //
-// The discriminator is the absence of a live BindResult for a row that carries
-// a persisted pod binding (PodAssignment): a bound running/resuming session has
-// a registry entry and its lease is revoked through the binder's Release on the
-// executor path; a created/finalizing/ready session has only the §4.6 persisted
-// SandboxName, which ReclaimClaimed releases by name (deleting the per-pod
-// SandboxClaim and revoking the lease keyed by sessionID). When the gateway runs
-// without a pod binder or registry (in-memory mode), or the row carries no pod
-// binding, the reclaim cannot apply and it reports false so the caller falls
-// through to the executor path. The lease revoke inside ReclaimClaimed is a
-// no-op for a created session that never assigned one and mandatory for a
-// finalizing/ready session that always holds one (§7.1 step 23).
+// The discriminator is the pre-terminal state, not the mere absence of a local
+// BindResult: the by-name reclaim is scoped to created/finalizing/ready
+// (fromState), where the §4.6 durable binding is the persisted SandboxName
+// alone and ReclaimClaimed releases it by name (deleting the per-pod
+// SandboxClaim and revoking the lease keyed by sessionID). A running/resuming
+// session is excluded even when this replica holds no live BindResult: the
+// per-replica registry (registry.go) misses a coordinator-handed-off running
+// session, and a running session always carries a persisted PodAssignment, so
+// keying on the absent BindResult alone would route a clean-terminating running
+// session through the by-name claim DELETE, bypassing the §6.2 recycle
+// disposition and the adapter scrub the binder's Release performs. Gating on
+// fromState keeps the running-session teardown on the executor path (§10.1
+// handoff coverage, the binder's Release). When the gateway runs without a pod
+// binder or registry (in-memory mode) or the row carries no pod binding, the
+// reclaim cannot apply and it reports false so the caller falls through to the
+// executor path. The lease revoke inside ReclaimClaimed is a no-op for a
+// created session that never assigned one and mandatory for a finalizing/ready
+// session that always holds one (§7.1 step 23).
 //
-// spec: §15.1 line 620 (/terminate releases the pod); §4.6 (durable binding);
-// §6.2 (pre-attached disposition); §7.1 step 23 (lease release); §4.5 (proposal,
-// the claimless reclaim the created-expiry sweeper shares).
-func (s *Server) terminalReclaimPreRunning(ctx context.Context, sess sessionstore.Session) bool {
+// spec: §15.1 line 620 (/terminate releases the pod); §4.6 (durable binding,
+// created/finalizing/ready scope); §6.2 (pre-attached disposition); §7.1 step
+// 23 (lease release); §4.5 (proposal, the claimless reclaim the created-expiry
+// sweeper shares).
+func (s *Server) terminalReclaimPreRunning(ctx context.Context, fromState session.State, sess sessionstore.Session) bool {
+	if !isPreRunningClaimState(fromState) {
+		return false
+	}
 	if s.podBinder == nil || s.podRegistry == nil || sess.PodAssignment == "" {
 		return false
 	}
 	if _, bound := s.podRegistry.Get(sess.ID); bound {
+		// A created/finalizing/ready session that nonetheless holds a live
+		// BindResult on this replica (an SDK-warm preConnect pod attached at
+		// finalize, for example) is released through the executor path so its
+		// lease and pod follow the binder's Release rather than the by-name
+		// claim DELETE.
 		return false
 	}
 	if err := s.podBinder.ReclaimClaimed(ctx, sess.PodAssignment, sess.ID); err != nil {

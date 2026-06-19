@@ -6915,10 +6915,12 @@ func main() {
 			return row.State, true
 		}
 		deadlockFail := func(ctx context.Context, tenantID, sessionID string) {
+			var fromState session.State
 			updated, err := sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
 				if session.IsTerminal(s.State) {
 					return nil // a concurrent terminal transition won the race
 				}
+				fromState = s.State
 				s.State = session.StateFailed
 				s.FailureClass = session.FailureClassRuntime
 				s.FailureReason = string(session.FailureDeadlockTimeout)
@@ -6930,7 +6932,10 @@ func main() {
 			}
 			if updated.State == session.StateFailed &&
 				updated.FailureReason == string(session.FailureDeadlockTimeout) {
-				sessionSrv.OnSessionTerminal(ctx, updated)
+				// spec: §4.6 — a deadlock-timeout fails a blocked running
+				// session, so fromState routes its teardown through the §6.2
+				// executor recycle path rather than the pre-running reclaim.
+				sessionSrv.OnSessionTerminal(ctx, fromState, updated)
 			}
 		}
 		deadlockDetector := deadlock.NewDetector(deadlockManager, deadlockTracker, inputWaits,

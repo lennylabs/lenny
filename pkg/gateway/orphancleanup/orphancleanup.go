@@ -57,7 +57,10 @@ func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return
 // spec: §5.2 line 519 — slot release on session end / expiry; §8.10 —
 // orphan cascade.
 type TerminalHook interface {
-	OnSessionTerminal(ctx context.Context, sess sessionstore.Session)
+	// fromState is the orphan's pre-terminal state, captured before the sweep
+	// forced the row terminal, so the terminal pod-release path can
+	// distinguish a pre-running claimed session from a running one (§4.6).
+	OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
 
 // MetricsSink receives the §8.10 / §16.1 orphan-cleanup and per-tenant
@@ -228,7 +231,8 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 				// Gateway-side terminal pipeline — release the executor
 				// (drains the pod, returns concurrent-mode slots per §5.2
 				// line 519), emit SSE/audit/billing, and archive the child.
-				s.terminal.OnSessionTerminal(ctx, updated)
+				// row.State is the pre-terminal state (§4.6).
+				s.terminal.OnSessionTerminal(ctx, row.State, updated)
 			} else {
 				s.archiveOrphan(ctx, updated, root.ID)
 			}

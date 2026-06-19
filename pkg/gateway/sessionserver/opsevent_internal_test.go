@@ -35,7 +35,7 @@ func TestRecordSessionCompletedEmitsSessionFailed(t *testing.T) {
 	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
 	srv := New(memstore.New(), Options{OpsEmitter: emitter})
 
-	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s1", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateFailed, FailureClass: "runtime_crash",
 	})
@@ -69,7 +69,7 @@ func TestRecordSessionCompletedEmitsTerminalLifecycleEvents(t *testing.T) {
 	for _, tc := range cases {
 		emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
 		srv := New(memstore.New(), Options{OpsEmitter: emitter})
-		srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+		srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
 		})
 		if !eventTypeInBuffer(emitter.Buffer(), tc.eventType) {
@@ -88,7 +88,7 @@ func TestRecordSessionCompletedNoEmitForNonTerminal(t *testing.T) {
 	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
 	srv := New(memstore.New(), Options{OpsEmitter: emitter})
 
-	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s2", TenantID: "acme", State: session.StateRunning,
 	})
 	if n := len(emitter.Buffer().Query(0, events.EventFilter{}, 100).Events); n != 0 {
@@ -99,7 +99,7 @@ func TestRecordSessionCompletedNoEmitForNonTerminal(t *testing.T) {
 func TestRecordSessionCompletedNoEmitterIsSafe(t *testing.T) {
 	// The emit is best-effort: a nil OpsEmitter must not panic.
 	srv := New(memstore.New(), Options{})
-	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s3", TenantID: "acme", State: session.StateFailed,
 	})
 }

@@ -52,7 +52,7 @@ func TestRecordSessionCompletedStampsExperimentVariant_spec_11_2_87(t *testing.T
 	billing := billingstore.NewMemory()
 	srv := New(memstore.New(), Options{Billing: billing})
 
-	srv.recordSessionCompleted(context.Background(), enrolledSession(session.StateCompleted))
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, enrolledSession(session.StateCompleted))
 
 	events, err := billing.Since(context.Background(), "acme", 0, 0)
 	if err != nil {

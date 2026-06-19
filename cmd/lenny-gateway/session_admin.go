@@ -21,8 +21,10 @@ type sessionAdminAdapter struct {
 	// seal, executor release / pod reclaim, audit, billing). It is the
 	// sessionserver's OnSessionTerminal hook — the same pipeline a
 	// watchdog-forced termination runs, so a force-terminate releases the
-	// pod exactly as a natural terminal does. spec: §5.2 line 519.
-	onTerminal func(context.Context, sessionstore.Session)
+	// pod exactly as a natural terminal does. fromState is the pre-force
+	// state so the terminal pod-release path can distinguish a pre-running
+	// claimed session from a running one (§4.6). spec: §5.2 line 519; §4.6.
+	onTerminal func(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
 
 func (a sessionAdminAdapter) GetByID(ctx context.Context, id string) (sessionstore.Session, error) {
@@ -65,7 +67,10 @@ func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, id string) (ses
 		return sessionstore.Session{}, "", false, err
 	}
 	if transitioned && a.onTerminal != nil {
-		a.onTerminal(ctx, updated)
+		// spec: §4.6 — prev is the pre-force state, so a force-terminate of a
+		// created/finalizing/ready session reclaims its claimed pod by name
+		// while a running session is released through the §6.2 executor path.
+		a.onTerminal(ctx, prev, updated)
 	}
 	return updated, prev, transitioned, nil
 }

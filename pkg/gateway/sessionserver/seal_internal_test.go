@@ -158,7 +158,7 @@ func TestRecordSessionCompletedFailsOnSealTimeout_spec_7_1_3(t *testing.T) {
 	}
 	completed, _ := store.Get(context.Background(), "acme", "s_seal")
 
-	srv.recordSessionCompleted(context.Background(), completed)
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, completed)
 
 	// spec: §7.1 line 112 — the row is re-labeled failed/workspace_seal_timeout.
 	row, _ := store.Get(context.Background(), "acme", "s_seal")
@@ -208,7 +208,7 @@ func TestRecordSessionCompletedCleanSealStaysCompleted_spec_7_1_3(t *testing.T) 
 	}
 	completed, _ := store.Get(context.Background(), "acme", "s_ok")
 
-	srv.recordSessionCompleted(context.Background(), completed)
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, completed)
 
 	row, _ := store.Get(context.Background(), "acme", "s_ok")
 	if row.State != session.StateCompleted {

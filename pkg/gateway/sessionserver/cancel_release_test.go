@@ -137,8 +137,10 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 			t.Fatalf("seed: %v", err)
 		}
 
-		// The watchdog / force-terminate path drives the terminal funnel.
-		srv.OnSessionTerminal(ctx, sess)
+		// The watchdog / force-terminate path drives the terminal funnel. The
+		// pre-terminal state is running, so the teardown follows the §6.2
+		// executor recycle path rather than the pre-running by-name reclaim.
+		srv.OnSessionTerminal(ctx, session.StateRunning, sess)
 
 		d, ok := exec.dispositionOf("sm")
 		if !ok || d != tc.want {
@@ -174,7 +176,7 @@ func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T)
 			t.Fatalf("seed %s: %v", tc.state, err)
 		}
 
-		srv.OnSessionTerminal(ctx, sess)
+		srv.OnSessionTerminal(ctx, session.StateRunning, sess)
 
 		row, err := store.Get(ctx, "acme", "tc")
 		if err != nil {
@@ -203,7 +205,7 @@ func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	srv.OnSessionTerminal(ctx, sess)
+	srv.OnSessionTerminal(ctx, session.StateRunning, sess)
 	first, err := store.Get(ctx, "acme", "idem")
 	if err != nil {
 		t.Fatalf("get after first: %v", err)
@@ -213,7 +215,7 @@ func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 	}
 
 	// A second terminal pass (re-entrant funnel) must not move the stamp.
-	srv.OnSessionTerminal(ctx, first)
+	srv.OnSessionTerminal(ctx, session.StateRunning, first)
 	second, err := store.Get(ctx, "acme", "idem")
 	if err != nil {
 		t.Fatalf("get after second: %v", err)

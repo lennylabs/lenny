@@ -56,7 +56,7 @@ func TestEmitChildFailedInjectsEventOnParentStream_spec_8_10_1082(t *testing.T) 
 	}
 	mustCreate(t, store, child)
 
-	srv.recordSessionCompleted(context.Background(), child)
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, child)
 
 	ev := childFailedEvent(t, bus, "parent")
 	if ev == nil {
@@ -96,7 +96,7 @@ func TestEmitChildFailedPermanentForNonRetryable_spec_8_10_1082(t *testing.T) {
 	}
 	mustCreate(t, store, child)
 
-	srv.recordSessionCompleted(context.Background(), child)
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, child)
 
 	ev := childFailedEvent(t, bus, "p2")
 	if ev == nil {
@@ -126,7 +126,7 @@ func TestEmitChildFailedSkipsNonFailedTerminals_spec_8_10_1082(t *testing.T) {
 		child := sessionstore.Session{ID: "c", TenantID: "acme", State: st, ParentSessionID: "p", CreatedAt: now, UpdatedAt: now}
 		mustCreate(t, store, child)
 
-		srv.recordSessionCompleted(context.Background(), child)
+		srv.recordSessionCompleted(context.Background(), session.StateRunning, child)
 
 		if ev := childFailedEvent(t, bus, "p"); ev != nil {
 			t.Errorf("state %s injected a child_failed event; want none", st)
@@ -144,7 +144,7 @@ func TestEmitChildFailedSkipsRootSession_spec_8_10_1082(t *testing.T) {
 	root := sessionstore.Session{ID: "root", TenantID: "acme", State: session.StateFailed, FailureReason: string(session.FailurePodEvicted), CreatedAt: now, UpdatedAt: now}
 	mustCreate(t, store, root)
 
-	srv.recordSessionCompleted(context.Background(), root)
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, root)
 
 	if ev := childFailedEvent(t, bus, "root"); ev != nil {
 		t.Error("a parentless root session injected a child_failed event; want none")

@@ -118,7 +118,10 @@ type PodPhaseReader interface {
 // it. Shared with pkg/gateway/orphancleanup so a force-terminated
 // session emits the same signals exactly once as a REST-terminated one.
 type TerminalHook interface {
-	OnSessionTerminal(ctx context.Context, sess sessionstore.Session)
+	// fromState is the orphan's pre-terminal state, captured before the
+	// reconciler wrote the `failed` row, so the terminal pod-release path can
+	// distinguish a pre-running claimed session from a running one (§4.6).
+	OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
 
 // MetricsSink receives the §16.1 orphan-session observations. A nil
@@ -359,7 +362,11 @@ func (r *Reconciler) failOrphan(ctx context.Context, tenantID string, row sessio
 		r.metrics.IncOrphanSessionReconciliation()
 	}
 	if r.terminal != nil {
-		r.terminal.OnSessionTerminal(ctx, updated)
+		// row.State is the pre-terminal state captured before the failed write
+		// (§4.6); the §10.1 orphan path only fails post-attached (running)
+		// sessions, so this routes their teardown through the executor recycle
+		// path rather than the pre-running by-name reclaim.
+		r.terminal.OnSessionTerminal(ctx, row.State, updated)
 	}
 	return true
 }

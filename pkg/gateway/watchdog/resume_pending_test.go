@@ -36,7 +36,7 @@ type captureLifecycleHook struct {
 	retryAttempts []sessionstore.Session
 }
 
-func (c *captureLifecycleHook) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+func (c *captureLifecycleHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminalCalls = append(c.terminalCalls, sess)
 }
 
@@ -290,7 +290,7 @@ type terminalOnlyForResume struct {
 	terminalCalls []sessionstore.Session
 }
 
-func (t *terminalOnlyForResume) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+func (t *terminalOnlyForResume) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	t.terminalCalls = append(t.terminalCalls, sess)
 }
 
