@@ -40,8 +40,17 @@ var requiredVerbs = []struct {
 	// holds no patch/watch on the main resource and no sandboxes/status
 	// grant — Sandbox.status is written solely by the WarmPoolController.
 	{"lenny-gateway", "sandboxes", []string{"get", "list"}},
-	// §4.6.3: controller creates sandboxes from templates.
-	{"lenny-controller", "sandboxes", []string{"get", "list", "watch", "create"}},
+	// §4.6.3: controller creates sandboxes from templates and holds the
+	// full main-resource grant. `patch` backs the §4.7 nonce-only
+	// Sandbox.spec.requireSoPeercred carrier SSA write (Server-Side Apply
+	// issues an HTTP PATCH, for which `update` is insufficient): the
+	// WarmPoolController records the render decision on the carrier before
+	// it creates the pod, and that write is forbidden without `patch` on
+	// the main resource. Pinning the full granted set here makes this the
+	// durable guard that a future RBAC narrowing cannot silently drop
+	// `patch` (a positive-only [get, list, watch, create] entry would not
+	// catch a dropped patch).
+	{"lenny-controller", "sandboxes", []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 	// §4.6.3: WarmPoolController is the sole writer of Sandbox.status.
 	{"lenny-controller", "sandboxes/status", []string{"get", "update", "patch"}},
 	// §4.6.1 / §4.6.3: WarmPoolController watches SandboxClaims (the
