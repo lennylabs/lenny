@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc/codes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -500,5 +502,54 @@ func TestWritePodClaimErrorAssignmentRaceEmitsMetric(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &env)
 	if env.Error.Code != "CREDENTIAL_POOL_EXHAUSTED" || env.Error.Details["reason"] != "assignment_race" {
 		t.Errorf("got code=%q reason=%v, want CREDENTIAL_POOL_EXHAUSTED/assignment_race", env.Error.Code, env.Error.Details["reason"])
+	}
+}
+
+// spec: §7.1 line 28 (a create-step failure rolls back without persisting the
+// row, releasing the create-time claim), §4.7 (the combined create-and-start
+// path reuses the claim/prepare/launch phases), §5.2 (slot reservation
+// release). The combined POST /v1/sessions/start path claims at /create then
+// runs prepare/launch in the same call; on a startOnPod error
+// createClaimNeedsRollback decides whether the handler must release the
+// create-time claim itself or whether the binder already released it. The
+// reservation-leak regression: a slot reservation's create-time active_slots
+// increment is leaked when startOnPod fails in its pre-bind ResolvePool /
+// PoolWarmingUp / manifest lookups (before BindReservedSlot, which owns the
+// non-idempotent slot-count release), so the predicate must release for a
+// non-SlotBindError slot failure and skip a SlotBindError to avoid a
+// double-decrement.
+func TestCreateClaimNeedsRollback_spec_7_1_28(t *testing.T) {
+	exclusive := &podsession.ClaimResult{SandboxName: "pod-a"} // SlotID == "" → exclusive
+	slot := &podsession.ClaimResult{SandboxName: "pod-a", SlotID: "sess-1"}
+	someErr := errors.New("startOnPod failed")
+	// A pre-bind failure inside startOnPod (the second ResolvePool, the
+	// PoolWarmingUp gate) returns a non-SlotBindError; the create-time slot
+	// reservation is then unreleased and must be rolled back here.
+	preBindWarming := &podsession.PoolWarmingError{Pool: "p", PodsWarming: 1}
+	// BindReservedSlot already released the reservation on its own failure,
+	// surfaced as a *podsession.SlotBindError; releasing again double-decrements.
+	binderFailure := slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable)
+
+	cases := []struct {
+		name  string
+		claim *podsession.ClaimResult
+		err   error
+		want  bool
+	}{
+		{"nil claim (service-mode claimless)", nil, someErr, false},
+		{"exclusive claim, pre-bind failure", exclusive, preBindWarming, true},
+		{"exclusive claim, arbitrary failure", exclusive, someErr, true},
+		{"slot reservation, pre-bind ResolvePool/warming failure", slot, preBindWarming, true},
+		{"slot reservation, arbitrary non-SlotBindError", slot, someErr, true},
+		{"slot reservation, BindReservedSlot SlotBindError", slot, binderFailure, false},
+		// A wrapped SlotBindError still unwraps to the binder-owned release.
+		{"slot reservation, wrapped SlotBindError", slot, fmt.Errorf("dispatch: %w", binderFailure), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := createClaimNeedsRollback(tc.claim, tc.err); got != tc.want {
+				t.Errorf("createClaimNeedsRollback(%+v, %v) = %v, want %v", tc.claim, tc.err, got, tc.want)
+			}
+		})
 	}
 }
