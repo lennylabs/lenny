@@ -3082,22 +3082,51 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 	}
 }
 
-// transitionFinalize: per §15.1, /finalize transitions
-// created → finalizing → ready. The minimal gateway short-circuits
-// the materialisation step and goes straight to ready.
-func transitionFinalize(row *sessionstore.Session) { row.State = session.StateReady }
+// transitionFinalizing: per §15.1, /finalize enters the preparation
+// barrier by transitioning created → finalizing. The workspace
+// materialization, setup commands, and credential-lease assignment then
+// run while the row is `finalizing`; handleFinalize transitions
+// finalizing → ready only once the session is fully prepared.
+func transitionFinalizing(row *sessionstore.Session) { row.State = session.StateFinalizing }
 
-// handleFinalize wraps the §15.1 finalize transition with §7.1
-// uploadToken single-use invalidation. After the row transitions to
-// ready (the upload window closes), the digest stamped at create is
-// marked consumed via the ConsumedTracker so a captured token cannot
-// be replayed against /upload after finalize.
+// transitionReady: per §15.1, the finalize barrier transitions
+// finalizing → ready once workspace materialization, setup commands, and
+// credential assignment have completed; the session then awaits /start.
+func transitionReady(row *sessionstore.Session) { row.State = session.StateReady }
+
+// handleFinalize implements POST /v1/sessions/{id}/finalize as the §4.3
+// preparation barrier. After binding the optional §14 WorkspacePlan and
+// transitioning created → finalizing, it reconnects to the pod claimed at
+// /create and runs the §7.1 step 11-13 prepare phase against it:
+// PrepareWorkspace streams the buffered lenny-blob:// upload content into
+// /workspace/staging, FinalizeWorkspace materializes /workspace/current
+// with the §7.4 post-promotion symlink re-validation, RunSetup runs the
+// plan's setup commands, and AssignCredentials delivers the §4.9
+// credential lease. Only when the session is fully prepared does it
+// transition finalizing → ready and return.
 //
-// The token consumption fires after the state mutation succeeds — if
-// the mutation is rejected (precondition or store error), the token
-// remains valid so the client can retry. Idempotent finalize calls
-// (the row is already ready) hit the §15.1 precondition rejection
-// before reaching the consume step.
+// A failure in any prepare step reclaims the claimed pod via the §6.2
+// pre-attached disposition (the binder's lease-aware failPhase, which
+// revokes the lease when AssignCredentials had already run) and surfaces
+// the corresponding workspace-validation, setup-command, or credential
+// error; a materialization or check-to-assignment credential failure
+// surfaces as CREDENTIAL_POOL_EXHAUSTED. The row transitions
+// finalizing → failed so a client cannot retry finalize against a pod
+// that no longer exists.
+//
+// Gap 2: a failure in the finalizing → ready transition, or in the
+// single-use upload-token consume, AFTER AssignCredentials has succeeded
+// reclaims the pod and revokes the lease too, so a post-assignment
+// finalize failure does not leak the lease.
+//
+// The single-use uploadToken invalidation, upload-channel/limits close,
+// SSE status-change, plan-warning publish, and the §16.6 finalize audit
+// row run once the row reaches ready, as before. The minimal gateway (no
+// pod binder) finalizes by the plain created → finalizing → ready
+// transition with no pod work.
+//
+// spec: §7.1 steps 11-13; §7.4 lines 434, 450, 459, 461; §15.1 (finalize
+// precondition); §4.9 (finalize lease assignment); §4.3 (proposal).
 func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -3127,8 +3156,11 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if !planOK {
 		return
 	}
+	// spec: §15.1 — enter the §4.3 preparation barrier: created → finalizing,
+	// binding the finalize plan in the same logical write. The prepare phase
+	// runs while the row is `finalizing`.
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
-		transitionFinalize(r)
+		transitionFinalizing(r)
 		if hasPlan {
 			r.WorkspacePlan = planJSON
 		}
@@ -3138,10 +3170,76 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §4.3 / §7.1 steps 11-13 — run the prepare phase against the pod
+	// claimed at /create: stream the buffered uploads into /workspace/staging,
+	// materialize /workspace/current, run setup commands, and assign the §4.9
+	// credential lease. prepareAtFinalize returns (nil, nil) for the
+	// dispositions that materialize nothing at finalize (no binder, service
+	// mode, a concurrent-workspace slot, or a row with no live binding).
+	plan, perr := storedWorkspacePlanForFinalize(updated, hasPlan, planJSON)
+	if perr != nil {
+		s.failSession(r.Context(), tenantID, id)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"stored workspace plan could not be parsed: "+perr.Error(), nil)
+		return
+	}
+	prep, err := s.prepareAtFinalize(r.Context(), updated, plan)
+	if err != nil {
+		// spec: §4.3 / §6.2 — the prepare step failed; the binder already
+		// reclaimed the claimed pod (and any lease assigned earlier in the
+		// phase) via the §6.2 pre-attached disposition. Transition the row to
+		// the terminal `failed` state (finalizing → failed) so a retry of
+		// finalize cannot run against a pod that no longer exists, then surface
+		// the workspace-validation, setup-command, or credential error. A
+		// materialization or check-to-assignment credential failure surfaces as
+		// CREDENTIAL_POOL_EXHAUSTED via writePodClaimError.
+		s.failSession(r.Context(), tenantID, id)
+		s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
+			"workspace finalization failed")
+		return
+	}
+	// spec: §4.3 — only after the prepare phase succeeds does the barrier
+	// transition finalizing → ready and return. Persist the §7.5 setup-command
+	// trail and the §7.3 negotiated workspace root the prepare phase produced.
+	if prep != nil {
+		s.applyFinalizePrepareResult(r.Context(), tenantID, id, updated.TenantID, updated.ID, prep)
+	}
+	// spec: §15.1 — finalizing → ready. Gap 2: when AssignCredentials has
+	// already run (prep != nil), a failure of this transition would leave the
+	// lease assigned but the session not ready, so reclaim the pod and revoke
+	// the lease before surfacing the error.
+	updated, err = s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
+		transitionReady(r)
+		return nil
+	})
+	if err != nil {
+		// Gap 2: the prepare phase succeeded (the lease is assigned) but the
+		// finalizing → ready write failed. Reclaim the pod and revoke the lease,
+		// then mark the row failed so it reaches a terminal state rather than
+		// stranding in `finalizing` (which no /finalize retry can leave, because
+		// the finalize precondition requires `created`).
+		if prep != nil {
+			s.reclaimFinalizedPod(r.Context(), updated.PodAssignment, id)
+		}
+		s.failSession(r.Context(), tenantID, id)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	// §7.1 single-use uploadToken invalidation: once the upload
-	// window closes, the digest cannot mint another upload.
+	// window closes, the digest cannot mint another upload. Gap 2: a consume
+	// failure after AssignCredentials succeeded would leave the lease assigned
+	// on a session whose finalize the client must treat as failed, so reclaim
+	// the pod and revoke the lease rather than leaking them.
 	if s.uploadVerifier != nil && updated.UploadTokenDigest != "" {
-		_ = s.uploadVerifier.ConsumeDigest(updated.UploadTokenDigest, updated.UploadTokenExpiry)
+		if cerr := s.uploadVerifier.ConsumeDigest(updated.UploadTokenDigest, updated.UploadTokenExpiry); cerr != nil {
+			if prep != nil {
+				s.reclaimFinalizedPod(r.Context(), updated.PodAssignment, id)
+			}
+			s.failSession(r.Context(), tenantID, id)
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"upload token could not be invalidated: "+cerr.Error(), nil)
+			return
+		}
 	}
 	// §7.4 line 463: close the upload channel — abort any in-flight
 	// /upload stream for this session so it surfaces
@@ -3153,7 +3251,8 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// per-session cumulative upload-byte total. In-flight concurrency
 	// slots self-release; only the byte total is freed here. F-11.1.6.
 	s.uploadLimits.closeSession(updated.ID)
-	// spec: §7.2 line 137 — surface the created → ready transition.
+	// spec: §7.2 line 137 — surface the finalizing → ready transition that
+	// closed the §4.3 preparation barrier.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	// spec: §14 lines 100/334/338 — surface any consumer-advisory parse
 	// warnings the finalize-bound plan raised on the same per-session SSE

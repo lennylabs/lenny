@@ -41,6 +41,56 @@ func inlinePlan(path string) *adapterv1.WorkspacePlan {
 	}
 }
 
+// spec: §6.1 lines 34-40, §4.3, §4.4 (proposal) — RequiresDemotion is the pure
+// §6.1 SDK-warm demotion decision the finalize-time Prepare makes and the
+// launch-only /start path recomputes from the persisted plan, so the gateway
+// does not persist the boolean. It must answer true only for a preConnect
+// request whose plan places a path matching sdkWarmBlockingPaths.
+// diagnosis: a wrong answer means the launch-only /start path chooses
+// ConfigureWorkspace vs. StartSession differently from the prepare phase that
+// materialized the workspace, so an SDK-warm pod that was demoted at finalize
+// would be re-pointed at a torn-down SDK at launch (or vice versa).
+func TestRequiresDemotionDecision_spec_6_1(t *testing.T) {
+	cases := []struct {
+		name       string
+		req        podsession.BindRequest
+		wantDemote bool
+	}{
+		{
+			name:       "not preConnect never demotes",
+			req:        podsession.BindRequest{Plan: inlinePlan(".env"), SDKWarmBlockingPaths: []string{".env"}},
+			wantDemote: false,
+		},
+		{
+			name:       "preConnect with a matching blocking path demotes",
+			req:        podsession.BindRequest{PreConnect: true, Plan: inlinePlan(".env"), SDKWarmBlockingPaths: []string{".env"}},
+			wantDemote: true,
+		},
+		{
+			name:       "preConnect with no matching path stays SDK-warm",
+			req:        podsession.BindRequest{PreConnect: true, Plan: inlinePlan("README.md"), SDKWarmBlockingPaths: []string{".env"}},
+			wantDemote: false,
+		},
+		{
+			name:       "preConnect with no blocking paths stays SDK-warm",
+			req:        podsession.BindRequest{PreConnect: true, Plan: inlinePlan(".env")},
+			wantDemote: false,
+		},
+		{
+			name:       "preConnect with a nil plan stays SDK-warm",
+			req:        podsession.BindRequest{PreConnect: true, SDKWarmBlockingPaths: []string{".env"}},
+			wantDemote: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := podsession.RequiresDemotion(tc.req); got != tc.wantDemote {
+				t.Errorf("RequiresDemotion = %v, want %v", got, tc.wantDemote)
+			}
+		})
+	}
+}
+
 // spec: §6.1 lines 30-34 — a preConnect pod whose plan matches no blocking
 // path stays SDK-warm: the binder points the pre-connected SDK at the
 // workspace (ConfigureWorkspace) and does not StartSession from cold.

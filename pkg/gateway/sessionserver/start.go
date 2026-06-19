@@ -1598,20 +1598,29 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// reconnect to the dead binding; reconnecting would fail Prepare against the
 	// no-longer-existing pod and fail the resume instead of recovering it.
 	if row.PodAssignment != "" && !session.IsRecovery(row.State) {
-		// spec: §5 / §6.3 line 348 (proposal) — on the combined one-call path
-		// the same call measured the create-time pod_claim duration; thread it
-		// into the launch-boundary end-to-end envelope so the single
-		// lenny_session_startup_duration_seconds observation spans pod claim
-		// through ready. On the two-step `POST /v1/sessions/{id}/start` path the
-		// claim ran in a separate /create request (claimed is nil), so the
-		// create-time pod_claim component is recorded by that request and is
-		// deliberately not re-attributed here; the /start end-to-end span is
-		// launch-only by construction.
-		var createPodClaim time.Duration
+		// spec: §4.3, §4.4 (proposal) — the two-step `POST /v1/sessions/{id}/start`
+		// path (claimed is nil) has already run the §4.3 prepare barrier at
+		// /finalize, so /start launches only: it reconnects to the prepared pod
+		// and runs the §4.4 launch (StartSession or ConfigureWorkspace) without
+		// re-staging, re-materializing, re-running setup, or re-assigning the
+		// credential lease. The combined one-call `POST /v1/sessions/start` path
+		// (claimed is non-nil) claimed the pod in the same call but never went
+		// through /finalize, so it runs the prepare barrier and the launch
+		// together here (§4.7).
 		if claimed != nil {
-			createPodClaim = claimed.PodClaim
+			// spec: §5 / §6.3 line 348 (proposal) — the same call measured the
+			// create-time pod_claim duration; thread it into the launch-boundary
+			// end-to-end envelope so the single
+			// lenny_session_startup_duration_seconds observation spans pod claim
+			// through ready.
+			return s.prepareAndLaunch(ctx, row, match, bindReq, claimed.PodClaim)
 		}
-		return s.prepareAndLaunch(ctx, row, match, bindReq, createPodClaim)
+		// On the two-step /start path the claim ran in a separate /create request
+		// and the prepare ran at /finalize, so the create-time pod_claim and the
+		// finalize-time materialization/setup/credential phases are recorded by
+		// those requests; the /start end-to-end span is launch-only by
+		// construction.
+		return s.launchPrepared(ctx, row, match, bindReq)
 	}
 	// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted session-claim
 	// acquisition in the per-pool claim FIFO and re-enter the claim path as
@@ -1759,6 +1768,45 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 	end := result.Timings
 	end.PodClaim = createPodClaim
 	s.recordStartupDuration(match, end)
+	return result, nil
+}
+
+// launchPrepared runs only the §4.4 launch against the pod a two-step
+// session prepared at /finalize, reconnecting from the row's persisted §4.6
+// binding (PodAssignment + PoolRef). The §4.3 prepare barrier
+// (PrepareWorkspace, FinalizeWorkspace, RunSetup, AssignCredentials) already
+// ran at /finalize, so /start neither re-stages, re-materializes, re-runs
+// setup, nor re-assigns the credential lease; it only starts the runtime
+// (StartSession for a pod-warm or demoted pod, ConfigureWorkspace for a
+// still-SDK-warm pod). The §6.1 SDK-warm demotion decision the prepare phase
+// made is a pure function of the persisted plan and the runtime's
+// sdkWarmBlockingPaths, so launchPrepared recomputes it through
+// podsession.RequiresDemotion rather than re-running the prepare phase to
+// learn it. A launch failure is surfaced for writePodClaimError; the binder
+// already reclaimed the bound pod (and the lease assigned at finalize) on the
+// failure path.
+//
+// The /start end-to-end span is launch-only by construction: the create-time
+// pod_claim phase was recorded at /create and the materialization / setup /
+// credential phases at /finalize, each once, so launchPrepared records only
+// the agent_session_start phase and the end-to-end envelope here.
+// spec: §4.4, §4.6 (proposal); §6.1 lines 30-34; §6.3 lines 348, 372.
+func (s *Server) launchPrepared(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest) (*podsession.BindResult, error) {
+	bindReq.SandboxName = row.PodAssignment
+	if row.PoolRef != "" {
+		bindReq.Pool = row.PoolRef
+	}
+	bindReq.Demoted = podsession.RequiresDemotion(bindReq)
+	result, err := s.podBinder.Launch(ctx, bindReq)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §6.3 — Launch measured only the agent_session_start phase; record
+	// it and the launch-only end-to-end envelope. The pod_claim and
+	// workspace_materialization / setup_commands / credential_assignment phases
+	// were recorded at /create and /finalize, so they are not re-emitted here.
+	s.recordStartupPhases(match, result.Timings)
+	s.recordStartupDuration(match, result.Timings)
 	return result, nil
 }
 
@@ -1915,10 +1963,22 @@ func (s *Server) registerBinding(ctx context.Context, result *podsession.BindRes
 // spec: §7.4 line 459; §14 line 100; §16.6 catalogue. F-7.4.15,
 // F-14.1.17, F-14.1.18.
 func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
-	if result == nil || len(result.WorkspacePlanWarnings) == 0 {
+	if result == nil {
 		return
 	}
-	for _, w := range result.WorkspacePlanWarnings {
+	s.publishWorkspacePlanWarnings(result.TenantID, result.SessionID, result.WorkspacePlanWarnings)
+}
+
+// publishWorkspacePlanWarnings emits one §14 `workspace_plan_warning` frame
+// per advisory the §4.7 materialization raised, on the per-session SSE bus
+// and the §16.6 / §25.3 operational-event stream. The /start launch path
+// (via publishWorkspaceWarnings on the BindResult) and the §4.3 finalize
+// prepare barrier (on the PrepareResult) both republish their warnings
+// through it, so the strip-components-skip advisory reaches subscribers
+// regardless of which boundary materialized the workspace. spec: §7.4 line
+// 459; §14 lines 100/334/338; §16.6 catalogue. F-7.4.15, F-14.1.17, F-14.1.18.
+func (s *Server) publishWorkspacePlanWarnings(tenantID, sessionID string, warnings []*adapterv1.WorkspacePlanWarning) {
+	for _, w := range warnings {
 		if w == nil {
 			continue
 		}
@@ -1950,8 +2010,8 @@ func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 			payload["winningSourceIndex"] = w.GetWinningSourceIndex()
 			payload["losingSourceIndex"] = w.GetLosingSourceIndex()
 		}
-		s.publishEvent(result.TenantID, result.SessionID, "workspace_plan_warning", payload)
-		s.emitWorkspacePlanWarningOps(result.TenantID, result.SessionID, payload)
+		s.publishEvent(tenantID, sessionID, "workspace_plan_warning", payload)
+		s.emitWorkspacePlanWarningOps(tenantID, sessionID, payload)
 	}
 }
 

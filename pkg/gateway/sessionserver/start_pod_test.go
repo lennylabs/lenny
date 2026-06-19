@@ -600,6 +600,145 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	}
 }
 
+// spec: §7.1 steps 11-13, §15.1 (finalize precondition), §4.3 (proposal).
+// diagnosis: /finalize is the §4.3 preparation barrier — it materializes
+// /workspace/current and runs setup before returning, and the session reaches
+// `ready` only once prepared. A failure here means /finalize transitioned to
+// `ready` without materializing the workspace, so the workspace plan was not
+// applied until /start (the pre-0007 deferred-claim behavior) or the row
+// reached `ready` while the pod was still bare.
+func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
+	srv, _, _, wsRoot := podBindServer(t, "sess-fin-mat")
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# finalized","mode":"0644"}]
+		}`),
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The workspace must not be materialized yet: /create only claims the pod
+	// and buffers uploads; materialization is the §4.3 finalize barrier's job.
+	if _, err := os.Stat(filepath.Join(wsRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("CLAUDE.md materialized before finalize (err=%v); materialization must run at /finalize", err)
+	}
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-mat/finalize", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("finalize: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The finalize barrier returns only once the session is `ready`.
+	var resp sessionserver.SessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateReady) {
+		t.Errorf("after finalize, state = %q, want ready", resp.State)
+	}
+	// The workspace plan stored at create was materialized onto the pod's
+	// adapter workspace at finalize, before /start ran.
+	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("workspace plan was not materialized at finalize: %v", err)
+	}
+	if string(got) != "# finalized" {
+		t.Errorf("materialized file = %q, want %q", got, "# finalized")
+	}
+
+	// /start then only launches; the session reaches running.
+	rr = postSessionStep(t, h, "/v1/sessions/sess-fin-mat/start", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("after start, state = %q, want running", resp.State)
+	}
+}
+
+// spec: §7.5 line 475, §7.3 line 387, §4.3 (proposal: finalize-failure
+// reclaim), §6.2 (pre-attached disposition).
+// diagnosis: a setup-command failure during the §4.3 finalize barrier must
+// reclaim the claimed pod (delete the per-pod SandboxClaim per the §6.2
+// pre-attached disposition) and transition the row to the terminal `failed`
+// state, surfacing the setup_command_failed reason. A failure here means the
+// finalize barrier left the row stuck in `finalizing` (un-retryable, since
+// finalize requires `created`) or leaked the claimed pod after the prepare
+// phase aborted.
+func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-fin-setupfail" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+	h := srv.Handler()
+
+	// A plan whose setup command exits non-zero makes the adapter's RunSetup
+	// abort with FailedPrecondition during the finalize prepare phase.
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"setupCommands": [{"cmd":"exit 3"}]
+		}`),
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The pod was claimed at /create: its per-pod claim exists.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-setupfail/finalize", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("finalize with a failing setup command: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("setup_command_failed")) {
+		t.Errorf("finalize error body = %s, want setup_command_failed reason", rr.Body.String())
+	}
+
+	// The session transitioned to the terminal failed state, not stuck in
+	// finalizing.
+	row, err := store.Get(context.Background(), "acme", "sess-fin-setupfail")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the finalize setup-command failure", row.State)
+	}
+	// The claimed pod was reclaimed: the per-pod SandboxClaim is deleted (the
+	// §6.2 pre-attached disposition), so no pod leaks past the failed finalize.
+	err = cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	if err == nil {
+		t.Errorf("per-pod claim still present after the failed finalize; the pod was not reclaimed")
+	}
+	if registry.Len() != 0 {
+		t.Errorf("registry holds %d bindings, want 0 — no binding is registered on a failed finalize", registry.Len())
+	}
+}
+
 func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 	srv, registry, _, _ := podBindServer(t, "sess-2step-early")
 	h := srv.Handler()

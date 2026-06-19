@@ -266,6 +266,23 @@ func isUnimplemented(err error) bool {
 	return status.Code(err) == codes.Unimplemented
 }
 
+// RequiresDemotion reports the §6.1 SDK-warm demotion decision for a bind
+// request: whether the request's workspace plan forces a still-SDK-warm
+// (preConnect) pod to be demoted to pod-warm before the workspace is
+// materialized. The decision is a pure function of the plan's placed paths and
+// the runtime's sdkWarmBlockingPaths glob list, so the finalize-time Prepare
+// (which makes the decision) and the launch-only /start path (which needs it
+// without re-running Prepare) compute the identical answer from the persisted
+// plan rather than the gateway persisting the boolean. A non-preConnect request
+// never demotes. spec: §6.1 lines 34-40, §4.3, §4.4 (proposal).
+func RequiresDemotion(req BindRequest) bool {
+	if !req.PreConnect {
+		return false
+	}
+	_, _, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths)
+	return requires
+}
+
 // §5.2 line 12 lenny_slot_failure_total error_type labels: the
 // concurrent-mode slot bind stages whose failure terminates a reserved
 // slot. The set is finite so the metric stays low-cardinality.
