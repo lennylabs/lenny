@@ -472,3 +472,16 @@ runbooks:
     test: TestMinIOUnavailable
     severity: P2
     coverage: extended
+
+  # ---- §4.7 nonce-only / SO_PEERCRED security-degradation runbook ----
+  # The PoolSecurityDegraded alert-driven runbook has a dedicated chaos
+  # scenario: TestNonceOnlyModeDegradationAndRecovery injects the
+  # SOPeercredDisabled state onto an acknowledged pool's member Sandboxes,
+  # asserts the live WarmPoolController surfaces SecurityDegradedMode=True
+  # and publishes lenny_pool_security_degraded == 1, then reverts the
+  # runtime field and replaces the last nonce-only pod and asserts the
+  # condition and the gauge clear.
+  nonce-only-mode:
+    test: TestNonceOnlyModeDegradationAndRecovery
+    severity: P2
+    coverage: extended

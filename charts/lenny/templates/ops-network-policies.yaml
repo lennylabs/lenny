@@ -203,7 +203,7 @@ spec:
         - protocol: TCP
           port: 443
 ---
-{{- /*
+{{/*
 lenny-backup-job (§25.4 lines 1345-1403) — egress for the backup Job
 pods (selected by app: lenny-backup). Jobs accept no ingress. Egress is
 Postgres (direct, not via the pooler), MinIO, the Kubernetes API, and

@@ -33,7 +33,7 @@ mesh for mTLS set mtls.enabled: false and let the mesh issue identities.
 {{- $ns := .Release.Namespace }}
 {{- $m := .Values.mtls }}
 ---
-{{- /*
+{{/*
 Self-signed bootstrap Issuer. Its sole job is to sign the CA
 certificate below; no leaf certificate is ever issued from it.
 */}}
@@ -48,7 +48,7 @@ metadata:
 spec:
   selfSigned: {}
 ---
-{{- /*
+{{/*
 Cluster-internal CA certificate. isCA: true marks the resulting
 certificate as a signing CA; cert-manager stores the CA key pair in the
 lenny-mtls-ca secret, which the CA Issuer below consumes.
@@ -74,7 +74,7 @@ spec:
     name: lenny-mtls-selfsign
     kind: Issuer
 ---
-{{- /*
+{{/*
 CA Issuer. Every leaf certificate below references this Issuer, so all
 internal control-plane certificates chain to lenny-mtls-ca.
 */}}

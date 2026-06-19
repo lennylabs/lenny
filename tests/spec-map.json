@@ -304,7 +304,8 @@
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
-        "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7"
+        "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
+        "tests/tier8_chaos/nonce_only_degradation_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -495,7 +496,8 @@
       "title": "Startup Latency Analysis",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
-        "tests/tier7b_load_kind/scenarios/startup_latency"
+        "tests/tier7b_load_kind/scenarios/startup_latency",
+        "tests/tier12_load_cloud/session_startup_latency_test.go"
       ],
       "packages": [
         "cmd/runtimes/echo"
@@ -554,7 +556,8 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
-        "pkg/session/..."
+        "pkg/session/...",
+        "tests/tier5_e2e_kind/eager_claim_e2e_test.go"
       ],
       "packages": [
         "pkg/session"
