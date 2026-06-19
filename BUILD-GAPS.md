@@ -9574,7 +9574,7 @@ Evidence:
 
 **Resolution:** `cancelSubtree` now respects each node's `CascadeOnFailure.Resolve()`. The explicit `lenny/cancel_child` target is always cancelled (per §8.5 row); descendants are queued only when the parent's resolved policy is `cancel_all`, so `await_completion` and `detach` siblings stay running. Terminal nodes' own cascades already ran when they settled so the traversal does not descend through them. `TestCancelChildTool` updated to the spec-compliant behavior; `TestCancelChildToolHonoursAwaitCompletion` and `TestCancelChildToolHonoursDetach` exercise the new policy branches.
 
-### - [-] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — DEFERRED
+### - [x] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — CLOSED
 
 **Severity: Medium** (spec MUST: §8.5 / §8.3 line 244 — "Returns `type: agent` runtimes **and external agents** only")
 
@@ -9604,7 +9604,7 @@ Evidence:
 - **Correction to the prior note.** The prior "Rule P" note claimed the spec defines none of (a) external-agent registration, (b) the `type: external` entry schema, (c) the `allowedExternalEndpoints`→registry mapping. (a) is in fact defined: §21.1 specifies external A2A agents "registered as connectors, callable via `lenny/delegate_task`". Only (b) and (c) are genuinely unspecified, and both are the post-v1 A2A *producer* surface for a later proposal — not a v1 gap. Line 244 is the only unmarked *discovery-result* contract; §8 lines 23/529 reference external agents unmarked but legitimately, because they describe opaque `delegate_task` targets rather than what discovery returns.
 - **Spec-clarity fix staged.** `proposals/0009_fix_mark-the-lenny-discover-agents-external-agents-discovery-cla.md` (Verified 2026-06-19; converged after 2 clean adversarial review rounds; awaiting sign-off) rewords line 244 to state the v1 agent-only result set and mark the external-agents clause post-v1 (A2A), reconciling the spec text with the v1-correct implementation and the spec-wide A2A post-v1 framing (§8 line 307, §9.3, §15.1, §21.1). The docs already present discovery as agent-only (`docs/runtime-author-guide/platform-tools.md:184`, `docs/runtime-author-guide/integration-levels.md:245`), so no docs change is needed.
 
-**Remains DEFERRED pending 0009 sign-off + application.** Closes when `implement-proposal` lands 0009's line-244 edit; the external-agent producer is a separate post-v1 A2A deliverable. No code is owed.
+**Closed 2026-06-19 — proposal 0009 applied to spec.** `implement-proposal` (spec-only) landed the §8.3 line-244 edit (commit `29c35794`) with 0 discrepancies. The discovery-scoping sentence now states the v1 result set is `type: agent` runtimes only (entries carry no type discriminator), with the external-agents clause marked post-v1 (A2A), cross-referencing §21.1 and the §9.3 transport-extensibility note. The spec text now matches the v1-correct agent-only implementation, so the apparent v1 contract that produced this finding is gone. No code was owed — the reconciliation is wording-only. The external-agent producer (a `type: external` `discover_agents` entry schema and the `allowedExternalEndpoints`→registry mapping) remains a post-v1 A2A deliverable for a later proposal. Heading DEFERRED → CLOSED.
 
 ### - [x] F-8.5.21 — `lenny/await_children` does not honour the §8.4 `approval` mode — Low (deferred in spec) [Medium] — CLOSED
 
