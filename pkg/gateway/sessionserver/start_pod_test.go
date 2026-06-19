@@ -32,13 +32,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
@@ -257,6 +261,184 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
 		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
+	}
+}
+
+// countingRouter wraps the default §4.9 CredentialRouter and counts
+// Resolve calls so a test can assert how many times the gateway runs the
+// §7.1-step-3 pre-claim credential availability check across a request.
+type countingRouter struct {
+	inner credrouter.Default
+	count *int
+}
+
+func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credrouter.Output, error) {
+	*r.count++
+	return r.inner.Resolve(ctx, in)
+}
+
+// spec: §4.1 (proposal: the §7.1-step-3 credential pre-check is moved into
+// createSession ahead of the step-4 claim and runs once before the claim),
+// §7.1 step 3, §4.9 lines 1216-1218.
+// diagnosis: the combined one-call POST /v1/sessions/start runs claim,
+// prepare, and launch in a single call. The credential availability
+// pre-check must run exactly once (at the create-time claim), not again at
+// the prepare dispatch. A failure here means startOnPod re-ran
+// resolveCredentialPools after claimAtCreate already ran it, so the pre-check
+// executed twice for one combined create-and-start, contradicting the
+// proposal's "pre-check runs once, before the claim" placement.
+func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	var resolveCount int
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-precheck-once" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        countingRouter{count: &resolveCount},
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// One provider in the intersection, resolved exactly once: the
+	// create-time pre-check. A count of 2 means the prepare dispatch re-ran
+	// resolveCredentialPools after the create-time claim.
+	if resolveCount != 1 {
+		t.Errorf("CredentialRouter.Resolve called %d times, want 1 (the §7.1-step-3 pre-check runs once before the step-4 claim)", resolveCount)
+	}
+}
+
+// spec: §6.3 line 348 (end-to-end span is pod claim through ready), §5
+// (proposal: the combined create-and-start reuses the claim/prepare/launch
+// phases and the claim-to-ready span covers claim through ready).
+// diagnosis: the combined one-call POST /v1/sessions/start performs the
+// claim, prepare, and launch in a single call, so the single end-to-end
+// lenny_session_startup_duration_seconds observation must include the
+// pod-claim component the same call measured at create. A failure here
+// means prepareAndLaunch dropped the create-time pod_claim duration from
+// the end-to-end total (it would equal credential_assignment +
+// agent_session_start only), under-reporting the §6.3 / §16.5 claim-through-
+// ready SLO envelope. The per-phase pod_claim histogram is still emitted
+// exactly once.
+func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	var (
+		phaseObs map[string]float64
+		endToEnd float64
+		endCount int
+	)
+	phaseObs = map[string]float64{}
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-combined-metric" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		ObserveStartupPhase: func(phase, _ string, seconds float64) {
+			phaseObs[phase] = seconds
+		},
+		ObserveStartupDuration: func(_, _, _ string, seconds float64) {
+			endToEnd = seconds
+			endCount++
+		},
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The end-to-end metric is emitted exactly once for one logical start.
+	if endCount != 1 {
+		t.Fatalf("lenny_session_startup_duration_seconds observed %d times, want exactly 1", endCount)
+	}
+	// The per-phase pod_claim sample is recorded once at /create.
+	podClaim, ok := phaseObs["pod_claim"]
+	if !ok || podClaim <= 0 {
+		t.Fatalf("pod_claim phase = %v (present=%v), want a positive sample recorded at create", podClaim, ok)
+	}
+	// spec: §6.3 line 348 — the end-to-end total is pod_claim +
+	// credential_assignment + agent_session_start. The pod-claim component
+	// must be present, so the end-to-end observation is at least the
+	// pod_claim phase plus the agent_session_start phase (both measured).
+	agentStart := phaseObs["agent_session_start"]
+	if agentStart <= 0 {
+		t.Fatalf("agent_session_start phase = %v, want a positive sample at launch", agentStart)
+	}
+	// Without the pod-claim component the end-to-end would be agent_session_start
+	// (+ credential_assignment) only and strictly below podClaim+agentStart.
+	wantAtLeast := podClaim + agentStart
+	if endToEnd < wantAtLeast-1e-9 {
+		t.Errorf("end-to-end duration = %v, want >= pod_claim(%v) + agent_session_start(%v) = %v; "+
+			"the combined-call observation dropped the pod-claim component",
+			endToEnd, podClaim, agentStart, wantAtLeast)
 	}
 }
 

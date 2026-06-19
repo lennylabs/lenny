@@ -65,6 +65,13 @@ const minWarmupRetryAfterSeconds = 30
 // the spec-named code instead of the legacy `POD_CLAIM_FAILED`; the
 // `POST /v1/sessions/{id}/start` two-step path passes `STARTING_FAILED`
 // per §6.2 line 303.
+//
+// Pool exhaustion is code-split by lifecycle phase: a create-time claim
+// exhaustion (wrapped as errCreateClaimExhausted by claimAtCreate)
+// surfaces the fallback `SESSION_CREATION_FAILED` per the §7.1 line 23
+// atomicity note and proposal §4.1, while a bare `podclaim.ErrNoIdlePod`
+// from the two-step `/start` claim keeps the §5.2 line 519
+// `WARM_POOL_EXHAUSTED` code.
 // spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §5.2 lines 602-625
 // (RUNTIME_UNAVAILABLE), §7.1 line 28 (SESSION_CREATION_FAILED),
 // §15.1 line 1138 (Retry-After).
@@ -143,6 +150,19 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 			s.preclaimMismatch(credAssign.Pool, credAssign.Provider)
 		}
 		s.writeCredentialPoolExhausted(w, "assignment_race")
+	case errors.Is(err, errCreateClaimExhausted):
+		// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — a
+		// create-time claim exhaustion is part of the §7.1 atomic creation
+		// unit, so it surfaces as the create-handler fallback envelope
+		// (SESSION_CREATION_FAILED + Retry-After) rather than the §5.2
+		// WARM_POOL_EXHAUSTED code. This case precedes the ErrNoIdlePod case
+		// because errCreateClaimExhausted wraps that sentinel; the create
+		// paths wrap it, the two-step `POST /v1/sessions/{id}/start` path
+		// does not, so /start keeps WARM_POOL_EXHAUSTED.
+		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
+			fallbackMsg+": "+err.Error(),
+			map[string]any{"reason": "no_idle_pods"})
 	case errors.Is(err, podclaim.ErrNoIdlePod):
 		s.writeWarmPoolExhausted(w, "no_idle_pods")
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
@@ -531,12 +551,22 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		row.ExecutionMode = level.ExecutionMode
 		row.ScrubPolicy = level.ScrubPolicy
 		row.ConversationContinuity = level.ConversationContinuity
+		// spec: §4.1 / §5 (proposal) — carry the create-time credential
+		// resolution and pod_claim duration into the same-call startOnPod so
+		// the combined path runs the §7.1-step-3 pre-check exactly once before
+		// the step-4 claim (no re-resolve at the prepare dispatch) and the
+		// single end-to-end startup observation spans pod claim through ready.
+		startCtx := &startContext{
+			CredPools:         outcome.CredPools,
+			UserCredProviders: outcome.UserCredProviders,
+		}
 		if outcome.Claim != nil {
 			createClaim = outcome.Claim
 			row.PodAssignment = createClaim.SandboxName
 			row.PoolRef = createClaim.Pool
+			startCtx.PodClaim = createClaim.PodClaim
 		}
-		result, err := s.startOnPod(r.Context(), row, parsedPlan)
+		result, err := s.startOnPod(r.Context(), row, parsedPlan, startCtx)
 		if err != nil {
 			// startOnPod's prepare/launch already reclaimed the bound pod on
 			// failure; rollbackClaim is a defensive no-op DELETE on the
@@ -637,7 +667,13 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 				"stored workspace plan could not be parsed: "+err.Error(), nil)
 			return
 		}
-		result, err := s.startOnPod(r.Context(), row, plan)
+		// spec: §4.1 / §5 (proposal) — the two-step `POST /v1/sessions/{id}/start`
+		// path runs in a separate request from the /create claim, so the
+		// create-time credential resolution and pod_claim duration are not in
+		// memory; startOnPod re-resolves credentials from the persisted row and
+		// the /start end-to-end span is launch-only (the create-time pod_claim
+		// was observed by the /create request).
+		result, err := s.startOnPod(r.Context(), row, plan, nil)
 		if err != nil {
 			// spec: §7.1 line 28 / §6.2 line 303 — `POST /v1/sessions/{id}/start`
 			// returns `STARTING_FAILED` when the §7.1 atomic-creation unit
@@ -1234,6 +1270,36 @@ type claimOutcome struct {
 	Claim *podsession.ClaimResult
 	// Level is the §7.1 sessionIsolationLevel for the resolved pool.
 	Level SessionIsolationLevel
+	// CredPools and UserCredProviders are the §7.1-step-3 pre-claim
+	// credential resolution claimAtCreate already computed. The combined
+	// one-call POST /v1/sessions/start path threads them into startOnPod so
+	// the step-3 pre-check runs exactly once before the step-4 claim rather
+	// than re-resolving at the prepare dispatch (the proposal's "pre-check
+	// runs once, before the claim" placement). The two-step create → start
+	// path discards them: its /start request re-resolves from the persisted
+	// row because the resolution is not persisted across the create window.
+	CredPools         map[string]string
+	UserCredProviders []string
+}
+
+// startContext carries the create-time resolution claimAtCreate produced
+// into a same-call startOnPod, so the combined one-call POST
+// /v1/sessions/start path neither re-runs the §7.1-step-3 credential
+// pre-check nor drops the create-time pod-claim duration from the
+// end-to-end startup envelope. It is nil for the two-step POST
+// /v1/sessions/{id}/start and the resume-rebuild paths, where startOnPod
+// resolves credentials itself and the claim ran in a separate request.
+type startContext struct {
+	// CredPools and UserCredProviders are the already-resolved §4.9
+	// pre-claim credential map and user-source providers; startOnPod reuses
+	// them instead of calling resolveCredentialPools again.
+	CredPools         map[string]string
+	UserCredProviders []string
+	// PodClaim is the create-time §6.3 pod_claim phase duration the same
+	// call measured at claimAtCreate. prepareAndLaunch threads it into the
+	// end-to-end lenny_session_startup_duration_seconds so the single
+	// combined-call observation spans pod claim through ready (§6.3).
+	PodClaim time.Duration
 }
 
 // claimAtCreate runs the §7.1 step-3 credential availability pre-check and
@@ -1286,7 +1352,8 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// before the client wastes an upload, regardless of the pool's session
 	// policy. Surfacing the gate at create rather than at /start is the §2
 	// fail-fast contract this proposal establishes.
-	if _, _, err := s.resolveCredentialPools(ctx, row); err != nil {
+	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
+	if err != nil {
 		return nil, err
 	}
 	// spec: §5.2 — service mode is claimless: a service-mode session is a
@@ -1294,7 +1361,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// no SandboxClaim and no workspace materialization. No pod is claimed at
 	// create; the row persists with execution_mode=service.
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
-		return &claimOutcome{Level: level}, nil
+		return &claimOutcome{Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
 	}
 	// spec: §5.2 — a concurrent-workspace pool (maxConcurrentSessions>1)
 	// reserves a fresh per-session slot rather than claiming a pod
@@ -1306,7 +1373,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// create per the §2 fail-fast contract; only the per-session slot
 	// reservation is deferred to /start.
 	if match.MaxConcurrentSessions > 1 {
-		return &claimOutcome{Level: level}, nil
+		return &claimOutcome{Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	// The Claim phase only needs the pool, session, and tenant; the plan and
@@ -1323,6 +1390,17 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 			return s.podBinder.Claim(ctx, bindReq)
 		})
 	if err != nil {
+		// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — pool
+		// exhaustion at the step-4 create-time claim surfaces as the §7.1
+		// SESSION_CREATION_FAILED atomicity envelope, not the §5.2
+		// WARM_POOL_EXHAUSTED code the two-step `POST /v1/sessions/{id}/start`
+		// path returns. Translate the exhaustion sentinel to errCreateClaimExhausted
+		// so writePodClaimError routes it to the create-handler fallback
+		// (SESSION_CREATION_FAILED) while pool-warming and credential misses
+		// keep their dedicated codes.
+		if errors.Is(err, podclaim.ErrNoIdlePod) {
+			return nil, fmt.Errorf("%w: %w", errCreateClaimExhausted, err)
+		}
 		return nil, err
 	}
 	// spec: §6.3 — record only the pod_claim phase timing at /create, its
@@ -1331,8 +1409,16 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// the launch boundary (recordStartupDuration), not here, so a single
 	// logical start does not double-count the envelope.
 	s.recordStartupPhases(match, podsession.BindTimings{PodClaim: claim.PodClaim})
-	return &claimOutcome{Claim: claim, Level: level}, nil
+	return &claimOutcome{Claim: claim, Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
 }
+
+// errCreateClaimExhausted marks a create-time pod-claim exhaustion so
+// writePodClaimError routes it to the §7.1 SESSION_CREATION_FAILED
+// atomicity envelope (proposal §4.1, atomicity note at §7.1 line 23)
+// rather than the §5.2 WARM_POOL_EXHAUSTED code the two-step start path
+// uses. The wrapped podclaim.ErrNoIdlePod stays inspectable for any
+// caller that branches on the underlying sentinel.
+var errCreateClaimExhausted = errors.New("create-time warm-pod claim exhausted")
 
 // startOnPod places a started session on a Kubernetes warm pod. It
 // resolves the warm pool serving the session's runtime and §5.3
@@ -1361,16 +1447,39 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 // publish the binding. The session-mode and concurrent-slot paths
 // both surface their result the same way; the caller distinguishes
 // them by inspecting BindResult.SlotID when it has to roll back.
-// spec: §4.2 line 160 — "Pod-to-session binding"; §7.1 line 28 —
-// atomic-creation rollback.
-func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
+//
+// claimed is the create-time resolution from a same-call claimAtCreate,
+// passed only on the combined one-call POST /v1/sessions/start path. When
+// it is non-nil, startOnPod reuses its §7.1-step-3 credential resolution
+// rather than calling resolveCredentialPools again (so the combined path
+// runs the pre-check exactly once before the step-4 claim, per the
+// proposal's "pre-check runs once, before the claim" placement) and threads
+// its create-time pod_claim duration into the end-to-end startup envelope.
+// It is nil on the two-step `POST /v1/sessions/{id}/start` and resume-rebuild
+// paths, where startOnPod resolves credentials itself because the claim ran
+// in a separate request.
+// spec: §4.1, §5 (proposal); §4.2 line 160 — "Pod-to-session binding";
+// §7.1 line 28 — atomic-creation rollback.
+func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext) (*podsession.BindResult, error) {
 	// spec: §4.9 lines 1216-1218 — run the pre-claim credential
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
-	// assignment is rejected without wasting a warm pod.
-	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
-	if err != nil {
-		return nil, err
+	// assignment is rejected without wasting a warm pod. On the combined
+	// one-call path the same-call claimAtCreate already ran this step-3
+	// pre-check, so reuse its resolution rather than re-running it (proposal
+	// §4.1: the pre-check runs once, before the claim).
+	var (
+		credPools         map[string]string
+		userCredProviders []string
+	)
+	if claimed != nil {
+		credPools, userCredProviders = claimed.CredPools, claimed.UserCredProviders
+	} else {
+		var err error
+		credPools, userCredProviders, err = s.resolveCredentialPools(ctx, row)
+		if err != nil {
+			return nil, err
+		}
 	}
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
@@ -1444,7 +1553,20 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// concurrent-slot pool the create-time claim defers) runs the whole
 	// Claim → Prepare → Launch sequence here.
 	if row.PodAssignment != "" {
-		return s.prepareAndLaunch(ctx, row, match, bindReq)
+		// spec: §5 / §6.3 line 348 (proposal) — on the combined one-call path
+		// the same call measured the create-time pod_claim duration; thread it
+		// into the launch-boundary end-to-end envelope so the single
+		// lenny_session_startup_duration_seconds observation spans pod claim
+		// through ready. On the two-step `POST /v1/sessions/{id}/start` path the
+		// claim ran in a separate /create request (claimed is nil), so the
+		// create-time pod_claim component is recorded by that request and is
+		// deliberately not re-attributed here; the /start end-to-end span is
+		// launch-only by construction.
+		var createPodClaim time.Duration
+		if claimed != nil {
+			createPodClaim = claimed.PodClaim
+		}
+		return s.prepareAndLaunch(ctx, row, match, bindReq, createPodClaim)
 	}
 	// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted session-claim
 	// acquisition in the per-pool claim FIFO and re-enter the claim path as
@@ -1508,8 +1630,16 @@ func (s *Server) exclusiveBindRequest(ctx context.Context, row sessionstore.Sess
 // launch composition without re-running the claim. A prepare or launch
 // failure is surfaced for writePodClaimError to map; the binder already
 // reclaimed the bound pod (and any lease) on the failure path.
-// spec: §4.3, §4.4, §4.6 (proposal); §7.1 steps 11-13.
-func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest) (*podsession.BindResult, error) {
+//
+// createPodClaim is the create-time §6.3 pod_claim phase duration the
+// same call measured at claimAtCreate, or zero when the claim ran in a
+// separate request (the two-step `POST /v1/sessions/{id}/start` path).
+// It is threaded into the end-to-end lenny_session_startup_duration_seconds
+// so a single combined-call observation includes the pod-claim component
+// per §6.3 line 348, while the per-phase pod_claim histogram is still
+// emitted exactly once (at /create, not re-emitted here).
+// spec: §4.3, §4.4, §4.6, §5 (proposal); §6.3 line 348; §7.1 steps 11-13.
+func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest, createPodClaim time.Duration) (*podsession.BindResult, error) {
 	bindReq.SandboxName = row.PodAssignment
 	if row.PoolRef != "" {
 		bindReq.Pool = row.PoolRef
@@ -1525,8 +1655,11 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 	}
 	// Reassemble the BindResult the whole-sequence Bind would have returned:
 	// the live adapter and launch timing come from Launch, the prepared
-	// workspace and setup trail from Prepare. The pod-claim timing was
-	// recorded at /create, so it is not re-attributed here.
+	// workspace and setup trail from Prepare. Launch never claims, so its
+	// PodClaim is zero; the create-time claim duration is carried separately
+	// (createPodClaim) and attributed to the end-to-end envelope below rather
+	// than to the per-phase pod_claim histogram, which was recorded once at
+	// /create.
 	result.Timings.WorkspaceMaterialization = prep.Timings.WorkspaceMaterialization
 	result.Timings.SetupCommands = prep.Timings.SetupCommands
 	result.Timings.CredentialAssignment = prep.Timings.CredentialAssignment
@@ -1536,12 +1669,21 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 	// spec: §6.3 / §5 (0007 proposal) — record the prepare/launch phases
 	// measured here (workspace_materialization, setup_commands,
 	// credential_assignment, agent_session_start). result.Timings.PodClaim is
-	// zero on this reconnect path, so recordStartupPhases skips it rather than
-	// re-emitting a spurious 0s pod_claim sample; pod_claim was recorded once
-	// at /create. The end-to-end lenny_session_startup_duration_seconds is
-	// emitted exactly once here, at the launch boundary.
+	// zero from Launch, so recordStartupPhases skips it rather than re-emitting
+	// a spurious 0s pod_claim sample; the per-phase pod_claim histogram was
+	// recorded once at /create.
 	s.recordStartupPhases(match, result.Timings)
-	s.recordStartupDuration(match, result.Timings)
+	// spec: §6.3 line 348 / §5 (proposal) — the end-to-end
+	// lenny_session_startup_duration_seconds spans pod claim through ready, so
+	// attribute the create-time pod_claim duration to the end-to-end total
+	// (without re-emitting the per-phase sample). On the combined one-call path
+	// createPodClaim is the same call's claim duration so the single
+	// observation covers the whole envelope; on the two-step /start path it is
+	// zero by construction and the create-time pod_claim was already
+	// observed by the separate /create request.
+	end := result.Timings
+	end.PodClaim = createPodClaim
+	s.recordStartupDuration(match, end)
 	return result, nil
 }
 
@@ -2426,7 +2568,10 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		if err != nil {
 			return "", err
 		}
-		result, err := s.startOnPod(ctx, row, plan)
+		// spec: §7.3 (snapshotless resume-rebuild) — the resume path holds no
+		// create-time claim or credential resolution (it claims a fresh pod via
+		// the whole-sequence Bind), so startOnPod resolves credentials itself.
+		result, err := s.startOnPod(ctx, row, plan, nil)
 		if err != nil {
 			return "", err
 		}

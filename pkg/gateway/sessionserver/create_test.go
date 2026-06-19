@@ -1481,13 +1481,16 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 (atomicity: no row on a failed create-step), §15.1
-// line 1138 (Retry-After).
-// diagnosis: a create against an exhausted pool that persists a row, or
-// omits the Retry-After hint, breaks the §7.1 fail-fast-at-create
-// guarantee — the client would discover exhaustion only after wasting an
-// upload. A failure here means createSession did not surface pool
-// exhaustion as a 503 SESSION_CREATION_FAILED before the row persist.
+// spec: §7.1 line 23 (atomicity note: pool exhaustion at step 4 returns
+// SESSION_CREATION_FAILED, no row), §15.1 line 1138 (Retry-After).
+// diagnosis: a create against an exhausted pool that persists a row, omits
+// the Retry-After hint, or surfaces a code other than SESSION_CREATION_FAILED
+// breaks the §7.1 fail-fast-at-create atomicity envelope — the client would
+// discover exhaustion only after wasting an upload, or under the wrong code.
+// A failure here means createSession did not surface create-time pool
+// exhaustion as a 503 SESSION_CREATION_FAILED before the row persist; the
+// two-step /start path keeps WARM_POOL_EXHAUSTED (§5.2), so this asserts the
+// create-handler code, not the shared classifier's default.
 func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
@@ -1515,6 +1518,22 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	}
 	if ra := rr.Header().Get("Retry-After"); ra == "" {
 		t.Error("Retry-After header missing on the SESSION_CREATION_FAILED reply")
+	}
+	// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — create-time pool
+	// exhaustion surfaces the SESSION_CREATION_FAILED atomicity envelope, not
+	// the §5.2 WARM_POOL_EXHAUSTED code the two-step /start claim returns.
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "SESSION_CREATION_FAILED" {
+		t.Errorf("code = %q, want SESSION_CREATION_FAILED (create-time exhaustion is the §7.1 atomicity envelope, not WARM_POOL_EXHAUSTED)", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "no_idle_pods" {
+		t.Errorf("details.reason = %v, want no_idle_pods", env.Error.Details["reason"])
 	}
 	if _, err := store.Get(context.Background(), "acme", "sess-create-exhausted"); err == nil {
 		t.Error("session row was persisted; §7.1 atomicity requires no row when the create-time claim fails")
