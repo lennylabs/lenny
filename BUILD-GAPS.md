@@ -6175,7 +6175,7 @@ diagram; its step 7/8 placement of AssignCredentials within the
 "creation atomic unit (steps 2-8)" does not pin the exact adapter-RPC
 interleaving. Closed as verified by-design.
 
-### - [-] F-7.1.19 — `transcript-as-artifact` derive copy not implemented [Info] — DEFERRED
+### - [x] F-7.1.19 — `transcript-as-artifact` derive copy not implemented [Info] — CLOSED
 
 §7.1 lines 79: "When deriving a new session, clients can optionally
 include the previous session's transcript as a file in the derived
@@ -6196,6 +6196,37 @@ caller asks for the integration; wiring it requires plumbing a new
 DeriveRequest field through the derive copy step and the workspace
 materialisation path, which is a self-contained but non-trivial
 follow-up.
+
+**Resolution (by-design, verify-close 2026-06-19).** Re-verified against the
+spec's `POST /v1/sessions/{id}/derive` definition: the spec defines no
+gateway-side transcript-injection field, so there is no spec-backed gap to
+implement. The derive request body the spec specifies is `allowStale`
+(§15.1 line 623), `allowIsolationDowngrade`/`ticketId` (§7.1 derive rule 5,
+§15.1 line 1055), and the target runtime/pool override — there is no
+`includeTranscript` / `transcriptInjectionPath` field anywhere in §7.1 or
+§15.1 (the field names this finding flagged as absent are not in the spec;
+they were hypothesised by the finding). §7.1 derive rule (line 81) is
+explicit that derive **"always performs a full copy of the parent
+session's workspace snapshot"** — derive is workspace-snapshot-only.
+
+The §7.1 line 79 sentence describes a **client-side** workflow, not a
+gateway feature: the transcript "is available via
+`GET /v1/sessions/{id}/transcript` and is included as a downloadable
+session artifact ... clients can optionally include the previous session's
+transcript as a file in the derived session's workspace." The actor is the
+client, and the mechanism is the composition of two already-implemented
+endpoints — `GET /transcript` plus a workspace upload — which this finding
+already confirms "works end-to-end." That composition is the spec's
+described mechanism, not a fall-back.
+
+The contrast with replay confirms the reading: `POST /v1/sessions/{id}/replay`
+*does* define an explicit gateway-side prompt/transcript re-injection
+mechanism (`replayMode: prompt_history`, §15.1 line 742); derive
+deliberately has no analog. A gateway-side `includeTranscript` convenience
+flag would be a **new spec surface** (a new `DeriveRequest` field), so it
+must originate from a `change-proposal` per the spec-driven-development
+rule, not a build-gap implementation. Nothing is owed against the current
+spec. Heading DEFERRED → CLOSED (by-design, no spec-backed gap).
 
 ### - [x] F-7.1.20 — Cleanup race on `created` state expiry [Info] — CLOSED
 
