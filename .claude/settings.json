@@ -3,13 +3,24 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
-            "type": "command",
-            "command": "f=$(jq -r '(.tool_input.file_path // .tool_input.notebook_path) // empty'); case \"$f\" in /Users/joan/projects/lenny/spec/*|spec/*|./spec/*) if grep -q '^- \\*\\*Status:\\*\\* Approved' /Users/joan/projects/lenny/proposals/*.md 2>/dev/null; then exit 0; fi; echo \"blocked: spec/ is read-only unless an approved spec proposal under proposals/ is pending application. Stage edits via the change-proposal skill, record approval, then apply with the implement-proposal skill. Path: $f\" >&2; exit 2 ;; esac"
+            "command": "f=$(jq -r '(.tool_input.file_path // .tool_input.notebook_path) // empty'); case \"$f\" in /Users/joan/projects/lenny/spec/*|spec/*|./spec/*) if grep -q '^- \\*\\*Status:\\*\\* Approved' /Users/joan/projects/lenny/proposals/*.md 2\u003e/dev/null; then exit 0; fi; echo \"blocked: spec/ is read-only unless an approved spec proposal under proposals/ is pending application. Stage edits via the change-proposal skill, record approval, then apply with the implement-proposal skill. Path: $f\" \u003e\u00262; exit 2 ;; esac",
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime --hook-json",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
       }
     ]
   },
