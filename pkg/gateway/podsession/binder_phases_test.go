@@ -6,14 +6,19 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
@@ -441,6 +446,80 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_5(t *testing.T) {
 	// lease; the fake records the call, which decremented nothing.
 	if len(assigner.released) != 1 || assigner.released[0] != "sess-created" {
 		t.Errorf("ReleaseSession calls = %v, want [sess-created] (a no-op revoke)", assigner.released)
+	}
+}
+
+// spec: §15.1 line 630 (created TTL-expiry releases the pod claim and revokes
+// the lease), §7.1 line 28 (atomicity), §4.5 (proposal) — the created-expiry
+// sweep, wired to the binder's claimless reclaim, releases the pod a
+// `created`-state row claimed at /create back to the pool against a real
+// kube-apiserver before it deletes the abandoned row. This is the S5 end-to-end
+// path: an expired created row with a persisted pod binding is swept, its
+// SandboxClaim is deleted from the apiserver, and the row is gone.
+// diagnosis: a failure means an abandoned created session strands its claimed
+// warm pod for the whole pool, because the §7.1 created-state sweep retired the
+// row without returning the pod the create handler reserved.
+func TestCreatedSweepReleasesClaimedPod_spec_15_1_630(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	assigner := &fakeAssigner{}
+	binder.Credentials = assigner
+
+	// A created session that only claimed a pod at /create (no finalize, so no
+	// lease): the warm pod is reserved and the binding is the persisted
+	// SandboxName + pool the sweep reconstructs.
+	claim, err := binder.Claim(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-abandoned", TenantID: "acme", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	// Seed the abandoned created row with the persisted pod binding the create
+	// handler writes, then run the sweep wired to the binder's claimless reclaim.
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	store := memstore.New()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess-abandoned", TenantID: "acme",
+		State:         session.StateCreated,
+		CreatedAt:     now.Add(-10 * time.Minute),
+		PodAssignment: claim.SandboxName, PoolRef: testPool,
+	}); err != nil {
+		t.Fatalf("seed created row: %v", err)
+	}
+	sw := createdsweeper.New(store, createdsweeper.StaticTenants{"acme"}, createdsweeper.Options{
+		Clock: func() time.Time { return now },
+		Reclaim: func(ctx context.Context, podName, _, sessionID string) error {
+			return binder.ReclaimClaimed(ctx, podName, sessionID)
+		},
+	})
+	dropped, err := sw.Tick(context.Background(), now)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if dropped != 1 {
+		t.Fatalf("dropped = %d, want 1 (the abandoned created row)", dropped)
+	}
+
+	// The reserved pod's per-pod claim is deleted from the apiserver, returning
+	// it to the pool.
+	var sc lennyv1.SandboxClaim
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	if !apierrors.IsNotFound(gerr) {
+		t.Errorf("per-pod claim get after sweep = %v, want NotFound (sweep released the claimed pod)", gerr)
+	}
+	// The row itself is gone.
+	if _, err := store.Get(context.Background(), "acme", "sess-abandoned"); err == nil {
+		t.Errorf("abandoned created row survived the sweep")
+	}
+	// A created session that never finalized holds no lease, so the revoke is a
+	// defensive no-op the same injected reclaim still runs.
+	if len(assigner.released) != 1 || assigner.released[0] != "sess-abandoned" {
+		t.Errorf("ReleaseSession calls = %v, want [sess-abandoned] (defensive no-op revoke)", assigner.released)
 	}
 }
 

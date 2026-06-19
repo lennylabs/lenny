@@ -6801,6 +6801,17 @@ func main() {
 		// spec: §7.1 line 58.
 		Timeout: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
 		Clock:   clockinject.Now,
+		// §15.1 line 630 (proposal §4.5): an abandoned `created`-state row
+		// holds a pod claimed at /create; releasing the row must return that
+		// pod to the pool and revoke any lease. Wire the sweep to the same
+		// claimless reclaim /terminate runs (Binder.ReclaimClaimed), closing
+		// over the kube Client, Namespace, and CredentialAssigner the binder
+		// already carries. ReclaimClaimed releases by pod name, so the poolRef
+		// the Reclaimer carries is unused here; it is part of the §4.6
+		// persisted binding the contract mirrors. Nil when the gateway runs
+		// without a pod binder (in-memory mode), where the sweep drops the row
+		// without a pod release.
+		Reclaim: createdSweeperReclaim(podBinder),
 	})
 	go createdGC.Run(watchdogCtx, func(dropped int, err error) {
 		if err != nil {
@@ -9518,6 +9529,27 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 		out = append(out, row.ID)
 	}
 	return out, nil
+}
+
+// createdSweeperReclaim adapts the podsession Binder's claimless reclaim into
+// the createdsweeper.Reclaimer the §7.1 created-expiry sweep invokes before it
+// drops an abandoned `created`-state row. It closes over the binder (which
+// carries the kube Client, Namespace, and CredentialAssigner) so the sweep
+// releases the pod claimed at /create and revokes any assigned lease through
+// the same ReclaimClaimed call /terminate uses. ReclaimClaimed releases by pod
+// name, so the poolRef the Reclaimer carries is dropped here. Returns nil when
+// the gateway runs without a pod binder (in-memory mode), leaving the sweep to
+// drop the row without a pod release.
+//
+// spec: §15.1 line 630 (created TTL-expiry releases the pod claim and revokes
+// the lease); proposal §4.5.
+func createdSweeperReclaim(binder *podsession.Binder) createdsweeper.Reclaimer {
+	if binder == nil {
+		return nil
+	}
+	return func(ctx context.Context, podName, _ /* poolRef */, sessionID string) error {
+		return binder.ReclaimClaimed(ctx, podName, sessionID)
+	}
 }
 
 // billingSessionLister enumerates the active (non-terminal) sessions the

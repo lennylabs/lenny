@@ -176,6 +176,129 @@ func TestSweepRunStopsOnContextCancel_spec_7_1_20(t *testing.T) {
 	}
 }
 
+// spec: §15.1 line 630 — a `created`-expiry release returns the pod claimed
+// at /create to the pool and revokes any assigned lease before the row is
+// retired. The sweep calls the injected Reclaimer with the row's
+// PodAssignment, PoolRef, and ID exactly once per eligible row, ahead of the
+// row Delete, so an abandoned create does not strand a pod.
+func TestSweepReclaimsPodBeforeDelete_spec_15_1_630(t *testing.T) {
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	store := memstore.New()
+	mustCreate(t, store, sessionstore.Session{
+		ID: "abandoned", TenantID: "acme",
+		State: session.StateCreated, CreatedAt: now.Add(-10 * time.Minute),
+		PodAssignment: "pod-abandoned", PoolRef: "pool-a",
+	})
+	rec := &captureReclaim{}
+	sw := New(store, StaticTenants{"acme"}, Options{
+		Clock: func() time.Time { return now }, Reclaim: rec.reclaim,
+	})
+	dropped, err := sw.Tick(context.Background(), now)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", dropped)
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("reclaim calls = %d, want 1 (the eligible row's pod must be released)", len(rec.calls))
+	}
+	got := rec.calls[0]
+	if got.podName != "pod-abandoned" || got.poolRef != "pool-a" || got.sessionID != "abandoned" {
+		t.Errorf("reclaim args = %+v, want pod-abandoned/pool-a/abandoned (row PodAssignment+PoolRef+ID)", got)
+	}
+	if _, err := store.Get(context.Background(), "acme", "abandoned"); err == nil {
+		t.Errorf("row was not deleted after a successful reclaim")
+	}
+}
+
+// spec: §15.1 line 630, §7.1 line 28 — a reclaim failure aborts the sweep with
+// the error and leaves the row in place, so the next tick retries the release
+// rather than dropping a row whose pod was never returned to the pool. The
+// abort-on-error semantics that the per-row Delete failure already had extend
+// to the reclaim step.
+func TestSweepAbortsAndKeepsRowOnReclaimError_spec_15_1_630(t *testing.T) {
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	store := memstore.New()
+	mustCreate(t, store, sessionstore.Session{
+		ID: "stuck", TenantID: "acme",
+		State: session.StateCreated, CreatedAt: now.Add(-10 * time.Minute),
+		PodAssignment: "pod-stuck", PoolRef: "pool-a",
+	})
+	sink := &captureMetrics{}
+	sw := New(store, StaticTenants{"acme"}, Options{
+		Clock: func() time.Time { return now }, Metrics: sink,
+		Reclaim: func(context.Context, string, string, string) error {
+			return errors.New("injected reclaim failure")
+		},
+	})
+	dropped, err := sw.Tick(context.Background(), now)
+	if err == nil {
+		t.Fatalf("Tick: expected an error from the failing reclaim")
+	}
+	if dropped != 0 {
+		t.Errorf("dropped = %d, want 0 (a reclaim failure must not drop the row)", dropped)
+	}
+	if sink.errors != 1 || sink.successes != 0 {
+		t.Errorf("metrics success/error = %d/%d, want 0/1", sink.successes, sink.errors)
+	}
+	if _, err := store.Get(context.Background(), "acme", "stuck"); err != nil {
+		t.Errorf("row was deleted despite the reclaim failure: %v", err)
+	}
+}
+
+// spec: §15.1 line 630 — a `created` row with no persisted pod binding
+// (PodAssignment empty, e.g. a row that failed before the at-create claim
+// landed) is dropped without invoking the Reclaimer, so the sweep never
+// deletes a phantom claim. The lease revoke is also skipped because no pod
+// and therefore no lease is bound.
+func TestSweepSkipsReclaimWhenNoPodBound_spec_15_1_630(t *testing.T) {
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	store := memstore.New()
+	mustCreate(t, store, sessionstore.Session{
+		ID: "no-pod", TenantID: "acme",
+		State: session.StateCreated, CreatedAt: now.Add(-10 * time.Minute),
+	})
+	rec := &captureReclaim{}
+	sw := New(store, StaticTenants{"acme"}, Options{
+		Clock: func() time.Time { return now }, Reclaim: rec.reclaim,
+	})
+	dropped, err := sw.Tick(context.Background(), now)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", dropped)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("reclaim calls = %d, want 0 (a row with no PodAssignment has no claim to release)", len(rec.calls))
+	}
+	if _, err := store.Get(context.Background(), "acme", "no-pod"); err == nil {
+		t.Errorf("row with no pod binding was not dropped")
+	}
+}
+
+// spec: §15.1 line 630 — a sweep wired with no Reclaimer (the in-memory
+// dev/test gateway) drops the row without attempting a pod release, so the
+// nil-dependency path degrades to a plain row drop rather than panicking.
+func TestSweepWithoutReclaimerDropsRow_spec_15_1_630(t *testing.T) {
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	store := memstore.New()
+	mustCreate(t, store, sessionstore.Session{
+		ID: "abandoned", TenantID: "acme",
+		State: session.StateCreated, CreatedAt: now.Add(-10 * time.Minute),
+		PodAssignment: "pod-abandoned", PoolRef: "pool-a",
+	})
+	sw := New(store, StaticTenants{"acme"}, Options{Clock: func() time.Time { return now }})
+	dropped, err := sw.Tick(context.Background(), now)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if dropped != 1 {
+		t.Errorf("dropped = %d, want 1 (the nil-Reclaimer sweep still drops the row)", dropped)
+	}
+}
+
 // --- test helpers ---------------------------------------------------
 
 func mustCreate(t *testing.T, s sessionstore.Store, row sessionstore.Session) {
@@ -205,4 +328,21 @@ type errorTenants struct{}
 
 func (e *errorTenants) ListTenants(_ context.Context) ([]string, error) {
 	return nil, errors.New("injected tenant-list error")
+}
+
+// captureReclaim records each Reclaimer invocation so a test can assert the
+// sweep released the right pod with the row's PodAssignment, PoolRef, and ID.
+type captureReclaim struct {
+	calls []reclaimCall
+}
+
+type reclaimCall struct {
+	podName   string
+	poolRef   string
+	sessionID string
+}
+
+func (c *captureReclaim) reclaim(_ context.Context, podName, poolRef, sessionID string) error {
+	c.calls = append(c.calls, reclaimCall{podName: podName, poolRef: poolRef, sessionID: sessionID})
+	return nil
 }
