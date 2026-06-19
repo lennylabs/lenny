@@ -56,6 +56,7 @@ DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 MIGRATE_JOB_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/migrate-job.yaml"
 AGENT_WORKLOAD_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/agent-workload.yaml"
 PSC_EGRESS_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/pool-scaling-controller-egress.yaml"
+APISERVER_EGRESS_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/apiserver-egress.yaml"
 CHART_DIR="${REPO_ROOT}/charts/lenny"
 
 # Fixed in-cluster data-store facts. These mirror datastores.yaml and
@@ -551,13 +552,22 @@ bootstrap:
       labels:
         lenny.dev/e2e: elicitation-echo
   pools:
-    # §6.3 pod-warm arm: a standard/session pool warmed to 1 pod, backed
-    # by the sidecar echo runtime.
+    # §6.3 pod-warm arm: a standard/session pool backed by the sidecar
+    # echo runtime. warmCount is 6 (not 1) so the §6.3 startup benchmark's
+    # 2-VU smoke run finds an idle pod on every claim. Each iteration
+    # claims a pod and terminates the session to release it, but on Kind a
+    # released pod takes several seconds to scrub and return to idle and a
+    # warmCount-1 pool refills a freshly-created replacement just as
+    # slowly, so a single warm pod exhausts within the first burst and ~96%
+    # of POST /v1/sessions/start calls fail with no-idle-pod. A depth of 6
+    # holds enough idle inventory to absorb the in-flight claims plus the
+    # refill lag; the echo pods request ~128Mi each, well within the Kind
+    # nodes' headroom.
     - name: echo-pool-sidecar
       runtimeRef: echo-runtime-sidecar
       isolationProfile: standard
       executionMode: session
-      warmCount: 1
+      warmCount: 6
       allowStandardIsolation: true
     - name: echo-pool-embedded
       runtimeRef: echo-runtime-embedded
@@ -566,12 +576,16 @@ bootstrap:
       warmCount: 1
       allowStandardIsolation: true
     # §6.3 SDK-warm arm: the preconnect runtime drives the warming ->
-    # sdk_connecting -> idle path.
+    # sdk_connecting -> idle path. warmCount is 6 for the same reason as
+    # echo-pool-sidecar above: the benchmark's 2-VU smoke run exhausts a
+    # single warm pod, and the SDK-warm refill (warming -> sdk_connecting
+    # -> idle) is slower still, so the depth keeps an idle pod available
+    # for every claim.
     - name: preconnect-echo-pool
       runtimeRef: preconnect-echo-runtime
       isolationProfile: standard
       executionMode: session
-      warmCount: 1
+      warmCount: 6
       allowStandardIsolation: true
     - name: cred-shell-echo-pool
       runtimeRef: cred-shell-echo-runtime
@@ -628,6 +642,17 @@ fi
 # test-infra-only, so it does not alter the production chart rendering.
 log "applying the PoolScalingController egress NetworkPolicy"
 kc apply -f "${PSC_EGRESS_MANIFEST}"
+
+# Admit lenny-system egress to the Kind kube-apiserver. kindnet evaluates
+# the egress NetworkPolicy against the post-DNAT destination, so the chart
+# policies' service-CIDR ipBlock (10.96.0.0/12, covering the kubernetes
+# Service ClusterIP) does not match the apiserver's real endpoint on the
+# `kind` Docker bridge network (172.18.0.0/16). Without this the gateway's
+# per-session SandboxClaim write times out and POST /v1/sessions/start
+# returns 503 SESSION_CREATION_FAILED. The manifest is test-infra-only, so
+# it does not alter the production chart rendering.
+log "applying the kube-apiserver egress NetworkPolicy"
+kc apply -f "${APISERVER_EGRESS_MANIFEST}"
 
 # Wait for the core control-plane pods to become Ready. The dedicated
 # §13.2 CoreDNS instance is disabled on this overlay (e2e-values sets

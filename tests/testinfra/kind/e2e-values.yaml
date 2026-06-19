@@ -26,7 +26,36 @@ platform:
   registry:
     url: ""
 
+# Run the cluster-internal gRPC links in plaintext (dev posture). With
+# mtls.enabled=true (the chart default) the gateway dials each agent pod's
+# adapter over mTLS (--adapter-tls-cert/key/ca), but the Sandbox reconciler
+# does not yet stamp a per-pod serving certificate onto the adapter
+# container, so the adapter serves :50051 in plaintext. The gateway's mTLS
+# dial then fails the handshake ("tls: first record does not look like a
+# TLS handshake") and POST /v1/sessions/start returns 503
+# SESSION_CREATION_FAILED, which breaks the §6.3 startup benchmark. The
+# per-pod adapter serving cert is the deferred SPIFFE/cert-manager work
+# tracked by the broader chart-wide mTLS gap (BUILD-GAPS F-10.3.10); until
+# it lands, the e2e runs gateway↔adapter and gateway↔Token-Service in
+# plaintext so the two sides agree. This is the e2e harness overlay only;
+# production keeps mtls.enabled=true.
+mtls:
+  enabled: false
+
 controller:
+  # Run a single WarmPoolController replica on the e2e cluster. The chart
+  # default is 2 (a leader plus a hot standby for production HA), but on a
+  # single-host Kind cluster the standby pod is CPU-starved during the heavy
+  # install: its controller-runtime health-probe server cannot answer the 1s
+  # /readyz and /healthz probes, so the liveness probe kills it in a restart
+  # loop and it never reports Ready. The install's control-plane Ready wait
+  # (kubectl wait --for=condition=Ready over every app.kubernetes.io/name=lenny
+  # pod) then blocks on that standby and times out, even though the elected
+  # leader is healthy and reconciling. One replica still runs --leader-elect
+  # and acquires the lease immediately, which is all the §6.3 benchmark and
+  # the tier-5/8/9 suites need (none exercise controller failover). This is
+  # the e2e harness overlay only; production keeps the 2-replica HA default.
+  replicas: 1
   image:
     repository: lenny-controller
     tag: e2e

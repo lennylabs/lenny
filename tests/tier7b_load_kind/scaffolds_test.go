@@ -357,6 +357,13 @@ func TestStartupLatencyPodWarm(t *testing.T) {
 	before := load.ScrapeStartupBuckets(t, baseURL, "runc")
 	res := load.RunScenario(t, "startup_latency", startupOptions(baseURL, "echo-runtime-sidecar", "pod_warm", "runc"))
 	assertScenarioRan(t, "startup_latency_pod_warm", res)
+	// Capture the per-arm reference into baselines/startup_latency_pod_warm.json.
+	// With LENNY_UPDATE_BASELINE=1 this reseeds the committed baseline with
+	// the real measured numbers; otherwise it diffs against the stored
+	// reference. The threshold is zero so the noisy Kind port-forward smoke
+	// run does not gate on a latency regression (the cloud load tier runs
+	// the strict §6.3 comparison), matching the smoke stance elsewhere.
+	load.AssertBaseline(t, "startup_latency_pod_warm", res, load.Threshold{})
 	recordClaimToReadyP95(t, baseURL, before, "runc", 2.0)
 }
 
@@ -372,6 +379,13 @@ func TestStartupLatencySDKWarm(t *testing.T) {
 	before := load.ScrapeStartupBuckets(t, baseURL, "runc")
 	res := load.RunScenario(t, "startup_latency", startupOptions(baseURL, "preconnect-echo-runtime", "sdk_warm", "runc"))
 	assertScenarioRan(t, "startup_latency_sdk_warm", res)
+	// Capture the per-arm reference into baselines/startup_latency_sdk_warm.json.
+	// With LENNY_UPDATE_BASELINE=1 this reseeds the committed baseline with
+	// the real measured numbers; otherwise it diffs against the stored
+	// reference. The threshold is zero so the noisy Kind port-forward smoke
+	// run does not gate on a latency regression (the cloud load tier runs
+	// the strict §6.3 comparison), matching the smoke stance elsewhere.
+	load.AssertBaseline(t, "startup_latency_sdk_warm", res, load.Threshold{})
 	recordClaimToReadyP95(t, baseURL, before, "runc", 2.0)
 }
 

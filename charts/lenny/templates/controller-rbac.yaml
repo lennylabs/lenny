@@ -76,6 +76,16 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  # Pods/status: the §6.1 syncReadinessGate flips the
+  # lenny.dev/sandbox-ready pod readiness gate to True once the backing
+  # pod's containers report ready, which is what makes a warm pod
+  # claimable (the kubelet holds Pod.Ready False until the gate is set).
+  # The reconciler patches it through the status subresource
+  # (Status().Patch), a distinct RBAC resource from `pods`, so without
+  # this rule every warm pod stays NotReady and the pool never fills.
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "patch", "update"]
   # Nodes: read-only, for the §13.2 NET-022 cluster-CIDR drift detector
   # aggregating spec.podCIDR, and for the §4.6.1 host-node
   # schedulability Node informer.
