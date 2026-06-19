@@ -637,10 +637,20 @@ type ClaimResult struct {
 	// PodIP is the claimed pod's address, returned for the §15.1 create
 	// response and the §6.3 pod-claim metric.
 	PodIP string
+	// SlotID identifies the §5.2 concurrent-workspace slot reserved at
+	// create by ClaimSlot. It equals SessionID (one session per slot), so
+	// the binding is reconstructable from SandboxName + Pool + the session
+	// id. Empty for an exclusive (maxConcurrentSessions=1) Claim, where the
+	// whole pod is claimed for the session; non-empty marks the create-time
+	// disposition as a reserved concurrent slot that /start reconnects to
+	// via BindReservedSlot rather than re-reserving. spec: §5.2.
+	SlotID string
 	// WorkspaceRoot is the §7.3 absolute cwd the pod's adapter reported on
 	// the §15.5 handshake at claim. Persisted so Prepare's archive symlink
 	// canonicalization and Launch's SDK-warm ConfigureWorkspace cwd both
 	// use the negotiated root without re-handshaking before they need it.
+	// Empty for a ClaimSlot result: the per-slot workspace root is
+	// negotiated when BindReservedSlot reconnects.
 	WorkspaceRoot string
 	// PodClaim is the §6.3 "pod claim and routing" phase duration (claim,
 	// pod-IP resolution, mTLS dial, version handshake), for the create

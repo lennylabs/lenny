@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -18,10 +20,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
+	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -321,9 +325,14 @@ func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
 
 // concurrentClaimServer builds a Server whose resolved pool is a
 // concurrent-workspace pool (sessionPolicy.maxConcurrentSessions = 4), with
-// the §4.9 credential stores wired. The CRD pair and the poolstore mirror
-// share the pool name "conc-pool" so ResolvePool folds in
-// MaxConcurrentSessions > 1.
+// the §4.9 credential stores and a miniredis-backed §5.2 slot counter wired.
+// The CRD pair and the poolstore mirror share the pool name "conc-pool" so
+// ResolvePool folds in MaxConcurrentSessions > 1. The pool holds no idle pod,
+// so a create-time slot reservation surfaces ErrNoIdlePod (the fake client
+// cannot serve the SSA Apply a successful slot reservation needs; a
+// successful reservation is exercised by the podsession ClaimSlot envtest
+// tests). The slot counter is wired so the binder is configured as it is in
+// production rather than failing closed on a nil counter.
 func concurrentClaimServer(t *testing.T, ns string, credStatus credentialpoolstore.CredentialStatus) *Server {
 	t.Helper()
 	ctx := context.Background()
@@ -352,8 +361,12 @@ func concurrentClaimServer(t *testing.T, ns string, credStatus credentialpoolsto
 		t.Fatalf("create concurrent pool mirror: %v", err)
 	}
 
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+
 	return &Server{
-		podBinder:      &podsession.Binder{Client: c, Namespace: ns},
+		podBinder:      &podsession.Binder{Client: c, Namespace: ns, SlotCounter: slotcounter.New(rc)},
 		agentNamespace: ns,
 		pools:          pools,
 		tenants:        tenants,
@@ -365,12 +378,12 @@ func concurrentClaimServer(t *testing.T, ns string, credStatus credentialpoolsto
 
 // spec: §4.9 lines 1216-1218, §7.1 step 3 — the §7.1 step-3 credential
 // availability pre-check runs at create for a concurrent-workspace pool
-// (maxConcurrentSessions > 1) too, AHEAD of the slot-deferral short-circuit.
-// An exhausted credential source therefore rejects the create with
+// (maxConcurrentSessions > 1) too, AHEAD of the slot-reservation claim. An
+// exhausted credential source therefore rejects the create with
 // CREDENTIAL_POOL_EXHAUSTED (ErrNoCredentialAvailable) before the client
-// uploads, rather than admitting the session to `created` and discovering
-// exhaustion only at /start. This pins the §2 fail-fast contract for the
-// concurrent pool class, whose slot reservation is deferred to /start.
+// uploads and before any slot is reserved, rather than admitting the session
+// to `created` and discovering exhaustion only at /start. This pins the §2
+// fail-fast contract for the concurrent pool class.
 func TestClaimAtCreateConcurrentPoolPreCheckRuns(t *testing.T) {
 	s := concurrentClaimServer(t, "lenny-agents", credentialpoolstore.CredentialRevoked)
 	_, err := s.claimAtCreate(context.Background(), sessionstore.Session{
@@ -381,26 +394,23 @@ func TestClaimAtCreateConcurrentPoolPreCheckRuns(t *testing.T) {
 	}
 }
 
-// spec: §5.2, §7.1 step 3-4 — when the concurrent-workspace pool's
-// credential pre-check passes, claimAtCreate returns the resolved level with
-// a nil ClaimResult: the per-session slot reservation is deferred to /start,
-// but the §7.1 step-3 availability gate has already run at create. The nil
-// Claim proves the create-time claim is skipped for the concurrent class,
-// while the absence of an error proves the pre-check passed rather than
-// being skipped.
-func TestClaimAtCreateConcurrentPoolDefersSlotAfterPreCheck(t *testing.T) {
+// spec: §4.1 (proposal), §7.1 line 23 (atomicity), §5.2 — when the
+// credential pre-check passes but the concurrent pool has no idle pod to
+// reserve a slot on, claimAtCreate surfaces the exhaustion as the §7.1
+// SESSION_CREATION_FAILED atomicity envelope (errCreateClaimExhausted
+// wrapping ErrNoIdlePod) before the client uploads, exactly as the exclusive
+// claim does. This proves the slot reservation is attempted at create rather
+// than deferred to /start.
+func TestClaimAtCreateConcurrentPoolExhaustionAtCreate(t *testing.T) {
 	s := concurrentClaimServer(t, "lenny-agents", credentialpoolstore.CredentialActive)
-	out, err := s.claimAtCreate(context.Background(), sessionstore.Session{
+	_, err := s.claimAtCreate(context.Background(), sessionstore.Session{
 		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code", IsolationProfile: isolation.ProfileSandboxed,
 	}, workspaceplan.Plan{})
-	if err != nil {
-		t.Fatalf("claimAtCreate (concurrent pool, available credential): %v", err)
+	if !errors.Is(err, errCreateClaimExhausted) {
+		t.Errorf("claimAtCreate (concurrent pool, no idle pod) = %v, want errCreateClaimExhausted (slot reservation attempted at create)", err)
 	}
-	if out.Claim != nil {
-		t.Errorf("concurrent-pool claim = %+v, want nil (slot reservation deferred to /start)", out.Claim)
-	}
-	if out.Level.ExecutionMode != "session" {
-		t.Errorf("level.ExecutionMode = %q, want session", out.Level.ExecutionMode)
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("claimAtCreate error = %v, want the wrapped ErrNoIdlePod inspectable", err)
 	}
 }
 

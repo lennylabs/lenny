@@ -2503,8 +2503,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// claimed pod's binding (PodAssignment + PoolRef) is persisted on the
 	// row so a later /finalize and /start reconnect to it (§4.6). A claim
 	// failure leaves no row behind per the §7.1 line 28 atomicity contract.
-	// A service-mode pool is claimless; a concurrent-workspace pool defers
-	// its slot reservation to /start (claimAtCreate returns a nil claim).
+	// A service-mode pool is claimless (a nil claim); a concurrent-workspace
+	// pool claims a per-session slot at create like every non-service-mode
+	// pool (claimAtCreate returns the reserved slot's binding), so the §15.1
+	// created-state pod-claim invariant holds uniformly.
 	var createClaim *podsession.ClaimResult
 	if s.podBinder != nil {
 		outcome, err := s.claimAtCreate(r.Context(), row, parsedPlan)
@@ -2512,8 +2514,8 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 			// spec: §7.1 line 28 — the pre-check or claim failed before any
 			// row was persisted; surface SESSION_CREATION_FAILED (or the
 			// credential / pool-warming envelope) with no session_id. No pod
-			// is held: the pre-check is claimless and the Claim phase reclaims
-			// its own pod on failure.
+			// is held: the pre-check is claimless, and the exclusive Claim and
+			// the concurrent ClaimSlot reclaim their own pod/slot on failure.
 			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
 				"could not place the session on a warm pod")

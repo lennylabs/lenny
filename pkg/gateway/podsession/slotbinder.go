@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"time"
@@ -117,7 +118,137 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 	if err != nil {
 		return nil, err
 	}
+	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, cl)
+}
 
+// ClaimSlot performs the §7.1 step-4 claim at session create for a §5.2
+// concurrent-workspace pool (sessionPolicy.maxConcurrentSessions > 1). It
+// reserves one of a pod's slots (the SandboxClaim plus the atomic
+// active_slots increment) and runs the §15.5 version handshake to confirm
+// the slot's pod is usable, then closes the handshake connection. It does
+// not materialize the workspace, run setup, assign credentials, or start
+// the runtime; those run at /finalize and /start through BindReservedSlot,
+// which reconnects from the persisted binding.
+//
+// The slot is the concurrent-pool analog of the exclusive Claim: reserving
+// it at create makes the §15.1 created-state invariant hold uniformly (a
+// warm pod has been claimed) and gives the §4.5 created-expiry sweeper and
+// the §4.6 /terminate path a durable binding to release the slot from.
+// SlotID equals SessionID, so the binding is reconstructable from
+// SandboxName + Pool + the session id, exactly like the exclusive path. A
+// reservation-exhaustion sentinel (ErrNoConcurrentSlot, ErrTenantMismatch,
+// ErrNoIdlePod) is returned unwrapped so the create handler maps it to the
+// §7.1 atomicity envelope before the client uploads.
+//
+// spec: §4.1 (proposal), §7.1 step 4, line 75; §5.2 (concurrent slot
+// reservation); §6.3 lines 358, 372.
+func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResult, error) {
+	phaseStart := time.Now()
+	sandboxName, slotID, podIP, cl, err := b.connectSlot(ctx, req)
+	if err != nil {
+		// connectSlot returns a SlotBindError once the slot has been reserved
+		// (a resolveSandbox/dial/handshake failure after the active_slots
+		// increment); release the reservation so a failed create-time claim does
+		// not leak the pod's active_slots. An exhaustion sentinel
+		// (ErrNoConcurrentSlot/ErrTenantMismatch/ErrNoIdlePod) reserved no slot
+		// and is returned unwrapped for the create handler's exhaustion mapping.
+		var sbe *SlotBindError
+		if errors.As(err, &sbe) {
+			if relErr := b.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID); relErr != nil {
+				log.Printf("podsession: release reserved slot %s on pod %s after create-time claim handshake failure for session %s: %v",
+					sbe.SlotID, sbe.Pod, req.SessionID, relErr)
+			}
+		}
+		return nil, err
+	}
+	// ClaimSlot runs only the reservation and handshake; the setup chain
+	// reconnects at BindReservedSlot, so the connection is not held across
+	// the upload window.
+	cl.Close()
+	return &ClaimResult{
+		SandboxName: sandboxName,
+		Pool:        req.Pool,
+		PodIP:       podIP,
+		SlotID:      slotID,
+		PodClaim:    time.Since(phaseStart),
+	}, nil
+}
+
+// BindReservedSlot materializes the workspace, runs setup, assigns
+// credentials, and starts the runtime on a slot already reserved at create
+// by ClaimSlot. It reconnects to the reserved slot's pod from the persisted
+// binding rather than reserving a fresh slot, so the §15.1 created-state
+// pod-binding holds from create through start.
+//
+// On any failure after the reconnect it releases the reserved slot
+// (ReleaseSlotReservation) before returning the error, the slot analog of
+// the exclusive Prepare/Launch reclaim: a start that cannot reach `running`
+// reclaims the slot the create-time reservation held, so the pod's
+// active_slots is not leaked. The release runs exactly once here; the
+// callers therefore do not release the create-time slot reservation again on
+// a BindReservedSlot failure. The slot is not re-reserved and retried here,
+// unlike BindSlot under the §5.2 retry policy; the start handler surfaces
+// the failure to the client.
+//
+// On success the caller owns the returned live adapter connection. spec:
+// §4.3, §4.4 (proposal), §5.2; §6.2 (pre-attached reclaim); §6.4 lines
+// 401-405.
+func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID string) (*BindResult, error) {
+	res, err := b.bindReservedSlot(ctx, req, sandboxName, slotID)
+	if err != nil {
+		// Release the reserved slot so a failed start does not leak the pod's
+		// active_slots; the create-time reservation increment is rolled back by
+		// the matching release. ReleaseSlotReservation is the slot-count half of
+		// ReleaseSlot (the failed attempt closed its own adapter connection).
+		if relErr := b.ReleaseSlotReservation(ctx, sandboxName, slotID); relErr != nil {
+			log.Printf("podsession: release reserved slot %s on pod %s after start failure for session %s: %v",
+				slotID, sandboxName, req.SessionID, relErr)
+		}
+		return nil, err
+	}
+	return res, nil
+}
+
+// bindReservedSlot reconnects to a slot reserved at create and runs the
+// post-reservation materialize-and-launch sequence. BindReservedSlot wraps
+// it and owns the reservation release on failure, so the slot-count rollback
+// runs exactly once per failed start.
+func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID string) (*BindResult, error) {
+	sb, err := b.resolveSandbox(ctx, sandboxName)
+	if err != nil {
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, err)
+	}
+	podIP := sb.Status.PodIP
+	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
+	cl, err := b.DialAdapter(addr)
+	if err != nil {
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
+			fmt.Errorf("podsession: dial reserved slot adapter at %s: %w", addr, err))
+	}
+	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
+	if err != nil {
+		cl.Close()
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
+			fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err))
+	}
+	if resp.GetIncompatible() {
+		cl.Close()
+		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, fmt.Errorf(
+			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
+		))
+	}
+	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, cl)
+}
+
+// materializeSlot runs the post-reservation §4.7 workspace-and-start
+// sequence on a slot whose reservation and §15.5 handshake the caller
+// already completed (BindSlot reserves a fresh slot, BindReservedSlot
+// reconnects to one reserved at create). The slot gets its own workspace:
+// it stages and finalizes the workspace, runs setup, assigns credentials (a
+// per-slot lease per §6), and starts the session. Any failure closes the
+// adapter connection, records the §5.2 failure counter, and returns a
+// SlotBindError so the caller can release the reservation and retry.
+func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP string, cl *adapterclient.Client) (*BindResult, error) {
 	// spec: §5.2 — a concurrent-session slot has its own per-slot workspace
 	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
 	// extraction runs gateway-side (§7.4 line 448) exactly as in
