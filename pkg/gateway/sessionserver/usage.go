@@ -418,7 +418,20 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	// the lifecycle audit event, and the retention-window roll). Shared
 	// with failSession so the start-path failure emits the same signals.
 	s.emitTerminalLifecycle(ctx, sess)
-	if s.executor != nil {
+	// spec: §15.1 line 620 (/terminate releases the pod), §4.6 (durable
+	// binding), §6.2 (pre-attached disposition), §7.1 step 23 (lease release)
+	// — a session terminated before it ever launched (created/finalizing/ready)
+	// holds a pod claimed at /create but registered no live BindResult, so the
+	// executor release below keys off the empty registry and returns early
+	// (PodExecutor.Release no-op), leaking both the claim and any lease the
+	// finalize barrier assigned. Reclaim the claimed pod and revoke the lease
+	// from the persisted binding instead, the same claimless reclaim the §4.5
+	// created-expiry sweeper runs. A bound (running/resuming) session has a live
+	// BindResult, so it falls through to the executor release, which revokes the
+	// lease through the binder's Release. terminalReclaimPreRunning reports true
+	// only when it ran the reclaim, so the executor release (the no-bind no-op
+	// for a pre-running session) is skipped in that case.
+	if !s.terminalReclaimPreRunning(ctx, sess) && s.executor != nil {
 		if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
 			// recordSessionCompleted is best-effort by design (a failed
 			// teardown does not unwind the terminal-state transition), but
@@ -504,6 +517,47 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 		// filterable across the session's full lifecycle. F-14.1.13.
 		Labels: cloneMetadata(sess.Labels),
 	})
+}
+
+// terminalReclaimPreRunning releases the pod a session claimed at /create
+// and revokes any lease the finalize barrier assigned when the session
+// reaches a terminal state before it ever launched (created/finalizing/ready).
+// Such a session registered no live BindResult, so the executor release path
+// (PodExecutor.Release) keys off the empty registry and returns early, leaking
+// the claim and the lease. It reports true when it ran the reclaim so the
+// caller skips the no-bind executor release.
+//
+// The discriminator is the absence of a live BindResult for a row that carries
+// a persisted pod binding (PodAssignment): a bound running/resuming session has
+// a registry entry and its lease is revoked through the binder's Release on the
+// executor path; a created/finalizing/ready session has only the §4.6 persisted
+// SandboxName, which ReclaimClaimed releases by name (deleting the per-pod
+// SandboxClaim and revoking the lease keyed by sessionID). When the gateway runs
+// without a pod binder or registry (in-memory mode), or the row carries no pod
+// binding, the reclaim cannot apply and it reports false so the caller falls
+// through to the executor path. The lease revoke inside ReclaimClaimed is a
+// no-op for a created session that never assigned one and mandatory for a
+// finalizing/ready session that always holds one (§7.1 step 23).
+//
+// spec: §15.1 line 620 (/terminate releases the pod); §4.6 (durable binding);
+// §6.2 (pre-attached disposition); §7.1 step 23 (lease release); §4.5 (proposal,
+// the claimless reclaim the created-expiry sweeper shares).
+func (s *Server) terminalReclaimPreRunning(ctx context.Context, sess sessionstore.Session) bool {
+	if s.podBinder == nil || s.podRegistry == nil || sess.PodAssignment == "" {
+		return false
+	}
+	if _, bound := s.podRegistry.Get(sess.ID); bound {
+		return false
+	}
+	if err := s.podBinder.ReclaimClaimed(ctx, sess.PodAssignment, sess.ID); err != nil {
+		// Best-effort, like the rest of recordSessionCompleted: a release error
+		// does not unwind the terminal-state transition. The §4.6.1 orphan-claim
+		// GC backstops a leaked claim, and logging surfaces the failure so an
+		// operator notices the pool not draining.
+		log.Printf("lenny-gateway: reclaim claimed pod %s for pre-running terminal session %s: %v",
+			sess.PodAssignment, sess.ID, err)
+	}
+	return true
 }
 
 // archiveSettledChild records a terminal child session in the §8.10

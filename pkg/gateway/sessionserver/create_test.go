@@ -1626,3 +1626,66 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 		t.Errorf("per-pod claim after a rolled-back create (err=%v); want NotFound (claim released)", err)
 	}
 }
+
+// spec: §15.1 line 620 (/terminate of a created session releases the pod),
+// §4.6 (durable binding), §6.2 (pre-attached disposition), §7.1 step 23
+// (lease release).
+// diagnosis: a /terminate (DELETE) of a `created` session that does not
+// release the warm pod claimed at /create leaks the pod for the whole pool:
+// the session never launched, so it holds no live BindResult and the executor
+// release path is a no-op against the empty registry. A failure here means
+// recordSessionCompleted does not run the §4.5 claimless reclaim for a
+// pre-running terminal session, so the pod stays bound forever.
+func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-term-created" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+	})
+
+	// Create claims the warm pod and persists the §4.6 binding; the session is
+	// in `created` (never launched, so no live BindResult).
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", UserID: "alice@acme.com",
+	}))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	// The create-time claim is present in `bound` before the terminate.
+	var bound lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &bound); err != nil {
+		t.Fatalf("get per-pod claim after create: %v", err)
+	}
+	if bound.Status.Phase != string(claimstate.Bound) {
+		t.Fatalf("claim binding state = %q, want bound after the create-time claim", bound.Status.Phase)
+	}
+
+	// /terminate the `created` session (DELETE -> cancelled, a terminal state).
+	delReq := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-term-created", nil)
+	delReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	delRR := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(delRR, delReq)
+	if delRR.Code != http.StatusOK {
+		t.Fatalf("DELETE created session: status %d, want 200; body=%s", delRR.Code, delRR.Body.String())
+	}
+
+	// spec: §15.1 line 620 — the terminate released the claimed pod: the per-pod
+	// SandboxClaim is deleted, returning the pod to the pool.
+	var after lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &after); !apierrors.IsNotFound(err) {
+		t.Errorf("per-pod claim after terminate (err=%v); want NotFound (pod released to the pool)", err)
+	}
+}
