@@ -8,10 +8,13 @@ tests:
   - it: renders the full lenny-system policy set including the new policies
     asserts:
       # default-deny-all plus the per-component allow-lists, including
-      # allow-gateway-ingress, allow-bootstrap-egress, allow-ops, and the
-      # named lenny-ops-deny-all-ingress baseline (F-17.2.16).
+      # allow-gateway-ingress, allow-bootstrap-egress, allow-ops, the
+      # allow-pool-scaling-controller-egress policy (§4.6.2 / §13.2),
+      # the allow-deployment-config-sync-egress policy (rendered because
+      # deploymentAudit.enabled defaults to true), and the named
+      # lenny-ops-deny-all-ingress baseline (F-17.2.16).
       - hasDocuments:
-          count: 15
+          count: 17
 
   # spec: §25.4 line 1123; §17.2 line 31 — the operability-vs-agent
   # boundary names lenny-ops-deny-all-ingress explicitly; render it by
@@ -249,6 +252,109 @@ tests:
           content:
             port: 53
             protocol: TCP
+
+  # spec: §16.7 (deployment-transition audit emitter) + §13.2 — the
+  # deployment-config-sync hook Job posts to the gateway under default-deny,
+  # so it needs an egress allow-list mirroring allow-bootstrap-egress.
+  - it: scopes allow-deployment-config-sync-egress to its component, egress-only
+    documentSelector:
+      path: metadata.name
+      value: allow-deployment-config-sync-egress
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: deployment-config-sync
+      - equal:
+          path: spec.policyTypes
+          value: [Egress]
+
+  - it: allows deployment-config-sync egress to the gateway internal HTTP port
+    documentSelector:
+      path: metadata.name
+      value: allow-deployment-config-sync-egress
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 8080
+      - equal:
+          path: spec.egress[0].ports[0].protocol
+          value: TCP
+
+  - it: omits allow-deployment-config-sync-egress when deploymentAudit is disabled
+    set:
+      deploymentAudit.enabled: false
+    asserts:
+      # The Job is gated on deploymentAudit.enabled, so its egress policy
+      # must render if and only if the Job does. Disabling drops it (17 -> 16).
+      - hasDocuments:
+          count: 16
+      - notExists:
+          path: $[?(@.metadata.name == "allow-deployment-config-sync-egress")]
+
+  # spec: §4.6.2 / §13.2 line 218 — the PoolScalingController runs as its own
+  # Deployment labelled lenny.dev/component: pool-scaling-controller, so the
+  # allow-controller-egress policy (which selects lenny.dev/component:
+  # controller) does not cover it. This policy admits the §13.2 PSC egress:
+  # kube-apiserver, PgBouncer, and kube-system CoreDNS. Egress-only — the PSC
+  # accepts no unsolicited ingress.
+  - it: scopes allow-pool-scaling-controller-egress to the PSC component, egress-only
+    documentSelector:
+      path: metadata.name
+      value: allow-pool-scaling-controller-egress
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: pool-scaling-controller
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+      - notContains:
+          path: spec.policyTypes
+          content: Ingress
+
+  - it: allows PSC egress to the kube-apiserver, PgBouncer, and CoreDNS
+    documentSelector:
+      path: metadata.name
+      value: allow-pool-scaling-controller-egress
+    asserts:
+      # kube-apiserver on the configured CIDR + ports (default 443, 6443).
+      - equal:
+          path: spec.egress[0].to[0].ipBlock.cidr
+          value: "10.96.0.0/12"
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            port: 443
+            protocol: TCP
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            port: 6443
+            protocol: TCP
+      # PgBouncer on 5432 (the §13.2 Postgres path).
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: pgbouncer
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 5432
+      # kube-system CoreDNS on 53, paired with k8s-app: kube-dns (NET-067).
+      - equal:
+          path: spec.egress[2].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.egress[2].to[0].podSelector.matchLabels["k8s-app"]
+          value: kube-dns
+      - contains:
+          path: spec.egress[2].ports
+          content:
+            port: 53
+            protocol: UDP
 
   - it: scopes allow-ops to the lenny-ops pods with ingress and egress
     documentSelector:

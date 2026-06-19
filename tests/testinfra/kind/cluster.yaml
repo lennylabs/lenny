@@ -40,7 +40,20 @@ nodes:
       lenny.dev/pool: "sandbox-gvisor"
 
 # Networking: pod CIDR + service CIDR pinned for reproducibility.
+#
+# The e2e cluster shares the `kind` Docker bridge (172.18.0.0/16) with any
+# other Kind clusters on the host. Kind's default podSubnet (10.244.0.0/16)
+# and serviceSubnet (10.96.0.0/12) are identical across clusters, so two
+# clusters on the same bridge install overlapping pod-CIDR routes and the
+# kindnet route table on one cluster misroutes cross-node traffic (a worker
+# pod's connection to the apiserver ClusterIP 10.x.0.1 lands on a
+# neighboring cluster's node and times out). The e2e cluster therefore pins
+# distinct ranges so its routes never collide with a default-CIDR cluster
+# sharing the bridge. The service range stays inside 10.96.0.0/12 so the
+# chart's broad-egress NetworkPolicies (to: 10.96.0.0/12 on 443/6443, which
+# admit the apiserver ClusterIP) keep admitting the apiserver without a
+# policy edit; 10.97.0.0/16 is a subnet of 10.96.0.0/12.
 networking:
-  podSubnet: "10.244.0.0/16"
-  serviceSubnet: "10.96.0.0/12"
+  podSubnet: "10.245.0.0/16"
+  serviceSubnet: "10.97.0.0/16"
   disableDefaultCNI: false

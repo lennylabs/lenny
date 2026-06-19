@@ -277,6 +277,59 @@ spec:
       port: 6379
       targetPort: redis
 ---
+# §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+# exception to backends: embedded only; all other backends enforce TLS. The
+# e2e overlay runs a real in-cluster MinIO (a non-embedded backend), so the
+# §12.5 chart guard requires minio.tls.enabled: true, which means the MinIO
+# server must serve HTTPS. cert-manager (installed by install.sh) issues a
+# serving certificate for the lenny-minio Service DNS name from a self-signed
+# CA; the gateway and the chart's bucket-lifecycle Job trust that CA via the
+# SSL_CERT_FILE env var install.sh patches onto them post-install (the gateway
+# MinIO client and mc both read the Go/OpenSSL system trust path, and the
+# cert-manager-issued ca.crt is what they verify the MinIO server cert
+# against). This is the e2e harness only; production uses a publicly trusted
+# or operator-managed artifact-store endpoint.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: lenny-minio-selfsign
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lenny-minio-tls
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  # cert-manager writes tls.crt, tls.key, and ca.crt into this Secret. The
+  # MinIO Deployment mounts tls.crt/tls.key as public.crt/private.key under
+  # its --certs-dir; install.sh mounts ca.crt into the gateway and the
+  # bucket-lifecycle Job so they trust the issuing CA.
+  secretName: lenny-minio-tls
+  duration: 8760h    # 1 year — comfortably outlives an e2e cluster's life.
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - lenny-minio.lenny-system.svc
+    - lenny-minio.lenny-system.svc.cluster.local
+    - lenny-minio
+  issuerRef:
+    name: lenny-minio-selfsign
+    kind: Issuer
+    group: cert-manager.io
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -337,6 +390,12 @@ spec:
             - /data
             - --console-address
             - ":9090"
+            # §12.5 line 280 — serve the artifact-store API over TLS. MinIO
+            # reads public.crt/private.key from --certs-dir and serves https
+            # on :9000 when they are present. The cert-manager-issued cert is
+            # projected into this dir by the tls-certs volume below.
+            - --certs-dir
+            - /certs
           env:
             - name: MINIO_ROOT_USER
               value: lennyminio
@@ -347,10 +406,16 @@ spec:
               containerPort: 9000
             - name: console
               containerPort: 9090
+          # MinIO now serves the health endpoints over HTTPS; the probes
+          # use scheme: HTTPS. The cert is issued from a self-signed CA the
+          # kubelet does not trust, so the httpGet probe would fail TLS
+          # verification — but the kubelet skips certificate verification for
+          # HTTPS probes, so the liveness/readiness checks still succeed.
           readinessProbe:
             httpGet:
               path: /minio/health/ready
               port: api
+              scheme: HTTPS
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
@@ -358,6 +423,7 @@ spec:
             httpGet:
               path: /minio/health/live
               port: api
+              scheme: HTTPS
             initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 3
@@ -377,6 +443,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            # cert-manager writes tls.crt/tls.key into the lenny-minio-tls
+            # Secret; this projection renames them to the public.crt/
+            # private.key filenames MinIO expects under --certs-dir.
+            - name: tls-certs
+              mountPath: /certs
+              readOnly: true
         # bucket-init keeps lenny-artifacts present across MinIO
         # restarts. The base Deployment uses emptyDir, so any pod
         # restart wipes /data — the install.sh one-shot bucket
@@ -402,12 +474,19 @@ spec:
             - |
               set -eu
               mkdir -p /tmp/mc
-              until mc alias set local http://127.0.0.1:9000 lennyminio lennyminio123 >/dev/null 2>&1; do
+              # MinIO now serves https on :9000. The sidecar dials the
+              # in-pod loopback, whose address never matches the cert's DNS
+              # SAN, so mc runs with --insecure (skip TLS verification) — an
+              # acceptable posture for an in-pod test-fixture sidecar that
+              # only re-creates the bucket. The gateway and the chart's
+              # bucket-lifecycle Job verify the cert properly against the
+              # mounted CA.
+              until mc --insecure alias set local https://127.0.0.1:9000 lennyminio lennyminio123 >/dev/null 2>&1; do
                 sleep 2
               done
               while :; do
-                mc mb --ignore-existing local/lenny-artifacts >/dev/null 2>&1 || true
-                mc version enable local/lenny-artifacts >/dev/null 2>&1 || true
+                mc --insecure mb --ignore-existing local/lenny-artifacts >/dev/null 2>&1 || true
+                mc --insecure version enable local/lenny-artifacts >/dev/null 2>&1 || true
                 sleep 30
               done
           securityContext:
@@ -431,6 +510,16 @@ spec:
           emptyDir: {}
         - name: init-scratch
           emptyDir: {}
+        # Project the cert-manager-issued cert under the public.crt/
+        # private.key filenames MinIO reads from --certs-dir.
+        - name: tls-certs
+          secret:
+            secretName: lenny-minio-tls
+            items:
+              - key: tls.crt
+                path: public.crt
+              - key: tls.key
+                path: private.key
 ---
 apiVersion: v1
 kind: Service
@@ -457,11 +546,13 @@ spec:
 # carries the chart's default-deny-all policy, which would otherwise
 # block every connection to and from these test-fixture pods. These two
 # policies re-admit exactly the data-store traffic: ingress to the
-# store pods from anything in the namespace, and egress to the store
-# pods from anything in the namespace. They are additive, so they do
-# not weaken the default-deny for any other destination — in
-# particular the tier-9 NetworkPolicy adversarial test still observes
-# the gateway as unreachable from an unlabelled pod.
+# store pods from anything in the namespace, and egress from anything in
+# the namespace to the store pods plus kube-system CoreDNS on port 53 so
+# a pod can resolve a store's Service DNS name before dialing it. They
+# are additive, so they do not weaken the default-deny for any other
+# destination: the tier-9 NetworkPolicy adversarial test still observes
+# the gateway as unreachable from an unlabelled pod, and DNS resolution
+# alone grants no data-plane reach to any non-datastore peer.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -512,4 +603,27 @@ spec:
         - port: 9000
           protocol: TCP
         - port: 9090
+          protocol: TCP
+    # Egress to kube-system CoreDNS on UDP/TCP 53. Pods in lenny-system
+    # that address a data store by its Service DNS name (for example the
+    # chart's post-install lenny-minio-bucket-lifecycle Job, which hits
+    # lenny-minio.lenny-system.svc:9000) must resolve that name first.
+    # Without this rule the default-deny-all policy blocks the lookup and
+    # mc fails intermittently with a DNS i/o timeout, surfacing as the
+    # misleading "Access Key Id does not exist" error. The peer uses the
+    # canonical CoreDNS namespaceSelector/podSelector the chart's own
+    # egress policies use. install.sh's one-shot bucket pod sidesteps DNS
+    # by dialing the MinIO pod IP, but a chart-rendered Job has no pod IP
+    # to substitute, so it needs the DNS path open.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
           protocol: TCP

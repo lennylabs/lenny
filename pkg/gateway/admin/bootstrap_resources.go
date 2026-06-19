@@ -133,6 +133,7 @@ func applyPoolSeed(stored *poolstore.Pool, desired poolstore.Pool) {
 	stored.AllowStandardIsolation = desired.AllowStandardIsolation
 	stored.AcknowledgeNonceOnlyAuth = desired.AcknowledgeNonceOnlyAuth
 	stored.EgressProfile = desired.EgressProfile
+	stored.DNSPolicy = desired.DNSPolicy
 	stored.UpdatedAt = desired.UpdatedAt
 }
 
@@ -168,6 +169,9 @@ func poolConflicts(existing poolstore.Pool, p PoolPayload) (conflicts, securityC
 	}
 	if p.EgressProfile != "" && string(existing.EgressProfile) != p.EgressProfile {
 		conflicts = append(conflicts, "egressProfile")
+	}
+	if p.DNSPolicy != "" && existing.DNSPolicy != p.DNSPolicy {
+		conflicts = append(conflicts, "dnsPolicy")
 	}
 	return conflicts, securityCritical
 }

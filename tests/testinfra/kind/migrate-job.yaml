@@ -22,8 +22,16 @@ kind: Job
 metadata:
   name: lenny-e2e-migrate
   namespace: lenny-system
+  # The pod template below deliberately does NOT carry
+  # app.kubernetes.io/name: lenny. install.sh's Step 9 control-plane Ready
+  # wait selects `-l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns`
+  # and blocks on `kubectl wait --for=condition=Ready` over every match. A
+  # completed migration pod stays Succeeded (TTL 600s) and never reports a
+  # Ready condition, so sharing the name label would hang that wait until its
+  # timeout and abort the install. The migrate Job is identified by
+  # app.kubernetes.io/component: e2e-migrate instead.
   labels:
-    app.kubernetes.io/name: lenny
+    app.kubernetes.io/name: lenny-e2e-migrate
     app.kubernetes.io/component: e2e-migrate
 spec:
   backoffLimit: 5
@@ -33,7 +41,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: lenny
+        app.kubernetes.io/name: lenny-e2e-migrate
         app.kubernetes.io/component: e2e-migrate
     spec:
       restartPolicy: Never

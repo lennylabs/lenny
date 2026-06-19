@@ -65,9 +65,15 @@ func (s *PoolStoreSource) ListPoolConfigs(ctx context.Context) ([]PoolConfig, er
 func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 	warm := int32(p.WarmCount)
 	spec := lennyv1.SandboxTemplateSpec{
-		RuntimeRef:           p.RuntimeRef,
-		IsolationProfile:     string(p.IsolationProfile),
-		EgressProfile:        string(p.EgressProfile),
+		RuntimeRef:       p.RuntimeRef,
+		IsolationProfile: string(p.IsolationProfile),
+		EgressProfile:    string(p.EgressProfile),
+		// spec: §13.2 — the per-pool DNS opt-out. The WarmPoolController
+		// stamps the lenny.dev/dns-policy: cluster-default label from this
+		// field so the supplemental allow-pod-egress-kube-dns NetworkPolicy
+		// admits the pool's kube-system DNS egress. Empty keeps the pool on
+		// the dedicated CoreDNS instance.
+		DNSPolicy:            p.DNSPolicy,
 		ResourceClass:        p.ResourceClass,
 		ExecutionMode:        string(p.ExecutionMode),
 		MaxConcurrent:        int32(p.MaxConcurrent),

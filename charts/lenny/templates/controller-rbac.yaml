@@ -76,6 +76,16 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  # Pods/status: the §6.1 syncReadinessGate flips the
+  # lenny.dev/sandbox-ready pod readiness gate to True once the backing
+  # pod's containers report ready, which is what makes a warm pod
+  # claimable (the kubelet holds Pod.Ready False until the gate is set).
+  # The reconciler patches it through the status subresource
+  # (Status().Patch), a distinct RBAC resource from `pods`, so without
+  # this rule every warm pod stays NotReady and the pool never fills.
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "patch", "update"]
   # Nodes: read-only, for the §13.2 NET-022 cluster-CIDR drift detector
   # aggregating spec.podCIDR, and for the §4.6.1 host-node
   # schedulability Node informer.
@@ -103,6 +113,16 @@ rules:
   - apiGroups: ["node.k8s.io"]
     resources: ["runtimeclasses"]
     verbs: ["get", "list"]
+  # CustomResourceDefinitions: read-only, for the §10 line 437 startup
+  # CRD schema-version self-check (F-15.5.12). Before the manager starts
+  # reconciling, the controller fetches each installed lenny.dev CRD by
+  # name and asserts its `lenny.dev/schema-version` annotation matches the
+  # version this build expects, failing closed so a stale CRD never
+  # silently strips fields a newer controller writes. The check `get`s
+  # each CRD individually, so get suffices (no list/watch).
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -16,6 +16,41 @@ tests:
       - hasDocuments:
           count: 6
 
+  # spec: §13.2 — allow-pod-egress-base must never carry a kube-system
+  # CoreDNS peer. Its broad lenny.dev/managed selector would otherwise let
+  # every agent pod bypass the dedicated instance's query logging, rate
+  # limiting, and response filtering. The kube-system fallback is the
+  # separate allow-pod-egress-kube-dns policy, scoped to the dns-policy
+  # label. This holds even with coredns.deploy=false and devMode on, the
+  # condition under which a prior dev-mode fallback rule was added in error.
+  - it: allow-pod-egress-base never permits a kube-system DNS peer
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      coredns:
+        deploy: false
+      global:
+        devMode: true
+    documentIndex: 2
+    asserts:
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-base
+      # Exactly two egress rules: the gateway gRPC peer and the dedicated
+      # CoreDNS peer. No third (kube-system) DNS peer is appended.
+      - lengthEqual:
+          path: spec.egress
+          count: 2
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: coredns
+      # The second (DNS) peer targets the dedicated CoreDNS in the release
+      # namespace, never kube-system. With only two egress rules asserted
+      # above, no kube-system DNS peer can exist on the base policy.
+      - equal:
+          path: spec.egress[1].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: lenny-system
+
   - it: does not render allow-pod-egress-otlp when otlpEndpoint is unset
     set:
       agentNamespaces:
