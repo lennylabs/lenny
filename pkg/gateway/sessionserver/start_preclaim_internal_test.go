@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
@@ -413,6 +414,62 @@ func TestClaimAtCreateConcurrentPoolExhaustionAtCreate(t *testing.T) {
 	}
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
 		t.Errorf("claimAtCreate error = %v, want the wrapped ErrNoIdlePod inspectable", err)
+	}
+}
+
+// spec: §4.4, §5.2 (proposal: /start is launch-only; a service-mode pool is
+// claimless).
+// launchOnPod on a service-mode pool returns (nil, nil): there is no pod to
+// launch on, so the two-step /start runs no launch RPC and binds no pod. A
+// service-mode session is a connection handle routed through the pool's
+// Service/EndpointSlice, so /start neither claims nor binds.
+func TestLaunchOnPodServiceModeClaimless(t *testing.T) {
+	const ns = "lenny-agents"
+	pool := &lennyv1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
+		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
+	}
+	tmpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       "svc-runtime",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			ExecutionMode:    string(runtimestore.ExecutionModeService),
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	s := &Server{podBinder: &podsession.Binder{Client: c, Namespace: ns}, agentNamespace: ns}
+
+	result, err := s.launchOnPod(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed, State: session.StateReady,
+	}, workspaceplan.Plan{})
+	if err != nil {
+		t.Fatalf("launchOnPod (service mode): %v", err)
+	}
+	if result != nil {
+		t.Errorf("service-mode launch result = %+v, want nil (claimless)", result)
+	}
+}
+
+// spec: §4.4, §5.2 (proposal: a concurrent-workspace pool materializes and
+// launches its reserved slot together at /start), §4.6.1 (pool exhaustion).
+// launchOnPod on a concurrent-workspace pool routes through bindConcurrentSlot.
+// With no idle pod and a row carrying no live reservation, the fresh-slot
+// reservation surfaces ErrNoIdlePod (the §5.2 exhaustion sentinel), proving
+// the concurrent branch resolves credentials and dispatches the slot bind
+// rather than taking the exclusive launch-only path. A successful reserved-slot
+// reconnect is exercised at the binder layer (TestBindReservedSlotReconnectsAndStarts).
+func TestLaunchOnPodConcurrentPoolDispatchesSlotBind(t *testing.T) {
+	s := concurrentClaimServer(t, "lenny-agents", credentialpoolstore.CredentialActive)
+	// A ready row with no live reservation (empty PodAssignment) drives the
+	// fresh-slot reservation branch of bindConcurrentSlot. The pool holds no
+	// idle pod, so the reservation surfaces ErrNoIdlePod.
+	_, err := s.launchOnPod(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code",
+		IsolationProfile: isolation.ProfileSandboxed, State: session.StateReady,
+	}, workspaceplan.Plan{})
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("launchOnPod (concurrent pool, no idle pod) = %v, want ErrNoIdlePod (slot bind dispatched at /start)", err)
 	}
 }
 

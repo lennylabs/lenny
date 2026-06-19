@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
@@ -84,6 +85,71 @@ func TestSessionStartRecordsEnvironment(t *testing.T) {
 	}
 	if row.Environment != "security-team" {
 		t.Errorf("stored environment: got %q, want security-team", row.Environment)
+	}
+}
+
+// spec: §4.4 (proposal: /start is launch-only), §15.1 (/start precondition,
+// ready → running).
+// TestTwoStepStartLaunchesReadySession exercises the two-step
+// `POST /v1/sessions/{id}/start` on the minimal gateway (no pod binder): a
+// `ready` session reaching `running` is the pure ready → running launch
+// transition, with no claim, materialization, setup, or credential work. The
+// preparation barrier already ran at /finalize, so /start is launch-only even
+// on the minimal gateway, where the launch is a plain state transition.
+func TestTwoStepStartLaunchesReadySession(t *testing.T) {
+	store := memstore.New()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID:       "sess_ready_1",
+		TenantID: "acme",
+		UserID:   "alice@acme.com",
+		State:    session.StateReady,
+	}); err != nil {
+		t.Fatalf("seed ready session: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_ready_1/start", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.SessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("state = %q, want running", resp.State)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_ready_1")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("stored state = %q, want running", row.State)
+	}
+}
+
+// spec: §15.1 (/start precondition: only a `ready` session may start).
+// A two-step /start against a session that has not finalized (still
+// `created`) is rejected by the precondition gate, so /start cannot run the
+// launch against a pod that was never prepared.
+func TestTwoStepStartRejectsNonReadyState(t *testing.T) {
+	store := memstore.New()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID:       "sess_created_1",
+		TenantID: "acme",
+		State:    session.StateCreated,
+	}); err != nil {
+		t.Fatalf("seed created session: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_created_1/start", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("start on a created session: status %d, want 409 (precondition)", rr.Code)
 	}
 }
 

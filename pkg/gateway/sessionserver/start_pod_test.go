@@ -600,6 +600,103 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	}
 }
 
+// spec: §4.4 (proposal: /start is launch-only and does no credential work),
+// §15.1 (/start precondition), §4.9 lines 1216-1218 (pre-claim credential
+// resolution).
+// diagnosis: the two-step `POST /v1/sessions/{id}/start` exclusive-pool path
+// must launch only — the §4.9 credential resolution belongs at /create
+// (pre-check) and /finalize (lease assignment), never at /start. The router
+// Resolve count must be unchanged across the /start call. A failure here
+// (the count grows at /start) means handleStart still routed through a path
+// that re-runs resolveCredentialPools (the pre-0007-S4 startOnPod front),
+// re-doing credential work the lease assignment at /finalize already
+// completed.
+func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	var resolveCount int
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-2step-nocred" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        countingRouter{count: &resolveCount},
+	})
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := postSessionStep(t, h, "/v1/sessions/sess-2step-nocred/finalize", nil); rr.Code != http.StatusOK {
+		t.Fatalf("finalize: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The §7.1-step-3 pre-check ran at /create and the lease assignment
+	// re-resolved the pool at /finalize, so by now the router has resolved the
+	// single provider twice. Snapshot the count immediately before /start.
+	beforeStart := resolveCount
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-2step-nocred/start", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.SessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("after start, state = %q, want running", resp.State)
+	}
+	// /start is launch-only: it must run no §4.9 credential resolution, so the
+	// router Resolve count is unchanged across the call.
+	if resolveCount != beforeStart {
+		t.Errorf("CredentialRouter.Resolve called %d times across /start (was %d before); "+
+			"/start must be launch-only and run no credential work (proposal §4.4)",
+			resolveCount-beforeStart, beforeStart)
+	}
+}
+
 // spec: §7.1 steps 11-13, §15.1 (finalize precondition), §4.3 (proposal).
 // diagnosis: /finalize is the §4.3 preparation barrier — it materializes
 // /workspace/current and runs setup before returning, and the session reaches

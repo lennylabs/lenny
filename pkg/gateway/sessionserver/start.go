@@ -632,17 +632,27 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStart implements POST /v1/sessions/{id}/start per §15.1: the
-// explicit start transition of the two-step create → finalize → start
-// lifecycle. It transitions a ready session to running and, when the
-// gateway is wired with a pod binder, places the session on a §5 warm
-// pod using the §14 WorkspacePlan stored at create.
+// explicit launch transition of the two-step create → finalize → start
+// lifecycle. It transitions a ready session to running and, when the gateway
+// is wired with a pod binder, launches the runtime on the pod prepared at
+// /finalize using the §14 WorkspacePlan stored at create.
 //
-// handleStart is a dedicated handler rather than a generic
-// handleTransition because the start transition carries the extra
-// pod-placement step — the same reason handleFinalize is dedicated for
-// the finalize transition. The pod claim runs before the row
-// transitions: a claim failure leaves the row ready so the client can
-// retry POST /start.
+// Per the proposal §4.4, /start is launch-only: the §4.3 preparation barrier
+// (staging, workspace materialization, setup commands, and credential-lease
+// assignment) already ran at /finalize, so /start neither claims a pod nor
+// re-runs any of that work. It reconnects to the prepared pod and runs only
+// the §6.3 agent_session_start phase (StartSession for a pod-warm pod,
+// ConfigureWorkspace for an SDK-warm one) through launchOnPod. The exception
+// is a concurrent-workspace pool, whose reserved slot materializes and
+// launches together at /start (§5.2); launchOnPod owns that distinction.
+//
+// handleStart is a dedicated handler rather than a generic handleTransition
+// because the start transition carries the extra launch step — the same
+// reason handleFinalize is dedicated for the finalize transition. The launch
+// runs before the row transitions: a launch failure leaves the row ready so
+// the client can retry POST /start.
+//
+// spec: §4.4, §4.6 (proposal); §15.1 (/start precondition); §6.1 lines 30-34.
 func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -670,26 +680,31 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 				"stored workspace plan could not be parsed: "+err.Error(), nil)
 			return
 		}
-		// spec: §4.1 / §5 (proposal) — the two-step `POST /v1/sessions/{id}/start`
-		// path runs in a separate request from the /create claim, so the
-		// create-time credential resolution and pod_claim duration are not in
-		// memory; startOnPod re-resolves credentials from the persisted row and
-		// the /start end-to-end span is launch-only (the create-time pod_claim
-		// was observed by the /create request).
-		result, err := s.startOnPod(r.Context(), row, plan, nil)
+		// spec: §4.4, §4.6 (proposal) — /start is launch-only: launchOnPod
+		// reconnects to the pod prepared at /finalize and runs only the §6.3
+		// agent_session_start phase (StartSession or ConfigureWorkspace),
+		// without re-staging, re-materializing, re-running setup, or
+		// re-assigning the credential lease, and without any §4.9 credential
+		// resolution. The exclusive-pool launch needs no credential inputs (the
+		// lease was assigned at /finalize); only the concurrent-pool slot
+		// launch, which materializes at /start, resolves them.
+		result, err := s.launchOnPod(r.Context(), row, plan)
 		if err != nil {
 			// spec: §7.1 line 28 / §6.2 line 303 — `POST /v1/sessions/{id}/start`
 			// returns `STARTING_FAILED` when the §7.1 atomic-creation unit
-			// fails on the explicit start half. The row stays `ready` so the
-			// client can retry; no pod is left allocated (pre-claim or
-			// claim-attempt errors release before this point).
+			// fails on the explicit launch half. The row stays `ready` so the
+			// client can retry; the binder already reclaimed the prepared pod
+			// (and the lease assigned at /finalize) on the launch failure path.
 			s.writePodClaimError(w, err, "STARTING_FAILED", "could not place the session on a warm pod")
 			return
 		}
 		s.registerBinding(r.Context(), result)
-		// spec: §7.5 line 475 — persist the per-command setup output the
-		// adapter captured so a subsequent GET /v1/sessions/{id} can
-		// surface it. F-7.5.4.
+		// spec: §7.5 line 475 — persist the per-command setup output a
+		// concurrent-workspace slot launch captured so a subsequent GET
+		// /v1/sessions/{id} can surface it. The exclusive-pool launch-only path
+		// produces no setup output (setup ran at /finalize, persisted there by
+		// applyFinalizePrepareResult), so this fires only for the concurrent
+		// slot launch that materializes at /start. F-7.5.4.
 		if result != nil && len(result.SetupOutputs) > 0 {
 			outs := setupOutputsFromBind(result.SetupOutputs)
 			if _, uerr := s.store.Update(r.Context(), tenantID, id, func(rr *sessionstore.Session) error {
@@ -1500,10 +1515,24 @@ var errCreateClaimExhausted = errors.New("create-time warm-pod claim exhausted")
 // runs the pre-check exactly once before the step-4 claim, per the
 // proposal's "pre-check runs once, before the claim" placement) and threads
 // its create-time pod_claim duration into the end-to-end startup envelope.
-// It is nil on the two-step `POST /v1/sessions/{id}/start` and resume-rebuild
-// paths, where startOnPod resolves credentials itself because the claim ran
-// in a separate request.
-// spec: §4.1, §5 (proposal); §4.2 line 160 — "Pod-to-session binding";
+// It is nil on the resume-rebuild path, where startOnPod resolves credentials
+// itself because the claim ran in a separate request.
+//
+// The two-step `POST /v1/sessions/{id}/start` exclusive-pool launch does NOT
+// flow through startOnPod: per the proposal §4.4, /start is launch-only and
+// does no credential work, so handleStart calls launchOnPod, which resolves
+// the pool and dispatches to launchPrepared without running the §4.9
+// pre-claim credential resolution. The credential lease was assigned at
+// /finalize. A concurrent-pool two-step /start still flows through
+// launchOnPod, which resolves credentials only on the BindReservedSlot
+// reconnect (a concurrent pool materializes and launches together at /start
+// per §5.2, so it needs the assignment inputs there).
+//
+// startOnPod, after this split, resolves credentials because both its
+// remaining callers consume them: the combined create-and-start path runs
+// the prepare barrier (which assigns the lease), and the resume-rebuild path
+// runs the whole Claim → Prepare → Launch sequence.
+// spec: §4.1, §4.4, §5 (proposal); §4.2 line 160 — "Pod-to-session binding";
 // §7.1 line 28 — atomic-creation rollback.
 func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext) (*podsession.BindResult, error) {
 	// spec: §4.9 lines 1216-1218 — run the pre-claim credential
@@ -1558,34 +1587,18 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// uses the session-claim path.
 	if match.MaxConcurrentSessions > 1 {
 		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
-		// spec: §4.1, §5.2 (proposal) — when the row carries a slot reserved at
-		// /create (the §4.6 durable binding, SlotID == SessionID == PodAssignment
-		// pod) and the session is still in its pre-running create → finalize →
-		// start window, the slot is not re-reserved: the gateway reconnects to
-		// the reserved slot's pod and runs the materialize-and-launch sequence
-		// against it (BindReservedSlot), mirroring the exclusive reconnect. The
-		// reconnect is gated on a live create-time reservation (a non-empty
-		// PodAssignment on a non-recovery row) so the resume-rebuild path with a
-		// stale dead-pod PodAssignment re-reserves a fresh slot below.
-		if row.PodAssignment != "" && !session.IsRecovery(row.State) {
-			return s.podBinder.BindReservedSlot(ctx, slotReq, row.PodAssignment, row.ID)
-		}
-		// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted slot
-		// acquisition in the per-pool claim FIFO and re-enter the slot-claim
-		// path as pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the
-		// first exhaustion. The slot retry policy itself surfaces the §5.2
-		// exhaustion sentinels unwrapped, which is the queue's retry signal.
-		return runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
-			func(ctx context.Context) (*podsession.BindResult, error) {
-				return s.bindSlotWithRetry(ctx, slotReq)
-			})
+		return s.bindConcurrentSlot(ctx, row, match, slotReq)
 	}
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
-	// spec: §7.1 steps 4-13 / §4.6 (proposal) — when the row carries a pod
-	// claimed at /create (the §4.6 durable binding) and the session is still in
-	// its pre-running create → finalize → start window, the pod is not
-	// re-claimed at start: the gateway reconnects to the bound pod and runs the
-	// §4.3 prepare barrier plus the §4.4 launch against it.
+	// spec: §4.7, §7.1 steps 4-13 (proposal) — the combined one-call
+	// `POST /v1/sessions/start` path (claimed is non-nil) claimed the pod in
+	// the same call but never went through /finalize, so it reconnects to the
+	// bound pod and runs the §4.3 prepare barrier plus the §4.4 launch together
+	// (prepareAndLaunch) without re-claiming. The two-step
+	// `POST /v1/sessions/{id}/start` launch-only path does not reach startOnPod
+	// (handleStart calls launchOnPod), so a live create-time binding with
+	// claimed == nil here is only the resume-rebuild path, which falls through
+	// to the whole-sequence Bind below.
 	//
 	// The reconnect is gated on a live create-time claim, signalled by a
 	// non-empty PodAssignment on a non-recovery row, rather than by a non-empty
@@ -1597,30 +1610,13 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// pod through the whole Claim → Prepare → Launch sequence below rather than
 	// reconnect to the dead binding; reconnecting would fail Prepare against the
 	// no-longer-existing pod and fail the resume instead of recovering it.
-	if row.PodAssignment != "" && !session.IsRecovery(row.State) {
-		// spec: §4.3, §4.4 (proposal) — the two-step `POST /v1/sessions/{id}/start`
-		// path (claimed is nil) has already run the §4.3 prepare barrier at
-		// /finalize, so /start launches only: it reconnects to the prepared pod
-		// and runs the §4.4 launch (StartSession or ConfigureWorkspace) without
-		// re-staging, re-materializing, re-running setup, or re-assigning the
-		// credential lease. The combined one-call `POST /v1/sessions/start` path
-		// (claimed is non-nil) claimed the pod in the same call but never went
-		// through /finalize, so it runs the prepare barrier and the launch
-		// together here (§4.7).
-		if claimed != nil {
-			// spec: §5 / §6.3 line 348 (proposal) — the same call measured the
-			// create-time pod_claim duration; thread it into the launch-boundary
-			// end-to-end envelope so the single
-			// lenny_session_startup_duration_seconds observation spans pod claim
-			// through ready.
-			return s.prepareAndLaunch(ctx, row, match, bindReq, claimed.PodClaim)
-		}
-		// On the two-step /start path the claim ran in a separate /create request
-		// and the prepare ran at /finalize, so the create-time pod_claim and the
-		// finalize-time materialization/setup/credential phases are recorded by
-		// those requests; the /start end-to-end span is launch-only by
-		// construction.
-		return s.launchPrepared(ctx, row, match, bindReq)
+	if claimed != nil && row.PodAssignment != "" && !session.IsRecovery(row.State) {
+		// spec: §5 / §6.3 line 348 (proposal) — the same call measured the
+		// create-time pod_claim duration; thread it into the launch-boundary
+		// end-to-end envelope so the single
+		// lenny_session_startup_duration_seconds observation spans pod claim
+		// through ready.
+		return s.prepareAndLaunch(ctx, row, match, bindReq, claimed.PodClaim)
 	}
 	// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted session-claim
 	// acquisition in the per-pool claim FIFO and re-enter the claim path as
@@ -1641,6 +1637,82 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	s.recordStartupPhases(match, result.Timings)
 	s.recordStartupDuration(match, result.Timings)
 	return result, nil
+}
+
+// launchOnPod runs the §4.4 launch-only path for the two-step
+// `POST /v1/sessions/{id}/start` against the pod prepared at /finalize. Per
+// the proposal §4.4, /start performs only the §6.3 agent_session_start phase:
+// it transitions ready → starting (the caller writes the row), reconnects to
+// the prepared pod from the row's persisted §4.6 binding, invokes
+// StartSession (pod-warm) or ConfigureWorkspace (SDK-warm), and lets the
+// caller transition the row to running. The heavy preparation — staging,
+// materialization, setup commands, and credential-lease assignment — already
+// ran at /finalize, so launchOnPod runs NO §4.9 pre-claim credential
+// resolution: the launch RPCs consume no credential inputs (the lease was
+// pushed to the pod at finalize), so resolving them here would be wasted work
+// the proposal moves off the /start path.
+//
+// It returns (nil, nil) for the dispositions that launch nothing at /start:
+//
+//   - the binder is not wired (the minimal gateway, which starts by a plain
+//     ready → running transition);
+//   - a service-mode pool, which is claimless and is routed through the
+//     pool's Service/EndpointSlice rather than a bound pod (§5.2).
+//
+// A concurrent-workspace pool (maxConcurrentSessions>1) reserves a slot at
+// /create and materializes + launches it together at /start via
+// BindReservedSlot (§5.2), so its launch DOES need the §4.9 assignment
+// inputs; launchOnPod resolves credentials on that branch alone. The
+// exclusive launch-only path needs none.
+//
+// spec: §4.4, §4.6 (proposal); §6.1 lines 30-34 (SDK-warm ConfigureWorkspace);
+// §15.1 (/start precondition); §5.2; §6.3 line 372.
+func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
+		row.RuntimeRef, string(row.IsolationProfile))
+	if err != nil {
+		return nil, err
+	}
+	// spec: §5.2 lines 602-625 — a session targeting a pool in the
+	// PoolWarmingUp bootstrap state returns 503 RUNTIME_UNAVAILABLE rather than
+	// reconnecting to a pod that may not be ready. A two-step /start should not
+	// hit this in practice (the pod was claimed at /create and prepared at
+	// /finalize), but the gate is kept fail-closed against a pool that warmed
+	// down across the window.
+	if match.PoolWarmingUp {
+		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
+	}
+	// spec: §5.2 — service mode is claimless: no SandboxClaim, no workspace,
+	// and no bound pod. The session row persists with execution_mode=service
+	// and message routing dispatches through the stateless data plane, so
+	// /start returns a nil BindResult with no launch RPC.
+	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return nil, nil
+	}
+	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
+	// spec: §4.1, §5.2 (proposal) — a concurrent-workspace pool reserved a slot
+	// at /create and materializes + launches it together at /start. That launch
+	// runs the §4.9 AssignCredentials, so it needs the per-provider pool map;
+	// resolve it here, on this branch alone. A live create-time reservation
+	// (non-empty PodAssignment on a non-recovery row) reconnects to the reserved
+	// slot via BindReservedSlot; a row without one is a misuse (a two-step
+	// /start with no claimed pod), surfaced as the queue's exhaustion path.
+	if match.MaxConcurrentSessions > 1 {
+		credPools, userCredProviders, cerr := s.resolveCredentialPools(ctx, row)
+		if cerr != nil {
+			return nil, cerr
+		}
+		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+		return s.bindConcurrentSlot(ctx, row, match, slotReq)
+	}
+	// spec: §4.4, §4.6 (proposal) — the exclusive-pool launch-only path. The
+	// pod was claimed at /create and prepared at /finalize, so reconnect to the
+	// bound pod and run only the launch (StartSession or ConfigureWorkspace).
+	// No credential inputs are needed: the lease was assigned at /finalize.
+	// launchPrepared recomputes the §6.1 SDK-warm demotion decision from the
+	// persisted plan rather than re-running the prepare phase to learn it.
+	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, nil, nil, agentInterface, minPlatformVersion)
+	return s.launchPrepared(ctx, row, match, bindReq)
 }
 
 // exclusiveBindRequest assembles the §4.7 BindRequest for an exclusive
@@ -1704,6 +1776,39 @@ func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, 
 		// "Concurrent" preset) rather than deleting the claim outright.
 		Recycle: match.Recycle,
 	}
+}
+
+// bindConcurrentSlot dispatches a §5.2 concurrent-workspace pool bind once the
+// caller has built the slotReq. It is shared by the combined create-and-start
+// path (startOnPod) and the two-step launch path (launchOnPod), which build
+// the same request and dispatch identically: a concurrent pool materializes
+// and launches the slot's workspace together at /start (it is not decomposed
+// across finalize and start like the exclusive pool), so both callers reach
+// here at launch time.
+//
+//   - When the row carries a slot reserved at /create (the §4.6 durable
+//     binding: a non-empty PodAssignment on a non-recovery row, SlotID ==
+//     SessionID == the reserved pod) the slot is not re-reserved. The gateway
+//     reconnects to the reserved slot's pod and runs the materialize-and-launch
+//     sequence against it (BindReservedSlot), the slot analog of the exclusive
+//     reconnect.
+//   - Otherwise (the §7.3 resume-rebuild path with a stale dead-pod
+//     PodAssignment, or a slotless row) it reserves a fresh slot through the
+//     §5.2 retry policy, holding an exhausted acquisition in the per-pool claim
+//     FIFO on a `queue` pool and returning WARM_POOL_EXHAUSTED on the first
+//     exhaustion of a `reject` pool. The slot retry policy surfaces the §5.2
+//     exhaustion sentinels unwrapped, which is the queue's retry signal.
+//
+// spec: §4.1, §5.2 (proposal); §4.6.1 (pool exhaustion queue); §4.6 (durable
+// binding reconnect).
+func (s *Server) bindConcurrentSlot(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, slotReq podsession.SlotBindRequest) (*podsession.BindResult, error) {
+	if row.PodAssignment != "" && !session.IsRecovery(row.State) {
+		return s.podBinder.BindReservedSlot(ctx, slotReq, row.PodAssignment, row.ID)
+	}
+	return runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+		func(ctx context.Context) (*podsession.BindResult, error) {
+			return s.bindSlotWithRetry(ctx, slotReq)
+		})
 }
 
 // prepareAndLaunch runs the §4.3 prepare barrier and the §4.4 launch
