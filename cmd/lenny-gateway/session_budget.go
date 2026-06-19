@@ -31,8 +31,10 @@ type budgetSessionTerminator struct {
 	store sessionstore.Store
 	// onTerminal runs the sessionserver terminal-side-effects pipeline. It
 	// is set after the session server is constructed (the same deferred
-	// wiring sessionAdminAdapter uses for its terminal hook).
-	onTerminal func(context.Context, sessionstore.Session)
+	// wiring sessionAdminAdapter uses for its terminal hook). fromState is the
+	// session's pre-terminal state so the terminal pod-release path can
+	// distinguish a pre-running claimed session from a running one (§4.6).
+	onTerminal func(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
 
 // TerminateSession transitions sessionID to `expired` with the given
@@ -60,6 +62,7 @@ func (t *budgetSessionTerminator) terminate(ctx context.Context, sessionID, reas
 		return
 	}
 	var transitioned bool
+	var fromState session.State
 	updated, err := t.store.Update(ctx, sess.TenantID, sess.ID, func(s *sessionstore.Session) error {
 		if session.IsTerminal(s.State) {
 			return nil
@@ -68,6 +71,7 @@ func (t *budgetSessionTerminator) terminate(ctx context.Context, sessionID, reas
 		// store does not validate the transition, matching the watchdog /
 		// force-terminate force paths; the §8.8 MCP adapter surfaces this
 		// as `failed` with error code `expired:budget`.
+		fromState = s.State
 		s.State = session.StateExpired
 		s.FailureReason = reason
 		transitioned = true
@@ -78,6 +82,9 @@ func (t *budgetSessionTerminator) terminate(ctx context.Context, sessionID, reas
 		return
 	}
 	if transitioned && t.onTerminal != nil {
-		t.onTerminal(ctx, updated)
+		// spec: §4.6 — a budget terminate runs against a running session, so
+		// fromState (running) routes its teardown through the §6.2 executor
+		// recycle path rather than the pre-running by-name reclaim.
+		t.onTerminal(ctx, fromState, updated)
 	}
 }

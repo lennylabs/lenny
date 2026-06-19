@@ -115,6 +115,58 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 	}
 }
 
+// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — a create-time
+// pod-claim exhaustion (claimAtCreate wraps ErrNoIdlePod as
+// errCreateClaimExhausted) surfaces the create-handler fallback envelope
+// SESSION_CREATION_FAILED, not the §5.2 WARM_POOL_EXHAUSTED code the
+// two-step /start claim returns. The case precedes the bare-ErrNoIdlePod
+// case because the wrapper embeds that sentinel; the errors.Is check sees
+// through %w wrapping. The body carries details.reason=no_idle_pods so an
+// operator can still see the underlying cause, and a Retry-After header.
+func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
+	s := New(memstore.New(), Options{})
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"direct", errCreateClaimExhausted},
+		{"wrapped sentinel", fmt.Errorf("%w: %w", errCreateClaimExhausted, podclaim.ErrNoIdlePod)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			s.writePodClaimError(w, tc.err, "SESSION_CREATION_FAILED",
+				"could not place the session on a warm pod")
+			if w.Code != 503 {
+				t.Errorf("status = %d, want 503", w.Code)
+			}
+			body := decodeErrorBody(t, w.Body.Bytes())
+			if body["code"] != "SESSION_CREATION_FAILED" {
+				t.Errorf("code = %v, want SESSION_CREATION_FAILED (create-time exhaustion is the §7.1 atomicity envelope)", body["code"])
+			}
+			details, _ := body["details"].(map[string]any)
+			if details["reason"] != "no_idle_pods" {
+				t.Errorf("details.reason = %v, want no_idle_pods", details["reason"])
+			}
+			if w.Header().Get("Retry-After") == "" {
+				t.Error("create-time exhaustion 503 must carry a Retry-After header (§15.1 line 1138)")
+			}
+		})
+	}
+
+	// The two-step /start path passes a bare ErrNoIdlePod (not wrapped),
+	// which keeps the §5.2 WARM_POOL_EXHAUSTED code; this guards against the
+	// create-time translation leaking into the start path's classifier.
+	t.Run("bare sentinel keeps WARM_POOL_EXHAUSTED", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		s.writePodClaimError(w, podclaim.ErrNoIdlePod, "STARTING_FAILED",
+			"could not place the session on a warm pod")
+		body := decodeErrorBody(t, w.Body.Bytes())
+		if body["code"] != "WARM_POOL_EXHAUSTED" {
+			t.Errorf("code = %v, want WARM_POOL_EXHAUSTED for the two-step /start claim", body["code"])
+		}
+	})
+}
+
 // spec: §5.2 lines 602-625 — a PoolWarmingError maps to the 503
 // RUNTIME_UNAVAILABLE "Pool Not Ready" response with Retry-After and a
 // details block carrying poolName, poolCondition, estimatedReadyIn, and

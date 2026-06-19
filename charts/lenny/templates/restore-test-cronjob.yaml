@@ -28,7 +28,7 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
     lenny.dev/component: restore-test
 ---
-{{- /*
+{{/*
 The scratch namespace the test restore creates is cluster-scoped, so
 the verification Job needs a ClusterRole to create and delete it. The
 restore runs as a Job inside that namespace; namespaced Job and Pod
@@ -69,7 +69,7 @@ subjects:
     name: lenny-restore-test
     namespace: {{ .Release.Namespace }}
 ---
-{{- /*
+{{/*
 The release-namespace Role grants the read-only ConfigMap access the
 restore needs to resolve platform configuration; it deliberately does
 not grant Secret access.

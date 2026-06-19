@@ -70,7 +70,7 @@ Common reason classes and their owning runbooks:
 GET /v1/admin/metrics?q=histogram_quantile(0.99, rate(lenny_session_creation_duration_seconds_bucket[5m]))&groupBy=phase&window=1h
 ```
 
-Phases: `claim`, `materialize`, `warmup`, `attach`. The dominant phase points at the underlying bottleneck.
+Phases: `auth`, `policy`, `credential_precheck`, `pod_claim`, `postgres_persist`. The dominant phase points at the underlying bottleneck.
 
 ### Step 4 — Tenant / pool scope
 

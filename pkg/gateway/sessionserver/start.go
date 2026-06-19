@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
@@ -64,6 +65,13 @@ const minWarmupRetryAfterSeconds = 30
 // the spec-named code instead of the legacy `POD_CLAIM_FAILED`; the
 // `POST /v1/sessions/{id}/start` two-step path passes `STARTING_FAILED`
 // per §6.2 line 303.
+//
+// Pool exhaustion is code-split by lifecycle phase: a create-time claim
+// exhaustion (wrapped as errCreateClaimExhausted by claimAtCreate)
+// surfaces the fallback `SESSION_CREATION_FAILED` per the §7.1 line 23
+// atomicity note and proposal §4.1, while a bare `podclaim.ErrNoIdlePod`
+// from the two-step `/start` claim keeps the §5.2 line 519
+// `WARM_POOL_EXHAUSTED` code.
 // spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §5.2 lines 602-625
 // (RUNTIME_UNAVAILABLE), §7.1 line 28 (SESSION_CREATION_FAILED),
 // §15.1 line 1138 (Retry-After).
@@ -142,6 +150,19 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 			s.preclaimMismatch(credAssign.Pool, credAssign.Provider)
 		}
 		s.writeCredentialPoolExhausted(w, "assignment_race")
+	case errors.Is(err, errCreateClaimExhausted):
+		// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — a
+		// create-time claim exhaustion is part of the §7.1 atomic creation
+		// unit, so it surfaces as the create-handler fallback envelope
+		// (SESSION_CREATION_FAILED + Retry-After) rather than the §5.2
+		// WARM_POOL_EXHAUSTED code. This case precedes the ErrNoIdlePod case
+		// because errCreateClaimExhausted wraps that sentinel; the create
+		// paths wrap it, the two-step `POST /v1/sessions/{id}/start` path
+		// does not, so /start keeps WARM_POOL_EXHAUSTED.
+		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
+			fallbackMsg+": "+err.Error(),
+			map[string]any{"reason": "no_idle_pods"})
 	case errors.Is(err, podclaim.ErrNoIdlePod):
 		s.writeWarmPoolExhausted(w, "no_idle_pods")
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
@@ -503,16 +524,59 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	row.UploadTokenDigest = parsed.Digest
 	row.UploadTokenExpiry = parsed.Expiry
 
-	// When the gateway is wired with a pod binder, the §15.1 start path
-	// places the session on a Kubernetes warm pod before the row is
-	// persisted. A claim failure leaves no row behind per the atomicity
-	// contract. A Token Service outage during credential assignment
-	// surfaces as TOKEN_SERVICE_UNAVAILABLE with Retry-After per §4.3
-	// line 214.
-	var bound *podsession.BindResult
+	// When the gateway is wired with a pod binder, the §15.1
+	// create-and-start path runs the §7.1 Claim → Prepare → Launch sequence
+	// in one call, reusing the same phases the decomposed create → finalize
+	// → start lifecycle drives (§4.7 of the proposal). claimAtCreate runs
+	// the credential pre-check and claims the pod (persisting the §4.6
+	// binding on the row); startOnPod then sees that binding and runs the
+	// prepare barrier plus the launch against it without re-claiming. A
+	// claim, prepare, or launch failure leaves no row behind per the §7.1
+	// line 28 atomicity contract; the binder reclaims the pod (and any
+	// lease) on the prepare/launch failure path. A Token Service outage
+	// during credential assignment surfaces as TOKEN_SERVICE_UNAVAILABLE
+	// with Retry-After per §4.3 line 214.
+	var (
+		bound       *podsession.BindResult
+		createClaim *podsession.ClaimResult
+	)
 	if s.podBinder != nil {
-		result, err := s.startOnPod(r.Context(), row, parsedPlan)
+		outcome, err := s.claimAtCreate(r.Context(), row, parsedPlan)
 		if err != nil {
+			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
+				"could not place the session on a warm pod")
+			return
+		}
+		level = outcome.Level
+		row.ExecutionMode = level.ExecutionMode
+		row.ScrubPolicy = level.ScrubPolicy
+		row.ConversationContinuity = level.ConversationContinuity
+		// spec: §4.1 / §5 (proposal) — carry the create-time credential
+		// resolution and pod_claim duration into the same-call startOnPod so
+		// the combined path runs the §7.1-step-3 pre-check exactly once before
+		// the step-4 claim (no re-resolve at the prepare dispatch) and the
+		// single end-to-end startup observation spans pod claim through ready.
+		startCtx := &startContext{
+			CredPools:         outcome.CredPools,
+			UserCredProviders: outcome.UserCredProviders,
+		}
+		if outcome.Claim != nil {
+			createClaim = outcome.Claim
+			row.PodAssignment = createClaim.SandboxName
+			row.PoolRef = createClaim.Pool
+			startCtx.PodClaim = createClaim.PodClaim
+		}
+		result, err := s.startOnPod(r.Context(), row, parsedPlan, startCtx)
+		if err != nil {
+			// spec: §7.1 line 28 — a create-step failure rolls back without
+			// persisting the row, releasing the create-time claim. The
+			// combined path claims at /create and then runs prepare/launch
+			// against that claim in the same call, so on a startOnPod error
+			// the create-time claim is released here unless the binder already
+			// owns its release (see createClaimNeedsRollback).
+			if createClaimNeedsRollback(createClaim, err) {
+				s.rollbackClaim(r.Context(), createClaim, row.ID)
+			}
 			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
 				"could not place the session on a warm pod")
 			return
@@ -568,17 +632,27 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStart implements POST /v1/sessions/{id}/start per §15.1: the
-// explicit start transition of the two-step create → finalize → start
-// lifecycle. It transitions a ready session to running and, when the
-// gateway is wired with a pod binder, places the session on a §5 warm
-// pod using the §14 WorkspacePlan stored at create.
+// explicit launch transition of the two-step create → finalize → start
+// lifecycle. It transitions a ready session to running and, when the gateway
+// is wired with a pod binder, launches the runtime on the pod prepared at
+// /finalize using the §14 WorkspacePlan stored at create.
 //
-// handleStart is a dedicated handler rather than a generic
-// handleTransition because the start transition carries the extra
-// pod-placement step — the same reason handleFinalize is dedicated for
-// the finalize transition. The pod claim runs before the row
-// transitions: a claim failure leaves the row ready so the client can
-// retry POST /start.
+// Per the proposal §4.4, /start is launch-only: the §4.3 preparation barrier
+// (staging, workspace materialization, setup commands, and credential-lease
+// assignment) already ran at /finalize, so /start neither claims a pod nor
+// re-runs any of that work. It reconnects to the prepared pod and runs only
+// the §6.3 agent_session_start phase (StartSession for a pod-warm pod,
+// ConfigureWorkspace for an SDK-warm one) through launchOnPod. The exception
+// is a concurrent-workspace pool, whose reserved slot materializes and
+// launches together at /start (§5.2); launchOnPod owns that distinction.
+//
+// handleStart is a dedicated handler rather than a generic handleTransition
+// because the start transition carries the extra launch step — the same
+// reason handleFinalize is dedicated for the finalize transition. The launch
+// runs before the row transitions: a launch failure leaves the row ready so
+// the client can retry POST /start.
+//
+// spec: §4.4, §4.6 (proposal); §15.1 (/start precondition); §6.1 lines 30-34.
 func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -606,20 +680,31 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 				"stored workspace plan could not be parsed: "+err.Error(), nil)
 			return
 		}
-		result, err := s.startOnPod(r.Context(), row, plan)
+		// spec: §4.4, §4.6 (proposal) — /start is launch-only: launchOnPod
+		// reconnects to the pod prepared at /finalize and runs only the §6.3
+		// agent_session_start phase (StartSession or ConfigureWorkspace),
+		// without re-staging, re-materializing, re-running setup, or
+		// re-assigning the credential lease, and without any §4.9 credential
+		// resolution. The exclusive-pool launch needs no credential inputs (the
+		// lease was assigned at /finalize); only the concurrent-pool slot
+		// launch, which materializes at /start, resolves them.
+		result, err := s.launchOnPod(r.Context(), row, plan)
 		if err != nil {
 			// spec: §7.1 line 28 / §6.2 line 303 — `POST /v1/sessions/{id}/start`
 			// returns `STARTING_FAILED` when the §7.1 atomic-creation unit
-			// fails on the explicit start half. The row stays `ready` so the
-			// client can retry; no pod is left allocated (pre-claim or
-			// claim-attempt errors release before this point).
+			// fails on the explicit launch half. The row stays `ready` so the
+			// client can retry; the binder already reclaimed the prepared pod
+			// (and the lease assigned at /finalize) on the launch failure path.
 			s.writePodClaimError(w, err, "STARTING_FAILED", "could not place the session on a warm pod")
 			return
 		}
 		s.registerBinding(r.Context(), result)
-		// spec: §7.5 line 475 — persist the per-command setup output the
-		// adapter captured so a subsequent GET /v1/sessions/{id} can
-		// surface it. F-7.5.4.
+		// spec: §7.5 line 475 — persist the per-command setup output a
+		// concurrent-workspace slot launch captured so a subsequent GET
+		// /v1/sessions/{id} can surface it. The exclusive-pool launch-only path
+		// produces no setup output (setup ran at /finalize, persisted there by
+		// applyFinalizePrepareResult), so this fires only for the concurrent
+		// slot launch that materializes at /start. F-7.5.4.
 		if result != nil && len(result.SetupOutputs) > 0 {
 			outs := setupOutputsFromBind(result.SetupOutputs)
 			if _, uerr := s.store.Update(r.Context(), tenantID, id, func(rr *sessionstore.Session) error {
@@ -1191,15 +1276,229 @@ func poolDescriptor(p credentialpoolstore.CredentialPool) credrouter.PoolDescrip
 	}
 }
 
+// claimOutcome reports the result of the §7.1-step-4 pod claim run at
+// session create. ClaimResult is nil for the one claimless disposition, a
+// service-mode pool; it is non-nil for every other pool, carrying the
+// exclusive pod claim or the concurrent-workspace slot reservation. Level
+// always carries the §7.1 sessionIsolationLevel derived from the resolved
+// pool so the create response reports the actual pod's profile rather than a
+// pre-resolved estimate. spec: §7.1 step 4, line 75; §5.2.
+type claimOutcome struct {
+	// Claim is the persisted §4.6 binding (sandbox name, pool, pod IP,
+	// and either the negotiated workspace root for an exclusive claim or the
+	// reserved SlotID for a concurrent-workspace claim). Nil only for the
+	// claimless service-mode disposition.
+	Claim *podsession.ClaimResult
+	// Level is the §7.1 sessionIsolationLevel for the resolved pool.
+	Level SessionIsolationLevel
+	// CredPools and UserCredProviders are the §7.1-step-3 pre-claim
+	// credential resolution claimAtCreate already computed. The combined
+	// one-call POST /v1/sessions/start path threads them into startOnPod so
+	// the step-3 pre-check runs exactly once before the step-4 claim rather
+	// than re-resolving at the prepare dispatch (the proposal's "pre-check
+	// runs once, before the claim" placement). The two-step create → start
+	// path discards them: its /start request re-resolves from the persisted
+	// row because the resolution is not persisted across the create window.
+	CredPools         map[string]string
+	UserCredProviders []string
+}
+
+// startContext carries the create-time resolution claimAtCreate produced
+// into a same-call startOnPod, so the combined one-call POST
+// /v1/sessions/start path neither re-runs the §7.1-step-3 credential
+// pre-check nor drops the create-time pod-claim duration from the
+// end-to-end startup envelope. It is nil for the two-step POST
+// /v1/sessions/{id}/start and the resume-rebuild paths, where startOnPod
+// resolves credentials itself and the claim ran in a separate request.
+type startContext struct {
+	// CredPools and UserCredProviders are the already-resolved §4.9
+	// pre-claim credential map and user-source providers; startOnPod reuses
+	// them instead of calling resolveCredentialPools again.
+	CredPools         map[string]string
+	UserCredProviders []string
+	// PodClaim is the create-time §6.3 pod_claim phase duration the same
+	// call measured at claimAtCreate. prepareAndLaunch threads it into the
+	// end-to-end lenny_session_startup_duration_seconds so the single
+	// combined-call observation spans pod claim through ready (§6.3).
+	PodClaim time.Duration
+}
+
+// claimAtCreate runs the §7.1 step-3 credential availability pre-check and
+// the step-4 pod claim inside the create atomic unit, before the session
+// row is persisted. It resolves the pool serving the row's runtime and
+// §5.3 profile, derives the §7.1 sessionIsolationLevel from the actual
+// resolved pool, runs the §4.9 pre-claim credential availability check for
+// every pool class, and runs the §4.1 (proposal) claim for every
+// non-service-mode pool (the exclusive Claim for a one-session-per-pod pool,
+// the ClaimSlot reservation for a concurrent-workspace pool), returning the
+// durable binding for the caller to persist on row.PodAssignment +
+// row.PoolRef.
+//
+// The §7.1 step-3 credential availability pre-check runs for every pool
+// class ahead of the service-mode short-circuit, so an exhausted-credential
+// session is rejected at create regardless of the pool's session policy (the
+// §2 fail-fast contract).
+//
+// A service-mode pool is claimless (§5.2): no pod is claimed and the
+// returned ClaimResult is nil. A concurrent-workspace pool
+// (maxConcurrentSessions>1) claims at create like every non-service-mode
+// pool: its claim is a per-session slot reservation (ClaimSlot) rather than
+// an exclusive whole-pod claim, so the §15.1 created-state invariant (a warm
+// pod has been claimed) and the §4.6 durable binding hold uniformly. The
+// returned ClaimResult carries the reserved slot's SandboxName, Pool, and
+// SlotID for the caller to persist on row.PodAssignment + row.PoolRef; /start
+// reconnects to the reserved slot rather than re-reserving. Pool warming,
+// pool/slot exhaustion, and a credential-availability miss are returned as
+// their typed errors for writePodClaimError to map (503
+// SESSION_CREATION_FAILED + Retry-After, or the credential-specific
+// envelopes), so the client learns of the failure before uploading and no
+// row is persisted.
+//
+// spec: §4.1 (proposal), §7.1 steps 3-5, line 75; §4.9 lines 1216-1218; §5.2.
+func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*claimOutcome, error) {
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
+		row.RuntimeRef, string(row.IsolationProfile))
+	if err != nil {
+		return nil, err
+	}
+	level := isolationLevelForPool(match, row.IsolationProfile)
+	// spec: §5.2 lines 602-625 — reject a create whose pool is still
+	// bootstrapping with 503 RUNTIME_UNAVAILABLE + Retry-After before any
+	// claim, so the client retries rather than burning a claim attempt.
+	if match.PoolWarmingUp {
+		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
+	}
+	// spec: §7.1 step 3 / §4.9 lines 1216-1218 — the §7.1 step-3 credential
+	// availability pre-check runs at create ahead of the step-4 claim, for
+	// every pool class. It is ordered before the service-mode and
+	// concurrent-workspace short-circuits below (the same ordering startOnPod
+	// uses at /start), so a session that would fail at credential assignment
+	// is rejected (CREDENTIAL_POOL_EXHAUSTED / USER_CREDENTIAL_NOT_FOUND)
+	// before the client wastes an upload, regardless of the pool's session
+	// policy. Surfacing the gate at create rather than at /start is the §2
+	// fail-fast contract this proposal establishes.
+	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §5.2 — service mode is claimless: a service-mode session is a
+	// connection handle routed through the pool's Service/EndpointSlice, with
+	// no SandboxClaim and no workspace materialization. No pod is claimed at
+	// create; the row persists with execution_mode=service.
+	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return &claimOutcome{Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
+	}
+	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
+	// spec: §4.1, §5.2 (proposal) — a concurrent-workspace pool
+	// (maxConcurrentSessions>1) claims at create like every non-service-mode
+	// pool, so the §15.1 created-state invariant (a warm pod has been claimed)
+	// and the §4.6 durable binding hold uniformly. The concurrent-pool claim
+	// is a per-session slot reservation (ClaimSlot): it lands the session on a
+	// shared pod's slot and persists SandboxName + Pool, and /start reconnects
+	// to that reserved slot (BindReservedSlot) rather than re-reserving. The
+	// SlotID equals the session id, so the binding is reconstructable from the
+	// persisted columns. Pool/slot exhaustion at the reservation surfaces as
+	// the §7.1 SESSION_CREATION_FAILED atomicity envelope before the client
+	// uploads, the same fail-fast contract the exclusive claim gives.
+	if match.MaxConcurrentSessions > 1 {
+		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+		// spec: §4.6.1 / §5.2 — a `queue` pool holds an exhausted slot
+		// reservation in the per-pool FIFO and re-enters as slots free; a
+		// `reject` pool returns WARM_POOL_EXHAUSTED on the first exhaustion. The
+		// queued reservation holds no slot between attempts, so the §7.1
+		// atomicity contract holds, exactly as the exclusive claim queue does.
+		claim, err := runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+			func(ctx context.Context) (*podsession.ClaimResult, error) {
+				return s.podBinder.ClaimSlot(ctx, slotReq)
+			})
+		if err != nil {
+			// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — slot
+			// exhaustion at the create-time reservation surfaces as the §7.1
+			// SESSION_CREATION_FAILED envelope, not the §5.2 WARM_POOL_EXHAUSTED
+			// code the two-step start path returns. Translate the exhaustion
+			// sentinels (no concurrent slot, tenant mismatch, no idle pod) to
+			// errCreateClaimExhausted so writePodClaimError routes them to the
+			// create-handler SESSION_CREATION_FAILED fallback.
+			if errors.Is(err, podclaim.ErrNoConcurrentSlot) ||
+				errors.Is(err, podclaim.ErrTenantMismatch) ||
+				errors.Is(err, podclaim.ErrNoIdlePod) {
+				return nil, fmt.Errorf("%w: %w", errCreateClaimExhausted, err)
+			}
+			return nil, err
+		}
+		// spec: §6.3 — record the pod_claim phase timing at /create, its new
+		// boundary in the decomposed lifecycle, for the concurrent path too.
+		s.recordStartupPhases(match, podsession.BindTimings{PodClaim: claim.PodClaim})
+		return &claimOutcome{Claim: claim, Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
+	}
+	// The Claim phase only needs the pool, session, and tenant; the plan and
+	// credential inputs are consumed by Prepare/Launch at /start. Build the
+	// full request so the create-time claim and the start-time prepare/launch
+	// read identical inputs.
+	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, nil, nil, agentInterface, minPlatformVersion)
+	// spec: §4.6.1 / §5.2 — a `queue` pool holds an exhausted claim in the
+	// per-pool FIFO and re-enters as pods free; a `reject` pool returns
+	// WARM_POOL_EXHAUSTED on the first exhaustion. The queued request holds
+	// no pod between attempts, so the §7.1 atomicity contract holds.
+	claim, err := runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+		func(ctx context.Context) (*podsession.ClaimResult, error) {
+			return s.podBinder.Claim(ctx, bindReq)
+		})
+	if err != nil {
+		// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — pool
+		// exhaustion at the step-4 create-time claim surfaces as the §7.1
+		// SESSION_CREATION_FAILED atomicity envelope, not the §5.2
+		// WARM_POOL_EXHAUSTED code the two-step `POST /v1/sessions/{id}/start`
+		// path returns. Translate the exhaustion sentinel to errCreateClaimExhausted
+		// so writePodClaimError routes it to the create-handler fallback
+		// (SESSION_CREATION_FAILED) while pool-warming and credential misses
+		// keep their dedicated codes.
+		if errors.Is(err, podclaim.ErrNoIdlePod) {
+			return nil, fmt.Errorf("%w: %w", errCreateClaimExhausted, err)
+		}
+		return nil, err
+	}
+	// spec: §6.3 — record only the pod_claim phase timing at /create, its
+	// new boundary in the decomposed lifecycle (§5 of the proposal). The
+	// end-to-end lenny_session_startup_duration_seconds is emitted once at
+	// the launch boundary (recordStartupDuration), not here, so a single
+	// logical start does not double-count the envelope.
+	s.recordStartupPhases(match, podsession.BindTimings{PodClaim: claim.PodClaim})
+	return &claimOutcome{Claim: claim, Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
+}
+
+// errCreateClaimExhausted marks a create-time pod-claim exhaustion so
+// writePodClaimError routes it to the §7.1 SESSION_CREATION_FAILED
+// atomicity envelope (proposal §4.1, atomicity note at §7.1 line 23)
+// rather than the §5.2 WARM_POOL_EXHAUSTED code the two-step start path
+// uses. The wrapped podclaim.ErrNoIdlePod stays inspectable for any
+// caller that branches on the underlying sentinel.
+var errCreateClaimExhausted = errors.New("create-time warm-pod claim exhausted")
+
 // startOnPod places a started session on a Kubernetes warm pod. It
 // resolves the warm pool serving the session's runtime and §5.3
-// isolation profile, then dispatches by the pool's sessionPolicy:
-// an exclusive pool (maxConcurrentSessions=1) claims an idle pod
-// through podBinder.Bind, a concurrent-workspace pool
-// (maxConcurrentSessions>1) reserves a slot on a shared pod through
-// podBinder.BindSlot (§5.2). The pod's §4.7 adapter runs the
-// per-mode assignment sequence; the BindResult is returned for the
-// caller to register and persist after its own atomicity gates pass.
+// isolation profile, then dispatches by the pool's sessionPolicy and by
+// whether a pod was already claimed at /create:
+//
+//   - An exclusive pool (maxConcurrentSessions=1) whose pre-running row
+//     carries a live §4.6 durable binding (PodAssignment set by the
+//     create-time claim, the session not in a recovery state) reconnects
+//     to the bound pod and runs the §4.3 prepare barrier plus the §4.4
+//     launch (prepareAndLaunch); it does not re-claim.
+//   - An exclusive pool with no live create-time claim runs the whole
+//     Claim → Prepare → Launch sequence through podBinder.Bind. This is
+//     the §7.3 snapshotless resume-rebuild path (resumeOnPod invokes
+//     startOnPod on a recovery-state row that still carries the dead pod's
+//     stale PodAssignment).
+//   - A concurrent-workspace pool (maxConcurrentSessions>1) whose row
+//     carries a live §4.6 binding reconnects to the slot reserved at
+//     create through podBinder.BindReservedSlot (§5.2), the slot analog of
+//     prepareAndLaunch; it does not re-reserve. A recovery-state row with a
+//     stale binding re-reserves a fresh slot through podBinder.BindSlot.
+//
+// The pod's §4.7 adapter runs the per-mode assignment sequence; the
+// BindResult is returned for the caller to register and persist after its
+// own atomicity gates pass.
 //
 // startOnPod no longer registers the binding or persists the
 // SandboxName field itself: the §7.1 line 28 atomicity contract
@@ -1208,16 +1507,53 @@ func poolDescriptor(p credentialpoolstore.CredentialPool) credrouter.PoolDescrip
 // publish the binding. The session-mode and concurrent-slot paths
 // both surface their result the same way; the caller distinguishes
 // them by inspecting BindResult.SlotID when it has to roll back.
-// spec: §4.2 line 160 — "Pod-to-session binding"; §7.1 line 28 —
-// atomic-creation rollback.
-func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
+//
+// claimed is the create-time resolution from a same-call claimAtCreate,
+// passed only on the combined one-call POST /v1/sessions/start path. When
+// it is non-nil, startOnPod reuses its §7.1-step-3 credential resolution
+// rather than calling resolveCredentialPools again (so the combined path
+// runs the pre-check exactly once before the step-4 claim, per the
+// proposal's "pre-check runs once, before the claim" placement) and threads
+// its create-time pod_claim duration into the end-to-end startup envelope.
+// It is nil on the resume-rebuild path, where startOnPod resolves credentials
+// itself because the claim ran in a separate request.
+//
+// The two-step `POST /v1/sessions/{id}/start` exclusive-pool launch does NOT
+// flow through startOnPod: per the proposal §4.4, /start is launch-only and
+// does no credential work, so handleStart calls launchOnPod, which resolves
+// the pool and dispatches to launchPrepared without running the §4.9
+// pre-claim credential resolution. The credential lease was assigned at
+// /finalize. A concurrent-pool two-step /start still flows through
+// launchOnPod, which resolves credentials only on the BindReservedSlot
+// reconnect (a concurrent pool materializes and launches together at /start
+// per §5.2, so it needs the assignment inputs there).
+//
+// startOnPod, after this split, resolves credentials because both its
+// remaining callers consume them: the combined create-and-start path runs
+// the prepare barrier (which assigns the lease), and the resume-rebuild path
+// runs the whole Claim → Prepare → Launch sequence.
+// spec: §4.1, §4.4, §5 (proposal); §4.2 line 160 — "Pod-to-session binding";
+// §7.1 line 28 — atomic-creation rollback.
+func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext) (*podsession.BindResult, error) {
 	// spec: §4.9 lines 1216-1218 — run the pre-claim credential
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
-	// assignment is rejected without wasting a warm pod.
-	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
-	if err != nil {
-		return nil, err
+	// assignment is rejected without wasting a warm pod. On the combined
+	// one-call path the same-call claimAtCreate already ran this step-3
+	// pre-check, so reuse its resolution rather than re-running it (proposal
+	// §4.1: the pre-check runs once, before the claim).
+	var (
+		credPools         map[string]string
+		userCredProviders []string
+	)
+	if claimed != nil {
+		credPools, userCredProviders = claimed.CredPools, claimed.UserCredProviders
+	} else {
+		var err error
+		credPools, userCredProviders, err = s.resolveCredentialPools(ctx, row)
+		if err != nil {
+			return nil, err
+		}
 	}
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
@@ -1250,40 +1586,145 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// the bind through the slot-claim path; the one-session-per-pod default
 	// uses the session-claim path.
 	if match.MaxConcurrentSessions > 1 {
-		slotReq := podsession.SlotBindRequest{
-			Pool:                    match.Pool,
-			SessionID:               row.ID,
-			TenantID:                row.TenantID,
-			Runtime:                 row.RuntimeRef,
-			MaxConcurrentSessions:   match.MaxConcurrentSessions,
-			MaxPodUptimeSeconds:     match.MaxPodUptimeSeconds,
-			Plan:                    podsession.WorkspacePlanToProto(plan),
-			ExperimentContext:       experimentContextToProto(row.ExperimentContext),
-			TracingContext:          row.TracingContext,
-			SetupPolicy:             s.runtimeSetupPolicy(ctx, row.RuntimeRef),
-			CredentialPools:         credPools,
-			UserID:                  row.UserID,
-			UserCredentialProviders: userCredProviders,
-			AgentInterface:          agentInterface,
-			MinPlatformVersion:      minPlatformVersion,
-			// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so the
-			// last-slot-drain edge of a recycling concurrent pool patches the
-			// claim bound → recycling and signals the whole-pod scrub (the §3.1
-			// "Concurrent" preset) rather than deleting the claim outright.
-			Recycle: match.Recycle,
-		}
-		// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted slot
-		// acquisition in the per-pool claim FIFO and re-enter the slot-claim
-		// path as pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the
-		// first exhaustion. The slot retry policy itself surfaces the §5.2
-		// exhaustion sentinels unwrapped, which is the queue's retry signal.
-		return runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
-			func(ctx context.Context) (*podsession.BindResult, error) {
-				return s.bindSlotWithRetry(ctx, slotReq)
-			})
+		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+		return s.bindConcurrentSlot(ctx, row, match, slotReq)
 	}
+	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+	// spec: §4.7, §7.1 steps 4-13 (proposal) — the combined one-call
+	// `POST /v1/sessions/start` path (claimed is non-nil) claimed the pod in
+	// the same call but never went through /finalize, so it reconnects to the
+	// bound pod and runs the §4.3 prepare barrier plus the §4.4 launch together
+	// (prepareAndLaunch) without re-claiming. The two-step
+	// `POST /v1/sessions/{id}/start` launch-only path does not reach startOnPod
+	// (handleStart calls launchOnPod), so a live create-time binding with
+	// claimed == nil here is only the resume-rebuild path, which falls through
+	// to the whole-sequence Bind below.
+	//
+	// The reconnect is gated on a live create-time claim, signalled by a
+	// non-empty PodAssignment on a non-recovery row, rather than by a non-empty
+	// PodAssignment alone. A session that lost its pod and entered a recovery
+	// state (resume_pending / resuming / awaiting_client_action) retains the
+	// dead pod's name in PodAssignment (failure.go), and no resume or
+	// tree-recovery path clears it. The §7.3 snapshotless resume-rebuild path
+	// (resumeOnPod → startOnPod with a recovery-state row) must claim a fresh
+	// pod through the whole Claim → Prepare → Launch sequence below rather than
+	// reconnect to the dead binding; reconnecting would fail Prepare against the
+	// no-longer-existing pod and fail the resume instead of recovering it.
+	if claimed != nil && row.PodAssignment != "" && !session.IsRecovery(row.State) {
+		// spec: §5 / §6.3 line 348 (proposal) — the same call measured the
+		// create-time pod_claim duration; thread it into the launch-boundary
+		// end-to-end envelope so the single
+		// lenny_session_startup_duration_seconds observation spans pod claim
+		// through ready.
+		return s.prepareAndLaunch(ctx, row, match, bindReq, claimed.PodClaim)
+	}
+	// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted session-claim
+	// acquisition in the per-pool claim FIFO and re-enter the claim path as
+	// pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the first
+	// exhaustion (ErrNoIdlePod after both the claim-path timeout and the
+	// Postgres fallback). A queued request holds no pod or claim between
+	// attempts, so the §7.1 atomicity contract is preserved.
+	result, err := runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+		func(ctx context.Context) (*podsession.BindResult, error) {
+			return s.podBinder.Bind(ctx, bindReq)
+		})
+	if err != nil {
+		return nil, err
+	}
+	// The whole-sequence Bind (resume-rebuild) claims and launches in one
+	// call, so result.Timings carries every §6.3 phase including PodClaim;
+	// record the phases and the end-to-end envelope once at this boundary.
+	s.recordStartupPhases(match, result.Timings)
+	s.recordStartupDuration(match, result.Timings)
+	return result, nil
+}
+
+// launchOnPod runs the §4.4 launch-only path for the two-step
+// `POST /v1/sessions/{id}/start` against the pod prepared at /finalize. Per
+// the proposal §4.4, /start performs only the §6.3 agent_session_start phase:
+// it transitions ready → starting (the caller writes the row), reconnects to
+// the prepared pod from the row's persisted §4.6 binding, invokes
+// StartSession (pod-warm) or ConfigureWorkspace (SDK-warm), and lets the
+// caller transition the row to running. The heavy preparation — staging,
+// materialization, setup commands, and credential-lease assignment — already
+// ran at /finalize, so launchOnPod runs NO §4.9 pre-claim credential
+// resolution: the launch RPCs consume no credential inputs (the lease was
+// pushed to the pod at finalize), so resolving them here would be wasted work
+// the proposal moves off the /start path.
+//
+// It returns (nil, nil) for the dispositions that launch nothing at /start:
+//
+//   - the binder is not wired (the minimal gateway, which starts by a plain
+//     ready → running transition);
+//   - a service-mode pool, which is claimless and is routed through the
+//     pool's Service/EndpointSlice rather than a bound pod (§5.2).
+//
+// A concurrent-workspace pool (maxConcurrentSessions>1) reserves a slot at
+// /create and materializes + launches it together at /start via
+// BindReservedSlot (§5.2), so its launch DOES need the §4.9 assignment
+// inputs; launchOnPod resolves credentials on that branch alone. The
+// exclusive launch-only path needs none.
+//
+// spec: §4.4, §4.6 (proposal); §6.1 lines 30-34 (SDK-warm ConfigureWorkspace);
+// §15.1 (/start precondition); §5.2; §6.3 line 372.
+func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
+		row.RuntimeRef, string(row.IsolationProfile))
+	if err != nil {
+		return nil, err
+	}
+	// spec: §5.2 lines 602-625 — a session targeting a pool in the
+	// PoolWarmingUp bootstrap state returns 503 RUNTIME_UNAVAILABLE rather than
+	// reconnecting to a pod that may not be ready. A two-step /start should not
+	// hit this in practice (the pod was claimed at /create and prepared at
+	// /finalize), but the gate is kept fail-closed against a pool that warmed
+	// down across the window.
+	if match.PoolWarmingUp {
+		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
+	}
+	// spec: §5.2 — service mode is claimless: no SandboxClaim, no workspace,
+	// and no bound pod. The session row persists with execution_mode=service
+	// and message routing dispatches through the stateless data plane, so
+	// /start returns a nil BindResult with no launch RPC.
+	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return nil, nil
+	}
+	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
+	// spec: §4.1, §5.2 (proposal) — a concurrent-workspace pool reserved a slot
+	// at /create and materializes + launches it together at /start. That launch
+	// runs the §4.9 AssignCredentials, so it needs the per-provider pool map;
+	// resolve it here, on this branch alone. A live create-time reservation
+	// (non-empty PodAssignment on a non-recovery row) reconnects to the reserved
+	// slot via BindReservedSlot; a row without one is a misuse (a two-step
+	// /start with no claimed pod), surfaced as the queue's exhaustion path.
+	if match.MaxConcurrentSessions > 1 {
+		credPools, userCredProviders, cerr := s.resolveCredentialPools(ctx, row)
+		if cerr != nil {
+			return nil, cerr
+		}
+		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+		return s.bindConcurrentSlot(ctx, row, match, slotReq)
+	}
+	// spec: §4.4, §4.6 (proposal) — the exclusive-pool launch-only path. The
+	// pod was claimed at /create and prepared at /finalize, so reconnect to the
+	// bound pod and run only the launch (StartSession or ConfigureWorkspace).
+	// No credential inputs are needed: the lease was assigned at /finalize.
+	// launchPrepared recomputes the §6.1 SDK-warm demotion decision from the
+	// persisted plan rather than re-running the prepare phase to learn it.
+	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, nil, nil, agentInterface, minPlatformVersion)
+	return s.launchPrepared(ctx, row, match, bindReq)
+}
+
+// exclusiveBindRequest assembles the §4.7 BindRequest for an exclusive
+// (one-session-per-pod) session-mode bind from the persisted row, the
+// resolved pool, and the §4.9 pre-claim credential resolution. The same
+// request drives the whole-sequence Bind (resume-rebuild) and the
+// decomposed Claim / Prepare / Launch phases (the create → finalize →
+// start lifecycle), so the create-time claim and the start-time
+// prepare/launch read identical runtime, plan, and credential inputs.
+func (s *Server) exclusiveBindRequest(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, plan workspaceplan.Plan, credPools map[string]string, userCredProviders []string, agentInterface []byte, minPlatformVersion string) podsession.BindRequest {
 	preConnect, sdkWarmBlockingPaths := s.runtimeSDKWarm(ctx, row.TenantID, row.RuntimeRef)
-	bindReq := podsession.BindRequest{
+	return podsession.BindRequest{
 		Pool:                     match.Pool,
 		SessionID:                row.ID,
 		TenantID:                 row.TenantID,
@@ -1305,20 +1746,172 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		// the whole-pod scrub) on a clean release rather than draining the pod.
 		Recycle: match.Recycle,
 	}
-	// spec: §4.6.1 / §5.2 — on a `queue` pool, hold an exhausted session-claim
-	// acquisition in the per-pool claim FIFO and re-enter the claim path as
-	// pods free; a `reject` pool returns WARM_POOL_EXHAUSTED on the first
-	// exhaustion (ErrNoIdlePod after both the claim-path timeout and the
-	// Postgres fallback). A queued request holds no pod or claim between
-	// attempts, so the §7.1 atomicity contract is preserved.
-	result, err := runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
+}
+
+// slotBindRequest builds the §5.2 SlotBindRequest for a concurrent-workspace
+// pool (maxConcurrentSessions > 1) from the session row and resolved pool,
+// so the create-time ClaimSlot reservation and the start-time slot
+// materialize-and-launch read identical inputs (the same pattern
+// exclusiveBindRequest follows for the session-mode path).
+func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, plan workspaceplan.Plan, credPools map[string]string, userCredProviders []string, agentInterface []byte, minPlatformVersion string) podsession.SlotBindRequest {
+	return podsession.SlotBindRequest{
+		Pool:                    match.Pool,
+		SessionID:               row.ID,
+		TenantID:                row.TenantID,
+		Runtime:                 row.RuntimeRef,
+		MaxConcurrentSessions:   match.MaxConcurrentSessions,
+		MaxPodUptimeSeconds:     match.MaxPodUptimeSeconds,
+		Plan:                    podsession.WorkspacePlanToProto(plan),
+		ExperimentContext:       experimentContextToProto(row.ExperimentContext),
+		TracingContext:          row.TracingContext,
+		SetupPolicy:             s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+		CredentialPools:         credPools,
+		UserID:                  row.UserID,
+		UserCredentialProviders: userCredProviders,
+		AgentInterface:          agentInterface,
+		MinPlatformVersion:      minPlatformVersion,
+		// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so the
+		// last-slot-drain edge of a recycling concurrent pool patches the
+		// claim bound → recycling and signals the whole-pod scrub (the §3.1
+		// "Concurrent" preset) rather than deleting the claim outright.
+		Recycle: match.Recycle,
+	}
+}
+
+// bindConcurrentSlot dispatches a §5.2 concurrent-workspace pool bind once the
+// caller has built the slotReq. It is shared by the combined create-and-start
+// path (startOnPod) and the two-step launch path (launchOnPod), which build
+// the same request and dispatch identically: a concurrent pool materializes
+// and launches the slot's workspace together at /start (it is not decomposed
+// across finalize and start like the exclusive pool), so both callers reach
+// here at launch time.
+//
+//   - When the row carries a slot reserved at /create (the §4.6 durable
+//     binding: a non-empty PodAssignment on a non-recovery row, SlotID ==
+//     SessionID == the reserved pod) the slot is not re-reserved. The gateway
+//     reconnects to the reserved slot's pod and runs the materialize-and-launch
+//     sequence against it (BindReservedSlot), the slot analog of the exclusive
+//     reconnect.
+//   - Otherwise (the §7.3 resume-rebuild path with a stale dead-pod
+//     PodAssignment, or a slotless row) it reserves a fresh slot through the
+//     §5.2 retry policy, holding an exhausted acquisition in the per-pool claim
+//     FIFO on a `queue` pool and returning WARM_POOL_EXHAUSTED on the first
+//     exhaustion of a `reject` pool. The slot retry policy surfaces the §5.2
+//     exhaustion sentinels unwrapped, which is the queue's retry signal.
+//
+// spec: §4.1, §5.2 (proposal); §4.6.1 (pool exhaustion queue); §4.6 (durable
+// binding reconnect).
+func (s *Server) bindConcurrentSlot(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, slotReq podsession.SlotBindRequest) (*podsession.BindResult, error) {
+	if row.PodAssignment != "" && !session.IsRecovery(row.State) {
+		return s.podBinder.BindReservedSlot(ctx, slotReq, row.PodAssignment, row.ID)
+	}
+	return runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
 		func(ctx context.Context) (*podsession.BindResult, error) {
-			return s.podBinder.Bind(ctx, bindReq)
+			return s.bindSlotWithRetry(ctx, slotReq)
 		})
+}
+
+// prepareAndLaunch runs the §4.3 prepare barrier and the §4.4 launch
+// against the pod a session claimed at /create, reconnecting from the
+// row's persisted §4.6 binding (PodAssignment + PoolRef) rather than
+// re-claiming. It reassembles the monolithic BindResult the caller
+// registers and persists, mirroring Binder.Bind's claim → prepare →
+// launch composition without re-running the claim. A prepare or launch
+// failure is surfaced for writePodClaimError to map; the binder already
+// reclaimed the bound pod (and any lease) on the failure path.
+//
+// createPodClaim is the create-time §6.3 pod_claim phase duration the
+// same call measured at claimAtCreate, or zero when the claim ran in a
+// separate request (the two-step `POST /v1/sessions/{id}/start` path).
+// It is threaded into the end-to-end lenny_session_startup_duration_seconds
+// so a single combined-call observation includes the pod-claim component
+// per §6.3 line 348, while the per-phase pod_claim histogram is still
+// emitted exactly once (at /create, not re-emitted here).
+// spec: §4.3, §4.4, §4.6, §5 (proposal); §6.3 line 348; §7.1 steps 11-13.
+func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest, createPodClaim time.Duration) (*podsession.BindResult, error) {
+	bindReq.SandboxName = row.PodAssignment
+	if row.PoolRef != "" {
+		bindReq.Pool = row.PoolRef
+	}
+	prep, err := s.podBinder.Prepare(ctx, bindReq)
 	if err != nil {
 		return nil, err
 	}
-	s.recordStartupMetrics(match, result.Timings)
+	bindReq.Demoted = prep.Demoted
+	result, err := s.podBinder.Launch(ctx, bindReq)
+	if err != nil {
+		return nil, err
+	}
+	// Reassemble the BindResult the whole-sequence Bind would have returned:
+	// the live adapter and launch timing come from Launch, the prepared
+	// workspace and setup trail from Prepare. Launch never claims, so its
+	// PodClaim is zero; the create-time claim duration is carried separately
+	// (createPodClaim) and attributed to the end-to-end envelope below rather
+	// than to the per-phase pod_claim histogram, which was recorded once at
+	// /create.
+	result.Timings.WorkspaceMaterialization = prep.Timings.WorkspaceMaterialization
+	result.Timings.SetupCommands = prep.Timings.SetupCommands
+	result.Timings.CredentialAssignment = prep.Timings.CredentialAssignment
+	result.WorkspacePlanWarnings = prep.WorkspacePlanWarnings
+	result.SetupOutputs = prep.SetupOutputs
+	result.WorkspaceRoot = prep.WorkspaceRoot
+	// spec: §6.3 / §5 (0007 proposal) — record the prepare/launch phases
+	// measured here (workspace_materialization, setup_commands,
+	// credential_assignment, agent_session_start). result.Timings.PodClaim is
+	// zero from Launch, so recordStartupPhases skips it rather than re-emitting
+	// a spurious 0s pod_claim sample; the per-phase pod_claim histogram was
+	// recorded once at /create.
+	s.recordStartupPhases(match, result.Timings)
+	// spec: §6.3 line 348 / §5 (proposal) — the end-to-end
+	// lenny_session_startup_duration_seconds spans pod claim through ready, so
+	// attribute the create-time pod_claim duration to the end-to-end total
+	// (without re-emitting the per-phase sample). On the combined one-call path
+	// createPodClaim is the same call's claim duration so the single
+	// observation covers the whole envelope; on the two-step /start path it is
+	// zero by construction and the create-time pod_claim was already
+	// observed by the separate /create request.
+	end := result.Timings
+	end.PodClaim = createPodClaim
+	s.recordStartupDuration(match, end)
+	return result, nil
+}
+
+// launchPrepared runs only the §4.4 launch against the pod a two-step
+// session prepared at /finalize, reconnecting from the row's persisted §4.6
+// binding (PodAssignment + PoolRef). The §4.3 prepare barrier
+// (PrepareWorkspace, FinalizeWorkspace, RunSetup, AssignCredentials) already
+// ran at /finalize, so /start neither re-stages, re-materializes, re-runs
+// setup, nor re-assigns the credential lease; it only starts the runtime
+// (StartSession for a pod-warm or demoted pod, ConfigureWorkspace for a
+// still-SDK-warm pod). The §6.1 SDK-warm demotion decision the prepare phase
+// made is a pure function of the persisted plan and the runtime's
+// sdkWarmBlockingPaths, so launchPrepared recomputes it through
+// podsession.RequiresDemotion rather than re-running the prepare phase to
+// learn it. A launch failure is surfaced for writePodClaimError; the binder
+// already reclaimed the bound pod (and the lease assigned at finalize) on the
+// failure path.
+//
+// The /start end-to-end span is launch-only by construction: the create-time
+// pod_claim phase was recorded at /create and the materialization / setup /
+// credential phases at /finalize, each once, so launchPrepared records only
+// the agent_session_start phase and the end-to-end envelope here.
+// spec: §4.4, §4.6 (proposal); §6.1 lines 30-34; §6.3 lines 348, 372.
+func (s *Server) launchPrepared(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest) (*podsession.BindResult, error) {
+	bindReq.SandboxName = row.PodAssignment
+	if row.PoolRef != "" {
+		bindReq.Pool = row.PoolRef
+	}
+	bindReq.Demoted = podsession.RequiresDemotion(bindReq)
+	result, err := s.podBinder.Launch(ctx, bindReq)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §6.3 — Launch measured only the agent_session_start phase; record
+	// it and the launch-only end-to-end envelope. The pod_claim and
+	// workspace_materialization / setup_commands / credential_assignment phases
+	// were recorded at /create and /finalize, so they are not re-emitted here.
+	s.recordStartupPhases(match, result.Timings)
+	s.recordStartupDuration(match, result.Timings)
 	return result, nil
 }
 
@@ -1475,10 +2068,22 @@ func (s *Server) registerBinding(ctx context.Context, result *podsession.BindRes
 // spec: §7.4 line 459; §14 line 100; §16.6 catalogue. F-7.4.15,
 // F-14.1.17, F-14.1.18.
 func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
-	if result == nil || len(result.WorkspacePlanWarnings) == 0 {
+	if result == nil {
 		return
 	}
-	for _, w := range result.WorkspacePlanWarnings {
+	s.publishWorkspacePlanWarnings(result.TenantID, result.SessionID, result.WorkspacePlanWarnings)
+}
+
+// publishWorkspacePlanWarnings emits one §14 `workspace_plan_warning` frame
+// per advisory the §4.7 materialization raised, on the per-session SSE bus
+// and the §16.6 / §25.3 operational-event stream. The /start launch path
+// (via publishWorkspaceWarnings on the BindResult) and the §4.3 finalize
+// prepare barrier (on the PrepareResult) both republish their warnings
+// through it, so the strip-components-skip advisory reaches subscribers
+// regardless of which boundary materialized the workspace. spec: §7.4 line
+// 459; §14 lines 100/334/338; §16.6 catalogue. F-7.4.15, F-14.1.17, F-14.1.18.
+func (s *Server) publishWorkspacePlanWarnings(tenantID, sessionID string, warnings []*adapterv1.WorkspacePlanWarning) {
+	for _, w := range warnings {
 		if w == nil {
 			continue
 		}
@@ -1510,8 +2115,8 @@ func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 			payload["winningSourceIndex"] = w.GetWinningSourceIndex()
 			payload["losingSourceIndex"] = w.GetLosingSourceIndex()
 		}
-		s.publishEvent(result.TenantID, result.SessionID, "workspace_plan_warning", payload)
-		s.emitWorkspacePlanWarningOps(result.TenantID, result.SessionID, payload)
+		s.publishEvent(tenantID, sessionID, "workspace_plan_warning", payload)
+		s.emitWorkspacePlanWarningOps(tenantID, sessionID, payload)
 	}
 }
 
@@ -1612,39 +2217,154 @@ func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindRes
 	}
 }
 
-// recordStartupMetrics observes the §6.3 startup-latency histograms for
-// a successful session-mode start. It records each instrumented
-// hot-path phase on lenny_session_startup_phase_duration_seconds
-// (§6.3 line 372) and the end-to-end pod-warm envelope on
-// lenny_session_startup_duration_seconds (§6.3 line 348). Per §6.3 line
-// 348 the end-to-end metric is pod claim through agent session ready
-// excluding workspace materialization; setup commands are also excluded
-// because they are deployer-controlled (§6.3 line 363) and the 2s runc /
-// 5s gVisor SLO budgets only the platform phases (claim ≤100ms +
-// credential ≤100ms + agent start ≤1.5s/4.5s). The end-to-end total is
-// therefore PodClaim + CredentialAssignment + AgentSessionStart.
+// createClaimNeedsRollback reports whether the create-and-start failure
+// handler must release the create-time claim itself (via rollbackClaim)
+// after a startOnPod error, or whether the binder already released it.
+//
+// The combined POST /v1/sessions/start path claims the pod at /create and
+// then runs prepare/launch against that claim in the same call. On a
+// startOnPod error the create-time claim must be released because the row is
+// not persisted (§7.1 line 28). The disposition turns on the claim kind:
+//
+//   - No claim (nil) or a claimless service-mode disposition: nothing to
+//     release.
+//   - Exclusive claim (SlotID == ""): always release. rollbackClaim runs
+//     ReclaimClaimed, a DELETE that is idempotent — a no-op when Prepare or
+//     Launch already reclaimed the pod, and the only release on a pre-bind
+//     ResolvePool/pool-warming/manifest failure inside startOnPod.
+//   - Slot reservation (SlotID set): release only when the binder did not
+//     reach BindReservedSlot. BindReservedSlot owns the non-idempotent
+//     active_slots release on its own failures (slotbinder.go), surfaced as a
+//     *podsession.SlotBindError, so releasing again would double-decrement the
+//     counter. But startOnPod runs ResolvePool, the PoolWarmingUp gate, and
+//     runtimeManifestFields BEFORE BindReservedSlot; a failure there (a
+//     transient kube-API error on the second ResolvePool of the same request,
+//     a pool that warmed down) returns a non-SlotBindError without ever
+//     releasing the create-time reservation. Releasing it here keeps the
+//     active_slots increment from leaking to the §4.6.1 orphan-GC backstop,
+//     matching the §7.1 atomicity envelope the decomposed createSession path
+//     already honors through its own rollbackClaim.
+//
+// spec: §7.1 line 28 (rollback releases the pod claim on a create-step
+// failure); §4.7 (the combined path reuses the claim/prepare/launch phases);
+// §5.2 (slot reservation release).
+func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
+	if claim == nil {
+		return false
+	}
+	if claim.SlotID == "" {
+		// Exclusive claim: ReclaimClaimed is idempotent, so release
+		// unconditionally regardless of where startOnPod failed.
+		return true
+	}
+	// Slot reservation: BindReservedSlot already released it iff the failure
+	// is a *podsession.SlotBindError (the binder ran). A pre-bind failure
+	// returns some other error and leaks the reservation unless released here.
+	var slotBindErr *podsession.SlotBindError
+	return !errors.As(err, &slotBindErr)
+}
+
+// rollbackClaim releases a pod claimed at /create when a later create
+// step fails before the session row is persisted (§7.1 line 28
+// atomic-creation rollback). The claim holds no live connection, so the
+// release runs against the persisted binding. The disposition follows the
+// claim kind: an exclusive Claim is released through ReclaimClaimed, which
+// deletes the per-pod SandboxClaim and revokes any lease; a §5.2
+// concurrent-slot reservation (SlotID set) is released through
+// ReleaseSlotReservation, which decrements the pod's active_slots without
+// deleting the per-pod claim or disturbing sibling slots. No lease is
+// assigned at create (§4.4 of the proposal), so the lease revoke is a
+// no-op here. Best-effort: the §4.6.1 orphan-claim GC reclaims a claim a
+// release error leaves behind, so the error is logged and swallowed.
+// spec: §7.1 line 28 (rollback releases the pod claim); §4.5, §4.6
+// (proposal); §5.2 (slot reservation release).
+func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResult, sessionID string) {
+	if claim == nil || s.podBinder == nil {
+		return
+	}
+	if claim.SlotID != "" {
+		if err := s.podBinder.ReleaseSlotReservation(ctx, claim.SandboxName, claim.SlotID); err != nil {
+			log.Printf("sessionserver: rollback create-time slot reservation %s on pod %s for session %s: %v",
+				claim.SlotID, claim.SandboxName, sessionID, err)
+		}
+		return
+	}
+	if err := s.podBinder.ReclaimClaimed(ctx, claim.SandboxName, sessionID); err != nil {
+		log.Printf("sessionserver: rollback create-time claim %s for session %s: %v", claim.SandboxName, sessionID, err)
+	}
+}
+
+// recordStartupPhases observes the §6.3 line 372 per-phase
+// lenny_session_startup_phase_duration_seconds histogram for the phases
+// the caller actually measured. The decomposed create → finalize →
+// start lifecycle records each §6.3 phase at the boundary where it runs:
+// pod_claim at /create, workspace_materialization / setup_commands /
+// credential_assignment at the /finalize prepare barrier, and
+// agent_session_start at /start (§5 of the 0007 proposal). A phase whose
+// duration is zero was not measured at this boundary, so it is skipped
+// rather than recorded as a spurious 0s sample that would skew that
+// phase's distribution; this keeps each phase a single observation per
+// logical start without changing the histogram structure.
 // The first-prompt/TTFT phase is tracked separately (F-6.3.3,
 // lenny_session_time_to_first_token_seconds) because it needs runtime
 // streaming feedback the start path does not see.
-// spec: §6.3 lines 348, 358, 372.
-func (s *Server) recordStartupMetrics(match podsession.PoolMatch, t podsession.BindTimings) {
+// spec: §6.3 lines 358, 372.
+func (s *Server) recordStartupPhases(match podsession.PoolMatch, t podsession.BindTimings) {
 	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
 	if !ok {
 		// An unrecognized profile would mislabel the series; skip rather
 		// than emit an empty runtime_class.
 		return
 	}
-	if s.observeStartupPhase != nil {
-		s.observeStartupPhase("pod_claim", runtimeClass, t.PodClaim.Seconds())
-		s.observeStartupPhase("workspace_materialization", runtimeClass, t.WorkspaceMaterialization.Seconds())
-		s.observeStartupPhase("setup_commands", runtimeClass, t.SetupCommands.Seconds())
-		s.observeStartupPhase("credential_assignment", runtimeClass, t.CredentialAssignment.Seconds())
-		s.observeStartupPhase("agent_session_start", runtimeClass, t.AgentSessionStart.Seconds())
+	if s.observeStartupPhase == nil {
+		return
 	}
-	if s.observeStartupDuration != nil {
-		total := t.PodClaim + t.CredentialAssignment + t.AgentSessionStart
-		s.observeStartupDuration(match.Pool, runtimeClass, match.IsolationProfile, total.Seconds())
+	phases := []struct {
+		name string
+		d    time.Duration
+	}{
+		{"pod_claim", t.PodClaim},
+		{"workspace_materialization", t.WorkspaceMaterialization},
+		{"setup_commands", t.SetupCommands},
+		{"credential_assignment", t.CredentialAssignment},
+		{"agent_session_start", t.AgentSessionStart},
 	}
+	for _, p := range phases {
+		if p.d <= 0 {
+			// A zero duration means the phase did not run at this boundary
+			// (for example pod_claim is recorded at /create, not re-attributed
+			// at the launch boundary). Skip it so the phase histogram is not
+			// polluted with a spurious 0s sample.
+			continue
+		}
+		s.observeStartupPhase(p.name, runtimeClass, p.d.Seconds())
+	}
+}
+
+// recordStartupDuration observes the §6.3 line 348 end-to-end pod-warm
+// envelope on lenny_session_startup_duration_seconds exactly once per
+// logical start, at the launch boundary, with the full assembled
+// timings. Per §6.3 line 348 the metric is pod claim through agent
+// session ready excluding workspace materialization; setup commands are
+// also excluded because they are deployer-controlled (§6.3 line 363) and
+// the 2s runc / 5s gVisor SLO budgets only the platform phases (claim
+// ≤100ms + credential ≤100ms + agent start ≤1.5s/4.5s). The end-to-end
+// total is therefore PodClaim + CredentialAssignment + AgentSessionStart.
+// The /create boundary records only the pod_claim phase via
+// recordStartupPhases and does not emit this end-to-end metric, so a
+// single logical start observes lenny_session_startup_duration_seconds
+// once rather than once at create and again at launch.
+// spec: §6.3 lines 348, 358.
+func (s *Server) recordStartupDuration(match podsession.PoolMatch, t podsession.BindTimings) {
+	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
+	if !ok {
+		return
+	}
+	if s.observeStartupDuration == nil {
+		return
+	}
+	total := t.PodClaim + t.CredentialAssignment + t.AgentSessionStart
+	s.observeStartupDuration(match.Pool, runtimeClass, match.IsolationProfile, total.Seconds())
 }
 
 // persistPodAssignment writes the bound pod's SandboxName back to the
@@ -2146,7 +2866,10 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		if err != nil {
 			return "", err
 		}
-		result, err := s.startOnPod(ctx, row, plan)
+		// spec: §7.3 (snapshotless resume-rebuild) — the resume path holds no
+		// create-time claim or credential resolution (it claims a fresh pod via
+		// the whole-sequence Bind), so startOnPod resolves credentials itself.
+		result, err := s.startOnPod(ctx, row, plan, nil)
 		if err != nil {
 			return "", err
 		}

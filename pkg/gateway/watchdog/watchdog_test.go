@@ -476,10 +476,14 @@ func TestTickArchivesExpiredChild(t *testing.T) {
 }
 
 // fakeTerminalHook captures terminal-pipeline invocations.
-type fakeTerminalHook struct{ calls []sessionstore.Session }
+type fakeTerminalHook struct {
+	calls      []sessionstore.Session
+	fromStates []session.State
+}
 
-func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, fromState session.State, sess sessionstore.Session) {
 	f.calls = append(f.calls, sess)
+	f.fromStates = append(f.fromStates, fromState)
 }
 
 // spec: §5.2 line 519 + §6.2 — F-5.2.26: a session forced terminal by
@@ -502,6 +506,12 @@ func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	}
 	if hook.calls[0].State != session.StateFailed {
 		t.Errorf("hook state = %q, want failed", hook.calls[0].State)
+	}
+	// spec: §4.6 — the pre-running per-state sweep forwards the pre-terminal
+	// state (created) so the gateway's terminal pod-release path reclaims the
+	// claimed pod by name rather than through the executor recycle path.
+	if hook.fromStates[0] != session.StateCreated {
+		t.Errorf("fromState = %q, want created", hook.fromStates[0])
 	}
 }
 
@@ -531,7 +541,13 @@ func TestTickWithTerminalHookDoesNotDoubleBill_spec_5_2_519(t *testing.T) {
 }
 
 // The TerminalHook also fires for the maxSessionAge expiry sweep so an
-// expired concurrent-mode session releases its slot.
+// expired concurrent-mode session releases its slot. The sweep forwards the
+// pre-terminal state (running) so the gateway routes the teardown through the
+// §6.2 executor recycle path rather than the pre-running by-name reclaim that
+// would bypass the recycle disposition for a handed-off running session.
+//
+// spec: §4.6 (durable binding, running-session handoff via §10.1 / executor
+// recycle); §6.2 (recycle disposition); §5.2 line 519 (slot release).
 func TestTickExpiryInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	store := memstore.New()
 	hook := &fakeTerminalHook{}
@@ -545,6 +561,10 @@ func TestTickExpiryInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	}
 	if len(hook.calls) != 1 || hook.calls[0].State != session.StateExpired {
 		t.Fatalf("OnSessionTerminal expiry call: %+v", hook.calls)
+	}
+	if hook.fromStates[0] != session.StateRunning {
+		t.Errorf("fromState = %q, want running (maxSessionAge expired a running session; "+
+			"its teardown must not be routed through the pre-running by-name reclaim)", hook.fromStates[0])
 	}
 }
 

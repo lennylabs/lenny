@@ -407,6 +407,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_dev_flag_llm_proxy_enabled", TypeGauge, "1 when the LLM-proxy dev override is enabled"},
 	{"lenny_ops_self_health_status", TypeGauge, "lenny-ops self-health status (1 healthy), read by LenniOpsSelfHealthDegraded"},
 	{"lenny_audit_partition_drop_blocked", TypeGauge, "1 when an audit-partition drop is blocked by SIEM lag, read by AuditPartitionDropBlocked"},
+	{"lenny_pool_security_degraded", TypeGauge, "1 while a pool renders §4.7 nonce-only pods (degraded SO_PEERCRED adapter-agent boundary), read by PoolSecurityDegraded"},
 
 	// --- Infrastructure-liveness and capacity series scraped from a
 	// platform dependency (Postgres, etcd, Redis, cert-manager).

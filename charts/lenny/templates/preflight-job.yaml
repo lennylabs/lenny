@@ -172,7 +172,7 @@ subjects:
     name: lenny-preflight
     namespace: {{ .Release.Namespace }}
 ---
-{{- $accepted := list -}}
+{{ $accepted := list -}}
 {{- range $flag, $on := .Values.acceptFeatureFlagDowngrade }}
 {{-   if $on }}{{ $accepted = append $accepted $flag }}{{ end }}
 {{- end }}

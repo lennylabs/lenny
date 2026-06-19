@@ -29,13 +29,13 @@ related:
 
 # token-service-outage
 
-The Token Service (the process that materializes leased credentials by decrypting Secrets with KMS) is unavailable. New sessions that require a credential materialization fail with `CREDENTIAL_MATERIALIZATION_ERROR`. Existing sessions holding active leases are unaffected until lease expiry.
+The Token Service (the process that materializes leased credentials by decrypting Secrets with KMS) is unavailable. The credential lease is materialized at the `finalize` step, so `finalize` for sessions that require a credential materialization fails with `CREDENTIAL_MATERIALIZATION_ERROR`. Existing sessions holding active leases are unaffected until lease expiry.
 
 ## Trigger
 
 - `TokenServiceUnavailable` alert.
 - Gateway circuit breaker sustained in `open` state (`lenny_gateway_token_service_circuit_state == 2`) past the configured sustain window.
-- New sessions return `CREDENTIAL_MATERIALIZATION_ERROR`.
+- `finalize` for credential-requiring sessions returns `CREDENTIAL_MATERIALIZATION_ERROR`.
 - `/v1/admin/health` returns `tokenService: unhealthy`.
 
 Exact alert thresholds are deployer-configurable — see [Metrics Reference](../reference/metrics.html#alert-rules).

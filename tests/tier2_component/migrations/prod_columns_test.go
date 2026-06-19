@@ -498,6 +498,11 @@ var prodMigrationSchema = []struct {
 	// gateway pool admission path requires before a pool may reference a
 	// nonce-only runtime. spec: §4.7, §5.3.
 	{migration: "0170", table: "sandbox_warm_pools", columns: []string{"acknowledge_nonce_only_auth"}},
+	// 0171 adds the §13.2 per-pool dns_policy opt-out column on
+	// sandbox_warm_pools, alongside egress_profile (migration 0079). Empty
+	// keeps the dedicated lenny-system CoreDNS; 'cluster-default' reverts a
+	// runc pool to the kube-system resolver. spec: §13.2.
+	{migration: "0171", table: "sandbox_warm_pools", columns: []string{"dns_policy"}},
 }
 
 // spec: 12.2, 18.5

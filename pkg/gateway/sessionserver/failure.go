@@ -338,7 +338,10 @@ func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Sessio
 		return FailureDisposition{}, err
 	}
 	if updated.State == session.StateFailed {
-		s.recordSessionCompleted(ctx, updated)
+		// spec: §4.6 — `from` is the pre-terminal state, so the terminal
+		// pod-release path can distinguish a pre-running claimed session from
+		// a handed-off running/resuming one.
+		s.recordSessionCompleted(ctx, from, updated)
 	}
 	return FailureDisposition{
 		Classification: classification, From: from, To: updated.State,

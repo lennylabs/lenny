@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -32,14 +33,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
@@ -260,6 +266,184 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 	}
 }
 
+// countingRouter wraps the default §4.9 CredentialRouter and counts
+// Resolve calls so a test can assert how many times the gateway runs the
+// §7.1-step-3 pre-claim credential availability check across a request.
+type countingRouter struct {
+	inner credrouter.Default
+	count *int
+}
+
+func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credrouter.Output, error) {
+	*r.count++
+	return r.inner.Resolve(ctx, in)
+}
+
+// spec: §4.1 (proposal: the §7.1-step-3 credential pre-check is moved into
+// createSession ahead of the step-4 claim and runs once before the claim),
+// §7.1 step 3, §4.9 lines 1216-1218.
+// diagnosis: the combined one-call POST /v1/sessions/start runs claim,
+// prepare, and launch in a single call. The credential availability
+// pre-check must run exactly once (at the create-time claim), not again at
+// the prepare dispatch. A failure here means startOnPod re-ran
+// resolveCredentialPools after claimAtCreate already ran it, so the pre-check
+// executed twice for one combined create-and-start, contradicting the
+// proposal's "pre-check runs once, before the claim" placement.
+func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	var resolveCount int
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-precheck-once" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        countingRouter{count: &resolveCount},
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// One provider in the intersection, resolved exactly once: the
+	// create-time pre-check. A count of 2 means the prepare dispatch re-ran
+	// resolveCredentialPools after the create-time claim.
+	if resolveCount != 1 {
+		t.Errorf("CredentialRouter.Resolve called %d times, want 1 (the §7.1-step-3 pre-check runs once before the step-4 claim)", resolveCount)
+	}
+}
+
+// spec: §6.3 line 348 (end-to-end span is pod claim through ready), §5
+// (proposal: the combined create-and-start reuses the claim/prepare/launch
+// phases and the claim-to-ready span covers claim through ready).
+// diagnosis: the combined one-call POST /v1/sessions/start performs the
+// claim, prepare, and launch in a single call, so the single end-to-end
+// lenny_session_startup_duration_seconds observation must include the
+// pod-claim component the same call measured at create. A failure here
+// means prepareAndLaunch dropped the create-time pod_claim duration from
+// the end-to-end total (it would equal credential_assignment +
+// agent_session_start only), under-reporting the §6.3 / §16.5 claim-through-
+// ready SLO envelope. The per-phase pod_claim histogram is still emitted
+// exactly once.
+func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	var (
+		phaseObs map[string]float64
+		endToEnd float64
+		endCount int
+	)
+	phaseObs = map[string]float64{}
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-combined-metric" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		ObserveStartupPhase: func(phase, _ string, seconds float64) {
+			phaseObs[phase] = seconds
+		},
+		ObserveStartupDuration: func(_, _, _ string, seconds float64) {
+			endToEnd = seconds
+			endCount++
+		},
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The end-to-end metric is emitted exactly once for one logical start.
+	if endCount != 1 {
+		t.Fatalf("lenny_session_startup_duration_seconds observed %d times, want exactly 1", endCount)
+	}
+	// The per-phase pod_claim sample is recorded once at /create.
+	podClaim, ok := phaseObs["pod_claim"]
+	if !ok || podClaim <= 0 {
+		t.Fatalf("pod_claim phase = %v (present=%v), want a positive sample recorded at create", podClaim, ok)
+	}
+	// spec: §6.3 line 348 — the end-to-end total is pod_claim +
+	// credential_assignment + agent_session_start. The pod-claim component
+	// must be present, so the end-to-end observation is at least the
+	// pod_claim phase plus the agent_session_start phase (both measured).
+	agentStart := phaseObs["agent_session_start"]
+	if agentStart <= 0 {
+		t.Fatalf("agent_session_start phase = %v, want a positive sample at launch", agentStart)
+	}
+	// Without the pod-claim component the end-to-end would be agent_session_start
+	// (+ credential_assignment) only and strictly below podClaim+agentStart.
+	wantAtLeast := podClaim + agentStart
+	if endToEnd < wantAtLeast-1e-9 {
+		t.Errorf("end-to-end duration = %v, want >= pod_claim(%v) + agent_session_start(%v) = %v; "+
+			"the combined-call observation dropped the pod-claim component",
+			endToEnd, podClaim, agentStart, wantAtLeast)
+	}
+}
+
 // spec: §7.1 line 28 — the §7.1 atomicity contract demands "does NOT
 // persist the session row" when the create-and-start atomic unit
 // (steps 2-8) fails. A claim failure on the §15.1 `POST
@@ -415,6 +599,515 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	}
 	if string(got) != "# stored plan" {
 		t.Errorf("materialized file = %q, want %q", got, "# stored plan")
+	}
+}
+
+// spec: §4.4 (proposal: /start is launch-only and does no credential work),
+// §15.1 (/start precondition), §4.9 lines 1216-1218 (pre-claim credential
+// resolution).
+// diagnosis: the two-step `POST /v1/sessions/{id}/start` exclusive-pool path
+// must launch only — the §4.9 credential resolution belongs at /create
+// (pre-check) and /finalize (lease assignment), never at /start. The router
+// Resolve count must be unchanged across the /start call. A failure here
+// (the count grows at /start) means handleStart still routed through a path
+// that re-runs resolveCredentialPools (the pre-0007-S4 startOnPod front),
+// re-doing credential work the lease assignment at /finalize already
+// completed.
+func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	var resolveCount int
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-2step-nocred" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        countingRouter{count: &resolveCount},
+	})
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := postSessionStep(t, h, "/v1/sessions/sess-2step-nocred/finalize", nil); rr.Code != http.StatusOK {
+		t.Fatalf("finalize: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The §7.1-step-3 pre-check ran at /create and the lease assignment
+	// re-resolved the pool at /finalize, so by now the router has resolved the
+	// single provider twice. Snapshot the count immediately before /start.
+	beforeStart := resolveCount
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-2step-nocred/start", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.SessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("after start, state = %q, want running", resp.State)
+	}
+	// /start is launch-only: it must run no §4.9 credential resolution, so the
+	// router Resolve count is unchanged across the call.
+	if resolveCount != beforeStart {
+		t.Errorf("CredentialRouter.Resolve called %d times across /start (was %d before); "+
+			"/start must be launch-only and run no credential work (proposal §4.4)",
+			resolveCount-beforeStart, beforeStart)
+	}
+}
+
+// spec: §7.1 steps 11-13, §15.1 (finalize precondition), §4.3 (proposal).
+// diagnosis: /finalize is the §4.3 preparation barrier — it materializes
+// /workspace/current and runs setup before returning, and the session reaches
+// `ready` only once prepared. A failure here means /finalize transitioned to
+// `ready` without materializing the workspace, so the workspace plan was not
+// applied until /start (the pre-0007 deferred-claim behavior) or the row
+// reached `ready` while the pod was still bare.
+func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
+	srv, _, _, wsRoot := podBindServer(t, "sess-fin-mat")
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# finalized","mode":"0644"}]
+		}`),
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The workspace must not be materialized yet: /create only claims the pod
+	// and buffers uploads; materialization is the §4.3 finalize barrier's job.
+	if _, err := os.Stat(filepath.Join(wsRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("CLAUDE.md materialized before finalize (err=%v); materialization must run at /finalize", err)
+	}
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-mat/finalize", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("finalize: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The finalize barrier returns only once the session is `ready`.
+	var resp sessionserver.SessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateReady) {
+		t.Errorf("after finalize, state = %q, want ready", resp.State)
+	}
+	// The workspace plan stored at create was materialized onto the pod's
+	// adapter workspace at finalize, before /start ran.
+	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("workspace plan was not materialized at finalize: %v", err)
+	}
+	if string(got) != "# finalized" {
+		t.Errorf("materialized file = %q, want %q", got, "# finalized")
+	}
+
+	// /start then only launches; the session reaches running.
+	rr = postSessionStep(t, h, "/v1/sessions/sess-fin-mat/start", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("after start, state = %q, want running", resp.State)
+	}
+}
+
+// spec: §7.5 line 475, §7.3 line 387, §4.3 (proposal: finalize-failure
+// reclaim), §6.2 (pre-attached disposition).
+// diagnosis: a setup-command failure during the §4.3 finalize barrier must
+// reclaim the claimed pod (delete the per-pod SandboxClaim per the §6.2
+// pre-attached disposition) and transition the row to the terminal `failed`
+// state, surfacing the setup_command_failed reason. A failure here means the
+// finalize barrier left the row stuck in `finalizing` (un-retryable, since
+// finalize requires `created`) or leaked the claimed pod after the prepare
+// phase aborted.
+func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-fin-setupfail" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+	h := srv.Handler()
+
+	// A plan whose setup command exits non-zero makes the adapter's RunSetup
+	// abort with FailedPrecondition during the finalize prepare phase.
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"setupCommands": [{"cmd":"exit 3"}]
+		}`),
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The pod was claimed at /create: its per-pod claim exists.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-setupfail/finalize", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("finalize with a failing setup command: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("setup_command_failed")) {
+		t.Errorf("finalize error body = %s, want setup_command_failed reason", rr.Body.String())
+	}
+
+	// The session transitioned to the terminal failed state, not stuck in
+	// finalizing.
+	row, err := store.Get(context.Background(), "acme", "sess-fin-setupfail")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the finalize setup-command failure", row.State)
+	}
+	// The claimed pod was reclaimed: the per-pod SandboxClaim is deleted (the
+	// §6.2 pre-attached disposition), so no pod leaks past the failed finalize.
+	err = cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	if err == nil {
+		t.Errorf("per-pod claim still present after the failed finalize; the pod was not reclaimed")
+	}
+	if registry.Len() != 0 {
+		t.Errorf("registry holds %d bindings, want 0 — no binding is registered on a failed finalize", registry.Len())
+	}
+}
+
+// spec: §4.9 line 1220 (check-to-assignment race), §7.3 line 138 / §7.6 line
+// 153 (proposal: USER_CREDENTIAL_NOT_FOUND is not a finalize trigger; a
+// check-to-assignment mismatch surfaces as CREDENTIAL_POOL_EXHAUSTED at
+// /finalize), §4.3 (proposal: a finalize-step failure reclaims the create-time
+// pod), §6.2 (pre-attached disposition).
+// diagnosis: a credential source present at the create-time §7.1-step-3
+// pre-check but gone by /finalize is the check-to-assignment mismatch. It must
+// (a) surface as CREDENTIAL_POOL_EXHAUSTED rather than the create-only
+// USER_CREDENTIAL_NOT_FOUND or pre-claim envelope, and (b) reclaim the pod
+// claimed at /create (delete the per-pod SandboxClaim) even though the binder's
+// prepare phase never ran, so the pod does not leak to the §4.6.1 orphan-claim
+// GC. A failure here means either the finalize re-resolution surfaced
+// USER_CREDENTIAL_NOT_FOUND (a 404 the proposal forbids at finalize) or the
+// create-time pod was left holding its claim after the pre-Prepare resolution
+// failed.
+func TestFinalizeCredentialMismatchReclaimsPod_spec_7_6(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-fin-credmiss" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        credrouter.NewDefault(),
+	})
+	h := srv.Handler()
+
+	// Create succeeds: the credential is active at the §7.1-step-3 pre-check, so
+	// the pod is claimed.
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+
+	// The credential vanishes during the upload window: revoke the pool's only
+	// credential so the finalize re-resolution finds none assignable.
+	if _, err := credPools.Update(ctx, "acme", "claude-prod", func(p *credentialpoolstore.CredentialPool) error {
+		p.Credentials[0].Status = credentialpoolstore.CredentialRevoked
+		return nil
+	}); err != nil {
+		t.Fatalf("revoke credential: %v", err)
+	}
+
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-credmiss/finalize", nil)
+	// The mismatch surfaces as CREDENTIAL_POOL_EXHAUSTED (503), not the
+	// create-only USER_CREDENTIAL_NOT_FOUND (404).
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("finalize with a vanished credential: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("CREDENTIAL_POOL_EXHAUSTED")) {
+		t.Errorf("finalize error body = %s, want CREDENTIAL_POOL_EXHAUSTED", rr.Body.String())
+	}
+
+	// The session transitioned to the terminal failed state.
+	row, err := store.Get(ctx, "acme", "sess-fin-credmiss")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the finalize credential mismatch", row.State)
+	}
+	// The create-time pod was reclaimed: the per-pod SandboxClaim is deleted,
+	// even though the binder's prepare phase never ran (the mismatch was a
+	// pre-Prepare resolution failure).
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+		t.Errorf("per-pod claim still present after the failed finalize; the create-time pod was not reclaimed")
+	}
+}
+
+// readyTransitionFailStore wraps a sessionstore.Store and fails the Update
+// that transitions a row to `ready`, so a test can force the §4.3 Gap-2
+// finalize failure: the binder's prepare phase succeeds (the §4.9 lease is
+// assigned), and only the subsequent finalizing → ready store write fails. All
+// other Updates pass through.
+type readyTransitionFailStore struct {
+	sessionstore.Store
+	failReady bool
+}
+
+func (s *readyTransitionFailStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	if s.failReady {
+		// Probe the mutation on a copy: when it would set the row to `ready`,
+		// reject the write to simulate a store outage at the exact finalize
+		// finalizing → ready transition that follows AssignCredentials.
+		probe, err := s.Store.Get(ctx, tenantID, id)
+		if err == nil {
+			if perr := mutate(&probe); perr == nil && probe.State == session.StateReady {
+				return sessionstore.Session{}, errInjectedReadyWriteFailure
+			}
+		}
+	}
+	return s.Store.Update(ctx, tenantID, id, mutate)
+}
+
+// errInjectedReadyWriteFailure is the injected store error the Gap-2 finalize
+// test forces on the finalizing → ready write.
+var errInjectedReadyWriteFailure = errors.New("injected store failure on finalizing -> ready write")
+
+// recordingLeaseAssigner records every AssignProto and ReleaseSession so a
+// test can assert the §4.9 lease was assigned at finalize and revoked on a
+// Gap-2 reclaim. It returns a fixed proxy-mode lease.
+type recordingLeaseAssigner struct {
+	assigns  []string
+	released []string
+}
+
+func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv1.CredentialLease, error) {
+	a.assigns = append(a.assigns, sessionID)
+	return &adapterv1.CredentialLease{
+		LeaseId:  "cl-" + pool,
+		Provider: pool,
+		Payload: []byte(`{"deliveryMode":"proxy",` +
+			`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-` + pool + `"}}`),
+	}, nil
+}
+
+func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
+	a.released = append(a.released, sessionID)
+}
+
+// spec: §4.3 (proposal: Gap 2 — a finalize failure AFTER AssignCredentials
+// succeeded reclaims the pod AND revokes the lease), §7.1 step 23 (lease
+// release), §15.1 (finalize precondition).
+// diagnosis: the §4.3 finalize barrier assigns the §4.9 lease during its
+// prepare phase, then transitions finalizing → ready. When that final store
+// write fails after the lease was assigned, the gateway must reclaim the
+// create-time pod (delete the per-pod SandboxClaim) AND revoke the lease
+// (ReleaseSession) before failing the row, or a post-assignment finalize
+// failure leaks the credential's active-session slot for a session that never
+// reaches ready. A failure here means reclaimFinalizedPod did not run on the
+// finalizing → ready write-failure branch, so the lease leaked.
+func TestFinalizePostCredentialWriteFailureRevokesLease_spec_4_3(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.CredentialsDir = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	assigner := &recordingLeaseAssigner{}
+	binder.Credentials = assigner
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	store := &readyTransitionFailStore{Store: memstore.New()}
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-fin-gap2" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        credrouter.NewDefault(),
+	})
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Arm the failure only for the finalizing → ready write so the prepare
+	// phase (which assigns the lease) runs to completion first.
+	store.failReady = true
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-gap2/finalize", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("finalize with an injected ready-write failure: status %d, want 500; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The lease was assigned at finalize and then revoked on the Gap-2 reclaim.
+	if len(assigner.assigns) != 1 || assigner.assigns[0] != "sess-fin-gap2" {
+		t.Errorf("AssignProto calls = %v, want [sess-fin-gap2] (the lease is assigned at finalize)", assigner.assigns)
+	}
+	if len(assigner.released) != 1 || assigner.released[0] != "sess-fin-gap2" {
+		t.Errorf("ReleaseSession calls = %v, want [sess-fin-gap2] (Gap 2: the post-assignment finalize failure must revoke the lease)", assigner.released)
+	}
+	// The claimed pod was reclaimed: the per-pod SandboxClaim is deleted.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+		t.Errorf("per-pod claim still present after the Gap-2 finalize failure; the create-time pod was not reclaimed")
+	}
+	// The row reaches the terminal failed state rather than stranding in finalizing.
+	store.failReady = false
+	row, err := store.Get(ctx, "acme", "sess-fin-gap2")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the Gap-2 finalize failure", row.State)
 	}
 }
 
@@ -578,6 +1271,64 @@ func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
 	}
 	if _, ok := registry.Get("sess-resume-nockpt"); !ok {
 		t.Error("registry holds no binding after a snapshotless resume")
+	}
+}
+
+// spec: §7.3 (snapshotless resume-rebuild), §4.6 (durable binding), §15.1.
+// diagnosis: the snapshotless resume-rebuild path reconnected to the dead
+// pod named in a stale PodAssignment instead of claiming a fresh one. A
+// session that lost its pod and entered awaiting_client_action retains the
+// dead pod's name in PodAssignment (failure.go), and no resume path clears
+// it. startOnPod's create-time-claim reconnect branch must be gated on a
+// live binding (non-recovery state), not on a non-empty PodAssignment
+// alone, so resumeOnPod claims a fresh pod through the whole-sequence Bind.
+// A failure means the resume reconnects to the no-longer-existing pod,
+// fails Prepare, and reports the resume as failed instead of recovering it.
+func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
+	srv, store, registry, cluster := podResumeServer(t, "sess-resume-stale")
+	// No WorkspaceSnapshot (snapshotless rebuild), but a non-empty stale
+	// PodAssignment naming the dead pod the session lost. Before the gate
+	// fix, startOnPod's `if row.PodAssignment != ""` branch would reconnect
+	// to "sbx-dead" rather than claiming the idle "sbx-1".
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID:            "sess-resume-stale",
+		PodAssignment: "sbx-dead",
+		PoolRef:       "echo-pool",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# resumed","mode":"0644"}]
+		}`),
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-stale/resume", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess-resume-stale")
+	if err != nil {
+		t.Fatalf("get resumed session: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("state = %q, want running after resume", row.State)
+	}
+
+	// The resume claimed the fresh idle pod (sbx-1), not the dead binding.
+	binding, ok := registry.Get("sess-resume-stale")
+	if !ok {
+		t.Fatal("registry holds no binding after a snapshotless resume with a stale PodAssignment")
+	}
+	if binding.SandboxName != "sbx-1" || binding.PodIP != "10.244.2.5" {
+		t.Errorf("binding = %+v, want fresh-claimed sbx-1 / 10.244.2.5 (not the stale sbx-dead)", binding)
+	}
+
+	// The fresh pod's claim is bound; the dead pod was never touched.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim for the freshly claimed pod: %v", err)
+	}
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound on the freshly claimed pod", claim.Status.Phase)
 	}
 }
 

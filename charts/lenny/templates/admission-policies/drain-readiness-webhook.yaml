@@ -11,7 +11,7 @@ features.drainReadiness is enabled.
 {{- if .Values.features.drainReadiness }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-drain-readiness" "egressLabel" "drain-readiness") }}
 ---
-{{- /*
+{{/*
 allow-drain-readiness-egress re-admits the §12.5 gateway-probe egress
 the system-network-policies default-deny otherwise blocks. The drain-
 readiness webhook calls GET /internal/drain-readiness on

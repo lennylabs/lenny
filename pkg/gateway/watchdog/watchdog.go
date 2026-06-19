@@ -305,7 +305,12 @@ func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return
 // spec: §5.2 line 519 — slot release on session end / expiry; §6.2 lines
 // 105-117 — executor release maps the terminal phase onto the Sandbox.
 type TerminalHook interface {
-	OnSessionTerminal(ctx context.Context, sess sessionstore.Session)
+	// fromState is the session's pre-terminal state, captured before the
+	// watchdog forced the row to its terminal value. The terminal pod-release
+	// path keys off it so a maxSessionAge-expired running session is released
+	// through the §6.2 executor recycle path rather than reclaimed by name
+	// (§4.6).
+	OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
 
 // AwaitingClientActionExpiryNotifier is an optional hook on TerminalHook
@@ -629,7 +634,10 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 				if updated.State == session.StateFailed && updated.FailureReason == reason {
 					res.ForcedFailures++
 					res.PerReason[reason]++
-					w.recordCompleted(ctx, updated)
+					// st is the pre-running state the sweep timed out
+					// (created/finalizing/ready/starting), the §4.6 pre-terminal
+					// state the reclaim path keys off.
+					w.recordCompleted(ctx, st, updated)
 				}
 			}
 		}
@@ -949,7 +957,7 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 			// `expired:deadline` failure reason shares the age-cap series, so
 			// the session_expiry counter stamps `max_session_age`. F-7.3.25.
 			w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
-			w.recordCompleted(ctx, updated)
+			w.recordCompleted(ctx, row.State, updated)
 		}
 	}
 	return nil
@@ -1043,7 +1051,7 @@ func (w *Watchdog) sweepIdle(ctx context.Context, tenant string, now time.Time, 
 				// spec: §16.1.1 — the idle-clock expiry stamps the
 				// `max_idle_time` reason on the session_expiry counter. F-11.3.7.
 				w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxIdleTime)
-				w.recordCompleted(ctx, updated)
+				w.recordCompleted(ctx, row.State, updated)
 			}
 		}
 	}
@@ -1109,7 +1117,11 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 			// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
 			// `max_session_age` reason on the session_expiry counter.
 			w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
-			w.recordCompleted(ctx, updated)
+			// spec: §4.6 — row.State is the pre-terminal state. sweepMaxAge can
+			// force a running/resuming session to expired; passing the true
+			// pre-terminal state keeps its teardown on the §6.2 executor recycle
+			// path rather than the pre-running by-name reclaim.
+			w.recordCompleted(ctx, row.State, updated)
 		}
 	}
 	return nil
@@ -1265,11 +1277,16 @@ func (w *Watchdog) Run(ctx context.Context, onTick func(Result, error)) {
 // falls back to its own §11.2.1 billing event and §8.10 child archive.
 // Best-effort either way: a failure must not abort the sweep.
 //
+// fromState is the session's pre-terminal state, which each sweep captures
+// before forcing the row terminal, so the hook's pod-release path can
+// distinguish a pre-running claimed session (created/finalizing/ready) from a
+// maxSessionAge-expired running/resuming one (§4.6).
+//
 // spec: §5.2 line 519 — concurrent-mode slot release on session end;
-// §11.2.1 — billing; §8.10 — child archive.
-func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Session) {
+// §11.2.1 — billing; §8.10 — child archive; §4.6 — durable binding.
+func (w *Watchdog) recordCompleted(ctx context.Context, fromState session.State, sess sessionstore.Session) {
 	if w.terminal != nil {
-		w.terminal.OnSessionTerminal(ctx, sess)
+		w.terminal.OnSessionTerminal(ctx, fromState, sess)
 		return
 	}
 	w.archiveChild(ctx, sess)

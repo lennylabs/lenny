@@ -69,7 +69,7 @@ func (f *fakeFallback) PodPhase(_ context.Context, _, podID, _ string) (string, 
 
 type fakeTerminal struct{ called []string }
 
-func (f *fakeTerminal) OnSessionTerminal(_ context.Context, s sessionstore.Session) {
+func (f *fakeTerminal) OnSessionTerminal(_ context.Context, _ session.State, s sessionstore.Session) {
 	f.called = append(f.called, s.ID)
 }
 

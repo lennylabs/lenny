@@ -266,6 +266,23 @@ func isUnimplemented(err error) bool {
 	return status.Code(err) == codes.Unimplemented
 }
 
+// RequiresDemotion reports the §6.1 SDK-warm demotion decision for a bind
+// request: whether the request's workspace plan forces a still-SDK-warm
+// (preConnect) pod to be demoted to pod-warm before the workspace is
+// materialized. The decision is a pure function of the plan's placed paths and
+// the runtime's sdkWarmBlockingPaths glob list, so the finalize-time Prepare
+// (which makes the decision) and the launch-only /start path (which needs it
+// without re-running Prepare) compute the identical answer from the persisted
+// plan rather than the gateway persisting the boolean. A non-preConnect request
+// never demotes. spec: §6.1 lines 34-40, §4.3, §4.4 (proposal).
+func RequiresDemotion(req BindRequest) bool {
+	if !req.PreConnect {
+		return false
+	}
+	_, _, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths)
+	return requires
+}
+
 // §5.2 line 12 lenny_slot_failure_total error_type labels: the
 // concurrent-mode slot bind stages whose failure terminates a reserved
 // slot. The set is finite so the metric stays low-cardinality.
@@ -437,6 +454,17 @@ type BindRequest struct {
 	// failed/crashed session always retires regardless of this flag. spec:
 	// §3.1, §3.4 (recycle on occupancy-zero).
 	Recycle bool
+	// SandboxName is the pod claimed at /create, persisted on the session
+	// row. The decomposed §7.1 lifecycle (§4.6) sets it so Prepare and Launch
+	// reconnect to the claimed pod from the binding rather than holding the
+	// claim connection across /create → /finalize → /start. Empty for Claim,
+	// which produces the binding. spec: §4.6 (proposal).
+	SandboxName string
+	// Demoted carries the §6.1 SDK-warm demotion decision Prepare made into
+	// Launch, so Launch chooses StartSession (demoted or pod-warm) vs.
+	// ConfigureWorkspace (still SDK-warm) without re-running the blocking-path
+	// match. Meaningful only when PreConnect is true. spec: §6.1 lines 30-40.
+	Demoted bool
 }
 
 // BindResult reports the pod a session was bound to.
@@ -613,42 +641,194 @@ type ResumeResult struct {
 	RecoveryGeneration int64
 }
 
-// Bind claims an idle pod for the request's session, resolves the
-// pod's adapter address, performs the §15.5 version handshake, and runs
-// the §4.7 session-assignment sequence on the pod's adapter:
-// PrepareWorkspace stages uploaded files and cloned repositories,
-// FinalizeWorkspace materializes the workspace, RunSetup runs the
-// plan's setup commands, AssignCredentials delivers the session's §4.9
-// credential leases, and StartSession starts the runtime. On success
-// the caller owns the returned live adapter connection. Any failure
+// ClaimResult reports the §7.1-step-4 pod claim made at session create,
+// for the gateway to persist on the session row so a later Prepare and
+// Launch can reconnect to the claimed pod from the binding alone (§4.6).
+// spec: §4.1 (proposal), §7.1 step 4.
+type ClaimResult struct {
+	// SandboxName is the claimed Sandbox the binding is persisted against.
+	SandboxName string
+	// Pool is the pool the pod was claimed from, persisted so Prepare and
+	// Launch (and the §4.5 created-expiry reclaim) can name the pool.
+	Pool string
+	// PodIP is the claimed pod's address, returned for the §15.1 create
+	// response and the §6.3 pod-claim metric.
+	PodIP string
+	// SlotID identifies the §5.2 concurrent-workspace slot reserved at
+	// create by ClaimSlot. It equals SessionID (one session per slot), so
+	// the binding is reconstructable from SandboxName + Pool + the session
+	// id. Empty for an exclusive (maxConcurrentSessions=1) Claim, where the
+	// whole pod is claimed for the session; non-empty marks the create-time
+	// disposition as a reserved concurrent slot that /start reconnects to
+	// via BindReservedSlot rather than re-reserving. spec: §5.2.
+	SlotID string
+	// WorkspaceRoot is the §7.3 absolute cwd the pod's adapter reported on
+	// the §15.5 handshake at claim. Persisted so Prepare's archive symlink
+	// canonicalization and Launch's SDK-warm ConfigureWorkspace cwd both
+	// use the negotiated root without re-handshaking before they need it.
+	// Empty for a ClaimSlot result: the per-slot workspace root is
+	// negotiated when BindReservedSlot reconnects.
+	WorkspaceRoot string
+	// PodClaim is the §6.3 "pod claim and routing" phase duration (claim,
+	// pod-IP resolution, mTLS dial, version handshake), for the create
+	// handler to record on the §6.3 / §16.1 pod_claim phase histogram.
+	PodClaim time.Duration
+}
+
+// PrepareResult reports the outcome of the §4.3 finalize-time preparation
+// barrier so the finalize handler can persist the workspace root, the
+// captured setup outputs, and the §7.4 strip-skip advisories, and emit the
+// per-phase §6.3 timings. The adapter connection Prepare opened is closed
+// before Prepare returns; Launch reconnects from the binding (§4.6).
+// spec: §4.3 (proposal), §6.3 lines 358, 372.
+type PrepareResult struct {
+	// WorkspaceRoot is the §7.3 cwd the adapter reported when Prepare
+	// reconnected, carried onto the session row for a later Resume.
+	WorkspaceRoot string
+	// Demoted reports whether the §6.1 SDK-warm pod was demoted to pod-warm
+	// during Prepare. Launch reads it to decide StartSession vs.
+	// ConfigureWorkspace without re-running the blocking-path match.
+	Demoted bool
+	// WorkspacePlanWarnings carries the §7.4 line 459 strip-skip advisories
+	// the gateway and adapter raised during materialization, for the
+	// finalize handler to republish on the §7.2 SSE stream.
+	WorkspacePlanWarnings []*adapterv1.WorkspacePlanWarning
+	// SetupOutputs is the §7.5 captured per-command transcript, persisted on
+	// the session row and surfaced through §15.1 and the §11.7 audit log.
+	SetupOutputs []*adapterv1.SetupCommandOutput
+	// Timings carries the §6.3 workspace-materialization, setup-commands,
+	// and credential-assignment phase durations Prepare measured.
+	Timings BindTimings
+}
+
+// Bind claims an idle pod for the request's session and runs the whole
+// §4.7 session-assignment sequence: PrepareWorkspace stages uploaded files
+// and cloned repositories, FinalizeWorkspace materializes the workspace,
+// RunSetup runs the plan's setup commands, AssignCredentials delivers the
+// session's §4.9 credential leases, and StartSession starts the runtime. On
+// success the caller owns the returned live adapter connection. Any failure
 // after the claim is returned so the gateway can retry on a fresh pod.
+//
+// Bind is the thin claim → prepare → launch composition for the callers
+// that run the whole sequence in one call (the §4.7 combined create-and-
+// start path and the test harness). The decomposed §7.1 lifecycle invokes
+// Claim, Prepare, and Launch independently across /create, /finalize, and
+// /start; each reconnects to the claimed pod from the persisted binding
+// (§4.6) rather than holding one connection across the whole window.
 func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
-	// spec: §6.3 lines 358, 372 — time each hot-path phase so the caller
-	// can attribute the per-phase latency budget and the end-to-end
-	// pod-warm startup SLO. The clock starts at the claim and segments
-	// at each phase boundary; on any failure the partial timings are
-	// discarded (the SLO measures successful starts only).
-	var t BindTimings
+	claim, err := b.Claim(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	// Thread the claim binding onto the request the way the persisted row
+	// would for the decomposed path, so Prepare and Launch reconnect from
+	// the binding rather than a held connection.
+	req.SandboxName = claim.SandboxName
+	prep, err := b.Prepare(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	req.Demoted = prep.Demoted
+	res, err := b.Launch(ctx, req)
+	if err != nil {
+		// Launch already reclaimed the pod and any assigned lease on every
+		// failure path: a launch-step failure via its failPhase reclaim, and a
+		// reconnect failure before the first launch step via ReclaimClaimed.
+		// Surface the error so the caller retries on a fresh pod.
+		return nil, err
+	}
+	// Reassemble the monolithic BindResult: the live adapter and launch
+	// timing come from Launch, the prepared workspace and setup trail from
+	// Prepare, and the claim timing from Claim. spec: §6.3 lines 358, 372.
+	res.Timings.PodClaim = claim.PodClaim
+	res.Timings.WorkspaceMaterialization = prep.Timings.WorkspaceMaterialization
+	res.Timings.SetupCommands = prep.Timings.SetupCommands
+	res.Timings.CredentialAssignment = prep.Timings.CredentialAssignment
+	res.WorkspacePlanWarnings = prep.WorkspacePlanWarnings
+	res.SetupOutputs = prep.SetupOutputs
+	res.WorkspaceRoot = prep.WorkspaceRoot
+	return res, nil
+}
+
+// Claim performs the §7.1 step-4 pod claim at session create: it claims an
+// idle warm pod from the pool, resolves the pod's adapter address, and runs
+// the §15.5 version handshake to confirm the pod is usable and to negotiate
+// the workspace root. It records the §6.3 pod-claim phase duration and
+// returns the claimed Sandbox name, pool, pod IP, and negotiated workspace
+// root for the gateway to persist on the session row, so a later Prepare
+// and Launch reconnect from the binding without a held connection (§4.6).
+// The handshake connection is closed before Claim returns. A pool-exhaustion
+// or handshake failure is returned so the create handler surfaces it before
+// the client uploads. spec: §4.1 (proposal), §7.1 step 4; §6.3 lines 358, 372.
+func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, error) {
 	phaseStart := time.Now()
 	sb, cl, neg, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
+	// Claim runs only the claim and handshake; the setup chain reconnects
+	// at Prepare, so the connection is not held across the upload window.
+	cl.Close()
+	return &ClaimResult{
+		SandboxName:   sb.Name,
+		Pool:          req.Pool,
+		PodIP:         sb.Status.PodIP,
+		WorkspaceRoot: neg.WorkspaceRoot,
+		PodClaim:      time.Since(phaseStart),
+	}, nil
+}
+
+// Prepare runs the §4.3 finalize-time preparation barrier against the pod
+// claimed at create. It reconnects to req.SandboxName from the persisted
+// binding (resolve the Sandbox, dial the adapter, re-run the §15.5 version
+// handshake), then runs the §4.7 setup chain: the §6.1 SDK-warm demotion
+// decision (now made here because it depends on the materialized plan),
+// stageWorkspace (PrepareWorkspace), FinalizeWorkspace, RunSetup, and
+// assignCredentials. On any step failure the pod and any assigned lease are
+// reclaimed via failPhase and the corresponding error is returned. The
+// adapter connection is closed before Prepare returns; Launch reconnects.
+// spec: §4.3 (proposal), §6.1 lines 34-40, §7.4, §4.9; §6.3 lines 358, 372.
+func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, error) {
+	sb, cl, neg, err := b.reconnect(ctx, req)
+	if err != nil {
+		// A reconnect failure (resolve/dial/handshake against the bound pod
+		// fails transiently between /create and /finalize) strands the pod
+		// claimed at /create with no live BindResult covering it. Reclaim it
+		// from the persisted binding so the monolith invariant — any post-claim
+		// failure reclaims the pod — holds for the Bind composition. No lease is
+		// assigned before Prepare runs, so the ReclaimClaimed lease revoke is a
+		// no-op here. spec: §4.6 (proposal), §6.2 (claimed → draining).
+		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
+			log.Printf("podsession: reclaim claimed pod %s after Prepare reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
+		}
+		return nil, err
+	}
 	sandboxName := sb.Name
-	t.PodClaim = time.Since(phaseStart)
+
+	var t BindTimings
+	// leaseAssigned tracks whether assignCredentials issued a lease in this
+	// phase, so a failure in a LATER step reclaims the lease as well as the
+	// pod (Gap 2): a finalize-block credential assignment must not leak the
+	// lease back to the §4.9 pool when a subsequent step aborts.
+	leaseAssigned := false
+	reclaim := func() {
+		b.failPhase(ctx, sb, leaseAssigned, req.SessionID)
+		cl.Close()
+	}
 
 	// spec: §6.1 lines 34-40 — on an SDK-warm (preConnect) pod, decide
 	// whether the workspace plan forces a demotion before the workspace is
 	// materialized. A blocking-path match tears down the pre-connected SDK
 	// (DemoteSDK) and the pod proceeds via the normal pod-warm StartSession
-	// path; no match keeps the pod SDK-warm and the final step points the
-	// SDK at the finalized workspace (ConfigureWorkspace) instead.
+	// path; no match keeps the pod SDK-warm and the launch points the SDK at
+	// the finalized workspace (ConfigureWorkspace) instead. The decision lives
+	// in Prepare because it depends on the materialized plan (§4.3).
 	demoted := false
 	if req.PreConnect {
 		if mp, pat, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths); requires {
 			demoteStart := time.Now()
 			if err := cl.DemoteSDK(ctx, fmt.Sprintf("workspace path %q matches sdkWarmBlockingPaths %q", mp, pat)); err != nil {
-				cl.Close()
+				reclaim()
 				if isUnimplemented(err) {
 					// spec: §6.1 line 40 — the runtime declared preConnect
 					// but its adapter cannot tear down the SDK; fail the
@@ -666,14 +846,13 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	}
 
 	// spec: §6.2 — the fine session-lifecycle states (receiving_uploads,
-	// finalizing_workspace, running_setup, starting_session, attached) are
-	// session-model states recorded on the Postgres session row, not coarse
-	// Sandbox.status.phase occupancy values. The pod projects the coarse
-	// `claimed` phase throughout the setup chain (set at claim time by
-	// connect), so the gateway runs the §4.7 setup RPCs without writing any
+	// finalizing_workspace, running_setup, starting_session) are session-model
+	// states on the Postgres session row, not coarse Sandbox.status.phase
+	// occupancy values. The pod projects the coarse `claimed` phase set at
+	// claim time, so Prepare runs the §4.7 setup RPCs without writing any
 	// per-step CRD phase. On a pre-attached failure the pod is reclaimed by
 	// draining it (the failed claim disposition: claimed → draining, §6.2).
-	phaseStart = time.Now()
+	phaseStart := time.Now()
 	// spec: §7.4 line 458; §13.4 line 665 — symlink targets are
 	// canonicalized against the pod's actual workspace root so the
 	// gateway-side extraction matches the adapter's post-promotion
@@ -684,14 +863,12 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	}
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, "", req.TenantID, req.Plan, allow)
 	if err != nil {
-		b.failPhase(ctx, sb)
-		cl.Close()
+		reclaim()
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
 	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
 	if err != nil {
-		b.failPhase(ctx, sb)
-		cl.Close()
+		reclaim()
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
 	}
 	// §7.4 line 459 strip-skip warnings now originate gateway-side (the
@@ -703,8 +880,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	phaseStart = time.Now()
 	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 	if err != nil {
-		b.failPhase(ctx, sb)
-		cl.Close()
+		reclaim()
 		// spec: §7.5 line 488 — partial outputs ride alongside the failure
 		// so the gateway can persist what was captured before the abort.
 		return nil, &SetupCommandFailure{
@@ -717,24 +893,69 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 
 	phaseStart = time.Now()
 	// §4.7 AssignCredentials is the fourth setup RPC; it runs while the pod
-	// projects the coarse `claimed` phase, before the runtime starts below.
+	// projects the coarse `claimed` phase, before the runtime starts at Launch.
 	if err := b.assignCredentials(ctx, cl, req); err != nil {
-		b.failPhase(ctx, sb)
-		cl.Close()
+		reclaim()
 		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
 	}
+	// The lease is now held; a failure after this point must also revoke it.
+	leaseAssigned = true
 	t.CredentialAssignment = time.Since(phaseStart)
 
-	phaseStart = time.Now()
+	cl.Close()
+	return &PrepareResult{
+		WorkspaceRoot:         neg.WorkspaceRoot,
+		Demoted:               demoted,
+		WorkspacePlanWarnings: finalizeWarnings,
+		SetupOutputs:          setupOutputs,
+		Timings:               t,
+	}, nil
+}
+
+// Launch runs the §4.4 start-time launch against the prepared pod. It
+// reconnects to req.SandboxName from the persisted binding, then either
+// starts the runtime from cold (StartSession, for a pod-warm or demoted
+// pod) or points the pre-connected SDK at the finalized workspace
+// (ConfigureWorkspace, for a still-SDK-warm pod), and verifies the §5.1
+// observed integration level. On success the caller owns the returned live
+// adapter connection. A launch failure reclaims the pod (and any lease
+// assigned at Prepare) via failPhase and is returned so the gateway retries
+// on a fresh pod. spec: §4.4 (proposal), §6.1 lines 30-34, §5.1 lines 41-44.
+func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, error) {
+	sb, cl, neg, err := b.reconnect(ctx, req)
+	if err != nil {
+		// A reconnect failure (dial/handshake against the bound pod fails
+		// transiently between /finalize and /start) strands the pod claimed at
+		// /create AND the §4.9 lease Prepare assigned, since by Launch the
+		// finalize block has always assigned it. Reclaim from the persisted
+		// binding so the monolith invariant — any post-claim failure reclaims
+		// the pod, and a post-AssignCredentials failure revokes the lease
+		// (Gap 2) — holds before the first launch RPC runs. ReclaimClaimed
+		// revokes the lease (keyed by sessionID) and deletes the per-pod claim.
+		// spec: §4.6 (proposal), §7.1 step 23 (lease release).
+		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
+			log.Printf("podsession: reclaim claimed pod %s after Launch reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
+		}
+		return nil, err
+	}
+	sandboxName := sb.Name
+	// A launch failure reclaims the pod and the lease assigned at Prepare:
+	// by Launch the finalize block has always assigned the lease, so the
+	// reclaim revokes it (Gap 2). spec: §7.1 step 23 (lease release).
+	reclaim := func() {
+		b.failPhase(ctx, sb, true, req.SessionID)
+		cl.Close()
+	}
+
+	phaseStart := time.Now()
 	// spec: §6.1 lines 30-34 — a still-SDK-warm pod (preConnect, not
 	// demoted) is started by pointing the pre-connected SDK at the
 	// finalized workspace (ConfigureWorkspace) rather than booting the
 	// runtime from cold (StartSession). A demoted or pod-warm pod uses
 	// StartSession.
-	if req.PreConnect && !demoted {
+	if req.PreConnect && !req.Demoted {
 		if err := cl.ConfigureWorkspace(ctx, req.SessionID, neg.WorkspaceRoot, req.ExperimentContext, req.TracingContext); err != nil {
-			b.failPhase(ctx, sb)
-			cl.Close()
+			reclaim()
 			return nil, fmt.Errorf("podsession: configure SDK-warm workspace on pod %s: %w", sandboxName, err)
 		}
 	} else if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
@@ -745,8 +966,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
 	}); err != nil {
-		b.failPhase(ctx, sb)
-		cl.Close()
+		reclaim()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}
 	// spec: §5.1 lines 41-44 — the runtime has now booted, so the adapter
@@ -757,26 +977,24 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	// declares. An underperforming runtime fails before the session is
 	// reported running, and the pod is reclaimed by draining it.
 	if err := b.verifyIntegrationLevel(ctx, cl, req.Runtime, req.DeclaredIntegrationLevel); err != nil {
-		b.failPhase(ctx, sb)
-		cl.Close()
+		reclaim()
 		return nil, err
 	}
 	// spec: §6.2 — the session reaching `running` is a session-model state
 	// recorded on the Postgres session row; the pod stays in the coarse
 	// `claimed` phase. No CRD phase write happens here.
+	var t BindTimings
 	t.AgentSessionStart = time.Since(phaseStart)
 
 	return &BindResult{
-		SessionID:             req.SessionID,
-		TenantID:              req.TenantID,
-		SandboxName:           sandboxName,
-		PodIP:                 sb.Status.PodIP,
-		Recycle:               req.Recycle,
-		Adapter:               cl,
-		Timings:               t,
-		WorkspacePlanWarnings: finalizeWarnings,
-		WorkspaceRoot:         neg.WorkspaceRoot,
-		SetupOutputs:          setupOutputs,
+		SessionID:     req.SessionID,
+		TenantID:      req.TenantID,
+		SandboxName:   sandboxName,
+		PodIP:         sb.Status.PodIP,
+		Recycle:       req.Recycle,
+		Adapter:       cl,
+		Timings:       t,
+		WorkspaceRoot: neg.WorkspaceRoot,
 	}, nil
 }
 
@@ -784,15 +1002,87 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 // session was reported running. A pre-attached setup failure is a terminal
 // claim disposition: the pod cannot serve the session and is retired by
 // draining it (the coarse §6.2 claimed → draining → terminated edge), so
-// the warm-pool sizer provisions a replacement. It is best-effort — the
-// caller already returns the underlying error, and a drain lost to a
-// concurrent reclamation does not change the outcome, because the orphaned
-// claim is collected and the pod recycled (§4.6.1). spec: §6.2 (claimed →
-// draining on a failed claim disposition); §4.6.1 orphan-claim collection.
-func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox) {
+// the warm-pool sizer provisions a replacement. When leaseAssigned is true
+// the finalize block had already pushed the §4.9 credential lease to the
+// pod, so the reclaim also revokes the lease back to its pool (§7.1 step 23)
+// rather than leaking the credential's active-session slot; leaseAssigned is
+// false before assignCredentials runs, so the revoke is a no-op then (Gap 2).
+// It is best-effort — the caller already returns the underlying error, and a
+// drain lost to a concurrent reclamation does not change the outcome, because
+// the orphaned claim is collected and the pod recycled (§4.6.1). spec: §6.2
+// (claimed → draining on a failed claim disposition); §4.6.1 orphan-claim
+// collection; §7.1 step 23 (lease release).
+func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox, leaseAssigned bool, sessionID string) {
+	if leaseAssigned {
+		// spec: §7.1 step 23 — a lease assigned earlier in this phase must be
+		// returned to its §4.9 pool on the reclaim, or the credential's
+		// active-session counter leaks for the abandoned session.
+		b.releaseCredentials(sessionID)
+	}
 	if err := b.drain(ctx, sb); err != nil {
 		log.Printf("podsession: drain failed sandbox %s after pre-attached setup failure: %v", sb.Name, err)
 	}
+}
+
+// ReclaimClaimed releases a pod claimed at /create that no live BindResult
+// covers: a `created`/`finalizing`/`ready` session retired by the §4.5
+// created-expiry sweeper or by /terminate, whose pod↔session binding is the
+// persisted SandboxName + pool alone (§4.6). It deletes the per-pod
+// SandboxClaim (returning the pod to the pool per the §4.6.1 occupancy
+// projection) and revokes any §4.9 credential lease the session holds, keyed
+// by sessionID (Credentials.ReleaseSession). The lease revoke is mandatory
+// rather than best-effort-skipped: a `finalizing`/`ready` session always
+// holds a lease assigned at finalize (§4.3), and ReleaseSession is a no-op
+// for a `created` session that never assigned one, so the unconditional
+// revoke fails closed without over-releasing. spec: §4.5 (proposal), §4.6
+// (proposal), §7.1 step 23 (lease release); §4.6.1 (occupancy projection on
+// claim DELETE).
+func (b *Binder) ReclaimClaimed(ctx context.Context, sandboxName, sessionID string) error {
+	// Revoke the lease first so a DELETE error does not strand the
+	// credential's active-session slot; ReleaseSession is keyed by sessionID
+	// and is a no-op for a session that holds no lease.
+	b.releaseCredentials(sessionID)
+	if err := podclaim.DeleteClaim(ctx, b.Client, b.Namespace, sandboxName); err != nil {
+		return fmt.Errorf("podsession: reclaim claimed pod %s for session %s: %w", sandboxName, sessionID, err)
+	}
+	return nil
+}
+
+// reconnect re-establishes the §4.7 adapter connection to a pod claimed at
+// /create from its persisted binding (§4.6): it resolves the Sandbox by the
+// req.SandboxName recorded on the session row, dials the adapter, and re-runs
+// the §15.5 version handshake. Prepare and Launch each call it so no phase
+// depends on a connection held open by the phase before it. The caller owns
+// cl and closes it on completion or reclaim. spec: §4.6 (proposal),
+// §15.5 (version handshake).
+func (b *Binder) reconnect(ctx context.Context, req BindRequest) (*lennyv1.Sandbox, *adapterclient.Client, negotiated, error) {
+	if req.SandboxName == "" {
+		// Fail closed: a Prepare/Launch with no persisted binding cannot
+		// reconnect to the claimed pod, so reject rather than re-claiming a
+		// fresh one and orphaning the pod claimed at /create.
+		return nil, nil, negotiated{}, fmt.Errorf("podsession: reconnect for session %s has no claimed sandbox binding", req.SessionID)
+	}
+	sb, err := b.resolveSandbox(ctx, req.SandboxName)
+	if err != nil {
+		return nil, nil, negotiated{}, err
+	}
+	addr := net.JoinHostPort(sb.Status.PodIP, strconv.Itoa(b.AdapterPort))
+	cl, err := b.DialAdapter(addr)
+	if err != nil {
+		return nil, nil, negotiated{}, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
+	}
+	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
+	if err != nil {
+		cl.Close()
+		return nil, nil, negotiated{}, fmt.Errorf("podsession: negotiate version with %s: %w", req.SandboxName, err)
+	}
+	if resp.GetIncompatible() {
+		cl.Close()
+		return nil, nil, negotiated{}, fmt.Errorf(
+			"podsession: pod %s adapter speaks no protocol version the gateway accepts", req.SandboxName,
+		)
+	}
+	return sb, cl, negotiated{WorkspaceRoot: resp.GetWorkspaceRoot()}, nil
 }
 
 // drain releases a session-mode pod by deleting its per-pod occupancy

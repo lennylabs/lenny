@@ -278,6 +278,139 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 	}
 }
 
+// spec: §4.1 (proposal), §7.1 step 4, §5.2
+// diagnosis: ClaimSlot did not reserve a §5.2 slot at create. The 0007
+// eager-claim design claims a per-session slot at /create for a
+// concurrent-workspace pool, so the §15.1 created-state pod-claim invariant
+// holds uniformly; a failure means the create path admitted a `created`
+// session with no claimed pod. ClaimSlot reserves the slot (the per-pod
+// SandboxClaim plus the active_slots increment) and runs the handshake, but
+// does not materialize the workspace or start the runtime.
+func TestClaimSlotReservesSlotWithoutStarting_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+
+	claim, err := binder.ClaimSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 8, Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	if claim.SandboxName != "sbx-1" || claim.Pool != testPool {
+		t.Errorf("claim = %+v, want sbx-1 / %s", claim, testPool)
+	}
+	// SlotID == SessionID so the binding is reconstructable from the persisted
+	// PodAssignment + PoolRef + the session id.
+	if claim.SlotID != "sess-1" {
+		t.Errorf("SlotID = %q, want sess-1 (== session id)", claim.SlotID)
+	}
+	// The slot is reserved: the per-pod occupancy claim exists.
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("ClaimSlot did not create the per-pod occupancy claim")
+	}
+	// No materialization or start at create: the runtime is not started and
+	// the per-slot workspace is not finalized (those run at BindReservedSlot).
+	if a.startedSet()["sess-1"] {
+		t.Error("ClaimSlot started the runtime; the runtime must launch at /start")
+	}
+	if a.finalizedSet()["sess-1"] {
+		t.Error("ClaimSlot finalized the workspace; materialization must run at /finalize")
+	}
+}
+
+// spec: §4.1 (proposal), §5.2 — a concurrent pool with no idle pod returns
+// the ErrNoIdlePod exhaustion sentinel unwrapped, reserving no slot, so the
+// create handler maps it to the §7.1 SESSION_CREATION_FAILED atomicity
+// envelope before the client uploads.
+func TestClaimSlotEmptyPoolReturnsExhaustion_spec_5_2(t *testing.T) {
+	binder := newSlotBinder(t, k8sClient(t), concurrentAdapterDialer(t, newConcurrentAdapter()))
+	_, err := binder.ClaimSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", MaxConcurrentSessions: 8,
+	})
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("error = %v, want ErrNoIdlePod for an empty pool", err)
+	}
+}
+
+// spec: §4.3, §4.4 (proposal), §5.2
+// diagnosis: BindReservedSlot did not reconnect to a slot reserved at create
+// and run the materialize-and-launch sequence. The 0007 decomposed lifecycle
+// reserves the slot at /create (ClaimSlot) and reconnects at /start
+// (BindReservedSlot) rather than re-reserving, so the create-time binding
+// holds from create through start. A failure means /start re-reserved a fresh
+// slot (double-counting active_slots) or could not launch on the reserved one.
+func TestBindReservedSlotReconnectsAndStarts_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+	req := podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 8, Plan: &adapterv1.WorkspacePlan{},
+	}
+
+	claim, err := binder.ClaimSlot(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	res, err := binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+	if err != nil {
+		t.Fatalf("BindReservedSlot: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	if res.SandboxName != "sbx-1" || res.SlotID != "sess-1" {
+		t.Errorf("result = %+v, want sbx-1 / sess-1", res)
+	}
+	if !a.startedSet()["sess-1"] {
+		t.Error("BindReservedSlot did not start the reserved slot's runtime")
+	}
+	if !a.finalizedSet()["sess-1"] {
+		t.Error("BindReservedSlot did not finalize the reserved slot's workspace")
+	}
+	// The reservation made at create is still the binding: the per-pod claim
+	// exists and was never re-reserved (one slot, not two).
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("BindReservedSlot lost the per-pod occupancy claim")
+	}
+}
+
+// spec: §5.2, §6.2 (pre-attached reclaim)
+// diagnosis: BindReservedSlot did not release the create-time slot
+// reservation on a start failure, leaking the pod's active_slots. A start
+// that cannot reach `running` must reclaim the slot the create-time
+// reservation held, the slot analog of the exclusive Prepare/Launch reclaim;
+// the release runs exactly once so the callers do not double-decrement.
+func TestBindReservedSlotReleasesReservationOnFailure_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	a.startErr = errors.New("runtime refused to start")
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+	req := podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 8, Plan: &adapterv1.WorkspacePlan{},
+	}
+
+	claim, err := binder.ClaimSlot(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Fatal("ClaimSlot did not reserve the slot")
+	}
+	_, err = binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+	if err == nil {
+		t.Fatal("BindReservedSlot succeeded, want a StartSession failure")
+	}
+	// The reserved slot was the only slot on the pod, so releasing it on the
+	// failure deletes the per-pod claim and returns the pod to the pool. A
+	// surviving claim would mean the active_slots count leaked.
+	if podClaimExists(t, c, "sbx-1") {
+		t.Error("BindReservedSlot did not release the reserved slot on a start failure (active_slots leaked)")
+	}
+}
+
 // spec: §5.2 line 519
 // diagnosis: BindSlot must distinguish an empty pool from a full one so
 // the gateway can set the right details.reason. §5.2 line 519: a pool

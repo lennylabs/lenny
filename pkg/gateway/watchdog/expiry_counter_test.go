@@ -35,7 +35,7 @@ type expiryCall struct {
 	reason string
 }
 
-func (c *expiryCapture) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+func (c *expiryCapture) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminal = append(c.terminal, sess)
 }
 

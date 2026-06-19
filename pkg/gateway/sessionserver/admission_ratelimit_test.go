@@ -17,6 +17,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
@@ -185,9 +186,18 @@ func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
+	// A service-mode template makes the create-time claim claimless (§5.2),
+	// so the per-pool rate-limit gate (which resolves the pool ahead of any
+	// claim) is exercised without seeding an idle Sandbox or needing the
+	// SSA-capable envtest claim path. The per-pool scope still resolves the
+	// pool from the template, which is what this test asserts.
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "claude-code", IsolationProfile: "sandboxed"},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       "claude-code",
+			IsolationProfile: "sandboxed",
+			ExecutionMode:    string(runtimestore.ExecutionModeService),
+		},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pool, tmpl).Build()
 	binder := &podsession.Binder{Client: c, Namespace: ns}

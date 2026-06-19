@@ -32,7 +32,7 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
     lenny.dev/component: backup
 ---
-{{- /*
+{{/*
 The cluster-scoped read on CRDs: the backup flow exports the CRD
 manifests and the lenny.dev custom resources (runtimes, pools, tenants)
 as part of the platform-configuration snapshot (§25.11 backup flow steps
@@ -70,7 +70,7 @@ subjects:
     name: lenny-backup-sa
     namespace: {{ .Release.Namespace }}
 ---
-{{- /*
+{{/*
 The release-namespace ConfigMap read (§25 line 3997: "get on ConfigMaps
 in lenny-system"). The release namespace is lenny-system by default; the
 Role is scoped to it so the backup resolves platform configuration from

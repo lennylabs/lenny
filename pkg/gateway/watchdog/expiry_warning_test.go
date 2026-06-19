@@ -26,7 +26,8 @@ type expiryWarningCall struct {
 	remainingSeconds int
 }
 
-func (c *captureExpiryWarning) OnSessionTerminal(_ context.Context, _ sessionstore.Session) {}
+func (c *captureExpiryWarning) OnSessionTerminal(_ context.Context, _ session.State, _ sessionstore.Session) {
+}
 
 func (c *captureExpiryWarning) OnSessionExpiringSoon(_ context.Context, sess sessionstore.Session, maxAge, remaining int) {
 	c.warnings = append(c.warnings, expiryWarningCall{sess.ID, maxAge, remaining})

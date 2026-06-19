@@ -23,7 +23,7 @@ type captureExpiryHook struct {
 	awaitingCalls []sessionstore.Session
 }
 
-func (c *captureExpiryHook) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+func (c *captureExpiryHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminalCalls = append(c.terminalCalls, sess)
 }
 
@@ -94,7 +94,7 @@ type terminalOnly struct {
 	calls []sessionstore.Session
 }
 
-func (t *terminalOnly) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+func (t *terminalOnly) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	t.calls = append(t.calls, sess)
 }
 

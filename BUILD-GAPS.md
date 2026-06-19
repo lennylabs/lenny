@@ -5771,6 +5771,26 @@ receive provisional values that can later differ") is therefore
 resolved: the level returned at create is the level frozen on the
 row.
 
+**Re-resolution (proposal 0007 — eager claim at create):** the
+deferred-claim decision recorded above is reversed. The proposal claims
+the warm pod synchronously at `/create` (§7.1 step 4, inside the create
+atomic unit), persists the pod↔session binding on the session row
+(`PodAssignment` + `PoolRef`, S2), buffers uploads in the Artifact Store
+through the `created` window (unchanged), and makes `/finalize` the
+preparation barrier that materializes the workspace and assigns the §4.9
+lease (S3, see F-7.1.17). `createSession` now runs the §7.1-step-3
+credential availability pre-check and the step-4 claim before persisting
+the row, so pool exhaustion fails fast at `/create` with
+`SESSION_CREATION_FAILED` before the client uploads, and the
+`sessionIsolationLevel` returned at create is the actually-claimed pod's
+profile. The accepted cost is holding a warm pod through the upload
+window; in the common back-to-back create → upload → finalize → start
+flow the hold is the upload duration. The binding is durable and
+handoff-safe: any replica reconnects from it (§4.6), so a coordinator
+handoff during the create → finalize → start window orphans neither the
+pod nor the lease (tier-7a `create_finalize_start_handoff`, and the
+fail-fast exhaustion scenario `create_pool_exhaustion`).
+
 ### - [x] F-7.1.7 — `GET /v1/sessions/{id}` does not return `sessionIsolationLevel` [Medium] — CLOSED
 
 §7.1 line 75: "`GET /v1/sessions/{id}` also returns
@@ -6096,7 +6116,7 @@ deadline a client already extended past that instant (the `extend-retention`
 the race with a concurrent extend-retention write. Pairs with the
 create-time default floor in F-7.1.5.
 
-### - [-] F-7.1.17 — `/finalize` does not validate staging or materialise workspace [Low] — DEFERRED
+### - [x] F-7.1.17 — `/finalize` does not validate staging or materialise workspace [Low] — CLOSED
 
 §7.1 steps 12–13: "Validate staging, materialize to /workspace/current
 … Run setup commands (bounded, logged)." `transitionFinalize`
@@ -6109,17 +6129,24 @@ validation rejecting the staged upload) cannot surface; it is
 deferred until `/start` and then returns `POD_CLAIM_FAILED` rather
 than the spec-implied workspace-validation error.
 
-**Deferred (this batch):** moving materialise+setup ahead to `/finalize`
-requires either (a) a partial `Binder.Bind` that runs `PrepareWorkspace`
-+ `FinalizeWorkspace` + `RunSetup` on a pod that is not yet claimed
-(no v1 surface for this), or (b) burning a warm pod claim at `/finalize`
-for a session that may never `/start`. The §7.1 step list is a
-high-level lifecycle diagram and the §15.1 precondition table only
-mandates the state transition (`created → finalizing → ready`); the
-two-step `/finalize` → `/start` collapse is documented behaviour
-under STARTING_FAILED (now §7.1 atomicity-aligned per F-7.1.4). Closing
-as DEFERRED until the adapter surfaces a separate Validate RPC or v2
-introduces eager-finalize semantics.
+**Resolution (proposal 0007, S3 + S8):** `/finalize` is now the §4.3
+preparation barrier. `handleFinalize` (`sessionserver.go`) reconnects to
+the pod claimed at `/create` (§7.1 step 4, S2) from the durable binding
+and runs the binder's `Prepare` phase: `PrepareWorkspace` streams the
+buffered `lenny-blob://` upload content into `/workspace/staging`,
+`FinalizeWorkspace` materializes `/workspace/current` with the §7.4 line
+461 post-promotion symlink re-validation, `RunSetup` runs the plan's
+setup commands, and `AssignCredentials` delivers the §4.9 lease. The row
+reaches `ready` only once the session is fully prepared, so a
+staging-validation, setup-command, or credential failure now surfaces at
+`/finalize` (the workspace-validation, setup-command, or
+`CREDENTIAL_POOL_EXHAUSTED` error) rather than being deferred to `/start`
+behind `STARTING_FAILED`. The S8 capstone added the tier-4 integration
+flow (create → upload → finalize → start asserting Artifact-Store
+buffering, finalize-time `/workspace/current` materialization + lease
+assignment, and start-only launch, `tests/tier4_integration/eager_claim_lifecycle_test.go`)
+and the tier-5 e2e finalize-materialization-against-a-warm-pod test
+(`tests/tier5_e2e_kind/eager_claim_e2e_test.go`).
 
 ### - [x] F-7.1.18 — Step 7 `AssignCredentials` ordering matches §4.7, not §7.1 literal step order [Info] — CLOSED
 
@@ -6182,6 +6209,20 @@ deployments do not accumulate abandoned rows across the tenant
 boundary. Wired in the gateway main alongside the §7.1 retention GC;
 metrics sink interface mirrors `retentiongc.MetricsSink` so the
 operator can graph the drop count.
+
+**Amendment (proposal 0007 — created-expiry releases the claimed pod):**
+now that the warm pod is claimed at `/create` (F-7.1.6 re-resolution),
+an abandoned `created` row holds a claimed pod, so the sweep must return
+it. The `createdsweeper` was extended (S5) with a `Reclaim` hook wired to
+`Binder.ReclaimClaimed`: before retiring an expired `created` row, the
+sweep deletes the per-pod `SandboxClaim` (returning the pod to the pool
+per §15.1 line 630) and revokes any §4.9 lease the row holds keyed by
+session id (a no-op for a `created` row that never finalized and so
+assigned no lease). The S8 tier-5 e2e
+`TestEagerClaimCreatedExpiryReleasesPod` asserts the claim count returns
+to baseline after the sweep window against a live cluster, and the
+tier-1 `TestCreatedSweepReleasesClaimedPod_spec_15_1_630` exercises the
+sweep-to-reclaim wiring against a real apiserver.
 
 ### Cross-cutting summary
 

@@ -25,9 +25,13 @@ func TestBudgetTerminatorExpiresRunningSession_spec_7_1(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	var terminalSess sessionstore.Session
+	var terminalFromState session.State
 	term := &budgetSessionTerminator{
-		store:      store,
-		onTerminal: func(_ context.Context, s sessionstore.Session) { terminalSess = s },
+		store: store,
+		onTerminal: func(_ context.Context, fromState session.State, s sessionstore.Session) {
+			terminalSess = s
+			terminalFromState = fromState
+		},
 	}
 	term.terminate(ctx, "s_1", sessionbudget.ReasonBudgetExhausted)
 
@@ -44,6 +48,12 @@ func TestBudgetTerminatorExpiresRunningSession_spec_7_1(t *testing.T) {
 	if terminalSess.ID != "s_1" {
 		t.Fatalf("onTerminal not invoked with the expired session, got %q", terminalSess.ID)
 	}
+	// spec: §4.6 — a budget terminate runs against a running session, so the
+	// pre-terminal state forwarded is running; the terminal pod-release path
+	// must keep it on the §6.2 executor recycle path, not the by-name reclaim.
+	if terminalFromState != session.StateRunning {
+		t.Fatalf("onTerminal fromState = %q, want running", terminalFromState)
+	}
 }
 
 // An already-terminal session is a no-op: no state change, no terminal
@@ -59,7 +69,7 @@ func TestBudgetTerminatorIdempotentOnTerminal_spec_11_2(t *testing.T) {
 	onTerminalCalls := 0
 	term := &budgetSessionTerminator{
 		store:      store,
-		onTerminal: func(context.Context, sessionstore.Session) { onTerminalCalls++ },
+		onTerminal: func(context.Context, session.State, sessionstore.Session) { onTerminalCalls++ },
 	}
 	term.terminate(ctx, "s_1", sessionbudget.ReasonBudgetExhausted)
 
@@ -79,7 +89,7 @@ func TestBudgetTerminatorUnknownSession_spec_11_2(t *testing.T) {
 	called := false
 	term := &budgetSessionTerminator{
 		store:      memstore.New(),
-		onTerminal: func(context.Context, sessionstore.Session) { called = true },
+		onTerminal: func(context.Context, session.State, sessionstore.Session) { called = true },
 	}
 	term.terminate(ctx, "missing", sessionbudget.ReasonBudgetExhausted)
 	if called {

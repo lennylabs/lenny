@@ -31,10 +31,12 @@ func TestSessionAdminAdapter_ForceTerminate_TransitionsAndReleases(t *testing.T)
 	seedRunning(t, store, "sess_1", "acme")
 
 	var released []string
+	var releasedFromStates []session.State
 	adapter := sessionAdminAdapter{
 		store: store,
-		onTerminal: func(_ context.Context, s sessionstore.Session) {
+		onTerminal: func(_ context.Context, fromState session.State, s sessionstore.Session) {
 			released = append(released, s.ID)
+			releasedFromStates = append(releasedFromStates, fromState)
 		},
 	}
 
@@ -60,6 +62,12 @@ func TestSessionAdminAdapter_ForceTerminate_TransitionsAndReleases(t *testing.T)
 	if len(released) != 1 || released[0] != "sess_1" {
 		t.Errorf("pod-release hook not invoked exactly once: %v", released)
 	}
+	// spec: §4.6 — the force-terminate forwards the pre-force state (running)
+	// so the terminal pod-release path routes the teardown through the §6.2
+	// executor recycle path rather than the pre-running by-name reclaim.
+	if len(releasedFromStates) != 1 || releasedFromStates[0] != session.StateRunning {
+		t.Errorf("terminal hook fromState = %v, want [running]", releasedFromStates)
+	}
 
 	// The store reflects the forced terminal state.
 	got, _ := store.GetByID(context.Background(), "sess_1")
@@ -77,8 +85,10 @@ func TestSessionAdminAdapter_ForceTerminate_IdempotentOnTerminal(t *testing.T) {
 	}
 	var released []string
 	adapter := sessionAdminAdapter{
-		store:      store,
-		onTerminal: func(_ context.Context, s sessionstore.Session) { released = append(released, s.ID) },
+		store: store,
+		onTerminal: func(_ context.Context, _ session.State, s sessionstore.Session) {
+			released = append(released, s.ID)
+		},
 	}
 
 	sess, prev, transitioned, err := adapter.ForceTerminate(context.Background(), "sess_done")

@@ -314,7 +314,7 @@ func TestTerminalCallbackDelivered_spec_14_108(t *testing.T) {
 	if err := store.Create(ctx, row); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	gw.OnSessionTerminal(ctx, row)
+	gw.OnSessionTerminal(ctx, session.StateRunning, row)
 
 	select {
 	case rec := <-done:

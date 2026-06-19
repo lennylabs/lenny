@@ -14,15 +14,22 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -1402,5 +1409,283 @@ func TestCreateAdmitsSetupCommandWithinAllowlist(t *testing.T) {
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201 (allowlist match); body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §7.1 steps 4-5 (claim at create, persist binding), §4.6 (durable
+// binding), §15.1 (created state: a warm pod has been claimed).
+// diagnosis: a create that does not claim a pod or does not persist the
+// PodAssignment + PoolRef binding breaks the §7.1 claim-at-create model —
+// a later /finalize and /start on a fresh replica could not reconnect to
+// the bound pod. A failure here means createSession skipped the §7.1 step-4
+// claim or did not stamp the §4.6 binding on the row.
+func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-create-claim" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+	}))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp sessionserver.CreateSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	// spec: §15.1 — create returns the session in `created` state; the heavy
+	// preparation runs at /finalize and the launch at /start.
+	if resp.State != "created" {
+		t.Errorf("state = %q, want created", resp.State)
+	}
+
+	// spec: §4.6 — the durable binding is persisted on the row at create so a
+	// later /finalize and /start on any replica reconnect to the bound pod.
+	row, err := store.Get(context.Background(), "acme", "sess-create-claim")
+	if err != nil {
+		t.Fatalf("get created session: %v", err)
+	}
+	if row.PodAssignment != "sbx-1" {
+		t.Errorf("row.PodAssignment = %q, want sbx-1 (claimed at create)", row.PodAssignment)
+	}
+	if row.PoolRef != "echo-pool" {
+		t.Errorf("row.PoolRef = %q, want echo-pool (resolved pool persisted)", row.PoolRef)
+	}
+
+	// spec: §4.6.1 — the per-pod SandboxClaim exists in `bound` after the
+	// create-time claim, so the pod is reserved through the upload window.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim after create: %v", err)
+	}
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound after the create-time claim", claim.Status.Phase)
+	}
+}
+
+// spec: §7.1 line 23 (atomicity note: pool exhaustion at step 4 returns
+// SESSION_CREATION_FAILED, no row), §15.1 line 1138 (Retry-After).
+// diagnosis: a create against an exhausted pool that persists a row, omits
+// the Retry-After hint, or surfaces a code other than SESSION_CREATION_FAILED
+// breaks the §7.1 fail-fast-at-create atomicity envelope — the client would
+// discover exhaustion only after wasting an upload, or under the wrong code.
+// A failure here means createSession did not surface create-time pool
+// exhaustion as a 503 SESSION_CREATION_FAILED before the row persist; the
+// two-step /start path keeps WARM_POOL_EXHAUSTED (§5.2), so this asserts the
+// create-handler code, not the shared classifier's default.
+func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	// A pool with no idle Sandbox exhausts the claim path (and, absent
+	// Postgres, the fallback), so the create-time claim returns ErrNoIdlePod.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-create-exhausted" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create on empty pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if ra := rr.Header().Get("Retry-After"); ra == "" {
+		t.Error("Retry-After header missing on the SESSION_CREATION_FAILED reply")
+	}
+	// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — create-time pool
+	// exhaustion surfaces the SESSION_CREATION_FAILED atomicity envelope, not
+	// the §5.2 WARM_POOL_EXHAUSTED code the two-step /start claim returns.
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "SESSION_CREATION_FAILED" {
+		t.Errorf("code = %q, want SESSION_CREATION_FAILED (create-time exhaustion is the §7.1 atomicity envelope, not WARM_POOL_EXHAUSTED)", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "no_idle_pods" {
+		t.Errorf("details.reason = %v, want no_idle_pods", env.Error.Details["reason"])
+	}
+	if _, err := store.Get(context.Background(), "acme", "sess-create-exhausted"); err == nil {
+		t.Error("session row was persisted; §7.1 atomicity requires no row when the create-time claim fails")
+	}
+}
+
+// spec: §5.2 (service mode is claimless), §7.1 (created state).
+// diagnosis: a service-mode create that claims a pod breaks the §5.2
+// claimless contract — every service-mode session would burn a warm pod.
+// A failure here means claimAtCreate did not take the service-mode branch.
+func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("svc-pool", "svc-tmpl"),
+		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+	)
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-create-svc" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "svc-runtime"}))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("service-mode create: status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess-create-svc")
+	if err != nil {
+		t.Fatalf("get service-mode created row: %v", err)
+	}
+	if row.PodAssignment != "" {
+		t.Errorf("row.PodAssignment = %q, want empty (service mode is claimless)", row.PodAssignment)
+	}
+	if row.ExecutionMode != "service" {
+		t.Errorf("row.ExecutionMode = %q, want service (level taken from the resolved pool)", row.ExecutionMode)
+	}
+
+	// The idle Sandbox is untouched: no per-pod claim was created at create.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-svc-sbx-1"}, &claim); !apierrors.IsNotFound(err) {
+		t.Errorf("service-mode create created/looked up claim-svc-sbx-1 (err=%v); want NotFound (claimless)", err)
+	}
+}
+
+// spec: §7.1 line 28 (rollback releases the pod claim on a create-step
+// failure), §4.6 (durable binding).
+// diagnosis: a create whose row persist fails after the §7.1 step-4 claim
+// must release the claimed pod, or every persist failure leaks a warm pod.
+// A failure here means createSession did not roll back the create-time
+// claim when store.Create failed.
+func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-rb", "echo-pool", "10.244.2.6"),
+	)
+	store := &createRejectingStore{Store: memstore.New()}
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-create-rb" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create with rejecting store: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// spec: §7.1 line 28 — the create-time claim is rolled back: the per-pod
+	// SandboxClaim is deleted, returning the pod to the pool.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-rb"}, &claim); !apierrors.IsNotFound(err) {
+		t.Errorf("per-pod claim after a rolled-back create (err=%v); want NotFound (claim released)", err)
+	}
+}
+
+// spec: §15.1 line 620 (/terminate of a created session releases the pod),
+// §4.6 (durable binding), §6.2 (pre-attached disposition), §7.1 step 23
+// (lease release).
+// diagnosis: a /terminate (DELETE) of a `created` session that does not
+// release the warm pod claimed at /create leaks the pod for the whole pool:
+// the session never launched, so it holds no live BindResult and the executor
+// release path is a no-op against the empty registry. A failure here means
+// recordSessionCompleted does not run the §4.5 claimless reclaim for a
+// pre-running terminal session, so the pod stays bound forever.
+func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-term-created" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+	})
+
+	// Create claims the warm pod and persists the §4.6 binding; the session is
+	// in `created` (never launched, so no live BindResult).
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", UserID: "alice@acme.com",
+	}))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	// The create-time claim is present in `bound` before the terminate.
+	var bound lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &bound); err != nil {
+		t.Fatalf("get per-pod claim after create: %v", err)
+	}
+	if bound.Status.Phase != string(claimstate.Bound) {
+		t.Fatalf("claim binding state = %q, want bound after the create-time claim", bound.Status.Phase)
+	}
+
+	// /terminate the `created` session (DELETE -> cancelled, a terminal state).
+	delReq := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-term-created", nil)
+	delReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	delRR := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(delRR, delReq)
+	if delRR.Code != http.StatusOK {
+		t.Fatalf("DELETE created session: status %d, want 200; body=%s", delRR.Code, delRR.Body.String())
+	}
+
+	// spec: §15.1 line 620 — the terminate released the claimed pod: the per-pod
+	// SandboxClaim is deleted, returning the pod to the pool.
+	var after lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &after); !apierrors.IsNotFound(err) {
+		t.Errorf("per-pod claim after terminate (err=%v); want NotFound (pod released to the pool)", err)
 	}
 }

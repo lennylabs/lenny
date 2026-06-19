@@ -34,7 +34,7 @@ type expiryTerminalHook struct {
 	inc func(pool, reason string)
 }
 
-func (h expiryTerminalHook) OnSessionTerminal(context.Context, sessionstore.Session) {}
+func (h expiryTerminalHook) OnSessionTerminal(context.Context, session.State, sessionstore.Session) {}
 
 func (h expiryTerminalHook) OnSessionExpired(_ context.Context, sess sessionstore.Session, reason string) {
 	h.inc(sess.PoolRef, reason)
