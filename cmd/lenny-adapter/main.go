@@ -47,7 +47,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
@@ -282,33 +281,17 @@ func main() {
 	// §4.7 lines 879-883: in nonce-only mode the platform MCP server adds
 	// the per-connection challenge-response supplement to the static nonce.
 	adapterSrv.NonceOnlyMode = !*requireSoPeercred
-	// §9.1 lines 8-31: the platform MCP server binds the abstract socket
-	// the manifest advertises (@lenny-platform-mcp) so a type:agent runtime
-	// can dial it. F-9.1.1.
-	adapterSrv.MCPSocket = *mcpSocket
-	// §9.1 lines 14-31: dial the gateway's GatewayControl service so the
-	// platform MCP server can forward a runtime's tools/list and tools/call
-	// to the gateway platform tool surface. The dial reuses the adapter's
-	// mesh identity (its server cert/key) as the client certificate and
-	// pins the gateway's DNS SAN (§10.3 NET-060). F-9.1.1.
+	// §9.1 lines 8-31: bind the platform MCP socket and, when a gateway
+	// address is configured, dial the gateway's GatewayControl service so
+	// the platform MCP server forwards a type:agent runtime's tools/list and
+	// tools/call (and the §9.3 per-connector tool calls) to the gateway.
+	// F-9.1.1.
+	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	defer func() { _ = gwCloser.Close() }()
 	if *gatewayGRPCAddr != "" {
-		dialOpt, derr := adapter.TLSClientOption(*certFile, *keyFile, *clientCAFile,
-			adapter.WithServerName(gatewaycontrol.GatewayDNSName))
-		if derr != nil {
-			log.Fatalf("lenny-adapter: §9.1 gateway dial TLS: %v", derr)
-		}
-		gwClient, derr := gatewaycontrol.Dial(*gatewayGRPCAddr, dialOpt)
-		if derr != nil {
-			log.Fatalf("lenny-adapter: §9.1 dial gateway %s: %v", *gatewayGRPCAddr, derr)
-		}
-		defer func() { _ = gwClient.Close() }()
-		adapterSrv.PlatformForwarder = gwClient
-		// §9.3 lines 142-164 — the same gateway-control channel forwards a
-		// type:agent runtime's per-connector tool calls (against the
-		// intra-pod @lenny-connector-<id> sockets) to the gateway, which
-		// dials the external endpoint with the gateway-held credential.
-		// F-9.1.2.
-		adapterSrv.ConnectorForwarder = gwClient
 		log.Printf("lenny-adapter: §9.1 platform tool forwarding to gateway at %s", *gatewayGRPCAddr)
 	}
 	adapterSrv.CredentialsDir = *credentialsDir

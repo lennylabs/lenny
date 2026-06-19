@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+#
+# allow-lenny-system-apiserver-egress is an e2e-only NetworkPolicy that
+# admits the lenny-system control-plane components' egress to the Kind
+# kube-apiserver. The §13.2 lenny-system default-deny otherwise blocks it
+# on this cluster topology.
+#
+# Why the chart policies are not enough on Kind. The chart's per-component
+# egress policies (allow-gateway-egress, allow-controller-egress, and
+# allow-pool-scaling-controller-egress) admit apiserver egress to the
+# service CIDR ipBlock (10.96.0.0/12, which on this cluster covers the
+# kubernetes Service ClusterIP 10.97.0.1:443). On a managed cluster that is
+# sufficient: the CNI evaluates the egress NetworkPolicy against the
+# Service ClusterIP. kindnet, however, evaluates the egress policy against
+# the POST-DNAT destination: kube-proxy DNATs 10.97.0.1:443 to the real
+# apiserver endpoint, which on Kind is a control-plane node's address on
+# the `kind` Docker bridge network (172.18.0.0/16, e.g. 172.18.0.4:6443),
+# NOT an address in the service CIDR. The service-CIDR ipBlock therefore
+# does not match the post-DNAT target and the apiserver dial is dropped
+# with an i/o timeout.
+#
+# A control plane whose apiserver informers connected at startup keeps
+# limping along on those conntrack-established connections, but every NEW
+# apiserver connection fails: the gateway's per-session SandboxClaim write
+# (POST /v1/sessions/start) hangs and returns 503 SESSION_CREATION_FAILED,
+# and leader-election lease renewals time out. This manifest admits egress
+# to the Kind node CIDR on the apiserver ports so the post-DNAT apiserver
+# traffic is permitted.
+#
+# Scope. The podSelector matches every lenny-system pod
+# (app.kubernetes.io/name: lenny); the policy only ADDS apiserver egress
+# (NetworkPolicies are additive), so it cannot tighten any component. The
+# CIDR is the Kind bridge subnet; on a real cluster the apiserver endpoint
+# is reachable through the chart's service-CIDR ipBlock and this manifest
+# is not applied. This is a test-infra-only object applied by install.sh,
+# so it does not alter the production chart rendering.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-lenny-system-apiserver-egress
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/managed-by: e2e-install
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lenny
+  egress:
+    # kube-apiserver on the Kind node CIDR (post-DNAT target of the
+    # kubernetes Service ClusterIP). 443 is the Service port; 6443 is the
+    # node endpoint port the DNAT resolves to.
+    - to:
+        - ipBlock:
+            cidr: 172.18.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+  policyTypes: [Egress]

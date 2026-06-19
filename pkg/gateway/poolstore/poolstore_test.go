@@ -139,6 +139,88 @@ func TestUpdateRejectsInternetEgressOnStandard(t *testing.T) {
 	}
 }
 
+// TestCreateRejectsDNSOptOutOnNonStandard covers the §13.2 cross-control:
+// only a `standard` (runc) pool may opt out of the dedicated CoreDNS
+// instance. A sandboxed or microvm pool must keep the dedicated resolver.
+// spec: 13.2 (per-pool DNS opt-out)
+func TestCreateRejectsDNSOptOutOnNonStandard(t *testing.T) {
+	for _, iso := range []isolation.Profile{isolation.ProfileSandboxed, isolation.ProfileMicrovm} {
+		s := poolstore.NewMemory()
+		err := s.Create(context.Background(), poolstore.Pool{
+			Name:             "dns-optout-" + string(iso),
+			IsolationProfile: iso,
+			DNSPolicy:        poolstore.DNSPolicyClusterDefault,
+		})
+		if err == nil {
+			t.Fatalf("dnsPolicy=cluster-default on %s isolation should be rejected (§13.2)", iso)
+		}
+	}
+}
+
+// TestCreateAdmitsDNSOptOutOnStandard covers the §13.2 opt-out happy path:
+// a runc pool may set dnsPolicy: cluster-default. Empty DNSPolicy always
+// validates and keeps the pool on the dedicated CoreDNS instance.
+// spec: 13.2 (per-pool DNS opt-out)
+func TestCreateAdmitsDNSOptOutOnStandard(t *testing.T) {
+	cases := []struct {
+		name string
+		dns  string
+	}{
+		{"cluster-default+standard", poolstore.DNSPolicyClusterDefault},
+		{"empty-dns+standard", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := poolstore.NewMemory()
+			err := s.Create(context.Background(), poolstore.Pool{
+				Name:                   "pool",
+				IsolationProfile:       isolation.ProfileStandard,
+				AllowStandardIsolation: true,
+				DNSPolicy:              tc.dns,
+			})
+			if err != nil {
+				t.Errorf("Create(%s) = %v, want success", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestCreateRejectsUnknownDNSPolicy fails closed on a mistyped DNS policy
+// rather than silently ignoring it; cluster-default is the only opt-out.
+// spec: 13.2 (per-pool DNS opt-out)
+func TestCreateRejectsUnknownDNSPolicy(t *testing.T) {
+	s := poolstore.NewMemory()
+	err := s.Create(context.Background(), poolstore.Pool{
+		Name:                   "bad-dns",
+		IsolationProfile:       isolation.ProfileStandard,
+		AllowStandardIsolation: true,
+		DNSPolicy:              "kube-system",
+	})
+	if err == nil {
+		t.Fatal("unrecognised dnsPolicy should be rejected (§13.2)")
+	}
+}
+
+// TestUpdateRejectsDNSOptOutOnNonStandard guards the §13.2 cross-control
+// on the mutate path, not just create.
+// spec: 13.2 (per-pool DNS opt-out)
+func TestUpdateRejectsDNSOptOutOnNonStandard(t *testing.T) {
+	s := poolstore.NewMemory()
+	if err := s.Create(context.Background(), poolstore.Pool{
+		Name:             "sandboxed-pool",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, err := s.Update(context.Background(), "sandboxed-pool", func(p *poolstore.Pool) error {
+		p.DNSPolicy = poolstore.DNSPolicyClusterDefault
+		return nil
+	})
+	if err == nil {
+		t.Fatal("opting a sandboxed pool out of dedicated DNS should be rejected (§13.2)")
+	}
+}
+
 func TestCreateRejectsNegativeCounts(t *testing.T) {
 	s := poolstore.NewMemory()
 	if err := s.Create(context.Background(), poolstore.Pool{Name: "a", WarmCount: -1}); err == nil {

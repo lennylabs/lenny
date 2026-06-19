@@ -101,6 +101,20 @@ type Pool struct {
 	// cross-control.
 	EgressProfile egress.Profile
 
+	// DNSPolicy is the §13.2 per-pool DNS opt-out. Empty (the default)
+	// routes the pool's pods through the dedicated lenny-system CoreDNS
+	// instance, where the WarmPoolController stamps `dnsPolicy: None`
+	// plus a `dnsConfig`. The only other accepted value is
+	// `cluster-default`: the pool's pods revert to the Kubernetes default
+	// ClusterFirst behavior and resolve through kube-system CoreDNS, and
+	// the WarmPoolController stamps the lenny.dev/dns-policy: cluster-default
+	// label so the supplemental allow-pod-egress-kube-dns NetworkPolicy
+	// admits their kube-system DNS egress. Opting out removes the dedicated
+	// instance's query logging, rate limiting, and response filtering, and
+	// is permitted only for `standard` (runc) pools per the §13.2
+	// cross-control. spec: §13.2.
+	DNSPolicy string
+
 	// CreatedAt / UpdatedAt / DeletedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -311,6 +325,47 @@ func ValidateEgressIsolation(p Pool) error {
 	}
 	if !egress.AllowsIsolation(p.EgressProfile, iso) {
 		return errors.New("poolstore: egressProfile=internet requires isolationProfile sandboxed or microvm; standard (runc) is forbidden (§13.2)")
+	}
+	return nil
+}
+
+// DNSPolicyClusterDefault is the §13.2 per-pool DNS opt-out value. A pool
+// that sets it reverts its pods to the Kubernetes default ClusterFirst
+// resolver (kube-system CoreDNS) instead of the dedicated lenny-system
+// CoreDNS instance. It is the only non-empty DNSPolicy the store accepts.
+const DNSPolicyClusterDefault = "cluster-default"
+
+// ValidateDNSPolicy enforces the §13.2 per-pool DNS opt-out admission
+// rules. An empty DNSPolicy routes the pool through the dedicated CoreDNS
+// instance and always validates. The only accepted opt-out value is
+// `cluster-default`; any other non-empty value fails closed so a mistyped
+// value is rejected rather than silently ignored. The opt-out is permitted
+// only for `standard` (runc) pools: the dedicated instance is the default
+// for every profile, and a sandboxed/microvm pool has no reason to bypass
+// its query logging, rate limiting, and response filtering.
+//
+// spec: §13.2 — "For `standard` (runc) isolation profiles, deployers may
+// explicitly opt out of the dedicated CoreDNS instance via pool
+// configuration (`dnsPolicy: cluster-default`) ... This must be a
+// conscious choice — the dedicated instance is the default for all
+// profiles."
+func ValidateDNSPolicy(p Pool) error {
+	if p.DNSPolicy == "" {
+		return nil
+	}
+	if p.DNSPolicy != DNSPolicyClusterDefault {
+		return errors.New("poolstore: dnsPolicy is not a recognised §13.2 value (only cluster-default opts out of the dedicated CoreDNS instance)")
+	}
+	// Resolve the effective isolation profile the way the admission path
+	// does: an empty profile defaults to the §5.3 production default
+	// (sandboxed), which may not opt out, so only an explicit `standard`
+	// profile is permitted to set the opt-out.
+	iso := p.IsolationProfile
+	if iso == "" {
+		iso = isolation.Default()
+	}
+	if iso != isolation.ProfileStandard {
+		return errors.New("poolstore: dnsPolicy=cluster-default requires isolationProfile standard (runc); sandboxed and microvm pools must use the dedicated CoreDNS instance (§13.2)")
 	}
 	return nil
 }
@@ -729,6 +784,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if err := ValidateEgressIsolation(p); err != nil {
 		return err
 	}
+	if err := ValidateDNSPolicy(p); err != nil {
+		return err
+	}
 	if err := ValidateServiceConfig(p); err != nil {
 		return err
 	}
@@ -822,6 +880,9 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 		return Pool{}, errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
 	}
 	if err := ValidateEgressIsolation(row); err != nil {
+		return Pool{}, err
+	}
+	if err := ValidateDNSPolicy(row); err != nil {
 		return Pool{}, err
 	}
 	if err := ValidateServiceConfig(row); err != nil {

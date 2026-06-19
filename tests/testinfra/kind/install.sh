@@ -55,6 +55,7 @@ E2E_VALUES="${REPO_ROOT}/tests/testinfra/kind/e2e-values.yaml"
 DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 MIGRATE_JOB_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/migrate-job.yaml"
 AGENT_WORKLOAD_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/agent-workload.yaml"
+APISERVER_EGRESS_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/apiserver-egress.yaml"
 CHART_DIR="${REPO_ROOT}/charts/lenny"
 
 # Fixed in-cluster data-store facts. These mirror datastores.yaml and
@@ -77,6 +78,10 @@ BINARIES=(
   lenny-preflight
   lenny-backup
   lenny-ctl
+  # §4.6.2 PoolScalingController runs as its own Deployment with a
+  # dedicated leader lease; the chart references it by image, so it must
+  # be built and loaded onto the offline Kind cluster like the rest.
+  lenny-pool-scaling-controller
   # §12.9.8 tier-9 egress-capture sidecar; the controller injects this
   # image when a Sandbox carries the egress-capture annotation.
   lenny-egress-capture
@@ -200,7 +205,117 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   done
   log "loading ${#images[@]} images onto cluster ${CLUSTER}"
   kind load docker-image --name "${CLUSTER}" "${images[@]}"
+  # External prebuilt images the chart references that install.sh does not
+  # build: the MinIO client the bucket lifecycle Job runs. Pull and load it
+  # so the offline cluster's pullPolicy: Never resolves.
+  #
+  # The §13.2 dedicated CoreDNS image (ghcr.io/lennylabs/lenny-coredns) is
+  # deliberately absent: e2e-values sets coredns.deploy=false, so the chart
+  # renders no agent-dns Deployment. The image bundles the coredns-ratelimit
+  # plugin, which has no public Go module source (github.com/coredns/ratelimit
+  # 404s on the module proxy), so build/coredns-plugins cannot build offline,
+  # and the private ghcr image cannot be pulled by the air-gapped kubelet.
+  EXTERNAL_IMAGES=(
+    "minio/mc:latest"
+  )
+  for img in "${EXTERNAL_IMAGES[@]}"; do
+    if ! docker image inspect "${img}" >/dev/null 2>&1; then
+      log "pulling external image ${img}"
+      if ! docker pull "${img}"; then
+        log "WARNING: could not pull ${img}; relying on a pre-loaded image on ${CLUSTER}"
+        continue
+      fi
+    fi
+    kind load docker-image --name "${CLUSTER}" "${img}" || \
+      log "WARNING: could not load ${img} onto ${CLUSTER}; relying on a pre-loaded image"
+  done
 fi
+
+# ---------------------------------------------------------------------
+# Step 2b: resolve the runtime image digests.
+#
+# The §13.1 admission plane requires every Runtime CR and every §17.6
+# bootstrap runtime image to be digest-pinned (`image@sha256:...`); a bare
+# `:e2e` tag is rejected with a digest-pattern error. A local `docker
+# build` assigns a fresh image id on every build, so a hardcoded digest
+# goes stale the moment the image is rebuilt and the kubelet then reports
+# ImagePullBackOff against a digest that no longer exists. install.sh
+# therefore resolves each runtime image's current id at install time with
+# `docker image inspect` and produces `<image>:<tag>@<digest>` references.
+# These references feed both the Runtime CR placeholder substitution
+# (Step 10) and the generated bootstrap overlay (Step 9), so every
+# digest-pinned reference in the install tracks the freshly-built image.
+#
+# This runs regardless of LENNY_SKIP_BUILD: the images are present in the
+# host Docker store either way (a skipped build assumes they are already
+# built and loaded), and the digests are needed for both substitution
+# paths below.
+resolve_digest() {
+  local image="$1"
+  local id
+  if ! id="$(docker image inspect "${image}" --format '{{.Id}}' 2>/dev/null)"; then
+    echo "error: cannot resolve the digest of ${image}; is it built and loaded?" >&2
+    exit 1
+  fi
+  if [[ -z "${id}" ]]; then
+    echo "error: docker image inspect returned an empty id for ${image}" >&2
+    exit 1
+  fi
+  # docker reports the id as `sha256:<hex>`, which is exactly the digest
+  # suffix the `<image>@sha256:<hex>` reference form expects.
+  printf '%s@%s' "${image}" "${id}"
+}
+
+log "resolving the runtime image digests"
+ECHO_IMAGE="$(resolve_digest "lenny-runtime-echo:${TAG}")"
+ECHO_EMBEDDED_IMAGE="$(resolve_digest "lenny-runtime-echo-embedded:${TAG}")"
+PRECONNECT_ECHO_IMAGE="$(resolve_digest "lenny-runtime-preconnect-echo:${TAG}")"
+CRED_SHELL_ECHO_IMAGE="$(resolve_digest "lenny-runtime-cred-shell-echo:${TAG}")"
+ELICITATION_ECHO_IMAGE="$(resolve_digest "lenny-runtime-elicitation-echo:${TAG}")"
+log "echo runtime image pinned to ${ECHO_IMAGE}"
+
+# ---------------------------------------------------------------------
+# Step 2c: register the digest-pinned reference in each node's containerd.
+#
+# The agent pods (and the §17.6 bootstrap runtimes) reference each runtime
+# image by its digest-pinned form `<repo>:<tag>@sha256:<id>` because the
+# §13.1 admission plane rejects a bare tag. `kind load docker-image`
+# imports the image into containerd under its tag name only, so containerd
+# has `lenny-runtime-echo:e2e` but no image named
+# `lenny-runtime-echo@sha256:<id>`. When the kubelet resolves a pod's
+# digest-pinned reference it looks up `<repo>@<digest>`, does not find it
+# locally, and with imagePullPolicy IfNotPresent falls through to a
+# registry pull that fails closed (ImagePullBackOff: the bare repo name
+# resolves to docker.io/library and the image does not exist there). The
+# id docker reports (`.Id`, the config digest) is the same value containerd
+# records as the image's OCI index digest after a `kind load` import, so
+# tagging the loaded image by its `<repo>@<id>` name on every node makes
+# the digest-pinned reference resolve from the local store without a pull.
+# This runs regardless of LENNY_SKIP_BUILD: the images are already loaded
+# either way, and re-tagging an already-tagged image is idempotent.
+log "registering digest-pinned runtime references in each node's containerd"
+RUNTIME_DIGEST_REFS=(
+  "${ECHO_IMAGE}"
+  "${ECHO_EMBEDDED_IMAGE}"
+  "${PRECONNECT_ECHO_IMAGE}"
+  "${CRED_SHELL_ECHO_IMAGE}"
+  "${ELICITATION_ECHO_IMAGE}"
+)
+for node in $(kind get nodes --name "${CLUSTER}"); do
+  for ref in "${RUNTIME_DIGEST_REFS[@]}"; do
+    # ref is `<repo>:<tag>@sha256:<id>`; the source tag is the part before
+    # `@`, and the digest-pinned target containerd needs is
+    # `docker.io/library/<repo>@sha256:<id>` (the kubelet's normalized
+    # lookup form for a bare-repo digest reference).
+    src_tag="${ref%@*}"
+    repo="${src_tag%%:*}"
+    digest="${ref#*@}"
+    docker exec "${node}" ctr -n k8s.io images tag --force \
+      "docker.io/library/${src_tag}" \
+      "docker.io/library/${repo}@${digest}" >/dev/null 2>&1 || \
+      log "WARNING: could not tag ${repo}@${digest} on ${node}; the pod may ImagePullBackOff"
+  done
+done
 
 # ---------------------------------------------------------------------
 # Step 4: create the lenny-system and monitoring namespaces.
@@ -283,6 +398,26 @@ kc -n ingress-nginx wait --for=condition=Available deploy/ingress-nginx-controll
 log "applying the in-cluster data-store manifests"
 kc apply -f "${DATASTORES_MANIFEST}"
 
+# §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+# exception to backends: embedded only; the e2e MinIO is a non-embedded
+# backend, so datastores.yaml has cert-manager issue a serving cert for the
+# lenny-minio Service DNS name and MinIO serves https on :9000. The chart
+# mounts the issuing CA into the gateway and the bucket-lifecycle Job
+# (minio.tls.caBundleConfigMap: lenny-minio-ca) and points SSL_CERT_DIR at
+# it so both verify the endpoint. Copy the cert-manager-issued ca.crt out of
+# the lenny-minio-tls Secret into that ConfigMap before the helm install.
+log "waiting for the MinIO serving certificate to be issued"
+kc -n lenny-system wait --for=condition=Ready certificate/lenny-minio-tls --timeout=120s
+log "creating the lenny-minio-ca ConfigMap from the issued CA"
+MINIO_CA_CRT="$(kc -n lenny-system get secret lenny-minio-tls -o jsonpath='{.data.ca\.crt}' | base64 -d)"
+if [ -z "${MINIO_CA_CRT}" ]; then
+  echo "error: lenny-minio-tls Secret has no ca.crt" >&2
+  exit 1
+fi
+kc -n lenny-system create configmap lenny-minio-ca \
+  --from-literal=ca.crt="${MINIO_CA_CRT}" \
+  --dry-run=client -o yaml | kc apply -f -
+
 log "waiting for the data-store deployments to become Available"
 for deploy in lenny-postgres lenny-redis lenny-minio; do
   kc -n lenny-system wait --for=condition=Available "deploy/${deploy}" --timeout=240s
@@ -321,6 +456,11 @@ if [ -z "${MINIO_POD_IP}" ]; then
   exit 1
 fi
 kc -n lenny-system delete pod lenny-e2e-minio-mb --ignore-not-found --wait=true
+# MinIO serves https on :9000 (§12.5 line 280; datastores.yaml issues the
+# cert-manager serving cert). This one-shot pod dials the MinIO pod IP, which
+# never matches the cert's DNS SAN, so mc runs with --insecure (skip TLS
+# verification). The gateway and the chart's bucket-lifecycle Job verify the
+# cert properly against the mounted CA; this throwaway bootstrap pod does not.
 kc -n lenny-system run lenny-e2e-minio-mb \
   --image=minio/mc:RELEASE.2024-09-16T17-43-14Z \
   --image-pull-policy=IfNotPresent \
@@ -330,8 +470,8 @@ kc -n lenny-system run lenny-e2e-minio-mb \
   --quiet \
   --command -- /bin/sh -c "
     set -e
-    mc alias set e2e http://${MINIO_POD_IP}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}'
-    mc mb --ignore-existing e2e/${MINIO_BUCKET}
+    mc --insecure alias set e2e https://${MINIO_POD_IP}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}'
+    mc --insecure mb --ignore-existing e2e/${MINIO_BUCKET}
   "
 log "MinIO bucket ${MINIO_BUCKET} is present"
 
@@ -347,18 +487,171 @@ log "MinIO bucket ${MINIO_BUCKET} is present"
 log "applying the lenny.dev CRDs"
 kc apply -f "${CHART_DIR}/crds/"
 
+# Generate the §17.6 bootstrap overlay with the runtime digests resolved
+# in Step 2b. The overlay carries the full bootstrap.runtimes and
+# bootstrap.pools lists; Helm replaces a list value wholesale when a later
+# -f sets it, so these lists supersede the e2e-values.yaml bootstrap block
+# (which intentionally declares neither) while the tenants/users maps there
+# deep-merge through. The runtimes are the §4.7 reference set the tier-5/8
+# sessiondriver harness drives by name plus the generic `echo` /
+# `claude-code` runtimeRefs the tier-7 scenarios post; the pools are the
+# Postgres-authoritative pool rows the PoolScalingController reconciles
+# into SandboxTemplate/SandboxWarmPool CRD pairs in lenny-agents. Each pool
+# is standard-isolation (the §13.1 Kind cluster has no Kata/microVM runtime
+# class) with allowStandardIsolation: true, the §5.3 deployer opt-in a
+# standard-isolation pool requires. Each pool also sets the §13.2 per-pool
+# DNS opt-out (dnsPolicy: cluster-default): the dedicated lenny-system
+# CoreDNS instance is disabled on this overlay (coredns.deploy=false,
+# because the lenny-coredns image is unbuildable offline), so the
+# WarmPoolController stamps the lenny.dev/dns-policy: cluster-default label
+# and the supplemental allow-pod-egress-kube-dns NetworkPolicy (rendered by
+# coredns.allowClusterDefaultOptOut in e2e-values.yaml) admits the pods'
+# kube-system DNS egress. spec: §17.6, §4.6.2, §13.1, §13.2.
+BOOTSTRAP_OVERLAY="${REPO_ROOT}/tests/testinfra/kind/bootstrap-overlay.gen.yaml"
+log "generating the bootstrap overlay with resolved runtime digests"
+cat >"${BOOTSTRAP_OVERLAY}" <<EOF
+# Generated by install.sh; do not edit. Runtime images are digest-pinned
+# to the freshly-built lenny-runtime-*:e2e images (resolved at install
+# time with docker image inspect). Regenerate by re-running install.sh.
+bootstrap:
+  runtimes:
+    # Generic runtimeRefs the tier-7 load scenarios post as session
+    # runtimeRef; both resolve to the echo image.
+    - name: echo
+      type: agent
+      image: ${ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: echo
+    - name: claude-code
+      type: agent
+      image: ${ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: claude-code
+    # The §4.7 sidecar / embedded / SDK-warm reference runtimes the
+    # tier-5/8 sessiondriver harness drives by name. The gateway runtime
+    # lookup resolves these when a test posts POST /v1/sessions with the
+    # matching runtimeRef; the Sandbox reconciler reads the same-named
+    # Runtime CR (applied from agent-workload.yaml) for the pod image.
+    - name: echo-runtime-sidecar
+      type: agent
+      image: ${ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: echo-sidecar
+    - name: echo-runtime-embedded
+      type: agent
+      image: ${ECHO_EMBEDDED_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: echo-embedded
+    # §6.1 SDK-warm runtime (capabilities.preConnect): the §6.3
+    # startup_latency benchmark's SDK-warm arm.
+    - name: preconnect-echo-runtime
+      type: agent
+      image: ${PRECONNECT_ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      capabilities:
+        preConnect: true
+      labels:
+        lenny.dev/e2e: preconnect-echo
+    - name: cred-shell-echo-runtime
+      type: agent
+      image: ${CRED_SHELL_ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: cred-shell-echo
+    - name: elicitation-echo-runtime
+      type: agent
+      image: ${ELICITATION_ECHO_IMAGE}
+      integrationLevel: standard
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: elicitation-echo
+  pools:
+    # §6.3 pod-warm arm: a standard/session pool backed by the sidecar
+    # echo runtime. warmCount is 6 (not 1) so the §6.3 startup benchmark's
+    # 2-VU smoke run finds an idle pod on every claim. Each iteration
+    # claims a pod and terminates the session to release it, but on Kind a
+    # released pod takes several seconds to scrub and return to idle and a
+    # warmCount-1 pool refills a freshly-created replacement just as
+    # slowly, so a single warm pod exhausts within the first burst and ~96%
+    # of POST /v1/sessions/start calls fail with no-idle-pod. A depth of 6
+    # holds enough idle inventory to absorb the in-flight claims plus the
+    # refill lag; the echo pods request ~128Mi each, well within the Kind
+    # nodes' headroom.
+    - name: echo-pool-sidecar
+      runtimeRef: echo-runtime-sidecar
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 6
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+    - name: echo-pool-embedded
+      runtimeRef: echo-runtime-embedded
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 1
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+    # §6.3 SDK-warm arm: the preconnect runtime drives the warming ->
+    # sdk_connecting -> idle path. warmCount is 6 for the same reason as
+    # echo-pool-sidecar above: the benchmark's 2-VU smoke run exhausts a
+    # single warm pod, and the SDK-warm refill (warming -> sdk_connecting
+    # -> idle) is slower still, so the depth keeps an idle pod available
+    # for every claim.
+    - name: preconnect-echo-pool
+      runtimeRef: preconnect-echo-runtime
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 6
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+    - name: cred-shell-echo-pool
+      runtimeRef: cred-shell-echo-runtime
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 1
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+    - name: elicitation-echo-pool
+      runtimeRef: elicitation-echo-runtime
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 1
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+EOF
+
 # --server-side=false forces client-side apply. Helm 4 defaults to
 # server-side apply, whose strict (containerPort, protocol) list-map key
 # rejects the chart's named http+metrics ports sharing one containerPort
 # (§16.9 line 723); helm 3 used client-side apply and tolerated it. The
 # Kind e2e pins client-side apply so it installs identically under helm 3
 # and helm 4 without depending on the chart's server-side-apply posture.
+# The generated bootstrap overlay is passed last so its bootstrap.runtimes
+# and bootstrap.pools lists win over the e2e-values.yaml bootstrap block.
 if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; then
   log "Helm release lenny is already installed in lenny-system; upgrading"
   helm upgrade lenny "${CHART_DIR}" \
     -n lenny-system \
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
+    -f "${BOOTSTRAP_OVERLAY}" \
     --server-side=false \
     --timeout 420s
 else
@@ -367,32 +660,79 @@ else
     -n lenny-system \
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
+    -f "${BOOTSTRAP_OVERLAY}" \
     --server-side=false \
     --timeout 420s
 fi
 
+# The §4.6.2 PoolScalingController's egress to the kube-apiserver, PgBouncer,
+# and kube-system CoreDNS is now admitted by the chart's
+# allow-pool-scaling-controller-egress NetworkPolicy (rendered when
+# postgres.dsn is set, which the e2e overlay sets), so no test-infra
+# PSC-egress manifest is applied here. On Kind the apiserver dial additionally
+# needs the post-DNAT node-CIDR egress that allow-lenny-system-apiserver-egress
+# below admits for every lenny-system pod, and the PSC reaches the in-cluster
+# Postgres datastore through allow-egress-to-e2e-datastores in datastores.yaml.
+
+# Admit lenny-system egress to the Kind kube-apiserver. kindnet evaluates
+# the egress NetworkPolicy against the post-DNAT destination, so the chart
+# policies' service-CIDR ipBlock (10.96.0.0/12, covering the kubernetes
+# Service ClusterIP) does not match the apiserver's real endpoint on the
+# `kind` Docker bridge network (172.18.0.0/16). Without this the gateway's
+# per-session SandboxClaim write times out and POST /v1/sessions/start
+# returns 503 SESSION_CREATION_FAILED. The manifest is test-infra-only, so
+# it does not alter the production chart rendering.
+log "applying the kube-apiserver egress NetworkPolicy"
+kc apply -f "${APISERVER_EGRESS_MANIFEST}"
+
+# Wait for the core control-plane pods to become Ready. The dedicated
+# §13.2 CoreDNS instance is disabled on this overlay (e2e-values sets
+# coredns.deploy=false), so no lenny.dev/component: coredns pods are
+# rendered; the Ready wait covers the gateway, controller, token-service,
+# and webhooks. The component!=coredns selector clause is retained as a
+# guard so a future re-enable of the dedicated instance does not silently
+# block the install on a CoreDNS image gap.
 log "waiting for the lenny-system control-plane pods to become Ready"
 kc -n lenny-system wait --for=condition=Ready pod \
-  -l app.kubernetes.io/name=lenny \
+  -l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns \
   --timeout=300s
 
 # ---------------------------------------------------------------------
-# Step 10: apply the agent-pod workload.
+# Step 10: apply the agent Runtime CRs and wait for the warm pods.
 #
-# agent-workload.yaml defines two SandboxWarmPools that exercise the
-# two §4.7 deployment models: echo-pool-sidecar runs the runtime in a
-# separate container bridged to the adapter over an abstract Unix
-# socket, and echo-pool-embedded runs one container whose image embeds
-# the adapter. The WarmPoolController reconciles each pool and the
-# Sandbox reconciler produces real agent pods in lenny-agents, so the
-# tier-5/8/9 tests that need a live agent pod run against a real
-# workload rather than skipping. The chart's agent-namespaces template
-# creates the lenny-agents namespace this workload lands in.
+# agent-workload.yaml defines the §4.7 reference Runtime CRs and the runc
+# RuntimeClass. The pools themselves are Postgres-authoritative: the §17.6
+# bootstrap.pools list seeded through the chart (Step 9) creates the pool
+# rows, and the PoolScalingController reconciles each into a
+# SandboxTemplate + SandboxWarmPool CRD pair in lenny-agents. The Sandbox
+# reconciler reads each pool's Runtime CR spec.image to build the warm
+# agent pods, so the tier-5/8/9 tests that need a live agent pod run
+# against a real workload rather than skipping. The chart's
+# agent-namespaces template creates the lenny-agents namespace.
+#
+# The Runtime CR images carry __*_IMAGE__ placeholders so the manifest
+# never embeds a stale digest. Substitute the digests resolved in Step 2b
+# before applying; the §13.1 admission plane rejects a bare :e2e tag, so
+# every image must be the pinned image:e2e@sha256:<digest> form.
 # ---------------------------------------------------------------------
-log "applying the agent-pod workload"
-kc apply -f "${AGENT_WORKLOAD_MANIFEST}"
+log "applying the agent Runtime CRs (digest-pinned)"
+sed \
+  -e "s|__ECHO_IMAGE__|${ECHO_IMAGE}|g" \
+  -e "s|__ECHO_EMBEDDED_IMAGE__|${ECHO_EMBEDDED_IMAGE}|g" \
+  -e "s|__PRECONNECT_ECHO_IMAGE__|${PRECONNECT_ECHO_IMAGE}|g" \
+  -e "s|__CRED_SHELL_ECHO_IMAGE__|${CRED_SHELL_ECHO_IMAGE}|g" \
+  -e "s|__ELICITATION_ECHO_IMAGE__|${ELICITATION_ECHO_IMAGE}|g" \
+  "${AGENT_WORKLOAD_MANIFEST}" | kc apply -f -
 
-log "waiting for the agent pods to become Ready"
+# The pools reach Postgres only after the post-install lenny-bootstrap Job
+# runs, and the PoolScalingController then reconciles them into CRDs and
+# the warm pods are created and pass their readiness probe. That whole
+# chain runs asynchronously after `helm install` returns, so poll for the
+# warm pods rather than expecting them immediately. The §6.3 startup
+# benchmark needs the echo-pool-sidecar (pod-warm) and preconnect-echo-pool
+# (SDK-warm) pods, so wait for at least two managed pods before the Ready
+# wait.
+log "waiting for the warm agent pods to appear (pools warm asynchronously)"
 for _ in $(seq 1 60); do
   running="$(kc -n lenny-agents get pods -l lenny.dev/managed=true \
     --no-headers 2>/dev/null | grep -c '.' || true)"
@@ -401,9 +741,9 @@ for _ in $(seq 1 60); do
 done
 if ! kc -n lenny-agents wait --for=condition=Ready pod \
   -l lenny.dev/managed=true --timeout=180s; then
-  log "the agent pods did not become Ready; dumping their state"
-  kc -n lenny-agents get pods -o wide || true
-  echo "error: the agent-pod workload did not become Ready" >&2
+  log "the warm agent pods did not become Ready; dumping their state"
+  kc -n lenny-agents get sandboxwarmpool,pods -o wide || true
+  echo "error: the warm agent pods did not become Ready" >&2
   exit 1
 fi
 

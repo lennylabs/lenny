@@ -321,3 +321,48 @@ func TestPoolStoreSourceMirrorsNonceOnlyAck(t *testing.T) {
 		t.Errorf("no-ack template acknowledgeNonceOnlyAuth = %v (present=%v), want false", got, ok)
 	}
 }
+
+// TestPoolStoreSourceMirrorsDNSPolicy verifies the §13.2 per-pool DNS
+// opt-out flows from the store row onto SandboxTemplate.spec.dnsPolicy so
+// the WarmPoolController stamps the lenny.dev/dns-policy: cluster-default
+// label and the supplemental allow-pod-egress-kube-dns NetworkPolicy
+// selects the pool's pods. A pool with no opt-out maps to an empty
+// dnsPolicy and stays on the dedicated CoreDNS instance.
+//
+// spec: 13.2 (per-pool DNS opt-out)
+func TestPoolStoreSourceMirrorsDNSPolicy(t *testing.T) {
+	store := newMemoryStore(
+		t,
+		poolstore.Pool{
+			Name:                   "dns-optout",
+			RuntimeRef:             "echo-runtime",
+			IsolationProfile:       isolation.ProfileStandard,
+			AllowStandardIsolation: true,
+			ExecutionMode:          runtimestore.ExecutionModeSession,
+			WarmCount:              1,
+			DNSPolicy:              poolstore.DNSPolicyClusterDefault,
+		},
+		poolstore.Pool{
+			Name:             "dns-dedicated",
+			RuntimeRef:       "echo-runtime",
+			IsolationProfile: isolation.ProfileSandboxed,
+			ExecutionMode:    runtimestore.ExecutionModeSession,
+			WarmCount:        1,
+		},
+	)
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	byName := map[string]string{}
+	for _, c := range configs {
+		byName[c.Name] = c.Template.DNSPolicy
+	}
+	if got := byName["dns-optout"]; got != poolstore.DNSPolicyClusterDefault {
+		t.Errorf("dns-optout template dnsPolicy = %q, want %q", got, poolstore.DNSPolicyClusterDefault)
+	}
+	if got := byName["dns-dedicated"]; got != "" {
+		t.Errorf("dns-dedicated template dnsPolicy = %q, want empty (dedicated instance)", got)
+	}
+}

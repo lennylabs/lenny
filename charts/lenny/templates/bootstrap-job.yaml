@@ -64,6 +64,12 @@ spec:
           args:
             - --api-url
             - "{{ $gateway }}"
+            # Per-request HTTP timeout for the bootstrap POST. The seed
+            # upsert can exceed the lenny-ctl 30s default on a cold
+            # gateway with a slow first database connection; a too-short
+            # timeout cancels the request mid-write. spec: §17.6.
+            - --timeout
+            - "{{ int $b.requestTimeoutSeconds }}"
             {{- if $useBearer }}
             - --bearer-file
             - /var/run/lenny/operator-token/{{ $tokenSecret.key }}

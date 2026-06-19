@@ -105,6 +105,86 @@ func TestEnsureWarmWorkspaceLayout_RootModeReadable(t *testing.T) {
 	}
 }
 
+// TestChmodWarmDir_AlreadyCorrectModeIsNoop verifies chmodWarmDir
+// succeeds when the directory already carries the requested mode, the
+// common case for a kubelet-created emptyDir mountpoint the non-root
+// adapter UID does not own. spec: §6.4 line 409 — F-6.4.3.
+func TestChmodWarmDir_AlreadyCorrectModeIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, warmSharedMode); err != nil {
+		t.Fatalf("seed mode: %v", err)
+	}
+	if err := chmodWarmDir(dir, warmSharedMode); err != nil {
+		t.Fatalf("chmodWarmDir on a correctly-moded dir: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != warmSharedMode {
+		t.Fatalf("mode = %o, want %o", got, warmSharedMode)
+	}
+}
+
+// TestChmodWarmDir_RaisesInadequateMode verifies chmodWarmDir lifts a
+// directory whose mode is missing the requested bits up to the requested
+// mode when the chmod is permitted (the adapter owns a dir it created with
+// a restrictive umask). spec: §6.4 line 409 — F-6.4.3.
+func TestChmodWarmDir_RaisesInadequateMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("seed restrictive mode: %v", err)
+	}
+	if err := chmodWarmDir(dir, warmSharedMode); err != nil {
+		t.Fatalf("chmodWarmDir: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != warmSharedMode {
+		t.Fatalf("mode = %o, want %o", got, warmSharedMode)
+	}
+}
+
+// TestChmodWarmDir_DeniedButAdequateModeTolerated verifies the EPERM
+// tolerance branch directly: when the chmod returns a permission error
+// (the non-root adapter UID does not own the kubelet-created mountpoint)
+// but the directory already grants the requested bits, chmodWarmDir
+// returns nil rather than crashing the adapter (and the runtime that dials
+// its socket). os.Chmod cannot be forced to return EPERM portably from a
+// non-root unit test without ownership manipulation, so the branch is
+// driven through chmodWarmDirWith, which injects the chmod result.
+// spec: §6.4 line 409 — F-6.4.3.
+func TestChmodWarmDir_DeniedButAdequateModeTolerated(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, warmSharedMode); err != nil {
+		t.Fatalf("seed adequate mode: %v", err)
+	}
+	denied := func(string, os.FileMode) error { return os.ErrPermission }
+	if err := chmodWarmDirWith(dir, warmSharedMode, denied); err != nil {
+		t.Fatalf("chmodWarmDirWith tolerating a benign EPERM: %v", err)
+	}
+
+	// A denial on a directory whose mode is still inadequate is fatal: the
+	// runtime would not be able to traverse it.
+	restrictive := t.TempDir()
+	if err := os.Chmod(restrictive, 0o700); err != nil {
+		t.Fatalf("seed restrictive mode: %v", err)
+	}
+	if err := chmodWarmDirWith(restrictive, warmSharedMode, denied); err == nil {
+		t.Fatal("chmodWarmDirWith should fail when the denied dir lacks the required bits")
+	}
+
+	// EROFS is tolerated the same way: an embedded/SDK-warm runtime mounts
+	// /workspace/shared read-only, so its chmod of the already-populated
+	// shared tree hits a read-only file system. spec: §6.4 line 409.
+	readonly := func(string, os.FileMode) error { return syscall.EROFS }
+	if err := chmodWarmDirWith(dir, warmSharedMode, readonly); err != nil {
+		t.Fatalf("chmodWarmDirWith tolerating a benign EROFS: %v", err)
+	}
+}
+
 // TestEnsureWarmWorkspaceLayout_PopulatesSharedAssets verifies the §6.4
 // line 409 read-only shared-asset tree is created and populated before
 // the pod is claimed: the directory exists at a runtime-readable mode and

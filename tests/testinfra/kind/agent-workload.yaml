@@ -1,217 +1,133 @@
 # SPDX-License-Identifier: MIT
 #
-# Agent-pod workloads for the tier-5/8/9 e2e suite. install.sh applies
-# this after the Lenny chart so the WarmPoolController has pools to
-# reconcile and the Sandbox reconciler produces real agent pods in the
-# lenny-agents namespace.
+# Runtime CRs and the runc RuntimeClass for the tier-5/8/9 e2e suite.
+# install.sh applies this after the Lenny chart.
 #
-# Two pools exercise the two §4.7 deployment models: echo-pool-sidecar
-# runs the runtime in a separate container that bridges the §15.4.1
-# JSONL framing to the adapter over an abstract Unix socket;
-# echo-pool-embedded runs a single container whose runtime image embeds
-# the adapter and serves the gRPC contract directly.
+# Pools (SandboxTemplate + SandboxWarmPool) are NOT defined here. The
+# admission plane treats §5.2 pools as Postgres-authoritative: the
+# pool-config-validator webhook rejects any manual kubectl write to a
+# SandboxTemplate or SandboxWarmPool with UNAUTHORIZED_POOL_CONFIG_WRITE,
+# because only the §4.6.2 PoolScalingController service account may
+# create them. The pools are therefore seeded into Postgres through the
+# §17.6 bootstrap.pools list in e2e-values.yaml; the PoolScalingController
+# reconciles each Postgres pool row into its SandboxTemplate +
+# SandboxWarmPool CRD pair, keyed by pool name, in the lenny-agents
+# namespace. The Sandbox reconciler then produces real agent pods so the
+# tier-5/8/9 tests that need a live agent pod run against a real workload.
 #
-# The Sandbox reconciler stamps runtimeClassName onto every agent pod
-# from the §5.3 isolation profile (standard -> runc). Kind nodes run
-# containerd whose default handler is runc, but no RuntimeClass object
-# named runc exists by default, so this RuntimeClass maps the standard
-# profile onto the node's stock runc handler.
+# The Runtime CRs below stay kubectl-applied: the Sandbox reconciler reads
+# the Runtime CR's spec.image to build each agent pod (§4.7), so the
+# digest-pinned image must exist as a Kubernetes object. The Runtime CRD
+# is not gated by the pool-config-validator webhook (only SandboxTemplate
+# and SandboxWarmPool are); the §13.1 admin/CRD digest requirement is what
+# rejects a bare :e2e tag. install.sh therefore substitutes each
+# __*_IMAGE__ placeholder below with the runtime image's current
+# `image:e2e@sha256:<digest>` reference (resolved with `docker image
+# inspect`) before `kubectl apply`, so the reference is always pinned to
+# the freshly-built image rather than a stale hardcoded digest.
+#
+# The Sandbox reconciler stamps runtimeClassName onto every agent pod from
+# the §5.3 isolation profile (standard -> runc). Kind nodes run containerd
+# whose default handler is runc, but no RuntimeClass object named runc
+# exists by default, so this RuntimeClass maps the standard profile onto
+# the node's stock runc handler.
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
   name: runc
 handler: runc
 ---
+# §4.7 sidecar deployment model: cmd/runtimes/echo is a stdin/stdout JSONL
+# exec target and the lenny-adapter sidecar bridges it over an abstract
+# Unix socket. Backs the pod-warm echo-pool-sidecar pool.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: echo-runtime-sidecar
 spec:
   type: agent
-  image: lenny-runtime-echo:e2e
+  image: __ECHO_IMAGE__
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
   deploymentModel: sidecar
 ---
+# §4.7 embedded deployment model: cmd/runtimes/echo-embedded links the
+# adapter into one container that serves the gRPC contract directly. Backs
+# the echo-pool-embedded pool.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: echo-runtime-embedded
 spec:
   type: agent
-  image: lenny-runtime-echo-embedded:e2e
+  image: __ECHO_EMBEDDED_IMAGE__
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
   deploymentModel: embedded
 ---
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
-metadata:
-  name: echo-template-sidecar
-  namespace: lenny-agents
-spec:
-  runtimeRef: echo-runtime-sidecar
-  isolationProfile: standard
-  executionMode: session
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
-metadata:
-  name: echo-template-embedded
-  namespace: lenny-agents
-spec:
-  runtimeRef: echo-runtime-embedded
-  isolationProfile: standard
-  executionMode: session
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
-metadata:
-  name: echo-pool-sidecar
-  namespace: lenny-agents
-spec:
-  templateRef: echo-template-sidecar
-  minWarm: 1
-  maxWarm: 2
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
-metadata:
-  name: echo-pool-embedded
-  namespace: lenny-agents
-spec:
-  templateRef: echo-template-embedded
-  minWarm: 1
-  maxWarm: 2
----
 # §6.1 SDK-warm reference runtime. preconnect-echo declares
 # capabilities.preConnect, so the WarmPoolController warms its pods
-# through the warming → sdk_connecting → idle path and the gateway drives
+# through the warming -> sdk_connecting -> idle path and the gateway drives
 # them via ConfigureWorkspace / DemoteSDK. The §6.3 startup_latency
-# benchmark drives a session against this pool as the SDK-warm arm and
-# against echo-pool-sidecar as the pod-warm arm, on the runc/standard
-# class the Kind cluster carries. spec: §6.1, §6.3.
+# benchmark drives a session against the preconnect-echo-pool as the
+# SDK-warm arm and against echo-pool-sidecar as the pod-warm arm, on the
+# runc/standard class the Kind cluster carries. spec: §6.1, §6.3.
+#
+# deploymentModel is embedded: cmd/runtimes/preconnect-echo links the
+# adapter into its own process and serves the adapter gRPC contract on
+# :50051 directly (the same single-container embedded model as
+# echo-runtime-embedded). Declaring it sidecar makes the Sandbox reconciler
+# inject a separate lenny-adapter container that also binds :50051, so the
+# embedded runtime fails with "address already in use" and the pod never
+# becomes Ready. spec: §4.7.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: preconnect-echo-runtime
 spec:
   type: agent
-  image: lenny-runtime-preconnect-echo:e2e
+  image: __PRECONNECT_ECHO_IMAGE__
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
-  deploymentModel: sidecar
+  deploymentModel: embedded
   capabilities:
     preConnect: true
 ---
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
-metadata:
-  name: preconnect-echo-template
-  namespace: lenny-agents
-spec:
-  runtimeRef: preconnect-echo-runtime
-  isolationProfile: standard
-  executionMode: session
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
-metadata:
-  name: preconnect-echo-pool
-  namespace: lenny-agents
-spec:
-  templateRef: preconnect-echo-template
-  minWarm: 1
-  maxWarm: 2
----
 # §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
-# image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ
-# works, and the runtime declares credentialPoolRefs so the §4.9
-# credential delivery path actually runs against it. Production
-# installs reject this runtime via the lenny-pod-security webhook;
-# the e2e overlay deploys it explicitly for the tier-9 scaffolds.
+# image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ works.
+# cred-shell-echo is a stdin/stdout §15.4.1 binary (it does not link the
+# adapter), so the §4.7 sidecar deployment model is the correct fit: the
+# lenny-adapter sidecar serves the gRPC contract and bridges to
+# cred-shell-echo over the abstract Unix socket. Production installs reject
+# this runtime via the lenny-pod-security webhook; the e2e overlay deploys
+# it explicitly for the tier-9 scaffolds.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: cred-shell-echo-runtime
 spec:
   type: agent
-  image: lenny-runtime-cred-shell-echo:e2e
+  image: __CRED_SHELL_ECHO_IMAGE__
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
-  # cred-shell-echo is a stdin/stdout §15.4.1 binary (it does not
-  # link the adapter), so the §4.7 sidecar deployment model is the
-  # correct fit: the lenny-adapter sidecar serves the gRPC contract
-  # and bridges to cred-shell-echo over the abstract Unix socket.
-  # The egress-capture sidecar (Step 2 §12.9.8) is injected by the
-  # reconciler alongside the adapter + runtime pair.
   deploymentModel: sidecar
 ---
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
-metadata:
-  name: cred-shell-echo-template
-  namespace: lenny-agents
-  # §12.9.8 tier-9 opt-in: every pod warmed from this template carries
-  # the lenny-egress-capture sidecar that records every outbound
-  # connection's SHA-256 hash to a JSONL file. The §12.9.8 probe
-  # reads the file via `kubectl exec` and asserts no credential
-  # string appears in egress. The Sandbox reconciler propagates this
-  # annotation to each warmed Sandbox; the §12.9.8 sidecar is
-  # injected by the reconciler's resolveEgressCapture path.
-  annotations:
-    lenny.dev/test-egress-capture-upstream: "echo.example.com:443"
-spec:
-  runtimeRef: cred-shell-echo-runtime
-  isolationProfile: standard
-  executionMode: session
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
-metadata:
-  name: cred-shell-echo-pool
-  namespace: lenny-agents
-spec:
-  templateRef: cred-shell-echo-template
-  minWarm: 1
-  maxWarm: 1
----
 # §9.2 tier-9 tamper-detect probe runtime. The elicitation-echo
-# Standard-level runtime calls lenny/request_elicitation on every
-# inbound message so the §9.2 chain walker exercises the
-# tamper-detect path end to end.
+# Standard-level runtime calls lenny/request_elicitation on every inbound
+# message so the §9.2 chain walker exercises the tamper-detect path end to
+# end.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
   name: elicitation-echo-runtime
 spec:
   type: agent
-  image: lenny-runtime-elicitation-echo:e2e
+  image: __ELICITATION_ECHO_IMAGE__
   integrationLevel: standard
   executionMode: session
   isolationProfile: standard
   deploymentModel: sidecar
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
-metadata:
-  name: elicitation-echo-template
-  namespace: lenny-agents
-spec:
-  runtimeRef: elicitation-echo-runtime
-  isolationProfile: standard
-  executionMode: session
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
-metadata:
-  name: elicitation-echo-pool
-  namespace: lenny-agents
-spec:
-  templateRef: elicitation-echo-template
-  minWarm: 1
-  maxWarm: 1

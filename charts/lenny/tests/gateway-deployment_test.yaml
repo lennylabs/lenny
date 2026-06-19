@@ -89,13 +89,21 @@ tests:
       path: kind
       value: Deployment
     asserts:
+      # spec: §13.2 credential-delivery primitive. The cert mounts 0440
+      # (group-readable) paired with the pod fsGroup 65532 below so the
+      # non-root distroless gateway can read it; a root-owned 0400 cert
+      # would be unreadable under runAsNonRoot and break the §10.3 mTLS
+      # dial. This is the production mode (devMode unset).
       - contains:
           path: spec.template.spec.volumes
           content:
             name: lenny-gateway-tls
             secret:
               secretName: lenny-gateway-tls
-              defaultMode: 0400
+              defaultMode: 0440
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 65532
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
@@ -111,6 +119,29 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --token-service-ca=/etc/lenny/mtls/ca.crt
+
+  # spec: §13.2 credential-delivery primitive. The cert mount mode (0440)
+  # and the pod fsGroup (65532) are unconditional, so the non-root
+  # distroless gateway reads the cert in dev mode too — they are not gated
+  # on global.devMode. A regression that re-gated them would mount a
+  # root-owned 0400 cert in production and break the §10.3 mTLS dial.
+  - it: mounts the mTLS cert 0440 with fsGroup in dev mode too
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-gateway-tls
+            secret:
+              secretName: lenny-gateway-tls
+              defaultMode: 0440
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 65532
 
   # spec: §4.3 line 195 / §10.3 — when mtls.enabled=false the chart
   # skips the volume mount and the --token-service-tls-* flags so the
@@ -2483,6 +2514,60 @@ tests:
                 name: lenny-datastore-conn
                 key: minio-secret-key
 
+  # spec: §12.5 — minio.tls.caBundleConfigMap names a ConfigMap (key ca.crt)
+  # the chart mounts into the gateway and points SSL_CERT_DIR at, so the
+  # Go minio-go client verifies a self-managed MinIO HTTPS endpoint whose CA
+  # is outside the system trust store. The volume renders independently of
+  # mtls.enabled.
+  - it: mounts the MinIO CA bundle and sets SSL_CERT_DIR when caBundleConfigMap is set
+    set:
+      mtls.enabled: false
+      minio.endpoint: "lenny-minio.lenny-system.svc:9000"
+      minio.accessKey: "ak"
+      minio.secretKey: "sk"
+      minio.bucket: "lenny-artifacts"
+      minio.tls.caBundleConfigMap: lenny-minio-ca
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-minio-ca
+            mountPath: /etc/lenny/minio-ca
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-minio-ca
+            configMap:
+              name: lenny-minio-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt
+
+  - it: omits the MinIO CA bundle mount when caBundleConfigMap is unset
+    set:
+      minio.endpoint: "lenny-minio.lenny-system.svc:9000"
+      minio.accessKey: "ak"
+      minio.secretKey: "sk"
+      minio.bucket: "lenny-artifacts"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca
+
   - it: omits the playground flags when the playground is disabled
     documentSelector:
       path: kind
@@ -2660,7 +2745,7 @@ tests:
             name: lenny-gateway-tls
             secret:
               secretName: lenny-gateway-tls
-              defaultMode: 0400
+              defaultMode: 0440
       - contains:
           path: spec.template.spec.volumes
           content:
