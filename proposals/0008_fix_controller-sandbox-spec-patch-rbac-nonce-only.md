@@ -1,6 +1,6 @@
 # Proposal: Controller `patch` grant on the `Sandbox` main resource for the §4.7 nonce-only carrier write
 
-- **Status:** Approved (2026-06-19). Verified and converged after 2 adversarial review rounds (0 findings fixed); awaiting implementation via implement-proposal.
+- **Status:** Applied to spec (2026-06-19). Verified and converged after 2 adversarial review rounds (0 findings fixed).
 - **Date:** 2026-06-19.
 - **Scope:** Reconciles the §4.6.3 RBAC paragraph and the controller chart RBAC to the implemented §4.7 nonce-only surfacing mechanism. The WarmPoolController owns `Sandbox.spec.*` (§4.6.3 ownership table) and records the nonce-only render decision on `Sandbox.spec.requireSoPeercred` via Server-Side Apply, which issues an HTTP PATCH and therefore requires the `patch` verb on the `Sandbox` main resource. The spec RBAC paragraph and the chart grant `create`/`update`/`delete` but not `patch` on `Sandbox`, so the carrier write is forbidden and the §4.7 `PoolSecurityDegraded` alert never fires for a pool running with `SO_PEERCRED` disabled. The fix adds `patch` to the controller's `sandboxes` rule, reconciles the spec paragraph, and updates the chart RBAC unit test.
 
