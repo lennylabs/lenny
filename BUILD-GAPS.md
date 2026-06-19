@@ -5225,7 +5225,7 @@ The spec author distinguishes "indicative planning targets" from "SLOs in any ca
 
 - **DEFERRED — NEEDS-OPERATOR (this batch).** The promotion gate this Info finding observes ("validated P50/P95/P99 across runc/**gVisor**/**Kata**" + Phase 2 exit-gate ADR) is gated on the same blocker as F-6.3.5/F-6.3.10: gVisor- and Kata-enabled host RuntimeClasses to measure the per-runtime-class SLOs, which are not present or locally substitutable on this host. `NEEDS-OPERATOR:` gVisor-enabled and Kata-enabled host RuntimeClasses. Heading OPEN → DEFERRED; clears with F-6.3.5.
 
-### - [ ] F-6.3.21 — The SDK-warm side of the spec's per-runtime budget table is unobservable in two compounding ways [Info] — DEFERRED
+### - [x] F-6.3.21 — The SDK-warm side of the spec's per-runtime budget table is unobservable in two compounding ways [Info] — CLOSED
 
 §6.3 line 334–339 enumerates SDK-warm hot-path phases (pod claim, routing, file upload, workspace materialization, setup, first prompt — agent session start removed). The SDK-warm path itself is unimplemented (per `6.1.md` H-1) and per-runtime-class telemetry is missing (H-1 here). So §6.3's claim that SDK-warm "eliminates agent session start latency" cannot be validated empirically by Lenny.
 
@@ -5234,6 +5234,15 @@ The spec author distinguishes "indicative planning targets" from "SLOs in any ca
 **Heading reconciled 2026-06-08 (stale-OPEN → DEFERRED; Rule N re-verified).** F-6.1.1 has since CLOSED and the demotion-side telemetry it unblocked landed (F-6.3.6 wired `lenny_warmpool_claims_total`; F-6.3.8 wired `lenny_warmpool_sdk_demotion_duration_seconds`). The remaining gap this Info finding names is "the SDK-warm side is **unobservable** ... cannot be validated empirically by Lenny" — empirical validation is the §6.3 promotion-gate benchmark that depends on the same cluster-resident load harness as the duplicate F-6.3.10/F-6.3.5 (the histogram is structured to carry SDK-warm observations, but no controlled-load run drives it under a real runtime class without a cluster). Re-DEFERRED on the cluster-resident benchmark harness, tracked with F-6.3.10.
 
 **DEFERRED — NEEDS-OPERATOR (this batch).** Empirical validation of the SDK-warm budget table "per runtime" needs the per-runtime-class benchmark gated on gVisor- and Kata-enabled host RuntimeClasses (see F-6.3.5/F-6.3.10), absent and not locally substitutable here. `NEEDS-OPERATOR:` gVisor-enabled and Kata-enabled host RuntimeClasses. Heading OPEN → DEFERRED; clears with F-6.3.10.
+
+**Resolution (verify-close 2026-06-19).** This finding said "clears with F-6.3.10"; F-6.3.10 (and its duplicate F-6.3.5) have since CLOSED via proposal `0006_build_startup-benchmark-per-runtime-class.md`, so it clears now. Both code-side causes the title names are resolved:
+
+- *SDK-warm path unimplemented* — F-6.1.1 is CLOSED; the `preconnect-echo` (SDK-warm) and `echo` (pod-warm) reference runtimes both exist and the `warming → sdk_connecting → idle` driver is built.
+- *Per-runtime-class telemetry missing* — `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` is declared (`pkg/gateway/gatewaymetrics/gatewaymetrics.go:1595`) and emitted in production by `recordStartupPhases` (`pkg/gateway/sessionserver/start.go:2312`), with `runtime_class` derived from the §5.3 isolation profile. The SDK-warm path rides the same emit code, so the histogram carries SDK-warm observations as the finding predicted. The benchmark harness now drives the pod-warm vs SDK-warm split per runtime class — `tests/tier12_load_cloud/session_startup_latency_test.go` runs runc/gVisor/Kata SDK-warm arms (`LENNY_WARMING_MODEL=sdk_warm` + `LENNY_RUNTIME_CLASS`) and records claim-to-ready P95.
+
+The production histogram carries no `warming_model` label, which is spec-correct: §6.3 lines 350 and 352 define the metric as `{phase, runtime_class}` (the only two labels; `warming_model` appears nowhere in `spec/`), and §6.3 line 352 assigns the pod-warm vs SDK-warm measurement to the Phase 2 benchmark harness rather than to a production label. The split lives in the harness arms (which control the pool and warming model), exactly where the spec puts it; adding a label would deviate from §16.1.
+
+The sole residual is the empirical RUN of the gVisor and Kata SDK-warm arms on operator-provisioned node pools (gVisor node pool; Kata nested-virt node pool) plus the Phase 2 exit-gate ADR — the arms `t.Skipf("NEEDS-OPERATOR: ...")` when the class is absent from `LENNY_BENCH_RUNTIME_CLASSES` (`session_startup_latency_test.go:72`). That residual is identical to the one F-6.3.5/F-6.3.10 carried forward when they closed, so it is tracked there rather than held open separately here. Closed on the same resolved-by-harness basis as F-6.3.5/F-6.3.10. Heading DEFERRED → CLOSED.
 
 ### - [x] F-6.3.22 — The `tests/tier7_load/scenarios/startup_latency/main.go` `scenarioVersion = "0.2.0-phase2"` suggests scope expansion is planned [Info] — CLOSED
 
