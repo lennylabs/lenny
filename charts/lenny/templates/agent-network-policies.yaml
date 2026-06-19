@@ -97,6 +97,14 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+  # spec: §13.2 — allow-pod-egress-base must NOT permit a kube-system
+  # CoreDNS fallback. The base policy's podSelector is the broad
+  # lenny.dev/managed: "true" selector, so a kube-system DNS peer here
+  # would grant every managed agent pod a permitted egress path to
+  # kube-system CoreDNS, bypassing the dedicated instance's query
+  # logging, rate limiting, and response filtering. The §13.2 opt-out
+  # fallback is the separate allow-pod-egress-kube-dns policy below,
+  # scoped to lenny.dev/dns-policy: cluster-default.
   policyTypes: [Egress]
 ---
 apiVersion: networking.k8s.io/v1

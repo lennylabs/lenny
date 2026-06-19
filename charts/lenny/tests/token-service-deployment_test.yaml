@@ -207,19 +207,50 @@ tests:
       path: kind
       value: Deployment
     asserts:
+      # spec: §13.2 credential-delivery primitive. The cert mounts 0440
+      # (group-readable) paired with the pod fsGroup 65532 so the non-root
+      # distroless Token Service can read it; a root-owned 0400 cert would
+      # be unreadable under runAsNonRoot and break the §10.3 mTLS listener.
+      # This is the production mode (devMode unset).
       - contains:
           path: spec.template.spec.volumes
           content:
             name: lenny-token-service-tls
             secret:
               secretName: lenny-token-service-tls
-              defaultMode: 0400
+              defaultMode: 0440
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 65532
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: lenny-token-service-tls
             mountPath: /etc/lenny/mtls
             readOnly: true
+
+  # spec: §13.2 credential-delivery primitive. The cert mount mode (0440)
+  # and the pod fsGroup (65532) are unconditional, so the non-root
+  # distroless Token Service reads the cert in dev mode too — they are not
+  # gated on global.devMode. A regression that re-gated them would mount a
+  # root-owned 0400 cert in production and break the §10.3 mTLS listener.
+  - it: mounts the mTLS cert 0440 with fsGroup in dev mode too
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-token-service-tls
+            secret:
+              secretName: lenny-token-service-tls
+              defaultMode: 0440
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 65532
       - contains:
           path: spec.template.spec.containers[0].args
           content: --tls-cert=/etc/lenny/mtls/tls.crt

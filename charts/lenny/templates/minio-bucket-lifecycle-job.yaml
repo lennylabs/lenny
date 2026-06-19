@@ -34,6 +34,12 @@ The Job is enabled when:
 {{- if not $useSSL -}}
 {{- $scheme = "http" -}}
 {{- end -}}
+{{- /* §12.5 — when the self-managed MinIO serving cert is issued by a CA
+   outside the system trust store, the operator names a ConfigMap (key
+   ca.crt) the Job mounts so mc verifies the endpoint against it. mc is a
+   Go binary and reads the directory via SSL_CERT_DIR alongside the system
+   roots. */ -}}
+{{- $minioCABundle := (default "" $tls.caBundleConfigMap) -}}
 {{- $noncurrentDays := default 1 $lifecycle.noncurrentExpirationDays -}}
 {{- $mcImage := default "minio/mc:latest" $lifecycle.image -}}
 apiVersion: batch/v1
@@ -68,8 +74,13 @@ spec:
           image: {{ $mcImage | quote }}
           imagePullPolicy: IfNotPresent
           env:
-            - name: MC_HOST_lenny
-              value: "{{ $scheme }}://$(MINIO_ACCESS_KEY):$(MINIO_SECRET_KEY)@{{ $minio.endpoint }}"
+            # MINIO_ACCESS_KEY and MINIO_SECRET_KEY are declared before
+            # MC_HOST_lenny because Kubernetes $(VAR) env substitution only
+            # expands a reference to a variable defined earlier in the list.
+            # A forward reference is left literal, so MC_HOST_lenny would
+            # otherwise carry the unexpanded text "$(MINIO_ACCESS_KEY)" as
+            # the access key and mc would fail with "The Access Key Id you
+            # provided does not exist in our records." Keep these two first.
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -80,6 +91,24 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: minio-secret-key
+            - name: MC_HOST_lenny
+              value: "{{ $scheme }}://$(MINIO_ACCESS_KEY):$(MINIO_SECRET_KEY)@{{ $minio.endpoint }}"
+            {{- if $.Values.global.devMode }}
+            # Dev-only: mc writes its config under $HOME/.mc by default; with
+            # readOnlyRootFilesystem and no home dir for uid 1000 that mkdir
+            # fails ("/.mc: read-only file system"). Point the config at the
+            # writable emptyDir mounted below. Gated to devMode so production
+            # rendering is unchanged.
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
+            {{- end }}
+            {{- if $minioCABundle }}
+            # §12.5 — add the operator-supplied MinIO CA directory to mc's
+            # Go trust pool so it verifies the HTTPS endpoint against the CA
+            # outside the system roots.
+            - name: SSL_CERT_DIR
+              value: /etc/lenny/minio-ca
+            {{- end }}
           command:
             - /bin/sh
             - -c
@@ -107,4 +136,33 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
+          {{- if or $.Values.global.devMode $minioCABundle }}
+          volumeMounts:
+            {{- if $.Values.global.devMode }}
+            - name: mc-config
+              mountPath: /tmp
+            {{- end }}
+            {{- if $minioCABundle }}
+            # §12.5 — the operator-supplied MinIO CA bundle (key ca.crt),
+            # added to mc's Go trust pool via SSL_CERT_DIR above.
+            - name: lenny-minio-ca
+              mountPath: /etc/lenny/minio-ca
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if or $.Values.global.devMode $minioCABundle }}
+      volumes:
+        {{- if $.Values.global.devMode }}
+        - name: mc-config
+          emptyDir: {}
+        {{- end }}
+        {{- if $minioCABundle }}
+        - name: lenny-minio-ca
+          configMap:
+            name: {{ $minioCABundle | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+      {{- end }}
 {{- end }}

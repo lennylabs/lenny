@@ -64,6 +64,15 @@ func main() {
 		"§6.4 directory the embedded runtime materializes read-only shared assets into at warm time")
 	sharedAssets := flag.String("shared-assets", "",
 		"§6.4 base64-encoded JSON array of inline shared-asset file specs (sharedassets.Encode)")
+	// spec: §9.1/§4.7 — in the embedded model the runtime process is the
+	// adapter, so it accepts the same platform-MCP flags the controller
+	// injects onto a type:agent runtime container. Without these the
+	// controller-injected flags would be unknown to flag.Parse and crash
+	// the container.
+	mcpSocket := flag.String("mcp-socket", "",
+		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent runtime; empty disables it")
+	gatewayGRPCAddr := flag.String("gateway-grpc-addr", "",
+		"§9.1/§8.6 gateway GatewayControl address the embedded runtime dials to forward platform tool calls; empty serves an empty catalog")
 	flag.Parse()
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
@@ -89,6 +98,17 @@ func main() {
 	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
 		log.Fatalf("preconnect-echo: %v", err)
 	}
+	// §9.1/§4.7: bind the platform MCP socket and, when a gateway address is
+	// configured, dial the gateway's GatewayControl service. ManifestDir is
+	// set above, since the platform MCP server reads the authenticating nonce
+	// from the manifest. In the embedded model the runtime and MCP server are
+	// one process and UID, so RuntimeUID stays zero (the SO_PEERCRED self-check
+	// is disabled, which is correct per §4.7).
+	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
+	if err != nil {
+		log.Fatalf("preconnect-echo: %v", err)
+	}
+	defer func() { _ = gwCloser.Close() }()
 	// §6.1 — advertise the preConnect capability so the gateway drives this
 	// pod through ConfigureWorkspace / DemoteSDK rather than StartSession.
 	adapterSrv.Capabilities = append(adapterSrv.Capabilities, adapter.CapabilityPreConnect)

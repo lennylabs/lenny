@@ -1,17 +1,18 @@
 {
-  "scenario": "startup_latency_sdk_warm",
+  "scenario": "startup_latency",
   "version": "0.1.0",
-  "recorded_at": "2026-06-18T00:00:00Z",
+  "recorded_at": "2026-06-19T06:02:13Z",
   "duration": "30s",
   "vus": 2,
   "metric_ms": {
-    "avg": 0,
-    "p50": 0,
-    "p90": 0,
-    "p95": 0,
-    "p99": 0
+    "avg": 53.159000000000006,
+    "p50": 53.159000000000006,
+    "p90": 54.7798,
+    "p95": 54.982400000000005,
+    "p99": 55.14448,
+    "p999": 0
   },
   "error_rate": 0,
-  "throughput_per_sec": 0,
-  "notes": "§6.3 SDK-warm arm, runc/standard, preconnect-echo (capabilities.preConnect). Reference capture pending: seed from the first real Kind run with LENNY_UPDATE_BASELINE=1. SDK-warm removes agent session start, so its claim-to-ready P95 is expected at or below the pod-warm arm; this pair is the §6.3 line 352 warming-model comparison on runc. The zero metrics here mean no measured baseline yet."
+  "throughput_per_sec": 0.033331716745071197,
+  "notes": "§6.3 SDK-warm arm, runc/standard, preconnect-echo (capabilities.preConnect). Real reference captured on the Kind e2e (LENNY_UPDATE_BASELINE=1) at 0% error rate; metric_ms is the client-side POST /v1/sessions/start wall-clock. SDK-warm pre-connects the agent process during warming, so its claim-to-ready skips agent session start; the logged gate-canonical claim-to-ready P95 (lenny_session_startup_duration_seconds{runtime_class=runc}) at capture was 0.048s, at or below the pod-warm arm and within the §6.3 indicative runc target of P95 <= 2s. This pair is the §6.3 warming-model comparison on runc. compareBaseline skips a zero-base percentile, so the cloud load tier runs the strict regression diff."
 }

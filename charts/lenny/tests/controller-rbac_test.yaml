@@ -91,6 +91,28 @@ tests:
             resources: ["poddisruptionbudgets"]
             verbs: ["get", "list", "watch", "create", "update", "delete"]
 
+  - it: grants Pod and Pod-status writes for backing-pod lifecycle and the §6.1 readiness gate
+    documentIndex: 1
+    asserts:
+      # The Sandbox-to-Pod reconciler creates/deletes backing pods and
+      # patches the §4.6.1 lenny.dev/state label on the main pods resource.
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch", "create", "patch", "delete"]
+      # §6.1 syncReadinessGate flips the lenny.dev/sandbox-ready readiness
+      # gate (a PodCondition write) through the pods/status subresource, a
+      # distinct RBAC resource. Without this grant the gate is never set, so
+      # every warm pod stays NotReady and the pool never fills.
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods/status"]
+            verbs: ["get", "patch", "update"]
+
   - it: binds the cluster role to the controller service account
     documentIndex: 2
     asserts:

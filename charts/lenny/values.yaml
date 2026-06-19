@@ -646,6 +646,17 @@ minio:
     # minio.deploy render requires this secret. Provision it with
     # cert-manager or supply your own. Ignored when deploy is false.
     secretName: ""
+    # caBundleConfigMap names a ConfigMap (key ca.crt) holding the CA
+    # bundle that issued the MinIO serving certificate, for a self-managed
+    # MinIO whose CA is outside the system trust store (§12.5 "Self-managed
+    # deployments use MinIO"). When set, the chart mounts ca.crt into the
+    # gateway and the bucket-lifecycle Job and points SSL_CERT_DIR at it so
+    # the Go MinIO client (gateway) and mc (Job) verify the MinIO server
+    # certificate against this CA in addition to the system roots. Leave
+    # empty when the MinIO certificate chains to a CA the cluster already
+    # trusts (a public CA, or a cert-manager CA injected into the node
+    # trust store). Mirrors ops.tls.caBundleConfigMap.
+    caBundleConfigMap: ""
   # deploy gates the §17.9.5 in-cluster MinIO workload: a distributed,
   # erasure-coded StatefulSet (≥4 nodes auto-enables erasure coding per
   # §17.8), a headless Service for stable pod DNS, a ClusterIP API
@@ -3929,6 +3940,16 @@ bootstrap:
   # waitTimeoutSeconds bounds how long the Job polls the gateway
   # GET /healthz endpoint for readiness before it gives up.
   waitTimeoutSeconds: 120
+  # requestTimeoutSeconds is the per-request HTTP timeout the Job passes
+  # to lenny-ctl as --timeout for the bootstrap POST itself (distinct from
+  # waitTimeoutSeconds, which only bounds the pre-POST health poll). The
+  # seed upsert writes every tenant, runtime, user, and pool in one
+  # request, so on a cold gateway with a slow first database connection it
+  # can take longer than the lenny-ctl 30s default; a too-short timeout
+  # cancels the request mid-write, which both fails the Job and aborts the
+  # in-flight transaction. Size it to the worst-case bootstrap on the
+  # target store. spec: §17.6.
+  requestTimeoutSeconds: 300
   # auth selects how the Job authenticates to the admin API. When
   # operatorTokenSecret.name is set, the Job mounts that Secret and
   # passes the token as `--bearer`. Otherwise, when global.devMode is

@@ -646,6 +646,79 @@ func TestCreatePoolRejectsUnknownEgressProfile(t *testing.T) {
 	}
 }
 
+// TestCreatePoolDNSPolicyRoundTrip exercises the §13.2 dnsPolicy admin
+// round-trip: a standard pool that sets cluster-default persists the
+// opt-out and surfaces it on GET, while an omitted dnsPolicy stays empty
+// (the pool keeps the dedicated CoreDNS instance).
+// spec: 13.2 (per-pool DNS opt-out)
+func TestCreatePoolDNSPolicyRoundTrip(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "p-optout", RuntimeRef: "echo", IsolationProfile: "standard",
+		AllowStandardIsolation: true, DNSPolicy: "cluster-default",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if row, _ := store.Get(context.Background(), "p-optout"); row.DNSPolicy != "cluster-default" {
+		t.Errorf("stored dnsPolicy = %q, want cluster-default", row.DNSPolicy)
+	}
+	rr = poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/p-optout", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var got admin.PoolPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode GET: %v", err)
+	}
+	if got.DNSPolicy != "cluster-default" {
+		t.Errorf("GET dnsPolicy = %q, want cluster-default", got.DNSPolicy)
+	}
+
+	rr = poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "p-dedicated", RuntimeRef: "echo", IsolationProfile: "sandboxed",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if row, _ := store.Get(context.Background(), "p-dedicated"); row.DNSPolicy != "" {
+		t.Errorf("omitted dnsPolicy = %q, want empty (dedicated instance)", row.DNSPolicy)
+	}
+}
+
+// TestCreatePoolRejectsDNSOptOutOnNonStandard surfaces the §13.2
+// cross-control through the admin API as a 400 VALIDATION_ERROR: only a
+// standard (runc) pool may opt out of the dedicated CoreDNS instance.
+// spec: 13.2 (per-pool DNS opt-out)
+func TestCreatePoolRejectsDNSOptOutOnNonStandard(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "sandboxed-optout", RuntimeRef: "echo", IsolationProfile: "sandboxed",
+		DNSPolicy: "cluster-default",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreatePoolRejectsUnknownDNSPolicy fails closed on a mistyped
+// dnsPolicy through the admin API.
+// spec: 13.2 (per-pool DNS opt-out)
+func TestCreatePoolRejectsUnknownDNSPolicy(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "bad-dns", RuntimeRef: "echo", IsolationProfile: "standard",
+		AllowStandardIsolation: true, DNSPolicy: "kube-system",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestCreatePoolEmitsWeakIsolationEvent covers F-5.3.12: a runc pool
 // admitted via allowStandardIsolation emits the DirectModeWeakIsolation
 // warning audit event in addition to admin.pool.created.
