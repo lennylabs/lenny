@@ -284,7 +284,9 @@
         "pkg/admission/ownership/ownership_test.go::TestValidateAllowsOwnedWrites",
         "pkg/admission/ownership/ownership_test.go::TestValidateRejectsCrossControllerWrites",
         "pkg/admission/ownership/ownership_test.go::TestOwnerSdkWarmCircuitBreakerOverridesDefault",
-        "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix"
+        "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix",
+        "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
+        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -305,7 +307,8 @@
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
         "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
-        "tests/tier8_chaos/nonce_only_degradation_test.go"
+        "tests/tier8_chaos/nonce_only_degradation_test.go",
+        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC"
       ],
       "packages": [
         "pkg/adapter",
