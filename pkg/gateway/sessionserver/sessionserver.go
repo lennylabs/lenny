@@ -3216,6 +3216,15 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if prep != nil {
 		s.applyFinalizePrepareResult(r.Context(), tenantID, id, updated.TenantID, updated.ID, prep)
 	}
+	// spec: §4.3 (Gap 2) — capture the pod↔session binding from the
+	// finalizing-write result, which is populated, before the finalizing → ready
+	// write below. A failed Update returns the zero Session, so reading
+	// PodAssignment off the failed write's result would lose the binding and the
+	// Gap-2 reclaim would no-op on an empty sandbox name, leaking the pod and the
+	// finalize-assigned lease.
+	podAssignment := updated.PodAssignment
+	uploadTokenDigest := updated.UploadTokenDigest
+	uploadTokenExpiry := updated.UploadTokenExpiry
 	// spec: §15.1 — finalizing → ready. Gap 2: when AssignCredentials has
 	// already run (prep != nil), a failure of this transition would leave the
 	// lease assigned but the session not ready, so reclaim the pod and revoke
@@ -3231,7 +3240,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		// stranding in `finalizing` (which no /finalize retry can leave, because
 		// the finalize precondition requires `created`).
 		if prep != nil {
-			s.reclaimFinalizedPod(r.Context(), updated.PodAssignment, id)
+			s.reclaimFinalizedPod(r.Context(), podAssignment, id)
 		}
 		s.failSession(r.Context(), tenantID, id)
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
@@ -3242,10 +3251,10 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// failure after AssignCredentials succeeded would leave the lease assigned
 	// on a session whose finalize the client must treat as failed, so reclaim
 	// the pod and revoke the lease rather than leaking them.
-	if s.uploadVerifier != nil && updated.UploadTokenDigest != "" {
-		if cerr := s.uploadVerifier.ConsumeDigest(updated.UploadTokenDigest, updated.UploadTokenExpiry); cerr != nil {
+	if s.uploadVerifier != nil && uploadTokenDigest != "" {
+		if cerr := s.uploadVerifier.ConsumeDigest(uploadTokenDigest, uploadTokenExpiry); cerr != nil {
 			if prep != nil {
-				s.reclaimFinalizedPod(r.Context(), updated.PodAssignment, id)
+				s.reclaimFinalizedPod(r.Context(), podAssignment, id)
 			}
 			s.failSession(r.Context(), tenantID, id)
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",

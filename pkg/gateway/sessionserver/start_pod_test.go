@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -44,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
@@ -949,6 +951,163 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_6(t *testing.T) {
 	// pre-Prepare resolution failure).
 	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the failed finalize; the create-time pod was not reclaimed")
+	}
+}
+
+// readyTransitionFailStore wraps a sessionstore.Store and fails the Update
+// that transitions a row to `ready`, so a test can force the §4.3 Gap-2
+// finalize failure: the binder's prepare phase succeeds (the §4.9 lease is
+// assigned), and only the subsequent finalizing → ready store write fails. All
+// other Updates pass through.
+type readyTransitionFailStore struct {
+	sessionstore.Store
+	failReady bool
+}
+
+func (s *readyTransitionFailStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	if s.failReady {
+		// Probe the mutation on a copy: when it would set the row to `ready`,
+		// reject the write to simulate a store outage at the exact finalize
+		// finalizing → ready transition that follows AssignCredentials.
+		probe, err := s.Store.Get(ctx, tenantID, id)
+		if err == nil {
+			if perr := mutate(&probe); perr == nil && probe.State == session.StateReady {
+				return sessionstore.Session{}, errInjectedReadyWriteFailure
+			}
+		}
+	}
+	return s.Store.Update(ctx, tenantID, id, mutate)
+}
+
+// errInjectedReadyWriteFailure is the injected store error the Gap-2 finalize
+// test forces on the finalizing → ready write.
+var errInjectedReadyWriteFailure = errors.New("injected store failure on finalizing -> ready write")
+
+// recordingLeaseAssigner records every AssignProto and ReleaseSession so a
+// test can assert the §4.9 lease was assigned at finalize and revoked on a
+// Gap-2 reclaim. It returns a fixed proxy-mode lease.
+type recordingLeaseAssigner struct {
+	assigns  []string
+	released []string
+}
+
+func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv1.CredentialLease, error) {
+	a.assigns = append(a.assigns, sessionID)
+	return &adapterv1.CredentialLease{
+		LeaseId:  "cl-" + pool,
+		Provider: pool,
+		Payload: []byte(`{"deliveryMode":"proxy",` +
+			`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-` + pool + `"}}`),
+	}, nil
+}
+
+func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
+	a.released = append(a.released, sessionID)
+}
+
+// spec: §4.3 (proposal: Gap 2 — a finalize failure AFTER AssignCredentials
+// succeeded reclaims the pod AND revokes the lease), §7.1 step 23 (lease
+// release), §15.1 (finalize precondition).
+// diagnosis: the §4.3 finalize barrier assigns the §4.9 lease during its
+// prepare phase, then transitions finalizing → ready. When that final store
+// write fails after the lease was assigned, the gateway must reclaim the
+// create-time pod (delete the per-pod SandboxClaim) AND revoke the lease
+// (ReleaseSession) before failing the row, or a post-assignment finalize
+// failure leaks the credential's active-session slot for a session that never
+// reaches ready. A failure here means reclaimFinalizedPod did not run on the
+// finalizing → ready write-failure branch, so the lease leaked.
+func TestFinalizePostCredentialWriteFailureRevokesLease_spec_4_3(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.CredentialsDir = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	assigner := &recordingLeaseAssigner{}
+	binder.Credentials = assigner
+
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	policy := credential.CredentialPolicy{
+		PreferredSource: credential.PreferredSourcePool,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", CredentialPolicy: policy}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	store := &readyTransitionFailStore{Store: memstore.New()}
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-fin-gap2" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		Tenants:                 tenants,
+		Runtimes:                runtimes,
+		CredentialPools:         credPools,
+		CredentialRouter:        credrouter.NewDefault(),
+	})
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Arm the failure only for the finalizing → ready write so the prepare
+	// phase (which assigns the lease) runs to completion first.
+	store.failReady = true
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-gap2/finalize", nil)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("finalize with an injected ready-write failure: status %d, want 500; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The lease was assigned at finalize and then revoked on the Gap-2 reclaim.
+	if len(assigner.assigns) != 1 || assigner.assigns[0] != "sess-fin-gap2" {
+		t.Errorf("AssignProto calls = %v, want [sess-fin-gap2] (the lease is assigned at finalize)", assigner.assigns)
+	}
+	if len(assigner.released) != 1 || assigner.released[0] != "sess-fin-gap2" {
+		t.Errorf("ReleaseSession calls = %v, want [sess-fin-gap2] (Gap 2: the post-assignment finalize failure must revoke the lease)", assigner.released)
+	}
+	// The claimed pod was reclaimed: the per-pod SandboxClaim is deleted.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+		t.Errorf("per-pod claim still present after the Gap-2 finalize failure; the create-time pod was not reclaimed")
+	}
+	// The row reaches the terminal failed state rather than stranding in finalizing.
+	store.failReady = false
+	row, err := store.Get(ctx, "acme", "sess-fin-gap2")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the Gap-2 finalize failure", row.State)
 	}
 }
 
