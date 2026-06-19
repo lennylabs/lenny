@@ -39,6 +39,26 @@ controller:
   # `lenny.dev/test-egress-capture-upstream` annotation (today, only
   # the cred-shell-echo template in agent-workload.yaml).
   egressCaptureImage: lenny-egress-capture:e2e
+  # Shrink the §5.2 resource classes for the Kind cluster. The e2e pools
+  # default to the `medium` class (500m/2Gi request, 2/2Gi limit) per
+  # container, and each agent pod runs two containers (adapter + runtime),
+  # so five warm pools demand 20Gi of memory requests across two ~8Gi
+  # worker nodes and most pods stay Pending with Insufficient memory. The
+  # echo reference runtimes are tiny, so the e2e overlay retunes every
+  # class to a Kind-sized footprint. The limit clears the §6.4 576Mi tmpfs
+  # reservation the controller validates at startup (a class whose memory
+  # limit is below it fails buildResourceClasses). This is the e2e harness
+  # only; production keeps the chart-default class sizing.
+  resourceClasses:
+    small:
+      requests: { cpu: "50m", memory: "128Mi" }
+      limits: { cpu: "500m", memory: "640Mi" }
+    medium:
+      requests: { cpu: "100m", memory: "192Mi" }
+      limits: { cpu: "1", memory: "768Mi" }
+    large:
+      requests: { cpu: "150m", memory: "256Mi" }
+      limits: { cpu: "2", memory: "1Gi" }
 
 admissionWebhooks:
   image:
@@ -173,6 +193,24 @@ poolScalingController:
 # normally. clusterIP and image.pullPolicy are unused while deploy is false.
 coredns:
   deploy: false
+
+# The §16.7 deployment-config-sync post-install hook is disabled on the Kind
+# e2e. The hook runs lenny-ctl `admin deployment sync-config` against the
+# gateway to emit the §16.7 gateway.*/platform.*/deployment.* transition
+# audit events. Its pods carry lenny.dev/component: deployment-config-sync;
+# the chart now ships an allow-deployment-config-sync-egress NetworkPolicy
+# admitting their gateway:8080 + DNS egress (the production fix), but the
+# Kind cluster's kindnet kube-network-policies enforcer does not reliably
+# program the allow for these freshly-created hook pods during the
+# post-install pod-churn window, so the pods hang on "gateway not ready" and
+# the post-install helm hook exhausts its backoffLimit, aborting the install
+# with DeadlineExceeded. The tier-7 startup_latency benchmark exercises
+# session creation and the warm-pool lifecycle, not the §16.7 deployment
+# transition audit stream, so the hook is not needed here. Disabling it skips
+# the hook Job and its ConfigMap while leaving the production audit path
+# (and its NetworkPolicy) intact for real installs.
+deploymentAudit:
+  enabled: false
 
 bootstrap:
   image:

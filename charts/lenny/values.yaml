@@ -3929,6 +3929,16 @@ bootstrap:
   # waitTimeoutSeconds bounds how long the Job polls the gateway
   # GET /healthz endpoint for readiness before it gives up.
   waitTimeoutSeconds: 120
+  # requestTimeoutSeconds is the per-request HTTP timeout the Job passes
+  # to lenny-ctl as --timeout for the bootstrap POST itself (distinct from
+  # waitTimeoutSeconds, which only bounds the pre-POST health poll). The
+  # seed upsert writes every tenant, runtime, user, and pool in one
+  # request, so on a cold gateway with a slow first database connection it
+  # can take longer than the lenny-ctl 30s default; a too-short timeout
+  # cancels the request mid-write, which both fails the Job and aborts the
+  # in-flight transaction. Size it to the worst-case bootstrap on the
+  # target store. spec: §17.6.
+  requestTimeoutSeconds: 300
   # auth selects how the Job authenticates to the admin API. When
   # operatorTokenSecret.name is set, the Job mounts that Secret and
   # passes the token as `--bearer`. Otherwise, when global.devMode is

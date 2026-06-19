@@ -664,6 +664,59 @@ spec:
           protocol: TCP
   policyTypes: [Egress]
 ---
+{{- if .Values.deploymentAudit.enabled }}
+{{- /*
+allow-deployment-config-sync-egress re-admits the §16.7
+lenny-deployment-config-sync Job egress the §13.2 default-deny otherwise
+blocks. Like the bootstrap Job, this transient post-install/post-upgrade
+hook runs lenny-ctl against the gateway admin API
+(admin deployment sync-config), so it needs egress to the gateway on the
+internal HTTP port and to CoreDNS for name resolution. The Job carries
+lenny.dev/component: deployment-config-sync, which the bootstrap egress
+policy does not select, so without this policy the post-install helm hook
+hangs on "gateway not ready" and the install fails. It renders only when
+the config-sync Job renders (deploymentAudit.enabled).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-deployment-config-sync-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: deployment-config-sync
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{- end }}
 {{- /*
 lenny-ops-deny-all-ingress is the §25.4 baseline default-deny for the
 operability control plane: it selects the lenny-ops pods (app: lenny-ops,

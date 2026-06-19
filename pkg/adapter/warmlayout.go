@@ -3,11 +3,61 @@
 package adapter
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"syscall"
 
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 )
+
+// chmodWarmDir pins dir to mode so the runtime can traverse it regardless
+// of the adapter's inherited umask. The directory is frequently a kubelet-
+// created emptyDir mountpoint (/workspace, /workspace/shared) the adapter
+// does not own or cannot write, so the chmod fails in two benign ways:
+//
+//   - EPERM: the mountpoint is owned by root with the pod fsGroup, not by
+//     the non-root adapter UID, and chmod(2) requires process ownership.
+//   - EROFS: an embedded or SDK-warm runtime that links this package mounts
+//     /workspace/shared read-only (it only consumes the shared assets the
+//     §6.4 producer wrote), so a chmod of that mount hits a read-only file
+//     system.
+//
+// In both cases the kubelet (EPERM) or the producing adapter (EROFS) has
+// already created the directory group/other-traversable, so the chmod is
+// only confirming bits that are already present. A bare chmod instead
+// crashes the adapter (and with it the runtime that dials the adapter
+// socket) on every §6.4 warm pod. When the chmod fails this way but the
+// directory already carries the required permission bits the failure is
+// benign and treated as success; any other error, or a benign error on a
+// directory whose mode is still wrong, is returned. spec: §6.4 line 409 —
+// F-6.4.3.
+func chmodWarmDir(dir string, mode os.FileMode) error {
+	return chmodWarmDirWith(dir, mode, os.Chmod)
+}
+
+// chmodWarmDirWith is chmodWarmDir with the chmod operation injected so a
+// unit test can drive the tolerance branch, which a non-root test cannot
+// force from os.Chmod without ownership or read-only-mount manipulation.
+func chmodWarmDirWith(dir string, mode os.FileMode, chmod func(string, os.FileMode) error) error {
+	if err := chmod(dir, mode); err != nil {
+		if !errors.Is(err, fs.ErrPermission) && !errors.Is(err, syscall.EROFS) {
+			return err
+		}
+		info, statErr := os.Stat(dir)
+		if statErr != nil {
+			return err
+		}
+		// The mountpoint already grants at least the requested bits; the
+		// denial is on a directory that needs no further relaxing.
+		if info.Mode().Perm()&mode.Perm() == mode.Perm() {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
 
 // warmWorkspaceRootMode is the permission mode of the warm-time
 // /workspace/current directory. The agent-container runtime reads from
@@ -52,8 +102,11 @@ func (s *Server) EnsureWarmWorkspaceLayout() error {
 		// os.MkdirAll honors the process umask, which can strip the
 		// group/other read+execute bits the runtime needs. Chmod the
 		// leaf to the exact mode so the §6.1 "empty but present"
-		// directory is readable regardless of the inherited umask.
-		if err := os.Chmod(s.WorkspaceRoot, warmWorkspaceRootMode); err != nil {
+		// directory is readable regardless of the inherited umask. The
+		// root is a kubelet-owned emptyDir mountpoint when /workspace is
+		// mounted directly, so tolerate the EPERM when it already carries
+		// the required bits.
+		if err := chmodWarmDir(s.WorkspaceRoot, warmWorkspaceRootMode); err != nil {
 			return fmt.Errorf("adapter: chmod workspace root %q: %w", s.WorkspaceRoot, err)
 		}
 	}
@@ -85,8 +138,11 @@ func (s *Server) ensureSharedAssets() error {
 		return fmt.Errorf("adapter: create shared-assets directory %q: %w", s.SharedAssetsDir, err)
 	}
 	// MkdirAll honors the umask; pin the exact mode so the runtime can
-	// traverse the directory regardless of the inherited umask.
-	if err := os.Chmod(s.SharedAssetsDir, warmSharedMode); err != nil {
+	// traverse the directory regardless of the inherited umask. The
+	// shared dir is a kubelet-owned emptyDir mountpoint, so tolerate the
+	// EPERM the non-root adapter UID gets when the mountpoint already
+	// carries the required bits.
+	if err := chmodWarmDir(s.SharedAssetsDir, warmSharedMode); err != nil {
 		return fmt.Errorf("adapter: chmod shared-assets directory %q: %w", s.SharedAssetsDir, err)
 	}
 	if err := sharedassets.Materialize(s.SharedAssetsDir, s.SharedAssets); err != nil {

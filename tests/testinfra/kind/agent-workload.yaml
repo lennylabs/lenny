@@ -74,6 +74,14 @@ spec:
 # benchmark drives a session against the preconnect-echo-pool as the
 # SDK-warm arm and against echo-pool-sidecar as the pod-warm arm, on the
 # runc/standard class the Kind cluster carries. spec: §6.1, §6.3.
+#
+# deploymentModel is embedded: cmd/runtimes/preconnect-echo links the
+# adapter into its own process and serves the adapter gRPC contract on
+# :50051 directly (the same single-container embedded model as
+# echo-runtime-embedded). Declaring it sidecar makes the Sandbox reconciler
+# inject a separate lenny-adapter container that also binds :50051, so the
+# embedded runtime fails with "address already in use" and the pod never
+# becomes Ready. spec: §4.7.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -84,7 +92,7 @@ spec:
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
-  deploymentModel: sidecar
+  deploymentModel: embedded
   capabilities:
     preConnect: true
 ---

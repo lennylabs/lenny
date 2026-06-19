@@ -275,6 +275,49 @@ ELICITATION_ECHO_IMAGE="$(resolve_digest "lenny-runtime-elicitation-echo:${TAG}"
 log "echo runtime image pinned to ${ECHO_IMAGE}"
 
 # ---------------------------------------------------------------------
+# Step 2c: register the digest-pinned reference in each node's containerd.
+#
+# The agent pods (and the §17.6 bootstrap runtimes) reference each runtime
+# image by its digest-pinned form `<repo>:<tag>@sha256:<id>` because the
+# §13.1 admission plane rejects a bare tag. `kind load docker-image`
+# imports the image into containerd under its tag name only, so containerd
+# has `lenny-runtime-echo:e2e` but no image named
+# `lenny-runtime-echo@sha256:<id>`. When the kubelet resolves a pod's
+# digest-pinned reference it looks up `<repo>@<digest>`, does not find it
+# locally, and with imagePullPolicy IfNotPresent falls through to a
+# registry pull that fails closed (ImagePullBackOff: the bare repo name
+# resolves to docker.io/library and the image does not exist there). The
+# id docker reports (`.Id`, the config digest) is the same value containerd
+# records as the image's OCI index digest after a `kind load` import, so
+# tagging the loaded image by its `<repo>@<id>` name on every node makes
+# the digest-pinned reference resolve from the local store without a pull.
+# This runs regardless of LENNY_SKIP_BUILD: the images are already loaded
+# either way, and re-tagging an already-tagged image is idempotent.
+log "registering digest-pinned runtime references in each node's containerd"
+RUNTIME_DIGEST_REFS=(
+  "${ECHO_IMAGE}"
+  "${ECHO_EMBEDDED_IMAGE}"
+  "${PRECONNECT_ECHO_IMAGE}"
+  "${CRED_SHELL_ECHO_IMAGE}"
+  "${ELICITATION_ECHO_IMAGE}"
+)
+for node in $(kind get nodes --name "${CLUSTER}"); do
+  for ref in "${RUNTIME_DIGEST_REFS[@]}"; do
+    # ref is `<repo>:<tag>@sha256:<id>`; the source tag is the part before
+    # `@`, and the digest-pinned target containerd needs is
+    # `docker.io/library/<repo>@sha256:<id>` (the kubelet's normalized
+    # lookup form for a bare-repo digest reference).
+    src_tag="${ref%@*}"
+    repo="${src_tag%%:*}"
+    digest="${ref#*@}"
+    docker exec "${node}" ctr -n k8s.io images tag --force \
+      "docker.io/library/${src_tag}" \
+      "docker.io/library/${repo}@${digest}" >/dev/null 2>&1 || \
+      log "WARNING: could not tag ${repo}@${digest} on ${node}; the pod may ImagePullBackOff"
+  done
+done
+
+# ---------------------------------------------------------------------
 # Step 4: create the lenny-system and monitoring namespaces.
 # ---------------------------------------------------------------------
 for ns in lenny-system monitoring; do
