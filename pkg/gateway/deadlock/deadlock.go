@@ -128,6 +128,13 @@ func Detect(snap Snapshot) []Subtree {
 		}
 		visiting[id] = true
 		res := false
+		// An elicitation wait is deliberately NOT a blocked signal here: a task
+		// waiting on an elicitation is waiting on an external actor (a human) and
+		// is "not considered deadlocked" per §9.2, so it never becomes a subtree
+		// root or a DeepestTask and is never DEADLOCK_TIMEOUT-failed. Its wait is
+		// bounded by maxElicitationWait instead. Only PendingInputs (input_required,
+		// an internal-actor wait on the parent) and AwaitingChildIDs are blocked
+		// signals; do not add an elicitation case. spec: §9.2 line 110, §8.8 line 981.
 		switch {
 		case len(n.PendingInputs) > 0:
 			res = true
