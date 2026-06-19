@@ -50,6 +50,7 @@ import (
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/clientgo_throttle_floor"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/connector_oauth_refresh_race"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/controller_reconcile_rate"
+
 	// Proposal 0007 eager-claim: concurrent creates against a finite pool
 	// (fail-fast exhaustion at /create) and coordinator handoff during the
 	// create → finalize → start window (binding reconstructed, no pod/lease leak).
