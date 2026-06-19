@@ -25,7 +25,8 @@ func TestPreconnectMainAcceptsPlatformMCPFlags_spec_9_1(t *testing.T) {
 	// fails net.Listen immediately, so the process exits past flag parsing
 	// without serving. Before the fix the unknown --mcp-socket flag made
 	// flag.Parse exit 2 before any of this ran.
-	cmd := exec.Command(bin,
+	cmd := exec.Command(
+		bin,
 		"--addr=:-1", // invalid port: net.Listen fails fast, log.Fatalf exits 1.
 		"--mcp-socket=@lenny-platform-mcp",
 		"--gateway-grpc-addr=lenny-gateway.lenny-system.svc:50051",
