@@ -67,11 +67,17 @@ only the env vars it can satisfy.
    non-embedded deployment; the chart enforces the posture below.
    Default tls.enabled is true; an explicit `false` is honored. */ -}}
 {{- $minioUseSSL := true -}}
+{{- $minioCABundle := "" -}}
 {{- if and $minio (hasKey ($minio | default dict) "tls") -}}
 {{- $minioTLS := $minio.tls -}}
 {{- if hasKey ($minioTLS | default dict) "enabled" -}}
 {{- $minioUseSSL = $minioTLS.enabled -}}
 {{- end -}}
+{{- /* §12.5 — when the self-managed MinIO serving cert is issued by a CA
+   outside the system trust store, the operator names a ConfigMap (key
+   ca.crt) the chart mounts so the gateway's Go MinIO client verifies the
+   endpoint against it (via SSL_CERT_DIR) in addition to the system roots. */ -}}
+{{- $minioCABundle = (default "" $minioTLS.caBundleConfigMap) -}}
 {{- end -}}
 {{- $backends := .Values.backends | default "" -}}
 {{- $complianceProfile := .Values.complianceProfile | default "" -}}
@@ -81,8 +87,8 @@ only the env vars it can satisfy.
 {{- if and (not $minioUseSSL) $regulated -}}
 {{- fail (printf "§12.5 line 279: minio.tls.enabled MUST be true when complianceProfile is %q (regulated)." $complianceProfile) -}}
 {{- end -}}
-{{- if and (not $minioUseSSL) (ne $backends "embedded") (not $.Values.global.devMode) -}}
-{{- fail "§12.5 line 279: minio.tls.enabled may default to false only when backends: embedded or global.devMode is set; set tls.enabled: true on any other backends value." -}}
+{{- if and (not $minioUseSSL) (ne $backends "embedded") -}}
+{{- fail "§12.5 line 280: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true." -}}
 {{- end -}}
 {{- /* §12.5 line 307 — the continuous T4 KMS probe cadence is bounded
    below by 60s to prevent excessive KMS API spend. Enforce the floor at
@@ -245,17 +251,17 @@ spec:
       {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
-        {{- if .Values.global.devMode }}
-        # Dev-only: fsGroup makes the mounted mTLS Secret group-owned by this
-        # GID and adds it as a supplemental group on the process, so the
-        # non-root container can read the cert-manager-issued cert/key
-        # (mounted group-readable at defaultMode 0440 below). Without it the
-        # 0400 root-owned files are unreadable and the gateway fails to load
-        # /etc/lenny/mtls/tls.crt with "permission denied". Gated to devMode
-        # so production rendering is unchanged; the underlying mount-mode bug
-        # is tracked separately for a deliberate production-facing fix.
+        # spec: §13.2 credential-delivery primitive. fsGroup makes the
+        # mounted mTLS Secret group-owned by this GID and adds it as a
+        # supplemental group on the process, so the non-root distroless
+        # image (gcr.io/distroless/static:nonroot, UID 65532) can read the
+        # cert-manager-issued cert/key mounted group-readable at defaultMode
+        # 0440 below. Without it a root-owned 0400 cert is unreadable under
+        # runAsNonRoot and the §10.3 gateway↔Token-Service mTLS dial fails to
+        # load /etc/lenny/mtls/tls.crt with "permission denied". The
+        # fsGroup + 0440 pair is the read primitive every mode needs, so it
+        # is unconditional rather than gated on devMode.
         fsGroup: 65532
-        {{- end }}
         seccompProfile:
           type: RuntimeDefault
       {{- /*
@@ -270,8 +276,9 @@ spec:
           no-mesh / external-mTLS deployment can opt out, but the chart
           default is mtls.enabled=true.
       */ -}}
-      {{- if .Values.mtls.enabled }}
+      {{- if or .Values.mtls.enabled $minioCABundle }}
       volumes:
+        {{- if .Values.mtls.enabled }}
         {{- if .Values.gateway.spiffe.enabled }}
         # §4.3 line 205 per-replica mTLS identity. The
         # cert-manager-csi-driver-spiffe (or equivalent SPIFFE CSI
@@ -292,10 +299,24 @@ spec:
         - name: lenny-gateway-tls
           secret:
             secretName: lenny-gateway-tls
-            # devMode mounts 0440 (group-readable, paired with the fsGroup
-            # above) so the non-root container can read the cert; production
-            # keeps the original 0400 so its rendering is unchanged.
-            defaultMode: {{ if .Values.global.devMode }}0440{{ else }}0400{{ end }}
+            # spec: §13.2. 0440 group-readable, paired with the fsGroup
+            # above, lets the non-root distroless process read the cert in
+            # every mode. A root-owned 0400 cert is unreadable under
+            # runAsNonRoot and breaks the §10.3 mTLS dial.
+            defaultMode: 0440
+        {{- end }}
+        {{- end }}
+        {{- if $minioCABundle }}
+        # §12.5 — the operator-supplied MinIO CA bundle (ConfigMap key
+        # ca.crt), added to the gateway's Go system trust pool so the
+        # minio-go client verifies a self-managed MinIO HTTPS endpoint
+        # whose CA is outside the system roots.
+        - name: lenny-minio-ca
+          configMap:
+            name: {{ $minioCABundle | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
         {{- end }}
       {{- end }}
       {{- /*
@@ -1372,6 +1393,15 @@ spec:
               value: {{ $minio.bucket | quote }}
             - name: LENNY_MINIO_USE_SSL
               value: {{ $minioUseSSL | quote }}
+            {{- if $minioCABundle }}
+            # §12.5 — point the Go runtime's system trust path at the mounted
+            # MinIO CA bundle so the minio-go client verifies the HTTPS
+            # endpoint against the operator-supplied CA in addition to the
+            # built-in system roots. SSL_CERT_DIR adds the directory to the
+            # cert pool; the default system file is still read.
+            - name: SSL_CERT_DIR
+              value: /etc/lenny/minio-ca
+            {{- end }}
             {{- end }}
             {{- $replConfig := include "lenny.artifactReplicationConfigJSON" . }}
             {{- if $replConfig }}
@@ -1416,11 +1446,20 @@ spec:
             - name: llm-proxy
               containerPort: {{ .Values.gateway.llmProxyPort }}
             {{- end }}
-          {{- if .Values.mtls.enabled }}
+          {{- if or .Values.mtls.enabled $minioCABundle }}
           volumeMounts:
+            {{- if .Values.mtls.enabled }}
             - name: lenny-gateway-tls
               mountPath: /etc/lenny/mtls
               readOnly: true
+            {{- end }}
+            {{- if $minioCABundle }}
+            # §12.5 — the operator-supplied MinIO CA bundle (key ca.crt),
+            # added to the Go system trust pool via SSL_CERT_DIR above.
+            - name: lenny-minio-ca
+              mountPath: /etc/lenny/minio-ca
+              readOnly: true
+            {{- end }}
           {{- end }}
           livenessProbe:
             httpGet:

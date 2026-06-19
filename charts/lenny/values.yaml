@@ -646,6 +646,17 @@ minio:
     # minio.deploy render requires this secret. Provision it with
     # cert-manager or supply your own. Ignored when deploy is false.
     secretName: ""
+    # caBundleConfigMap names a ConfigMap (key ca.crt) holding the CA
+    # bundle that issued the MinIO serving certificate, for a self-managed
+    # MinIO whose CA is outside the system trust store (§12.5 "Self-managed
+    # deployments use MinIO"). When set, the chart mounts ca.crt into the
+    # gateway and the bucket-lifecycle Job and points SSL_CERT_DIR at it so
+    # the Go MinIO client (gateway) and mc (Job) verify the MinIO server
+    # certificate against this CA in addition to the system roots. Leave
+    # empty when the MinIO certificate chains to a CA the cluster already
+    # trusts (a public CA, or a cert-manager CA injected into the node
+    # trust store). Mirrors ops.tls.caBundleConfigMap.
+    caBundleConfigMap: ""
   # deploy gates the §17.9.5 in-cluster MinIO workload: a distributed,
   # erasure-coded StatefulSet (≥4 nodes auto-enables erasure coding per
   # §17.8), a headless Service for stable pod DNS, a ClusterIP API

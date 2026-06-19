@@ -6,8 +6,8 @@
 # on this cluster topology.
 #
 # Why the chart policies are not enough on Kind. The chart's per-component
-# egress policies (allow-gateway-egress, allow-controller-egress, and the
-# e2e allow-pool-scaling-controller-egress) admit apiserver egress to the
+# egress policies (allow-gateway-egress, allow-controller-egress, and
+# allow-pool-scaling-controller-egress) admit apiserver egress to the
 # service CIDR ipBlock (10.96.0.0/12, which on this cluster covers the
 # kubernetes Service ClusterIP 10.97.0.1:443). On a managed cluster that is
 # sufficient: the CNI evaluates the egress NetworkPolicy against the

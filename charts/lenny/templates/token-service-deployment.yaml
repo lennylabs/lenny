@@ -48,16 +48,17 @@ spec:
       {{- include "lenny.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true
-        {{- if .Values.global.devMode }}
-        # Dev-only: fsGroup makes the mounted mTLS Secret group-owned by this
-        # GID and adds it as a supplemental group on the process, so the
-        # non-root container can read the cert-manager-issued cert/key
-        # (mounted group-readable at defaultMode 0440 below). Without it the
-        # 0400 root-owned files are unreadable and the binary fails to load
-        # /etc/lenny/mtls/tls.crt with "permission denied". Gated to devMode
-        # so production rendering is unchanged.
+        # spec: §13.2 credential-delivery primitive. fsGroup makes the
+        # mounted mTLS Secret group-owned by this GID and adds it as a
+        # supplemental group on the process, so the non-root distroless
+        # image (gcr.io/distroless/static:nonroot, UID 65532) can read the
+        # cert-manager-issued cert/key mounted group-readable at defaultMode
+        # 0440 below. Without it a root-owned 0400 cert is unreadable under
+        # runAsNonRoot and the §10.3 gateway↔Token-Service mTLS listener
+        # fails to load /etc/lenny/mtls/tls.crt with "permission denied". The
+        # fsGroup + 0440 pair is the read primitive every mode needs, so it
+        # is unconditional rather than gated on devMode.
         fsGroup: 65532
-        {{- end }}
         seccompProfile:
           type: RuntimeDefault
       {{- /*
@@ -77,10 +78,11 @@ spec:
         - name: lenny-token-service-tls
           secret:
             secretName: lenny-token-service-tls
-            # devMode mounts 0440 (group-readable, paired with the fsGroup
-            # above) so the non-root container can read the cert; production
-            # keeps the original 0400 so its rendering is unchanged.
-            defaultMode: {{ if .Values.global.devMode }}0440{{ else }}0400{{ end }}
+            # spec: §13.2. 0440 group-readable, paired with the fsGroup
+            # above, lets the non-root distroless process read the cert in
+            # every mode. A root-owned 0400 cert is unreadable under
+            # runAsNonRoot and breaks the §10.3 mTLS listener.
+            defaultMode: 0440
       {{- end }}
       containers:
         - name: token-service

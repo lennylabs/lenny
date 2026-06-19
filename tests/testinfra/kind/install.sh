@@ -55,7 +55,6 @@ E2E_VALUES="${REPO_ROOT}/tests/testinfra/kind/e2e-values.yaml"
 DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 MIGRATE_JOB_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/migrate-job.yaml"
 AGENT_WORKLOAD_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/agent-workload.yaml"
-PSC_EGRESS_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/pool-scaling-controller-egress.yaml"
 APISERVER_EGRESS_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/apiserver-egress.yaml"
 CHART_DIR="${REPO_ROOT}/charts/lenny"
 
@@ -399,6 +398,26 @@ kc -n ingress-nginx wait --for=condition=Available deploy/ingress-nginx-controll
 log "applying the in-cluster data-store manifests"
 kc apply -f "${DATASTORES_MANIFEST}"
 
+# §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+# exception to backends: embedded only; the e2e MinIO is a non-embedded
+# backend, so datastores.yaml has cert-manager issue a serving cert for the
+# lenny-minio Service DNS name and MinIO serves https on :9000. The chart
+# mounts the issuing CA into the gateway and the bucket-lifecycle Job
+# (minio.tls.caBundleConfigMap: lenny-minio-ca) and points SSL_CERT_DIR at
+# it so both verify the endpoint. Copy the cert-manager-issued ca.crt out of
+# the lenny-minio-tls Secret into that ConfigMap before the helm install.
+log "waiting for the MinIO serving certificate to be issued"
+kc -n lenny-system wait --for=condition=Ready certificate/lenny-minio-tls --timeout=120s
+log "creating the lenny-minio-ca ConfigMap from the issued CA"
+MINIO_CA_CRT="$(kc -n lenny-system get secret lenny-minio-tls -o jsonpath='{.data.ca\.crt}' | base64 -d)"
+if [ -z "${MINIO_CA_CRT}" ]; then
+  echo "error: lenny-minio-tls Secret has no ca.crt" >&2
+  exit 1
+fi
+kc -n lenny-system create configmap lenny-minio-ca \
+  --from-literal=ca.crt="${MINIO_CA_CRT}" \
+  --dry-run=client -o yaml | kc apply -f -
+
 log "waiting for the data-store deployments to become Available"
 for deploy in lenny-postgres lenny-redis lenny-minio; do
   kc -n lenny-system wait --for=condition=Available "deploy/${deploy}" --timeout=240s
@@ -437,6 +456,11 @@ if [ -z "${MINIO_POD_IP}" ]; then
   exit 1
 fi
 kc -n lenny-system delete pod lenny-e2e-minio-mb --ignore-not-found --wait=true
+# MinIO serves https on :9000 (§12.5 line 280; datastores.yaml issues the
+# cert-manager serving cert). This one-shot pod dials the MinIO pod IP, which
+# never matches the cert's DNS SAN, so mc runs with --insecure (skip TLS
+# verification). The gateway and the chart's bucket-lifecycle Job verify the
+# cert properly against the mounted CA; this throwaway bootstrap pod does not.
 kc -n lenny-system run lenny-e2e-minio-mb \
   --image=minio/mc:RELEASE.2024-09-16T17-43-14Z \
   --image-pull-policy=IfNotPresent \
@@ -446,8 +470,8 @@ kc -n lenny-system run lenny-e2e-minio-mb \
   --quiet \
   --command -- /bin/sh -c "
     set -e
-    mc alias set e2e http://${MINIO_POD_IP}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}'
-    mc mb --ignore-existing e2e/${MINIO_BUCKET}
+    mc --insecure alias set e2e https://${MINIO_POD_IP}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}'
+    mc --insecure mb --ignore-existing e2e/${MINIO_BUCKET}
   "
 log "MinIO bucket ${MINIO_BUCKET} is present"
 
@@ -641,19 +665,14 @@ else
     --timeout 420s
 fi
 
-# Re-admit the §4.6.2 PoolScalingController's egress to kube-system
-# CoreDNS and the kube-apiserver. The chart's allow-controller-egress
-# policy is intended to cover both the WarmPoolController and the
-# PoolScalingController, but its podSelector matches lenny.dev/component:
-# controller while the PoolScalingController labels its pods
-# lenny.dev/component: pool-scaling-controller, so the chart policy does
-# not select them and the §13.2 default-deny blocks the controller from
-# reaching Postgres or the apiserver. Without this the controller never
-# reconciles the §17.6-seeded pools into the SandboxTemplate /
-# SandboxWarmPool CRD pairs the warm pods derive from. The manifest is
-# test-infra-only, so it does not alter the production chart rendering.
-log "applying the PoolScalingController egress NetworkPolicy"
-kc apply -f "${PSC_EGRESS_MANIFEST}"
+# The §4.6.2 PoolScalingController's egress to the kube-apiserver, PgBouncer,
+# and kube-system CoreDNS is now admitted by the chart's
+# allow-pool-scaling-controller-egress NetworkPolicy (rendered when
+# postgres.dsn is set, which the e2e overlay sets), so no test-infra
+# PSC-egress manifest is applied here. On Kind the apiserver dial additionally
+# needs the post-DNAT node-CIDR egress that allow-lenny-system-apiserver-egress
+# below admits for every lenny-system pod, and the PSC reaches the in-cluster
+# Postgres datastore through allow-egress-to-e2e-datastores in datastores.yaml.
 
 # Admit lenny-system egress to the Kind kube-apiserver. kindnet evaluates
 # the egress NetworkPolicy against the post-DNAT destination, so the chart

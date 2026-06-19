@@ -136,6 +136,70 @@ spec:
   policyTypes: [Egress]
 ---
 {{- /*
+allow-pool-scaling-controller-egress re-admits the §4.6.2
+PoolScalingController egress the §13.2 default-deny otherwise blocks. The
+§13.2 component table groups the WarmPoolController and PoolScalingController
+in one row (kube-apiserver, PgBouncer, kube-system CoreDNS), but the PSC runs
+as its own Deployment labelled lenny.dev/component: pool-scaling-controller
+(§4.6.2), not lenny.dev/component: controller, so the allow-controller-egress
+policy above does not select it. Without this policy the PSC cannot reach the
+kube-apiserver to watch and write its SandboxTemplate / SandboxWarmPool CRD
+pair, nor PgBouncer to read the Postgres-authoritative pool definitions it
+reconciles, and the §13.2 default-deny breaks pool reconciliation. The PSC
+accepts no unsolicited ingress, so the policy is egress-only. The DNS peers
+pair the namespaceSelector with the concrete k8s-app: kube-dns podSelector
+per NET-067.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pool-scaling-controller-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: pool-scaling-controller
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{- /*
 allow-token-service re-admits the §4.3 Token Service flows the §13.2
 default-deny otherwise blocks: ingress from the gateway pods on the
 mTLS gRPC port, and egress to PgBouncer, Redis, the KMS endpoint, and
