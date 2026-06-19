@@ -763,6 +763,64 @@ func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
 	}
 }
 
+// spec: §7.3 (snapshotless resume-rebuild), §4.6 (durable binding), §15.1.
+// diagnosis: the snapshotless resume-rebuild path reconnected to the dead
+// pod named in a stale PodAssignment instead of claiming a fresh one. A
+// session that lost its pod and entered awaiting_client_action retains the
+// dead pod's name in PodAssignment (failure.go), and no resume path clears
+// it. startOnPod's create-time-claim reconnect branch must be gated on a
+// live binding (non-recovery state), not on a non-empty PodAssignment
+// alone, so resumeOnPod claims a fresh pod through the whole-sequence Bind.
+// A failure means the resume reconnects to the no-longer-existing pod,
+// fails Prepare, and reports the resume as failed instead of recovering it.
+func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
+	srv, store, registry, cluster := podResumeServer(t, "sess-resume-stale")
+	// No WorkspaceSnapshot (snapshotless rebuild), but a non-empty stale
+	// PodAssignment naming the dead pod the session lost. Before the gate
+	// fix, startOnPod's `if row.PodAssignment != ""` branch would reconnect
+	// to "sbx-dead" rather than claiming the idle "sbx-1".
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID:            "sess-resume-stale",
+		PodAssignment: "sbx-dead",
+		PoolRef:       "echo-pool",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# resumed","mode":"0644"}]
+		}`),
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-stale/resume", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess-resume-stale")
+	if err != nil {
+		t.Fatalf("get resumed session: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("state = %q, want running after resume", row.State)
+	}
+
+	// The resume claimed the fresh idle pod (sbx-1), not the dead binding.
+	binding, ok := registry.Get("sess-resume-stale")
+	if !ok {
+		t.Fatal("registry holds no binding after a snapshotless resume with a stale PodAssignment")
+	}
+	if binding.SandboxName != "sbx-1" || binding.PodIP != "10.244.2.5" {
+		t.Errorf("binding = %+v, want fresh-claimed sbx-1 / 10.244.2.5 (not the stale sbx-dead)", binding)
+	}
+
+	// The fresh pod's claim is bound; the dead pod was never touched.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("get per-pod claim for the freshly claimed pod: %v", err)
+	}
+	if claim.Status.Phase != string(claimstate.Bound) {
+		t.Errorf("claim binding state = %q, want bound on the freshly claimed pod", claim.Status.Phase)
+	}
+}
+
 func TestResumeRejectsNonResumableState(t *testing.T) {
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-bad")
 	// A `running` session is not a valid POST /resume precondition —

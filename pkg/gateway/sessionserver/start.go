@@ -1425,13 +1425,16 @@ var errCreateClaimExhausted = errors.New("create-time warm-pod claim exhausted")
 // isolation profile, then dispatches by the pool's sessionPolicy and by
 // whether a pod was already claimed at /create:
 //
-//   - An exclusive pool (maxConcurrentSessions=1) whose row carries a
-//     §4.6 durable binding (PodAssignment set by the create-time claim)
-//     reconnects to the bound pod and runs the §4.3 prepare barrier plus
-//     the §4.4 launch (prepareAndLaunch); it does not re-claim.
-//   - An exclusive pool with no prior claim (the §7.3 snapshotless
-//     resume-rebuild path) runs the whole Claim → Prepare → Launch
-//     sequence through podBinder.Bind.
+//   - An exclusive pool (maxConcurrentSessions=1) whose pre-running row
+//     carries a live §4.6 durable binding (PodAssignment set by the
+//     create-time claim, the session not in a recovery state) reconnects
+//     to the bound pod and runs the §4.3 prepare barrier plus the §4.4
+//     launch (prepareAndLaunch); it does not re-claim.
+//   - An exclusive pool with no live create-time claim runs the whole
+//     Claim → Prepare → Launch sequence through podBinder.Bind. This is
+//     the §7.3 snapshotless resume-rebuild path (resumeOnPod invokes
+//     startOnPod on a recovery-state row that still carries the dead pod's
+//     stale PodAssignment) and the no-prior-claim concurrent-defer case.
 //   - A concurrent-workspace pool (maxConcurrentSessions>1) reserves a
 //     slot on a shared pod through podBinder.BindSlot (§5.2); the
 //     create-time claim defers to start for this path.
@@ -1545,14 +1548,25 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			})
 	}
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
-	// spec: §7.1 steps 4-13 / §4.6 (proposal) — when the row already carries a
-	// pod claimed at /create (PodAssignment set, the §4.6 durable binding), the
-	// pod is not re-claimed at start: the gateway reconnects to the bound pod
-	// and runs the §4.3 prepare barrier plus the §4.4 launch against it. A
-	// row with no PodAssignment (the §7.3 snapshotless resume-rebuild path, or a
-	// concurrent-slot pool the create-time claim defers) runs the whole
-	// Claim → Prepare → Launch sequence here.
-	if row.PodAssignment != "" {
+	// spec: §7.1 steps 4-13 / §4.6 (proposal) — when the row carries a pod
+	// claimed at /create (the §4.6 durable binding) and the session is still in
+	// its pre-running create → finalize → start window, the pod is not
+	// re-claimed at start: the gateway reconnects to the bound pod and runs the
+	// §4.3 prepare barrier plus the §4.4 launch against it.
+	//
+	// The reconnect is gated on a live create-time claim, signalled by a
+	// non-empty PodAssignment on a non-recovery row, rather than by a non-empty
+	// PodAssignment alone. A session that lost its pod and entered a recovery
+	// state (resume_pending / resuming / awaiting_client_action) retains the
+	// dead pod's name in PodAssignment (failure.go), and no resume or
+	// tree-recovery path clears it. The §7.3 snapshotless resume-rebuild path
+	// (resumeOnPod → startOnPod with a recovery-state row) must claim a fresh
+	// pod through the whole Claim → Prepare → Launch sequence below rather than
+	// reconnect to the dead binding; reconnecting would fail Prepare against the
+	// no-longer-existing pod and fail the resume instead of recovering it. A row
+	// with no PodAssignment (a concurrent-slot pool the create-time claim
+	// defers) also runs the whole sequence here.
+	if row.PodAssignment != "" && !session.IsRecovery(row.State) {
 		// spec: §5 / §6.3 line 348 (proposal) — on the combined one-call path
 		// the same call measured the create-time pod_claim duration; thread it
 		// into the launch-boundary end-to-end envelope so the single
