@@ -256,11 +256,11 @@ Three levels:
 2. For each session in the user's task tree: gateway sends a `Terminate` RPC to the pod with reason `USER_REVOKED`.
 3. The pod's runtime adapter initiates graceful shutdown (SIGTERM to agent, wait up to 10s, then SIGKILL).
 4. Gateway marks all sessions as terminated in SessionStore.
-5. Cached auth tokens for the user are invalidated in Redis.
+5. The user's issued tokens are revoked in the durable Postgres issued-token index (the authoritative revocation store; see [§13.3](13_security-model.md#133-credential-flow)), each revoked token id is pushed into the gateway's in-memory revocation cache, and the revocations are fanned out to peer replicas so every replica's cache rejects the tokens within seconds.
 6. Credential leases held by the user's sessions are revoked (returned to pool).
 7. Pending elicitations for the user are dismissed.
 
-> **Note:** Invalidation is asynchronous — the API call returns immediately and propagation completes within seconds. The `GET /v1/sessions` endpoint reflects the updated state once propagation completes.
+> **Note:** Full-revoke propagation is two-tiered. On the handling gateway replica, the API performs the local effects synchronously before it returns: it cancels the user's non-terminal sessions in the SessionStore, sends the [§4.7](04_system-components.md#47-runtime-adapter) `Terminate` RPC to the pods that replica coordinates, revokes the user's credential leases, revokes the user's issued tokens and pushes them into the in-memory revocation cache, dismisses pending elicitations, and revokes the user's playground sessions. The response body reports the per-effect counts and any partial-failure detail for the effects enumerated above. Because each local pod `Terminate` RPC is bounded, the call blocks for a bounded duration rather than returning immediately. Cross-replica propagation is asynchronous: the gateway publishes the step-2 `Terminate` request, the token revocations, and the credential deny-list entries on Redis pub/sub channels, and peer replicas apply them on their subscribers within seconds. The reported counts therefore reflect only the handling replica's local effects; peer-replica pods, revocation-cache entries, and deny-list entries follow asynchronously. The cancelled session state is committed to the central SessionStore before the call returns, so `GET /v1/sessions` reflects it on return; when read traffic is routed to a Postgres read replica (see [§12.3](12_storage-architecture.md#123-postgres-ha-requirements)), the cancellation becomes visible once it replicates, subject to the usual read-replica lag.
 
 ### 11.5 Idempotency
 
