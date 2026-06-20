@@ -19,7 +19,7 @@ Before calling any platform tool, connect to the platform MCP server:
 
 1. Read `/run/lenny/adapter-manifest.json`.
 2. Extract `platformMcpServer.socket` (e.g., `@lenny-platform-mcp`) and `mcpNonce`. The nonce is a 256-bit hex string regenerated for each task execution.
-3. Connect over the abstract Unix socket. Abstract sockets are a Linux feature, so Standard- and Full-level runtime development requires a Linux environment.
+3. Connect over the abstract Unix socket. Abstract sockets are a Linux kernel feature, so they are available wherever the adapter runs inside an in-cluster Linux pod. Under Embedded Mode (`lenny up`) the adapter runs in an in-cluster pod, which on macOS and Windows runs under Docker Desktop's Linux VM, so Standard- and Full-level runtime authors can develop against Embedded Mode on any host. Only Source Mode (`make run`), which runs the adapter on the host, requires a Linux host for these levels.
 4. Send MCP `initialize` with the nonce as the top-level `_lennyNonce` field in `params`. The server speaks MCP `2025-03-26` and also accepts `2024-11-05` for a transition window. The adapter validates `_lennyNonce` against `mcpNonce`, strips it from `params`, and rejects any connection that omits a valid nonce before dispatching tools.
 
 ```json

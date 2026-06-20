@@ -52,6 +52,22 @@ func sdkExamplePages(root string) []string {
 	}
 }
 
+// abstractSocketPages is the set of published reader-facing pages, beyond
+// the SDK examples, that carry the host-side abstract-socket restriction
+// proposal §3.5/§3.6 reconciled. Each names the abstract-socket transport
+// for Standard/Full runtimes and must scope the host-side Linux
+// requirement to Source Mode rather than asserting a blanket Linux-only
+// restriction. These pages live outside spec/, so the spec-anchor tests
+// in embedded_mode_anchors_test.go do not cover them, and the SDK-example
+// test above does not reach them.
+func abstractSocketPages(root string) []string {
+	return []string{
+		filepath.Join(root, "docs", "runtime-author-guide", "platform-tools.md"),
+		filepath.Join(root, "docs", "getting-started", "concepts.md"),
+		filepath.Join(root, "docs", "tutorials", "build-a-runtime.md"),
+	}
+}
+
 // diagnosis: the quickstart's Docker prerequisite reconciliation from
 // proposal §3.2/§3.3 regressed. The page either reasserts that no Docker
 // is required (false on macOS and Windows, where the embedded k3s runs
@@ -180,6 +196,56 @@ func TestSDKExamplesScopeAbstractSocketRestrictionToHostSide(t *testing.T) {
 		// level excludes them.
 		if strings.Contains(content, "which are Linux-only. Use `docker compose up` on macOS") {
 			t.Errorf("%s still asserts the Standard level is flatly Linux-only; Embedded Mode runs the adapter in an in-cluster Linux pod on macOS and Windows (proposal §3.5/§3.6)", name)
+		}
+	}
+}
+
+// diagnosis: a published reader-facing page beyond the SDK examples
+// still asserts the pre-0013 over-broad "Standard/Full runtime
+// development requires Linux" abstract-socket restriction with no
+// Embedded-Mode carve-out. The platform-tools, concepts, and
+// build-a-runtime pages each describe the abstract-socket transport for
+// Standard/Full runtimes; if any reasserts a blanket host-OS Linux
+// requirement, it contradicts the reconciled spec (§15.4.3/§17.4) and
+// the sibling reconciled pages (local-development.md, integration-
+// levels.md), recreating the self-contradiction proposal §1.3 set out to
+// prevent. The host-side Linux requirement holds only for Source Mode
+// (`make run`); Embedded Mode (`lenny up`) runs the adapter in an
+// in-cluster Linux pod under Docker Desktop's Linux VM on macOS and
+// Windows.
+//
+// spec: §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
+// Proposal 0013 §1.3, §3.5, §3.6, §3.9.
+func TestPublishedPagesScopeAbstractSocketRestrictionToSourceMode(t *testing.T) {
+	root := repoRoot(t)
+	for _, page := range abstractSocketPages(root) {
+		content := readDocPage(t, page)
+		name := filepath.Base(filepath.Dir(page)) + "/" + filepath.Base(page)
+
+		// The reconciled text must name the Embedded-Mode in-cluster-pod
+		// path as how Standard/Full authors develop on macOS and Windows.
+		for _, want := range []string{
+			"in-cluster",
+			"Embedded Mode",
+			"Docker Desktop's Linux VM",
+		} {
+			if !strings.Contains(content, want) {
+				t.Errorf("%s missing abstract-socket reconciliation text %q (proposal §1.3/§3.5/§3.6 regression)", name, want)
+			}
+		}
+
+		// The pre-0013 over-broad phrasings — a blanket host-OS Linux
+		// requirement for Standard/Full development with no carve-out — must
+		// be gone. Each fragment is the exact pre-reconciliation wording the
+		// site carried.
+		for _, banned := range []string{
+			"Standard- and Full-level runtime development requires a Linux environment",
+			"which only exist on Linux. To develop on macOS, run your runtime inside",
+			"abstract Unix sockets (Linux only; use `docker compose` on macOS)",
+		} {
+			if strings.Contains(content, banned) {
+				t.Errorf("%s still asserts the pre-0013 over-broad abstract-socket restriction (%q); scope the host-side Linux requirement to Source Mode and name the Embedded-Mode in-cluster-pod path (proposal §1.3/§3.5/§3.6)", name, banned)
+			}
 		}
 	}
 }
