@@ -88,7 +88,7 @@ type Stack struct {
 	// request without tearing the rest of the stack down. ctlSpec.BinPath
 	// is empty when the controller did not start.
 	gwSpec  gatewaySpec
-	ctlSpec controllerSpec
+	ctlSpec ControllerSpec
 }
 
 // Up brings up the Embedded Mode stack. It is idempotent: when a stack
@@ -293,7 +293,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		if err != nil {
 			fmt.Fprintf(out, "lenny up: WARNING: controller binary not found: %v\n", err)
 		} else {
-			s.ctlSpec = controllerSpec{
+			s.ctlSpec = ControllerSpec{
 				BinPath:     ctlBin,
 				PostgresDSN: dsn,
 				Kubeconfig:  kubeconfig,

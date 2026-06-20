@@ -4,8 +4,15 @@ package stack
 
 import "os"
 
-// controllerSpec configures the embedded controller child process.
-type controllerSpec struct {
+// ControllerSpec configures the embedded controller child process. It is
+// exported so the tier-2 bring-up test can start the production controller
+// against a Docker-backed substrate's host-rewritten kubeconfig, the same
+// call Up makes — the controllers-start leg the non-Linux gate previously
+// skipped.
+//
+// spec: §17.4 (Embedded Mode runs the production controllers against the
+// launcher's host-rewritten kubeconfig on every supported host).
+type ControllerSpec struct {
 	// BinPath is the production lenny-controller binary.
 	BinPath string
 	// PostgresDSN points the controller's agent_pod_state mirror at
@@ -22,13 +29,58 @@ type controllerSpec struct {
 	LogPath string
 }
 
-// startController launches the production controllers against the
+// Controller is a handle to a running embedded controller child process.
+// StartController returns it so a caller (the tier-2 bring-up test) can
+// assert the controller comes up and stays alive against the launcher's
+// host-rewritten kubeconfig, then tear it down. The handle exposes the
+// liveness and teardown surface without leaking the internal process type.
+type Controller struct {
+	proc *managedProcess
+}
+
+// PID returns the controller process identifier, or zero when it is not
+// running.
+func (c *Controller) PID() int { return c.proc.PID() }
+
+// Running reports whether the controller child process is still alive.
+// It probes the OS for the PID (signal-0 on unix, OpenProcess on Windows)
+// rather than reading cmd.ProcessState, because nothing calls cmd.Wait on
+// the controller in this path, so ProcessState stays nil and would report
+// a self-exited controller as still running. status.go and lifecycle.go
+// determine component liveness the same way (processAlive), so a
+// controller that exits on its own — the failure this handle exists to
+// detect, a controller that cannot reach the in-container API server
+// across the host/Docker boundary and exits non-zero during startup — is
+// observed as not running. spec: §24.19 (the controller health probe).
+func (c *Controller) Running() bool { return processAlive(c.proc.PID()) }
+
+// Stop terminates the controller child process tree. It is idempotent.
+func (c *Controller) Stop() error { return c.proc.Stop() }
+
+// StartController launches the production controllers against the
 // embedded Kubernetes cluster. §17.4: Embedded Mode uses the
 // production controllers; the controller resolves its cluster
 // connection from KUBECONFIG, which is pointed at the embedded k3s
-// admin kubeconfig. Leader election is left off — the embedded stack
-// runs a single replica.
-func startController(spec controllerSpec) (*managedProcess, error) {
+// admin kubeconfig (the launcher's host-rewritten kubeconfig on the
+// Docker-backed launcher). Leader election is left off — the embedded
+// stack runs a single replica. It is exported so the tier-2 bring-up
+// test can pin the controllers-start leg against a Docker-backed
+// substrate, the same way InstallCRDs pins the CRD-install leg.
+//
+// spec: §17.4 (the production controllers run against the launcher's
+// host-rewritten kubeconfig on every supported host).
+func StartController(spec ControllerSpec) (*Controller, error) {
+	proc, err := startController(spec)
+	if err != nil {
+		return nil, err
+	}
+	return &Controller{proc: proc}, nil
+}
+
+// startController launches the production controller as a child process
+// per spec. It returns the internal managedProcess the stack supervisor
+// owns; StartController wraps it in the exported Controller handle.
+func startController(spec ControllerSpec) (*managedProcess, error) {
 	args := []string{
 		// The embedded stack runs one replica, so leader election is
 		// unnecessary; omitting --leader-elect keeps it off.
