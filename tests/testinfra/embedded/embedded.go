@@ -9,17 +9,23 @@
 // in-process http.Handler.
 //
 // Embedded Mode brings up an embedded k3s cluster for session
-// placement. That requires Linux (k3s is Linux-only per §17.4 line
-// 224) plus a writable container runtime and, on first run, network
-// access to download the k3s and PostgreSQL bundles (§17.4 lines 98,
-// 150). Session start additionally pulls the runtime image, which the
-// reference catalog ships placeholder-pinned (§17.4 / catalog.go), so
-// `session new` succeeds only once an operator points the chosen
-// runtime at a pullable image. The bring-up is therefore expensive and
-// host-dependent; SkipUnlessAvailable gates the test behind an explicit
-// LENNY_EMBEDDED_SMOKE opt-in and a Linux host so the unit and tier-4
-// suites stay green on developer laptops and CI runners that lack the
-// runtime. This mirrors the envtest and kind opt-in convention.
+// placement. The cluster substrate is cross-platform: on Linux k3s runs
+// as a managed child process, and on macOS and Windows the same pinned
+// k3s version runs as a container under Docker Desktop's Linux VM (§17.4
+// Embedded Mode). The host therefore needs a writable container runtime,
+// and on macOS and Windows it needs the docker CLI on PATH so Docker
+// Desktop supplies the Linux kernel the binary cannot embed. On first
+// run the bring-up also needs network access to download the k3s and
+// PostgreSQL bundles (§17.4). Session start additionally pulls the
+// runtime image, which the reference catalog ships placeholder-pinned
+// (§17.4 / catalog.go), so `session new` succeeds only once an operator
+// points the chosen runtime at a pullable image. The bring-up is
+// therefore expensive and host-dependent; SkipUnlessAvailable gates the
+// test behind an explicit LENNY_EMBEDDED_SMOKE opt-in and the
+// cross-platform substrate prerequisite (Linux, or a non-Linux host with
+// Docker on PATH) so the unit and tier-4 suites stay green on developer
+// laptops and CI runners that lack the substrate. This mirrors the
+// envtest and kind opt-in convention.
 package embedded
 
 import (
@@ -34,6 +40,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -54,18 +61,29 @@ const RuntimeEnv = "LENNY_EMBEDDED_SMOKE_RUNTIME"
 // is unset. chat is the §26.7 zero-config default `lenny up` seeds.
 const DefaultRuntime = "chat"
 
-// available reports whether the host can run the Embedded Mode smoke
-// test, returning a human-readable reason when it cannot. The checks
-// are: the go toolchain is on PATH (the helper builds cmd/lenny), the
-// host is Linux (embedded k3s session placement is Linux-only per
-// §17.4 line 224), and the LENNY_EMBEDDED_SMOKE opt-in is set (the
-// bring-up is expensive and network-dependent on first run).
+// available reports whether the host can provision the Embedded Mode
+// substrate and run the smoke test, returning a human-readable reason
+// when it cannot. The checks are: the go toolchain is on PATH (the
+// helper builds cmd/lenny), the host can provision the embedded k3s
+// substrate (k3s.SupportedPlatform — Linux unconditionally, macOS and
+// Windows when the docker CLI is on PATH so Docker Desktop supplies the
+// Linux VM), and the LENNY_EMBEDDED_SMOKE opt-in is set (the bring-up is
+// expensive and network-dependent on first run). Reusing the production
+// SupportedPlatform gate keeps the test prerequisite in lockstep with
+// the launcher-selection gate, so a host that the smoke test runs on is
+// exactly a host where `lenny up` provisions a real cluster.
+//
+// spec: §17.4 (the embedded k3s substrate is provisioned per host
+// operating system, as a managed child process on Linux and a
+// Docker-backed container on macOS and Windows where Docker Desktop
+// supplies the Linux VM).
 func available() (bool, string) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return false, "go toolchain not on PATH"
 	}
-	if runtime.GOOS != "linux" {
-		return false, "embedded k3s session placement requires Linux (§17.4 line 224); GOOS=" + runtime.GOOS
+	if !k3s.SupportedPlatform() {
+		return false, "embedded k3s substrate is unavailable: on " + runtime.GOOS +
+			" the docker CLI must be on PATH so Docker Desktop supplies the Linux VM the embedded k3s runs in (§17.4 Embedded Mode)"
 	}
 	if !truthy(os.Getenv(SmokeOptInEnv)) {
 		return false, "set " + SmokeOptInEnv + "=1 to run the Embedded Mode smoke test (downloads + runs k3s + PostgreSQL and pulls a runtime image)"
@@ -82,8 +100,12 @@ func truthy(v string) bool {
 	return false
 }
 
-// SkipUnlessAvailable skips the test unless the host can run the
-// Embedded Mode smoke test. spec: §17.4.
+// SkipUnlessAvailable skips the test unless the host can provision the
+// Embedded Mode substrate and the operator has opted in. The host is
+// able when k3s.SupportedPlatform reports the substrate provisionable
+// (Linux, or a non-Linux host with the docker CLI on PATH so Docker
+// Desktop supplies the Linux VM) and LENNY_EMBEDDED_SMOKE is set.
+// spec: §17.4.
 func SkipUnlessAvailable(t testing.TB) {
 	t.Helper()
 	if ok, reason := available(); !ok {

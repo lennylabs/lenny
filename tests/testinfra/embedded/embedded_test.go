@@ -3,8 +3,10 @@
 package embedded_test
 
 import (
+	"runtime"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 	"github.com/lennylabs/lenny/tests/testinfra/embedded"
 )
 
@@ -30,6 +32,42 @@ func TestSkipUnlessAvailableSkipsWithoutOptIn(t *testing.T) {
 		}()
 		embedded.SkipUnlessAvailable(inner)
 	})
+}
+
+// spec: §17.4 — the Embedded Mode smoke gate is no longer Linux-only: with
+// the opt-in set, it admits the test exactly on the hosts the production
+// launcher can provision the substrate on (k3s.SupportedPlatform — Linux
+// unconditionally, a non-Linux host when Docker is on PATH). This pins
+// that S8's relaxation tracks the production gate rather than re-deriving
+// a separate OS check, so the test runs on macOS and Windows with Docker
+// present instead of always skipping off Linux.
+func TestSkipUnlessAvailableTracksSupportedPlatform(t *testing.T) {
+	// Opt in so the gate's decision is the substrate prerequisite rather
+	// than the opt-in. SkipUnlessAvailable skips when the substrate is
+	// unavailable and runs (does not skip) when it is available, so its
+	// skip/run outcome must equal k3s.SupportedPlatform() on this host.
+	t.Setenv(embedded.SmokeOptInEnv, "1")
+
+	wantRun := k3s.SupportedPlatform()
+	t.Run("inner", func(inner *testing.T) {
+		defer func() {
+			ranToCompletion := !inner.Skipped()
+			if ranToCompletion != wantRun {
+				t.Errorf("with the opt-in set, SkipUnlessAvailable ran=%v, want ran=%v "+
+					"(k3s.SupportedPlatform()=%v on GOOS=%s); the smoke gate must track the production substrate gate",
+					ranToCompletion, wantRun, wantRun, runtime.GOOS)
+			}
+		}()
+		embedded.SkipUnlessAvailable(inner)
+	})
+
+	// On Linux the substrate is supported unconditionally, so the opt-in
+	// gate must admit the test there. This pins the Linux path explicitly
+	// so a regression that breaks Linux is caught even on a Linux-only CI
+	// runner.
+	if runtime.GOOS == "linux" && !wantRun {
+		t.Fatalf("k3s.SupportedPlatform() = false on linux; the embedded substrate must be supported unconditionally on Linux")
+	}
 }
 
 // spec: §17.4 — Runtime falls back to the §26.7 chat default when the
