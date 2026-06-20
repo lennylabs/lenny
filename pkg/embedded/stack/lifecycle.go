@@ -59,9 +59,40 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 		return err
 	}
 
-	// Re-execute this binary as the detached supervisor. The
-	// supervisor brings the stack up and stays alive to host the
-	// in-process components.
+	if err := spawnSupervisor(root, paths, opts); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, "lenny up: bringing the embedded stack up (first run downloads PostgreSQL and k3s)")
+	if err := waitForStack(ctx, paths, 6*time.Minute); err != nil {
+		fmt.Fprintf(errOut, "lenny up: %v\n", err)
+		fmt.Fprintf(errOut, "lenny up: see %s for supervisor output\n", paths.Logs+"/supervisor.log")
+		return err
+	}
+	st, _, _ := readState(paths.StateFile())
+	fmt.Fprintf(out, "\n  %s\n\n", ProductionWarningBanner)
+	fmt.Fprintf(out, "lenny up: stack ready\n")
+	fmt.Fprintf(out, "  gateway   https://localhost%s  (http://localhost%s)\n",
+		portSuffix(st.HTTPSAddr), portSuffix(st.HTTPAddr))
+	fmt.Fprintf(out, "  TLS CA    %s\n", paths.TLS+"/ca.crt")
+	fmt.Fprintf(out, "  token     run 'lenny token print' for a bearer for the built-in user\n")
+	if !st.K3sEnabled {
+		fmt.Fprintf(out, "  note      embedded Kubernetes is not running; session placement is unavailable\n")
+	}
+	return nil
+}
+
+// spawnSupervisor re-executes the lenny binary as the detached supervisor
+// that brings the stack up and stays alive to host the in-process
+// components. It is a package-level var so a unit test can substitute a fake
+// that records a healthy stack without re-executing the real binary,
+// exercising RunUp's orchestration (idempotency, wait, ready-report) without
+// a real bring-up. The default implementation detaches the supervisor so it
+// outlives the foreground lenny up process.
+//
+// spec: §17.4 (lenny up re-executes the binary as a detached supervisor),
+// §24.19.
+var spawnSupervisor = func(root string, paths Paths, opts UpOptions) error {
 	self, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("lenny up: resolve own path: %w", err)
@@ -94,23 +125,6 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 	// The foreground process does not wait on the supervisor; release
 	// it so the supervisor is not left a zombie when lenny up exits.
 	_ = cmd.Process.Release()
-
-	fmt.Fprintln(out, "lenny up: bringing the embedded stack up (first run downloads PostgreSQL and k3s)")
-	if err := waitForStack(ctx, paths, 6*time.Minute); err != nil {
-		fmt.Fprintf(errOut, "lenny up: %v\n", err)
-		fmt.Fprintf(errOut, "lenny up: see %s for supervisor output\n", paths.Logs+"/supervisor.log")
-		return err
-	}
-	st, _, _ := readState(paths.StateFile())
-	fmt.Fprintf(out, "\n  %s\n\n", ProductionWarningBanner)
-	fmt.Fprintf(out, "lenny up: stack ready\n")
-	fmt.Fprintf(out, "  gateway   https://localhost%s  (http://localhost%s)\n",
-		portSuffix(st.HTTPSAddr), portSuffix(st.HTTPAddr))
-	fmt.Fprintf(out, "  TLS CA    %s\n", paths.TLS+"/ca.crt")
-	fmt.Fprintf(out, "  token     run 'lenny token print' for a bearer for the built-in user\n")
-	if !st.K3sEnabled {
-		fmt.Fprintf(out, "  note      embedded Kubernetes is not running; session placement is unavailable\n")
-	}
 	return nil
 }
 

@@ -72,6 +72,27 @@ func TestNewSelectsDockerLauncherOffLinux(t *testing.T) {
 	}
 }
 
+// TestNewDockerLauncherSelectsDockerLauncher covers the explicit
+// Docker-backed launcher constructor: it returns the same *dockerLauncher
+// New returns off Linux, regardless of the host operating system, so the
+// tier-2 bring-up test can exercise the macOS/Windows substrate path on a
+// Docker-equipped Linux CI host. It applies Config defaults like New does.
+//
+// spec: §17.4 (on macOS and Windows the embedded k3s runs as a Docker-backed
+// container; the same launcher provisions it).
+func TestNewDockerLauncherSelectsDockerLauncher(t *testing.T) {
+	l := NewDockerLauncher(Config{Dir: t.TempDir()})
+	if _, ok := l.(*dockerLauncher); !ok {
+		t.Fatalf("NewDockerLauncher returned %T, want *dockerLauncher", l)
+	}
+	// Defaults are applied: the kubeconfig path follows the shared
+	// convention, which depends on Dir alone, so assert the launcher is
+	// usable rather than re-checking timeouts (covered by TestConfigWithDefaults).
+	if l.KubeconfigPath() == "" {
+		t.Error("NewDockerLauncher produced a launcher with an empty kubeconfig path")
+	}
+}
+
 func TestDownloadURLByArch(t *testing.T) {
 	url := downloadURL()
 	if !strings.Contains(url, Version) {

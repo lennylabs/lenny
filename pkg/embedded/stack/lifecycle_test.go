@@ -5,6 +5,8 @@ package stack
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +25,198 @@ func TestRunDownNoStack(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "no embedded stack is running") {
 		t.Errorf("RunDown output = %q, want a no-stack message", out.String())
+	}
+}
+
+// TestRunUpOrchestratesBringUp covers RunUp's orchestration with an injected
+// supervisor spawn: RunUp ensures the state directories, launches the
+// supervisor (here a fake that records a healthy stack), waits for the
+// gateway to answer, and reports the ready stack. The real detached-process
+// spawn is exercised by the tier-4 embedded smoke test; this pins the
+// foreground orchestration around it without a real bring-up.
+//
+// spec: §17.4 (lenny up launches the supervisor and waits for a healthy
+// gateway before reporting the stack ready), §24.19.
+func TestRunUpOrchestratesBringUp_spec_17_4(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+
+	prev := spawnSupervisor
+	t.Cleanup(func() { spawnSupervisor = prev })
+	spawnSupervisor = func(_ string, paths Paths, _ UpOptions) error {
+		// Stand in for the detached supervisor: record a healthy stack so
+		// waitForStack returns immediately.
+		st := State{
+			SupervisorPID: os.Getpid(),
+			GatewayPID:    os.Getpid(),
+			HTTPAddr:      addr,
+			HTTPSAddr:     "127.0.0.1:8443",
+			K3sEnabled:    true,
+		}
+		return writeState(paths.StateFile(), st)
+	}
+
+	var out, errOut bytes.Buffer
+	if err := RunUp(context.Background(), UpOptions{Out: &out, ErrOut: &errOut}); err != nil {
+		t.Fatalf("RunUp: %v\nerrOut: %s", err, errOut.String())
+	}
+	if !strings.Contains(out.String(), "stack ready") {
+		t.Errorf("RunUp output = %q, want the ready report", out.String())
+	}
+	// K3sEnabled is true, so the no-cluster note is omitted.
+	if strings.Contains(out.String(), "session placement is unavailable") {
+		t.Errorf("RunUp reported the cluster unavailable despite K3sEnabled: %q", out.String())
+	}
+}
+
+// TestRunUpReportsSpawnFailure covers RunUp's error path when the supervisor
+// cannot be launched: RunUp returns the spawn error rather than waiting for a
+// stack that will never come up.
+//
+// spec: §17.4, §24.19.
+func TestRunUpReportsSpawnFailure(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	prev := spawnSupervisor
+	t.Cleanup(func() { spawnSupervisor = prev })
+	spawnSupervisor = func(string, Paths, UpOptions) error {
+		return errStubSpawn
+	}
+	var out, errOut bytes.Buffer
+	err := RunUp(context.Background(), UpOptions{Out: &out, ErrOut: &errOut})
+	if err == nil {
+		t.Fatal("RunUp with a failing supervisor spawn = nil, want an error")
+	}
+}
+
+// errStubSpawn is the canned spawn failure TestRunUpReportsSpawnFailure
+// injects.
+var errStubSpawn = &stubError{"supervisor spawn failed"}
+
+type stubError struct{ msg string }
+
+func (e *stubError) Error() string { return e.msg }
+
+// TestWaitForStackReturnsWhenGatewayHealthy covers the readiness poll
+// lenny up blocks on after starting the supervisor: when the state file
+// records a live gateway PID and the gateway answers its liveness probe,
+// waitForStack returns nil. The current test process stands in for the
+// live gateway PID (processAlive(self) is true) and an httptest server
+// stands in for the gateway, so the readiness loop is pinned without a
+// real bring-up.
+//
+// spec: §17.4 (lenny up waits for a healthy gateway before reporting the
+// stack ready), §24.19.
+func TestWaitForStackReturnsWhenGatewayHealthy_spec_17_4(t *testing.T) {
+	root := t.TempDir()
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	// httptest URLs are http://127.0.0.1:PORT; waitForStack joins http:// to
+	// the recorded HTTPAddr, so record the bare host:port.
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	st := State{SupervisorPID: os.Getpid(), GatewayPID: os.Getpid(), HTTPAddr: addr}
+	if err := writeState(paths.StateFile(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+	if err := waitForStack(context.Background(), paths, 5*time.Second); err != nil {
+		t.Errorf("waitForStack with a healthy recorded gateway = %v, want nil", err)
+	}
+}
+
+// TestWaitForStackTimesOutWithoutState covers the deadline path: with no
+// state file written (the supervisor never recorded a running stack), the
+// poll loop returns a timeout error rather than blocking forever.
+//
+// spec: §17.4, §24.19 (lenny up surfaces a bring-up that never becomes
+// ready).
+func TestWaitForStackTimesOutWithoutState(t *testing.T) {
+	root := t.TempDir()
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	err := waitForStack(context.Background(), paths, 1500*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitForStack with no recorded stack = nil, want a timeout error")
+	}
+	if !strings.Contains(err.Error(), "did not become ready") {
+		t.Errorf("error = %q, want it to name the not-ready stack", err)
+	}
+}
+
+// TestWaitForStackHonorsContextCancel covers the cancellation path: a
+// cancelled context makes the poll return the context error rather than
+// spinning to the timeout.
+//
+// spec: §24.19 (the bring-up honors cancellation).
+func TestWaitForStackHonorsContextCancel(t *testing.T) {
+	root := t.TempDir()
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitForStack(ctx, paths, 10*time.Second); err == nil {
+		t.Error("waitForStack with a cancelled context = nil, want the context error")
+	}
+}
+
+// TestRunDownStopsLiveSupervisor covers the RunDown branch that tears down a
+// running supervisor: when the recorded SupervisorPID is alive, RunDown asks
+// for a graceful stop (a no-op on unix that falls through) and then forcibly
+// terminates the supervisor, so the recorded process is gone and the state
+// file is cleared. A parked sleeper stands in for the detached supervisor so
+// the live-supervisor path is pinned without a real bring-up.
+//
+// spec: §24.19 (lenny down tears the running stack down).
+func TestRunDownStopsLiveSupervisor_spec_24_19(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	sup := spawnSleeper(t)
+	// Reap the sleeper once RunDown kills it: the test process is its parent,
+	// so without a Wait the killed child lingers as a zombie the liveness
+	// probe still reports alive.
+	cmd := sup.cmd
+	reaped := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(reaped) }()
+	pid := sup.PID()
+	// Detach the in-memory handle so RunDown reaches the process only by the
+	// recorded PID, the way lenny down does against a state file.
+	sup.cmd = nil
+
+	st := State{SupervisorPID: pid, GatewayPID: 1 << 30, K3sEnabled: false}
+	if err := writeState(paths.StateFile(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+	var out bytes.Buffer
+	if err := RunDown(context.Background(), DownOptions{Out: &out}); err != nil {
+		t.Fatalf("RunDown with a live supervisor: %v", err)
+	}
+	select {
+	case <-reaped:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("supervisor pid %d not reaped after RunDown", pid)
+	}
+	if _, err := os.Stat(paths.StateFile()); !os.IsNotExist(err) {
+		t.Error("RunDown left the state file in place after stopping the supervisor")
+	}
+	if !strings.Contains(out.String(), "stopping the embedded stack") {
+		t.Errorf("RunDown output = %q, want the stopping message", out.String())
 	}
 }
 

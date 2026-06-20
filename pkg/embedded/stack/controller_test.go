@@ -3,8 +3,10 @@
 package stack
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // controllerArgs and controllerEnv build the production controller child
@@ -111,5 +113,81 @@ func TestControllerEnvExtendsBase(t *testing.T) {
 	// The base slice must be unmodified: controllerEnv appends to a copy.
 	if len(base) != 2 || !strings.HasPrefix(base[0], "PATH=") {
 		t.Errorf("controllerEnv mutated the caller's base slice: %v", base)
+	}
+}
+
+// TestControllerHandleLifecycle covers the exported Controller handle the
+// tier-2 bring-up test relies on: a running controller reports a positive
+// PID and Running()=true, and Stop() terminates it so Running() goes false.
+// The handle's liveness is probed through processAlive (not cmd.Wait), which
+// is why a controller that exits on its own is observed as not running. The
+// child is a parked sleeper rather than the real controller binary so the
+// handle lifecycle is pinned without a live cluster.
+//
+// diagnosis: a failure means the Controller handle does not track the child
+// process correctly — PID/Running/Stop disagree with the OS. The tier-2
+// bring-up test would then mis-report whether the production controller stayed
+// alive against the launcher's host-rewritten kubeconfig.
+//
+// spec: §17.4 (Embedded Mode supervises the production controllers as managed
+// child processes), §24.19 (the controller health probe).
+func TestControllerHandleLifecycle_spec_17_4(t *testing.T) {
+	c := &Controller{proc: spawnSleeper(t)}
+	pid := c.PID()
+	if pid <= 0 {
+		t.Fatalf("Controller.PID() = %d, want a positive pid for a running child", pid)
+	}
+	if !c.Running() {
+		t.Fatal("Controller.Running() = false for a just-started child")
+	}
+	if err := c.Stop(); err != nil {
+		t.Fatalf("Controller.Stop(): %v", err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if !c.Running() {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if c.Running() {
+		t.Errorf("Controller.Running() = true after Stop (pid %d)", pid)
+	}
+	// Stop is idempotent: a second call is a no-op.
+	if err := c.Stop(); err != nil {
+		t.Errorf("second Controller.Stop() errored: %v", err)
+	}
+}
+
+// TestStartControllerLaunchesChild covers StartController/startController: the
+// launch path builds the controller argv and env from the spec and starts the
+// child. It points BinPath at a parked sleeper binary so the process actually
+// starts without needing the real controller binary or a cluster, then tears
+// it down through the returned handle.
+//
+// diagnosis: a failure means the controllers-start leg of `lenny up` could not
+// launch the production controller process at all (a bad argv/env assembly or
+// a process-spawn failure), independent of whether the controller can reach
+// the API server.
+//
+// spec: §17.4 (the production controllers run as managed child processes on
+// every supported host).
+func TestStartControllerLaunchesChild_spec_17_4(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test binary: %v", err)
+	}
+	c, err := StartController(ControllerSpec{
+		BinPath:     self,
+		PostgresDSN: "postgres://localhost/lenny",
+		Kubeconfig:  t.TempDir() + "/kubeconfig.yaml",
+		LogPath:     t.TempDir() + "/controller.log",
+	})
+	if err != nil {
+		t.Fatalf("StartController: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Stop() })
+	if c.PID() <= 0 {
+		t.Fatalf("StartController returned a handle with non-positive PID %d", c.PID())
 	}
 }

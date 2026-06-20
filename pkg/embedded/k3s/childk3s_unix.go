@@ -41,12 +41,16 @@ type childSupervisor struct {
 	cfg     Config
 	cmd     *exec.Cmd
 	logFile *os.File
+	// httpGet fetches the pinned k3s binary. It is a field so a unit test
+	// can substitute a fake server without reaching GitHub releases,
+	// mirroring the runDocker injection on the Docker-backed launcher.
+	httpGet func(req *http.Request) (*http.Response, error)
 }
 
 // newChildLauncher constructs the Linux child-process launcher. The
 // caller has already applied Config defaults via withDefaults.
 func newChildLauncher(cfg Config) Launcher {
-	return &childSupervisor{cfg: cfg}
+	return &childSupervisor{cfg: cfg, httpGet: http.DefaultClient.Do}
 }
 
 // BinaryPath returns the path the k3s binary is stored at.
@@ -94,7 +98,7 @@ func (s *childSupervisor) EnsureBinary(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("embedded k3s: build download request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.httpGet(req)
 	if err != nil {
 		return fmt.Errorf("embedded k3s: download %s: %w", downloadURL(), err)
 	}

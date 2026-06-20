@@ -206,6 +206,55 @@ func TestCtrInvocationArgsDockerPath(t *testing.T) {
 	assertArgs(t, "docker import", gotImport, wantImport)
 }
 
+// TestImportFromFileMissingTarballOnDockerPath covers the open-error branch
+// of importFromFile on the Docker-backed substrate: the host tarball is
+// streamed into the in-container ctr via stdin, so a missing tarball is
+// reported as an open error before any docker exec runs. The host-binary
+// branch (ctr.container == "") and the success path shell out to ctr, so
+// they belong to the tier-2 bring-up rather than this unit; this test pins
+// the fail-closed open-error path without a real container.
+//
+// spec: §24.19.1 line 275 (the `--file <tar>` import path), §17.4 (the
+// Docker-backed substrate streams the host tarball through `docker exec -i`).
+func TestImportFromFileMissingTarballOnDockerPath_spec_24_19_1(t *testing.T) {
+	ctr := ctrInvocation{binary: "docker", socket: containerCtrSocket, container: "lenny-embedded-k3s-x"}
+	missing := filepath.Join(t.TempDir(), "no-such-image.tar")
+	var stdout, stderr bytes.Buffer
+	code := importFromFile(ctr, "k8s.io", "acme/chat:v1", missing, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("importFromFile on a missing tarball = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "open") {
+		t.Errorf("stderr = %q, want it to name the open failure", stderr.String())
+	}
+}
+
+// TestImportFromFileHostPathRunError covers the host-binary file-import
+// error branch of importFromFile (ctr.container == ""): when the ctr
+// invocation fails (here because the binary path does not exist), the import
+// reports a non-zero exit with a diagnostic rather than claiming success.
+// This pins the host-path error handling without a real k3s ctr; the
+// success path shells out to a live ctr and belongs to the tier-2 bring-up.
+//
+// spec: §24.19.1 line 275 (the `--file <tar>` import path on the host
+// substrate).
+func TestImportFromFileHostPathRunError_spec_24_19_1(t *testing.T) {
+	tar := filepath.Join(t.TempDir(), "image.tar")
+	if err := os.WriteFile(tar, []byte("not-a-real-tar"), 0o644); err != nil {
+		t.Fatalf("seed tarball: %v", err)
+	}
+	// A host-path ctr invocation (empty container) whose binary does not
+	// exist, so runStreamed returns an exec error and the error branch runs.
+	ctr := ctrInvocation{binary: filepath.Join(t.TempDir(), "no-such-ctr"), socket: "/sock"}
+	var stdout, stderr bytes.Buffer
+	if code := importFromFile(ctr, "k8s.io", "acme/chat:v1", tar, &stdout, &stderr); code != 1 {
+		t.Fatalf("importFromFile with an unrunnable ctr = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "lenny image import:") {
+		t.Errorf("stderr = %q, want a lenny image import diagnostic", stderr.String())
+	}
+}
+
 func assertArgs(t *testing.T, label string, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -365,5 +414,39 @@ func TestCtrCommandCorruptState(t *testing.T) {
 	}
 	if got := errb.String(); !strings.Contains(got, "lenny image:") {
 		t.Errorf("stderr = %q, want a lenny image diagnostic", got)
+	}
+}
+
+// TestCmdImageListUnavailableStack covers cmdImageList's early return: with
+// no running stack and no host k3s on disk, ctrCommand reports
+// K3S_UNAVAILABLE and cmdImageList propagates that exit without attempting a
+// ctr invocation.
+//
+// spec: §24.19.1 line 282 (K3S_UNAVAILABLE when the embedded containerd is
+// unreachable).
+func TestCmdImageListUnavailableStack_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	if code := cmdImageList(nil, &stdout, &stderr); code != exitK3sUnavailable {
+		t.Fatalf("cmdImageList against an unavailable stack = %d, want %d", code, exitK3sUnavailable)
+	}
+	if !strings.Contains(stderr.String(), "K3S_UNAVAILABLE") {
+		t.Errorf("stderr = %q, want K3S_UNAVAILABLE", stderr.String())
+	}
+}
+
+// TestCmdImageRmUnavailableStack covers cmdImageRm's early return after a
+// valid reference passes validation: ctrCommand reports K3S_UNAVAILABLE and
+// cmdImageRm propagates the exit without invoking ctr.
+//
+// spec: §24.19.1 line 282 (K3S_UNAVAILABLE).
+func TestCmdImageRmUnavailableStack_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	if code := cmdImageRm([]string{"acme/chat:v1"}, &stdout, &stderr); code != exitK3sUnavailable {
+		t.Fatalf("cmdImageRm against an unavailable stack = %d, want %d", code, exitK3sUnavailable)
+	}
+	if !strings.Contains(stderr.String(), "K3S_UNAVAILABLE") {
+		t.Errorf("stderr = %q, want K3S_UNAVAILABLE", stderr.String())
 	}
 }

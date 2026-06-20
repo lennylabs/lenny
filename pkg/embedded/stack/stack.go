@@ -225,50 +225,10 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// spec: §17.4 (the embedded Kubernetes substrate is provisioned per
 	// host operating system, and stays identical above the substrate
 	// layer).
-	k3sEnabled := false
-	kubeconfig := ""
-	// gatewayGRPCDialAddr is the gateway's externally-reachable §8.6/§9.1
-	// GatewayControl address from inside the cluster. The substrate launcher
-	// supplies the host portion (loopback on the Linux child-process
-	// launcher, host.docker.internal on the Docker-backed launcher); the
-	// stack joins it to the gateway's gRPC host port. The controller stamps
-	// it onto agent pods so the in-cluster adapter dials the host gateway
-	// across the host/Docker boundary. It stays empty without an embedded
-	// cluster (no in-cluster adapter to serve). spec: §4.7, §8.6, §9.1.
-	gatewayGRPCDialAddr := ""
-	if k3s.SupportedPlatform() {
-		fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
-		sup := k3s.New(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort})
-		if err := sup.Start(ctx); err != nil {
-			// k3s is the §17.4 component most likely to fail on a
-			// constrained host. Route around it: the storage and
-			// identity paths still come up. lenny status reports the
-			// degraded state.
-			fmt.Fprintf(out, "lenny up: WARNING: embedded Kubernetes did not start: %v\n", err)
-			fmt.Fprintln(out, "lenny up: continuing without the embedded cluster; session placement is unavailable")
-		} else {
-			s.k3s = sup
-			k3sEnabled = true
-			kubeconfig = sup.KubeconfigPath()
-			// Compute the gateway's externally-reachable gRPC address from
-			// the launcher's substrate-specific host. The §4.7 placement and
-			// adapter business logic above this point is unaware of the
-			// substrate; only this provisioning layer branches per OS.
-			gatewayGRPCDialAddr = gatewayGRPCAddr(sup.GatewayHost(), defaultGatewayGRPCPort)
-			if err := InstallCRDs(ctx, kubeconfig); err != nil {
-				fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
-			}
-		}
-	} else {
-		// On a non-Linux host the embedded k3s runs under Docker Desktop's
-		// Linux VM, so the platform is unsupported only when Docker is
-		// absent. spec: §17.4 (Docker Desktop is the macOS/Windows
-		// prerequisite that supplies the Linux kernel the embedded k3s
-		// needs).
-		fmt.Fprintf(out, "lenny up: embedded Kubernetes is unavailable on this host "+
-			"(macOS and Windows require Docker Desktop to run the embedded k3s under its Linux VM); "+
-			"the gateway, stores, and identity provider still come up\n")
-	}
+	sub := s.provisionSubstrate(ctx, paths, out)
+	k3sEnabled := sub.enabled
+	kubeconfig := sub.kubeconfig
+	gatewayGRPCDialAddr := sub.gatewayGRPCDialAddr
 
 	// ----- Production gateway -----
 	fmt.Fprintln(out, "lenny up: starting the gateway")
@@ -426,6 +386,79 @@ func (s *Stack) CACertPath() string { return s.tls.CACertPath }
 
 // OIDC returns the embedded OIDC provider for the running stack.
 func (s *Stack) OIDC() *oidc.Provider { return s.idp }
+
+// substrateResult is the outcome of provisionSubstrate: whether the
+// embedded cluster came up, the admin kubeconfig path, and the §4.7
+// gateway↔adapter callback address the controller stamps onto agent pods.
+type substrateResult struct {
+	enabled             bool
+	kubeconfig          string
+	gatewayGRPCDialAddr string
+}
+
+// Substrate-provisioning seams. They default to the real k3s launcher and
+// CRD install and are package-level vars so a unit test can substitute a
+// fake launcher and assert the per-OS substrate-selection logic without
+// downloading and running real k3s, mirroring the runDocker injection on
+// the Docker-backed launcher. spec: §17.4 (the substrate is provisioned per
+// host operating system; the gateway/controllers/CRDs above it stay
+// identical).
+var (
+	substrateSupported   = k3s.SupportedPlatform
+	newSubstrate         = k3s.New
+	installSubstrateCRDs = InstallCRDs
+)
+
+// provisionSubstrate brings the embedded Kubernetes substrate up on every
+// host the launcher supports: a managed k3s child process on Linux, a
+// Docker-backed k3s container under Docker Desktop's Linux VM on macOS and
+// Windows. It installs the CRDs against the launcher's (host-rewritten)
+// kubeconfig and computes the §4.7 gateway↔adapter callback address from the
+// launcher's substrate-specific host. The OS branch is confined to this
+// provisioning layer; the gateway, controllers, CRDs, and storage
+// interfaces above it are byte-identical across operating systems. A
+// substrate that fails to start is routed around: the storage and identity
+// paths still come up and lenny status reports the degraded state.
+//
+// spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
+// operating system, and stays identical above the substrate layer), §4.7,
+// §8.6, §9.1.
+func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, out io.Writer) substrateResult {
+	if !substrateSupported() {
+		// On a non-Linux host the embedded k3s runs under Docker Desktop's
+		// Linux VM, so the platform is unsupported only when Docker is
+		// absent. spec: §17.4 (Docker Desktop is the macOS/Windows
+		// prerequisite that supplies the Linux kernel the embedded k3s needs).
+		fmt.Fprintf(out, "lenny up: embedded Kubernetes is unavailable on this host "+
+			"(macOS and Windows require Docker Desktop to run the embedded k3s under its Linux VM); "+
+			"the gateway, stores, and identity provider still come up\n")
+		return substrateResult{}
+	}
+	fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
+	sup := newSubstrate(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort})
+	if err := sup.Start(ctx); err != nil {
+		// k3s is the §17.4 component most likely to fail on a constrained
+		// host. Route around it: the storage and identity paths still come
+		// up. lenny status reports the degraded state.
+		fmt.Fprintf(out, "lenny up: WARNING: embedded Kubernetes did not start: %v\n", err)
+		fmt.Fprintln(out, "lenny up: continuing without the embedded cluster; session placement is unavailable")
+		return substrateResult{}
+	}
+	s.k3s = sup
+	res := substrateResult{
+		enabled:    true,
+		kubeconfig: sup.KubeconfigPath(),
+		// Compute the gateway's externally-reachable gRPC address from the
+		// launcher's substrate-specific host. The §4.7 placement and adapter
+		// business logic above this point is unaware of the substrate; only
+		// this provisioning layer branches per OS.
+		gatewayGRPCDialAddr: gatewayGRPCAddr(sup.GatewayHost(), defaultGatewayGRPCPort),
+	}
+	if err := installSubstrateCRDs(ctx, res.kubeconfig); err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
+	}
+	return res
+}
 
 // gatewayHealthy reports whether the gateway at baseURL answers its
 // liveness probe.

@@ -134,6 +134,16 @@ func gatewayArgs(spec gatewaySpec) []string {
 		// keeps the gateway's startup assertion satisfied regardless of
 		// the dev-mode default.
 		"-no-environment-policy", "allow-all",
+		// §12.4 mandates Redis AUTH and TLS on every Redis instance and the
+		// gateway fails closed at startup when neither is present. The §17.4
+		// embedded Redis is the loopback-only miniredis that is exempt from
+		// that invariant (it emits a passwordless, plaintext redis:// URL),
+		// so the embedded gateway must opt out explicitly; -dev-mode does not
+		// imply it. Without this the gateway refuses to start (redisconn
+		// ErrAuthRequired) and never becomes healthy. spec: §12.4, §17.4
+		// (Embedded Mode Redis is exempt from the production AUTH and TLS
+		// requirements).
+		"-redis-allow-insecure",
 	}
 	if spec.OIDCKeyFile != "" {
 		args = append(args, "-bearer-trust-hmac-key-file", spec.OIDCKeyFile)
