@@ -152,8 +152,10 @@ func TestDockerRunArgs(t *testing.T) {
 	args := d.runArgs()
 	joined := strings.Join(args, " ")
 
-	// The pinned image carries the same version as the Linux launcher.
-	if !strings.Contains(joined, "rancher/k3s:"+Version) {
+	// The pinned image carries the Docker-tag form of the same version the
+	// Linux launcher downloads (the `+` build separator is `-` in a Docker
+	// tag). The run argv must reference the resolved containerImage exactly.
+	if !strings.Contains(joined, containerImage) {
 		t.Errorf("docker run argv does not pin the k3s image %q: %v", containerImage, args)
 	}
 	// The API port is published to the matching host port on loopback.
@@ -179,6 +181,30 @@ func TestDockerRunArgs(t *testing.T) {
 	}
 	if hasArg(args, "--rootless") {
 		t.Errorf("docker run argv must not carry --rootless (container path): %v", args)
+	}
+}
+
+// TestContainerImageTagIsDockerSafe pins the `+`-to-`-` translation
+// between the k3s GitHub release tag (Version, which the Linux launcher
+// downloads with its `+` build separator) and the Docker image tag (which
+// cannot contain `+`). A Docker tag with a `+` is an invalid reference, so
+// docker run rejects it; Docker Hub publishes the image under the `-`
+// form. The resolved containerImage must carry no `+`.
+//
+// spec: §17.4 (the same pinned k3s version runs as a container under
+// Docker Desktop's Linux VM).
+func TestContainerImageTagIsDockerSafe(t *testing.T) {
+	if got := containerImageTag("v1.31.4+k3s1"); got != "v1.31.4-k3s1" {
+		t.Errorf("containerImageTag(v1.31.4+k3s1) = %q, want v1.31.4-k3s1", got)
+	}
+	// A version with no build separator is unchanged.
+	if got := containerImageTag("v1.31.4"); got != "v1.31.4" {
+		t.Errorf("containerImageTag(v1.31.4) = %q, want v1.31.4 (unchanged)", got)
+	}
+	// The resolved image the launcher runs must be a valid docker
+	// reference: a `+` makes `docker run` reject it as an invalid format.
+	if strings.Contains(containerImage, "+") {
+		t.Errorf("containerImage %q contains a `+`; docker rejects it as an invalid reference", containerImage)
 	}
 }
 
@@ -485,6 +511,78 @@ func TestContainerNameSanitizes(t *testing.T) {
 // dockerNamePattern is docker's container-name grammar, used only by the
 // test to assert the derived name is valid.
 var dockerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// TestDockerLauncherContainerName confirms the Docker-backed launcher
+// exposes its container handle so the stack can record it for a later
+// lenny status probe in place of a host PID.
+//
+// spec: §24.19 (a container-backed launcher records a container handle
+// where there is no host PID).
+func TestDockerLauncherContainerName(t *testing.T) {
+	d := newDockerLauncherForTest(t, newFakeDocker())
+	if d.ContainerName() != d.name {
+		t.Errorf("ContainerName() = %q, want the launcher container name %q", d.ContainerName(), d.name)
+	}
+	if d.ContainerName() == "" {
+		t.Error("ContainerName() = empty, want a derived docker container name")
+	}
+}
+
+// withRunDocker swaps the package-level docker runner for the duration of
+// a test so the container probe (ContainerRunning) can be exercised
+// without invoking a real docker, then restores it.
+func withRunDocker(t *testing.T, fn func(ctx context.Context, args ...string) ([]byte, error)) {
+	t.Helper()
+	prev := runDocker
+	t.Cleanup(func() { runDocker = prev })
+	runDocker = fn
+}
+
+// TestContainerRunning maps docker inspect's running state to the
+// ContainerRunning result lenny status uses to probe the Docker-backed
+// substrate by name, including the not-running, docker-error, and empty-
+// name fail-closed cases.
+//
+// spec: §24.19 (the k3s health probe is a container probe on the
+// Docker-backed substrate, where there is no host PID).
+func TestContainerRunning(t *testing.T) {
+	// An empty handle reports not-running and never shells out.
+	withRunDocker(t, func(context.Context, ...string) ([]byte, error) {
+		t.Fatal("ContainerRunning('') must not shell out to docker")
+		return nil, nil
+	})
+	if ContainerRunning("") {
+		t.Error("ContainerRunning(\"\") = true, want false (fail closed)")
+	}
+
+	// docker reports the container running.
+	withRunDocker(t, func(_ context.Context, args ...string) ([]byte, error) {
+		if len(args) == 0 || args[0] != "inspect" {
+			t.Errorf("ContainerRunning issued %v, want a docker inspect", args)
+		}
+		if !hasArg(args, "lenny-embedded-k3s-demo") {
+			t.Errorf("ContainerRunning did not target the container name: %v", args)
+		}
+		return []byte("true\n"), nil
+	})
+	if !ContainerRunning("lenny-embedded-k3s-demo") {
+		t.Error("ContainerRunning = false when docker reports the container running")
+	}
+
+	// docker reports the container stopped.
+	withRunDocker(t, func(context.Context, ...string) ([]byte, error) { return []byte("false\n"), nil })
+	if ContainerRunning("lenny-embedded-k3s-demo") {
+		t.Error("ContainerRunning = true when docker reports the container stopped")
+	}
+
+	// docker errors (absent container / docker unavailable): fail closed.
+	withRunDocker(t, func(context.Context, ...string) ([]byte, error) {
+		return nil, errors.New("no such container")
+	})
+	if ContainerRunning("lenny-embedded-k3s-demo") {
+		t.Error("ContainerRunning = true when docker errors, want false (fail closed)")
+	}
+}
 
 func hasArg(args []string, want string) bool {
 	for _, a := range args {

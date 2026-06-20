@@ -100,6 +100,21 @@ func New(cfg Config) Launcher {
 	return newDockerLauncher(cfg)
 }
 
+// NewDockerLauncher constructs the Docker-backed launcher explicitly,
+// independent of the host operating system. New selects it only on
+// non-Linux hosts; this constructor lets the tier-2 bring-up test exercise
+// the Docker-backed substrate (the macOS/Windows code path) on a
+// Docker-equipped Linux CI host, where New would otherwise return the
+// child-process launcher. The launcher is the same one New returns off
+// Linux, so the test exercises the production substrate path rather than a
+// test double.
+//
+// spec: §17.4 (on macOS and Windows the embedded k3s runs as a Docker-
+// backed container; the same launcher provisions it).
+func NewDockerLauncher(cfg Config) Launcher {
+	return newDockerLauncher(cfg.withDefaults())
+}
+
 // SupportedPlatform reports whether the host operating system can
 // provision the embedded k3s substrate. Linux is supported
 // unconditionally through the managed child-process launcher. macOS and

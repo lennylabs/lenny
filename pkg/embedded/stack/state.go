@@ -25,9 +25,18 @@ type State struct {
 	// GatewayPID and ControllerPID are the child-process identifiers.
 	GatewayPID    int `json:"gatewayPid"`
 	ControllerPID int `json:"controllerPid"`
-	// K3sPID is the embedded k3s process identifier. Zero when k3s did
-	// not start (an unsupported host).
+	// K3sPID is the embedded k3s host process identifier on the Linux
+	// managed-child-process launcher. It is zero on the Docker-backed
+	// launcher (macOS and Windows), where k3s runs inside the Docker VM
+	// with no host PID; K3sContainer carries the handle there. It is also
+	// zero when k3s did not start (an unsupported host).
 	K3sPID int `json:"k3sPid,omitempty"`
+	// K3sContainer is the docker container name the Docker-backed launcher
+	// runs the embedded k3s under (macOS and Windows). It is the handle
+	// lenny status probes for liveness in place of the host PID. It is
+	// empty on the Linux child-process launcher, which records a host PID
+	// in K3sPID instead, and empty when k3s did not start.
+	K3sContainer string `json:"k3sContainer,omitempty"`
 	// HTTPAddr and HTTPSAddr are the gateway's plaintext and
 	// TLS-terminated listen addresses.
 	HTTPAddr  string `json:"httpAddr"`
@@ -36,11 +45,17 @@ type State struct {
 	// strings the gateway and controllers were configured with.
 	PostgresDSN string `json:"postgresDsn"`
 	RedisURL    string `json:"redisUrl"`
-	// KubeconfigPath is the embedded k3s admin kubeconfig. Empty when
-	// k3s did not start.
+	// KubeconfigPath is the embedded k3s admin kubeconfig. On the Linux
+	// launcher it is k3s' generated admin kubeconfig; on the Docker-backed
+	// launcher it is the host-rewritten kubeconfig whose server URL points
+	// at the published host port. The gateway and controllers resolve
+	// their cluster connection from it. Empty when k3s did not start.
 	KubeconfigPath string `json:"kubeconfigPath,omitempty"`
-	// K3sEnabled records whether the embedded Kubernetes layer came
-	// up. It is false on a non-Linux host.
+	// K3sEnabled records whether the embedded Kubernetes layer came up. It
+	// is true on every host where the substrate provisioned (Linux
+	// unconditionally, macOS and Windows when Docker Desktop is present),
+	// and false only on an unsupported host (a non-Linux host without
+	// Docker) or when the substrate failed to start.
 	K3sEnabled bool `json:"k3sEnabled"`
 }
 

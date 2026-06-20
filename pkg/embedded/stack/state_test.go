@@ -17,6 +17,7 @@ func TestWriteReadState(t *testing.T) {
 		GatewayPID:     222,
 		ControllerPID:  333,
 		K3sPID:         444,
+		K3sContainer:   "lenny-embedded-k3s-k3s",
 		HTTPAddr:       "127.0.0.1:8080",
 		HTTPSAddr:      "127.0.0.1:8443",
 		PostgresDSN:    "postgres://lenny@127.0.0.1:15433/lenny",

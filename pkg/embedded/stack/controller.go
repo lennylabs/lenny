@@ -12,7 +12,11 @@ type controllerSpec struct {
 	// the embedded Postgres.
 	PostgresDSN string
 	// Kubeconfig is the embedded k3s admin kubeconfig the controller
-	// resolves its cluster connection from.
+	// resolves its cluster connection from. On the Docker-backed launcher
+	// (macOS and Windows) it is the host-rewritten kubeconfig whose server
+	// URL points at the published host port, so the host-process
+	// controller reaches the in-container API server across the
+	// host/Docker boundary.
 	Kubeconfig string
 	// LogPath is the controller log file.
 	LogPath string

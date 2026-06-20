@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
+	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 )
 
 // ComponentStatus is the health of one Embedded Mode component.
@@ -121,19 +122,14 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 		})
 	}
 
-	// Embedded Kubernetes.
-	if st.K3sEnabled {
-		out.Components = append(out.Components, ComponentStatus{
-			Name:     "k3s",
-			Healthy:  processAlive(st.K3sPID),
-			Detail:   pidDetail(st.K3sPID),
-			Resource: usage[st.K3sPID],
-		})
-	} else {
-		out.Components = append(out.Components, ComponentStatus{
-			Name: "k3s", Healthy: false, Detail: "not running (unsupported host or failed to start)",
-		})
-	}
+	// Embedded Kubernetes. The Linux launcher runs k3s as a host process,
+	// so its liveness is a PID probe and the host ps samples its
+	// resources. The Docker-backed launcher runs k3s inside the Docker VM
+	// with no host PID, so its liveness is a container probe by the
+	// recorded container handle and the host ps cannot sample it.
+	// spec: §24.19 (the k3s health/resource probe is a container probe on
+	// the Docker-backed substrate).
+	out.Components = append(out.Components, k3sComponentStatus(st, usage))
 
 	// Stores: a probe against the gateway covers them indirectly; a
 	// healthy gateway is configured against the embedded Postgres and
@@ -151,6 +147,58 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 		}
 	}
 	return out, nil
+}
+
+// containerRunning probes whether a Docker-backed k3s container is alive.
+// It is a var so the status container-probe path is unit-testable without
+// invoking a real docker, matching the resourceSampler injection point.
+var containerRunning = k3s.ContainerRunning
+
+// k3sComponentStatus builds the k3s component health row from the
+// recorded state. It probes by the substrate handle the launcher
+// recorded: a host PID on the Linux managed-child-process launcher, or a
+// docker container name on the Docker-backed launcher (macOS and
+// Windows), where k3s runs inside the Docker VM with no host PID. When
+// neither handle is set the substrate did not come up (an unsupported
+// host or a failed start), reported down.
+//
+// spec: §24.19 (the k3s health/resource probe is a container probe on the
+// Docker-backed substrate, a host-PID probe on Linux).
+func k3sComponentStatus(st State, usage map[int]ResourceUsage) ComponentStatus {
+	switch {
+	case st.K3sContainer != "":
+		// Docker-backed substrate: probe the container by name. The host
+		// ps cannot sample a process inside the Docker VM, so the resource
+		// sample is left unsampled.
+		return ComponentStatus{
+			Name:    "k3s",
+			Healthy: containerRunning(st.K3sContainer),
+			Detail:  containerDetail(st.K3sContainer),
+		}
+	case st.K3sPID != 0:
+		// Linux managed-child-process launcher: probe by host PID and
+		// sample its resources from the host ps.
+		return ComponentStatus{
+			Name:     "k3s",
+			Healthy:  processAlive(st.K3sPID),
+			Detail:   pidDetail(st.K3sPID),
+			Resource: usage[st.K3sPID],
+		}
+	default:
+		return ComponentStatus{
+			Name: "k3s", Healthy: false, Detail: "not running (unsupported host or failed to start)",
+		}
+	}
+}
+
+// containerDetail formats a docker container handle into a status detail
+// string, naming the container and its liveness so an operator can locate
+// it with `docker logs` / `docker inspect`.
+func containerDetail(name string) string {
+	if containerRunning(name) {
+		return fmt.Sprintf("container %s", name)
+	}
+	return fmt.Sprintf("container %s (not running)", name)
 }
 
 // WriteStatus renders a Status report as a human-readable table.

@@ -23,8 +23,12 @@ type gatewaySpec struct {
 	// backends through its standard configuration flags.
 	PostgresDSN string
 	RedisURL    string
-	// Kubeconfig is the embedded k3s admin kubeconfig. Empty when the
-	// embedded cluster did not start.
+	// Kubeconfig is the embedded k3s admin kubeconfig. On the Linux
+	// launcher it is k3s' generated kubeconfig; on the Docker-backed
+	// launcher (macOS and Windows) it is the host-rewritten kubeconfig
+	// whose server URL points at the published host port, so the gateway
+	// reaches the in-container API server across the host/Docker boundary.
+	// Empty when the embedded cluster did not start.
 	Kubeconfig string
 	// LogPath is the gateway log file.
 	LogPath string

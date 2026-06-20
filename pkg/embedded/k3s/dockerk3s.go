@@ -47,8 +47,25 @@ import (
 // containerImage is the rancher/k3s image the Docker-backed launcher
 // pulls and runs. It pins the same k3s version as the Linux
 // child-process launcher (Version) so the embedded cluster is the same
-// k3s distribution on every host.
-const containerImage = "rancher/k3s:" + Version
+// k3s distribution on every host. The GitHub release tag the Linux
+// launcher downloads uses a `+` build separator (v1.31.4+k3s1), but a
+// Docker image tag cannot contain `+`; Docker Hub publishes the matching
+// image under the `-` form (v1.31.4-k3s1). containerImageTag translates
+// the version so both launchers track one pinned Version constant.
+var containerImage = "rancher/k3s:" + containerImageTag(Version)
+
+// containerImageTag converts the pinned k3s release version into a
+// Docker-tag-safe form. Docker tag grammar (alphanumeric, `.`, `-`, `_`)
+// rejects the `+` build separator k3s uses in its GitHub release tags, and
+// Docker Hub mirrors the image under the `+`-to-`-` form. The translation
+// keeps a single pinned Version across the Linux download URL (which keeps
+// the `+`) and the container image tag.
+//
+// spec: §17.4 (the same pinned k3s version runs as a container under
+// Docker Desktop's Linux VM).
+func containerImageTag(version string) string {
+	return strings.ReplaceAll(version, "+", "-")
+}
 
 // containerKubeconfigPath is where k3s writes the admin kubeconfig inside
 // the rancher/k3s container. The launcher reads it out with
@@ -86,6 +103,19 @@ func newDockerLauncher(cfg Config) Launcher {
 // path is the same convention the Linux launcher uses.
 func (d *dockerLauncher) KubeconfigPath() string {
 	return filepath.Join(d.cfg.Dir, "kubeconfig.yaml")
+}
+
+// ContainerName returns the docker container name the launcher runs the
+// embedded k3s under. The stack records this handle in its state file so
+// a later lenny status can probe the container's liveness by name, in
+// place of the host PID the Linux child-process launcher records. The
+// Linux launcher does not implement this method; the stack records an
+// empty container handle for it.
+//
+// spec: §24.19 (a container-backed launcher records a container handle
+// where there is no host PID).
+func (d *dockerLauncher) ContainerName() string {
+	return d.name
 }
 
 // Start provisions the k3s container. It removes any stale container
@@ -282,8 +312,33 @@ func rewriteKubeconfigServer(kubeconfig string, hostPort int) string {
 // combined stdout and stderr. It shells out to the `docker` binary,
 // matching pkg/embedded/localcli/image.go; the combined output lets a
 // caller surface docker's diagnostic on failure. The context bounds the
-// invocation so a hung docker call honors cancellation and deadlines.
-func runDocker(ctx context.Context, args ...string) ([]byte, error) {
+// invocation so a hung docker call honors cancellation and deadlines. It
+// is a var so the package-level container probe (ContainerRunning) can be
+// unit-tested without invoking a real docker.
+var runDocker = func(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	return cmd.CombinedOutput()
+}
+
+// ContainerRunning reports whether the named k3s container is alive. lenny
+// status uses it to probe the Docker-backed substrate's liveness from the
+// recorded container handle: the container runs inside the Docker VM with
+// no host PID, so the PID-based liveness probe the Linux launcher relies
+// on does not apply. An empty name, an absent container, or an
+// unavailable docker daemon reports not-running, fail-closed. The probe is
+// bounded by a short timeout so a hung docker call does not stall status.
+//
+// spec: §24.19 (the k3s health probe is a container probe on the
+// Docker-backed substrate, where there is no host PID).
+func ContainerRunning(name string) bool {
+	if name == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := runDocker(ctx, "inspect", "-f", "{{.State.Running}}", name)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "true"
 }

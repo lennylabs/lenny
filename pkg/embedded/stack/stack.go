@@ -200,6 +200,15 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	s.idp = idp
 
 	// ----- Embedded Kubernetes layer -----
+	// The substrate provisions on every host the launcher supports: a
+	// managed k3s child process on Linux, a Docker-backed k3s container
+	// under Docker Desktop's Linux VM on macOS and Windows. On those hosts
+	// the CRDs install and the controllers run against the launcher's
+	// (host-rewritten) kubeconfig, the same as on Linux; only the
+	// substrate provisioning below the gateway/controllers/CRDs differs.
+	// spec: §17.4 (the embedded Kubernetes substrate is provisioned per
+	// host operating system, and stays identical above the substrate
+	// layer).
 	k3sEnabled := false
 	kubeconfig := ""
 	if k3s.SupportedPlatform() {
@@ -216,7 +225,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 			s.k3s = sup
 			k3sEnabled = true
 			kubeconfig = sup.KubeconfigPath()
-			if err := installCRDs(ctx, kubeconfig); err != nil {
+			if err := InstallCRDs(ctx, kubeconfig); err != nil {
 				fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
 			}
 		}
@@ -315,7 +324,12 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		st.ControllerPID = s.control.PID()
 	}
 	if s.k3s != nil {
+		// The Linux launcher records a host PID; the Docker-backed
+		// launcher records its container name instead, because its k3s
+		// runs inside the Docker VM with no host PID. lenny status probes
+		// whichever handle is set. spec: §24.19.
 		st.K3sPID = s.k3s.PID()
+		st.K3sContainer = k3sContainerHandle(s.k3s)
 	}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		return nil, err
@@ -375,6 +389,23 @@ func (s *Stack) OIDC() *oidc.Provider { return s.idp }
 // liveness probe.
 func gatewayHealthy(ctx context.Context, baseURL string) bool {
 	return probeHealthz(ctx, baseURL) == nil
+}
+
+// k3sContainerHandle returns the docker container name a Docker-backed
+// k3s launcher runs under, or "" for the Linux managed-child-process
+// launcher (which records a host PID instead). The launcher exposes the
+// handle through an optional ContainerName method; the type assertion
+// keeps the substrate-specific container knowledge out of the k3s
+// Launcher interface, which the Linux launcher would otherwise have to
+// stub.
+//
+// spec: §24.19 (a container-backed launcher records a container handle
+// where there is no host PID).
+func k3sContainerHandle(l k3s.Launcher) string {
+	if c, ok := l.(interface{ ContainerName() string }); ok {
+		return c.ContainerName()
+	}
+	return ""
 }
 
 // purgeRoot removes the entire Embedded Mode state directory. lenny
