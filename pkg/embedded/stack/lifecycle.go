@@ -139,8 +139,10 @@ func waitForStack(ctx context.Context, paths Paths, timeout time.Duration) error
 // RunSupervisor implements the hidden `__supervise` subcommand. It is
 // the detached long-lived process that hosts the in-process Embedded
 // Mode components and supervises the child processes. It brings the
-// stack up, then blocks until it receives SIGTERM or SIGINT, at which
-// point it tears the stack down gracefully.
+// stack up, then blocks until a teardown wakeup arrives (a SIGTERM or
+// SIGINT on unix, a named teardown event on Windows), carried by the
+// build-tagged process-control substrate, at which point it tears the
+// stack down gracefully.
 func RunSupervisor(ctx context.Context, opts UpOptions) error {
 	root, err := resolveRoot(opts.Root)
 	if err != nil {
