@@ -2368,10 +2368,13 @@
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
         "tests/tier11_docs/time_to_hello_world_test.go",
-        "tests/tier3_contract/compose_mode/compose_mode_test.go"
+        "tests/tier3_contract/compose_mode/compose_mode_test.go",
+        "tests/tier2_component/embedded/bringup_test.go"
       ],
       "packages": [
-        "cmd/lenny-dev"
+        "cmd/lenny-dev",
+        "pkg/embedded/stack",
+        "pkg/embedded/k3s"
       ],
       "blocked_until_phase": "2"
     },
@@ -2776,13 +2779,16 @@
       "title": "Local Stack",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "tests/tier2_component/embedded/bringup_test.go"
       ],
       "packages": [
-        "cmd/lenny-ctl"
+        "cmd/lenny-ctl",
+        "pkg/embedded/stack",
+        "pkg/embedded/k3s"
       ],
       "blocked_until_phase": "14",
-      "notes": "lenny-ctl local stack subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+      "notes": "lenny-ctl local stack subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands. The Docker-backed embedded-substrate bring-up (k3s container, host-rewritten kubeconfig, container status probe) is exercised by tests/tier2_component/embedded/bringup_test.go."
     },
     "24.20": {
       "title": "Installation Wizard",

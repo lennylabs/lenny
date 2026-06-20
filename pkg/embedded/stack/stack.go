@@ -7,12 +7,20 @@
 // configured against them.
 //
 // Embedded Mode uses the production gateway, controllers, CRDs, and
-// storage interfaces. Only the driver selection differs: the embedded
-// backends are reached through the same configuration surface a
+// storage interfaces. Within a host, the driver selection differs: the
+// embedded backends are reached through the same configuration surface a
 // cluster deployment uses (the gateway's --postgres-dsn, --redis-url,
 // and dev-mode flags). There are no mode-dependent code splits in
 // platform business logic; this package is the orchestration layer
-// outside that business logic.
+// outside that business logic. The embedded Kubernetes substrate is
+// provisioned per host operating system (a managed k3s child process on
+// Linux, a Docker-backed k3s container on macOS and Windows), and that
+// provisioning is confined to the substrate layer below the gateway,
+// controllers, CRDs, and storage interfaces, which stay identical across
+// operating systems.
+//
+// spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
+// operating system and stays identical above the substrate layer).
 package stack
 
 import (

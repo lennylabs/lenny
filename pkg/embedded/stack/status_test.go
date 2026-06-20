@@ -7,7 +7,41 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 )
+
+// containerNamedLauncher is a k3s.Launcher that exposes a ContainerName, like
+// the Docker-backed launcher. k3sContainerHandle reads the handle through the
+// optional-method type assertion, so this stub stands in for the real
+// Docker-backed launcher without provisioning a container.
+type containerNamedLauncher struct {
+	k3s.Launcher
+	name string
+}
+
+func (l containerNamedLauncher) ContainerName() string { return l.name }
+
+// plainLauncher is a k3s.Launcher with no ContainerName, like the Linux
+// managed-child-process launcher. k3sContainerHandle returns "" for it.
+type plainLauncher struct{ k3s.Launcher }
+
+// TestK3sContainerHandle covers the substrate-handle extraction Up records in
+// State: a Docker-backed launcher (exposes ContainerName) yields its container
+// name, and a Linux managed-child-process launcher (no ContainerName) yields
+// the empty string, so State.K3sContainer is set only on the Docker path.
+//
+// spec: §24.19 (a container-backed launcher records a container handle where
+// there is no host PID; the Linux launcher records a host PID instead).
+func TestK3sContainerHandle_spec_24_19(t *testing.T) {
+	const name = "lenny-embedded-k3s-demo"
+	if got := k3sContainerHandle(containerNamedLauncher{name: name}); got != name {
+		t.Errorf("k3sContainerHandle(Docker-backed) = %q, want %q", got, name)
+	}
+	if got := k3sContainerHandle(plainLauncher{}); got != "" {
+		t.Errorf("k3sContainerHandle(Linux child-process) = %q, want \"\" (records a host PID instead)", got)
+	}
+}
 
 // withContainerRunning swaps the package-level container probe for the
 // duration of a test so the Docker-backed k3s status path is exercised
