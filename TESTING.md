@@ -629,7 +629,7 @@ The infrastructure runs on macOS (Intel and Apple Silicon) and Linux. Windows is
 | buf | 1.30 | Proto linting and breaking-change detection |
 | openssl | 3.0 | Self-signed mTLS certs in dev |
 | sqlc or pgx codegen | latest | SQL codegen for migrations |
-| golangci-lint | 1.56 | Tier 0 lint |
+| golangci-lint | 2.12 | Tier 0 lint |
 | migrate (or atlas, or goose) | latest | Run migrations |
 
 ### Local Kubernetes (tiers 5, 8, 9, parts of 7)
@@ -816,7 +816,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Checks.**
 1. `go vet ./...`
-2. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `gosimple`, `staticcheck`, `unused`, `govet`, `ineffassign`, `gocyclo`, `gosec`.
+2. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
 3. `gofumpt -l .` — formatting.
 4. `goimports -l -local github.com/lenny-labs/lenny .` — import ordering.
 5. `helm lint charts/lenny`.

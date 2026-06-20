@@ -286,13 +286,13 @@ Used to generate self-signed mTLS material in dev mode.
 - Linux: usually pre-installed (`openssl version` to confirm). Upgrade via the distro package manager if needed.
 - Verify: `openssl version` reports OpenSSL 3.0 or higher.
 
-### golangci-lint 1.61+
+### golangci-lint 2.12+
 
-Aggregated Go linter used in Tier 0. Install via the upstream install script on every platform — it downloads a prebuilt binary and avoids `go install` compatibility issues that surface when an older pinned version's transitive `golang.org/x/tools` does not compile against a newer Go release.
+Aggregated Go linter used in Tier 0. The v2 series is required: the v1.x line aborts on Go 1.26 export data with "unsupported version: 2". Install via the upstream install script on every platform — it downloads a prebuilt binary and avoids `go install` compatibility issues that surface when an older pinned version's transitive `golang.org/x/tools` does not compile against a newer Go release.
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-  | sh -s -- -b "$(go env GOPATH)/bin" v1.61.0
+  | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
 ```
 
 - Verify: `golangci-lint --version`

@@ -2,42 +2,59 @@
 #
 # Conservative defaults for Phase 1. Linters expand in later phases as
 # more code lands and false-positives get tuned out.
-
+#
+# Config schema is golangci-lint v2 (`version: "2"`). The Go language
+# version is derived from go.mod rather than pinned here, so there is a
+# single source of truth. In v2 gosimple is folded into staticcheck, and
+# the gofumpt/goimports formatters move to the formatters section.
+version: "2"
 run:
-  timeout: 2m
-  go: "1.22"
   tests: true
-
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
+    - misspell
     - staticcheck
     - unused
-    - misspell
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Don't penalise the agent-generated boilerplate while it stabilises.
+      - linters:
+          - govet
+        path: tests/tier3_contract/.*_test\.go
+        text: not implemented
+    paths:
+      # Test-only helper directories whose lint pass is exercised by
+      # `go test ./tests/tier0_static/...`; the jsonschema/v5 import here
+      # has historically tripped the bundled type-checker, so exclude
+      # them from the lint pass without losing coverage.
+      - tests/tier0_static
+      - tests/testinfra/schematest
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
     - gofumpt
     - goimports
-
-linters-settings:
-  goimports:
-    local-prefixes: github.com/lennylabs/lenny
-
-issues:
-  # golangci-lint 1.61's bundled type-checker fails to resolve external
-  # imports for tests/tier0_static (the jsonschema/v5 package in
-  # particular). The directory's test suite is exercised by
-  # `go test ./tests/tier0_static/...` in the static-tier runner, so
-  # skipping the lint pass does not reduce coverage. Revisit after the
-  # next golangci-lint bump.
-  exclude-dirs:
-    - tests/tier0_static
-    - tests/testinfra/schematest
-  exclude-rules:
-    # Don't penalise the agent-generated boilerplate while it stabilises.
-    - path: "tests/tier3_contract/.*_test\\.go"
-      text: "not implemented"
-      linters:
-        - govet
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/lennylabs/lenny
+  exclusions:
+    generated: lax
+    paths:
+      - tests/tier0_static
+      - tests/testinfra/schematest
+      - third_party$
+      - builtin$
+      - examples$
