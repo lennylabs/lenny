@@ -32,6 +32,7 @@ package embedded_test
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,6 +233,84 @@ func TestDockerBackedBringUpStartsController(t *testing.T) {
 	if err := waitControllerStaysAlive(ctx, ctl, 20*time.Second); err != nil {
 		log := readControllerLog(logPath)
 		t.Fatalf("controller did not stay alive against the host-rewritten kubeconfig: %v\ncontroller log:\n%s", err, log)
+	}
+}
+
+// spec: §4.7 (the gateway↔adapter gRPC callback traverses the host/Docker
+// boundary; the controller stamps the launcher's substrate-reachable gateway
+// address onto each agent pod's adapter), §8.6, §9.1, §17.4.
+// diagnosis: The production controller did not come up or did not stay alive
+//
+//	when threaded with the §4.7 cross-boundary gateway callback
+//	address (the Docker-backed launcher's host.docker.internal host
+//	joined to the gateway gRPC port). Either threading the
+//	--gateway-grpc-addr flag broke controller startup, or the
+//	controller could not reach the in-container API server across
+//	the host/Docker boundary. Read the controller log printed on
+//	failure and run `docker logs` for the lenny-embedded-k3s
+//	container.
+func TestDockerBackedBringUpThreadsGatewayCallbackAddr(t *testing.T) {
+	requireDockerDaemon(t)
+	controllerBin := buildControllerBin(t)
+
+	cfg := k3s.Config{
+		Dir:          t.TempDir(),
+		APIPort:      26445,
+		ReadyTimeout: 3 * time.Minute,
+	}
+	launcher := k3s.NewDockerLauncher(cfg)
+	t.Cleanup(func() { _ = launcher.Stop() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := launcher.Start(ctx); err != nil {
+		t.Fatalf("Docker-backed k3s did not come up: %v", err)
+	}
+
+	// The Docker-backed launcher reaches the host gateway at
+	// host.docker.internal, the alias resolvable inside the Docker VM. This
+	// is the substrate-specific host the stack joins to the gateway gRPC port
+	// and stamps onto agent pods, carrying the §4.7 callback across the
+	// host/Docker boundary. Assert the launcher returns the alias rather than
+	// loopback, then thread the composed dial address through the controller
+	// the way Up does.
+	if got := launcher.GatewayHost(); got != "host.docker.internal" {
+		t.Fatalf("Docker-backed launcher GatewayHost() = %q, want host.docker.internal (the in-VM host alias)", got)
+	}
+	gatewayCallbackAddr := net.JoinHostPort(launcher.GatewayHost(), "50061")
+
+	kubeconfig := launcher.KubeconfigPath()
+	if err := stack.InstallCRDs(ctx, kubeconfig); err != nil {
+		t.Fatalf("CRD install against the host-rewritten kubeconfig failed: %v", err)
+	}
+
+	// Start the production controller threaded with the §4.7 cross-boundary
+	// gateway callback address, the same as Up does under `if k3sEnabled`.
+	// PostgresDSN is left empty so the mirror is disabled; the cross-boundary
+	// connection under test is the controller's manager dialing the
+	// in-container API server while it carries the callback address it stamps
+	// onto pods. spec: §4.7, §17.4.
+	logPath := filepath.Join(t.TempDir(), "controller.log")
+	ctl, err := stack.StartController(stack.ControllerSpec{
+		BinPath:         controllerBin,
+		Kubeconfig:      kubeconfig,
+		GatewayGRPCAddr: gatewayCallbackAddr,
+		LogPath:         logPath,
+	})
+	if err != nil {
+		t.Fatalf("starting the production controller with the §4.7 gateway callback address failed: %v", err)
+	}
+	t.Cleanup(func() { _ = ctl.Stop() })
+
+	// The controller comes up and stays alive with the cross-boundary callback
+	// address threaded in. The address it stamps onto pods is the
+	// host.docker.internal dial address; the controller itself reaches the API
+	// server across the boundary through the host-rewritten kubeconfig. A
+	// controller that rejected the callback flag or could not reach the API
+	// server exits non-zero during startup. spec: §4.7, §17.4.
+	if err := waitControllerStaysAlive(ctx, ctl, 20*time.Second); err != nil {
+		log := readControllerLog(logPath)
+		t.Fatalf("controller did not stay alive with the §4.7 cross-boundary callback address threaded in: %v\ncontroller log:\n%s", err, log)
 	}
 }
 

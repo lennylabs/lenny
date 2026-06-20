@@ -308,7 +308,8 @@
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
         "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
         "tests/tier8_chaos/nonce_only_degradation_test.go",
-        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC"
+        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
+        "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -2369,7 +2370,8 @@
       "tests": [
         "tests/tier11_docs/time_to_hello_world_test.go",
         "tests/tier3_contract/compose_mode/compose_mode_test.go",
-        "tests/tier2_component/embedded/bringup_test.go"
+        "tests/tier2_component/embedded/bringup_test.go",
+        "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go"
       ],
       "packages": [
         "cmd/lenny-dev",

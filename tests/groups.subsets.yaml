@@ -253,6 +253,11 @@ subsets:
     tests:
       - tests/tier3_contract/gatewaycontrol_scrub/...
 
+  embedded-gatewaycallback:
+    tier: contract
+    tests:
+      - tests/tier3_contract/embedded_gatewaycallback/...
+
   workspaceplan:
     tier: contract
     tests:

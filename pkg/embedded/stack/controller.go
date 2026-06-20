@@ -93,6 +93,20 @@ func StartController(spec ControllerSpec) (*Controller, error) {
 // per spec. It returns the internal managedProcess the stack supervisor
 // owns; StartController wraps it in the exported Controller handle.
 func startController(spec ControllerSpec) (*managedProcess, error) {
+	return startProcess(processSpec{
+		Name:    "controller",
+		BinPath: spec.BinPath,
+		Args:    controllerArgs(spec),
+		Env:     controllerEnv(spec, os.Environ()),
+		LogPath: spec.LogPath,
+	})
+}
+
+// controllerArgs builds the command-line arguments for the embedded
+// controller child process from spec. It is separated from startController
+// so the §4.7 gateway-callback-address threading is testable without
+// launching a process, mirroring gatewayArgs.
+func controllerArgs(spec ControllerSpec) []string {
 	args := []string{
 		// The embedded stack runs one replica, so leader election is
 		// unnecessary; omitting --leader-elect keeps it off.
@@ -107,17 +121,19 @@ func startController(spec ControllerSpec) (*managedProcess, error) {
 		// the §4.7 pod-spec/adapter business logic stays substrate-agnostic.
 		args = append(args, "--gateway-grpc-addr", spec.GatewayGRPCAddr)
 	}
-	env := append(
-		os.Environ(),
+	return args
+}
+
+// controllerEnv builds the environment for the embedded controller child
+// process by extending base (typically os.Environ()) with the cluster
+// connection and the §17.4 embedded-mode driver selector. It is separated
+// from startController so the env construction is testable without
+// launching a process, mirroring gatewayEnv.
+func controllerEnv(spec ControllerSpec, base []string) []string {
+	return append(
+		append([]string(nil), base...),
 		"KUBECONFIG="+spec.Kubeconfig,
 		"LENNY_POSTGRES_DSN="+spec.PostgresDSN,
 		"LENNY_EMBEDDED_MODE=true",
 	)
-	return startProcess(processSpec{
-		Name:    "controller",
-		BinPath: spec.BinPath,
-		Args:    args,
-		Env:     env,
-		LogPath: spec.LogPath,
-	})
 }
