@@ -131,30 +131,6 @@ func TestStartRejectsUnsupportedPlatform(t *testing.T) {
 	}
 }
 
-// spec: §17.4 (the Docker-backed launcher provisions k3s as a container
-// under Docker Desktop's Linux VM). With Docker present on a non-Linux
-// host the platform is supported, so Start reaches the Docker-backed body
-// rather than the unsupported-platform gate. The container-provisioning
-// body is implemented in a following build step; until then Start fails
-// closed so the stack routes around the absent cluster rather than
-// proceeding as if it were up.
-func TestDockerLauncherStartFailsClosedUntilWired(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		t.Skip("linux selects the child-process launcher, not the Docker-backed one")
-	}
-	withLookPathDocker(t, true)
-	l := New(Config{Dir: t.TempDir()})
-	err := l.Start(context.Background())
-	if err == nil {
-		t.Fatal("expected the Docker-backed Start to fail closed before its body is wired")
-	}
-	// The Docker-present path must not surface the unsupported-platform
-	// (Docker-absent) diagnostic.
-	if strings.Contains(err.Error(), "docker` binary is not on PATH") {
-		t.Errorf("Docker-present Start surfaced the Docker-absent diagnostic: %v", err)
-	}
-}
-
 func TestStopBeforeStartIsNoOp(t *testing.T) {
 	l := New(Config{Dir: t.TempDir()})
 	if err := l.Stop(); err != nil {
