@@ -106,7 +106,7 @@ func killProcessTree(pid int) {
 	if err != nil {
 		return
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -144,7 +144,7 @@ func pidAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 	var code uint32
 	if err := windows.GetExitCodeProcess(handle, &code); err != nil {
 		return false
@@ -260,7 +260,7 @@ func setNamedEvent(name string) error {
 	if err != nil {
 		return fmt.Errorf("embedded: open event %q: %w", name, err)
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 	if err := windows.SetEvent(handle); err != nil {
 		return fmt.Errorf("embedded: set event %q: %w", name, err)
 	}

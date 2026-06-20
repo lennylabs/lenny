@@ -2,10 +2,11 @@
 
 // Package k3s supervises the embedded Kubernetes layer for §17.4
 // Embedded Mode. The single-node k3s distribution bundles a Linux
-// container runtime and an embedded etcd-compatible datastore, so it
-// runs only on Linux. On a first lenny up the k3s binary is downloaded
-// into the Embedded Mode state directory and started as a managed
-// child process; lenny down terminates it.
+// container runtime and an embedded etcd-compatible datastore, so the
+// in-process child-process launcher runs only on Linux. On a first
+// lenny up the k3s binary is downloaded into the Embedded Mode state
+// directory and started as a managed child process; lenny down
+// terminates it.
 //
 // In-process embedding of k3s is not feasible: k3s links a container
 // runtime that requires Linux kernel namespaces and a root or
@@ -16,7 +17,16 @@
 // On a non-Linux host the Supervisor reports an unsupported platform
 // rather than failing the whole stack: the embedded Postgres, Redis,
 // OIDC, TLS, and gateway components still come up so a developer can
-// exercise the storage and identity paths.
+// exercise the storage and identity paths. The package itself compiles
+// on every target OS of Embedded Mode (Linux, macOS, and Windows) — the
+// OS-specific process-group detach and termination live in the
+// build-tagged process-control substrate (process_unix.go,
+// process_windows.go), so a non-Linux build links cleanly even though
+// SupportedPlatform reports false there.
+//
+// spec: §17.4 (Embedded Mode runs the production stack on a host;
+// the substrate is provisioned per host operating system), §24.19
+// (lenny up/down manage the supervised child process).
 package k3s
 
 import (
@@ -28,7 +38,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"time"
 )
 
@@ -176,9 +185,10 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	cmd := exec.Command(s.BinaryPath(), args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	// Put k3s in its own process group so the supervisor can signal
-	// the whole tree on Stop.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Put k3s in its own process group so the supervisor can terminate
+	// the whole tree on Stop. The attributes are OS-specific and come
+	// from the build-tagged process-control substrate.
+	cmd.SysProcAttr = processGroupSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return fmt.Errorf("embedded k3s: start server: %w", err)
@@ -220,12 +230,6 @@ func (s *Supervisor) serverArgs(asRoot bool) []string {
 	return args
 }
 
-// runningAsRoot reports whether the current process is root. k3s
-// rootless mode is only added when the supervisor itself is non-root.
-func runningAsRoot() bool {
-	return os.Geteuid() == 0
-}
-
 // waitReady blocks until the kubeconfig file exists or ReadyTimeout
 // elapses. k3s writes the kubeconfig once the API server is serving.
 func (s *Supervisor) waitReady(ctx context.Context) error {
@@ -253,18 +257,11 @@ func (s *Supervisor) Stop() error {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
-	pid := s.cmd.Process.Pid
-	// Signal the whole process group: k3s spawns containerd and
-	// kubelet children.
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
-	done := make(chan error, 1)
-	go func() { done <- s.cmd.Wait() }()
-	select {
-	case <-done:
-	case <-time.After(20 * time.Second):
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-		<-done
-	}
+	// Terminate the whole process tree: k3s spawns containerd and
+	// kubelet children. The OS-specific group/job termination, with the
+	// 20s grace-then-force escalation, lives in the build-tagged
+	// process-control substrate.
+	terminateProcessGroup(s.cmd, 20*time.Second)
 	if s.logFile != nil {
 		_ = s.logFile.Close()
 		s.logFile = nil
