@@ -533,6 +533,6 @@ async function asyncMain(): Promise<void> {
 }
 ```
 
-### 6. macOS Note
+### 6. Platform Note (macOS and Windows)
 
-The Standard level requires abstract Unix sockets, which are Linux-only. Use `docker compose up` on macOS.
+The Standard level uses abstract Unix sockets, a Linux kernel feature. Abstract sockets are available wherever the adapter and runtime run inside an in-cluster Linux pod, so Standard- and Full-level development works on macOS and Windows through Embedded Mode (`lenny up`), where the pod runs under Docker Desktop's Linux VM. The restriction applies only to a host-side adapter: `make run` (Source Mode) runs the adapter on the host, where macOS and Windows do not provide abstract sockets, so Source Mode supports Basic-level runtimes only on those hosts. A macOS or Windows developer who prefers Source Mode for Standard- or Full-level work should use `docker compose up` (Compose Mode) instead, which runs the adapter inside a Linux container.
