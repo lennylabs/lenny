@@ -3,6 +3,7 @@
 package stack
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,6 +76,60 @@ func TestRemoveState(t *testing.T) {
 	// error.
 	if err := removeState(path); err != nil {
 		t.Errorf("second removeState errored: %v", err)
+	}
+}
+
+// spec: §24.19.1 (the image bridge selects its containerd-reach path from
+// the running substrate), §17.4 (the substrate is provisioned per host
+// operating system) — RunningSubstrate reports a Docker-backed substrate
+// when the state records a k3s container handle, a host substrate when it
+// does not, and ErrNoRunningStack when no stack is recorded.
+func TestRunningSubstrate(t *testing.T) {
+	t.Run("no running stack", func(t *testing.T) {
+		root := t.TempDir()
+		if _, err := RunningSubstrate(root); !errors.Is(err, ErrNoRunningStack) {
+			t.Fatalf("RunningSubstrate without a stack = %v, want ErrNoRunningStack", err)
+		}
+	})
+
+	t.Run("docker-backed substrate", func(t *testing.T) {
+		root := t.TempDir()
+		writeSubstrateState(t, root, "lenny-embedded-k3s-x")
+		sub, err := RunningSubstrate(root)
+		if err != nil {
+			t.Fatalf("RunningSubstrate: %v", err)
+		}
+		if !sub.DockerBacked() {
+			t.Errorf("DockerBacked() = false, want true for a recorded container handle")
+		}
+		if sub.Container != "lenny-embedded-k3s-x" {
+			t.Errorf("Container = %q, want lenny-embedded-k3s-x", sub.Container)
+		}
+	})
+
+	t.Run("host substrate", func(t *testing.T) {
+		root := t.TempDir()
+		writeSubstrateState(t, root, "")
+		sub, err := RunningSubstrate(root)
+		if err != nil {
+			t.Fatalf("RunningSubstrate: %v", err)
+		}
+		if sub.DockerBacked() {
+			t.Errorf("DockerBacked() = true, want false for a host child-process substrate")
+		}
+	})
+}
+
+// writeSubstrateState records a stack state file under root with the given
+// k3s container handle so RunningSubstrate has a state to read.
+func writeSubstrateState(t *testing.T, root, container string) {
+	t.Helper()
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	if err := writeState(paths.StateFile(), State{K3sEnabled: true, K3sContainer: container}); err != nil {
+		t.Fatalf("writeState: %v", err)
 	}
 }
 

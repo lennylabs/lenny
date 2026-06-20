@@ -130,6 +130,57 @@ func RunningGateway(root string) (string, error) {
 	return "http://" + st.HTTPAddr, nil
 }
 
+// Substrate describes how the embedded k3s is provisioned on the running
+// stack, so a local command (the §24.19.1 image bridge) can reach the
+// embedded containerd through the substrate's mechanism. The Linux
+// managed-child-process launcher runs k3s on the host with a host
+// containerd socket; the Docker-backed launcher (macOS and Windows) runs
+// k3s inside a container with no host socket, so the bridge runs `ctr`
+// inside that container.
+//
+// spec: §17.4 (the substrate is provisioned per host operating system),
+// §24.19.1 (the image bridge reaches the embedded containerd image store).
+type Substrate struct {
+	// Container is the docker container name the Docker-backed launcher runs
+	// the embedded k3s under (macOS and Windows). It is empty on the Linux
+	// child-process launcher, where k3s runs on the host with a host
+	// containerd socket. A non-empty Container selects the container-exec
+	// path; an empty Container selects the host-socket path.
+	Container string
+}
+
+// DockerBacked reports whether the substrate runs k3s inside a Docker
+// container (macOS and Windows) rather than as a host child process
+// (Linux). The image bridge branches on this to reach the embedded
+// containerd: a container-exec path when Docker-backed, a host-socket path
+// otherwise.
+func (s Substrate) DockerBacked() bool { return s.Container != "" }
+
+// RunningSubstrate returns the embedded k3s substrate handle recorded by
+// the running stack. It returns ErrNoRunningStack when no stack is
+// recorded, so a caller can surface the §24.19.1 EMBEDDED_MODE_REQUIRED /
+// K3S_UNAVAILABLE diagnostic instead of a lower-level error. The root
+// argument selects the LENNY_HOME-equivalent state directory; an empty
+// root uses the default.
+//
+// spec: §24.19.1 (the image bridge selects its containerd-reach path from
+// the running substrate).
+func RunningSubstrate(root string) (Substrate, error) {
+	resolved, err := resolveRoot(root)
+	if err != nil {
+		return Substrate{}, err
+	}
+	paths := NewPaths(resolved)
+	st, ok, err := readState(paths.StateFile())
+	if err != nil {
+		return Substrate{}, err
+	}
+	if !ok {
+		return Substrate{}, ErrNoRunningStack
+	}
+	return Substrate{Container: st.K3sContainer}, nil
+}
+
 // processAlive reports whether a process with the given PID is
 // currently running. A zero or negative PID is treated as not running.
 // The liveness probe itself (signal-0 on unix, OpenProcess on Windows)

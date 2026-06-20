@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/embedded/stack"
 )
 
 func TestCmdImageRequiresSubcommand(t *testing.T) {
@@ -161,16 +163,207 @@ func TestImageImportSuggestsTarFallbackWhenDockerMissing_spec_24_19_1(t *testing
 	}
 }
 
-func TestCtrInvocationBaseArgs(t *testing.T) {
+// spec: §24.19.1 (the image bridge reaches the embedded containerd image
+// store), §17.4 (the substrate is provisioned per host operating system) —
+// on the Linux managed-child-process launcher the bridge runs the host k3s
+// binary against the host containerd socket, so the argv is a bare `ctr`
+// invocation with no docker-exec prefix.
+func TestCtrInvocationArgsHostPath(t *testing.T) {
 	c := ctrInvocation{binary: "/k3s", socket: "/sock"}
-	got := c.baseArgs("k8s.io")
-	want := []string{"ctr", "--address", "/sock", "--namespace", "k8s.io"}
+	got := c.args("k8s.io", false, "images", "ls")
+	want := []string{"ctr", "--address", "/sock", "--namespace", "k8s.io", "images", "ls"}
+	assertArgs(t, "host ls", got, want)
+
+	// A stdin-requesting subcommand on the host path does not add `exec -i`;
+	// `-i` is a docker-exec concern only.
+	gotImport := c.args("k8s.io", true, "images", "import", "-")
+	wantImport := []string{"ctr", "--address", "/sock", "--namespace", "k8s.io", "images", "import", "-"}
+	assertArgs(t, "host import", gotImport, wantImport)
+}
+
+// spec: §24.19.1, §17.4 — on the Docker-backed launcher (macOS and
+// Windows) the bridge runs `k3s ctr` inside the k3s container via
+// `docker exec`, addressing the in-container containerd socket. A
+// tarball-streaming subcommand requests an interactive stdin (`exec -i`).
+func TestCtrInvocationArgsDockerPath(t *testing.T) {
+	c := ctrInvocation{binary: "docker", socket: containerCtrSocket, container: "lenny-embedded-k3s-x"}
+
+	// A non-streaming subcommand: no `-i`.
+	got := c.args("k8s.io", false, "images", "ls")
+	want := []string{
+		"exec", "lenny-embedded-k3s-x", "k3s",
+		"ctr", "--address", containerCtrSocket, "--namespace", "k8s.io", "images", "ls",
+	}
+	assertArgs(t, "docker ls", got, want)
+
+	// A streaming import requests `-i` so the host tarball pipes into the
+	// in-container ctr stdin.
+	gotImport := c.args("custom", true, "images", "import", "-")
+	wantImport := []string{
+		"exec", "-i", "lenny-embedded-k3s-x", "k3s",
+		"ctr", "--address", containerCtrSocket, "--namespace", "custom", "images", "import", "-",
+	}
+	assertArgs(t, "docker import", gotImport, wantImport)
+}
+
+func assertArgs(t *testing.T, label string, got, want []string) {
+	t.Helper()
 	if len(got) != len(want) {
-		t.Fatalf("baseArgs = %v, want %v", got, want)
+		t.Fatalf("%s: args = %v, want %v", label, got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Errorf("baseArgs[%d] = %q, want %q", i, got[i], want[i])
+			t.Errorf("%s: args[%d] = %q, want %q", label, i, got[i], want[i])
 		}
+	}
+}
+
+// seedStackState writes a minimal Embedded Mode stack state file under the
+// given home directory recording the k3s container handle. A non-empty
+// container selects the Docker-backed substrate; an empty container leaves
+// the host child-process substrate (no recorded container). The state file
+// JSON layout is stack.State at <home>/run/stack.json.
+func seedStackState(t *testing.T, home, container string) {
+	t.Helper()
+	paths := stack.NewPaths(home)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("seedStackState: EnsureDirs: %v", err)
+	}
+	body := `{"k3sEnabled":true}`
+	if container != "" {
+		body = `{"k3sEnabled":true,"k3sContainer":"` + container + `"}`
+	}
+	if err := os.WriteFile(paths.StateFile(), []byte(body), 0o600); err != nil {
+		t.Fatalf("seedStackState: write state: %v", err)
+	}
+}
+
+// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 (Docker-backed
+// substrate) — when the running stack records a Docker-backed k3s
+// container but the `docker` binary is absent, the image bridge fails
+// closed with K3S_UNAVAILABLE and points the operator at Docker Desktop.
+func TestCtrCommandDockerSubstrateMissingDocker_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	home, _ := stack.DefaultRoot()
+	seedStackState(t, home, "lenny-embedded-k3s-x")
+
+	origLook := lookPathDocker
+	t.Cleanup(func() { lookPathDocker = origLook })
+	lookPathDocker = func() (string, error) {
+		return "", errors.New("exec: \"docker\": executable file not found in $PATH")
+	}
+
+	var errb bytes.Buffer
+	_, code := ctrCommand(&errb)
+	if code != exitK3sUnavailable {
+		t.Fatalf("docker-missing exit = %d, want %d", code, exitK3sUnavailable)
+	}
+	if got := errb.String(); !strings.Contains(got, "K3S_UNAVAILABLE") || !strings.Contains(got, "Docker Desktop") {
+		t.Errorf("stderr = %q, want K3S_UNAVAILABLE + Docker Desktop guidance", got)
+	}
+}
+
+// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 — when the recorded
+// Docker-backed k3s container is not running, the bridge reports
+// K3S_UNAVAILABLE rather than running `docker exec` against a dead
+// container.
+func TestCtrCommandDockerSubstrateContainerDown_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	home, _ := stack.DefaultRoot()
+	seedStackState(t, home, "lenny-embedded-k3s-x")
+
+	origLook := lookPathDocker
+	origRunning := containerRunning
+	t.Cleanup(func() {
+		lookPathDocker = origLook
+		containerRunning = origRunning
+	})
+	lookPathDocker = func() (string, error) { return "/usr/bin/docker", nil }
+	var probed string
+	containerRunning = func(name string) bool {
+		probed = name
+		return false
+	}
+
+	var errb bytes.Buffer
+	_, code := ctrCommand(&errb)
+	if code != exitK3sUnavailable {
+		t.Fatalf("container-down exit = %d, want %d", code, exitK3sUnavailable)
+	}
+	if probed != "lenny-embedded-k3s-x" {
+		t.Errorf("probed container = %q, want lenny-embedded-k3s-x", probed)
+	}
+	if got := errb.String(); !strings.Contains(got, "K3S_UNAVAILABLE") || !strings.Contains(got, "container is not running") {
+		t.Errorf("stderr = %q, want K3S_UNAVAILABLE + container-not-running guidance", got)
+	}
+}
+
+// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 — when the recorded
+// Docker-backed k3s container is up, ctrCommand returns a `docker exec`
+// invocation addressing the in-container containerd socket, so the bridge
+// reaches containerd inside the container rather than via absent host paths.
+func TestCtrCommandDockerSubstrateRunning_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	home, _ := stack.DefaultRoot()
+	seedStackState(t, home, "lenny-embedded-k3s-x")
+
+	origLook := lookPathDocker
+	origRunning := containerRunning
+	t.Cleanup(func() {
+		lookPathDocker = origLook
+		containerRunning = origRunning
+	})
+	lookPathDocker = func() (string, error) { return "/usr/bin/docker", nil }
+	containerRunning = func(string) bool { return true }
+
+	var errb bytes.Buffer
+	ctr, code := ctrCommand(&errb)
+	if code != 0 {
+		t.Fatalf("running-container exit = %d (stderr %q), want 0", code, errb.String())
+	}
+	if ctr.binary != "docker" || ctr.container != "lenny-embedded-k3s-x" || ctr.socket != containerCtrSocket {
+		t.Errorf("invocation = %+v, want docker exec into lenny-embedded-k3s-x at %s", ctr, containerCtrSocket)
+	}
+}
+
+// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 — the host
+// child-process substrate (Linux) reports K3S_UNAVAILABLE when the host
+// k3s binary and containerd socket are absent, with no stack state file
+// recorded. This pins the host path unchanged: it depends on the on-disk
+// host artifacts rather than the recorded substrate.
+func TestCtrCommandHostSubstrateUnavailable_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+
+	var errb bytes.Buffer
+	_, code := ctrCommand(&errb)
+	if code != exitK3sUnavailable {
+		t.Fatalf("host-absent exit = %d, want %d", code, exitK3sUnavailable)
+	}
+	if got := errb.String(); !strings.Contains(got, "K3S_UNAVAILABLE") {
+		t.Errorf("stderr = %q, want K3S_UNAVAILABLE", got)
+	}
+}
+
+// spec: §24.19.1 — a corrupt stack state file makes RunningSubstrate
+// return a non-ErrNoRunningStack error. ctrCommand surfaces it as a
+// generic failure (exit 1) rather than misclassifying it as a clean
+// no-stack K3S_UNAVAILABLE, so the operator sees the real cause.
+func TestCtrCommandCorruptState(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	home, _ := stack.DefaultRoot()
+	paths := stack.NewPaths(home)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	if err := os.WriteFile(paths.StateFile(), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("seed corrupt state: %v", err)
+	}
+	var errb bytes.Buffer
+	_, code := ctrCommand(&errb)
+	if code != 1 {
+		t.Fatalf("corrupt-state exit = %d, want 1", code)
+	}
+	if got := errb.String(); !strings.Contains(got, "lenny image:") {
+		t.Errorf("stderr = %q, want a lenny image diagnostic", got)
 	}
 }
