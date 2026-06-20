@@ -11,15 +11,16 @@ import (
 	"time"
 )
 
-// process_unix.go is the POSIX half of the build-tagged process-control
-// substrate that lets pkg/embedded/k3s compile on every target OS of
-// Embedded Mode while keeping the Linux launcher's behavior verbatim. It
-// carries the original Setpgid process-group start and the group-signal
-// SIGTERM/SIGKILL termination the Supervisor used inline, so the Linux
-// embedded-cluster launcher behaves exactly as before. The Windows half
-// (process_windows.go) reimplements the same surface with Win32 job
-// objects. All OS branching for process control is confined to these two
-// files; k3s.go calls only this surface.
+// process_unix.go is the process-control substrate for the Linux
+// child-process launcher (childk3s_unix.go). It carries the Setpgid
+// process-group start and the group-signal SIGTERM/SIGKILL termination
+// the launcher uses, so the Linux embedded-cluster launcher behaves
+// exactly as before this file was extracted. The child-process launcher
+// runs only on Linux (the unix build tag); macOS and Windows provision
+// the substrate as a Docker container managed through the docker CLI,
+// which needs no host process-group control, so there is no Windows
+// counterpart to this file. The launcher in childk3s_unix.go calls only
+// this surface for process control.
 //
 // spec: §17.4 (Embedded Mode runs the production stack on a host; the
 // substrate is provisioned per host operating system), §24.19 (lenny

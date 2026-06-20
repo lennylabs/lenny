@@ -68,7 +68,7 @@ type Stack struct {
 	pg      *postgres.Instance
 	rd      *redis.Server
 	idp     *oidc.Provider
-	k3s     *k3s.Supervisor
+	k3s     k3s.Launcher
 	tls     tlsgen.Material
 	proxy   *tlsProxy
 	gateway *managedProcess
@@ -221,7 +221,13 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 			}
 		}
 	} else {
-		fmt.Fprintf(out, "lenny up: embedded Kubernetes is unavailable on this host (k3s requires Linux); "+
+		// On a non-Linux host the embedded k3s runs under Docker Desktop's
+		// Linux VM, so the platform is unsupported only when Docker is
+		// absent. spec: §17.4 (Docker Desktop is the macOS/Windows
+		// prerequisite that supplies the Linux kernel the embedded k3s
+		// needs).
+		fmt.Fprintf(out, "lenny up: embedded Kubernetes is unavailable on this host "+
+			"(macOS and Windows require Docker Desktop to run the embedded k3s under its Linux VM); "+
 			"the gateway, stores, and identity provider still come up\n")
 	}
 

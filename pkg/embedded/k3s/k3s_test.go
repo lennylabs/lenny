@@ -4,18 +4,71 @@ package k3s
 
 import (
 	"context"
-	"path/filepath"
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
 )
 
+// withLookPathDocker swaps the package's docker-resolution hook for the
+// duration of a test so the Docker-present and Docker-absent platform
+// paths can be exercised without touching the real PATH, then restores
+// it. found=false simulates an absent docker binary.
+func withLookPathDocker(t *testing.T, found bool) {
+	t.Helper()
+	prev := lookPathDocker
+	t.Cleanup(func() { lookPathDocker = prev })
+	if found {
+		lookPathDocker = func() (string, error) { return "/usr/local/bin/docker", nil }
+	} else {
+		lookPathDocker = func() (string, error) { return "", errors.New("exec: \"docker\": not found in PATH") }
+	}
+}
+
+// spec: §17.4 (the embedded k3s substrate is provisioned per host
+// operating system: Linux unconditionally, macOS and Windows when Docker
+// supplies the Linux VM). SupportedPlatform gates the launcher selection.
 func TestSupportedPlatform(t *testing.T) {
-	// k3s requires Linux: the supervisor must report support only on
-	// Linux hosts.
-	want := runtime.GOOS == "linux"
-	if SupportedPlatform() != want {
-		t.Errorf("SupportedPlatform() = %v, want %v on %s", SupportedPlatform(), want, runtime.GOOS)
+	if runtime.GOOS == "linux" {
+		// Linux is supported unconditionally; Docker availability is
+		// irrelevant on Linux.
+		withLookPathDocker(t, false)
+		if !SupportedPlatform() {
+			t.Errorf("SupportedPlatform() = false on linux, want true unconditionally")
+		}
+		return
+	}
+	// On a non-Linux host the platform is supported exactly when the
+	// docker CLI is resolvable: Docker Desktop supplies the Linux VM the
+	// embedded k3s runs in.
+	withLookPathDocker(t, true)
+	if !SupportedPlatform() {
+		t.Errorf("SupportedPlatform() = false on %s with docker present, want true", runtime.GOOS)
+	}
+	withLookPathDocker(t, false)
+	if SupportedPlatform() {
+		t.Errorf("SupportedPlatform() = true on %s with docker absent, want false (fail closed)", runtime.GOOS)
+	}
+}
+
+// spec: §17.4 (New selects the launcher by host operating system: a
+// managed child process on Linux, a Docker-backed container on macOS and
+// Windows). The non-Linux Docker launcher selection is asserted here; the
+// Linux child-process launcher selection is asserted in the unix test
+// file, where the concrete *childSupervisor type is in the build.
+func TestNewSelectsDockerLauncherOffLinux(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("linux selects the child-process launcher; covered by the unix test file")
+	}
+	// New always returns a usable Launcher regardless of Docker
+	// availability; SupportedPlatform, not New, is the gate.
+	withLookPathDocker(t, true)
+	l := New(Config{Dir: t.TempDir()})
+	if l == nil {
+		t.Fatal("New returned nil launcher")
+	}
+	if _, ok := l.(*dockerLauncher); !ok {
+		t.Errorf("New on %s returned %T, want *dockerLauncher", runtime.GOOS, l)
 	}
 }
 
@@ -38,90 +91,92 @@ func TestDownloadURLByArch(t *testing.T) {
 	}
 }
 
-func TestSupervisorPaths(t *testing.T) {
-	dir := t.TempDir()
-	s := New(Config{Dir: dir})
-	if s.BinaryPath() != filepath.Join(dir, "k3s") {
-		t.Errorf("BinaryPath = %q", s.BinaryPath())
+// TestConfigWithDefaults covers the shared Config defaults both launchers
+// apply: the k3s-convention API port and the download/ready timeouts.
+func TestConfigWithDefaults(t *testing.T) {
+	got := Config{Dir: "/x"}.withDefaults()
+	if got.APIPort != 6443 {
+		t.Errorf("default APIPort = %d, want 6443", got.APIPort)
 	}
-	if s.KubeconfigPath() != filepath.Join(dir, "kubeconfig.yaml") {
-		t.Errorf("KubeconfigPath = %q", s.KubeconfigPath())
+	if got.DownloadTimeout <= 0 {
+		t.Errorf("default DownloadTimeout = %v, want > 0", got.DownloadTimeout)
 	}
-	if s.LogPath() != filepath.Join(dir, "k3s.log") {
-		t.Errorf("LogPath = %q", s.LogPath())
+	if got.ReadyTimeout <= 0 {
+		t.Errorf("default ReadyTimeout = %v, want > 0", got.ReadyTimeout)
 	}
-}
-
-func TestSupervisorDefaultsAPIPort(t *testing.T) {
-	s := New(Config{Dir: t.TempDir()})
-	// The default API port is the k3s convention, 6443.
-	if s.cfg.APIPort != 6443 {
-		t.Errorf("default APIPort = %d, want 6443", s.cfg.APIPort)
+	// An explicit value is preserved.
+	explicit := Config{Dir: "/x", APIPort: 7000}.withDefaults()
+	if explicit.APIPort != 7000 {
+		t.Errorf("explicit APIPort overwritten: got %d, want 7000", explicit.APIPort)
 	}
 }
 
+// spec: §17.4 (an unsupported host fails closed). On a non-Linux host
+// without Docker, Start rejects the launch with a clear diagnostic that
+// names the Docker prerequisite, rather than attempting a launch that
+// cannot succeed. On Linux the platform is always supported, so this
+// path is skipped.
 func TestStartRejectsUnsupportedPlatform(t *testing.T) {
-	if SupportedPlatform() {
-		t.Skip("host supports k3s; this test covers the unsupported-platform path")
+	if runtime.GOOS == "linux" {
+		t.Skip("linux is supported unconditionally; this test covers the Docker-absent non-Linux path")
 	}
-	s := New(Config{Dir: t.TempDir()})
-	// On a non-Linux host Start must fail fast with a clear message
-	// rather than attempting a download.
-	err := s.Start(context.Background())
+	withLookPathDocker(t, false)
+	l := New(Config{Dir: t.TempDir()})
+	err := l.Start(context.Background())
 	if err == nil {
-		t.Fatal("expected Start to fail on an unsupported platform")
+		t.Fatal("expected Start to fail on an unsupported (Docker-absent) non-Linux host")
 	}
-	if !strings.Contains(err.Error(), "requires Linux") {
-		t.Errorf("error %q does not explain the Linux requirement", err.Error())
+	if !strings.Contains(err.Error(), "Docker") {
+		t.Errorf("error %q does not name the Docker prerequisite", err.Error())
+	}
+}
+
+// spec: §17.4 (the Docker-backed launcher provisions k3s as a container
+// under Docker Desktop's Linux VM). With Docker present on a non-Linux
+// host the platform is supported, so Start reaches the Docker-backed body
+// rather than the unsupported-platform gate. The container-provisioning
+// body is implemented in a following build step; until then Start fails
+// closed so the stack routes around the absent cluster rather than
+// proceeding as if it were up.
+func TestDockerLauncherStartFailsClosedUntilWired(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("linux selects the child-process launcher, not the Docker-backed one")
+	}
+	withLookPathDocker(t, true)
+	l := New(Config{Dir: t.TempDir()})
+	err := l.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected the Docker-backed Start to fail closed before its body is wired")
+	}
+	// The Docker-present path must not surface the unsupported-platform
+	// (Docker-absent) diagnostic.
+	if strings.Contains(err.Error(), "docker` binary is not on PATH") {
+		t.Errorf("Docker-present Start surfaced the Docker-absent diagnostic: %v", err)
 	}
 }
 
 func TestStopBeforeStartIsNoOp(t *testing.T) {
-	s := New(Config{Dir: t.TempDir()})
-	if err := s.Stop(); err != nil {
+	l := New(Config{Dir: t.TempDir()})
+	if err := l.Stop(); err != nil {
 		t.Errorf("Stop before Start errored: %v", err)
 	}
-	if s.Running() {
+	if l.Running() {
 		t.Error("Running reported true before Start")
 	}
-	if s.PID() != 0 {
-		t.Errorf("PID = %d before Start, want 0", s.PID())
+	if l.PID() != 0 {
+		t.Errorf("PID = %d before Start, want 0", l.PID())
 	}
 }
 
-func TestEnsureBinaryRejectsUnsupportedPlatform(t *testing.T) {
-	if SupportedPlatform() {
-		t.Skip("host supports k3s; this test covers the unsupported-platform path")
-	}
-	s := New(Config{Dir: t.TempDir()})
-	if err := s.EnsureBinary(context.Background()); err == nil {
-		t.Error("expected EnsureBinary to fail on an unsupported platform")
-	}
-}
-
-// spec: §17.4 line 160 — "k3s (single-node, rootless where supported)".
-// When running as non-root the supervisor passes --rootless so k3s
-// picks its rootless mode on supported hosts; when running as root it
-// omits the flag so root-mode k3s starts normally.
-func TestServerArgsRootlessGating_spec_17_4_160(t *testing.T) {
-	s := New(Config{Dir: t.TempDir()})
-
-	rootArgs := s.serverArgs(true)
-	for _, a := range rootArgs {
-		if a == "--rootless" {
-			t.Fatalf("root invocation must omit --rootless, got %v", rootArgs)
-		}
-	}
-
-	nonRootArgs := s.serverArgs(false)
-	found := false
-	for _, a := range nonRootArgs {
-		if a == "--rootless" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("non-root invocation must include --rootless, got %v", nonRootArgs)
+// TestKubeconfigPathConvention covers the shared kubeconfig-path
+// convention: every launcher writes the admin kubeconfig to
+// <Dir>/kubeconfig.yaml so the host-process controllers resolve their
+// cluster connection the same way regardless of substrate.
+func TestKubeconfigPathConvention(t *testing.T) {
+	dir := t.TempDir()
+	l := New(Config{Dir: dir})
+	want := dir + "/kubeconfig.yaml"
+	if l.KubeconfigPath() != want {
+		t.Errorf("KubeconfigPath = %q, want %q", l.KubeconfigPath(), want)
 	}
 }
