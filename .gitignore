@@ -61,3 +61,9 @@ scripts/cloud/*/values-cloud-*.yaml
 # digests and stays out of git.
 tests/testinfra/kind/bootstrap-overlay.gen.yaml
 .claude/scheduled_tasks.lock
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/

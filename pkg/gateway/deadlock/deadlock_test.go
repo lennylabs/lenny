@@ -69,6 +69,26 @@ func TestDetectSimpleDeadlock_spec_8_8_981(t *testing.T) {
 	}
 }
 
+// TestDetectElicitationBlockedExcluded_spec_9_2_110 pins the §9.2 line-110
+// external-actor semantics: an elicitation-blocked task populates neither
+// the inputwait nor the await blocked signal, so its awaiting parent yields
+// no deadlocked subtree and the task is never DEADLOCK_TIMEOUT-failed. A
+// child blocked on lenny/request_input (the internal-actor half) is pinned
+// by TestDetectSimpleDeadlock_spec_8_8_981; this case covers the contrast.
+// spec: 9.2 (elicitation vs deadlock), 8.8 (subtree deadlock detector)
+func TestDetectElicitationBlockedExcluded_spec_9_2_110(t *testing.T) {
+	// C is elicitation-blocked: running, with no pending request_input and
+	// no awaited children. It populates neither blocked signal, so its
+	// awaiting parent P is not deadlocked.
+	got := deadlock.Detect(snap(
+		node("P", session.StateRunning, []string{"C"}),
+		node("C", session.StateRunning, nil),
+	))
+	if len(got) != 0 {
+		t.Fatalf("Detect returned %d subtrees, want 0 (elicitation-blocked child must not deadlock its parent): %+v", len(got), got)
+	}
+}
+
 // TestDetectRunningChildIsNotDeadlock_spec_8_8_981 covers the §8.8
 // false-negative: an actively-running awaited child can still settle on
 // its own, so the parent is not deadlocked.
