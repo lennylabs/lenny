@@ -96,10 +96,14 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 
 	// `lenny up` — first run downloads PostgreSQL + k3s, so allow the
 	// §17.4 lifecycle ceiling (lifecycle.go bounds the foreground wait at
-	// 6 minutes) rather than the steady-state 60s aspiration. The
-	// supervisor is detached and keeps running until `lenny down`.
+	// 6 minutes) rather than the steady-state 60s aspiration. The deadline
+	// is operator-tunable through embedded.UpTimeoutEnv so a cold-cache or
+	// slow-network host (where the first-run PostgreSQL + k3s + runtime-image
+	// downloads exceed the default) can raise it without editing the test.
+	// The supervisor is detached and keeps running until `lenny down`.
+	upTimeout := embedded.UpTimeout()
 	start := time.Now()
-	up := embedded.Run(t, bin, home, 6*time.Minute, "up")
+	up := embedded.Run(t, bin, home, upTimeout, "up")
 	if up.ExitCode != 0 {
 		t.Fatalf("lenny up: exit %d\nstdout:\n%s\nstderr:\n%s", up.ExitCode, up.Stdout, up.Stderr)
 	}

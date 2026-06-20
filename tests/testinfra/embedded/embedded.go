@@ -61,6 +61,39 @@ const RuntimeEnv = "LENNY_EMBEDDED_SMOKE_RUNTIME"
 // is unset. chat is the §26.7 zero-config default `lenny up` seeds.
 const DefaultRuntime = "chat"
 
+// UpTimeoutEnv names the environment variable that overrides the
+// foreground `lenny up` deadline the smoke test waits under. The smoke
+// test runs against a fresh LENNY_HOME, so first run downloads the
+// PostgreSQL bundle, the k3s binary and image, and a runtime image
+// before the stack is ready. On a cold cache with slow network those
+// downloads can exceed the DefaultUpTimeout default, so an operator
+// running the test on a slow or cold-cache host raises the deadline
+// here (the test-coverage escape hatch for resource-dependent heavy
+// tiers; a warm cache or a faster link keeps the default sufficient).
+// The value is a Go duration string (for example "10m"). spec: §17.4.
+const UpTimeoutEnv = "LENNY_EMBEDDED_UP_TIMEOUT"
+
+// DefaultUpTimeout is the foreground `lenny up` deadline the smoke test
+// waits under when UpTimeoutEnv is unset. It matches the §17.4 lifecycle
+// ceiling the product code bounds the foreground wait at
+// (pkg/embedded/stack/lifecycle.go), so a warm-cache bring-up completes
+// inside it.
+const DefaultUpTimeout = 6 * time.Minute
+
+// UpTimeout returns the foreground `lenny up` deadline: the duration
+// parsed from UpTimeoutEnv when it is set to a valid positive Go
+// duration, otherwise DefaultUpTimeout. An unset, empty, malformed, or
+// non-positive value falls back to the default so a typo cannot silently
+// disable the deadline.
+func UpTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv(UpTimeoutEnv)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return DefaultUpTimeout
+}
+
 // available reports whether the host can provision the Embedded Mode
 // substrate and run the smoke test, returning a human-readable reason
 // when it cannot. The checks are: the go toolchain is on PATH (the

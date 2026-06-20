@@ -5,6 +5,7 @@ package embedded_test
 import (
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 	"github.com/lennylabs/lenny/tests/testinfra/embedded"
@@ -88,5 +89,37 @@ func TestRuntimeSelectorDefaultAndOverride(t *testing.T) {
 	t.Setenv(embedded.RuntimeEnv, "  langgraph \n")
 	if got := embedded.Runtime(); got != "langgraph" {
 		t.Errorf("Runtime() trimmed = %q, want %q", got, "langgraph")
+	}
+}
+
+// spec: §17.4 — the foreground `lenny up` deadline the smoke test waits
+// under is operator-tunable so a cold-cache or slow-network host (where
+// the first-run PostgreSQL + k3s + runtime-image downloads exceed the
+// default) can raise it without editing the test (the test-coverage
+// escape hatch for resource-dependent heavy tiers). An unset, empty,
+// malformed, or non-positive value falls back to the default so a typo
+// cannot silently disable the deadline.
+func TestUpTimeoutDefaultAndOverride(t *testing.T) {
+	t.Setenv(embedded.UpTimeoutEnv, "")
+	if got := embedded.UpTimeout(); got != embedded.DefaultUpTimeout {
+		t.Errorf("UpTimeout() default = %s, want %s", got, embedded.DefaultUpTimeout)
+	}
+	t.Setenv(embedded.UpTimeoutEnv, "10m")
+	if got := embedded.UpTimeout(); got != 10*time.Minute {
+		t.Errorf("UpTimeout() override = %s, want %s", got, 10*time.Minute)
+	}
+	// Surrounding whitespace is trimmed so a stray newline in a CI
+	// env-file does not defeat the parse.
+	t.Setenv(embedded.UpTimeoutEnv, "  15m \n")
+	if got := embedded.UpTimeout(); got != 15*time.Minute {
+		t.Errorf("UpTimeout() trimmed = %s, want %s", got, 15*time.Minute)
+	}
+	// A malformed or non-positive value falls back to the default rather
+	// than silently disabling the deadline.
+	for _, bad := range []string{"not-a-duration", "0", "-5m"} {
+		t.Setenv(embedded.UpTimeoutEnv, bad)
+		if got := embedded.UpTimeout(); got != embedded.DefaultUpTimeout {
+			t.Errorf("UpTimeout() with %q = %s, want default %s", bad, got, embedded.DefaultUpTimeout)
+		}
 	}
 }

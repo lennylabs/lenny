@@ -47,6 +47,42 @@ func TestGatewayArgsPassesBearerTrustKeyFile(t *testing.T) {
 	}
 }
 
+// TestGatewayArgsThreadsGRPCAddr covers the §4.7/§8.6/§9.1 GatewayControl
+// listener bind: when the stack computes the gRPC listen address (an empty
+// host so the listener binds all host interfaces, reachable from the Docker
+// VM), gatewayArgs threads it through -grpc-addr so the in-cluster agent-pod
+// adapter can dial the gateway callback across the host/Docker boundary. The
+// listener is enabled only when an embedded cluster exists to host the
+// adapter that dials it.
+//
+// spec: §4.7, §8.6, §9.1, §17.4 (the gateway serves the adapter→gateway
+// control surface the in-cluster adapter dials across the host/Docker
+// boundary).
+func TestGatewayArgsThreadsGRPCAddr_spec_4_7(t *testing.T) {
+	const addr = ":50061"
+	args := gatewayArgs(gatewaySpec{HTTPAddr: "127.0.0.1:8080", GRPCAddr: addr})
+	got, ok := argValue(args, "-grpc-addr")
+	if !ok {
+		t.Fatal("gatewayArgs did not pass -grpc-addr when the spec set it")
+	}
+	if got != addr {
+		t.Errorf("-grpc-addr = %q, want %q", got, addr)
+	}
+}
+
+// TestGatewayArgsOmitsGRPCAddrWhenUnset confirms an empty GRPCAddr leaves
+// the GatewayControl listener disabled, so a stack without an embedded
+// cluster (no in-cluster adapter to serve) does not bind the listener.
+//
+// spec: §4.7 (the GatewayControl listener is bound only when there is an
+// in-cluster adapter to dial it).
+func TestGatewayArgsOmitsGRPCAddrWhenUnset(t *testing.T) {
+	args := gatewayArgs(gatewaySpec{HTTPAddr: "127.0.0.1:8080"})
+	if _, ok := argValue(args, "-grpc-addr"); ok {
+		t.Error("gatewayArgs passed -grpc-addr with no address set")
+	}
+}
+
 // envValue returns the value of the last KEY=VALUE entry for key, or ""
 // when absent. Last wins, matching exec's later-entry precedence.
 func envValue(env []string, key string) (string, bool) {
