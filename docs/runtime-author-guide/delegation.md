@@ -343,7 +343,7 @@ The `cascadeOnFailure` policy governs what happens to children when the parent r
 | Policy | Behavior |
 |--------|----------|
 | `cancel_all` (default) | Cancel all descendants immediately |
-| `await_completion` | Let running children finish (up to `cascadeTimeoutSeconds`), then collect results |
+| `await_completion` | Children keep running (up to `cascadeTimeoutSeconds`); when the timeout elapses, orphan cleanup terminates any still running. Each child's result stays retrievable from the session tree. |
 | `detach` | Children become orphaned; results are stored but no parent collects them |
 
 The name is misleading: `cascadeOnFailure` applies on every terminal transition, including normal completion. A parent that completes normally after `await_children(mode="any")` applies the cascade policy to its remaining children.
