@@ -27,6 +27,20 @@ func quickstartPath(root string) string {
 	return filepath.Join(root, "docs", "getting-started", "quickstart.md")
 }
 
+// localDevelopmentPath is the published runtime-author local-development
+// page. It is the primary reader-facing local-dev page for the §17.4
+// Embedded Mode / `make run` / `docker compose up` comparison.
+func localDevelopmentPath(root string) string {
+	return filepath.Join(root, "docs", "runtime-author-guide", "local-development.md")
+}
+
+// installationPath is the published operator-guide installation page,
+// whose "`lenny up` for local evaluation" section is a deployment-facing
+// Embedded Mode description.
+func installationPath(root string) string {
+	return filepath.Join(root, "docs", "operator-guide", "installation.md")
+}
+
 // sdkExamplePages is the set of SDK-example pages whose Standard-level
 // platform note proposal §3.5/§3.6 reconciliation applies to.
 func sdkExamplePages(root string) []string {
@@ -167,6 +181,135 @@ func TestSDKExamplesScopeAbstractSocketRestrictionToHostSide(t *testing.T) {
 		if strings.Contains(content, "which are Linux-only. Use `docker compose up` on macOS") {
 			t.Errorf("%s still asserts the Standard level is flatly Linux-only; Embedded Mode runs the adapter in an in-cluster Linux pod on macOS and Windows (proposal §3.5/§3.6)", name)
 		}
+	}
+}
+
+// diagnosis: the local-development page's cross-platform substrate
+// reconciliation from proposal 0013 (§3.1/§3.2/§3.7) regressed. The page
+// either still describes `lenny up` as running the stack "in-process"
+// (stale: k3s runs as a managed child process on Linux and as a Docker
+// container on macOS/Windows, the gateway and controllers as host child
+// processes), or omits the Docker Desktop prerequisite that macOS and
+// Windows need, leaving a non-Linux runtime author following `lenny up`
+// without the one prerequisite it requires on their host.
+//
+// spec: §17.4 (per-OS substrate, Docker prerequisite), §24.19 (`lenny up`
+// stack composition). Proposal 0013 §3.1, §3.2, §3.7.
+func TestLocalDevelopmentStatesPerOSSubstrateAndDockerPrerequisite(t *testing.T) {
+	root := repoRoot(t)
+	content := readDocPage(t, localDevelopmentPath(root))
+
+	// The reconciled page must name the per-OS substrate (managed child
+	// process on Linux, Docker Desktop's Linux VM on macOS/Windows) and the
+	// Docker Desktop prerequisite.
+	for _, want := range []string{
+		"Docker Desktop",
+		"Linux VM",
+		"managed child process",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("local-development.md missing cross-platform substrate text %q (proposal §3.1/§3.2 regression)", want)
+		}
+	}
+
+	// The stale "starts everything in-process" framing for `lenny up` must
+	// be gone; it is false against the current per-OS substrate (proposal
+	// §3.7 removes the "in-process" characterization of k3s/controllers).
+	if strings.Contains(content, "starts everything in-process") {
+		t.Errorf("local-development.md still describes `lenny up` as starting everything in-process; k3s runs as a managed child process or Docker container and the controllers as host child processes (proposal §3.7)")
+	}
+}
+
+// diagnosis: the local-development page's local-isolation-fidelity
+// disclosure from proposal §3.10 regressed. The page presents the
+// embedded stack's pod isolation as production-equivalent, when the
+// single-node cluster degrades the `sandboxed` (gVisor) and `microvm`
+// (Kata) profiles to runc for distinct reasons and disables
+// NetworkPolicy. A runtime author would mistake local behavior for the
+// production isolation boundary.
+//
+// spec: §17.4 (local isolation fidelity), §5.3 (isolation profiles),
+// §13.2 (network isolation). Proposal 0013 §3.10.
+func TestLocalDevelopmentDisclosesLocalIsolationDegradation(t *testing.T) {
+	root := repoRoot(t)
+	content := readDocPage(t, localDevelopmentPath(root))
+
+	// The page must disclose the runc degradation and the disabled
+	// NetworkPolicy enforcement.
+	for _, want := range []string{
+		"runc",
+		"NetworkPolicy",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("local-development.md missing local-fidelity disclosure text %q (proposal §3.10 regression)", want)
+		}
+	}
+
+	// Proposal §3.10 keeps the gVisor and Kata runc-degradation causes
+	// distinct. The page must carry the microvm-specific cause rather than
+	// collapse both profiles under the gVisor-runtime-class cause.
+	if !strings.Contains(content, "hardware virtualization the local substrate cannot nest") {
+		t.Errorf("local-development.md is missing the distinct `microvm`/Kata runc-degradation cause; proposal §3.10 keeps the gVisor and Kata causes distinct")
+	}
+	if !strings.Contains(content, "no gVisor runtime class") {
+		t.Errorf("local-development.md is missing the distinct `sandboxed`/gVisor runc-degradation cause (the cluster installs no gVisor runtime class); proposal §3.10 keeps the gVisor and Kata causes distinct")
+	}
+}
+
+// diagnosis: the local-development page's abstract-socket reconciliation
+// from proposal §3.5/§3.6 regressed. The page either keeps a blanket
+// "Linux-only" Standard/Full restriction that excludes macOS and Windows
+// authors, or drops the Embedded-Mode in-cluster-pod carve-out that makes
+// abstract sockets available on those hosts under `lenny up`.
+//
+// spec: §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
+// Proposal 0013 §3.5, §3.6.
+func TestLocalDevelopmentScopesAbstractSocketRestrictionToHostSide(t *testing.T) {
+	root := repoRoot(t)
+	content := readDocPage(t, localDevelopmentPath(root))
+
+	// The reconciled note must name the Embedded-Mode in-cluster-pod path
+	// as how Standard/Full authors work on macOS and Windows.
+	if !strings.Contains(content, "in-cluster Linux pod") {
+		t.Errorf("local-development.md missing the in-cluster Linux pod carve-out for abstract sockets on macOS/Windows (proposal §3.5/§3.6 regression)")
+	}
+
+	// The pre-0013 blanket claim that abstract sockets "exist only on
+	// Linux, so on macOS or Windows use `make run` for Basic-level runtimes
+	// and `lenny up` (or `docker compose up`) for Standard and Full" — which
+	// asserted a flat host-OS restriction without the in-cluster-pod
+	// explanation — must be gone.
+	if strings.Contains(content, "Those sockets exist only on Linux, so on macOS or Windows use") {
+		t.Errorf("local-development.md still asserts a flat host-OS abstract-socket restriction without the in-cluster-pod carve-out (proposal §3.5/§3.6)")
+	}
+}
+
+// diagnosis: the operator-guide installation page's `lenny up` section
+// reconciliation from proposal §3.2/§3.7/§3.10 regressed. The deployment
+// reader either still sees `lenny up` described as running "in-process"
+// (stale), or is not told Docker Desktop is required on macOS/Windows, or
+// is not warned the local cluster does not reproduce production isolation.
+//
+// spec: §17.4 (per-OS substrate, Docker prerequisite, local isolation
+// fidelity), §24.19 (`lenny up`). Proposal 0013 §3.2, §3.7, §3.10.
+func TestInstallationLennyUpStatesSubstrateAndFidelity(t *testing.T) {
+	root := repoRoot(t)
+	content := readDocPage(t, installationPath(root))
+
+	for _, want := range []string{
+		"Docker Desktop",
+		"managed child process",
+		"runc",
+		"NetworkPolicy",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("installation.md `lenny up` section missing cross-platform/fidelity text %q (proposal §3.2/§3.7/§3.10 regression)", want)
+		}
+	}
+
+	// The stale "runs the entire platform in-process" framing must be gone.
+	if strings.Contains(content, "runs the entire platform in-process") {
+		t.Errorf("installation.md still describes `lenny up` as running the entire platform in-process; k3s runs as a managed child process or Docker container and the controllers as host child processes (proposal §3.7)")
 	}
 }
 
