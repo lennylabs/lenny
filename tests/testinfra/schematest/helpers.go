@@ -16,7 +16,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
@@ -102,4 +104,33 @@ func RepoRootCwd() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("could not find repo root containing go.mod from %s", wd)
+}
+
+// TrackedFiles returns every git-tracked file path, relative to the
+// repository root and using forward slashes. License and other
+// repository-hygiene checks enumerate tracked files rather than walking
+// the filesystem so that generated, gitignored artifacts (the Kind
+// bootstrap overlay, build output under dist/ and node_modules/, cloud
+// values overrides) are never flagged. The check's contract is the set
+// of files committed to the repository, which is exactly `git ls-files`.
+//
+// When git is unavailable or the working directory is not a git checkout
+// (a source tarball, for example), the tracked set cannot be determined,
+// so the calling test skips rather than reporting spurious results.
+func TrackedFiles(t testing.TB) []string {
+	t.Helper()
+	root := RepoRoot(t)
+	cmd := exec.Command("git", "ls-files", "-z")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skipf("git ls-files unavailable (not a git checkout?): %v", err)
+	}
+	var files []string
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel != "" {
+			files = append(files, rel)
+		}
+	}
+	return files
 }

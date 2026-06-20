@@ -22,47 +22,41 @@ import (
 func TestEveryGoFileHasSPDXHeader(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
-	roots := []string{"pkg", "cmd", "tests"}
+	// Enumerate git-tracked files rather than walking the filesystem so
+	// that generated, gitignored artifacts (build output, the Kind
+	// bootstrap overlay) are never flagged. The check applies to files
+	// committed under pkg/, cmd/, and tests/.
+	roots := []string{"pkg/", "cmd/", "tests/"}
 	var missing []string
-	for _, top := range roots {
-		base := filepath.Join(root, top)
-		if _, err := os.Stat(base); os.IsNotExist(err) {
+	for _, rel := range schematest.TrackedFiles(t) {
+		if filepath.Ext(rel) != ".go" {
 			continue
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				// Third-party dependencies and built output carry no
-				// SPDX header; skip those directory subtrees.
-				if d.Name() == "node_modules" || d.Name() == "dist" {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if filepath.Ext(path) != ".go" {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(string(data), "SPDX-License-Identifier: MIT") {
-				rel, _ := filepath.Rel(root, path)
-				missing = append(missing, rel)
-			}
-			return nil
-		})
+		if !underAny(rel, roots) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			t.Fatalf("walk %s: %v", top, err)
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if !strings.Contains(string(data), "SPDX-License-Identifier: MIT") {
+			missing = append(missing, rel)
 		}
 	}
-	if len(missing) > 0 {
-		for _, m := range missing {
-			t.Errorf("missing SPDX header: %s", m)
+	for _, m := range missing {
+		t.Errorf("missing SPDX header: %s", m)
+	}
+}
+
+// underAny reports whether rel sits under any of the given top-level
+// prefixes (each prefix ends in a slash).
+func underAny(rel string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(rel, p) {
+			return true
 		}
 	}
+	return false
 }
 
 // spec: 13.0 (license headers on non-Go files: shell, YAML, Python, TypeScript)
@@ -75,7 +69,6 @@ func TestEveryGoFileHasSPDXHeader(t *testing.T) {
 func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
-	roots := []string{"scripts", "compose", "sdks", "tests"}
 	// Extensions and the syntactic comment marker that may carry
 	// the SPDX header. Each entry: (ext, requiredPrefix).
 	exts := map[string]string{
@@ -101,49 +94,31 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 		// .github action workflows have their own license tooling.
 		return false
 	}
+	// Enumerate git-tracked files so generated, gitignored artifacts
+	// (build output under dist/ and node_modules/, the Kind bootstrap
+	// overlay, cloud values overrides) are never flagged.
+	rootPrefixes := []string{"scripts/", "compose/", "sdks/", "tests/"}
 	var missing []string
-	for _, top := range roots {
-		base := filepath.Join(root, top)
-		if _, err := os.Stat(base); os.IsNotExist(err) {
+	for _, rel := range schematest.TrackedFiles(t) {
+		marker, ok := exts[filepath.Ext(rel)]
+		if !ok {
 			continue
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				// Third-party dependencies and built output carry no
-				// SPDX header; skip those directory subtrees.
-				if d.Name() == "node_modules" || d.Name() == "dist" {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			ext := filepath.Ext(path)
-			marker, ok := exts[ext]
-			if !ok {
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
-			if exempt(rel) {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if !strings.Contains(string(data), marker) {
-				missing = append(missing, rel)
-			}
-			return nil
-		})
+		if !underAny(rel, rootPrefixes) {
+			continue
+		}
+		if exempt(rel) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			t.Fatalf("walk %s: %v", top, err)
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if !strings.Contains(string(data), marker) {
+			missing = append(missing, rel)
 		}
 	}
-	if len(missing) > 0 {
-		for _, m := range missing {
-			t.Errorf("missing SPDX header: %s", m)
-		}
+	for _, m := range missing {
+		t.Errorf("missing SPDX header: %s", m)
 	}
 }

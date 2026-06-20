@@ -580,12 +580,13 @@ func runStaticTier() (string, string) {
 			}
 			out, err := exec.Command(path, "run", "--timeout=2m").CombinedOutput()
 			if err != nil {
-				// Phase 1 note: golangci-lint 1.61's bundled typechecker
-				// fails on the jsonschema/v5 package. Surface the output
-				// for visibility, but do not fail the tier. The check
-				// becomes hard-fail when the pin moves to a fixed
-				// version (tracked alongside the .golangci.yml
-				// exclude-dirs comment).
+				// golangci-lint is pinned to the v2 series (v1.x aborts on
+				// Go 1.26 export-data). It now runs, but surfaces
+				// pre-existing findings that were masked while the binary
+				// could not load packages. Surface the output for
+				// visibility without failing the tier; the check flips to
+				// hard-fail once those findings are burned down (bd
+				// lenny-vgl).
 				return fmt.Sprintf("WARNING (non-fatal, see .golangci.yml):\n%s", out), nil
 			}
 			return string(out), nil
