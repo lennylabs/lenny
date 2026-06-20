@@ -47,7 +47,12 @@ rules:
   # require delete (§4.6.3 RBAC backstop grants create/update/delete).
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxes"]
-    verbs: ["get", "list", "watch", "create", "update", "delete"]
+    # patch is required for the WarmPoolController's Server-Side Apply write of
+    # the §4.7 nonce-only render decision onto the Sandbox.spec.requireSoPeercred
+    # carrier (pkg/controller/sandbox/controller.go recordNonceOnlyCarrier /
+    # clearNonceOnlyCarrier); SSA issues an HTTP PATCH, for which `update` is
+    # insufficient — the same reason the sandboxes/status rule below needs patch.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # SandboxClaims: the §4.6.1 occupancy projection watches SandboxClaim
   # resources and computes Sandbox.status.phase as a level-triggered
   # projection of claim existence and binding state, so the

@@ -14,10 +14,18 @@
 # Service ClusterIP. kindnet, however, evaluates the egress policy against
 # the POST-DNAT destination: kube-proxy DNATs 10.97.0.1:443 to the real
 # apiserver endpoint, which on Kind is a control-plane node's address on
-# the `kind` Docker bridge network (172.18.0.0/16, e.g. 172.18.0.4:6443),
-# NOT an address in the service CIDR. The service-CIDR ipBlock therefore
-# does not match the post-DNAT target and the apiserver dial is dropped
-# with an i/o timeout.
+# the `kind` Docker bridge network (a 172.16.0.0/12 subnet, e.g.
+# 172.18.0.4:6443 or 172.19.0.3:6443), NOT an address in the service CIDR.
+# The service-CIDR ipBlock therefore does not match the post-DNAT target
+# and the apiserver dial is dropped with an i/o timeout.
+#
+# The exact Docker bridge subnet is not stable: Docker assigns the `kind`
+# network the next free /16 in 172.16.0.0/12 at creation, so a cluster
+# re-created after another Docker network already holds 172.18.0.0/16 lands
+# on 172.19.0.0/16 (or later). Pinning a single /16 here breaks every fresh
+# apiserver dial the moment the assignment drifts. The ipBlock therefore
+# covers the whole 172.16.0.0/12 Docker-bridge range so the policy tracks
+# the cluster's actual node CIDR without an install-time substitution.
 #
 # A control plane whose apiserver informers connected at startup keeps
 # limping along on those conntrack-established connections, but every NEW
@@ -49,10 +57,13 @@ spec:
   egress:
     # kube-apiserver on the Kind node CIDR (post-DNAT target of the
     # kubernetes Service ClusterIP). 443 is the Service port; 6443 is the
-    # node endpoint port the DNAT resolves to.
+    # node endpoint port the DNAT resolves to. The CIDR spans the whole
+    # 172.16.0.0/12 Docker-bridge range because Docker may assign the `kind`
+    # network any /16 within it; pinning a single /16 drifts when the
+    # network is re-created.
     - to:
         - ipBlock:
-            cidr: 172.18.0.0/16
+            cidr: 172.16.0.0/12
       ports:
         - port: 443
           protocol: TCP

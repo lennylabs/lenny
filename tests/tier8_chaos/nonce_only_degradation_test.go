@@ -35,14 +35,21 @@
 // PoolSecurityDegraded rule evaluates rather than an injected projection.
 //
 // The revert step returns the runtime to full SO_PEERCRED enforcement
-// (requireSoPeercred: true) and then deletes the pool through the admin API;
-// the test asserts the §4.7 revert latch holds while a pre-revert nonce-only
-// member still serves and that the condition and gauge clear once the pool's
-// members are gone.
+// (requireSoPeercred: true), then scales the pool's warm count to 0 through
+// the admin API and deletes the pre-revert member Sandboxes directly; the test
+// asserts the §4.7 revert latch holds while a pre-revert nonce-only member
+// still serves and that the condition transitions to an explicit False and the
+// gauge clears to 0 once the pool's nonce-only members are gone. Replacing the
+// members in place (rather than deleting the pool) exercises the §4.7
+// condition-clearing transition with the SandboxTemplate still present, so it
+// asserts the explicit SecurityDegradedMode=False outcome and does not depend
+// on the §10.5 sandboxtemplate-deletion-guard teardown path.
 
 package tier8_chaos_test
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,20 +61,22 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
-// nonceOnlyPool is the pool the nonce-only chaos scenario drives. It is
-// created in Postgres through the admin API; the PoolScalingController
-// reconciles it into the SandboxTemplate + SandboxWarmPool CRD pair under
-// this same name in the agent namespace.
-const nonceOnlyPool = "chaos-nonce-only-pool"
-
-// nonceOnlyRuntime is the deploymentModel: sidecar Runtime the pool
-// references. requireSoPeercred: false on a sidecar runtime is the §4.7
-// activating field, settable only through a Runtime CR; reverting it to
-// true is the runbook's step-2 remediation. The WarmPoolController derives
-// the pool condition from the member Sandboxes rather than the Runtime CR,
-// so reverting this field stops new nonce-only pods but does not by itself
-// clear the latch while a pre-revert member survives.
-const nonceOnlyRuntime = "chaos-nonce-only-runtime"
+// nonceOnlyPoolPrefix / nonceOnlyRuntimePrefix are the name stems the
+// nonce-only chaos scenario builds its per-run pool and Runtime names
+// from. The names are made unique per run (uniqueNonceOnlyName) because a
+// pool name is the PRIMARY KEY of the Postgres `sandbox_warm_pools` table
+// (migrations/0033) and a soft-deleted row keeps the name occupied: a
+// re-create with the same name fails with a unique violation (409
+// RESOURCE_CONFLICT). A fixed name therefore lets the test run only once
+// per cluster lifetime; a unique name per run makes it repeatable and
+// keeps a leftover pool from a prior run (one F-13.2.24 leaves stuck) from
+// colliding with this run. The pool name doubles as the SandboxTemplate +
+// SandboxWarmPool object name the PoolScalingController reconciles into the
+// agent namespace.
+const (
+	nonceOnlyPoolPrefix    = "chaos-nonce-only-pool"
+	nonceOnlyRuntimePrefix = "chaos-nonce-only-runtime"
+)
 
 // nonceOnlyRuntimeClass is the RuntimeClass the §5.3 `standard` isolation
 // profile maps to (`standard` → runc). The WarmPoolController marks a pool
@@ -124,13 +133,13 @@ const controllerMetricsPortName = "metrics"
 // the Postgres-authoritative admin API, and lets the live controllers
 // render a nonce-only warm member; it then asserts the WarmPoolController
 // writes SecurityDegradedMode=True on the SandboxTemplate and publishes
-// lenny_pool_security_degraded == 1, reverts the runtime field, deletes the
-// pool, and asserts the condition transitions to False and the gauge returns
-// to 0. A failure means the bundled PoolSecurityDegraded alert has no live
-// series when a pool runs nonce-only (operators are blind to a disabled
-// SO_PEERCRED boundary), the §4.7 revert latch released early while a
-// nonce-only member still served, or the pool never recovered after its
-// members were gone.
+// lenny_pool_security_degraded == 1, reverts the runtime field, replaces the
+// pool's nonce-only members (scale to 0 + member delete), and asserts the
+// condition transitions to False and the gauge returns to 0. A failure means
+// the bundled PoolSecurityDegraded alert has no live series when a pool runs
+// nonce-only (operators are blind to a disabled SO_PEERCRED boundary), the
+// §4.7 revert latch released early while a nonce-only member still served, or
+// the pool never recovered after its members were gone.
 func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	c := kind.InstallLenny(t)
 
@@ -149,6 +158,16 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// it in place.
 	ensureNonceOnlyRuntimeClass(t, c)
 
+	// Build a unique pool + Runtime name for this run. A pool name is the
+	// PRIMARY KEY of the Postgres sandbox_warm_pools table and a soft-deleted
+	// row keeps the name occupied, so a fixed name lets the scenario run only
+	// once per cluster lifetime (the second create returns 409
+	// RESOURCE_CONFLICT). A per-run suffix makes the test repeatable and keeps
+	// a leftover pool a prior run left stuck (when the F-13.2.24 deletion-guard
+	// block prevents teardown) from colliding with this run.
+	pool := uniqueNonceOnlyName(t, nonceOnlyPoolPrefix)
+	runtimeName := uniqueNonceOnlyName(t, nonceOnlyRuntimePrefix)
+
 	// Register the §4.7 activating runtime through its only modeling surface,
 	// the Runtime CR. requireSoPeercred: false is valid only on the sidecar
 	// deployment model; the RuntimeReconciler mirrors the CR into the gateway
@@ -159,20 +178,20 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// not be pullable: the §4.7 carrier and the SOPeercredDisabled condition
 	// are resolved from config before the pod is created, so the warm member's
 	// pod failing to pull does not affect the surfaced degradation.
-	runtime := nonceOnlyRuntimeManifest(nonceOnlyRuntime, false)
+	runtime := nonceOnlyRuntimeManifest(runtimeName, false)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, runtime) })
 	if out, err := c.ApplyStdin(t, runtime); err != nil {
 		t.Fatalf("failed to apply the nonce-only Runtime CR: %v\n%s", err, out)
 	}
 	registered := pollUntil(60*time.Second, 3*time.Second, func() bool {
-		return runtimeRegisteredStatus(t, c, nonceOnlyRuntime) == "True"
+		return runtimeRegisteredStatus(t, c, runtimeName) == "True"
 	})
 	if !registered {
 		t.Fatalf("the RuntimeReconciler did not register Runtime %s (last Registered=%q); the admin pool-create "+
-			"gate cannot resolve its requireSoPeercred posture", nonceOnlyRuntime,
-			runtimeRegisteredStatus(t, c, nonceOnlyRuntime))
+			"gate cannot resolve its requireSoPeercred posture", runtimeName,
+			runtimeRegisteredStatus(t, c, runtimeName))
 	}
-	t.Logf("registered: Runtime %s (sidecar, requireSoPeercred=false) is Registered=True", nonceOnlyRuntime)
+	t.Logf("registered: Runtime %s (sidecar, requireSoPeercred=false) is Registered=True", runtimeName)
 
 	// Drive the admin API from the test host through an API-server-mediated
 	// port-forward to the gateway Service, so the admin requests need no
@@ -191,10 +210,10 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// a requireSoPeercred=false runtime; standard isolation + the explicit
 	// allowStandardIsolation opt-in match the dev-mode runc RuntimeClass on
 	// this cluster so the pool is not RuntimeClass-Degraded.
-	t.Cleanup(func() { deleteNonceOnlyPool(t, gatewayURL) })
-	createNonceOnlyPool(t, gatewayURL)
+	t.Cleanup(func() { deleteNonceOnlyPool(t, gatewayURL, pool) })
+	createNonceOnlyPool(t, gatewayURL, pool, runtimeName)
 	t.Logf("created: Postgres-authoritative pool %s (warmCount=1, acknowledgeNonceOnlyAuth=true, runtimeRef=%s)",
-		nonceOnlyPool, nonceOnlyRuntime)
+		pool, runtimeName)
 
 	// Forward a controller pod's metrics endpoint once for the run. The
 	// port-forward goes through the API server, so the gauge read is not
@@ -213,44 +232,44 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// the WarmPoolController writes SecurityDegradedMode=True and publishes
 	// the gauge.
 	degraded := pollUntil(nonceOnlyReconcileBound, 5*time.Second, func() bool {
-		return securityDegradedConditionStatus(t, c, nonceOnlyPool) == "True"
+		return securityDegradedConditionStatus(t, c, pool) == "True"
 	})
 	if !degraded {
 		t.Errorf("§4.7 violation: after the acknowledged nonce-only pool was created the controllers did not write "+
 			"SecurityDegradedMode=True on SandboxTemplate %s (last status %q); the bundled PoolSecurityDegraded "+
-			"alert has no condition backing. Member Sandboxes: %s", nonceOnlyPool,
-			securityDegradedConditionStatus(t, c, nonceOnlyPool), describeNonceOnlyMembers(t, c))
+			"alert has no condition backing. Member Sandboxes: %s", pool,
+			securityDegradedConditionStatus(t, c, pool), describeNonceOnlyMembers(t, c, pool))
 	} else {
-		t.Logf("degradation surfaced: SandboxTemplate %s carries SecurityDegradedMode=True", nonceOnlyPool)
+		t.Logf("degradation surfaced: SandboxTemplate %s carries SecurityDegradedMode=True", pool)
 	}
 	gaugeUp := pollUntil(nonceOnlyReconcileBound, 5*time.Second, func() bool {
-		v, ok := scrapeSecurityDegradedGauge(t, metricsURL, nonceOnlyPool)
+		v, ok := scrapeSecurityDegradedGauge(t, metricsURL, pool)
 		return ok && v == 1
 	})
 	if !gaugeUp {
-		v, _ := scrapeSecurityDegradedGauge(t, metricsURL, nonceOnlyPool)
+		v, _ := scrapeSecurityDegradedGauge(t, metricsURL, pool)
 		t.Errorf("§16.5 violation: lenny_pool_security_degraded for pool %s did not reach 1 (last %v); the "+
 			"controller-published gauge the bundled PoolSecurityDegraded rule evaluates has no degraded series",
-			nonceOnlyPool, v)
+			pool, v)
 	} else {
-		t.Logf("alert series live: lenny_pool_security_degraded{pool=%q} == 1", nonceOnlyPool)
+		t.Logf("alert series live: lenny_pool_security_degraded{pool=%q} == 1", pool)
 	}
 
 	// Capture the rendered nonce-only member names before the revert so the
 	// latch assertion can observe a pre-revert member surviving the runtime
 	// field flip.
-	preRevertMembers := nonceOnlyMemberNames(t, c)
+	preRevertMembers := nonceOnlyMemberNames(t, c, pool)
 	t.Logf("rendered nonce-only members before revert: %v", preRevertMembers)
 
 	// Revert step (runbook remediation step 2): return the runtime to full
 	// SO_PEERCRED enforcement. This stops new nonce-only pods; per §4.7 the
 	// pool stays degraded while a pre-revert nonce-only member still serves,
 	// so the condition must hold until the carrier members are replaced.
-	revert := nonceOnlyRuntimeManifest(nonceOnlyRuntime, true)
+	revert := nonceOnlyRuntimeManifest(runtimeName, true)
 	if out, err := c.ApplyStdin(t, revert); err != nil {
 		t.Fatalf("failed to revert the Runtime requireSoPeercred field to true: %v\n%s", err, out)
 	}
-	t.Logf("revert: Runtime %s requireSoPeercred set back to true", nonceOnlyRuntime)
+	t.Logf("revert: Runtime %s requireSoPeercred set back to true", runtimeName)
 
 	// Model the §4.7 latch ordering: while a pre-revert nonce-only member
 	// survives, the pool stays SecurityDegradedMode=True. The reverted
@@ -259,7 +278,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// it is replaced, so the condition must not clear in this window.
 	if len(preRevertMembers) > 0 {
 		cleared := pollUntil(20*time.Second, 4*time.Second, func() bool {
-			return securityDegradedConditionStatus(t, c, nonceOnlyPool) != "True"
+			return securityDegradedConditionStatus(t, c, pool) != "True"
 		})
 		if cleared {
 			t.Errorf("§4.7 latch violation: SecurityDegradedMode cleared while member Sandbox(es) %v still carried "+
@@ -271,44 +290,129 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 		}
 	}
 
-	// Recovery (runbook remediation step 3): delete the pool through the
-	// admin API. The PoolScalingController removes the SandboxWarmPool /
-	// SandboxTemplate CRD pair, garbage-collecting the member Sandboxes that
-	// carried the nonce-only signal. With the pool's last nonce-only member
-	// gone the WarmPoolController transitions the condition to an explicit
-	// False (it was previously True) and clears the gauge before forgetting
-	// the deleted pool's series. The condition read may go absent once the
-	// SandboxTemplate is deleted; an absent condition is also a cleared
-	// state, so recovery is reached on either an explicit False or the
-	// template's removal.
-	deleteNonceOnlyPool(t, gatewayURL)
-	t.Logf("recovery: pool %s deleted through the admin API", nonceOnlyPool)
+	// Recovery (runbook remediation step 3): replace the pre-revert nonce-only
+	// members so the pool's carrier set goes empty. This is the §4.7 recovery
+	// transition the proposal's testing design names: "the pool condition
+	// reverts to False only when the runtime field has returned to true and no
+	// member Sandbox still carries SOPeercredDisabled=True". With the runtime
+	// already reverted to requireSoPeercred=true, the recovery completes once
+	// the last carrier member is gone.
+	//
+	// Recovery is driven without deleting the pool deliberately: a pool delete
+	// turns into a SandboxTemplate delete, which the §10.5
+	// sandboxtemplate-deletion-guard webhook gates on a gateway runtime-upgrade
+	// probe and fails closed when its egress is blocked by the §13.2
+	// default-deny (the orthogonal, separately-tracked F-13.2.24 chart defect).
+	// The §4.7 condition-clearing invariant this leg verifies sits entirely on
+	// the member-Sandbox carrier set, not on template teardown, so the leg
+	// keeps the SandboxTemplate present and asserts the stronger explicit-False
+	// outcome (the condition flips to False rather than merely going absent on
+	// template removal) without depending on the deletion-guard path the
+	// unrelated F-13.2.24 defect blocks.
+	//
+	// First scale the pool's warm count to 0 through the §25.17 admin API so
+	// the WarmPoolController does not re-render a warm member, then delete the
+	// pre-revert member Sandboxes directly. The warm member's pod never reaches
+	// the Idle phase on this cluster (its image is an unpullable digest, so it
+	// sits Pending/ErrImagePull), and the §4.6 planner only drains Idle pods,
+	// so a scale-to-0 alone cannot shed a never-ready warm member; deleting the
+	// member Sandbox is the §4.7 "pod is replaced" step. A Sandbox DELETE is
+	// not gated by any webhook (the deletion guard scopes only sandboxtemplates
+	// on DELETE), so this runs unconditionally on the cluster.
+	setNonceOnlyPoolWarmCount(t, gatewayURL, pool, 0)
+	t.Logf("recovery: pool %s warm count scaled to 0 through the admin API", pool)
+	deleteNonceOnlyMembers(t, c, pool)
+	t.Logf("recovery: pre-revert nonce-only members of pool %s deleted directly", pool)
 
 	recovered := pollUntil(nonceOnlyReconcileBound, 5*time.Second, func() bool {
-		status := securityDegradedConditionStatus(t, c, nonceOnlyPool)
-		return status == "False" || status == ""
+		return securityDegradedConditionStatus(t, c, pool) == "False"
 	})
 	if !recovered {
-		t.Errorf("§4.7 violation: after the nonce-only pool was deleted the controller did not clear "+
-			"SecurityDegradedMode on SandboxTemplate %s (last status %q); a pool stuck degraded keeps the "+
-			"PoolSecurityDegraded alert firing indefinitely", nonceOnlyPool,
-			securityDegradedConditionStatus(t, c, nonceOnlyPool))
+		t.Errorf("§4.7 violation: after the nonce-only pool's members were replaced the controller did not "+
+			"transition SecurityDegradedMode to False on SandboxTemplate %s (last status %q, members: %s); a pool "+
+			"stuck degraded keeps the PoolSecurityDegraded alert firing indefinitely", pool,
+			securityDegradedConditionStatus(t, c, pool), describeNonceOnlyMembers(t, c, pool))
 	} else {
-		t.Logf("recovery: SandboxTemplate %s no longer reports SecurityDegradedMode=True", nonceOnlyPool)
+		t.Logf("recovery: SandboxTemplate %s transitioned SecurityDegradedMode to False", pool)
 	}
 	gaugeCleared := pollUntil(nonceOnlyReconcileBound, 5*time.Second, func() bool {
-		v, ok := scrapeSecurityDegradedGauge(t, metricsURL, nonceOnlyPool)
-		// A cleared gauge is either an explicit 0 or the series being
-		// forgotten when the deleted pool's reconcile drops it.
+		v, ok := scrapeSecurityDegradedGauge(t, metricsURL, pool)
+		// A cleared gauge is an explicit 0 for the still-present pool series;
+		// tolerate a forgotten series as also-cleared in case the pool's
+		// reconcile drops the label.
 		return !ok || v == 0
 	})
 	if !gaugeCleared {
-		v, _ := scrapeSecurityDegradedGauge(t, metricsURL, nonceOnlyPool)
+		v, _ := scrapeSecurityDegradedGauge(t, metricsURL, pool)
 		t.Errorf("§16.5 violation: lenny_pool_security_degraded for pool %s did not return to 0 after recovery "+
-			"(last %v); the bundled PoolSecurityDegraded alert keeps a stale degraded series", nonceOnlyPool, v)
+			"(last %v); the bundled PoolSecurityDegraded alert keeps a stale degraded series", pool, v)
 	} else {
 		t.Logf("alert series cleared: lenny_pool_security_degraded{pool=%q} is 0 or gone; nonce-only degradation "+
-			"verified end to end", nonceOnlyPool)
+			"verified end to end", pool)
+	}
+}
+
+// uniqueNonceOnlyName appends a short random suffix to prefix so each test
+// run uses a fresh pool / Runtime name. The pool name is the PRIMARY KEY of
+// the Postgres sandbox_warm_pools table and a soft-deleted row keeps the
+// name occupied (migrations/0033), so reusing a fixed name makes the second
+// run fail with 409 RESOURCE_CONFLICT. The suffix is 8 lowercase-hex
+// characters, which keeps the name within the §5.2 pool-name pattern
+// (^[a-z0-9][a-z0-9_-]{0,127}$) and well under the Kubernetes object-name
+// length limit the name carries through as the SandboxTemplate /
+// SandboxWarmPool object name.
+func uniqueNonceOnlyName(t *testing.T, prefix string) string {
+	t.Helper()
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("failed to generate a unique run suffix: %v", err)
+	}
+	return prefix + "-" + hex.EncodeToString(b[:])
+}
+
+// setNonceOnlyPoolWarmCount scales the pool's warm count through the §25.17
+// admin API (PUT /v1/admin/pools/{name}/warm-count) with confirm:true, the
+// supported path the warm-pool-exhaustion runbook and the diagnostic
+// suggestedAction address the pool's warm count by. The §25.17 sub-route names
+// the field minWarm and gates the mutation behind confirm:true (a request
+// without confirm returns a dry-run preview rather than applying), so the body
+// carries both. Scaling to 0 drives the WarmPoolController to remove the pool's
+// member Sandboxes without deleting the SandboxTemplate, which is the §4.7
+// recovery path the test exercises. A 2xx is required; any other status fails
+// the test because the recovery assertions depend on the scale taking effect.
+func setNonceOnlyPoolWarmCount(t *testing.T, gatewayURL, pool string, warmCount int) {
+	t.Helper()
+	body := fmt.Sprintf(`{"minWarm":%d,"confirm":true}`, warmCount)
+	status, respBody, err := adminPoolRequest(
+		http.MethodPut, gatewayURL+"/v1/admin/pools/"+pool+"/warm-count", body,
+	)
+	if err != nil || (status != http.StatusOK && status != http.StatusAccepted) {
+		t.Fatalf("admin PUT /v1/admin/pools/%s/warm-count failed (err=%v, status=%d): %s",
+			pool, err, status, respBody)
+	}
+}
+
+// deleteNonceOnlyMembers deletes the pool's member Sandboxes directly through
+// the API server, the §4.7 "the last nonce-only pod is replaced" recovery
+// step. A Sandbox DELETE is not gated by any admission webhook (the §10.5
+// sandboxtemplate-deletion-guard scopes only sandboxtemplates on DELETE), so
+// it runs unconditionally and does not depend on the gateway-egress
+// NetworkPolicy the orthogonal F-13.2.24 defect omits. It is paired with a
+// prior warm-count scale to 0 so the WarmPoolController does not re-render a
+// member; deleting the member then clears the requireSoPeercred=false carrier
+// (and the SOPeercredDisabled condition) the pool's degradation derives from,
+// so poolNonceOnly goes false and the controller writes the explicit
+// SecurityDegradedMode=False recovery transition. The delete is best-effort on
+// an empty member set (the label selector simply matches nothing), so it is
+// safe whether or not the warm member was rendered.
+func deleteNonceOnlyMembers(t *testing.T, c *kind.Cluster, pool string) {
+	t.Helper()
+	if out, err := c.KubectlOut(
+		t,
+		"-n", agentNamespace, "delete", "sandbox",
+		"-l", "lenny.dev/pool="+pool, "--wait=false",
+	); err != nil {
+		t.Fatalf("failed to delete the nonce-only member Sandboxes of pool %s: %v\n%s", pool, err, out)
 	}
 }
 
@@ -346,11 +450,11 @@ spec:
 // with the allowStandardIsolation opt-in to match the cluster's runc
 // RuntimeClass. A 2xx is required; any other status fails the test because
 // the rest of the scenario depends on the pool existing.
-func createNonceOnlyPool(t *testing.T, gatewayURL string) {
+func createNonceOnlyPool(t *testing.T, gatewayURL, pool, runtimeName string) {
 	t.Helper()
 	body := fmt.Sprintf(`{"name":%q,"runtimeRef":%q,"isolationProfile":"standard",`+
 		`"executionMode":"session","warmCount":1,"allowStandardIsolation":true,`+
-		`"acknowledgeNonceOnlyAuth":true}`, nonceOnlyPool, nonceOnlyRuntime)
+		`"acknowledgeNonceOnlyAuth":true}`, pool, runtimeName)
 	status, respBody, err := adminPoolRequest(http.MethodPost, gatewayURL+"/v1/admin/pools", body)
 	if err != nil || (status != http.StatusCreated && status != http.StatusOK) {
 		t.Fatalf("admin POST /v1/admin/pools failed (err=%v, status=%d): %s", err, status, respBody)
@@ -365,17 +469,17 @@ func createNonceOnlyPool(t *testing.T, gatewayURL string) {
 // permanently-degraded nonce-only pool behind would keep the
 // PoolSecurityDegraded alert firing and affect later tests, so cleanup is
 // best-effort but logged.
-func deleteNonceOnlyPool(t *testing.T, gatewayURL string) {
+func deleteNonceOnlyPool(t *testing.T, gatewayURL, pool string) {
 	t.Helper()
-	status, respBody, err := adminPoolRequest(http.MethodDelete, gatewayURL+"/v1/admin/pools/"+nonceOnlyPool, "")
+	status, respBody, err := adminPoolRequest(http.MethodDelete, gatewayURL+"/v1/admin/pools/"+pool, "")
 	switch {
 	case err != nil:
-		t.Logf("cleanup: admin DELETE /v1/admin/pools/%s did not complete: %v", nonceOnlyPool, err)
+		t.Logf("cleanup: admin DELETE /v1/admin/pools/%s did not complete: %v", pool, err)
 	case status == http.StatusNoContent || status == http.StatusOK || status == http.StatusNotFound:
 		// Deleted now or already gone.
 	default:
 		t.Logf("cleanup: admin DELETE /v1/admin/pools/%s returned status %d: %s",
-			nonceOnlyPool, status, respBody)
+			pool, status, respBody)
 	}
 }
 
@@ -497,12 +601,12 @@ func securityDegradedConditionStatus(t *testing.T, c *kind.Cluster, pool string)
 // carry the §4.7 nonce-only carrier (spec.requireSoPeercred: false). The
 // WarmPoolController lists members by the lenny.dev/pool label; the test
 // reads the same set to observe the rendered nonce-only members.
-func nonceOnlyMemberNames(t *testing.T, c *kind.Cluster) []string {
+func nonceOnlyMemberNames(t *testing.T, c *kind.Cluster, pool string) []string {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
 		"-n", agentNamespace, "get", "sandbox",
-		"-l", "lenny.dev/pool="+nonceOnlyPool,
+		"-l", "lenny.dev/pool="+pool,
 		"-o", `jsonpath={range .items[?(@.spec.requireSoPeercred==false)]}{.metadata.name}{"\n"}{end}`,
 	)
 	if err != nil {
@@ -515,12 +619,12 @@ func nonceOnlyMemberNames(t *testing.T, c *kind.Cluster) []string {
 // the requireSoPeercred carrier, and the SOPeercredDisabled condition) for a
 // failure message, so a degradation that never surfaces is diagnosable
 // against the live member set.
-func describeNonceOnlyMembers(t *testing.T, c *kind.Cluster) string {
+func describeNonceOnlyMembers(t *testing.T, c *kind.Cluster, pool string) string {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
 		"-n", agentNamespace, "get", "sandbox",
-		"-l", "lenny.dev/pool="+nonceOnlyPool,
+		"-l", "lenny.dev/pool="+pool,
 		"-o", `jsonpath={range .items[*]}{.metadata.name}=phase:{.status.phase},`+
 			`requireSoPeercred:{.spec.requireSoPeercred},`+
 			`soPeercredDisabled:{.status.conditions[?(@.type=="SOPeercredDisabled")].status};{end}`,
