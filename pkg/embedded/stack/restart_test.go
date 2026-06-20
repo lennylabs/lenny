@@ -94,9 +94,10 @@ func TestRunRestartDeadSupervisor(t *testing.T) {
 	}
 }
 
-// handleRestartRequest is the supervisor's SIGHUP body: it reads the
-// component name, restarts it, and writes the outcome so the separate
-// `lenny restart` process can report success or failure.
+// handleRestartRequest is the supervisor's restart-wakeup body: it reads
+// the component name, restarts it, and writes the outcome so the separate
+// `lenny restart` process can report success or failure. The wakeup is an
+// OS-specific signal (SIGHUP on unix, a named event on Windows).
 func TestHandleRestartRequestWritesResult(t *testing.T) {
 	home := t.TempDir()
 	paths := NewPaths(home)
@@ -128,8 +129,8 @@ func TestHandleRestartRequestWritesResult(t *testing.T) {
 	}
 }
 
-// A spurious SIGHUP with no pending request is harmless: no result file
-// is produced.
+// A spurious restart wakeup with no pending request is harmless: no
+// result file is produced.
 func TestHandleRestartRequestNoRequest(t *testing.T) {
 	home := t.TempDir()
 	paths := NewPaths(home)

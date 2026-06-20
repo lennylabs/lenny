@@ -77,20 +77,6 @@ func TestRemoveState(t *testing.T) {
 	}
 }
 
-func TestProcessAlive(t *testing.T) {
-	// The current process is always alive.
-	if !processAlive(os.Getpid()) {
-		t.Error("processAlive reported the current process as dead")
-	}
-	// PID 0 and negative PIDs are treated as not running.
-	if processAlive(0) {
-		t.Error("processAlive reported PID 0 as alive")
-	}
-	if processAlive(-1) {
-		t.Error("processAlive reported a negative PID as alive")
-	}
-	// A very high PID is almost certainly unused.
-	if processAlive(1 << 30) {
-		t.Error("processAlive reported an unused high PID as alive")
-	}
-}
+// processAlive, the state-file liveness probe, delegates to the
+// build-tagged process-control substrate. Its boundary behavior is
+// covered cross-platform by TestProcessAliveBoundaries in process_test.go.

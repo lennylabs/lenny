@@ -116,17 +116,12 @@ func RunningGateway(root string) (string, error) {
 }
 
 // processAlive reports whether a process with the given PID is
-// currently running. A zero or negative PID is treated as not
-// running.
+// currently running. A zero or negative PID is treated as not running.
+// The liveness probe itself (signal-0 on unix, OpenProcess on Windows)
+// lives in the build-tagged process-control substrate.
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// On Unix, signal 0 performs error checking without delivering a
-	// signal: a nil error means the process exists and is signalable.
-	return proc.Signal(syscall0()) == nil
+	return pidAlive(pid)
 }

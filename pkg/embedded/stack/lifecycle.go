@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
-	"syscall"
 	"time"
 )
 
@@ -85,9 +83,11 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 	cmd.Env = append(os.Environ(), SuperviseEnvVar+"=1", "LENNY_HOME="+root)
 	cmd.Stdout = superLog
 	cmd.Stderr = superLog
-	// Detach: a new session so the supervisor outlives the foreground
-	// lenny up process and its controlling terminal.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Detach the supervisor so it outlives the foreground lenny up
+	// process and its controlling terminal. The detach attributes are
+	// OS-specific (a new session on unix, a detached console process
+	// group on Windows).
+	cmd.SysProcAttr = detachSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("lenny up: start supervisor: %w", err)
 	}
@@ -155,24 +155,24 @@ func RunSupervisor(ctx context.Context, opts UpOptions) error {
 	if err != nil {
 		return err
 	}
-	// Block until a teardown signal arrives. lenny down sends SIGTERM
-	// to this process; lenny restart sends SIGHUP, which restarts a
-	// single component and keeps the supervisor running.
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	// Block until a teardown or restart wakeup arrives. lenny down asks
+	// for a graceful teardown; lenny restart asks to restart a single
+	// component and keep the supervisor running. The wakeup substrate is
+	// OS-specific (POSIX signals on unix, named events on Windows) and
+	// lives in the build-tagged process-control layer.
+	sigs, err := newSupervisorSignals(root)
+	if err != nil {
+		return err
+	}
+	defer sigs.close()
 	paths := NewPaths(root)
-	for {
-		var sig os.Signal
-		select {
-		case sig = <-sigCh:
-		case <-ctx.Done():
-		}
-		if sig == syscall.SIGHUP {
-			// spec: §24.19 line 264 — restart one component in place.
-			st.handleRestartRequest(ctx, paths)
-			continue
-		}
-		break
+	// Each restart wakeup restarts one component in place and keeps the
+	// supervisor running; a teardown wakeup (or a cancelled context)
+	// breaks the loop into the graceful Stop path below.
+	// spec: §24.19 — restart a single component without tearing the rest
+	// of the stack down.
+	for sigs.wait(ctx) {
+		st.handleRestartRequest(ctx, paths)
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -223,8 +223,14 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 
 	if processAlive(st.SupervisorPID) {
 		fmt.Fprintf(out, "lenny down: stopping the embedded stack (supervisor pid %d)\n", st.SupervisorPID)
-		// SIGTERM triggers the supervisor's graceful teardown.
-		stopByPID(st.SupervisorPID)
+		// Ask the supervisor to tear the stack down gracefully (a SIGTERM
+		// it catches on unix, a named teardown event on Windows). When
+		// the graceful path returns true the supervisor has already
+		// exited; otherwise fall back to a forced termination so a
+		// crashed or unresponsive supervisor never leaves the stack up.
+		if !gracefulStopSupervisor(st.SupervisorPID, paths) {
+			stopByPID(st.SupervisorPID)
+		}
 	} else {
 		// The supervisor is gone but children may have outlived it.
 		// Signal the recorded gateway, controller, and k3s PIDs
