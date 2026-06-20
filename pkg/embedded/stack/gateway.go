@@ -19,6 +19,16 @@ type gatewaySpec struct {
 	// HTTPAddr is the loopback host:port the gateway serves plaintext
 	// HTTP on. §17.4 fronts it with the TLS-terminating proxy.
 	HTTPAddr string
+	// GRPCAddr is the host:port the gateway's §8.6/§9.1 GatewayControl
+	// gRPC listener binds. It is bound on all host interfaces (an empty
+	// host, ":<port>") rather than loopback so an in-cluster agent-pod
+	// adapter under the Docker VM can reach it across the host/Docker
+	// boundary; binding loopback would make it unreachable from the Docker
+	// VM. The controller stamps the launcher's externally-reachable address
+	// (GatewayHost():<port>) onto pods so the adapter dials the right host.
+	// Empty leaves the GatewayControl listener disabled (no embedded
+	// cluster, so no in-cluster adapter to serve). spec: §4.7, §8.6, §9.1.
+	GRPCAddr string
 	// PostgresDSN and RedisURL point the gateway at the embedded
 	// backends through its standard configuration flags.
 	PostgresDSN string
@@ -127,6 +137,16 @@ func gatewayArgs(spec gatewaySpec) []string {
 	}
 	if spec.OIDCKeyFile != "" {
 		args = append(args, "-bearer-trust-hmac-key-file", spec.OIDCKeyFile)
+	}
+	if spec.GRPCAddr != "" {
+		// §8.6 GatewayControl listener: serves the adapter→gateway control
+		// surface (ExtendLease, platform/connector tool bridges) the
+		// in-cluster agent-pod adapter dials across the host/Docker boundary.
+		// The mTLS material flags (--adapter-tls-cert/key/ca) are left unset,
+		// so the listener serves plaintext — the §4.7 documented
+		// local-development path — while the address wiring that crosses the
+		// boundary is the same code path production uses. spec: §4.7, §8.6.
+		args = append(args, "-grpc-addr", spec.GRPCAddr)
 	}
 	return args
 }

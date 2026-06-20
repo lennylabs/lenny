@@ -14,6 +14,20 @@ import (
 // pinned so a lenny up is reproducible across hosts and launchers.
 const Version = "v1.31.4+k3s1"
 
+// Host aliases an in-cluster agent pod uses to reach a host process (the
+// gateway and its §8.6/§9.1 GatewayControl listener). They are
+// substrate-specific and returned by Launcher.GatewayHost.
+const (
+	// loopbackHost is the host a pod uses on the Linux child-process
+	// launcher, where k3s runs on the host and the gateway binds loopback.
+	loopbackHost = "127.0.0.1"
+	// dockerHostAlias is the Docker-Desktop alias a container resolves to
+	// the host's gateway IP. On the Docker-backed launcher an in-cluster
+	// pod reaches the host gateway through it. The k3s container is started
+	// with --add-host so the alias resolves inside the Docker VM.
+	dockerHostAlias = "host.docker.internal"
+)
+
 // Launcher provisions the embedded k3s substrate for §17.4 Embedded
 // Mode. The substrate is provisioned per host operating system: a
 // managed k3s child process on Linux, and a Docker-backed k3s container
@@ -48,6 +62,23 @@ type Launcher interface {
 	// connection from this file through the KUBECONFIG environment
 	// variable.
 	KubeconfigPath() string
+	// GatewayHost returns the hostname an in-cluster agent pod uses to
+	// reach a host process (the gateway and its §8.6/§9.1 GatewayControl
+	// listener). It is substrate-specific: the Linux child-process
+	// launcher runs k3s on the host, so a pod reaches the host gateway at
+	// loopback (127.0.0.1); the Docker-backed launcher runs k3s inside the
+	// Docker VM, so a pod reaches the host gateway at host.docker.internal,
+	// the Docker-Desktop alias for the host. The stack combines this host
+	// with the gateway's gRPC host port to compute the §4.7 gateway↔adapter
+	// callback address it stamps onto agent pods, so the substrate branch
+	// stays confined to this provisioning layer and the §4.7
+	// placement/adapter/mTLS business logic above it is byte-identical
+	// across operating systems.
+	//
+	// spec: §17.4 (the substrate is provisioned per host operating system),
+	// §4.7 (the gateway↔adapter gRPC+mTLS callback traverses the host/Docker
+	// boundary; the in-cluster adapter dials the gateway at this host).
+	GatewayHost() string
 }
 
 // Config configures the embedded k3s launcher.

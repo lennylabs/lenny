@@ -27,7 +27,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
@@ -48,6 +50,12 @@ const (
 	defaultHTTPSPort    = 8443
 	defaultPostgresPort = 15433
 	defaultK3sAPIPort   = 6443
+	// defaultGatewayGRPCPort is the host port the gateway's §8.6/§9.1
+	// GatewayControl listener binds. In-cluster agent-pod adapters dial it
+	// to forward platform tool calls and ExtendLease across the host/Docker
+	// boundary; the controller stamps the launcher's externally-reachable
+	// address (GatewayHost():this-port) onto pods. spec: §4.7, §8.6.
+	defaultGatewayGRPCPort = 50061
 )
 
 // Config configures an Up invocation.
@@ -219,6 +227,15 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// layer).
 	k3sEnabled := false
 	kubeconfig := ""
+	// gatewayGRPCDialAddr is the gateway's externally-reachable §8.6/§9.1
+	// GatewayControl address from inside the cluster. The substrate launcher
+	// supplies the host portion (loopback on the Linux child-process
+	// launcher, host.docker.internal on the Docker-backed launcher); the
+	// stack joins it to the gateway's gRPC host port. The controller stamps
+	// it onto agent pods so the in-cluster adapter dials the host gateway
+	// across the host/Docker boundary. It stays empty without an embedded
+	// cluster (no in-cluster adapter to serve). spec: §4.7, §8.6, §9.1.
+	gatewayGRPCDialAddr := ""
 	if k3s.SupportedPlatform() {
 		fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
 		sup := k3s.New(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort})
@@ -233,6 +250,11 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 			s.k3s = sup
 			k3sEnabled = true
 			kubeconfig = sup.KubeconfigPath()
+			// Compute the gateway's externally-reachable gRPC address from
+			// the launcher's substrate-specific host. The §4.7 placement and
+			// adapter business logic above this point is unaware of the
+			// substrate; only this provisioning layer branches per OS.
+			gatewayGRPCDialAddr = gatewayGRPCAddr(sup.GatewayHost(), defaultGatewayGRPCPort)
 			if err := InstallCRDs(ctx, kubeconfig); err != nil {
 				fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
 			}
@@ -269,6 +291,17 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		KMSMasterKeyFile: paths.KMSMasterKey(),
 		ArtifactsDir:     paths.Artifacts,
 	}
+	// Bind the §8.6/§9.1 GatewayControl listener only when an embedded
+	// cluster is up: it serves the in-cluster agent-pod adapter, so without
+	// a cluster there is no adapter to serve. The listener binds all host
+	// interfaces (an empty host in :<port>) so the in-cluster adapter under
+	// the Docker VM reaches it across the host/Docker boundary; binding
+	// loopback would make it unreachable from the Docker VM. The controller
+	// stamps the matching substrate-specific dial host onto pods. spec:
+	// §4.7, §8.6.
+	if k3sEnabled {
+		s.gwSpec.GRPCAddr = fmt.Sprintf(":%d", defaultGatewayGRPCPort)
+	}
 	gw, err := startGateway(s.gwSpec)
 	if err != nil {
 		return nil, err
@@ -294,10 +327,11 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 			fmt.Fprintf(out, "lenny up: WARNING: controller binary not found: %v\n", err)
 		} else {
 			s.ctlSpec = ControllerSpec{
-				BinPath:     ctlBin,
-				PostgresDSN: dsn,
-				Kubeconfig:  kubeconfig,
-				LogPath:     paths.Logs + "/controller.log",
+				BinPath:         ctlBin,
+				PostgresDSN:     dsn,
+				Kubeconfig:      kubeconfig,
+				GatewayGRPCAddr: gatewayGRPCDialAddr,
+				LogPath:         paths.Logs + "/controller.log",
 			}
 			ctl, err := startController(s.ctlSpec)
 			if err != nil {
@@ -397,6 +431,21 @@ func (s *Stack) OIDC() *oidc.Provider { return s.idp }
 // liveness probe.
 func gatewayHealthy(ctx context.Context, baseURL string) bool {
 	return probeHealthz(ctx, baseURL) == nil
+}
+
+// gatewayGRPCAddr joins the substrate launcher's gateway host and the
+// gateway gRPC host port into the §8.6/§9.1 GatewayControl address the
+// controller stamps onto agent pods. The host comes from the launcher
+// (GatewayHost): 127.0.0.1 on the Linux child-process launcher, where the
+// gateway and pods share the host, and host.docker.internal on the
+// Docker-backed launcher, where pods run inside the Docker VM and reach
+// the host gateway through that alias. Confining the substrate branch to
+// the host the launcher returns keeps the §4.7 pod-spec/adapter business
+// logic substrate-agnostic. net.JoinHostPort is used so the address is
+// well-formed for any host form. The function is pure so it is unit-tested
+// directly. spec: §4.7, §8.6, §9.1, §17.4.
+func gatewayGRPCAddr(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // k3sContainerHandle returns the docker container name a Docker-backed

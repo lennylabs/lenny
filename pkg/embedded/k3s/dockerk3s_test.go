@@ -182,6 +182,31 @@ func TestDockerRunArgs(t *testing.T) {
 	if hasArg(args, "--rootless") {
 		t.Errorf("docker run argv must not carry --rootless (container path): %v", args)
 	}
+	// The host.docker.internal alias is mapped to the host gateway IP so an
+	// in-cluster agent pod reaches the host gateway across the host/Docker
+	// boundary. spec: §4.7.
+	if !strings.Contains(joined, "--add-host host.docker.internal:host-gateway") {
+		t.Errorf("docker run argv missing --add-host host.docker.internal:host-gateway "+
+			"(the §4.7 gateway↔adapter callback alias): %v", args)
+	}
+}
+
+// spec: §4.7 (the gateway↔adapter gRPC+mTLS callback traverses the
+// host/Docker boundary; the in-cluster adapter reaches the host gateway at
+// host.docker.internal), §17.4. The Docker-backed launcher runs k3s inside
+// the Docker VM, so a pod cannot reach the host at loopback; GatewayHost
+// must return the host.docker.internal alias the launcher maps in
+// runArgs.
+func TestDockerLauncherGatewayHostIsDockerInternal(t *testing.T) {
+	d := newDockerLauncherForTest(t, newFakeDocker())
+	if got := d.GatewayHost(); got != "host.docker.internal" {
+		t.Errorf("dockerLauncher.GatewayHost() = %q, want host.docker.internal", got)
+	}
+	// The alias GatewayHost returns must be the one runArgs maps, so the
+	// address the controller stamps onto pods resolves inside the Docker VM.
+	if !strings.Contains(strings.Join(d.runArgs(), " "), d.GatewayHost()+":host-gateway") {
+		t.Errorf("runArgs does not map the GatewayHost alias %q to host-gateway", d.GatewayHost())
+	}
 }
 
 // TestContainerImageTagIsDockerSafe pins the `+`-to-`-` translation

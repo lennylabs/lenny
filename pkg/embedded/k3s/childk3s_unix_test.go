@@ -67,6 +67,19 @@ func TestChildSupervisorDefaultsAPIPort(t *testing.T) {
 	}
 }
 
+// spec: §4.7 (the gateway↔adapter callback host), §17.4. The Linux
+// child-process launcher runs k3s on the host, so an in-cluster pod
+// reaches the host gateway at loopback rather than the
+// host.docker.internal alias the Docker-backed launcher uses. GatewayHost
+// returns the substrate-specific host the stack joins to the gateway gRPC
+// port to compute the §4.7 callback address it stamps onto pods.
+func TestChildSupervisorGatewayHostIsLoopback(t *testing.T) {
+	s := newChild(t)
+	if got := s.GatewayHost(); got != "127.0.0.1" {
+		t.Errorf("childSupervisor.GatewayHost() = %q, want 127.0.0.1 (k3s runs on the host)", got)
+	}
+}
+
 // TestChildEnsureBinaryRejectsUnsupportedPlatform covers the
 // platform gate on the child launcher's EnsureBinary. On a non-Linux
 // unix host (a unix build that is not linux, such as darwin) the child

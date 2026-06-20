@@ -41,6 +41,14 @@ func (s *childStub) KubeconfigPath() string {
 	return filepath.Join(s.cfg.Dir, "kubeconfig.yaml")
 }
 
+// GatewayHost returns loopback, keeping the convention identical across
+// builds. New never selects this stub at runtime (it picks the
+// Docker-backed launcher off Linux), so the value is unused; it exists
+// only so the stub satisfies Launcher on a non-unix build.
+func (s *childStub) GatewayHost() string {
+	return loopbackHost
+}
+
 // Start fails closed: the managed child-process launcher cannot run off
 // a unix host. New does not select it there, so this guards against a
 // caller constructing it directly.

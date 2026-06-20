@@ -118,6 +118,21 @@ func (d *dockerLauncher) ContainerName() string {
 	return d.name
 }
 
+// GatewayHost returns the host an in-cluster pod uses to reach the host
+// gateway. The Docker-backed launcher runs k3s inside the Docker VM, so a
+// pod cannot reach the host at loopback; it reaches it at the
+// host.docker.internal alias, which runArgs maps to the host gateway IP
+// with --add-host so the alias resolves inside the VM. The stack combines
+// this host with the gateway's gRPC host port to compute the §4.7
+// gateway↔adapter callback address it stamps onto agent pods.
+//
+// spec: §4.7 (the gateway↔adapter gRPC+mTLS callback traverses the
+// host/Docker boundary; the in-cluster adapter reaches the host gateway at
+// host.docker.internal), §17.4.
+func (d *dockerLauncher) GatewayHost() string {
+	return dockerHostAlias
+}
+
 // Start provisions the k3s container. It removes any stale container
 // under the same name, runs a new detached container that publishes the
 // API server on the host port with the same cluster-disabling flag set
@@ -154,18 +169,31 @@ func (d *dockerLauncher) Start(ctx context.Context) error {
 	return nil
 }
 
+// dockerHostGatewayMapping is the --add-host value that maps the
+// host.docker.internal alias to the Docker-Desktop magic host-gateway IP.
+// The privileged k3s container runs its own containerd and DNS, so the
+// alias is not present by default the way it is for a plain `docker run`;
+// adding the mapping to the container's /etc/hosts makes
+// host.docker.internal resolve to the host gateway inside the Docker VM,
+// which is the address an in-cluster agent pod's adapter dials to reach
+// the host gateway across the host/Docker boundary. spec: §4.7.
+const dockerHostGatewayMapping = dockerHostAlias + ":host-gateway"
+
 // runArgs builds the `docker run` argv for the k3s container. It runs the
 // container detached and privileged (k3s needs kernel namespaces its
 // embedded container runtime sets up), names it deterministically,
-// publishes the in-container API port to the configured host port, and
-// passes the same cluster-disabling server flags the Linux launcher uses.
-// The --bind-address and --rootless flags are omitted: they are
+// publishes the in-container API port to the configured host port, maps
+// the host.docker.internal alias to the host gateway IP so an in-cluster
+// pod reaches the host gateway across the boundary, and passes the same
+// cluster-disabling server flags the Linux launcher uses. The
+// --bind-address and --rootless flags are omitted: they are
 // substrate-specific to the Linux host process and do not apply to the
 // container, whose API server is reached through the published host port.
 //
 // spec: §17.4 (the same pinned k3s version runs as a container under
 // Docker Desktop's Linux VM with the identical cluster-disabling flag
-// set).
+// set), §4.7 (host.docker.internal carries the gateway↔adapter callback
+// across the host/Docker boundary).
 func (d *dockerLauncher) runArgs() []string {
 	return append([]string{
 		"run", "-d",
@@ -175,6 +203,10 @@ func (d *dockerLauncher) runArgs() []string {
 		// host-process controllers and the gateway reach the API server
 		// at 127.0.0.1:<APIPort>.
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", d.cfg.APIPort, d.cfg.APIPort),
+		// Map host.docker.internal to the host gateway IP so an in-cluster
+		// agent pod's adapter reaches the host gateway's §8.6/§9.1
+		// GatewayControl listener across the host/Docker boundary.
+		"--add-host", dockerHostGatewayMapping,
 		containerImage,
 	}, d.serverArgs()...)
 }

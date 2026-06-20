@@ -67,6 +67,13 @@ func (s *childSupervisor) LogPath() string {
 	return filepath.Join(s.cfg.Dir, "k3s.log")
 }
 
+// GatewayHost returns the host an in-cluster pod uses to reach the host
+// gateway. The Linux launcher runs k3s on the host, so a pod reaches the
+// host gateway at loopback. spec: §4.7, §17.4.
+func (s *childSupervisor) GatewayHost() string {
+	return loopbackHost
+}
+
 // EnsureBinary downloads the pinned k3s binary into the state
 // directory when it is absent. It is a no-op when the binary is
 // already present.

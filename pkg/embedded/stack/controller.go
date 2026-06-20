@@ -25,6 +25,18 @@ type ControllerSpec struct {
 	// controller reaches the in-container API server across the
 	// host/Docker boundary.
 	Kubeconfig string
+	// GatewayGRPCAddr is the §8.6/§9.1 gateway GatewayControl address
+	// (host:port) the controller stamps onto every agent pod's adapter so a
+	// type:agent runtime's platform tool calls and ExtendLease reach the
+	// gateway. It is the gateway's externally-reachable address from inside
+	// the cluster: the launcher's GatewayHost (127.0.0.1 on the Linux
+	// child-process launcher, host.docker.internal on the Docker-backed
+	// launcher) joined to the gateway's gRPC host port. Threading it here
+	// carries the §4.7 gateway↔adapter callback across the host/Docker
+	// boundary, because the gateway runs as a host process while the pods
+	// run in-cluster. Empty leaves the platform MCP server unstarted in the
+	// pod. spec: §4.7, §8.6, §9.1, §17.4.
+	GatewayGRPCAddr string
 	// LogPath is the controller log file.
 	LogPath string
 }
@@ -85,6 +97,15 @@ func startController(spec ControllerSpec) (*managedProcess, error) {
 		// The embedded stack runs one replica, so leader election is
 		// unnecessary; omitting --leader-elect keeps it off.
 		"--postgres-dsn", spec.PostgresDSN,
+	}
+	if spec.GatewayGRPCAddr != "" {
+		// §4.7/§9.1: the controller stamps this externally-reachable gateway
+		// address onto every agent pod's adapter so the in-cluster adapter
+		// dials the host gateway's GatewayControl listener across the
+		// host/Docker boundary. The substrate launcher supplied the host
+		// portion (loopback on Linux, host.docker.internal under Docker), so
+		// the §4.7 pod-spec/adapter business logic stays substrate-agnostic.
+		args = append(args, "--gateway-grpc-addr", spec.GatewayGRPCAddr)
 	}
 	env := append(
 		os.Environ(),
