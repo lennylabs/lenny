@@ -180,7 +180,7 @@ A few properties you saw in action, which apply equally to a production install:
 - **The gateway is the only entrance.** Your pod never had an IP address you could reach.
 - **Workspace files go through the gateway.** No shared disks, no mounted volumes.
 - **The same platform runs any agent.** `chat`, `claude-code`, and whatever you build yourself all integrate the same way.
-- **Pods are locked down by default.** Non-root, no extra Linux capabilities, and no network access except back to the gateway. In production, the `sandboxed` profile also wraps each pod in a gVisor sandbox. The embedded single-node cluster cannot reproduce that isolation: it installs no gVisor runtime class, so the `sandboxed` and `microvm` profiles run under standard `runc` locally, and it disables NetworkPolicy enforcement, so the default-deny network boundary is not exercised. Treat the local stack as a functional preview rather than the production isolation boundary.
+- **Pods are locked down by default.** Non-root, no extra Linux capabilities, and no network access except back to the gateway. In production, the `sandboxed` profile also wraps each pod in a gVisor sandbox and the `microvm` profile in a Kata virtual machine. The embedded single-node cluster cannot reproduce that isolation: the `sandboxed` profile runs under standard `runc` because the cluster installs no gVisor runtime class, and the `microvm` profile runs under `runc` because it needs hardware virtualization the local substrate cannot nest. The cluster also disables NetworkPolicy enforcement, so the default-deny network boundary is not exercised. Treat the local stack as a functional preview rather than the production isolation boundary.
 
 ---
 

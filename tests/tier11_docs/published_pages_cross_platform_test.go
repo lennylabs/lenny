@@ -107,6 +107,28 @@ func TestQuickstartDisclosesLocalIsolationDegradation(t *testing.T) {
 	if strings.Contains(content, "sandboxed under gVisor, and no network access") {
 		t.Errorf("quickstart.md still presents pods as unconditionally 'sandboxed under gVisor' in the local stack; gVisor degrades to runc on the embedded cluster (proposal §3.10)")
 	}
+
+	// Proposal §3.10 keeps the gVisor and Kata runc-degradation causes
+	// distinct: the `sandboxed` (gVisor) profile degrades because the
+	// embedded cluster installs no gVisor runtime class, while the
+	// `microvm` (Kata) profile degrades because it needs hardware
+	// virtualization the single-node substrate cannot nest. The page must
+	// carry the microvm-specific cause, not collapse both profiles under
+	// the gVisor-runtime-class cause. §1.4 of the proposal flags conflating
+	// the two under a single cause as a spec defect — and it is technically
+	// wrong for `microvm`, whose runc fallback is not caused by a missing
+	// gVisor runtime class.
+	if !strings.Contains(content, "hardware virtualization the local substrate cannot nest") {
+		t.Errorf("quickstart.md is missing the distinct `microvm`/Kata runc-degradation cause (hardware virtualization the local substrate cannot nest); proposal §3.10 keeps the gVisor and Kata causes distinct")
+	}
+	for _, conflated := range []string{
+		"`sandboxed` and `microvm` profiles run under standard `runc` locally",
+		"`sandboxed` and `microvm` profiles run under standard `runc`",
+	} {
+		if strings.Contains(content, conflated) {
+			t.Errorf("quickstart.md conflates the gVisor and Kata causes under one cause (%q); proposal §3.10 requires each profile to carry its own distinct cause", conflated)
+		}
+	}
 }
 
 // diagnosis: the SDK-example Standard-level platform note reconciliation
