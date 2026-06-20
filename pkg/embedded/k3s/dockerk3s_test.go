@@ -609,6 +609,47 @@ func TestContainerRunning(t *testing.T) {
 	}
 }
 
+// TestRemoveContainer covers the container removal lenny down uses to keep a
+// crashed-supervisor teardown (and lenny down --purge) from leaking the
+// Docker-backed k3s container: the container runs inside the Docker VM with
+// no host PID, so removing it by its recorded handle is the only teardown
+// reach. An empty handle is a no-op (the Linux child-process substrate
+// records no container), a non-empty handle issues `docker rm -f <name>`,
+// and a docker error (an already-removed container) is swallowed.
+//
+// spec: §24.19 (lenny up/down manage the substrate; a crashed supervisor
+// must not leak the Docker-backed k3s container).
+func TestRemoveContainer(t *testing.T) {
+	// An empty handle is a no-op and never shells out: the Linux substrate
+	// records no container name.
+	withRunDocker(t, func(context.Context, ...string) ([]byte, error) {
+		t.Fatal("RemoveContainer(\"\") must not shell out to docker")
+		return nil, nil
+	})
+	RemoveContainer("")
+
+	// A non-empty handle issues a forced docker rm targeting the container.
+	var got [][]string
+	withRunDocker(t, func(_ context.Context, args ...string) ([]byte, error) {
+		got = append(got, args)
+		return nil, nil
+	})
+	RemoveContainer("lenny-embedded-k3s-demo")
+	if len(got) != 1 {
+		t.Fatalf("RemoveContainer issued %d docker calls, want 1: %v", len(got), got)
+	}
+	if got[0][0] != "rm" || !hasArg(got[0], "-f") || !hasArg(got[0], "lenny-embedded-k3s-demo") {
+		t.Errorf("RemoveContainer issued %v, want a forced docker rm of the container", got[0])
+	}
+
+	// A docker error (the container is already gone, or docker is
+	// unavailable) is swallowed: the teardown must not fail on a benign rm.
+	withRunDocker(t, func(context.Context, ...string) ([]byte, error) {
+		return []byte("Error: No such container"), errors.New("exit status 1")
+	})
+	RemoveContainer("lenny-embedded-k3s-demo") // must not panic or block
+}
+
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {

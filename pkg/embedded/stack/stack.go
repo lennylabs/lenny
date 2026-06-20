@@ -407,6 +407,15 @@ var (
 	substrateSupported   = k3s.SupportedPlatform
 	newSubstrate         = k3s.New
 	installSubstrateCRDs = InstallCRDs
+	// removeSubstrateContainer force-removes the Docker-backed k3s container
+	// by its recorded handle. lenny down calls it on the crashed-supervisor
+	// teardown path and lenny down --purge calls it before discarding the
+	// state directory that holds the handle, so neither orphans the container
+	// the graceful Stack.Stop path would have removed. It is a package-level
+	// var so a unit test can assert the teardown removes the recorded
+	// container without invoking a real docker. spec: §24.19 (a crashed
+	// supervisor must not leak the Docker-backed k3s container).
+	removeSubstrateContainer = k3s.RemoveContainer
 )
 
 // provisionSubstrate brings the embedded Kubernetes substrate up on every

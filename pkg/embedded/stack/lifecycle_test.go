@@ -220,6 +220,155 @@ func TestRunDownStopsLiveSupervisor_spec_24_19(t *testing.T) {
 	}
 }
 
+// TestRunDownCrashedSupervisorRemovesDockerContainer covers the
+// crashed-supervisor teardown on a Docker-backed substrate (macOS and
+// Windows): the recorded supervisor PID is dead, so RunDown takes the
+// supervisor-gone branch and signals the recorded host PIDs. The
+// Docker-backed k3s runs inside the Docker VM with no host PID
+// (st.K3sPID == 0), so those signals never reach it; RunDown must remove
+// the container by its recorded handle before removeState discards the
+// handle, or a crashed supervisor leaks the container with nothing to find
+// it by. The substrate-container removal seam is injected so the test
+// asserts the removal without invoking a real docker.
+//
+// diagnosis: a failure means lenny down on a crashed supervisor orphans the
+// embedded k3s container on macOS/Windows — the named no-leak invariant the
+// substrate-lifecycle scope requires holds only on the Linux PID path.
+//
+// spec: §24.19 (lenny up/down manage the substrate; a crashed supervisor
+// must not leak the Docker-backed k3s container), §17.4 (the embedded
+// substrate is a Docker-backed container on macOS and Windows).
+func TestRunDownCrashedSupervisorRemovesDockerContainer_spec_24_19(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+
+	var removed []string
+	prev := removeSubstrateContainer
+	t.Cleanup(func() { removeSubstrateContainer = prev })
+	removeSubstrateContainer = func(name string) { removed = append(removed, name) }
+
+	// A Docker-backed stack whose supervisor and child PIDs are all dead, and
+	// whose k3s handle is the container name (K3sPID == 0, as the
+	// Docker-backed launcher records). RunDown takes the supervisor-gone
+	// branch.
+	const handle = "lenny-embedded-k3s-demo"
+	st := State{
+		SupervisorPID: 1 << 30,
+		GatewayPID:    1 << 30,
+		ControllerPID: 1 << 30,
+		K3sPID:        0,
+		K3sContainer:  handle,
+		K3sEnabled:    true,
+	}
+	if err := writeState(paths.StateFile(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := RunDown(context.Background(), DownOptions{Out: &out}); err != nil {
+		t.Fatalf("RunDown: %v", err)
+	}
+	if len(removed) != 1 || removed[0] != handle {
+		t.Fatalf("RunDown removed %v, want exactly the recorded container %q", removed, handle)
+	}
+	if _, err := os.Stat(paths.StateFile()); !os.IsNotExist(err) {
+		t.Error("RunDown left the state file (and its container handle) in place")
+	}
+}
+
+// TestRunDownPurgeRemovesDockerContainerBeforeDiscardingRoot covers the
+// lenny down --purge gap on a Docker-backed substrate: purgeRoot only does
+// os.RemoveAll(root), which never reaches the container inside the Docker
+// VM. RunDown must remove the container by its recorded handle before
+// purgeRoot discards the state directory that held the handle, or --purge
+// orphans the container while throwing away its name.
+//
+// diagnosis: a failure means lenny down --purge on macOS/Windows leaves the
+// embedded k3s container running while deleting the only record of its name.
+//
+// spec: §24.19 (lenny up/down manage the substrate; --purge must not leak
+// the Docker-backed k3s container), §17.4.
+func TestRunDownPurgeRemovesDockerContainerBeforeDiscardingRoot_spec_24_19(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "lenny-state")
+	t.Setenv("LENNY_HOME", root)
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+
+	var removed []string
+	prev := removeSubstrateContainer
+	t.Cleanup(func() { removeSubstrateContainer = prev })
+	removeSubstrateContainer = func(name string) {
+		// The handle must be removed before purgeRoot discards the state
+		// directory that records it.
+		if _, err := os.Stat(paths.StateFile()); err != nil {
+			t.Errorf("container removed after the state file was already gone: %v", err)
+		}
+		removed = append(removed, name)
+	}
+
+	const handle = "lenny-embedded-k3s-demo"
+	st := State{SupervisorPID: 1 << 30, GatewayPID: 1 << 30, K3sContainer: handle, K3sEnabled: true}
+	if err := writeState(paths.StateFile(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := RunDown(context.Background(), DownOptions{Purge: true, Out: &out}); err != nil {
+		t.Fatalf("RunDown --purge: %v", err)
+	}
+	if len(removed) != 1 || removed[0] != handle {
+		t.Fatalf("RunDown --purge removed %v, want exactly the recorded container %q", removed, handle)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Error("state directory still present after --purge")
+	}
+}
+
+// TestRunDownLinuxSubstrateRemovesNoContainer confirms the removal is a
+// no-op on the Linux child-process substrate, which records a host PID in
+// K3sPID and no container handle: RemoveContainer is called with an empty
+// handle and removes nothing, so the Linux teardown is unchanged.
+//
+// diagnosis: a failure means the Docker-container teardown leaked into the
+// Linux path, which has no container to remove.
+//
+// spec: §24.19, §17.4 (the Linux substrate is a managed child process, not a
+// container).
+func TestRunDownLinuxSubstrateRemovesNoContainer_spec_24_19(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+
+	var removedHandles []string
+	prev := removeSubstrateContainer
+	t.Cleanup(func() { removeSubstrateContainer = prev })
+	removeSubstrateContainer = func(name string) { removedHandles = append(removedHandles, name) }
+
+	// A Linux stack: a recorded host PID, no container handle.
+	st := State{SupervisorPID: 1 << 30, GatewayPID: 1 << 30, K3sPID: 1 << 30, K3sEnabled: true}
+	if err := writeState(paths.StateFile(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+	var out bytes.Buffer
+	if err := RunDown(context.Background(), DownOptions{Out: &out}); err != nil {
+		t.Fatalf("RunDown: %v", err)
+	}
+	// The seam is still invoked, but with an empty handle: the real
+	// RemoveContainer is a no-op on an empty name, so nothing is removed.
+	if len(removedHandles) != 1 || removedHandles[0] != "" {
+		t.Errorf("RunDown on a Linux substrate passed handles %v, want a single empty handle", removedHandles)
+	}
+}
+
 func TestRunDownPurgeRemovesRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "lenny-state")
 	t.Setenv("LENNY_HOME", root)

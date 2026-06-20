@@ -374,3 +374,27 @@ func ContainerRunning(name string) bool {
 	}
 	return strings.TrimSpace(string(out)) == "true"
 }
+
+// RemoveContainer force-removes the named Docker-backed k3s container,
+// mirroring dockerLauncher.Stop (`docker rm -f <name>`). lenny down uses
+// it from the recorded container handle when the supervisor has crashed and
+// the in-memory launcher is unavailable: the container runs inside the
+// Docker VM with no host PID, so the recorded host PIDs the supervisor-gone
+// teardown signals cannot reach it, and removing it by name is the only way
+// to keep a crashed-supervisor teardown from leaking the container. lenny
+// down --purge also calls it before discarding the state directory that
+// holds the handle. An empty name is a no-op so the Linux child-process
+// substrate (which records no container handle) is skipped. A docker rm of
+// an absent container is benign, so the error is ignored; the call is
+// bounded by a short timeout so a hung docker call does not stall teardown.
+//
+// spec: §24.19 (lenny up/down manage the substrate; a crashed supervisor
+// must not leak the Docker-backed k3s container).
+func RemoveContainer(name string) {
+	if name == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, _ = runDocker(ctx, "rm", "-f", name)
+}

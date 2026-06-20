@@ -257,6 +257,18 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 		}
 		_ = stopEmbeddedPostgres(st)
 	}
+	// Remove the Docker-backed k3s container (macOS and Windows) by its
+	// recorded handle before removeState and purgeRoot discard it. The
+	// container runs inside the Docker VM with no host PID, so neither the
+	// recorded PIDs the supervisor-gone branch signals nor purgeRoot's
+	// os.RemoveAll reach it; without this removal a crashed supervisor or a
+	// --purge orphans the container with no recorded handle to find it by.
+	// On the live-supervisor path the graceful Stack.Stop already removed
+	// it, so this docker rm is a benign no-op; the handle is empty on the
+	// Linux child-process substrate, where RemoveContainer is a no-op too.
+	// spec: §24.19 (lenny up/down manage the substrate; a crashed supervisor
+	// or --purge must not leak the Docker-backed k3s container).
+	removeSubstrateContainer(st.K3sContainer)
 	_ = removeState(paths.StateFile())
 	fmt.Fprintln(out, "lenny down: stack stopped")
 
