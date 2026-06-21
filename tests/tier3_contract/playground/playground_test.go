@@ -121,6 +121,7 @@ func TestDevModeMintReturnsBearer(t *testing.T) {
 		TokenType        string `json:"tokenType"`
 		ExpiresInSeconds int64  `json:"expiresInSeconds"`
 		Reusable         bool   `json:"reusable"`
+		EffectiveScope   string `json:"effectiveScope"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode mint body: %v", err)
@@ -130,6 +131,79 @@ func TestDevModeMintReturnsBearer(t *testing.T) {
 	}
 	if body.ExpiresInSeconds != 900 {
 		t.Fatalf("expiresInSeconds = %d, want 900", body.ExpiresInSeconds)
+	}
+	// §27.3.1: the mint response carries effectiveScope, the
+	// space-separated intersection(subject.scope, playground ceiling)
+	// the SPA reads to gate the §27.4 delegation-policy affordance. It
+	// must equal the minted bearer's scope claim on the wire. A
+	// dev-mode mint synthesizes a subject carrying the full ceiling, so
+	// the absent-restriction intersection yields the full ceiling
+	// string (non-empty).
+	if body.EffectiveScope == "" {
+		t.Fatalf("mint response effectiveScope is empty, want the dev-mode full ceiling string")
+	}
+	claims := decodeClaims(t, body.BearerToken)
+	if claimScope, _ := claims["scope"].(string); body.EffectiveScope != claimScope {
+		t.Fatalf("effectiveScope = %q, want it to equal the bearer scope claim %q",
+			body.EffectiveScope, claimScope)
+	}
+}
+
+// spec: 27.3.1 (the mint response narrows effectiveScope to the subject scope across non-dev modes)
+// diagnosis: The POST /v1/playground/token response no longer carries
+//
+//	the effective scope the §27.4 SPA gate reads, or the value no
+//	longer matches the minted bearer's scope claim after narrowing
+//	the subject scope against the playground ceiling. The mint
+//	response effectiveScope carrier is broken; inspect completeMint
+//	and tokenResponse in pkg/gateway/playground.
+func TestMintResponseEffectiveScopeNarrowsToSubject(t *testing.T) {
+	// apiKey mode admits a pasted user_bearer whose scope claim is the
+	// subject scope. The mint intersects it against the playground
+	// ceiling (tools:sessions:* ...), and Set.Intersect keeps the
+	// narrower operand, so a subject scoped to tools:sessions:write
+	// survives as tools:sessions:write on the minted bearer and in the
+	// effectiveScope response field. This pins the narrowing on the
+	// wire across the oidc/apiKey modes, distinct from the dev-mode
+	// full-ceiling case.
+	signer := devSigner()
+	subjectToken, err := signer.Sign(jwt.Claims{
+		Subject: "alice", TenantID: "acme",
+		Typ:    auth.TokenUserBearer,
+		Scope:  "tools:sessions:write",
+		Expiry: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign subject token: %v", err)
+	}
+	h := newPlayground(t, playground.AuthModeAPIKey)
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	resp, raw := postJSON(t, srv.URL+"/v1/playground/token", "{}",
+		map[string]string{"Authorization": "Bearer " + subjectToken})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("apiKey mint status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+	var body struct {
+		BearerToken    string `json:"bearerToken"`
+		EffectiveScope string `json:"effectiveScope"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode mint body: %v", err)
+	}
+	// The effectiveScope field must equal the minted bearer's scope
+	// claim on the wire, and the intersection must keep the narrower
+	// subject operand (tools:sessions:write), not the ceiling wildcard.
+	claims := decodeClaims(t, body.BearerToken)
+	claimScope, _ := claims["scope"].(string)
+	if body.EffectiveScope != claimScope {
+		t.Fatalf("effectiveScope = %q, want it to equal the bearer scope claim %q",
+			body.EffectiveScope, claimScope)
+	}
+	if !strings.Contains(body.EffectiveScope, "tools:sessions:write") {
+		t.Fatalf("effectiveScope = %q, want it to contain the narrower subject operand tools:sessions:write",
+			body.EffectiveScope)
 	}
 }
 

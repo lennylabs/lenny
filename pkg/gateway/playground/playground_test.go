@@ -436,6 +436,136 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 	}
 }
 
+// TestMintResponseEffectiveScopeMirrorsJWTScope pins the §27.3.1
+// effectiveScope carrier: the mint-response field equals the minted
+// JWT's scope claim by construction across the four narrowing cases the
+// SPA must gate the §27.4 delegation-policy affordance on. The
+// apiKey-mode cases drive the intersection through a subject token; the
+// dev-mode case carries the full ceiling literal. effectiveScope is the
+// space-separated intersection(subject.scope, playground_allowed_scope),
+// so a subject scoped to the narrower tools:sessions:write survives as
+// tools:sessions:write (Intersect keeps the narrower operand), an
+// absent subject scope is the §25.1 absent-claim case that returns the
+// full ceiling, and a present-but-disjoint subject scope yields the
+// empty string via the intersectScope sentinel translation.
+//
+// spec: 27.3.1 (mint-response effectiveScope carrier), 25.1
+// (playground-allowed scope set), 10.2 (scope is the intersection,
+// never the union)
+func TestMintResponseEffectiveScopeMirrorsJWTScope_spec_27_3_1(t *testing.T) {
+	signer := devSigner()
+	mint := func(c jwt.Claims) string {
+		token, err := signer.Sign(c)
+		if err != nil {
+			t.Fatalf("sign subject token: %v", err)
+		}
+		return token
+	}
+	const fullCeiling = "tools:sessions:* tools:me:read tools:runtimes:read " +
+		"tools:pools:read tools:operations:read tools:events:read"
+
+	cases := []struct {
+		name string
+		// devMode selects the dev-mode mint (synthetic subject carrying the
+		// full ceiling); otherwise the apiKey-mode mint drives the
+		// intersection through subjectScope.
+		devMode      bool
+		subjectScope string
+		// wantContains is asserted as a substring of effectiveScope when
+		// set; exactScope (with wantExact) is asserted as an exact match
+		// when assertExact is true, so the empty-string case is checkable.
+		wantContains string
+		assertExact  bool
+		wantExact    string
+	}{
+		{
+			// Intersect keeps the narrower operand: the subject's
+			// tools:sessions:write lies inside the ceiling's
+			// tools:sessions:*, so it survives verbatim.
+			name:         "subject scoped to tools:sessions:write survives",
+			subjectScope: "tools:sessions:write",
+			wantContains: "tools:sessions:write",
+		},
+		{
+			// The dev-mode synthetic subject carries the full ceiling, so
+			// the effective scope carries the tools:sessions:* literal.
+			name:         "dev-mode subject carries the ceiling wildcard",
+			devMode:      true,
+			wantContains: "tools:sessions:*",
+		},
+		{
+			// §25.1 absent-claim case: Set.Intersect returns the other
+			// operand when the subject set is not present, so an empty
+			// subject scope yields the full ceiling string.
+			name:         "absent subject scope yields the full ceiling",
+			subjectScope: "",
+			assertExact:  true,
+			wantExact:    fullCeiling,
+		},
+		{
+			// Present-but-disjoint subject scope: the intersection is empty
+			// and intersectScope translates the sentinel to "".
+			name:         "present-but-disjoint subject scope yields empty",
+			subjectScope: "tools:credential:write",
+			assertExact:  true,
+			wantExact:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var h *Handler
+			var authHeader string
+			if tc.devMode {
+				h = New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"},
+					Options{Signer: signer})
+			} else {
+				h = New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer})
+				authHeader = "Bearer " + mint(jwt.Claims{
+					Subject:  "bob",
+					TenantID: "acme",
+					Typ:      auth.TokenUserBearer,
+					Scope:    tc.subjectScope,
+					Expiry:   time.Now().Add(time.Hour).Unix(),
+				})
+			}
+			srv := httptest.NewServer(h.TokenRoutes())
+			defer srv.Close()
+
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/playground/token", strings.NewReader("{}"))
+			req.Header.Set("Content-Type", "application/json")
+			if authHeader != "" {
+				req.Header.Set("Authorization", authHeader)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("POST token: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			var body tokenResponse
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+
+			// The response field must equal the minted JWT's scope claim by
+			// construction; the SPA relies on this equality to gate §27.4.
+			claims := decodeJWTPayload(t, body.BearerToken)
+			jwtScope, _ := claims["scope"].(string)
+			if body.EffectiveScope != jwtScope {
+				t.Fatalf("effectiveScope %q != minted JWT scope claim %q", body.EffectiveScope, jwtScope)
+			}
+			if tc.wantContains != "" && !strings.Contains(body.EffectiveScope, tc.wantContains) {
+				t.Fatalf("effectiveScope %q does not contain %q", body.EffectiveScope, tc.wantContains)
+			}
+			if tc.assertExact && body.EffectiveScope != tc.wantExact {
+				t.Fatalf("effectiveScope = %q, want exactly %q", body.EffectiveScope, tc.wantExact)
+			}
+		})
+	}
+}
+
 func TestOIDCModeRejectsBearerOnTokenEndpoint(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
 		Signer:   devSigner(),

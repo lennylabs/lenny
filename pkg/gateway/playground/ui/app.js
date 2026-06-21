@@ -22,6 +22,7 @@
     config: null,
     bearer: null,
     bearerExpiresAt: 0,
+    effectiveScope: "",
     apiKeyToken: null, // apiKey mode: held in sessionStorage by the form
     runtime: null,
     sessionId: null,
@@ -123,6 +124,11 @@
         }
         state.bearer = body.bearerToken;
         state.bearerExpiresAt = Date.now() + body.expiresInSeconds * 1000;
+        // §27.3.1: the mint response carries the bearer's effective
+        // scope (intersection of the subject scope and the playground
+        // ceiling). The §27.4 session-config screen gates the
+        // delegation-policy field on it.
+        state.effectiveScope = body.effectiveScope || "";
         authStatusEl.textContent = "session token active";
         return state.bearer;
       });
@@ -160,6 +166,32 @@
       rest = rest.slice(idx + parts[i].length);
     }
     return true;
+  }
+
+  // §27.4 item 2: the delegation-policy field is a client-side
+  // visibility affordance, gated on the minted bearer's effective scope
+  // granting tools:sessions:write. The helper probes with
+  // tools:sessions:write, which an explicit tools:sessions:write
+  // satisfies and which the tools:sessions:* playground ceiling (the
+  // §25.1 ceiling) or tools:* matches through the §25.1 wildcard-action
+  // rule. It mirrors the gateway scopes.Set.Matches semantics: a scope
+  // matches when its domain equals the target domain and its action is
+  // the target action or `*`, and tools:* matches everything. The
+  // session surface does not gate on scope; this hides the field rather
+  // than enforcing access.
+  function hasScope(target) {
+    var claim = (state.effectiveScope || "").split(/\s+/);
+    var want = target.split(":"); // ["tools","sessions","write"]
+    for (var i = 0; i < claim.length; i++) {
+      if (!claim[i]) continue;
+      var have = claim[i].split(":");
+      if (have.length !== 3) continue;
+      if (have[0] !== want[0]) continue;
+      if (have[1] === "*" && have[2] === "*") return true; // tools:*
+      if (have[1] !== want[1]) continue;
+      if (have[2] === "*" || have[2] === want[2]) return true;
+    }
+    return false;
   }
 
   // ---- screen 1: runtime picker (§27.4) ----
@@ -263,6 +295,14 @@
     clear(app);
     app.appendChild(el("h1", { text: "Configure session: " + (state.runtime.id || state.runtime.name) }));
 
+    // §27.4 item 2: the delegation-policy field is a client-side
+    // visibility affordance shown only when the minted bearer's effective
+    // scope grants tools:sessions:write (an explicit tools:sessions:write,
+    // or the tools:sessions:* or tools:* wildcard that subsumes it). The
+    // session surface does not gate on scope; this hides the field rather
+    // than enforcing access.
+    var canDelegate = hasScope("tools:sessions:write");
+
     // §27.4 item 2: the runtime-options editor is a form generated from
     // the runtime's runtimeOptionsSchema (§5.1 / §14). When the runtime
     // declares no schema the SPA falls back to a free-form JSON editor; in
@@ -309,7 +349,9 @@
         setPlanFile(e.dataTransfer.files[0]);
       }
     });
-    var delegationField = el("input", { type: "text", placeholder: "delegation policy id (optional)" });
+    var delegationField = canDelegate
+      ? el("input", { type: "text", placeholder: "delegation policy id (optional)" })
+      : null;
     var errLine = el("p", { class: "err" }, []);
 
     var card = el("div", { class: "config-card" }, [
@@ -320,8 +362,8 @@
       optionsEditor.node,
       el("label", { text: "Workspace plan tarball (optional)" }),
       dropZone,
-      el("label", { text: "Delegation policy (optional, requires scope)" }),
-      delegationField,
+      canDelegate ? el("label", { text: "Delegation policy (optional)" }) : null,
+      canDelegate ? delegationField : null,
       el("label", { text: "Session labels" }),
       labelsField,
       errLine,
@@ -342,8 +384,19 @@
               runtimeRef: state.runtime.id || state.runtime.name,
               runtimeOptions: options,
               labels: parseLabels(labelsField.value),
-              delegationPolicyId: delegationField.value.trim() || undefined,
             };
+            // §27.4 item 2 → §14 CreateSessionRequest outer field. The
+            // selection sets delegationLease.delegationPolicyRef, the
+            // field the server decodes (sessionserver.go) and stores
+            // (sessionstore.go DelegationLeaseRequest). The earlier flat
+            // top-level key the SPA sent was never decoded and was
+            // silently dropped. Omitting delegationLease on an empty
+            // selection lets the server apply its default lease
+            // resolution. canDelegate guards against dereferencing an
+            // undefined delegationField when the affordance is hidden.
+            if (canDelegate && delegationField && delegationField.value.trim()) {
+              payload.delegationLease = { delegationPolicyRef: delegationField.value.trim() };
+            }
             if (selectedPlanFile) {
               createSessionWithWorkspace(payload, selectedPlanFile, errLine);
             } else {
