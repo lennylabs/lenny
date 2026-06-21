@@ -31,12 +31,8 @@ func TestReferenceRuntimesCoversCatalog(t *testing.T) {
 
 func TestReferenceRuntimesIntegrationLevels(t *testing.T) {
 	for _, rt := range ReferenceRuntimes() {
-		// §26.1: chat is Standard; every other reference runtime is
-		// Full.
+		// §26.1: every reference runtime, including chat, is Full.
 		want := "full"
-		if rt.Name == "chat" {
-			want = "standard"
-		}
 		if rt.IntegrationLevel != want {
 			t.Errorf("%s integrationLevel = %q, want %q", rt.Name, rt.IntegrationLevel, want)
 		}

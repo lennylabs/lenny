@@ -165,8 +165,8 @@ func referenceLabels(upstream string) map[string]string {
 // registers every entry as a platform-global record and grants the
 // default tenant access to it. The §26 catalog publishes images under
 // ghcr.io/lennylabs/runtime-<name>:1.0.0. The §26.1 catalog table
-// fixes the integration level of each runtime: chat is Standard, every
-// other reference runtime is Full.
+// fixes the integration level of each runtime: every reference
+// runtime, including chat, is Full.
 var referenceRuntimes = []ReferenceRuntime{
 	codingAgent("claude-code",
 		[]string{"anthropic_direct", "aws_bedrock", "gcp_vertex_anthropic"},
@@ -190,11 +190,12 @@ var referenceRuntimes = []ReferenceRuntime{
 		"cursor/cli"),
 	{
 		// spec: §26.1 line 22 / §26.7 — chat is the minimum useful runtime:
-		// Standard level, the small resource class only, multi_turn with
-		// immediate (no queued) injection.
+		// Full level (hotRotation: true requires the Full-only lifecycle
+		// channel per §15.4.3), the small resource class only, multi_turn
+		// with immediate (no queued) injection.
 		Name:                   "chat",
 		Image:                  "ghcr.io/lennylabs/runtime-chat:1.0.0" + placeholderDigest,
-		IntegrationLevel:       "standard",
+		IntegrationLevel:       "full",
 		Description:            "Talk to an LLM with no tools; the minimum useful runtime",
 		AllowedResourceClasses: []string{"small"},
 		SupportedProviders:     []string{"anthropic_direct", "openai_direct", "gcp_vertex_gemini"},
