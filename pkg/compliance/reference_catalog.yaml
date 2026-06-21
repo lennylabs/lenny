@@ -61,7 +61,7 @@ runtimes:
 
   - name: chat
     category: general-purpose
-    level: standard
+    level: full
     image: lennylabs/runtime-chat:1.0.0
     notes: "Talk-to-an-LLM runtime with no tools — the minimum useful runtime (§26.7)."
 

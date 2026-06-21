@@ -382,7 +382,7 @@ func TestReferenceCatalogNightly(t *testing.T) {
 		"gemini-cli":        compliance.LevelFull,
 		"codex":             compliance.LevelFull,
 		"cursor-cli":        compliance.LevelFull,
-		"chat":              compliance.LevelStandard,
+		"chat":              compliance.LevelFull,
 		"langgraph":         compliance.LevelFull,
 		"mastra":            compliance.LevelFull,
 		"openai-assistants": compliance.LevelFull,
