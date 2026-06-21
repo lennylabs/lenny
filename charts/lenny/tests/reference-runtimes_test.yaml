@@ -108,19 +108,19 @@ tests:
           path: spec.allowedResourceClasses
           content: small
 
-  # spec: §26.1 line 22 — F-26.1.1. The chat runtime is the §26.1
-  # catalog's lone Standard-level entry ("the minimum useful runtime").
-  # Every other reference runtime is Full; the chart MUST match the
+  # spec: §26.1 line 22 — F-26.7.1 (supersedes F-26.1.1). Every reference
+  # runtime, including chat, is Full; chat's hotRotation: true requires
+  # the Full-only lifecycle channel (§15.4.3). The chart MUST match the
   # spec table so the registered Runtime CRD advertises the §15.4.6
-  # conformance battery the runtime actually implements.
-  - it: registers chat at integrationLevel standard per §26.1 line 22
+  # conformance battery the runtime implements.
+  - it: registers chat at integrationLevel full per §26.1 line 22
     documentSelector:
       path: metadata.name
       value: chat
     asserts:
       - equal:
           path: spec.integrationLevel
-          value: standard
+          value: full
 
   - it: renders no runtimes when the catalog is disabled
     set:
