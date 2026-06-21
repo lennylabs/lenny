@@ -24,13 +24,15 @@ All three paths use the same chart, the same preflight checks, and the same boot
 ## `lenny up` for local evaluation
 {: #lenny-up-for-local-evaluation }
 
-For evaluation and developer laptops, the `lenny` binary runs the entire platform in-process:
+For evaluation and developer laptops, the `lenny` binary runs the entire platform from one binary:
 
 ```bash
 lenny up
 ```
 
-On first run it downloads k3s to `~/.lenny/k3s/` and starts the whole stack -- embedded Kubernetes, Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The pool controller warms up pods, and `lenny session new --runtime chat --message "hello"` is ready in under a minute.
+It starts the whole stack -- embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. On Linux it downloads k3s to `~/.lenny/k3s/` and supervises it as a managed child process, needing no external services. On macOS and Windows the embedded k3s needs a Linux kernel the binary cannot embed, so it runs the same pinned k3s version as a container under Docker Desktop's Linux VM; Docker Desktop is the one prerequisite on those hosts, and you should start it before `lenny up`. The pool controller warms up pods, and `lenny session new --runtime chat --message "hello"` is ready in under a minute.
+
+The embedded single-node cluster does not reproduce the full production isolation surface: the `sandboxed` and `microvm` profiles both fall back to standard `runc` (gVisor because the cluster installs no gVisor runtime class, Kata because it needs hardware virtualization the local substrate cannot nest), and NetworkPolicy enforcement is disabled. Treat the local stack as a functional preview rather than the production isolation boundary.
 
 `lenny up` prints a banner you can't suppress: credentials, master key, and identities are insecure, and it's not for production. The built-in identity provider rejects any audience claim other than `dev.local`, and trying to expose the gateway beyond localhost fails with `EMBEDDED_MODE_LOCAL_ONLY`.
 

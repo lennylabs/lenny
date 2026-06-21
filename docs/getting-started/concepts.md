@@ -145,7 +145,7 @@ Everything in Basic, plus a local connection to a tool server that the platform 
 - Uses a standard MCP client library. There is nothing Lenny-specific beyond reading the manifest and presenting a nonce during the MCP `initialize` handshake.
 - **Credential rotation:** same as Basic: checkpoint and restart.
 
-**Note:** Standard and Full runtimes use abstract Unix sockets for the local tool connection, which only exist on Linux. To develop on macOS, run your runtime inside `docker compose up`.
+**Note:** Standard and Full runtimes use abstract Unix sockets for the local tool connection, a Linux kernel feature. They are available wherever the adapter runs inside an in-cluster Linux pod. Under Embedded Mode (`lenny up`) the adapter runs in an in-cluster pod, which on macOS and Windows runs under Docker Desktop's Linux VM, so you can develop Standard and Full runtimes on any host. Only Source Mode (`make run`) runs the adapter on the host and so requires a Linux host for these levels; on macOS, run your runtime under `lenny up` or `docker compose up` instead.
 
 #### Full
 

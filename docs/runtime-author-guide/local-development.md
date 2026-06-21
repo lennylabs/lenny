@@ -9,12 +9,14 @@ nav_order: 4
 
 To develop a runtime, use `lenny up`. It runs the full Lenny platform from a single binary on your machine, against the same Kubernetes code path production uses, with the reference runtimes pre-installed. Build your image, register it, and start a session.
 
+On Linux, `lenny up` needs no external services: it downloads a pinned k3s and supervises it as a managed child process. On macOS and Windows, the embedded k3s needs a Linux kernel the binary cannot embed, so it runs the same pinned k3s version as a container under Docker Desktop's Linux VM. Docker Desktop is therefore a prerequisite on macOS and Windows; start it before you run `lenny up`. The gateway, controllers, CRDs, and storage interfaces are identical across operating systems, and only the substrate that hosts the embedded cluster differs by host.
+
 Two other local modes exist mainly for contributors working on Lenny itself. A runtime author rarely needs them, but each gives a tighter loop in a specific case, so all three are documented here.
 
 | Mode | What it runs | Use it to | Limitations |
 |------|--------------|-----------|-------------|
-| **`lenny up`** (recommended) | The whole platform from one binary: embedded k3s, Postgres, Redis, key management, identity, the gateway, the controllers, and the reference runtime catalog. Your runtime runs in a real Kubernetes pod. | Develop and test your runtime against the real platform, and run end-to-end demos. | Local only, with insecure development credentials and keys. Not for production. |
-| **`make run`** | The Lenny source tree with Kubernetes stubbed out: the gateway, an in-process controller, and one agent, all as goroutines in a single process, backed by SQLite and in-memory stores. Your agent runs as a host process rather than in a pod. | Iterate on the gateway or controller source, or run a Basic-level runtime through a fast host-process loop. | No real pod lifecycle, scaling, or isolation. Standard- and Full-level runtimes connect over Linux abstract Unix sockets, so under `make run` they work only on a Linux host. |
+| **`lenny up`** (recommended) | The whole platform from one binary: embedded k3s, Postgres, Redis, key management, identity, the gateway, the controllers, and the reference runtime catalog. Your runtime runs in a real Kubernetes pod. On Linux the k3s runs as a managed child process; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. | Develop and test your runtime against the real platform, and run end-to-end demos. | Local only, with insecure development credentials and keys. Not for production. Requires Docker Desktop on macOS and Windows. The single-node cluster does not reproduce the production isolation surface (see [Local isolation fidelity](#local-isolation-fidelity)). |
+| **`make run`** | The Lenny source tree with Kubernetes stubbed out: the gateway, an in-process controller, and one agent, all as goroutines in a single process, backed by SQLite and in-memory stores. Your agent runs as a host process rather than in a pod. | Iterate on the gateway or controller source, or run a Basic-level runtime through a fast host-process loop. | No real pod lifecycle, scaling, or isolation. The host-side adapter connects Standard- and Full-level runtimes over Linux abstract Unix sockets, so under `make run` those levels work only on a Linux host. |
 | **`docker compose up`** | The gateway, a controller, and one agent container, plus Postgres, Redis, and MinIO as containers. | Iterate on gateway or controller logic against real storage backends, or run integration tests in CI. | Plain HTTP by default; enable TLS before configuring real credentials. A single agent container, with no scaling. |
 
 The difference between the first two is what runs underneath. `lenny up` is a released binary that starts a real single-node Kubernetes (k3s) and runs your runtime in an actual pod, so it exercises the production code path. `make run` runs the source tree with no Kubernetes at all and launches your agent as a plain host process, which rebuilds faster but does not reproduce pod scheduling, isolation, or scaling.
@@ -27,9 +29,9 @@ The difference between the first two is what runs underneath. `lenny up` is a re
 lenny up
 ```
 
-`lenny up` starts everything in-process: an embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The first run downloads k3s to `~/.lenny/k3s/`; every run after that starts in seconds.
+`lenny up` starts the whole stack: an embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The gateway and controllers run as host child processes, the Postgres runs as a child process, and the Redis runs in-process. The k3s runs as a managed child process on Linux, where the first run downloads it to `~/.lenny/k3s/`; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. Every run after the first starts in seconds.
 
-**What you need:** the `lenny` binary, and nothing else.
+**What you need:** on Linux, the `lenny` binary and nothing else. On macOS and Windows, the `lenny` binary plus Docker Desktop, which supplies the Linux VM the embedded k3s runs in. Start Docker Desktop before `lenny up`.
 
 **Use it for:**
 
@@ -65,6 +67,16 @@ lenny down --purge     # also wipe ~/.lenny/ for a fresh start
 ### Not for production
 
 `lenny up` is for local development only. Its credentials, master keys, and identities are insecure. The embedded identity provider accepts only the `dev.local` audience, and the gateway fails closed with `EMBEDDED_MODE_LOCAL_ONLY` if you try to expose it beyond localhost.
+
+### Local isolation fidelity
+{: #local-isolation-fidelity }
+
+The embedded single-node cluster cannot reproduce the full production isolation surface, on any host. Two limits hold equally on the Linux child-process substrate and the Docker-backed substrate:
+
+- **Isolation profiles degrade to runc.** In production the `sandboxed` profile wraps each pod in a gVisor sandbox and the `microvm` profile in a Kata virtual machine. Locally, the `sandboxed` profile runs under standard `runc` because the embedded cluster installs no gVisor runtime class, and the `microvm` profile runs under `runc` because it needs hardware virtualization the local substrate cannot nest. Each profile degrades for its own reason.
+- **NetworkPolicy is not enforced.** The embedded k3s runs with NetworkPolicy enforcement disabled, so the default-deny egress boundary that isolates pods in production is not exercised locally.
+
+Treat the local stack as a functional preview rather than the production isolation boundary. The runtime your agent sees is the same; the kernel- and network-level isolation around it is not.
 
 ---
 
@@ -120,7 +132,7 @@ Traces go to stdout; Prometheus metrics are exposed on `:9090/metrics`.
 
 ### Limitations
 
-`make run` has no Kubernetes underneath, so it does not reproduce pod scheduling, isolation, scaling, or the warm pool. It runs your agent as a host process, which connects over Linux abstract Unix sockets for Standard- and Full-level features. Those sockets exist only on Linux, so on macOS or Windows use `make run` for Basic-level runtimes and `lenny up` (or `docker compose up`) for Standard and Full.
+`make run` has no Kubernetes underneath, so it does not reproduce pod scheduling, isolation, scaling, or the warm pool. It runs your agent as a host process, which connects over Linux abstract Unix sockets for Standard- and Full-level features. Those sockets are a Linux kernel feature, so a host-side adapter has them only on Linux. On macOS or Windows use `make run` for Basic-level runtimes only. For Standard- and Full-level work on those hosts, use `lenny up`, which runs the adapter inside an in-cluster Linux pod (under Docker Desktop's Linux VM on macOS and Windows), so abstract sockets are available there. `docker compose up`, which runs the adapter inside a Linux container, also works.
 
 ---
 
@@ -331,7 +343,7 @@ docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
 | Session hangs after your binary writes a response | stdout not flushed | Flush explicitly after every write (see your language's guidance in the [Adapter Contract](../reference/adapter-contract.md)) |
 | Your binary gets SIGTERM after 10 seconds | Heartbeat wasn't acknowledged | Handle `heartbeat` by immediately writing `heartbeat_ack` |
 | `tool_result` never arrives | `tool_call` referenced an invalid tool | Stick to `read_file`, `write_file`, `list_dir`, `delete_file` at the Basic level |
-| MCP connection refused (Standard level) | You're on macOS with `make run` | Use `docker compose up` -- abstract Unix sockets only exist on Linux |
+| MCP connection refused (Standard level) | You're on macOS with `make run`, where the host-side adapter has no Linux abstract Unix sockets | Use `lenny up` (the adapter runs in an in-cluster Linux pod) or `docker compose up` (the adapter runs in a Linux container) |
 | MCP nonce rejected | You cached the manifest too early | Re-read `/run/lenny/adapter-manifest.json` at startup -- the nonce is regenerated per session |
 
 ---

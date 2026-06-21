@@ -7,10 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	migratepg "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -37,13 +33,19 @@ func openSQL(dsn string) (*sql.DB, error) {
 // are embedded in the binary, so this needs no source checkout.
 //
 // The stock embedded PostgreSQL 16 bundle does not ship the pgvector
-// extension. When pgvector is unavailable, the §9.4 semantic-memory
-// migration cannot apply. applyMigrations detects this, applies every
-// migration up to the one before the first pgvector-dependent
-// migration, and skips the rest. The embedded stack then runs without
-// §9.4 semantic search; every other feature is fully migrated. out
-// receives a one-line note when the pgvector-dependent migrations are
-// skipped.
+// extension that the §9.4 agent_memory.embedding column (migration
+// 0044) and the production §9.4 Postgres memory store depend on. When
+// pgvector is unavailable, applyMigrations installs a pure-SQL pgvector
+// shim (the `vector` type, the text casts, and the `<=>` operator; see
+// installVectorShim) before running the migrations, then applies the
+// complete migration set. The shim lets the unchanged production schema
+// and the unchanged production memory store run against the embedded
+// Postgres, so every migration applies and no later migration (for
+// example 0077_tenant_credential_policy) is stranded. The §9.4
+// semantic-search ivfflat index that needs the real C access method is
+// skipped by migration 0044's own guard, so semantic ranking degrades
+// to the recency-ordered substring fallback; every other feature is
+// fully migrated. out receives a one-line note when the shim is used.
 func applyMigrations(dsn string, out io.Writer) error {
 	db, err := openSQL(dsn)
 	if err != nil {
@@ -51,37 +53,24 @@ func applyMigrations(dsn string, out io.Writer) error {
 	}
 	defer func() { _ = db.Close() }()
 
+	if !pgvectorAvailable(db) {
+		if err := installVectorShim(db); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "lenny up: note: the embedded Postgres bundle lacks pgvector; "+
+			"a pure-SQL vector shim is installed and §9.4 semantic search degrades to the "+
+			"recency-ordered substring fallback (every other feature is fully migrated)")
+	}
+
 	m, closeFn, err := buildMigrator(db)
 	if err != nil {
 		return err
 	}
 	defer closeFn()
 
-	if pgvectorAvailable(db) {
-		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-			return fmt.Errorf("embedded migrate: apply schema: %w", err)
-		}
-		return nil
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("embedded migrate: apply schema: %w", err)
 	}
-
-	// pgvector is unavailable. Migrate to the highest version that
-	// does not depend on pgvector.
-	target, ok, err := highestNonPgvectorVersion()
-	if err != nil {
-		return err
-	}
-	if !ok {
-		// No migration depends on pgvector: apply everything.
-		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-			return fmt.Errorf("embedded migrate: apply schema: %w", err)
-		}
-		return nil
-	}
-	if err := m.Migrate(target); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("embedded migrate: apply schema up to v%d: %w", target, err)
-	}
-	fmt.Fprintln(out, "lenny up: note: the embedded Postgres bundle lacks pgvector; "+
-		"the §9.4 semantic-memory migrations are skipped and semantic search is unavailable")
 	return nil
 }
 
@@ -107,6 +96,8 @@ func buildMigrator(db *sql.DB) (m *migrate.Migrate, closeFn func(), err error) {
 // pgvectorAvailable reports whether the connected PostgreSQL server can
 // create the pgvector extension. It probes pg_available_extensions
 // rather than running CREATE EXTENSION so the check has no side effect.
+// When it reports false, applyMigrations installs the pure-SQL vector
+// shim (installVectorShim) before running the migrations.
 func pgvectorAvailable(db *sql.DB) bool {
 	var available bool
 	err := db.QueryRow(
@@ -114,77 +105,4 @@ func pgvectorAvailable(db *sql.DB) bool {
 	).
 		Scan(&available)
 	return err == nil && available
-}
-
-// highestNonPgvectorVersion scans the embedded migration files and
-// returns the highest version number that precedes the first
-// pgvector-dependent migration. ok is false when no migration depends
-// on pgvector.
-func highestNonPgvectorVersion() (version uint, ok bool, err error) {
-	entries, err := fs.ReadDir(migrations.FS, ".")
-	if err != nil {
-		return 0, false, fmt.Errorf("embedded migrate: list migrations: %w", err)
-	}
-	type upFile struct {
-		version uint
-		pgvec   bool
-	}
-	var ups []upFile
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".up.sql") {
-			continue
-		}
-		v, perr := parseMigrationVersion(name)
-		if perr != nil {
-			return 0, false, perr
-		}
-		raw, rerr := migrations.FS.ReadFile(name)
-		if rerr != nil {
-			return 0, false, fmt.Errorf("embedded migrate: read %s: %w", name, rerr)
-		}
-		ups = append(ups, upFile{version: v, pgvec: dependsOnPgvector(raw)})
-	}
-	sort.Slice(ups, func(i, j int) bool { return ups[i].version < ups[j].version })
-
-	firstPgvec := -1
-	for i, u := range ups {
-		if u.pgvec {
-			firstPgvec = i
-			break
-		}
-	}
-	if firstPgvec <= 0 {
-		// No pgvector migration, or the first migration itself depends
-		// on it (which the schema never does).
-		return 0, false, nil
-	}
-	return ups[firstPgvec-1].version, true, nil
-}
-
-// parseMigrationVersion extracts the leading numeric version from a
-// migration file name of the form NNNN_description.up.sql.
-func parseMigrationVersion(name string) (uint, error) {
-	idx := strings.IndexByte(name, '_')
-	if idx <= 0 {
-		return 0, fmt.Errorf("embedded migrate: migration %q has no version prefix", name)
-	}
-	v, err := strconv.ParseUint(name[:idx], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("embedded migrate: migration %q has a non-numeric version: %w", name, err)
-	}
-	return uint(v), nil
-}
-
-// dependsOnPgvector reports whether a migration's SQL requires the
-// pgvector extension. It matches the vector extension, the vector
-// column type, and the ivfflat / hnsw index access methods pgvector
-// provides.
-func dependsOnPgvector(sql []byte) bool {
-	s := strings.ToLower(string(sql))
-	return strings.Contains(s, "extension if not exists vector") ||
-		strings.Contains(s, "extension vector") ||
-		strings.Contains(s, "vector(") ||
-		strings.Contains(s, "using ivfflat") ||
-		strings.Contains(s, "using hnsw")
 }

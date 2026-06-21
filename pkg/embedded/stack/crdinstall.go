@@ -17,12 +17,18 @@ import (
 	embeddedcrds "github.com/lennylabs/lenny/pkg/embedded/crds"
 )
 
-// installCRDs applies every lenny.dev CustomResourceDefinition to the
-// embedded cluster. §17.4: Embedded Mode uses the production CRDs. The
-// manifests are embedded in the binary, so this needs no checkout of
-// the Helm chart. Each CRD is created when absent and updated in place
-// when it already exists, which keeps lenny up idempotent.
-func installCRDs(ctx context.Context, kubeconfigPath string) error {
+// InstallCRDs applies every lenny.dev CustomResourceDefinition to the
+// embedded cluster reachable through kubeconfigPath. §17.4: Embedded Mode
+// uses the production CRDs. The manifests are embedded in the binary, so
+// this needs no checkout of the Helm chart. Each CRD is created when
+// absent and updated in place when it already exists, which keeps lenny up
+// idempotent. It is exported so the tier-2 bring-up test can drive the CRD
+// install against a Docker-backed substrate's host-rewritten kubeconfig,
+// the same call Up makes.
+//
+// spec: §17.4 (Embedded Mode installs the production CRDs against the
+// launcher's host-rewritten kubeconfig on every supported host).
+func InstallCRDs(ctx context.Context, kubeconfigPath string) error {
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("embedded crd: load kubeconfig %s: %w", kubeconfigPath, err)

@@ -83,8 +83,9 @@ func (p Paths) StateFile() string {
 
 // RestartRequestFile returns the path of the §24.19 restart-request
 // file. `lenny restart <component>` writes the component name here and
-// signals the supervisor with SIGHUP; the supervisor reads it to learn
-// which component to restart.
+// signals the supervisor through the build-tagged restart-wakeup
+// substrate (SIGHUP on unix, a named restart event on Windows); the
+// supervisor reads it to learn which component to restart.
 func (p Paths) RestartRequestFile() string {
 	return filepath.Join(p.Run, "restart.request")
 }

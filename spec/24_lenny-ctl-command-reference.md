@@ -11,7 +11,7 @@ Every command requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin t
 
 1. **`lenny-ctl preflight`** operates in two modes — standalone (reads `values.yaml` directly and probes infrastructure without a running gateway) and API-backed (delegates to `POST /v1/admin/preflight` on a running gateway). In standalone mode it embeds the preflight check logic locally because preflight must run before the platform is deployed.
 2. **`lenny-ctl install`** ([§24.20](#2420-installation-wizard)) carries the interactive installer's question engine and values-rendering logic locally; it calls `helm` and then `lenny-ctl bootstrap` internally.
-3. **`lenny up` / `lenny down` / `lenny status`** ([§24.19](#2419-local-stack)) manage the Embedded Mode single-binary stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) and run the gateway, controllers, embedded Postgres/Redis, and k3s in-process. These are local-only commands; they do not call any remote API.
+3. **`lenny up` / `lenny down` / `lenny status`** ([§24.19](#2419-local-stack)) manage the Embedded Mode single-binary stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)): they run the gateway and controllers as host child processes, the embedded Postgres as a child process (PostgreSQL 16 binary bundle) and the embedded Redis in-process, and the embedded k3s as a managed child process on Linux or as a container under Docker Desktop's Linux VM on macOS and Windows. These are local-only commands; they do not call any remote API.
 4. **`lenny runtime init`** ([§24.18](#2418-runtime-scaffolding)) is an offline scaffolder that emits a new runtime repository skeleton.
 
 **One binary, two names.** The binary ships as both `lenny` (short name, Embedded Mode ergonomics) and `lenny-ctl` (long name, operator context). Both names support every subcommand; the docs use the short form in local/developer contexts and the long form in operator contexts. See [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) for the binary-vs-symlink layout.
@@ -257,7 +257,7 @@ The Embedded Mode stack ([§17.4](17_deployment-topology.md#174-local-developmen
 
 | Command | Description |
 |---------|-------------|
-| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack. Idempotent. Prints the local gateway URL and the non-suppressible "Embedded Mode — NOT for production use" banner. |
+| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack (on macOS and Windows the embedded k3s runs under Docker Desktop; see [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)). Idempotent. Prints the local gateway URL and the non-suppressible "Embedded Mode — NOT for production use" banner. |
 | `lenny down [--purge]` | Gracefully terminate all embedded components. `--purge` additionally deletes `~/.lenny/`. |
 | `lenny status` | Print component health, active session count, and resource usage. |
 | `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`. |

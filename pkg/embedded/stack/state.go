@@ -25,9 +25,18 @@ type State struct {
 	// GatewayPID and ControllerPID are the child-process identifiers.
 	GatewayPID    int `json:"gatewayPid"`
 	ControllerPID int `json:"controllerPid"`
-	// K3sPID is the embedded k3s process identifier. Zero when k3s did
-	// not start (an unsupported host).
+	// K3sPID is the embedded k3s host process identifier on the Linux
+	// managed-child-process launcher. It is zero on the Docker-backed
+	// launcher (macOS and Windows), where k3s runs inside the Docker VM
+	// with no host PID; K3sContainer carries the handle there. It is also
+	// zero when k3s did not start (an unsupported host).
 	K3sPID int `json:"k3sPid,omitempty"`
+	// K3sContainer is the docker container name the Docker-backed launcher
+	// runs the embedded k3s under (macOS and Windows). It is the handle
+	// lenny status probes for liveness in place of the host PID. It is
+	// empty on the Linux child-process launcher, which records a host PID
+	// in K3sPID instead, and empty when k3s did not start.
+	K3sContainer string `json:"k3sContainer,omitempty"`
 	// HTTPAddr and HTTPSAddr are the gateway's plaintext and
 	// TLS-terminated listen addresses.
 	HTTPAddr  string `json:"httpAddr"`
@@ -36,11 +45,17 @@ type State struct {
 	// strings the gateway and controllers were configured with.
 	PostgresDSN string `json:"postgresDsn"`
 	RedisURL    string `json:"redisUrl"`
-	// KubeconfigPath is the embedded k3s admin kubeconfig. Empty when
-	// k3s did not start.
+	// KubeconfigPath is the embedded k3s admin kubeconfig. On the Linux
+	// launcher it is k3s' generated admin kubeconfig; on the Docker-backed
+	// launcher it is the host-rewritten kubeconfig whose server URL points
+	// at the published host port. The gateway and controllers resolve
+	// their cluster connection from it. Empty when k3s did not start.
 	KubeconfigPath string `json:"kubeconfigPath,omitempty"`
-	// K3sEnabled records whether the embedded Kubernetes layer came
-	// up. It is false on a non-Linux host.
+	// K3sEnabled records whether the embedded Kubernetes layer came up. It
+	// is true on every host where the substrate provisioned (Linux
+	// unconditionally, macOS and Windows when Docker Desktop is present),
+	// and false only on an unsupported host (a non-Linux host without
+	// Docker) or when the substrate failed to start.
 	K3sEnabled bool `json:"k3sEnabled"`
 }
 
@@ -115,18 +130,64 @@ func RunningGateway(root string) (string, error) {
 	return "http://" + st.HTTPAddr, nil
 }
 
+// Substrate describes how the embedded k3s is provisioned on the running
+// stack, so a local command (the §24.19.1 image bridge) can reach the
+// embedded containerd through the substrate's mechanism. The Linux
+// managed-child-process launcher runs k3s on the host with a host
+// containerd socket; the Docker-backed launcher (macOS and Windows) runs
+// k3s inside a container with no host socket, so the bridge runs `ctr`
+// inside that container.
+//
+// spec: §17.4 (the substrate is provisioned per host operating system),
+// §24.19.1 (the image bridge reaches the embedded containerd image store).
+type Substrate struct {
+	// Container is the docker container name the Docker-backed launcher runs
+	// the embedded k3s under (macOS and Windows). It is empty on the Linux
+	// child-process launcher, where k3s runs on the host with a host
+	// containerd socket. A non-empty Container selects the container-exec
+	// path; an empty Container selects the host-socket path.
+	Container string
+}
+
+// DockerBacked reports whether the substrate runs k3s inside a Docker
+// container (macOS and Windows) rather than as a host child process
+// (Linux). The image bridge branches on this to reach the embedded
+// containerd: a container-exec path when Docker-backed, a host-socket path
+// otherwise.
+func (s Substrate) DockerBacked() bool { return s.Container != "" }
+
+// RunningSubstrate returns the embedded k3s substrate handle recorded by
+// the running stack. It returns ErrNoRunningStack when no stack is
+// recorded, so a caller can surface the §24.19.1 EMBEDDED_MODE_REQUIRED /
+// K3S_UNAVAILABLE diagnostic instead of a lower-level error. The root
+// argument selects the LENNY_HOME-equivalent state directory; an empty
+// root uses the default.
+//
+// spec: §24.19.1 (the image bridge selects its containerd-reach path from
+// the running substrate).
+func RunningSubstrate(root string) (Substrate, error) {
+	resolved, err := resolveRoot(root)
+	if err != nil {
+		return Substrate{}, err
+	}
+	paths := NewPaths(resolved)
+	st, ok, err := readState(paths.StateFile())
+	if err != nil {
+		return Substrate{}, err
+	}
+	if !ok {
+		return Substrate{}, ErrNoRunningStack
+	}
+	return Substrate{Container: st.K3sContainer}, nil
+}
+
 // processAlive reports whether a process with the given PID is
-// currently running. A zero or negative PID is treated as not
-// running.
+// currently running. A zero or negative PID is treated as not running.
+// The liveness probe itself (signal-0 on unix, OpenProcess on Windows)
+// lives in the build-tagged process-control substrate.
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// On Unix, signal 0 performs error checking without delivering a
-	// signal: a nil error means the process exists and is signalable.
-	return proc.Signal(syscall0()) == nil
+	return pidAlive(pid)
 }

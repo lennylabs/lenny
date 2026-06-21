@@ -19,12 +19,26 @@ type gatewaySpec struct {
 	// HTTPAddr is the loopback host:port the gateway serves plaintext
 	// HTTP on. §17.4 fronts it with the TLS-terminating proxy.
 	HTTPAddr string
+	// GRPCAddr is the host:port the gateway's §8.6/§9.1 GatewayControl
+	// gRPC listener binds. It is bound on all host interfaces (an empty
+	// host, ":<port>") rather than loopback so an in-cluster agent-pod
+	// adapter under the Docker VM can reach it across the host/Docker
+	// boundary; binding loopback would make it unreachable from the Docker
+	// VM. The controller stamps the launcher's externally-reachable address
+	// (GatewayHost():<port>) onto pods so the adapter dials the right host.
+	// Empty leaves the GatewayControl listener disabled (no embedded
+	// cluster, so no in-cluster adapter to serve). spec: §4.7, §8.6, §9.1.
+	GRPCAddr string
 	// PostgresDSN and RedisURL point the gateway at the embedded
 	// backends through its standard configuration flags.
 	PostgresDSN string
 	RedisURL    string
-	// Kubeconfig is the embedded k3s admin kubeconfig. Empty when the
-	// embedded cluster did not start.
+	// Kubeconfig is the embedded k3s admin kubeconfig. On the Linux
+	// launcher it is k3s' generated kubeconfig; on the Docker-backed
+	// launcher (macOS and Windows) it is the host-rewritten kubeconfig
+	// whose server URL points at the published host port, so the gateway
+	// reaches the in-container API server across the host/Docker boundary.
+	// Empty when the embedded cluster did not start.
 	Kubeconfig string
 	// LogPath is the gateway log file.
 	LogPath string
@@ -120,9 +134,29 @@ func gatewayArgs(spec gatewaySpec) []string {
 		// keeps the gateway's startup assertion satisfied regardless of
 		// the dev-mode default.
 		"-no-environment-policy", "allow-all",
+		// §12.4 mandates Redis AUTH and TLS on every Redis instance and the
+		// gateway fails closed at startup when neither is present. The §17.4
+		// embedded Redis is the loopback-only miniredis that is exempt from
+		// that invariant (it emits a passwordless, plaintext redis:// URL),
+		// so the embedded gateway must opt out explicitly; -dev-mode does not
+		// imply it. Without this the gateway refuses to start (redisconn
+		// ErrAuthRequired) and never becomes healthy. spec: §12.4, §17.4
+		// (Embedded Mode Redis is exempt from the production AUTH and TLS
+		// requirements).
+		"-redis-allow-insecure",
 	}
 	if spec.OIDCKeyFile != "" {
 		args = append(args, "-bearer-trust-hmac-key-file", spec.OIDCKeyFile)
+	}
+	if spec.GRPCAddr != "" {
+		// §8.6 GatewayControl listener: serves the adapter→gateway control
+		// surface (ExtendLease, platform/connector tool bridges) the
+		// in-cluster agent-pod adapter dials across the host/Docker boundary.
+		// The mTLS material flags (--adapter-tls-cert/key/ca) are left unset,
+		// so the listener serves plaintext — the §4.7 documented
+		// local-development path — while the address wiring that crosses the
+		// boundary is the same code path production uses. spec: §4.7, §8.6.
+		args = append(args, "-grpc-addr", spec.GRPCAddr)
 	}
 	return args
 }

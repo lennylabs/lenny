@@ -675,7 +675,7 @@ func Load(path string) (*AdapterManifest, error) {
 
 ### Connecting to Lenny's local tool server
 
-Standard-level runtimes connect to Lenny's local tool server as an MCP client. The connection uses abstract Unix sockets (Linux only; use `docker compose` on macOS).
+Standard-level runtimes connect to Lenny's local tool server as an MCP client. The connection uses abstract Unix sockets, a Linux kernel feature available wherever the adapter runs inside an in-cluster Linux pod. Under Embedded Mode (`lenny up`) the adapter runs in an in-cluster pod, which on macOS and Windows runs under Docker Desktop's Linux VM, so Standard-level authors can develop on any host. Only Source Mode (`make run`) runs the adapter on the host and requires a Linux host for this level; on macOS, use `lenny up` or `docker compose` instead.
 
 ```go
 // Pseudocode for MCP connection setup:

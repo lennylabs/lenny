@@ -9,7 +9,7 @@ nav_order: 1
 
 **Goal:** install Lenny on your laptop, chat with an agent, and shut it down -- in under five minutes.
 
-You'll use `lenny up`, a single binary that runs the whole platform on your machine: an embedded Kubernetes cluster, the database and cache it needs, a stand-in key-management service and identity provider for development, the gateway, the management plane, and the nine reference runtimes. No Docker, no external services, no prior Kubernetes setup required.
+You'll use `lenny up`, a single binary that runs the whole platform on your machine: an embedded Kubernetes cluster, the database and cache it needs, a stand-in key-management service and identity provider for development, the gateway, the management plane, and the reference runtimes. On Linux it needs no external services and no prior Kubernetes setup. On macOS and Windows the embedded Kubernetes cluster runs inside Docker Desktop's Linux VM, so Docker Desktop is the one prerequisite to install first.
 
 This is the recommended starting point for anyone evaluating Lenny. If you're going to contribute to the gateway or controllers themselves and want faster iteration, see [Local Development](../runtime-author-guide/local-development.html) for `make run` (native process) and `docker compose up` (containerized) alternatives.
 
@@ -20,9 +20,10 @@ This is the recommended starting point for anyone evaluating Lenny. If you're go
 | Requirement        | Version         | Notes                                                                                                                                 |
 | ------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | **Lenny CLI**      | latest          | `brew install lennylabs/tap/lenny`, or download a single binary from the [releases page](https://github.com/lennylabs/lenny/releases) |
-| **macOS or Linux** | anything recent | Windows works through WSL2                                                                                                            |
+| **macOS, Windows, or Linux** | anything recent | Windows also works through WSL2                                                                                              |
+| **Docker Desktop** | latest          | Required on macOS and Windows only. The embedded Kubernetes cluster needs a Linux kernel that the binary cannot embed, and Docker Desktop's Linux VM supplies it. Not required on Linux. |
 
-That's it. The first `lenny up` downloads its dependencies into `~/.lenny/` and takes about a minute. Every subsequent start is a few seconds.
+The first `lenny up` downloads its dependencies into `~/.lenny/` and takes about a minute. Every subsequent start is a few seconds. On macOS and Windows, start Docker Desktop before you run `lenny up`.
 
 ---
 
@@ -100,7 +101,7 @@ lenny session logs ses_01HN0J... --follow
 
 ## Step 4: Try a coding agent
 
-The runtime catalog includes four coding agents: `claude-code`, `gemini-cli`, `codex`, and `cursor-cli`. Each one wraps its respective CLI inside a gVisor sandbox with a fresh workspace prepared from a directory you give it.
+The runtime catalog includes four coding agents: `claude-code`, `gemini-cli`, `codex`, and `cursor-cli`. Each one runs its respective CLI in an isolated pod with a fresh workspace prepared from a directory you give it. In production these runtimes default to the `sandboxed` (gVisor) isolation profile; on the embedded stack that profile runs under standard `runc`, as noted under [What just happened](#what-just-happened).
 
 Point one at a local repository:
 
@@ -179,7 +180,7 @@ A few properties you saw in action, which apply equally to a production install:
 - **The gateway is the only entrance.** Your pod never had an IP address you could reach.
 - **Workspace files go through the gateway.** No shared disks, no mounted volumes.
 - **The same platform runs any agent.** `chat`, `claude-code`, and whatever you build yourself all integrate the same way.
-- **Pods are locked down by default.** Non-root, no extra Linux capabilities, sandboxed under gVisor, and no network access except back to the gateway.
+- **Pods are locked down by default.** Non-root, no extra Linux capabilities, and no network access except back to the gateway. In production, the `sandboxed` profile also wraps each pod in a gVisor sandbox and the `microvm` profile in a Kata virtual machine. The embedded single-node cluster cannot reproduce that isolation: the `sandboxed` profile runs under standard `runc` because the cluster installs no gVisor runtime class, and the `microvm` profile runs under `runc` because it needs hardware virtualization the local substrate cannot nest. The cluster also disables NetworkPolicy enforcement, so the default-deny network boundary is not exercised. Treat the local stack as a functional preview rather than the production isolation boundary.
 
 ---
 

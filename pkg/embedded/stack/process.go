@@ -7,13 +7,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
 // managedProcess is a child process the Embedded Mode stack owns: the
-// production gateway or a controller. The process is started in its
-// own process group so Stop can signal the whole tree.
+// production gateway or a controller. The process is started in its own
+// process group (or, on Windows, its own console process group and
+// kill-on-close job) so Stop can terminate the whole tree. The
+// OS-specific group/detach attributes and termination live in the
+// build-tagged process-control substrate (process_unix.go,
+// process_windows.go); this file holds the cross-platform consumer API.
 type managedProcess struct {
 	name    string
 	cmd     *exec.Cmd
@@ -49,9 +52,9 @@ func startProcess(spec processSpec) (*managedProcess, error) {
 	cmd.Env = spec.Env
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	// Run the child in its own process group so Stop signals it and
-	// any grandchildren together.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Run the child in its own process group so Stop terminates it and
+	// any grandchildren together. The attributes are OS-specific.
+	cmd.SysProcAttr = processGroupSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return nil, fmt.Errorf("embedded: start %s (%s): %w", spec.Name, spec.BinPath, err)
@@ -74,22 +77,13 @@ func (m *managedProcess) Running() bool {
 		(m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited())
 }
 
-// Stop signals the child process group and waits for it to exit,
-// escalating to SIGKILL after a grace period. Stop is idempotent.
+// Stop terminates the child process tree and waits for it to exit,
+// escalating to a forced kill after a grace period. Stop is idempotent.
 func (m *managedProcess) Stop() error {
 	if m == nil || m.cmd == nil || m.cmd.Process == nil {
 		return nil
 	}
-	pid := m.cmd.Process.Pid
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
-	done := make(chan error, 1)
-	go func() { done <- m.cmd.Wait() }()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-		<-done
-	}
+	terminateManagedProcess(m.cmd, 10*time.Second)
 	if m.logFile != nil {
 		_ = m.logFile.Close()
 		m.logFile = nil
@@ -98,26 +92,12 @@ func (m *managedProcess) Stop() error {
 	return nil
 }
 
-// stopByPID signals an external process group by PID. lenny down uses
+// stopByPID terminates an external process tree by PID. lenny down uses
 // it to terminate the gateway and controllers recorded in the state
 // file when the orchestrating Stack object is not in memory.
 func stopByPID(pid int) {
 	if pid <= 0 {
 		return
 	}
-	// Signal the process group first; fall back to the bare PID when
-	// the process is not a group leader.
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
-	}
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if !processAlive(pid) {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
-	}
+	terminateByPID(pid, 15*time.Second)
 }

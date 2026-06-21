@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
-	"syscall"
 	"time"
 )
 
@@ -61,9 +59,40 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 		return err
 	}
 
-	// Re-execute this binary as the detached supervisor. The
-	// supervisor brings the stack up and stays alive to host the
-	// in-process components.
+	if err := spawnSupervisor(root, paths, opts); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, "lenny up: bringing the embedded stack up (first run downloads PostgreSQL and k3s)")
+	if err := waitForStack(ctx, paths, 6*time.Minute); err != nil {
+		fmt.Fprintf(errOut, "lenny up: %v\n", err)
+		fmt.Fprintf(errOut, "lenny up: see %s for supervisor output\n", paths.Logs+"/supervisor.log")
+		return err
+	}
+	st, _, _ := readState(paths.StateFile())
+	fmt.Fprintf(out, "\n  %s\n\n", ProductionWarningBanner)
+	fmt.Fprintf(out, "lenny up: stack ready\n")
+	fmt.Fprintf(out, "  gateway   https://localhost%s  (http://localhost%s)\n",
+		portSuffix(st.HTTPSAddr), portSuffix(st.HTTPAddr))
+	fmt.Fprintf(out, "  TLS CA    %s\n", paths.TLS+"/ca.crt")
+	fmt.Fprintf(out, "  token     run 'lenny token print' for a bearer for the built-in user\n")
+	if !st.K3sEnabled {
+		fmt.Fprintf(out, "  note      embedded Kubernetes is not running; session placement is unavailable\n")
+	}
+	return nil
+}
+
+// spawnSupervisor re-executes the lenny binary as the detached supervisor
+// that brings the stack up and stays alive to host the in-process
+// components. It is a package-level var so a unit test can substitute a fake
+// that records a healthy stack without re-executing the real binary,
+// exercising RunUp's orchestration (idempotency, wait, ready-report) without
+// a real bring-up. The default implementation detaches the supervisor so it
+// outlives the foreground lenny up process.
+//
+// spec: §17.4 (lenny up re-executes the binary as a detached supervisor),
+// §24.19.
+var spawnSupervisor = func(root string, paths Paths, opts UpOptions) error {
 	self, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("lenny up: resolve own path: %w", err)
@@ -85,32 +114,17 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 	cmd.Env = append(os.Environ(), SuperviseEnvVar+"=1", "LENNY_HOME="+root)
 	cmd.Stdout = superLog
 	cmd.Stderr = superLog
-	// Detach: a new session so the supervisor outlives the foreground
-	// lenny up process and its controlling terminal.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Detach the supervisor so it outlives the foreground lenny up
+	// process and its controlling terminal. The detach attributes are
+	// OS-specific (a new session on unix, a detached console process
+	// group on Windows).
+	cmd.SysProcAttr = detachSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("lenny up: start supervisor: %w", err)
 	}
 	// The foreground process does not wait on the supervisor; release
 	// it so the supervisor is not left a zombie when lenny up exits.
 	_ = cmd.Process.Release()
-
-	fmt.Fprintln(out, "lenny up: bringing the embedded stack up (first run downloads PostgreSQL and k3s)")
-	if err := waitForStack(ctx, paths, 6*time.Minute); err != nil {
-		fmt.Fprintf(errOut, "lenny up: %v\n", err)
-		fmt.Fprintf(errOut, "lenny up: see %s for supervisor output\n", paths.Logs+"/supervisor.log")
-		return err
-	}
-	st, _, _ := readState(paths.StateFile())
-	fmt.Fprintf(out, "\n  %s\n\n", ProductionWarningBanner)
-	fmt.Fprintf(out, "lenny up: stack ready\n")
-	fmt.Fprintf(out, "  gateway   https://localhost%s  (http://localhost%s)\n",
-		portSuffix(st.HTTPSAddr), portSuffix(st.HTTPAddr))
-	fmt.Fprintf(out, "  TLS CA    %s\n", paths.TLS+"/ca.crt")
-	fmt.Fprintf(out, "  token     run 'lenny token print' for a bearer for the built-in user\n")
-	if !st.K3sEnabled {
-		fmt.Fprintf(out, "  note      embedded Kubernetes is not running; session placement is unavailable\n")
-	}
 	return nil
 }
 
@@ -139,8 +153,10 @@ func waitForStack(ctx context.Context, paths Paths, timeout time.Duration) error
 // RunSupervisor implements the hidden `__supervise` subcommand. It is
 // the detached long-lived process that hosts the in-process Embedded
 // Mode components and supervises the child processes. It brings the
-// stack up, then blocks until it receives SIGTERM or SIGINT, at which
-// point it tears the stack down gracefully.
+// stack up, then blocks until a teardown wakeup arrives (a SIGTERM or
+// SIGINT on unix, a named teardown event on Windows), carried by the
+// build-tagged process-control substrate, at which point it tears the
+// stack down gracefully.
 func RunSupervisor(ctx context.Context, opts UpOptions) error {
 	root, err := resolveRoot(opts.Root)
 	if err != nil {
@@ -155,24 +171,24 @@ func RunSupervisor(ctx context.Context, opts UpOptions) error {
 	if err != nil {
 		return err
 	}
-	// Block until a teardown signal arrives. lenny down sends SIGTERM
-	// to this process; lenny restart sends SIGHUP, which restarts a
-	// single component and keeps the supervisor running.
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	// Block until a teardown or restart wakeup arrives. lenny down asks
+	// for a graceful teardown; lenny restart asks to restart a single
+	// component and keep the supervisor running. The wakeup substrate is
+	// OS-specific (POSIX signals on unix, named events on Windows) and
+	// lives in the build-tagged process-control layer.
+	sigs, err := newSupervisorSignals(root)
+	if err != nil {
+		return err
+	}
+	defer sigs.close()
 	paths := NewPaths(root)
-	for {
-		var sig os.Signal
-		select {
-		case sig = <-sigCh:
-		case <-ctx.Done():
-		}
-		if sig == syscall.SIGHUP {
-			// spec: §24.19 line 264 — restart one component in place.
-			st.handleRestartRequest(ctx, paths)
-			continue
-		}
-		break
+	// Each restart wakeup restarts one component in place and keeps the
+	// supervisor running; a teardown wakeup (or a cancelled context)
+	// breaks the loop into the graceful Stop path below.
+	// spec: §24.19 — restart a single component without tearing the rest
+	// of the stack down.
+	for sigs.wait(ctx) {
+		st.handleRestartRequest(ctx, paths)
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -223,8 +239,14 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 
 	if processAlive(st.SupervisorPID) {
 		fmt.Fprintf(out, "lenny down: stopping the embedded stack (supervisor pid %d)\n", st.SupervisorPID)
-		// SIGTERM triggers the supervisor's graceful teardown.
-		stopByPID(st.SupervisorPID)
+		// Ask the supervisor to tear the stack down gracefully (a SIGTERM
+		// it catches on unix, a named teardown event on Windows). When
+		// the graceful path returns true the supervisor has already
+		// exited; otherwise fall back to a forced termination so a
+		// crashed or unresponsive supervisor never leaves the stack up.
+		if !gracefulStopSupervisor(st.SupervisorPID, paths) {
+			stopByPID(st.SupervisorPID)
+		}
 	} else {
 		// The supervisor is gone but children may have outlived it.
 		// Signal the recorded gateway, controller, and k3s PIDs
@@ -235,6 +257,18 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 		}
 		_ = stopEmbeddedPostgres(st)
 	}
+	// Remove the Docker-backed k3s container (macOS and Windows) by its
+	// recorded handle before removeState and purgeRoot discard it. The
+	// container runs inside the Docker VM with no host PID, so neither the
+	// recorded PIDs the supervisor-gone branch signals nor purgeRoot's
+	// os.RemoveAll reach it; without this removal a crashed supervisor or a
+	// --purge orphans the container with no recorded handle to find it by.
+	// On the live-supervisor path the graceful Stack.Stop already removed
+	// it, so this docker rm is a benign no-op; the handle is empty on the
+	// Linux child-process substrate, where RemoveContainer is a no-op too.
+	// spec: §24.19 (lenny up/down manage the substrate; a crashed supervisor
+	// or --purge must not leak the Docker-backed k3s container).
+	removeSubstrateContainer(st.K3sContainer)
 	_ = removeState(paths.StateFile())
 	fmt.Fprintln(out, "lenny down: stack stopped")
 

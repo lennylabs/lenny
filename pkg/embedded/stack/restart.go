@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 	"time"
 )
 
@@ -89,10 +88,11 @@ type restartResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// handleRestartRequest is the supervisor's SIGHUP handler body. It reads
-// the component name the CLI wrote to the request file, restarts that
-// component, writes the result file, and clears the request. A missing
-// or empty request file is ignored so a spurious SIGHUP is harmless.
+// handleRestartRequest is the supervisor's restart-wakeup handler body.
+// It reads the component name the CLI wrote to the request file, restarts
+// that component, writes the result file, and clears the request. A
+// missing or empty request file is ignored so a spurious wakeup is
+// harmless.
 func (s *Stack) handleRestartRequest(ctx context.Context, paths Paths) {
 	reqPath := paths.RestartRequestFile()
 	b, err := os.ReadFile(reqPath)
@@ -134,7 +134,9 @@ type RestartOptions struct {
 // restart the named component, and waits for the supervisor's result.
 // It runs as a short-lived process separate from the supervisor that
 // owns the child processes, so it communicates through the §24.19
-// restart request/result files plus a SIGHUP.
+// restart request/result files plus an OS-specific wakeup (SIGHUP on
+// unix, a named event on Windows) carried by the build-tagged
+// process-control substrate.
 //
 // spec: §24.19 line 264.
 func RunRestart(ctx context.Context, opts RestartOptions) error {
@@ -168,7 +170,7 @@ func RunRestart(ctx context.Context, opts RestartOptions) error {
 		return fmt.Errorf("write restart request: %w", err)
 	}
 	fmt.Fprintf(out, "lenny restart: restarting %s (supervisor pid %d)\n", opts.Component, st.SupervisorPID)
-	if err := syscall.Kill(st.SupervisorPID, syscall.SIGHUP); err != nil {
+	if err := sendRestartSignal(st.SupervisorPID, paths); err != nil {
 		_ = os.Remove(paths.RestartRequestFile())
 		return fmt.Errorf("signal supervisor: %w", err)
 	}

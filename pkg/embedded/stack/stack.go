@@ -7,19 +7,29 @@
 // configured against them.
 //
 // Embedded Mode uses the production gateway, controllers, CRDs, and
-// storage interfaces. Only the driver selection differs: the embedded
-// backends are reached through the same configuration surface a
+// storage interfaces. Within a host, the driver selection differs: the
+// embedded backends are reached through the same configuration surface a
 // cluster deployment uses (the gateway's --postgres-dsn, --redis-url,
 // and dev-mode flags). There are no mode-dependent code splits in
 // platform business logic; this package is the orchestration layer
-// outside that business logic.
+// outside that business logic. The embedded Kubernetes substrate is
+// provisioned per host operating system (a managed k3s child process on
+// Linux, a Docker-backed k3s container on macOS and Windows), and that
+// provisioning is confined to the substrate layer below the gateway,
+// controllers, CRDs, and storage interfaces, which stay identical across
+// operating systems.
+//
+// spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
+// operating system and stays identical above the substrate layer).
 package stack
 
 import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
@@ -40,6 +50,12 @@ const (
 	defaultHTTPSPort    = 8443
 	defaultPostgresPort = 15433
 	defaultK3sAPIPort   = 6443
+	// defaultGatewayGRPCPort is the host port the gateway's §8.6/§9.1
+	// GatewayControl listener binds. In-cluster agent-pod adapters dial it
+	// to forward platform tool calls and ExtendLease across the host/Docker
+	// boundary; the controller stamps the launcher's externally-reachable
+	// address (GatewayHost():this-port) onto pods. spec: §4.7, §8.6.
+	defaultGatewayGRPCPort = 50061
 )
 
 // Config configures an Up invocation.
@@ -68,7 +84,7 @@ type Stack struct {
 	pg      *postgres.Instance
 	rd      *redis.Server
 	idp     *oidc.Provider
-	k3s     *k3s.Supervisor
+	k3s     k3s.Launcher
 	tls     tlsgen.Material
 	proxy   *tlsProxy
 	gateway *managedProcess
@@ -80,7 +96,7 @@ type Stack struct {
 	// request without tearing the rest of the stack down. ctlSpec.BinPath
 	// is empty when the controller did not start.
 	gwSpec  gatewaySpec
-	ctlSpec controllerSpec
+	ctlSpec ControllerSpec
 }
 
 // Up brings up the Embedded Mode stack. It is idempotent: when a stack
@@ -200,30 +216,19 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	s.idp = idp
 
 	// ----- Embedded Kubernetes layer -----
-	k3sEnabled := false
-	kubeconfig := ""
-	if k3s.SupportedPlatform() {
-		fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
-		sup := k3s.New(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort})
-		if err := sup.Start(ctx); err != nil {
-			// k3s is the §17.4 component most likely to fail on a
-			// constrained host. Route around it: the storage and
-			// identity paths still come up. lenny status reports the
-			// degraded state.
-			fmt.Fprintf(out, "lenny up: WARNING: embedded Kubernetes did not start: %v\n", err)
-			fmt.Fprintln(out, "lenny up: continuing without the embedded cluster; session placement is unavailable")
-		} else {
-			s.k3s = sup
-			k3sEnabled = true
-			kubeconfig = sup.KubeconfigPath()
-			if err := installCRDs(ctx, kubeconfig); err != nil {
-				fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
-			}
-		}
-	} else {
-		fmt.Fprintf(out, "lenny up: embedded Kubernetes is unavailable on this host (k3s requires Linux); "+
-			"the gateway, stores, and identity provider still come up\n")
-	}
+	// The substrate provisions on every host the launcher supports: a
+	// managed k3s child process on Linux, a Docker-backed k3s container
+	// under Docker Desktop's Linux VM on macOS and Windows. On those hosts
+	// the CRDs install and the controllers run against the launcher's
+	// (host-rewritten) kubeconfig, the same as on Linux; only the
+	// substrate provisioning below the gateway/controllers/CRDs differs.
+	// spec: §17.4 (the embedded Kubernetes substrate is provisioned per
+	// host operating system, and stays identical above the substrate
+	// layer).
+	sub := s.provisionSubstrate(ctx, paths, out)
+	k3sEnabled := sub.enabled
+	kubeconfig := sub.kubeconfig
+	gatewayGRPCDialAddr := sub.gatewayGRPCDialAddr
 
 	// ----- Production gateway -----
 	fmt.Fprintln(out, "lenny up: starting the gateway")
@@ -245,6 +250,17 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		OIDCKeyFile:      paths.OIDCKeyFile(),
 		KMSMasterKeyFile: paths.KMSMasterKey(),
 		ArtifactsDir:     paths.Artifacts,
+	}
+	// Bind the §8.6/§9.1 GatewayControl listener only when an embedded
+	// cluster is up: it serves the in-cluster agent-pod adapter, so without
+	// a cluster there is no adapter to serve. The listener binds all host
+	// interfaces (an empty host in :<port>) so the in-cluster adapter under
+	// the Docker VM reaches it across the host/Docker boundary; binding
+	// loopback would make it unreachable from the Docker VM. The controller
+	// stamps the matching substrate-specific dial host onto pods. spec:
+	// §4.7, §8.6.
+	if k3sEnabled {
+		s.gwSpec.GRPCAddr = fmt.Sprintf(":%d", defaultGatewayGRPCPort)
 	}
 	gw, err := startGateway(s.gwSpec)
 	if err != nil {
@@ -270,11 +286,12 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		if err != nil {
 			fmt.Fprintf(out, "lenny up: WARNING: controller binary not found: %v\n", err)
 		} else {
-			s.ctlSpec = controllerSpec{
-				BinPath:     ctlBin,
-				PostgresDSN: dsn,
-				Kubeconfig:  kubeconfig,
-				LogPath:     paths.Logs + "/controller.log",
+			s.ctlSpec = ControllerSpec{
+				BinPath:         ctlBin,
+				PostgresDSN:     dsn,
+				Kubeconfig:      kubeconfig,
+				GatewayGRPCAddr: gatewayGRPCDialAddr,
+				LogPath:         paths.Logs + "/controller.log",
 			}
 			ctl, err := startController(s.ctlSpec)
 			if err != nil {
@@ -309,7 +326,12 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		st.ControllerPID = s.control.PID()
 	}
 	if s.k3s != nil {
+		// The Linux launcher records a host PID; the Docker-backed
+		// launcher records its container name instead, because its k3s
+		// runs inside the Docker VM with no host PID. lenny status probes
+		// whichever handle is set. spec: §24.19.
 		st.K3sPID = s.k3s.PID()
+		st.K3sContainer = k3sContainerHandle(s.k3s)
 	}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		return nil, err
@@ -365,10 +387,124 @@ func (s *Stack) CACertPath() string { return s.tls.CACertPath }
 // OIDC returns the embedded OIDC provider for the running stack.
 func (s *Stack) OIDC() *oidc.Provider { return s.idp }
 
+// substrateResult is the outcome of provisionSubstrate: whether the
+// embedded cluster came up, the admin kubeconfig path, and the §4.7
+// gateway↔adapter callback address the controller stamps onto agent pods.
+type substrateResult struct {
+	enabled             bool
+	kubeconfig          string
+	gatewayGRPCDialAddr string
+}
+
+// Substrate-provisioning seams. They default to the real k3s launcher and
+// CRD install and are package-level vars so a unit test can substitute a
+// fake launcher and assert the per-OS substrate-selection logic without
+// downloading and running real k3s, mirroring the runDocker injection on
+// the Docker-backed launcher. spec: §17.4 (the substrate is provisioned per
+// host operating system; the gateway/controllers/CRDs above it stay
+// identical).
+var (
+	substrateSupported   = k3s.SupportedPlatform
+	newSubstrate         = k3s.New
+	installSubstrateCRDs = InstallCRDs
+	// removeSubstrateContainer force-removes the Docker-backed k3s container
+	// by its recorded handle. lenny down calls it on the crashed-supervisor
+	// teardown path and lenny down --purge calls it before discarding the
+	// state directory that holds the handle, so neither orphans the container
+	// the graceful Stack.Stop path would have removed. It is a package-level
+	// var so a unit test can assert the teardown removes the recorded
+	// container without invoking a real docker. spec: §24.19 (a crashed
+	// supervisor must not leak the Docker-backed k3s container).
+	removeSubstrateContainer = k3s.RemoveContainer
+)
+
+// provisionSubstrate brings the embedded Kubernetes substrate up on every
+// host the launcher supports: a managed k3s child process on Linux, a
+// Docker-backed k3s container under Docker Desktop's Linux VM on macOS and
+// Windows. It installs the CRDs against the launcher's (host-rewritten)
+// kubeconfig and computes the §4.7 gateway↔adapter callback address from the
+// launcher's substrate-specific host. The OS branch is confined to this
+// provisioning layer; the gateway, controllers, CRDs, and storage
+// interfaces above it are byte-identical across operating systems. A
+// substrate that fails to start is routed around: the storage and identity
+// paths still come up and lenny status reports the degraded state.
+//
+// spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
+// operating system, and stays identical above the substrate layer), §4.7,
+// §8.6, §9.1.
+func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, out io.Writer) substrateResult {
+	if !substrateSupported() {
+		// On a non-Linux host the embedded k3s runs under Docker Desktop's
+		// Linux VM, so the platform is unsupported only when Docker is
+		// absent. spec: §17.4 (Docker Desktop is the macOS/Windows
+		// prerequisite that supplies the Linux kernel the embedded k3s needs).
+		fmt.Fprintf(out, "lenny up: embedded Kubernetes is unavailable on this host "+
+			"(macOS and Windows require Docker Desktop to run the embedded k3s under its Linux VM); "+
+			"the gateway, stores, and identity provider still come up\n")
+		return substrateResult{}
+	}
+	fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
+	sup := newSubstrate(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort})
+	if err := sup.Start(ctx); err != nil {
+		// k3s is the §17.4 component most likely to fail on a constrained
+		// host. Route around it: the storage and identity paths still come
+		// up. lenny status reports the degraded state.
+		fmt.Fprintf(out, "lenny up: WARNING: embedded Kubernetes did not start: %v\n", err)
+		fmt.Fprintln(out, "lenny up: continuing without the embedded cluster; session placement is unavailable")
+		return substrateResult{}
+	}
+	s.k3s = sup
+	res := substrateResult{
+		enabled:    true,
+		kubeconfig: sup.KubeconfigPath(),
+		// Compute the gateway's externally-reachable gRPC address from the
+		// launcher's substrate-specific host. The §4.7 placement and adapter
+		// business logic above this point is unaware of the substrate; only
+		// this provisioning layer branches per OS.
+		gatewayGRPCDialAddr: gatewayGRPCAddr(sup.GatewayHost(), defaultGatewayGRPCPort),
+	}
+	if err := installSubstrateCRDs(ctx, res.kubeconfig); err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
+	}
+	return res
+}
+
 // gatewayHealthy reports whether the gateway at baseURL answers its
 // liveness probe.
 func gatewayHealthy(ctx context.Context, baseURL string) bool {
 	return probeHealthz(ctx, baseURL) == nil
+}
+
+// gatewayGRPCAddr joins the substrate launcher's gateway host and the
+// gateway gRPC host port into the §8.6/§9.1 GatewayControl address the
+// controller stamps onto agent pods. The host comes from the launcher
+// (GatewayHost): 127.0.0.1 on the Linux child-process launcher, where the
+// gateway and pods share the host, and host.docker.internal on the
+// Docker-backed launcher, where pods run inside the Docker VM and reach
+// the host gateway through that alias. Confining the substrate branch to
+// the host the launcher returns keeps the §4.7 pod-spec/adapter business
+// logic substrate-agnostic. net.JoinHostPort is used so the address is
+// well-formed for any host form. The function is pure so it is unit-tested
+// directly. spec: §4.7, §8.6, §9.1, §17.4.
+func gatewayGRPCAddr(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// k3sContainerHandle returns the docker container name a Docker-backed
+// k3s launcher runs under, or "" for the Linux managed-child-process
+// launcher (which records a host PID instead). The launcher exposes the
+// handle through an optional ContainerName method; the type assertion
+// keeps the substrate-specific container knowledge out of the k3s
+// Launcher interface, which the Linux launcher would otherwise have to
+// stub.
+//
+// spec: §24.19 (a container-backed launcher records a container handle
+// where there is no host PID).
+func k3sContainerHandle(l k3s.Launcher) string {
+	if c, ok := l.(interface{ ContainerName() string }); ok {
+		return c.ContainerName()
+	}
+	return ""
 }
 
 // purgeRoot removes the entire Embedded Mode state directory. lenny
