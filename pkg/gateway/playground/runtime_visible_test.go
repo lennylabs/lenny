@@ -128,3 +128,39 @@ func TestPlaygroundPickerFiltersAllowedRuntimes_spec_27_5_190(t *testing.T) {
 		}
 	}
 }
+
+// TestPlaygroundStoresEffectiveScope_spec_27_3_1 pins the §27.3.1 → §27.4 wiring
+// the SPA needs to gate the delegation-policy affordance: the in-memory state
+// declares effectiveScope before the first mint, mintBearer stores the mint
+// response's effectiveScope field, and a hasScope helper probes
+// tools:sessions:write while honoring the tools:sessions:* and tools:* wildcards
+// per the gateway scopes.Set.Matches semantics. The bundle is plain ES2017 with
+// no build step, so the test inspects its source for these surfaces directly.
+// F-27.4.5.
+func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
+	app := readUIAsset(t, "app.js")
+	// The state initializer declares effectiveScope so the §27.4 gate reads a
+	// defined value before the first mint completes (proposal §3.4).
+	if !strings.Contains(app, `effectiveScope: ""`) {
+		t.Errorf("app.js state initializer must declare effectiveScope")
+	}
+	// mintBearer stores the §27.3.1 mint-response effectiveScope field.
+	if !strings.Contains(app, "state.effectiveScope = body.effectiveScope") {
+		t.Errorf("app.js mintBearer must store body.effectiveScope into state.effectiveScope")
+	}
+	// The hasScope helper gates the delegation field on the minted bearer's
+	// effective scope (proposal §3.5). It probes a domain:domain-resource:action
+	// target (such as tools:sessions:write), reads the stored effective scope,
+	// and honors the tools:sessions:* and tools:* wildcards.
+	for _, marker := range []string{
+		"function hasScope(target)",              // the helper exists
+		"state.effectiveScope",                   // it reads the stored scope
+		`var want = target.split(":")`,           // it parses the probe target (e.g. tools:sessions:write)
+		`have[1] === "*" && have[2] === "*"`,     // tools:* matches everything
+		`have[2] === "*" || have[2] === want[2]`, // action wildcard (tools:sessions:*) or exact match
+	} {
+		if !strings.Contains(app, marker) {
+			t.Errorf("app.js hasScope helper must contain %q", marker)
+		}
+	}
+}
