@@ -88,7 +88,7 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 |:--------|:-------|:------|
 | `echo` (compliance reference) | Shipped | Basic-level adapter embedded in the platform repo at `cmd/runtimes/echo`. |
 | `streaming-echo` (CI test runtime) | Shipped | Full-level lifecycle runtime at `cmd/runtimes/streaming-echo`. Passes `lenny runtime validate` at the Basic and Full levels. |
-| `chat` | Not started | Generic LLM chat, no tools. Standard integration level. |
+| `chat` | Not started | Generic LLM chat, no tools. Full integration level. |
 | `claude-code` | Not started | Anthropic Claude Code CLI under gVisor. |
 | `gemini-cli` | Not started | Google Gemini CLI under gVisor. |
 | `codex` | Not started | OpenAI Codex CLI under gVisor. |
