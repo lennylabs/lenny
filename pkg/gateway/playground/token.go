@@ -38,13 +38,19 @@ var playgroundAllowedScope = []string{
 }
 
 // tokenResponse is the §27.3.1 POST /v1/playground/token success
-// body.
+// body. EffectiveScope mirrors the minted JWT's scope claim — the
+// space-separated intersection(subject.scope, playground_allowed_scope)
+// — so the SPA can gate scope-conditional §27.4 affordances (the
+// delegation-policy selection) without decoding the bearer.
+//
+// spec: §27.3.1 mint response; §25.1 "Playground-allowed scope set".
 type tokenResponse struct {
 	BearerToken      string `json:"bearerToken"`
 	TokenType        string `json:"tokenType"`
 	ExpiresInSeconds int64  `json:"expiresInSeconds"`
 	Reusable         bool   `json:"reusable"`
 	IssuedAt         string `json:"issuedAt"`
+	EffectiveScope   string `json:"effectiveScope"`
 }
 
 // handleToken serves POST /v1/playground/token: the §27.3.1
@@ -314,6 +320,10 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		ExpiresInSeconds: int64(h.cfg.BearerTTL / time.Second),
 		Reusable:         true,
 		IssuedAt:         now.Format(time.RFC3339),
+		// spec: §27.3.1 — EffectiveScope carries the same narrowed value
+		// the bearer holds (set on the JWT scope claim above), so the SPA
+		// reads it without decoding the token.
+		EffectiveScope: narrowed,
 	})
 }
 
