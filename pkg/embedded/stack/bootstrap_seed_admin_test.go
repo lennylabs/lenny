@@ -84,14 +84,15 @@ func TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2(t *testing.
 		t.Errorf("claude-code allowedResourceClasses not stored: %+v", cc.AllowedResourceClasses)
 	}
 
-	// spec: §26.1 line 22 — chat is Standard and carries the small
+	// spec: §26.1 line 22 / §26.7 — chat is Full (hotRotation: true
+	// requires the Full-only lifecycle channel) and carries the small
 	// resource class only.
 	chat, err := runtimes.Get(context.Background(), "chat")
 	if err != nil {
 		t.Fatalf("get chat: %v", err)
 	}
-	if string(chat.IntegrationLevel) != "standard" {
-		t.Errorf("chat integrationLevel = %q, want standard", chat.IntegrationLevel)
+	if string(chat.IntegrationLevel) != "full" {
+		t.Errorf("chat integrationLevel = %q, want full", chat.IntegrationLevel)
 	}
 	if len(chat.AllowedResourceClasses) != 1 || chat.AllowedResourceClasses[0] != "small" {
 		t.Errorf("chat allowedResourceClasses = %v, want [small]", chat.AllowedResourceClasses)

@@ -19,7 +19,7 @@ This appendix catalogs the **reference runtimes** shipped by the Lenny project a
 | `gemini-cli`       | Coding agent    | Full     | Google's Gemini CLI inside a Lenny-managed sandbox                               |
 | `codex`            | Coding agent    | Full     | OpenAI's Codex CLI inside a Lenny-managed sandbox                                |
 | `cursor-cli`       | Coding agent    | Full     | Cursor's agent CLI inside a Lenny-managed sandbox                                |
-| `chat`             | General-purpose | Standard | "Talk to an LLM" with no tools; demonstrates the minimum useful runtime          |
+| `chat`             | General-purpose | Full     | "Talk to an LLM" with no tools; demonstrates the minimum useful runtime          |
 | `langgraph`        | Framework       | Full     | LangGraph graph-based agents (Python)                                            |
 | `mastra`           | Framework       | Full     | Mastra agent framework (TypeScript)                                              |
 | `openai-assistants`| Framework       | Full     | OpenAI Assistants API-compatible runtime                                         |

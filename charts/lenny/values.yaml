@@ -2944,14 +2944,14 @@ referenceRuntimes:
         warmCount: 2
         resourceClass: medium
         egressProfile: restricted
-    # spec: §26.1 line 22 anchors `chat` at Standard ("the minimum useful
-    # runtime"). Every other reference runtime is Full; the chart value
-    # MUST match the spec catalog row so the registered Runtime CRD
-    # advertises the §15.4.6 conformance battery the chat runtime
-    # actually implements. F-26.1.1.
+    # spec: §26.1 line 22 anchors `chat` at Full ("the minimum useful
+    # runtime"); hotRotation: true requires the Full-only lifecycle
+    # channel (§15.4.3). The chart value MUST match the spec catalog row
+    # so the registered Runtime CRD advertises the §15.4.6 conformance
+    # battery the chat runtime implements. F-26.7.1 (supersedes F-26.1.1).
     - name: chat
       image: ghcr.io/lennylabs/runtime-chat@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      integrationLevel: standard
+      integrationLevel: full
       allowedResourceClasses: [small]
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
       # spec: §26.7 lines 318-352 — chat is multi_turn but supports only

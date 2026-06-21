@@ -45276,6 +45276,8 @@ The integration level is fixed by §26.1 and `runtime.yaml` is the authoritative
 
 **Resolution:** `charts/lenny/values.yaml` chat entry now declares `integrationLevel: standard` per §26.1 line 22, matching the embedded-stack catalog (`pkg/embedded/stack/catalog.go`) and the compliance catalog (`pkg/compliance/reference_catalog.yaml`). New helm-unittest case `registers chat at integrationLevel standard per §26.1 line 22` guards the regression.
 
+**Superseded by F-26.7.1 (proposal 0014, 2026-06-21). Stays CLOSED; it is not reopened.** This finding's chart-to-Standard resolution was correct against §26.1 line 22 at the time it was applied. Proposal 0014 later reconciled the §26.1 contradiction toward **Full** (the internally coherent side per `hotRotation: true`; see F-26.7.1 above), which reverses this resolution. The chart now reads `integrationLevel: full` (`charts/lenny/values.yaml`, commit 440c4b27) and the helm-unittest case asserts `full` (`charts/lenny/tests/reference-runtimes_test.yaml`, renamed to `registers chat at integrationLevel full per §26.1 line 22`, commit 440c4b27). The reversal is a consequence of the later spec reconciliation rather than a defect in this finding's own remediation, so F-26.1.1 remains CLOSED per proposal 0014 §8 decision 1. A future reader must not re-flip the chart to Standard: §26.1 line 22 no longer says Standard.
+
 ---
 
 ### - [x] F-26.1.2 — 1-02 — Helm chart bypass: `referenceRuntimes.enabled: false` produces an installation with no reference runtimes registered [Medium] — CLOSED
@@ -46187,7 +46189,7 @@ Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md` lines 30
 
 ### Findings
 
-### - [ ] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — DEFERRED
+### - [x] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — CLOSED
 - §26.1 catalog table (line 22) lists `chat` as **Standard**.
 - §26.7 body lists `chat` as **Full** in three places: prose line 309 ("smallest useful Full-level runtime"), Conformance level line 313 ("Full"), and YAML highlights line 322 (`integrationLevel: full`).
 - Implementation (`pkg/embedded/stack/catalog.go` line 66, `pkg/embedded/stack/catalog_test.go` lines 36–39, `pkg/compliance/reference_catalog.yaml` line 56) all hard-code `standard`, citing §26.1.
@@ -46211,6 +46213,18 @@ once one gives, the catalog entry / compliance YAML / test assertion re-align in
 trivial follow-up.
 
 **Heading reconciled (this batch, stale-OPEN → DEFERRED).** Driver reopened the heading; re-confirmed the implementation is internally consistent on `standard` (catalog.go, reference_catalog.yaml, the catalog test) and §26.7 lines 309/313/322 still say `full`. Required spec change: reconcile §26.1 line 22 (`Standard`) with §26.7 lines 309/313/322 (`Full`). No code change closes a spec-internal disagreement; heading flipped to match the body.
+
+**CLOSED (proposal 0014, 2026-06-21).** The spec arbitration the deferral awaited was performed by proposal `0014_fix_reconcile-the-chat-reference-runtime-to-full-across-spec-26-.md`, which reconciled §26.1 line 22 to **Full** — the internally coherent side, because §26.7 declares `credentialCapabilities.hotRotation: true` (line 336) and in-place hot rotation depends on the Full-only lifecycle channel per §4 (`spec/04_system-components.md:1474`) and the §15.4.3 level matrix (`spec/15_external-api-surface.md:2119,2122`). A Standard `chat` advertising `hotRotation: true` cannot deliver it. Three of the four spec assertions (§26.7 lines 309/313/322) already read Full; the lone §26.1 cell was the defect and now reads Full. Every implementation, chart, and test site that hard-coded the Standard side was flipped to Full, with the §26.1-citing comments reworded so the prose no longer asserts `chat` is Standard:
+- `pkg/embedded/stack/catalog.go` — `chat` entry `IntegrationLevel: "full"`; per-entry and package comments reworded (commit 20fbd866).
+- `pkg/compliance/reference_catalog.yaml` — `chat` `level: full` (commit 4584d7c5).
+- `pkg/embedded/stack/catalog_test.go` — `TestReferenceRuntimesIntegrationLevels` lost the dead `chat` special-case branch; every reference runtime now expects `full` (commit 20fbd866).
+- `pkg/embedded/stack/bootstrap_seed_admin_test.go` — `chat` integration-level assertion now expects `full`, comment reworded (commit 20fbd866).
+- `tests/tier10_conformance/scaffolds_test.go` — `TestReferenceCatalogNightly` `wantNames` `chat` entry now `compliance.LevelFull` (commit 4584d7c5).
+- `charts/lenny/values.yaml` — `chat` `integrationLevel: full`, comment reworded to cite F-26.7.1 (commit 440c4b27).
+- `charts/lenny/tests/reference-runtimes_test.yaml` — helm-unittest case `registers chat at integrationLevel full per §26.1 line 22` asserts `full` (commit 440c4b27).
+- `docs/about/status.md` — reference-runtime catalog `chat` row Notes cell now reads "Full integration level" (commit c5e3dacf).
+
+The orphan `cmd/lenny-compliance/reference-catalog.yaml`, a byte-identical copy of `pkg/compliance/reference_catalog.yaml` with no `//go:embed`, no path reader, and no drift guard, was deleted (commit 00e18954, §3.5 path 1 / §8 decision 2). See F-26.1.1 (below) for the reversal of its chart-to-Standard resolution.
 
 ### - [x] F-26.7.2 — (Info) — Image tag matches §26.7 YAML highlights [Medium] — CLOSED
 `ghcr.io/lennylabs/runtime-chat:1.0.0` in `catalog.go` line 65 matches the spec line 320 image tag exactly. Digest is a placeholder per the §17.4 pattern documented in `catalog.go` lines 19–30; on first session start the gateway will fail the pull until the operator re-registers with the published digest or imports the image locally. Noted as expected behavior, not a defect.
