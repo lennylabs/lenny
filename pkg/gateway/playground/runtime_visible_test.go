@@ -164,3 +164,51 @@ func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
 		}
 	}
 }
+
+// TestPlaygroundGatesDelegationField_spec_27_4_item2 pins the §27.4 item 2
+// delegation-policy gate and its create-payload wire-key. The field is a
+// client-side visibility affordance: renderSessionConfig computes canDelegate
+// from hasScope("tools:sessions:write") and emits the delegation label and
+// input only when canDelegate is true (relying on el's null-child skip). The
+// create payload sets the nested delegationLease.delegationPolicyRef field the
+// server decodes, guarded on canDelegate so an undefined delegationField is
+// never dereferenced when the affordance is hidden, and the obsolete flat
+// delegationPolicyId key is gone. The bundle is plain ES2017 with no build
+// step, so the test inspects its source for these surfaces directly.
+// F-27.4.5.
+func TestPlaygroundGatesDelegationField_spec_27_4_item2(t *testing.T) {
+	app := readUIAsset(t, "app.js")
+	// renderSessionConfig gates the delegation affordance on the minted
+	// bearer's effective scope granting tools:sessions:write (proposal §3.5).
+	for _, marker := range []string{
+		`var canDelegate = hasScope("tools:sessions:write")`,                         // the gate is computed from hasScope
+		`canDelegate ? el("label", { text: "Delegation policy (optional)" }) : null`, // label is null-skipped when ungated
+		"canDelegate ? delegationField : null",                                       // input is null-skipped when ungated
+	} {
+		if !strings.Contains(app, marker) {
+			t.Errorf("app.js renderSessionConfig must gate the delegation field: missing %q", marker)
+		}
+	}
+	// The "(requires scope)" qualifier is dropped because visibility is now
+	// gated; the field is shown only to callers who hold the scope.
+	if strings.Contains(app, "requires scope") {
+		t.Errorf("app.js must drop the '(requires scope)' qualifier now that visibility is gated")
+	}
+	// The create payload emits the nested delegationLease.delegationPolicyRef
+	// key the server decodes (proposal §3.6), guarded on canDelegate and a
+	// defined delegationField so the affordance-hidden path never dereferences
+	// an undefined field.
+	for _, marker := range []string{
+		"if (canDelegate && delegationField && delegationField.value.trim())",
+		"payload.delegationLease = { delegationPolicyRef: delegationField.value.trim() }",
+	} {
+		if !strings.Contains(app, marker) {
+			t.Errorf("app.js create payload must set delegationLease.delegationPolicyRef: missing %q", marker)
+		}
+	}
+	// The old flat top-level delegationPolicyId payload key, which the server
+	// never decoded and silently dropped, must be gone.
+	if strings.Contains(app, "delegationPolicyId") {
+		t.Errorf("app.js must not emit the flat delegationPolicyId key; it was never decoded by the server")
+	}
+}

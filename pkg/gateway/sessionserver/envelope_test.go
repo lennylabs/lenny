@@ -371,3 +371,45 @@ func TestCreateEchoesPoolAndDelegationLease_spec_14(t *testing.T) {
 		t.Errorf("stored delegationLease: got %+v", row.DelegationLeaseRequest)
 	}
 }
+
+// TestCreateDecodesPlaygroundDelegationLeaseWireKey_spec_27_4 confirms the
+// §27.4 playground SPA's create body reaches the server's delegation-policy
+// field. The SPA now emits the nested delegationLease.delegationPolicyRef key
+// (proposal §3.6), replacing the flat delegationPolicyId key the create
+// decoder never read. This anchors on the raw playground-shaped JSON body —
+// exactly the bytes the SPA POSTs — and confirms the decode populates
+// row.DelegationLeaseRequest.DelegationPolicyRef. It also confirms the obsolete
+// flat key is silently ignored (no DisallowUnknownFields on the decoder), so a
+// stray flat key never bleeds into the stored lease.
+// diagnosis: a failure means the §27.4 delegation-policy selection no longer
+// reaches the server's delegationLease.delegationPolicyRef field — either the
+// SPA wire-key and the server decode disagree, or the create decoder changed
+// its handling of the nested delegationLease block.
+// spec: §27.4 (playground delegation-policy field), §14 (CreateSessionRequest
+// outer fields), §08.3 (delegation policy resource).
+func TestCreateDecodesPlaygroundDelegationLeaseWireKey_spec_27_4(t *testing.T) {
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock: clock, IDFunc: func() string { return "sess_pg" },
+		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+	})
+	// The exact JSON the §27.4 SPA emits for a filled delegation selection:
+	// the nested delegationLease.delegationPolicyRef key with only the policy
+	// ref set (the playground UI sends neither maxDepth nor maxChildrenTotal).
+	body := []byte(`{
+		"runtimeRef": "claude-code",
+		"runtimeOptions": {},
+		"labels": {},
+		"delegationLease": {"delegationPolicyRef": "reviewer-policy"}
+	}`)
+	rr := createRequestRaw(t, srv.Handler(), body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_pg")
+	if row.DelegationLeaseRequest == nil || row.DelegationLeaseRequest.DelegationPolicyRef != "reviewer-policy" {
+		t.Errorf("playground delegationLease.delegationPolicyRef did not reach the store: got %+v", row.DelegationLeaseRequest)
+	}
+}
