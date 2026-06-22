@@ -334,9 +334,17 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// ----- §26 reference runtimes -----
 	// Pass the import-time-resolved echo image reference so the bootstrap seed
 	// registers the echo runtime under the same digest the applied Runtime CR
-	// and the containerd image carry; an empty reference (substrate down or
-	// import failed) leaves the echo seed on its sentinel placeholder, which
-	// the gateway never places against because AgentNamespace is unset too.
+	// and the containerd image carry. The echo tarball ships with the lenny
+	// binary and is imported at every bring-up where the substrate is up, so a
+	// non-empty reference is the expected steady state whenever k3sEnabled is
+	// true; an empty reference there means the import failed, an edge this
+	// bring-up does not treat as a normal degraded mode. AgentNamespace is set
+	// on k3sEnabled alone (above), so on the k3s-up-but-import-failed edge the
+	// gateway still routes through the §4.7 pod path against the sentinel-pinned
+	// echo seed (no Runtime CR is applied, since the CR apply is gated on a
+	// resolved digest) and an echo session fails to start. The gateway keeps the
+	// in-process echo executor only when the substrate is down (k3sEnabled
+	// false), matching the first k3sEnabled block above.
 	// spec: §15.4.4 (echo exemplar), §4.7 (digest-pinned pod image).
 	fmt.Fprintln(out, "lenny up: installing reference runtimes")
 	if err := installReferenceRuntimes(ctx, "http://"+httpAddr, sub.echoImageRef, out); err != nil {

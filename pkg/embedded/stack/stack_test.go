@@ -323,12 +323,16 @@ func TestProvisionSubstrateActivatesPlacement_spec_4_7(t *testing.T) {
 }
 
 // TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7 covers the
-// fail-closed gating: when the echo image import resolves no digest (the
+// Runtime-CR apply gate: when the echo image import resolves no digest (the
 // substrate is up but the tarball is missing or containerd is unreachable), the
-// Runtime CR is not applied. Applying a CR carrying a sentinel digest no
-// containerd image matches would only ImagePullBackOff, so the bring-up keeps
-// the gateway on the in-process echo executor instead. The namespace is still
-// created, since it is independent of the image.
+// Runtime CR is not applied, because applying a CR carrying a sentinel digest no
+// containerd image matches would only ImagePullBackOff. The namespace is still
+// created, since it is independent of the image. This edge does not degrade to
+// the in-process echo executor: AgentNamespace is gated on k3sEnabled alone, so
+// with k3s up the gateway still routes through the §4.7 pod path and an echo
+// session fails to start; the echo tarball ships with the binary and imports at
+// every bring-up, so an unresolved digest while k3s is up is not an expected
+// steady state.
 //
 // spec: §4.7 (the digest-pinned pod image requires the import to resolve), §5.1.
 func TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7(t *testing.T) {
@@ -343,6 +347,15 @@ func TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7(t *testing.T) 
 	if res.echoImageRef != "" {
 		t.Errorf("echoImageRef = %q, want empty when the import resolves no digest", res.echoImageRef)
 	}
+	// The substrate stays enabled on an import failure: only the Runtime-CR
+	// apply is image-gated, k3s itself is up. Up's gateway block keys
+	// AgentNamespace off this enabled flag (k3sEnabled) alone, so the gateway
+	// routes through the §4.7 pod path here rather than degrading to the
+	// in-process echo executor. TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate
+	// pins that gating contract directly.
+	if !res.enabled {
+		t.Error("an import failure disabled the substrate; the gateway AgentNamespace gate keys off enabled (k3sEnabled), so the substrate must stay up")
+	}
 	if calls.namespaceCreated != agentNamespace {
 		t.Errorf("agent namespace created = %q, want %q (independent of the image)", calls.namespaceCreated, agentNamespace)
 	}
@@ -351,6 +364,82 @@ func TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7(t *testing.T) 
 	}
 	if calls.crApplied {
 		t.Error("Runtime CR was applied despite an unresolved image; the CR apply must be gated on a resolved digest")
+	}
+}
+
+// TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate_spec_4_7
+// pins the actual gateway AgentNamespace gating contract that Up relies on:
+// Up sets s.gwSpec.AgentNamespace inside `if k3sEnabled`, where k3sEnabled is
+// exactly provisionSubstrate's returned enabled flag (stack.go: `k3sEnabled :=
+// sub.enabled`). The gate keys off the substrate being up alone, never off
+// sub.echoImageRef. This test asserts that across both the import-succeeds and
+// the import-fails edges (k3s up in both) provisionSubstrate returns
+// enabled:true, so Up sets AgentNamespace in both, while only the
+// substrate-down case returns enabled:false and leaves AgentNamespace unset.
+// It documents the real behavior rather than a fail-closed degrade: on the
+// import-failed-but-k3s-up edge the gateway still routes through the §4.7 pod
+// path against the sentinel echo seed (no Runtime CR applied) and an echo
+// session fails to start; the echo tarball ships with the binary and imports at
+// every bring-up, so an unresolved digest while k3s is up is not an expected
+// steady state. spec: §4.7 (AgentNamespace is gated on the substrate alone),
+// §17.4 (Embedded Mode activates placement when the substrate is up).
+func TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate_spec_4_7(t *testing.T) {
+	const resolved = "ghcr.io/lennylabs/runtime-echo-embedded@sha256:" +
+		"5555555555555555555555555555555555555555555555555555555555555555"
+	cases := []struct {
+		name          string
+		supported     bool
+		startErr      error
+		resolvedImage string
+		wantEnabled   bool
+	}{
+		{
+			name:          "k3s up and import resolves a digest sets AgentNamespace",
+			supported:     true,
+			resolvedImage: resolved,
+			wantEnabled:   true,
+		},
+		{
+			name:          "k3s up but import resolves no digest still sets AgentNamespace",
+			supported:     true,
+			resolvedImage: "", // import failed; the §4.7 pod path is still active
+			wantEnabled:   true,
+		},
+		{
+			name:          "substrate down leaves AgentNamespace unset",
+			supported:     false,
+			resolvedImage: "",
+			wantEnabled:   false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeLauncher{startErr: tc.startErr, gatewayHost: "127.0.0.1", kubeconfig: "/k/kubeconfig.yaml"}
+			withSubstrateSeams(t, tc.supported, fake, nil)
+			withActivationSeams(t, tc.resolvedImage)
+
+			s := &Stack{}
+			var out strings.Builder
+			res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+
+			// Up gates the gateway's AgentNamespace on `k3sEnabled := sub.enabled`
+			// alone. Replicate that exact gating decision and assert the resulting
+			// AgentNamespace state matches the actual landed behavior.
+			gotAgentNamespace := ""
+			if res.enabled {
+				gotAgentNamespace = agentNamespace
+			}
+			wantAgentNamespace := ""
+			if tc.wantEnabled {
+				wantAgentNamespace = agentNamespace
+			}
+			if res.enabled != tc.wantEnabled {
+				t.Errorf("sub.enabled = %v, want %v (the gateway AgentNamespace gate keys off this)", res.enabled, tc.wantEnabled)
+			}
+			if gotAgentNamespace != wantAgentNamespace {
+				t.Errorf("gateway AgentNamespace = %q, want %q", gotAgentNamespace, wantAgentNamespace)
+			}
+		})
 	}
 }
 

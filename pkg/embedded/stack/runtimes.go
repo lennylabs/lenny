@@ -44,9 +44,13 @@ const defaultTenant = "default"
 // reference the bring-up resolved when it imported the tarball into the
 // embedded containerd; it overwrites the echo seed's sentinel image so the
 // seeded digest equals the applied Runtime CR's and the containerd image's.
-// An empty reference (substrate down or import failed) leaves the echo seed on
-// its sentinel placeholder; the gateway never places against it because
-// AgentNamespace stays unset on that path too.
+// An empty reference leaves the echo seed on its sentinel placeholder. On the
+// substrate-down path (k3sEnabled false) the gateway keeps the in-process echo
+// executor because AgentNamespace stays unset. On the k3s-up-but-import-failed
+// edge AgentNamespace is set (it is gated on k3sEnabled alone), so the gateway
+// routes through the §4.7 pod path against the sentinel record and an echo
+// session fails to start; the echo tarball ships with the binary and imports at
+// every bring-up, so this edge is not an expected steady state.
 //
 // spec: §17.4 (Embedded Mode seed), §5.2 (warm pool), §15.4.4 (echo
 // conformance exemplar), §26.1 (auto-grant), §4.7 (digest-pinned pod image).
