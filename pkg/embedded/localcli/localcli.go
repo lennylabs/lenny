@@ -31,8 +31,10 @@ const (
 	// EMBEDDED_MODE_REQUIRED code: a local command that requires a
 	// running Embedded Mode stack was invoked without one.
 	exitEmbeddedModeRequired = 3
-	// exitK3sUnavailable is §24.19.1 line 282 K3S_UNAVAILABLE.
-	exitK3sUnavailable = 4
+	// exitK3sUnavailable is §24.19.1 line 282 K3S_UNAVAILABLE. The image
+	// bridge that returns this code now lives in pkg/embedded/stack; this
+	// alias keeps a single normative value the CLI dispatch compares against.
+	exitK3sUnavailable = stack.ExitK3sUnavailable
 )
 
 // Supervising reports whether this process was launched as the detached
