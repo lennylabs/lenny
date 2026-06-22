@@ -132,6 +132,55 @@ func TestBuildBootstrapSeedSeedsEchoPool_spec_5_2(t *testing.T) {
 	}
 }
 
+// TestEchoSeedPoolMatchesBootstrapSeed_spec_17_4 asserts the exported
+// EchoSeedPool accessor returns the §17.4 echo warm pool as the poolstore
+// row mapped field-for-field from buildBootstrapSeed, so a materialization
+// witness driving off the accessor exercises the exact row the embedded
+// stack seeds and cannot drift from it undetected. spec: §5.2 (warm pool),
+// §13.2 (per-pool DNS), §17.4 (Embedded Mode seed).
+func TestEchoSeedPoolMatchesBootstrapSeed_spec_17_4(t *testing.T) {
+	seeded := buildBootstrapSeed("").Pools[0]
+	pool := EchoSeedPool()
+
+	if pool.Name != seeded.Name {
+		t.Errorf("EchoSeedPool name = %q, want %q (the seeded echo pool name)", pool.Name, seeded.Name)
+	}
+	// The seed names the §5.2 hot pool echo-pool-embedded, matching the
+	// working Kind precedent; a row named "echo" would resolve a different
+	// SandboxWarmPool than the embedded stack materializes.
+	if pool.Name != "echo-pool-embedded" {
+		t.Errorf("EchoSeedPool name = %q, want echo-pool-embedded", pool.Name)
+	}
+	if pool.RuntimeRef != seeded.RuntimeRef || pool.RuntimeRef != EchoRuntimeName {
+		t.Errorf("EchoSeedPool runtimeRef = %q, want %q", pool.RuntimeRef, EchoRuntimeName)
+	}
+	if pool.WarmCount != seeded.WarmCount || pool.WarmCount != 1 {
+		t.Errorf("EchoSeedPool warmCount = %d, want 1 (single-pod hot pool)", pool.WarmCount)
+	}
+	if pool.ResourceClass != seeded.ResourceClass {
+		t.Errorf("EchoSeedPool resourceClass = %q, want %q", pool.ResourceClass, seeded.ResourceClass)
+	}
+	// §13.2 restricted egress carried from the seed; a witness that omits it
+	// diverges from the row the embedded stack emits.
+	if string(pool.EgressProfile) != seeded.EgressProfile || string(pool.EgressProfile) != "restricted" {
+		t.Errorf("EchoSeedPool egressProfile = %q, want restricted", pool.EgressProfile)
+	}
+	if string(pool.IsolationProfile) != seeded.IsolationProfile || string(pool.IsolationProfile) != "standard" {
+		t.Errorf("EchoSeedPool isolationProfile = %q, want standard", pool.IsolationProfile)
+	}
+	if !pool.AllowStandardIsolation || pool.AllowStandardIsolation != seeded.AllowStandardIsolation {
+		t.Error("EchoSeedPool must set allowStandardIsolation so the gateway admits the explicit standard profile")
+	}
+	if pool.DNSPolicy != seeded.DNSPolicy || pool.DNSPolicy != poolstore.DNSPolicyClusterDefault {
+		t.Errorf("EchoSeedPool dnsPolicy = %q, want cluster-default", pool.DNSPolicy)
+	}
+	// The seed sets no ExecutionMode, so the mapped row carries the empty
+	// default; a witness that fabricates `session` diverges from the seed.
+	if pool.ExecutionMode != "" {
+		t.Errorf("EchoSeedPool executionMode = %q, want empty (the seed sets none)", pool.ExecutionMode)
+	}
+}
+
 // TestBuildBootstrapSeedEchoPoolDNSPolicyAdmissible_spec_13_2 asserts the
 // seeded echo pool's dnsPolicy passes the §13.2 poolstore admission rule:
 // cluster-default is admitted only on a `standard` (runc) pool, which the

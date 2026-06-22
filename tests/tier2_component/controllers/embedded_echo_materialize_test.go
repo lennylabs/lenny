@@ -21,8 +21,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
@@ -86,24 +84,19 @@ func TestEmbeddedEchoPoolMaterializesToWarmPod_spec_17_4(t *testing.T) {
 	const ns = "lenny-agents"
 	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
 
-	// The §17.4 echo warm-pool seed as a poolstore row. These are the exact
-	// field values buildBootstrapSeed emits for the echo pool, pinned by the
-	// tier-1 TestBuildBootstrapSeedSeedsEchoPool_spec_5_2: a single-pod hot pool
-	// (warmCount 1), standard (runc) isolation under the §17.4 local-fidelity
-	// disclosure with the allowStandardIsolation opt-in, and the §13.2
+	// The §17.4 echo warm-pool seed as a poolstore row, sourced from the
+	// embedded stack's real bootstrap seed (stack.EchoSeedPool, which derives
+	// from buildBootstrapSeed) rather than a hand-built literal, so this
+	// materialization witness exercises the exact row the embedded stack emits
+	// and cannot drift from it undetected. The seed is a single-pod hot pool
+	// (warmCount 1) named echo-pool-embedded, runs standard (runc) isolation
+	// under the §17.4 local-fidelity disclosure with the allowStandardIsolation
+	// opt-in and the restricted egress profile, and carries the §13.2
 	// cluster-default DNS opt-out the embedded substrate requires.
+	echoPool := stack.EchoSeedPool()
+	poolName := echoPool.Name
 	store := poolstore.NewMemory()
-	const poolName = "echo"
-	if err := store.Create(ctx, poolstore.Pool{
-		Name:                   poolName,
-		RuntimeRef:             stack.EchoRuntimeName,
-		WarmCount:              1,
-		IsolationProfile:       isolation.Profile("standard"),
-		ExecutionMode:          runtimestore.ExecutionMode("session"),
-		ResourceClass:          "small",
-		AllowStandardIsolation: true,
-		DNSPolicy:              poolstore.DNSPolicyClusterDefault,
-	}); err != nil {
+	if err := store.Create(ctx, echoPool); err != nil {
 		t.Fatalf("seed echo pool row: %v", err)
 	}
 

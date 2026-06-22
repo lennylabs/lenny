@@ -12,6 +12,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/ctl"
 	"github.com/lennylabs/lenny/pkg/embedded/oidc"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/egress"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // defaultTenant is the §17.4 tenant lenny up grants reference-runtime
@@ -285,6 +288,35 @@ func buildBootstrapSeed(echoImageRef string) bootstrapSeed {
 		DNSPolicy:              "cluster-default",
 	})
 	return seed
+}
+
+// EchoSeedPool returns the §17.4 Embedded Mode echo warm pool as the
+// poolstore row the bootstrap seed lands, sourced from buildBootstrapSeed
+// so it cannot drift from the wire seed the embedded stack actually emits.
+// The PoolScalingController materializes this row into the
+// SandboxTemplate/SandboxWarmPool pair (§4.6.2), so a materialization test
+// drives the chain off the real seed rather than a hand-built literal.
+// spec: §5.2 (single-pod hot pool), §13.2 (cluster-default DNS opt-out),
+// §17.4 (Embedded Mode seed).
+func EchoSeedPool() poolstore.Pool {
+	return seedPoolToPoolstore(buildBootstrapSeed("").Pools[0])
+}
+
+// seedPoolToPoolstore maps a bootstrap seedPool wire record into the
+// poolstore.Pool row the gateway bootstrap handler stores
+// (pkg/gateway/admin.applyPoolSeed), so a caller materializing the seed
+// uses the same fields the handler writes. spec: §5.2 (warm pool).
+func seedPoolToPoolstore(p seedPool) poolstore.Pool {
+	return poolstore.Pool{
+		Name:                   p.Name,
+		RuntimeRef:             p.RuntimeRef,
+		WarmCount:              p.WarmCount,
+		ResourceClass:          p.ResourceClass,
+		EgressProfile:          egress.Profile(p.EgressProfile),
+		IsolationProfile:       isolation.Profile(p.IsolationProfile),
+		AllowStandardIsolation: p.AllowStandardIsolation,
+		DNSPolicy:              p.DNSPolicy,
+	}
 }
 
 // seedRuntimeFrom maps a catalog ReferenceRuntime into the bootstrap
