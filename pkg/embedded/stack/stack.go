@@ -441,8 +441,10 @@ type substrateResult struct {
 	// echoImageRef is the digest-pinned echoImageRepository@sha256:<digest>
 	// reference the bring-up resolved when it imported the echo-embedded
 	// tarball into the embedded containerd. It is empty when the substrate
-	// did not come up or the import failed, in which case the gateway keeps
-	// the in-process echo executor. S6 injects it into the bootstrap seed
+	// did not come up or, with the substrate up, the import failed. Only the
+	// substrate-down case keeps the gateway on the in-process echo executor;
+	// with k3s up AgentNamespace stays set and the gateway routes through the
+	// §4.7 pod path regardless. S6 injects it into the bootstrap seed
 	// (overwriting echoRuntime.Image) and the applied echo Runtime CRD.
 	// spec: §24.19.1 (the --file import path), §4.7 (digest-pinned pod image).
 	echoImageRef string
@@ -542,16 +544,18 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 	// apply and bootstrap seed, so the resolved digest-pinned reference is
 	// available to both, gated on the substrate coming up alone (no separate
 	// runnable-image precondition: the tarball ships with the binary). A
-	// failed import leaves echoImageRef empty; the gateway then keeps the
-	// in-process echo executor. spec: §24.19.1 (the --file import path), §17.4
+	// failed import leaves echoImageRef empty, but with k3s up AgentNamespace
+	// stays set, so the gateway routes through the §4.7 pod path and the echo
+	// session fails to start rather than falling back to the in-process echo
+	// executor. spec: §24.19.1 (the --file import path), §17.4
 	// (Embedded Mode bring-up), §4.7 (digest-pinned pod image).
 	res.echoImageRef = importEchoRuntimeImageFn(s, paths.Root, echoTarball, out)
 	// Apply the cluster-scoped echo Runtime CR carrying the import-time-resolved
 	// digest and deploymentModel: embedded. The Sandbox controller resolves the
 	// runtime from a Runtime CR by name, so without this the seeded registry
 	// record and warm pool leave the warm pod failing to render. It runs only
-	// when the import resolved a digest: an empty echoImageRef means the gateway
-	// keeps the in-process echo executor, so applying a CR carrying a sentinel
+	// when the import resolved a digest: an empty echoImageRef means no echo
+	// image reached containerd, so applying a CR carrying a sentinel
 	// digest that no containerd image matches would only ImagePullBackOff. The
 	// seeded digest, the CR digest, and the containerd image digest are
 	// identical because all three resolve from the same imported image. spec:
@@ -572,8 +576,10 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 // resolves the ctr invocation from the live launcher's substrate handle
 // rather than the recorded stack state, because the state file is not
 // written until the end of Up. A failed import is non-fatal: it is logged
-// and the empty return leaves the gateway on the in-process echo executor,
-// mirroring the substrate-unavailable degraded path.
+// and returns the empty string; the caller gates the Runtime-CR apply on a
+// non-empty return. With the substrate up AgentNamespace stays set, so the
+// gateway routes through the §4.7 pod path and echo sessions fail to start
+// rather than falling back to the in-process echo executor.
 //
 // spec: §24.19.1 (the --file import path), §17.4 (Embedded Mode bring-up
 // per host operating system), §4.7 (the digest-pinned embedded pod image).
