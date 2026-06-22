@@ -240,6 +240,81 @@ var referenceRuntimes = []ReferenceRuntime{
 	},
 }
 
+// EchoRuntimeName is the runtime identifier the Embedded Mode bootstrap
+// seeds for the §15.4.4 echo conformance exemplar. The runtime record,
+// the echo warm pool's runtimeRef, and the applied echo Runtime CRD all
+// use this name so the gateway resolves `lenny session new --runtime echo`
+// to the seeded pod path.
+const EchoRuntimeName = "echo"
+
+// echoImageRepository is the canonical OCI repository the embedded echo
+// runtime image is imported into the embedded containerd under. The
+// bring-up resolves the imported image's content digest at `lenny up`
+// time and overwrites echoRuntime.Image with
+// echoImageRepository + "@sha256:<resolved-digest>" before the bootstrap
+// seed and the Runtime-CRD apply read it (S5/S6); the static literal here
+// carries only the sentinel placeholder. spec: §26.2 line 38 (canonical
+// ghcr.io/lennylabs/runtime-<name> path).
+const echoImageRepository = "ghcr.io/lennylabs/runtime-echo-embedded"
+
+// echoImageSentinel is the image reference the static echo catalog entry
+// carries before the bring-up resolves the imported image's real digest.
+// It is digest-pinned (so the entry satisfies the §5.1/§13.1 syntax) but
+// distinct from placeholderDigest so the §26-only placeholder-pinned
+// scans — placeholderPinnedRuntimes and the bootstrap-seed loop — never
+// treat the runnable echo record as a placeholder-pinned §26 entry. The
+// bring-up overwrites it with the import-time-resolved reference. spec:
+// §15.4.4, §17.4.
+const echoImageSentinel = echoImageRepository + "@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+// echoRuntime is the §15.4.4 echo conformance exemplar the Embedded Mode
+// bootstrap seeds as a credential-free, pod-deployable runtime, distinct
+// from the §26 reference runtimes (echo is "a conformance exemplar
+// embedded in the platform repo", §26.1). It is declared outside the
+// referenceRuntimes slice so the §26-only loops — placeholderPinnedRuntimes
+// and the bootstrap-seed runtime loop in buildBootstrapSeed — do not treat
+// it as a placeholder-pinned §26 record; the echo seed is wired
+// explicitly. The entry carries no LLM provider, no supportedProviders,
+// and no credentialCapabilities, so the runtime leases no credentials
+// (§13). echo-embedded is Basic-level (cmd/runtimes/echo-embedded), so the
+// entry declares integrationLevel: basic, and it carries a single-pod warm
+// pool (warmCount: 1, the §5.2 hot-pool taxonomy) so the WarmPoolController
+// pre-warms one echo pod and the first session claims it. The Image is the
+// sentinel placeholder the bring-up overwrites with the import-time-resolved
+// echo-embedded digest (S5/S6).
+//
+// spec: §15.4.4 (echo conformance exemplar), §5.2 (warm pool), §17.4
+// (Embedded Mode seed).
+var echoRuntime = ReferenceRuntime{
+	Name:             EchoRuntimeName,
+	Image:            echoImageSentinel,
+	IntegrationLevel: "basic",
+	Description:      "Credential-free echo conformance exemplar; the pod-deployable runtime lenny up runs out of the box",
+	// echocore consumes one `message` and produces one `response` with no
+	// mid-session injection channel, so the runtime declares the §5.1
+	// one_shot interaction model (multi_turn requires injection.supported,
+	// which echocore has no channel for). spec: §5.1 (interaction model).
+	Capabilities: &runtimeCapabilities{
+		Interaction: "one_shot",
+	},
+	// Credential-free, single-pod, restricted-egress posture matching the
+	// Kind precedent echo-pool-embedded (tests/testinfra/kind/install.sh).
+	DefaultPoolConfig: &defaultPoolConfig{WarmCount: 1, ResourceClass: "small", EgressProfile: "restricted"},
+	// echo carries the credential-free label set: no reference-runtime
+	// marker, no provider. It is the §15.4.4 exemplar rather than a §26
+	// reference runtime.
+	Labels: map[string]string{
+		"lenny.dev/echo-runtime": "true",
+		"maintainer":             "lennylabs",
+	},
+}
+
+// EchoRuntime returns a copy of the §15.4.4 echo conformance-exemplar
+// catalog entry the Embedded Mode stack seeds. spec: §15.4.4, §17.4.
+func EchoRuntime() ReferenceRuntime {
+	return echoRuntime
+}
+
 // ReferenceRuntimes returns a copy of the §26 catalog the Embedded
 // Mode stack installs.
 func ReferenceRuntimes() []ReferenceRuntime {

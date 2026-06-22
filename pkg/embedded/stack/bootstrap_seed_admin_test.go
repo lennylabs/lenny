@@ -56,8 +56,9 @@ func TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2(t *testing.
 	if len(resp.Runtimes.Errors) != 0 {
 		t.Fatalf("runtime registration errors: %+v", resp.Runtimes.Errors)
 	}
-	if resp.Runtimes.CreatedCount != len(referenceRuntimes) {
-		t.Fatalf("created %d runtimes, want %d", resp.Runtimes.CreatedCount, len(referenceRuntimes))
+	// The §26 reference catalog plus the §15.4.4 echo exemplar register.
+	if resp.Runtimes.CreatedCount != len(referenceRuntimes)+1 {
+		t.Fatalf("created %d runtimes, want %d (the §26 catalog plus echo)", resp.Runtimes.CreatedCount, len(referenceRuntimes)+1)
 	}
 
 	// spec: §26.2 — claude-code carries the shared coding-agent blocks.

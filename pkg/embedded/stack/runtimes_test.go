@@ -10,6 +10,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // TestInstallReferenceRuntimesGrantFailureNamesRuntimes_spec_24_3
@@ -89,6 +92,127 @@ func TestInstallReferenceRuntimesWarnsOnPlaceholderDigest_spec_26_3(t *testing.T
 	}
 	if !strings.Contains(got, "lenny image import") {
 		t.Errorf("warning should point at the remediation: %q", got)
+	}
+}
+
+// TestBuildBootstrapSeedSeedsEchoPool_spec_5_2 asserts the §17.4 Embedded
+// Mode seed creates exactly one echo warm pool referencing the echo
+// runtime, with the §5.2 single-pod hot-pool count, the §17.4
+// local-fidelity `standard` (runc) isolation plus the allowStandardIsolation
+// opt-in, and the §13.2 cluster-default DNS opt-out the embedded substrate
+// requires. spec: §5.2, §13.2, §17.4.
+func TestBuildBootstrapSeedSeedsEchoPool_spec_5_2(t *testing.T) {
+	seed := buildBootstrapSeed()
+	if len(seed.Pools) != 1 {
+		t.Fatalf("seed has %d pools, want exactly the echo pool", len(seed.Pools))
+	}
+	p := seed.Pools[0]
+	if p.RuntimeRef != EchoRuntimeName {
+		t.Errorf("echo pool runtimeRef = %q, want %q", p.RuntimeRef, EchoRuntimeName)
+	}
+	// §5.2 hot pool: warmCount 1 yields minWarm = maxWarm = 1, so the
+	// WarmPoolController pre-warms exactly one pod.
+	if p.WarmCount != 1 {
+		t.Errorf("echo pool warmCount = %d, want 1 (single-pod hot pool)", p.WarmCount)
+	}
+	// §17.4 local fidelity: the embedded single-node cluster runs runc, so
+	// the pool sets standard isolation and the allowStandardIsolation opt-in
+	// the gateway admission path requires for an explicit standard profile.
+	if p.IsolationProfile != "standard" {
+		t.Errorf("echo pool isolationProfile = %q, want standard", p.IsolationProfile)
+	}
+	if !p.AllowStandardIsolation {
+		t.Error("echo pool must set allowStandardIsolation so the gateway admits the explicit standard profile")
+	}
+	// §13.2: cluster-default opts the pool's pods out of the dedicated
+	// lenny-system CoreDNS the embedded substrate does not run.
+	if p.DNSPolicy != "cluster-default" {
+		t.Errorf("echo pool dnsPolicy = %q, want cluster-default", p.DNSPolicy)
+	}
+}
+
+// TestBuildBootstrapSeedEchoPoolDNSPolicyAdmissible_spec_13_2 asserts the
+// seeded echo pool's dnsPolicy passes the §13.2 poolstore admission rule:
+// cluster-default is admitted only on a `standard` (runc) pool, which the
+// echo pool is. spec: §13.2.
+func TestBuildBootstrapSeedEchoPoolDNSPolicyAdmissible_spec_13_2(t *testing.T) {
+	p := buildBootstrapSeed().Pools[0]
+	pool := poolstore.Pool{
+		Name:             p.Name,
+		IsolationProfile: isolation.Profile(p.IsolationProfile),
+		DNSPolicy:        p.DNSPolicy,
+	}
+	if err := poolstore.ValidateDNSPolicy(pool); err != nil {
+		t.Fatalf("echo pool dnsPolicy is not §13.2-admissible: %v", err)
+	}
+}
+
+// TestInstallReferenceRuntimesGrantsEcho_spec_26_1 asserts the
+// default-tenant grant loop covers the seeded echo runtime in addition to
+// the §26 reference runtimes, so `lenny session new --runtime echo` is
+// reachable for the default tenant the tier-4 smoke runs against. spec:
+// §26.1, §15.4.4.
+func TestInstallReferenceRuntimesGrantsEcho_spec_26_1(t *testing.T) {
+	var grantedNames []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/tenant-access") {
+			// /v1/admin/runtimes/<name>/tenant-access
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/admin/runtimes/"), "/")
+			grantedNames = append(grantedNames, parts[0])
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	if err := installReferenceRuntimes(context.Background(), srv.URL, io.Discard); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	hasEcho := false
+	for _, n := range grantedNames {
+		if n == EchoRuntimeName {
+			hasEcho = true
+		}
+	}
+	if !hasEcho {
+		t.Errorf("default-tenant grant did not cover the echo runtime; granted %v", grantedNames)
+	}
+	// Every §26 reference runtime is still granted alongside echo.
+	for _, rt := range referenceRuntimes {
+		found := false
+		for _, n := range grantedNames {
+			if n == rt.Name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("default-tenant grant dropped reference runtime %q; granted %v", rt.Name, grantedNames)
+		}
+	}
+}
+
+// TestInstallReferenceRuntimesWarnDoesNotListEcho_spec_26_3 asserts the
+// placeholder-pin WARN stays scoped to the §26 reference runtimes so the
+// runnable echo runtime is not listed as un-startable. spec: §26.3, §15.4.4.
+func TestInstallReferenceRuntimesWarnDoesNotListEcho_spec_26_3(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := installReferenceRuntimes(context.Background(), srv.URL, &out); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	// The WARN line names the placeholder-pinned runtimes; echo is runnable
+	// and must not appear among them. Scope the assertion to the WARN line
+	// so the install summary line (which mentions "echo runtime") does not
+	// trip it.
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, "[WARN]") && strings.Contains(line, EchoRuntimeName) {
+			t.Errorf("placeholder-pin WARN must not list the runnable echo runtime: %q", line)
+		}
 	}
 }
 
