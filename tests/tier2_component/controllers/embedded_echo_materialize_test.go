@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -39,6 +40,12 @@ import (
 // kube-system CoreDNS egress is admitted) and the template surfaces the §5.2
 // PoolWarmingUp condition during the initial fill, the condition the
 // session-start path maps to 503 RUNTIME_UNAVAILABLE until the pod is idle.
+//
+// The test pins both phases of the §5.2 condition lifecycle the proposal
+// names: PoolWarmingUp is True/Provisioning during the initial fill while the
+// single pod is still warming, then clears to False/Available once that pod
+// reaches the idle phase, the transition the gateway maps from
+// 503 RUNTIME_UNAVAILABLE back to a successful claim.
 //
 // This is the component-level witness that proposal 0016 activates the §4.7 pod
 // path end to end in Embedded Mode: the gateway-side placement path resolves the
@@ -186,5 +193,39 @@ func TestEmbeddedEchoPoolMaterializesToWarmPod_spec_17_4(t *testing.T) {
 	}
 	if !warming {
 		t.Errorf("template carries no PoolWarmingUp condition; the §5.2 initial-fill 503 RUNTIME_UNAVAILABLE window is not surfaced")
+	}
+
+	// Drive the warmed pod to idle and re-reconcile to pin the second half of
+	// the §5.2 condition lifecycle: once the single hot-pool pod reaches the
+	// idle phase (ready = 1), poolWarmingUpCondition clears PoolWarmingUp to
+	// False/Available, the transition the gateway maps from 503
+	// RUNTIME_UNAVAILABLE back to a successful claim. Without this leg a
+	// regression that leaves the pool stuck warming (e.g. one that never
+	// recomputes ready) would pass, because the first leg observes the pool
+	// only in its initial state where True/Provisioning is trivially correct.
+	sb.Status.Phase = string(state.Idle)
+	if err := c.Status().Update(ctx, &sb); err != nil {
+		t.Fatalf("set warmed sandbox phase to idle: %v", err)
+	}
+	if _, err := wpr.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("WarmPoolController Reconcile after idle: %v", err)
+	}
+	if err := c.Get(ctx, key, &tmpl); err != nil {
+		t.Fatalf("get template after idle: %v", err)
+	}
+	var cleared bool
+	for _, cond := range tmpl.Status.Conditions {
+		if cond.Type == "PoolWarmingUp" {
+			cleared = true
+			if cond.Status != metav1.ConditionFalse {
+				t.Errorf("PoolWarmingUp status = %q after the pod is idle, want False (the §5.2 window cleared)", cond.Status)
+			}
+			if cond.Reason != "Available" {
+				t.Errorf("PoolWarmingUp reason = %q after the pod is idle, want Available (the idle pod is claimable)", cond.Reason)
+			}
+		}
+	}
+	if !cleared {
+		t.Errorf("template carries no PoolWarmingUp condition after the pod is idle; the §5.2 clearing transition is not surfaced")
 	}
 }
