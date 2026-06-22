@@ -201,12 +201,23 @@ const warmupRetryInterval = 5 * time.Second
 // initial-fill window. The bring-up seeds a single-pod warm pool
 // (warmCount: 1, minWarm > 0), so the first `session new` may land while
 // the WarmPoolController is still filling the pool, during which the
-// gateway returns 503 RUNTIME_UNAVAILABLE (the CLI surfaces the gateway
-// error text, which carries the RUNTIME_UNAVAILABLE code, on stderr). That
-// is the documented transient warming response, so the smoke retries
-// rather than failing. Any other non-zero exit (an unpullable image, a
-// failed §4.7 callback) is a hard failure surfaced immediately. spec: §5.2
-// (PoolWarmingUp / RUNTIME_UNAVAILABLE), §4.7, §17.4.
+// gateway returns 503 RUNTIME_UNAVAILABLE.
+//
+// The smoke runs `session new` without a workspace, so the CLI takes the
+// MCP create_session path (pkg/embedded/localcli/session.go), and the SDK
+// builds the CLI's error from the tool result's text content block alone
+// (sdks/client/go/lenny/mcp.go CreateSession via MCPToolResult.Text). The
+// gateway puts the RUNTIME_UNAVAILABLE code in a separate `lenny/error`
+// block and only the human warming message in the text block
+// (pkg/gateway/mcp/mcp.go), so the RUNTIME_UNAVAILABLE code string never
+// reaches stderr. The smoke therefore cannot key its retry on that code.
+// Per the §3 C5 second sanctioned approach, it retries any non-zero exit
+// until the warmup deadline elapses rather than pinning to a message or
+// code substring (the warming message is transient runtime output and
+// pinning to it is the same fragility class). A non-zero exit that persists
+// past the deadline (an unpullable image, a failed §4.7 callback, or a pod
+// that never became idle) is the hard failure. spec: §5.2 (PoolWarmingUp /
+// RUNTIME_UNAVAILABLE initial-fill window), §4.7, §17.4.
 func newSessionToleratingWarmup(t *testing.T, bin, home, rt string) string {
 	t.Helper()
 	deadline := time.Now().Add(warmupWindow)
@@ -221,25 +232,26 @@ func newSessionToleratingWarmup(t *testing.T, bin, home, rt string) string {
 			}
 			return sid
 		}
-		// Retry only the §5.2 transient warming response. A
-		// RUNTIME_UNAVAILABLE in the CLI error text means the single-pod
-		// pool is still in its PoolWarmingUp window; the pod is not idle
-		// yet. Keep polling until the WarmPoolController fills the pool or
-		// the warmup window elapses.
-		if !strings.Contains(last.Stderr, "RUNTIME_UNAVAILABLE") {
+		// The single-pod pool may still be in its §5.2 PoolWarmingUp
+		// window, in which case the gateway returns 503 RUNTIME_UNAVAILABLE
+		// and the pod is not idle yet. The CLI surfaces only the human
+		// warming message on stderr (the RUNTIME_UNAVAILABLE code rides in
+		// the discarded `lenny/error` block), so the smoke cannot
+		// distinguish a transient warming 503 from another failure by the
+		// error text. It retries every non-zero exit and lets the warmup
+		// deadline bound how long it tolerates one before declaring a
+		// genuine bring-up failure.
+		if time.Now().After(deadline) {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("lenny session new --runtime %s: pool still warming after %s "+
-				"(503 RUNTIME_UNAVAILABLE); the single echo pod never became idle\nstderr:\n%s",
-				rt, warmupWindow, last.Stderr)
-		}
-		t.Logf("lenny session new: pool warming (503 RUNTIME_UNAVAILABLE), retrying in %s", warmupRetryInterval)
+		t.Logf("lenny session new: not yet placed (exit %d), retrying in %s\nstderr:\n%s",
+			last.ExitCode, warmupRetryInterval, last.Stderr)
 		time.Sleep(warmupRetryInterval)
 	}
-	t.Fatalf("lenny session new --runtime %s: exit %d\nstdout:\n%s\nstderr:\n%s\n"+
+	t.Fatalf("lenny session new --runtime %s: still failing after %s; the single echo pod "+
+		"never became idle (exit %d)\nstdout:\n%s\nstderr:\n%s\n"+
 		"(echo is the auto-seeded runnable runtime; set %s to another runtime only if its image is pullable on this host)",
-		rt, last.ExitCode, last.Stdout, last.Stderr, embedded.RuntimeEnv)
+		rt, warmupWindow, last.ExitCode, last.Stdout, last.Stderr, embedded.RuntimeEnv)
 	return "" // unreachable: t.Fatalf stops the test
 }
 
