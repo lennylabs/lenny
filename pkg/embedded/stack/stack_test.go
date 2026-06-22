@@ -132,7 +132,7 @@ func TestProvisionSubstrateUnsupportedPlatform_spec_17_4(t *testing.T) {
 	withSubstrateSeams(t, false, &fakeLauncher{}, nil)
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), &out)
+	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
 	if res.enabled {
 		t.Error("provisionSubstrate on an unsupported host = enabled, want disabled")
 	}
@@ -156,7 +156,7 @@ func TestProvisionSubstrateStartError_spec_17_4(t *testing.T) {
 	withSubstrateSeams(t, true, fake, nil)
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), &out)
+	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
 	if res.enabled {
 		t.Error("provisionSubstrate with a failing launcher = enabled, want disabled")
 	}
@@ -183,7 +183,7 @@ func TestProvisionSubstrateSuccess_spec_17_4(t *testing.T) {
 	withSubstrateSeams(t, true, fake, nil)
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), &out)
+	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
 	if !res.enabled {
 		t.Fatal("provisionSubstrate with a healthy launcher = disabled, want enabled")
 	}
@@ -211,7 +211,7 @@ func TestProvisionSubstrateCRDInstallFailureIsNonFatal_spec_17_4(t *testing.T) {
 	withSubstrateSeams(t, true, fake, errors.New("crd boom"))
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), &out)
+	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
 	if !res.enabled {
 		t.Error("provisionSubstrate with a CRD-install failure = disabled, want enabled (non-fatal)")
 	}

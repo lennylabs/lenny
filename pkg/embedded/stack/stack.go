@@ -73,6 +73,12 @@ type Config struct {
 	// alongside the running lenny binary and on PATH.
 	GatewayBin    string
 	ControllerBin string
+	// EchoTarball overrides the path to the pre-built echo-embedded
+	// docker-save tarball the bring-up imports into the embedded
+	// containerd (the LENNY_ECHO_TARBALL operator override). Empty
+	// triggers discovery alongside the running lenny binary, where the
+	// tarball ships. spec: §24.19.1 (the --file import path).
+	EchoTarball string
 	// Out receives human-readable progress output. Nil discards it.
 	Out io.Writer
 }
@@ -225,7 +231,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// spec: §17.4 (the embedded Kubernetes substrate is provisioned per
 	// host operating system, and stays identical above the substrate
 	// layer).
-	sub := s.provisionSubstrate(ctx, paths, out)
+	sub := s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
 	k3sEnabled := sub.enabled
 	kubeconfig := sub.kubeconfig
 	gatewayGRPCDialAddr := sub.gatewayGRPCDialAddr
@@ -388,12 +394,21 @@ func (s *Stack) CACertPath() string { return s.tls.CACertPath }
 func (s *Stack) OIDC() *oidc.Provider { return s.idp }
 
 // substrateResult is the outcome of provisionSubstrate: whether the
-// embedded cluster came up, the admin kubeconfig path, and the §4.7
-// gateway↔adapter callback address the controller stamps onto agent pods.
+// embedded cluster came up, the admin kubeconfig path, the §4.7
+// gateway↔adapter callback address the controller stamps onto agent pods,
+// and the import-time-resolved echo runtime image reference.
 type substrateResult struct {
 	enabled             bool
 	kubeconfig          string
 	gatewayGRPCDialAddr string
+	// echoImageRef is the digest-pinned echoImageRepository@sha256:<digest>
+	// reference the bring-up resolved when it imported the echo-embedded
+	// tarball into the embedded containerd. It is empty when the substrate
+	// did not come up or the import failed, in which case the gateway keeps
+	// the in-process echo executor. S6 injects it into the bootstrap seed
+	// (overwriting echoRuntime.Image) and the applied echo Runtime CRD.
+	// spec: §24.19.1 (the --file import path), §4.7 (digest-pinned pod image).
+	echoImageRef string
 }
 
 // Substrate-provisioning seams. They default to the real k3s launcher and
@@ -432,7 +447,7 @@ var (
 // spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
 // operating system, and stays identical above the substrate layer), §4.7,
 // §8.6, §9.1.
-func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, out io.Writer) substrateResult {
+func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball string, out io.Writer) substrateResult {
 	if !substrateSupported() {
 		// On a non-Linux host the embedded k3s runs under Docker Desktop's
 		// Linux VM, so the platform is unsupported only when Docker is
@@ -466,7 +481,51 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, out io.Writ
 	if err := installSubstrateCRDs(ctx, res.kubeconfig); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
 	}
+	// Import the pre-built echo-embedded image into the embedded containerd
+	// and record the import-time-resolved digest. The import runs after the
+	// substrate is up (so containerd is reachable) and before the Runtime-CR
+	// apply and bootstrap seed (S6), so the resolved digest-pinned reference
+	// is available to both, gated on the substrate coming up alone (no
+	// separate runnable-image precondition: the tarball ships with the
+	// binary). A failed import leaves echoImageRef empty; the gateway then
+	// keeps the in-process echo executor. spec: §24.19.1 (the --file import
+	// path), §17.4 (Embedded Mode bring-up), §4.7 (digest-pinned pod image).
+	res.echoImageRef = s.importEchoRuntimeImage(paths.Root, echoTarball, out)
 	return res
+}
+
+// importEchoRuntimeImage imports the pre-built echo-embedded tarball into
+// the embedded containerd and returns the import-time-resolved
+// digest-pinned image reference, or the empty string when the import
+// cannot run (no tarball, unreachable containerd, or a failed import). It
+// resolves the ctr invocation from the live launcher's substrate handle
+// rather than the recorded stack state, because the state file is not
+// written until the end of Up. A failed import is non-fatal: it is logged
+// and the empty return leaves the gateway on the in-process echo executor,
+// mirroring the substrate-unavailable degraded path.
+//
+// spec: §24.19.1 (the --file import path), §17.4 (Embedded Mode bring-up
+// per host operating system), §4.7 (the digest-pinned embedded pod image).
+func (s *Stack) importEchoRuntimeImage(root, echoTarball string, out io.Writer) string {
+	tarball, err := resolveEchoTarball(echoTarball)
+	if err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: echo runtime image not imported: %v\n", err)
+		return ""
+	}
+	ctr, code := CtrCommandForSubstrate(root, k3sContainerHandle(s.k3s), out)
+	if code != 0 {
+		// CtrCommandForSubstrate already wrote a K3S_UNAVAILABLE diagnostic.
+		fmt.Fprintln(out, "lenny up: WARNING: echo runtime image not imported; the embedded containerd is unreachable")
+		return ""
+	}
+	fmt.Fprintln(out, "lenny up: importing the echo runtime image into the embedded containerd")
+	ref, err := importEchoImage(ctr, tarball, out, out)
+	if err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: echo runtime image import failed: %v\n", err)
+		return ""
+	}
+	fmt.Fprintf(out, "lenny up: echo runtime image imported as %s\n", ref)
+	return ref
 }
 
 // gatewayHealthy reports whether the gateway at baseURL answers its

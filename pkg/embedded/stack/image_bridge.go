@@ -177,8 +177,28 @@ func CtrCommand(stderr io.Writer) (CtrInvocation, int) {
 	// socket on disk and reports K3S_UNAVAILABLE when either is absent. The
 	// host path stays byte-identical to its prior behavior on Linux, where
 	// it does not depend on the state file.
-	if sub.DockerBacked() {
-		return dockerCtrCommand(sub.Container, stderr)
+	return CtrCommandForSubstrate(root, sub.Container, stderr)
+}
+
+// CtrCommandForSubstrate resolves how to reach the embedded k3s
+// containerd from a live substrate handle, without reading the recorded
+// stack state file. The Embedded Mode bring-up imports the seeded echo
+// image before it writes the state file (writeState runs at the end of
+// Up), so it cannot use CtrCommand, which resolves the substrate from the
+// not-yet-written state. The container argument is the Docker-backed
+// launcher's container name (empty on the Linux child-process launcher);
+// it selects the same two reach paths CtrCommand selects. root is the
+// resolved Embedded Mode state directory the host path locates the k3s
+// binary and socket under. It fails closed identically: an absent host
+// k3s, an absent socket, an absent docker binary, or a stopped container
+// each report K3S_UNAVAILABLE.
+//
+// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 (per-OS substrate),
+// §4.7 (the bring-up import targets the embedded containerd before the
+// state file exists).
+func CtrCommandForSubstrate(root, container string, stderr io.Writer) (CtrInvocation, int) {
+	if container != "" {
+		return dockerCtrCommand(container, stderr)
 	}
 	return hostCtrCommand(root, stderr)
 }
