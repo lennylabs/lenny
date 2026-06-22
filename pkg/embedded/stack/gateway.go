@@ -29,6 +29,13 @@ type gatewaySpec struct {
 	// Empty leaves the GatewayControl listener disabled (no embedded
 	// cluster, so no in-cluster adapter to serve). spec: §4.7, §8.6, §9.1.
 	GRPCAddr string
+	// AgentNamespace is the §5 warm-pool/Sandbox namespace the gateway
+	// places sessions into. When set, the gateway resolves the warm pool
+	// from this namespace and routes every started session onto a warm pod
+	// over the §4.7 adapter boundary instead of the in-process echo
+	// executor. Empty leaves the gateway on the in-process echo executor
+	// (no embedded cluster to place into). spec: §17.4, §4.7.
+	AgentNamespace string
 	// PostgresDSN and RedisURL point the gateway at the embedded
 	// backends through its standard configuration flags.
 	PostgresDSN string
@@ -157,6 +164,16 @@ func gatewayArgs(spec gatewaySpec) []string {
 		// local-development path — while the address wiring that crosses the
 		// boundary is the same code path production uses. spec: §4.7, §8.6.
 		args = append(args, "-grpc-addr", spec.GRPCAddr)
+	}
+	if spec.AgentNamespace != "" {
+		// §4.7 pod placement: with -agent-namespace the gateway resolves the
+		// warm pool from this namespace and places each started session on a
+		// warm pod via the §4.7 adapter instead of the in-process echo
+		// executor (cmd/lenny-gateway/runtime_select.go selects the echo
+		// executor only when the flag is unset). Set by the stack solely when
+		// the embedded substrate is up; an empty namespace leaves the gateway
+		// on the in-process echo executor. spec: §17.4, §4.7.
+		args = append(args, "-agent-namespace", spec.AgentNamespace)
 	}
 	return args
 }

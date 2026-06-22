@@ -37,6 +37,15 @@ type ControllerSpec struct {
 	// run in-cluster. Empty leaves the platform MCP server unstarted in the
 	// pod. spec: §4.7, §8.6, §9.1, §17.4.
 	GatewayGRPCAddr string
+	// AgentNamespaces is the comma-separated list of namespaces the
+	// PoolScalingController, the mirror reconciler, and the claim GC operate
+	// on. When set, the PoolScalingController materializes the seeded
+	// poolstore rows into SandboxTemplate/SandboxWarmPool CRDs per §4.6.2 so
+	// the gateway finds an idle pod to claim. The controller gates all three
+	// on a non-empty namespace list, so leaving this empty keeps them off.
+	// Empty leaves the §5.1 pool resources unmaterialized (no embedded
+	// cluster to reconcile into). spec: §4.6.2, §5.1.
+	AgentNamespaces string
 	// LogPath is the controller log file.
 	LogPath string
 }
@@ -120,6 +129,15 @@ func controllerArgs(spec ControllerSpec) []string {
 		// portion (loopback on Linux, host.docker.internal under Docker), so
 		// the §4.7 pod-spec/adapter business logic stays substrate-agnostic.
 		args = append(args, "--gateway-grpc-addr", spec.GatewayGRPCAddr)
+	}
+	if spec.AgentNamespaces != "" {
+		// §4.6.2/§5.1: the PoolScalingController (and the mirror reconciler and
+		// claim GC) start only when the controller is given a non-empty
+		// --agent-namespaces list. Threading it activates the projection of the
+		// seeded poolstore rows into the SandboxTemplate/SandboxWarmPool CRD
+		// pair so the gateway finds an idle pod to claim; the stack sets it
+		// solely when the embedded substrate is up. spec: §4.6.2, §5.1.
+		args = append(args, "--agent-namespaces", spec.AgentNamespaces)
 	}
 	return args
 }

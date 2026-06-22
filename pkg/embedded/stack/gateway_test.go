@@ -76,6 +76,45 @@ func TestGatewayArgsThreadsGRPCAddr_spec_4_7(t *testing.T) {
 	}
 }
 
+// TestGatewayArgsThreadsAgentNamespace covers the §17.4/§4.7 pod-placement
+// activation: when the stack sets the embedded agent namespace (done only
+// when the substrate is up), gatewayArgs threads it through -agent-namespace
+// so the gateway resolves the warm pool from that namespace and places each
+// started session on a warm pod over the §4.7 adapter boundary instead of
+// selecting the in-process echo executor. This is the single flag the
+// already-complete gateway-side placement path is gated on.
+//
+// spec: §17.4 (Embedded Mode activates pod placement), §4.7 (the gateway
+// places each started session on a warm pod via the adapter when the agent
+// namespace is set).
+func TestGatewayArgsThreadsAgentNamespace_spec_17_4(t *testing.T) {
+	const ns = "lenny-agents"
+	args := gatewayArgs(gatewaySpec{HTTPAddr: "127.0.0.1:8080", AgentNamespace: ns})
+	got, ok := argValue(args, "-agent-namespace")
+	if !ok {
+		t.Fatal("gatewayArgs did not pass -agent-namespace when the spec set it")
+	}
+	if got != ns {
+		t.Errorf("-agent-namespace = %q, want %q", got, ns)
+	}
+}
+
+// TestGatewayArgsOmitsAgentNamespaceWhenUnset confirms an empty
+// AgentNamespace leaves the flag off, so a stack without an embedded cluster
+// keeps the gateway on the in-process echo executor (the §4.7 placement path
+// stays inert). This is the degraded fallback the stack relies on when the
+// substrate does not come up.
+//
+// spec: §17.4 (the gateway keeps the in-process echo executor when the
+// embedded cluster is unavailable), §4.7.
+func TestGatewayArgsOmitsAgentNamespaceWhenUnset(t *testing.T) {
+	args := gatewayArgs(gatewaySpec{HTTPAddr: "127.0.0.1:8080"})
+	if _, ok := argValue(args, "-agent-namespace"); ok {
+		t.Error("gatewayArgs passed -agent-namespace with no namespace set; " +
+			"the gateway would attempt pod placement with no embedded cluster")
+	}
+}
+
 // TestGatewayArgsAllowsInsecureRedis covers the §12.4/§17.4 Redis AUTH-and-TLS
 // opt-out: the §17.4 embedded Redis is the loopback-only miniredis exempt from
 // the production AUTH and TLS invariant and emits a passwordless, plaintext
