@@ -50,10 +50,14 @@
 // k3s + PostgreSQL. Where a macOS or Windows host with Docker Desktop is
 // unavailable in CI, the Docker-backed leg is deferred: the test skips
 // rather than fails, stating the dependency (the test-coverage tier-5/6
-// escape hatch). Session start pulls the runtime image; the reference
-// catalog ships placeholder-pinned images, so an operator running this
-// test sets LENNY_EMBEDDED_SMOKE_RUNTIME to a runtime whose image is
-// pullable on the host (or pre-loads the chat image).
+// escape hatch). The smoke targets the echo runtime, which `lenny up`
+// auto-seeds with a runnable image digest, an applied Runtime CRD, and a
+// single-pod warm pool, so it places a session on an in-cluster pod with
+// no operator setup (the test-smoke-embedded Makefile target defaults
+// LENNY_EMBEDDED_SMOKE_RUNTIME to echo). The §26 reference catalog ships
+// placeholder-pinned images, so pointing the smoke at one of those
+// runtimes still requires an operator to register a pullable image, apply
+// a Runtime CRD, and create a warm pool first.
 package tier4_integration_test
 
 import (
@@ -70,9 +74,10 @@ import (
 // exercises the embedded quick-start on the cross-platform substrate:
 // bring the stack up, assert the embedded Kubernetes substrate is
 // healthy (the published API port / real-Kubernetes path, not the
-// controller-sim fallback), create a session (which warms a pod across
-// the host/Docker boundary), assert a session id, and tear the stack
-// down.
+// controller-sim fallback), create a session against the auto-seeded
+// echo runtime (retrying across the §5.2 PoolWarmingUp initial-fill window
+// while the single-pod pool warms a pod across the host/Docker boundary),
+// assert a session id, and tear the stack down.
 //
 // diagnosis: a failure means the documented `lenny up` → `session new` →
 // `lenny down` quick-start did not complete end to end through the real
@@ -82,8 +87,9 @@ import (
 // the host fell back to the controller-simulator path rather than the
 // real-Kubernetes code path — on a Docker-backed host check the
 // published API port is free and `docker logs` for the lenny-embedded-k3s
-// container. If `session new` failed, pod placement did not succeed: the
-// runtime image may be unpullable (set LENNY_EMBEDDED_SMOKE_RUNTIME), or
+// container. If `session new` failed after the §5.2 warmup window elapsed,
+// pod placement did not succeed: the single echo pod never became idle
+// (check the WarmPoolController and the echo pod's image-pull status), or
 // the §4.7 gateway↔adapter callback did not traverse the host/Docker
 // boundary (the in-cluster adapter could not reach the host gateway at
 // host.docker.internal).
@@ -155,18 +161,17 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 	// boundary. A non-zero session id confirms placement succeeded across
 	// that boundary end to end. Prints the session id to stdout and exits 0
 	// on success (cmd/lenny session new). spec: §4.7, §17.4.
+	//
+	// The single-pod warm pool the bring-up seeds (warmCount: 1) has
+	// minWarm > 0, so during the §5.2 initial-fill window the pool carries
+	// the PoolWarmingUp condition and the gateway returns 503
+	// RUNTIME_UNAVAILABLE with a Retry-After header until the WarmPoolController
+	// fills its one pod. The smoke must not assert an immediately-idle pod:
+	// it retries `session new` across that warming window until the pod
+	// becomes idle and placement succeeds. spec: §5.2 (PoolWarmingUp /
+	// RUNTIME_UNAVAILABLE initial-fill window).
 	rt := embedded.Runtime()
-	r := embedded.Run(t, bin, home, 2*time.Minute,
-		"session", "new", "--runtime", rt, "--user", "alice@acme.com")
-	if r.ExitCode != 0 {
-		t.Fatalf("lenny session new --runtime %s: exit %d\nstdout:\n%s\nstderr:\n%s\n"+
-			"(the reference catalog ships placeholder-pinned images; set %s to a runtime whose image is pullable)",
-			rt, r.ExitCode, r.Stdout, r.Stderr, embedded.RuntimeEnv)
-	}
-	sid := strings.TrimSpace(r.Stdout)
-	if sid == "" {
-		t.Fatalf("lenny session new: empty session id\nstderr:\n%s", r.Stderr)
-	}
+	sid := newSessionToleratingWarmup(t, bin, home, rt)
 	t.Logf("lenny session new: created %s", sid)
 
 	// `lenny down --purge` tears the stack down and removes the state dir.
@@ -176,6 +181,66 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatalf("lenny down --purge: state dir %s still present (stat err: %v)", home, err)
 	}
+}
+
+// warmupWindow bounds how long the smoke retries `session new` across the
+// §5.2 PoolWarmingUp initial-fill window before giving up. The
+// WarmPoolBootstrapping alert fires at warmupDeadlineSeconds (300s by
+// default; spec/05 §5.2), so a single echo pod that has not become idle by
+// then is a genuine bring-up failure rather than an expected warm window.
+const warmupWindow = 5 * time.Minute
+
+// warmupRetryInterval is the floor between `session new` retries while the
+// pool warms. The gateway's Retry-After is max(30, estimatedWarmupSeconds)
+// (spec/05 §5.2). The CLI does not expose the header, so the smoke honors
+// that floor by polling at this interval until the pod becomes idle.
+const warmupRetryInterval = 5 * time.Second
+
+// newSessionToleratingWarmup runs `lenny session new --runtime rt` and
+// returns the created session id, retrying across the §5.2 PoolWarmingUp
+// initial-fill window. The bring-up seeds a single-pod warm pool
+// (warmCount: 1, minWarm > 0), so the first `session new` may land while
+// the WarmPoolController is still filling the pool, during which the
+// gateway returns 503 RUNTIME_UNAVAILABLE (the CLI surfaces the gateway
+// error text, which carries the RUNTIME_UNAVAILABLE code, on stderr). That
+// is the documented transient warming response, so the smoke retries
+// rather than failing. Any other non-zero exit (an unpullable image, a
+// failed §4.7 callback) is a hard failure surfaced immediately. spec: §5.2
+// (PoolWarmingUp / RUNTIME_UNAVAILABLE), §4.7, §17.4.
+func newSessionToleratingWarmup(t *testing.T, bin, home, rt string) string {
+	t.Helper()
+	deadline := time.Now().Add(warmupWindow)
+	var last embedded.Result
+	for {
+		last = embedded.Run(t, bin, home, 2*time.Minute,
+			"session", "new", "--runtime", rt, "--user", "alice@acme.com")
+		if last.ExitCode == 0 {
+			sid := strings.TrimSpace(last.Stdout)
+			if sid == "" {
+				t.Fatalf("lenny session new: empty session id\nstderr:\n%s", last.Stderr)
+			}
+			return sid
+		}
+		// Retry only the §5.2 transient warming response. A
+		// RUNTIME_UNAVAILABLE in the CLI error text means the single-pod
+		// pool is still in its PoolWarmingUp window; the pod is not idle
+		// yet. Keep polling until the WarmPoolController fills the pool or
+		// the warmup window elapses.
+		if !strings.Contains(last.Stderr, "RUNTIME_UNAVAILABLE") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lenny session new --runtime %s: pool still warming after %s "+
+				"(503 RUNTIME_UNAVAILABLE); the single echo pod never became idle\nstderr:\n%s",
+				rt, warmupWindow, last.Stderr)
+		}
+		t.Logf("lenny session new: pool warming (503 RUNTIME_UNAVAILABLE), retrying in %s", warmupRetryInterval)
+		time.Sleep(warmupRetryInterval)
+	}
+	t.Fatalf("lenny session new --runtime %s: exit %d\nstdout:\n%s\nstderr:\n%s\n"+
+		"(echo is the auto-seeded runnable runtime; set %s to another runtime only if its image is pullable on this host)",
+		rt, last.ExitCode, last.Stdout, last.Stderr, embedded.RuntimeEnv)
+	return "" // unreachable: t.Fatalf stops the test
 }
 
 // embeddedComponentHealthy reports whether the `lenny status` table marks
