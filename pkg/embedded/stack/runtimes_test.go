@@ -174,8 +174,12 @@ func TestBuildBootstrapSeedInjectsEchoDigest_spec_4_7(t *testing.T) {
 // TestBuildBootstrapSeedEchoDigestSentinelWhenUnresolved_spec_4_7 asserts that
 // when the import did not resolve a digest (substrate down or import failed),
 // the echo seed keeps its sentinel placeholder rather than an empty image,
-// which the bootstrap handler would reject. The gateway never places against
-// the sentinel because AgentNamespace stays unset on that path too. spec: §4.7.
+// which the bootstrap handler would reject. On the substrate-down path the
+// gateway keeps the in-process echo executor (AgentNamespace stays unset because
+// it is gated on k3sEnabled). On the k3s-up-but-import-failed path the
+// Runtime-CR apply is skipped (gated on a resolved digest), so a session against
+// the sentinel record resolves no warm pool and fails the create rather than
+// pulling the unpullable sentinel image. spec: §4.7.
 func TestBuildBootstrapSeedEchoDigestSentinelWhenUnresolved_spec_4_7(t *testing.T) {
 	seed := buildBootstrapSeed("")
 	var echo *seedRuntime

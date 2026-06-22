@@ -267,18 +267,20 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// §4.7, §8.6.
 	if k3sEnabled {
 		s.gwSpec.GRPCAddr = fmt.Sprintf(":%d", defaultGatewayGRPCPort)
+		// §4.7 pod placement: point the gateway at the agent namespace so it
+		// resolves the warm pool from there and routes every started session onto
+		// a warm pod over the §4.7 adapter boundary instead of the in-process echo
+		// executor. Set here, before startGateway below, because the gateway
+		// consumes gwSpec at launch; setting it in the later controller block would
+		// launch the gateway without -agent-namespace and leave the activation
+		// inert. Gated on the k3sEnabled substrate gate alone, symmetric with the
+		// controller's AgentNamespaces set in the controller block below: the echo
+		// tarball ships with the lenny binary and is imported at every bring-up
+		// where the substrate is up, so the runnable echo image is always present.
+		// When the substrate is down (k3sEnabled false) the field stays empty and
+		// the gateway keeps the in-process echo executor. spec: §17.4, §4.7.
+		s.gwSpec.AgentNamespace = agentNamespace
 	}
-	// §4.7 pod placement: point the gateway at the agent namespace so it
-	// resolves the warm pool from there and routes every started session onto a
-	// warm pod over the §4.7 adapter boundary instead of the in-process echo
-	// executor. Set before startGateway below, because the gateway consumes
-	// gwSpec at launch; setting it in the later controller block would launch
-	// the gateway without -agent-namespace and leave the activation inert.
-	// gatewayAgentNamespace gates on the resolved echo image as well as the
-	// substrate, so an import failure (k3s up but no resolved digest) leaves the
-	// namespace unset and the gateway on the in-process echo executor, fail
-	// closed. spec: §17.4, §4.7.
-	s.gwSpec.AgentNamespace = gatewayAgentNamespace(k3sEnabled, sub.echoImageRef)
 	gw, err := startGateway(s.gwSpec)
 	if err != nil {
 		return nil, err

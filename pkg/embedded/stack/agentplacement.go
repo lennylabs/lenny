@@ -39,26 +39,6 @@ var (
 	applyEchoRuntimeCRFn   = applyEchoRuntimeCR
 )
 
-// gatewayAgentNamespace returns the §4.7 agent namespace the embedded gateway
-// places into, or the empty string to keep the gateway on the in-process echo
-// executor. Placement is activated only when both the substrate is up
-// (k3sEnabled) and the echo-embedded image import resolved a digest
-// (echoImageRef != ""). Gating on the resolved image as well as the substrate
-// makes the import-failure edge fail closed: when k3s is up but the import
-// resolved no digest, no echo Runtime CR is applied and the seed keeps its
-// sentinel placeholder, so routing the session through the §4.7 pod path would
-// fail rather than start; leaving the namespace unset keeps the gateway on the
-// in-process echo executor, the same degraded path the substrate being down
-// takes. spec: §17.4 (Embedded Mode degrades to the in-process echo executor
-// when placement cannot run), §4.7 (the pod path needs a runnable digest-pinned
-// image and an applied Runtime CR).
-func gatewayAgentNamespace(k3sEnabled bool, echoImageRef string) string {
-	if k3sEnabled && echoImageRef != "" {
-		return agentNamespace
-	}
-	return ""
-}
-
 // ensureAgentNamespace creates the agent namespace in the embedded cluster
 // reachable through kubeconfigPath, idempotently: an already-present namespace
 // is treated as success so a re-run of lenny up does not fail. The gateway
