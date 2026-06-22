@@ -127,7 +127,7 @@ func TestReferenceRuntimesReturnsCopy(t *testing.T) {
 }
 
 func TestBuildBootstrapSeed(t *testing.T) {
-	seed := buildBootstrapSeed()
+	seed := buildBootstrapSeed("")
 	// §17.4: lenny up creates the default tenant.
 	if len(seed.Tenants) != 1 || seed.Tenants[0].ID != defaultTenant {
 		t.Errorf("seed tenants = %+v, want the default tenant", seed.Tenants)

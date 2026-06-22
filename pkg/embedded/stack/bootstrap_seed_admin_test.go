@@ -33,7 +33,7 @@ func TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2(t *testing.
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	}).WithRuntimes(runtimes).WithUsers(users)
 
-	body, err := json.Marshal(buildBootstrapSeed())
+	body, err := json.Marshal(buildBootstrapSeed(""))
 	if err != nil {
 		t.Fatalf("marshal seed: %v", err)
 	}

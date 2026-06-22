@@ -267,6 +267,16 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// §4.7, §8.6.
 	if k3sEnabled {
 		s.gwSpec.GRPCAddr = fmt.Sprintf(":%d", defaultGatewayGRPCPort)
+		// §4.7 pod placement: point the gateway at the agent namespace so it
+		// resolves the warm pool from there and routes every started session
+		// onto a warm pod over the §4.7 adapter boundary instead of the
+		// in-process echo executor. Set in this first k3sEnabled block, before
+		// startGateway below, because the gateway consumes gwSpec at launch;
+		// setting it in the later controller block would launch the gateway
+		// without -agent-namespace and leave the activation inert. Left empty
+		// when the substrate is down, keeping the in-process echo fallback.
+		// spec: §17.4, §4.7.
+		s.gwSpec.AgentNamespace = agentNamespace
 	}
 	gw, err := startGateway(s.gwSpec)
 	if err != nil {
@@ -298,6 +308,16 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 				Kubeconfig:      kubeconfig,
 				GatewayGRPCAddr: gatewayGRPCDialAddr,
 				LogPath:         paths.Logs + "/controller.log",
+				// §4.6.2/§5.1: point the controller at the same agent namespace
+				// the gateway places into so the PoolScalingController (and the
+				// mirror reconciler and claim GC) start and materialize the
+				// seeded echo poolstore row into the SandboxTemplate/SandboxWarmPool
+				// CRD pair the gateway claims an idle pod from. The embedded
+				// controller is not given --dedicated-dns-cluster-ip, so the
+				// seeded pool's dnsPolicy: cluster-default keeps the echo pod on
+				// k3s kube-system CoreDNS. Both threads target the same namespace.
+				// spec: §4.6.2, §5.1.
+				AgentNamespaces: agentNamespace,
 			}
 			ctl, err := startController(s.ctlSpec)
 			if err != nil {
@@ -309,8 +329,14 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	}
 
 	// ----- §26 reference runtimes -----
+	// Pass the import-time-resolved echo image reference so the bootstrap seed
+	// registers the echo runtime under the same digest the applied Runtime CR
+	// and the containerd image carry; an empty reference (substrate down or
+	// import failed) leaves the echo seed on its sentinel placeholder, which
+	// the gateway never places against because AgentNamespace is unset too.
+	// spec: §15.4.4 (echo exemplar), §4.7 (digest-pinned pod image).
 	fmt.Fprintln(out, "lenny up: installing reference runtimes")
-	if err := installReferenceRuntimes(ctx, "http://"+httpAddr, out); err != nil {
+	if err := installReferenceRuntimes(ctx, "http://"+httpAddr, sub.echoImageRef, out); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: reference-runtime install incomplete: %v\n", err)
 	}
 
@@ -431,6 +457,13 @@ var (
 	// container without invoking a real docker. spec: §24.19 (a crashed
 	// supervisor must not leak the Docker-backed k3s container).
 	removeSubstrateContainer = k3s.RemoveContainer
+	// importEchoRuntimeImageFn is the bring-up echo-image import seam. It
+	// defaults to the real (*Stack).importEchoRuntimeImage and is a
+	// package-level var so a unit test can drive the §4.7 activation sequence
+	// in provisionSubstrate (namespace create, import, Runtime-CR apply) with a
+	// controllable resolved digest, without a live ctr or containerd. spec:
+	// §24.19.1 (the --file import path), §4.7.
+	importEchoRuntimeImageFn = (*Stack).importEchoRuntimeImage
 )
 
 // provisionSubstrate brings the embedded Kubernetes substrate up on every
@@ -481,16 +514,43 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 	if err := installSubstrateCRDs(ctx, res.kubeconfig); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
 	}
+	// Create the agent namespace the gateway places into and the
+	// PoolScalingController materializes the seeded pool CRDs into. Both the
+	// gateway's -agent-namespace and the controller's --agent-namespaces are
+	// set to this namespace (in Up's two k3sEnabled blocks), so it must exist
+	// before either places. A create failure warns rather than aborts: the
+	// controllers create namespaced resources lazily, but a missing namespace
+	// would leave placement inert, so the bring-up surfaces it. spec: §4.6.2
+	// (the pool CRDs materialize in the agent namespace), §5.1.
+	if err := ensureAgentNamespaceFn(ctx, res.kubeconfig, agentNamespace); err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: agent namespace create failed: %v\n", err)
+	}
 	// Import the pre-built echo-embedded image into the embedded containerd
 	// and record the import-time-resolved digest. The import runs after the
 	// substrate is up (so containerd is reachable) and before the Runtime-CR
-	// apply and bootstrap seed (S6), so the resolved digest-pinned reference
-	// is available to both, gated on the substrate coming up alone (no
-	// separate runnable-image precondition: the tarball ships with the
-	// binary). A failed import leaves echoImageRef empty; the gateway then
-	// keeps the in-process echo executor. spec: §24.19.1 (the --file import
-	// path), §17.4 (Embedded Mode bring-up), §4.7 (digest-pinned pod image).
-	res.echoImageRef = s.importEchoRuntimeImage(paths.Root, echoTarball, out)
+	// apply and bootstrap seed, so the resolved digest-pinned reference is
+	// available to both, gated on the substrate coming up alone (no separate
+	// runnable-image precondition: the tarball ships with the binary). A
+	// failed import leaves echoImageRef empty; the gateway then keeps the
+	// in-process echo executor. spec: §24.19.1 (the --file import path), §17.4
+	// (Embedded Mode bring-up), §4.7 (digest-pinned pod image).
+	res.echoImageRef = importEchoRuntimeImageFn(s, paths.Root, echoTarball, out)
+	// Apply the cluster-scoped echo Runtime CR carrying the import-time-resolved
+	// digest and deploymentModel: embedded. The Sandbox controller resolves the
+	// runtime from a Runtime CR by name, so without this the seeded registry
+	// record and warm pool leave the warm pod failing to render. It runs only
+	// when the import resolved a digest: an empty echoImageRef means the gateway
+	// keeps the in-process echo executor, so applying a CR carrying a sentinel
+	// digest that no containerd image matches would only ImagePullBackOff. The
+	// seeded digest, the CR digest, and the containerd image digest are
+	// identical because all three resolve from the same imported image. spec:
+	// §4.7 (embedded deployment model), §5.1 (Runtime CR).
+	if res.echoImageRef != "" {
+		fmt.Fprintln(out, "lenny up: applying the echo runtime CR")
+		if err := applyEchoRuntimeCRFn(ctx, res.kubeconfig, res.echoImageRef); err != nil {
+			fmt.Fprintf(out, "lenny up: WARNING: echo runtime CR apply failed: %v\n", err)
+		}
+	}
 	return res
 }
 

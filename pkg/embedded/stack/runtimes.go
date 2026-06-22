@@ -40,9 +40,17 @@ const defaultTenant = "default"
 // gateway runs in dev mode, where the X-Lenny-Roles dev header admits
 // a self-claimed platform-admin.
 //
+// echoImageRef is the import-time-resolved digest-pinned echo-embedded image
+// reference the bring-up resolved when it imported the tarball into the
+// embedded containerd; it overwrites the echo seed's sentinel image so the
+// seeded digest equals the applied Runtime CR's and the containerd image's.
+// An empty reference (substrate down or import failed) leaves the echo seed on
+// its sentinel placeholder; the gateway never places against it because
+// AgentNamespace stays unset on that path too.
+//
 // spec: §17.4 (Embedded Mode seed), §5.2 (warm pool), §15.4.4 (echo
-// conformance exemplar), §26.1 (auto-grant).
-func installReferenceRuntimes(ctx context.Context, gatewayURL string, out io.Writer) error {
+// conformance exemplar), §26.1 (auto-grant), §4.7 (digest-pinned pod image).
+func installReferenceRuntimes(ctx context.Context, gatewayURL, echoImageRef string, out io.Writer) error {
 	client := ctl.New(ctl.Options{
 		BaseURL:   gatewayURL,
 		DevTenant: defaultTenant,
@@ -53,7 +61,7 @@ func installReferenceRuntimes(ctx context.Context, gatewayURL string, out io.Wri
 	// The bootstrap seed creates the default tenant and registers
 	// every reference runtime as a platform-global record in one
 	// idempotent call.
-	seed := buildBootstrapSeed()
+	seed := buildBootstrapSeed(echoImageRef)
 	var bootstrapResp map[string]any
 	if err := client.Do(ctx, "POST", "/v1/admin/bootstrap", seed, &bootstrapResp); err != nil {
 		return fmt.Errorf("register reference runtimes: %w", err)
@@ -215,9 +223,13 @@ type seedUser struct {
 }
 
 // buildBootstrapSeed assembles the §17.4 Embedded Mode bootstrap seed:
-// the default tenant, the built-in user, and the §26 reference-runtime
-// catalog as platform-global records.
-func buildBootstrapSeed() bootstrapSeed {
+// the default tenant, the built-in user, the §26 reference-runtime catalog
+// as platform-global records, and the §15.4.4 echo runtime plus its single-pod
+// warm pool. echoImageRef is the import-time-resolved digest-pinned echo image
+// reference; when set it overwrites the echo seed's sentinel image so the
+// seeded digest equals the applied Runtime CR's and the containerd image's.
+// An empty echoImageRef leaves the echo seed on its sentinel placeholder.
+func buildBootstrapSeed(echoImageRef string) bootstrapSeed {
 	seed := bootstrapSeed{
 		Tenants: []seedTenant{
 			{ID: defaultTenant, DisplayName: "Default (Embedded Mode)"},
@@ -236,11 +248,18 @@ func buildBootstrapSeed() bootstrapSeed {
 	}
 	// echo is the §15.4.4 conformance exemplar rather than a §26 reference
 	// runtime, so it is seeded explicitly outside the referenceRuntimes
-	// loop. It carries the runnable echo-embedded image the bring-up
-	// resolves at import time (S5/S6 overwrite echoRuntime.Image before this
-	// seed is built), a single-pod warm pool, and credential-free labels.
-	// spec: §15.4.4 (echo conformance exemplar), §17.4 (Embedded Mode seed).
-	seed.Runtimes = append(seed.Runtimes, seedRuntimeFrom(echoRuntime))
+	// loop. It carries the runnable echo-embedded image the bring-up resolved
+	// at import time, overwriting the catalog entry's sentinel placeholder so
+	// the seeded digest equals the applied Runtime CR's and the containerd
+	// image's, which the digest-pinned IfNotPresent pull requires. A single-pod
+	// warm pool and credential-free labels complete the entry.
+	// spec: §15.4.4 (echo conformance exemplar), §17.4 (Embedded Mode seed),
+	// §4.7 (digest-pinned pod image).
+	echoSeed := seedRuntimeFrom(echoRuntime)
+	if echoImageRef != "" {
+		echoSeed.Image = echoImageRef
+	}
+	seed.Runtimes = append(seed.Runtimes, echoSeed)
 	// The echo warm pool (warmCount: 1, §5.2 hot-pool taxonomy) is the only
 	// seeded pool: the §26 reference runtimes register without a pool
 	// (placeholder-pinned, no §4.7 pod placement). The pool runs `standard`

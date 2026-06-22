@@ -5,6 +5,7 @@ package stack
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func TestInstallReferenceRuntimesGrantFailureNamesRuntimes_spec_24_3(t *testing.
 	}))
 	defer srv.Close()
 
-	err := installReferenceRuntimes(context.Background(), srv.URL, io.Discard)
+	err := installReferenceRuntimes(context.Background(), srv.URL, "", io.Discard)
 	if err == nil {
 		t.Fatal("expected an error when grants fail")
 	}
@@ -60,7 +61,7 @@ func TestInstallReferenceRuntimesAllGrantsSucceed_spec_24_3(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := installReferenceRuntimes(context.Background(), srv.URL, io.Discard); err != nil {
+	if err := installReferenceRuntimes(context.Background(), srv.URL, "", io.Discard); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 }
@@ -77,7 +78,7 @@ func TestInstallReferenceRuntimesWarnsOnPlaceholderDigest_spec_26_3(t *testing.T
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := installReferenceRuntimes(context.Background(), srv.URL, &out); err != nil {
+	if err := installReferenceRuntimes(context.Background(), srv.URL, "", &out); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 	got := out.String()
@@ -102,7 +103,7 @@ func TestInstallReferenceRuntimesWarnsOnPlaceholderDigest_spec_26_3(t *testing.T
 // opt-in, and the §13.2 cluster-default DNS opt-out the embedded substrate
 // requires. spec: §5.2, §13.2, §17.4.
 func TestBuildBootstrapSeedSeedsEchoPool_spec_5_2(t *testing.T) {
-	seed := buildBootstrapSeed()
+	seed := buildBootstrapSeed("")
 	if len(seed.Pools) != 1 {
 		t.Fatalf("seed has %d pools, want exactly the echo pool", len(seed.Pools))
 	}
@@ -136,7 +137,7 @@ func TestBuildBootstrapSeedSeedsEchoPool_spec_5_2(t *testing.T) {
 // cluster-default is admitted only on a `standard` (runc) pool, which the
 // echo pool is. spec: §13.2.
 func TestBuildBootstrapSeedEchoPoolDNSPolicyAdmissible_spec_13_2(t *testing.T) {
-	p := buildBootstrapSeed().Pools[0]
+	p := buildBootstrapSeed("").Pools[0]
 	pool := poolstore.Pool{
 		Name:             p.Name,
 		IsolationProfile: isolation.Profile(p.IsolationProfile),
@@ -144,6 +145,84 @@ func TestBuildBootstrapSeedEchoPoolDNSPolicyAdmissible_spec_13_2(t *testing.T) {
 	}
 	if err := poolstore.ValidateDNSPolicy(pool); err != nil {
 		t.Fatalf("echo pool dnsPolicy is not §13.2-admissible: %v", err)
+	}
+}
+
+// TestBuildBootstrapSeedInjectsEchoDigest_spec_4_7 asserts the bring-up's
+// import-time-resolved echo image reference overwrites the echo seed's sentinel
+// image, so the seeded digest equals the applied Runtime CR's and the
+// containerd image's. The digest-pinned IfNotPresent pull requires all three to
+// agree. spec: §4.7 (digest-pinned pod image), §15.4.4 (echo exemplar).
+func TestBuildBootstrapSeedInjectsEchoDigest_spec_4_7(t *testing.T) {
+	const resolved = "ghcr.io/lennylabs/runtime-echo-embedded@sha256:" +
+		"abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcab"
+	seed := buildBootstrapSeed(resolved)
+	var echo *seedRuntime
+	for i := range seed.Runtimes {
+		if seed.Runtimes[i].Name == EchoRuntimeName {
+			echo = &seed.Runtimes[i]
+		}
+	}
+	if echo == nil {
+		t.Fatal("seed has no echo runtime")
+	}
+	if echo.Image != resolved {
+		t.Errorf("echo seed image = %q, want the import-time-resolved digest %q", echo.Image, resolved)
+	}
+}
+
+// TestBuildBootstrapSeedEchoDigestSentinelWhenUnresolved_spec_4_7 asserts that
+// when the import did not resolve a digest (substrate down or import failed),
+// the echo seed keeps its sentinel placeholder rather than an empty image,
+// which the bootstrap handler would reject. The gateway never places against
+// the sentinel because AgentNamespace stays unset on that path too. spec: §4.7.
+func TestBuildBootstrapSeedEchoDigestSentinelWhenUnresolved_spec_4_7(t *testing.T) {
+	seed := buildBootstrapSeed("")
+	var echo *seedRuntime
+	for i := range seed.Runtimes {
+		if seed.Runtimes[i].Name == EchoRuntimeName {
+			echo = &seed.Runtimes[i]
+		}
+	}
+	if echo == nil {
+		t.Fatal("seed has no echo runtime")
+	}
+	if echo.Image != echoImageSentinel {
+		t.Errorf("echo seed image with no resolved digest = %q, want the sentinel %q", echo.Image, echoImageSentinel)
+	}
+}
+
+// TestInstallReferenceRuntimesSeedsResolvedEchoDigest_spec_4_7 asserts the
+// resolved echo image reference reaches the gateway bootstrap call rather than
+// being dropped in installReferenceRuntimes. The fake gateway captures the
+// posted seed and the test confirms the echo record carries the resolved
+// digest. spec: §4.7 (digest-pinned pod image), §15.4.4 (echo exemplar).
+func TestInstallReferenceRuntimesSeedsResolvedEchoDigest_spec_4_7(t *testing.T) {
+	const resolved = "ghcr.io/lennylabs/runtime-echo-embedded@sha256:" +
+		"def0def0def0def0def0def0def0def0def0def0def0def0def0def0def0def0d"
+	var postedEchoImage string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/admin/bootstrap" {
+			var seed bootstrapSeed
+			if err := json.NewDecoder(r.Body).Decode(&seed); err != nil {
+				t.Errorf("decode posted seed: %v", err)
+			}
+			for _, rt := range seed.Runtimes {
+				if rt.Name == EchoRuntimeName {
+					postedEchoImage = rt.Image
+				}
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	if err := installReferenceRuntimes(context.Background(), srv.URL, resolved, io.Discard); err != nil {
+		t.Fatalf("installReferenceRuntimes: %v", err)
+	}
+	if postedEchoImage != resolved {
+		t.Errorf("posted echo image = %q, want the resolved digest %q", postedEchoImage, resolved)
 	}
 }
 
@@ -165,7 +244,7 @@ func TestInstallReferenceRuntimesGrantsEcho_spec_26_1(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := installReferenceRuntimes(context.Background(), srv.URL, io.Discard); err != nil {
+	if err := installReferenceRuntimes(context.Background(), srv.URL, "", io.Discard); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 	hasEcho := false
@@ -202,7 +281,7 @@ func TestInstallReferenceRuntimesWarnDoesNotListEcho_spec_26_3(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := installReferenceRuntimes(context.Background(), srv.URL, &out); err != nil {
+	if err := installReferenceRuntimes(context.Background(), srv.URL, "", &out); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 	// The WARN line names the placeholder-pinned runtimes; echo is runnable
