@@ -151,6 +151,16 @@ compose-tls: ## §17.4 credential-testing profile: generate self-signed mTLS mat
 test-smoke: ## §17.4 line 276 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
 	@go test -tags smoke -count=1 -timeout 120s -run TestSourceModeSmoke ./tests/tier4_integration/...
 
+ECHO_TARBALL ?= $(CURDIR)/bin/runtime-echo-embedded.tar
+
+.PHONY: echo-embedded-tarball
+echo-embedded-tarball: ## Build the echo-embedded image and docker-save it to bin/runtime-echo-embedded.tar, the credential-free pod image the Embedded Mode bring-up imports into the embedded containerd (resolveEchoTarball / LENNY_ECHO_TARBALL).
+	@mkdir -p bin
+	@echo "  image runtime-echo-embedded"
+	@docker build --build-arg BINARY=runtimes/echo-embedded -t ghcr.io/lennylabs/runtime-echo-embedded:dev .
+	@echo "  docker save → $(ECHO_TARBALL)"
+	@docker save ghcr.io/lennylabs/runtime-echo-embedded:dev -o $(ECHO_TARBALL)
+
 .PHONY: test-smoke-embedded
-test-smoke-embedded: ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows).
-	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} go test -tags smoke -count=1 -timeout 900s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...
+test-smoke-embedded: echo-embedded-tarball ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo tarball first.
+	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags smoke -count=1 -timeout 1500s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...

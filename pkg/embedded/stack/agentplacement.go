@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,13 +30,25 @@ import (
 // agree on one namespace. spec: §4.6.2, §5.1, §17.4.
 const agentNamespace = "lenny-agents"
 
+// runcRuntimeClassName is the §5.3 RuntimeClass the `standard` isolation
+// profile maps to (standard->runc, sandboxed->gvisor, microvm->kata). The
+// seeded embedded echo pool uses the standard profile, so the WarmPoolController
+// cannot render its pod until this RuntimeClass exists; its handler is
+// k3s/containerd's built-in `runc`, so naming it needs no out-of-band runtime
+// install. In production the §5.3 RuntimeClasses ship via the Helm chart
+// (charts/lenny/templates/runtimeclasses.yaml); Embedded Mode applies the CRDs
+// directly and installs this one RuntimeClass at bring-up so placement renders.
+// spec: §5.3 (isolation profiles), §17.4 (Embedded Mode provisions the substrate).
+const runcRuntimeClassName = "runc"
+
 // Substrate placement seams. They default to the real typed/controller-runtime
 // clients and are package-level vars so a unit test can substitute fakes and
-// assert the §4.7 activation sequence (namespace create, Runtime-CR apply,
-// digest injection) without a live API server, mirroring the existing
-// substrate seams (newSubstrate, installSubstrateCRDs). spec: §4.7, §5.1.
+// assert the §4.7 activation sequence (namespace create, RuntimeClass install,
+// Runtime-CR apply, digest injection) without a live API server, mirroring the
+// existing substrate seams (newSubstrate, installSubstrateCRDs). spec: §4.7, §5.1.
 var (
 	ensureAgentNamespaceFn = ensureAgentNamespace
+	ensureRuntimeClassFn   = ensureRuntimeClass
 	applyEchoRuntimeCRFn   = applyEchoRuntimeCR
 )
 
@@ -74,6 +87,43 @@ func ensureAgentNamespaceFromConfig(ctx context.Context, cfg *rest.Config, names
 			return nil
 		}
 		return fmt.Errorf("embedded agent-namespace: create %s: %w", namespace, err)
+	}
+	return nil
+}
+
+// ensureRuntimeClass creates the named §5.3 RuntimeClass (with the given
+// containerd handler) in the embedded cluster reachable through kubeconfigPath,
+// idempotently. The seeded echo pool's `standard` isolation profile resolves to
+// the `runc` RuntimeClass, which does not exist in a bare k3s cluster, so the
+// WarmPoolController fails its pod render ("runtimeclass \"runc\" not found")
+// until this installs it. It is part of activating the §4.7 pod path in Embedded
+// Mode, alongside ensureAgentNamespace. spec: §5.3 (isolation profiles), §17.4.
+func ensureRuntimeClass(ctx context.Context, kubeconfigPath, name, handler string) error {
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("embedded runtimeclass: load kubeconfig %s: %w", kubeconfigPath, err)
+	}
+	return ensureRuntimeClassFromConfig(ctx, cfg, name, handler)
+}
+
+// ensureRuntimeClassFromConfig creates the RuntimeClass against an
+// already-resolved rest config, idempotently. It is split from ensureRuntimeClass
+// so a tier-2 envtest can exercise the create and the AlreadyExists idempotency
+// against a real kube-apiserver without writing a kubeconfig file. spec: §5.3.
+func ensureRuntimeClassFromConfig(ctx context.Context, cfg *rest.Config, name, handler string) error {
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("embedded runtimeclass: build core client: %w", err)
+	}
+	rc := &nodev1.RuntimeClass{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Handler:    handler,
+	}
+	if _, err := client.NodeV1().RuntimeClasses().Create(ctx, rc, metav1.CreateOptions{}); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("embedded runtimeclass: create %s: %w", name, err)
 	}
 	return nil
 }

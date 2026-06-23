@@ -538,6 +538,15 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 	if err := ensureAgentNamespaceFn(ctx, res.kubeconfig, agentNamespace); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: agent namespace create failed: %v\n", err)
 	}
+	// Install the §5.3 `runc` RuntimeClass the seeded echo pool's `standard`
+	// isolation profile resolves to. A bare k3s cluster ships no RuntimeClass
+	// objects, so without it the WarmPoolController fails to render the echo pod
+	// ("runtimeclass \"runc\" not found") and placement stays inert. The handler
+	// is k3s/containerd's built-in `runc`, so no out-of-band runtime is needed.
+	// spec: §5.3 (standard->runc), §17.4 (Embedded Mode provisions the substrate).
+	if err := ensureRuntimeClassFn(ctx, res.kubeconfig, runcRuntimeClassName, runcRuntimeClassName); err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: runtimeclass install failed: %v\n", err)
+	}
 	// Import the pre-built echo-embedded image into the embedded containerd
 	// and record the import-time-resolved digest. The import runs after the
 	// substrate is up (so containerd is reachable) and before the Runtime-CR

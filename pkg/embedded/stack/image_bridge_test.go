@@ -30,7 +30,7 @@ func TestCtrInvocationArgsHostPath(t *testing.T) {
 }
 
 // spec: §24.19.1, §17.4 — on the Docker-backed launcher (macOS and
-// Windows) the bridge runs `k3s ctr` inside the k3s container via
+// Windows) the bridge runs the bundled `ctr` inside the k3s container via
 // `docker exec`, addressing the in-container containerd socket. A
 // tarball-streaming subcommand requests an interactive stdin (`exec -i`).
 func TestCtrInvocationArgsDockerPath(t *testing.T) {
@@ -39,7 +39,7 @@ func TestCtrInvocationArgsDockerPath(t *testing.T) {
 	// A non-streaming subcommand: no `-i`.
 	got := c.Args("k8s.io", false, "images", "ls")
 	want := []string{
-		"exec", "lenny-embedded-k3s-x", "k3s",
+		"exec", "lenny-embedded-k3s-x",
 		"ctr", "--address", containerCtrSocket, "--namespace", "k8s.io", "images", "ls",
 	}
 	assertArgs(t, "docker ls", got, want)
@@ -48,7 +48,7 @@ func TestCtrInvocationArgsDockerPath(t *testing.T) {
 	// in-container ctr stdin.
 	gotImport := c.Args("custom", true, "images", "import", "-")
 	wantImport := []string{
-		"exec", "-i", "lenny-embedded-k3s-x", "k3s",
+		"exec", "-i", "lenny-embedded-k3s-x",
 		"ctr", "--address", containerCtrSocket, "--namespace", "custom", "images", "import", "-",
 	}
 	assertArgs(t, "docker import", gotImport, wantImport)

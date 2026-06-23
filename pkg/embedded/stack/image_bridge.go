@@ -30,9 +30,9 @@ const containerCtrSocket = "/run/k3s/containerd/containerd.sock"
 // CtrInvocation builds the argv that reaches the embedded k3s containerd
 // `ctr` client. It is substrate-aware: on the Linux managed-child-process
 // launcher it runs the host k3s binary against the host containerd socket;
-// on the Docker-backed launcher (macOS and Windows) it runs `k3s ctr`
-// inside the k3s container via `docker exec`, because there is no host k3s
-// binary or host containerd socket for a containerized k3s.
+// on the Docker-backed launcher (macOS and Windows) it runs the bundled
+// `ctr` inside the k3s container via `docker exec`, because there is no host
+// k3s binary or host containerd socket for a containerized k3s.
 //
 // It is exported because both the `lenny image` CLI dispatch and the
 // Embedded Mode bring-up import resolve a CtrInvocation and run subcommands
@@ -57,9 +57,13 @@ type CtrInvocation struct {
 
 // Args builds the full argv (after the binary) for a ctr subcommand under
 // namespace. On the host path it is the bare `ctr` invocation against the
-// host socket. On the Docker path it is `exec [-i] <container> k3s ctr`
-// against the in-container socket; stdin is requested (`exec -i`) only when
-// the subcommand streams a tarball in (the `images import -` case).
+// host socket. On the Docker path it is `exec [-i] <container> ctr` against
+// the in-container socket; stdin is requested (`exec -i`) only when the
+// subcommand streams a tarball in (the `images import -` case). The
+// in-container `ctr` is the rancher/k3s image's bundled `/bin/ctr`; the
+// `k3s ctr` multicall form is not used because that build reports
+// "No help topic for 'ctr'" when k3s is invoked by its own name rather than
+// as the `ctr` symlink.
 func (c CtrInvocation) Args(namespace string, stdin bool, sub ...string) []string {
 	ctr := append([]string{"ctr", "--address", c.socket, "--namespace", namespace}, sub...)
 	if c.container == "" {
@@ -69,7 +73,7 @@ func (c CtrInvocation) Args(namespace string, stdin bool, sub ...string) []strin
 	if stdin {
 		exec = append(exec, "-i")
 	}
-	exec = append(exec, c.container, "k3s")
+	exec = append(exec, c.container)
 	return append(exec, ctr...)
 }
 
@@ -77,7 +81,7 @@ func (c CtrInvocation) Args(namespace string, stdin bool, sub ...string) []strin
 // embedded containerd store. On the Linux substrate the host `ctr` reads
 // the host file directly (`ctr images import <file>`). On the Docker-backed
 // substrate the in-container `ctr` cannot read a host path, so the host
-// tarball is streamed into `docker exec -i <container> k3s ctr images
+// tarball is streamed into `docker exec -i <container> ctr images
 // import -`.
 //
 // spec: §24.19.1 line 275 (the `--file <tar>` air-gapped/CI import path),
@@ -110,7 +114,7 @@ func ImportFromFile(ctr CtrInvocation, namespace, reference, file string, stdout
 // ImportFromHostDaemon streams the image out of the host Docker daemon into
 // the embedded containerd: `docker save <ref>` piped to `ctr images import
 // -`. The `ctr` side is the host binary on the Linux substrate or `docker
-// exec -i <container> k3s ctr` on the Docker-backed substrate. `docker` is
+// exec -i <container> ctr` on the Docker-backed substrate. `docker` is
 // resolved on PATH up front so a missing binary surfaces a caller-facing
 // diagnostic that points at the `--file <tar>` fallback rather than the raw
 // `exec: docker: executable file not found in PATH` from os/exec.

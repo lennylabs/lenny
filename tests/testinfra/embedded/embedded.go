@@ -164,8 +164,12 @@ func Runtime() string {
 	return DefaultRuntime
 }
 
-// Build compiles cmd/lenny into a fresh temp binary and returns its
-// path. A build failure fails the test.
+// Build compiles cmd/lenny into a fresh temp binary and returns its path.
+// It also builds the sibling lenny-gateway and lenny-controller binaries
+// into the same directory: the embedded stack shells out to them
+// (resolveBin resolves a sibling next to the lenny binary), so a stale or
+// absent gateway/controller binary fails the bring-up. A build failure
+// fails the test.
 func Build(t testing.TB) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "lenny-embedded-it-*")
@@ -173,13 +177,15 @@ func Build(t testing.TB) string {
 		t.Fatalf("embedded.Build: mkdtemp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	bin := filepath.Join(dir, "lenny")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/lenny")
-	cmd.Dir = schematest.RepoRoot(t)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("embedded.Build: build cmd/lenny: %v\n%s", err, out)
+	root := schematest.RepoRoot(t)
+	for _, c := range []string{"lenny", "lenny-gateway", "lenny-controller"} {
+		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, c), "./cmd/"+c)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("embedded.Build: build cmd/%s: %v\n%s", c, err, out)
+		}
 	}
-	return bin
+	return filepath.Join(dir, "lenny")
 }
 
 // Result is the outcome of one CLI invocation.
