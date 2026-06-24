@@ -4,8 +4,11 @@ package localcli
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/embedded/stack"
 )
 
 const testVersion = "test-version"
@@ -161,6 +164,67 @@ func TestRunTokenPrintAfterKeyWritten(t *testing.T) {
 	tok := strings.TrimSpace(stdout.String())
 	if n := strings.Count(tok, "."); n != 2 {
 		t.Errorf("token %q has %d dots, want 2 (a compact JWT)", tok, n)
+	}
+}
+
+// TestUpThreadsEchoTarballOverride covers the LENNY_ECHO_TARBALL operator
+// override: the in-process foreground bring-up (cmdUp) is the only bring-up
+// path after the detached supervisor was removed, so cmdUp must read the env
+// var and thread it into UpOptions.EchoTarball. The tier-4 smoke harness
+// builds lenny into a bare temp dir with no co-located tarball and supplies it
+// solely through this env var; if cmdUp drops it, the echo image never imports
+// and the `lenny up` → `session new --runtime echo` smoke path breaks.
+//
+// spec: §24.19.1 (the LENNY_ECHO_TARBALL operator override / --file import
+// path).
+func TestUpThreadsEchoTarballOverride_spec_24_19_1(t *testing.T) {
+	const want = "/opt/echo/echo-embedded.tar"
+	t.Setenv("LENNY_ECHO_TARBALL", want)
+
+	var captured stack.UpOptions
+	prev := runUp
+	t.Cleanup(func() { runUp = prev })
+	runUp = func(_ context.Context, opts stack.UpOptions) error {
+		captured = opts
+		return nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"up"}, &stdout, &stderr, testVersion); code != 0 {
+		t.Fatalf("up exit code = %d (stderr %q), want 0", code, stderr.String())
+	}
+	if captured.EchoTarball != want {
+		t.Errorf("cmdUp threaded EchoTarball = %q, want the LENNY_ECHO_TARBALL value %q", captured.EchoTarball, want)
+	}
+	if captured.CLIVersion != testVersion {
+		t.Errorf("cmdUp threaded CLIVersion = %q, want %q", captured.CLIVersion, testVersion)
+	}
+}
+
+// TestUpWithoutEchoTarballOverrideLeavesItEmpty confirms cmdUp leaves
+// EchoTarball empty when LENNY_ECHO_TARBALL is unset, so the stack falls back
+// to discovering the tarball alongside the binary rather than reading a stale
+// value.
+//
+// spec: §24.19.1 (the override is optional; an unset env var triggers
+// discovery alongside the binary).
+func TestUpWithoutEchoTarballOverrideLeavesItEmpty_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_ECHO_TARBALL", "")
+
+	var captured stack.UpOptions
+	prev := runUp
+	t.Cleanup(func() { runUp = prev })
+	runUp = func(_ context.Context, opts stack.UpOptions) error {
+		captured = opts
+		return nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"up"}, &stdout, &stderr, testVersion); code != 0 {
+		t.Fatalf("up exit code = %d (stderr %q), want 0", code, stderr.String())
+	}
+	if captured.EchoTarball != "" {
+		t.Errorf("cmdUp threaded EchoTarball = %q with no override, want empty", captured.EchoTarball)
 	}
 }
 

@@ -97,8 +97,17 @@ type DownOptions struct {
 // a live launcher: it stops or removes the Docker-backed container by its
 // recorded name and the Linux k3s process group by its recorded leader PID.
 //
-// spec: §17.4 (lenny down persists the substrate and the imported-image
-// store; --purge removes them; the application stores are ephemeral), §24.19.
+// A non-`--purge` down does not delete the state file: it rewrites it as a
+// Stopped marker that preserves the substrate handle and the deployed image
+// tag, so the next warm lenny up reads the tag and skips the expensive
+// re-import and re-apply when the CLI version is unchanged. lenny status reads
+// the marker as no running stack. `--purge` discards the marker and the
+// persisted substrate.
+//
+// spec: §17.4 (lenny down persists the substrate, the imported-image store,
+// and the deployed image tag across a non-`--purge` down so the warm up
+// reconcile can skip the re-import and re-apply; --purge removes them; the
+// application stores are ephemeral), §24.19.
 func RunDown(ctx context.Context, opts DownOptions) error {
 	out := orDiscard(opts.Out)
 	root, err := resolveRoot(opts.Root)
@@ -107,13 +116,22 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 	}
 	paths := NewPaths(root)
 
+	// Read the full recorded state (running or already stopped): --purge must
+	// clean up a substrate left behind by a prior non-`--purge` down, and a
+	// no-op down on an already-stopped stack reports no running stack.
 	st, ok, err := readState(paths.StateFile())
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if !ok || st.Stopped {
 		fmt.Fprintln(out, "lenny down: no embedded stack is running")
 		if opts.Purge {
+			// A non-`--purge` down left the substrate persisted; --purge now
+			// removes it before purgeRoot discards the state directory that
+			// records its handle. With no record (ok == false) both removals
+			// are no-ops on their empty handles.
+			removeSubstrateContainer(st.K3sContainer)
+			stopSubstrateProcess(st.K3sPID)
 			if err := purgeRoot(root); err != nil {
 				return err
 			}
@@ -148,15 +166,40 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 	// warm lenny up restarts it. The Docker-backed container is `docker stop`d
 	// (the container and its containerd image store persist); the Linux
 	// process group is terminated by its recorded PID (the k3s data directory
-	// persists on disk). The state file is cleared so a later lenny status
-	// reports no running stack; lenny up rewrites it on the warm restart.
-	// spec: §17.4 (lenny down persists the substrate and the imported-image
-	// store).
+	// persists on disk).
 	stopSubstrateContainer(st.K3sContainer)
 	stopSubstrateProcess(st.K3sPID)
-	_ = removeState(paths.StateFile())
+	// Rewrite the state file as a Stopped marker rather than deleting it: it
+	// preserves the substrate handle and the deployed image tag so the next
+	// warm lenny up matches the tag and skips the re-import and re-apply (the
+	// §17.4 fast warm restart). lenny status reads the marker as no running
+	// stack. StartedAt and the live forwarder address are cleared because the
+	// stack is no longer answering on them. spec: §17.4 (a non-`--purge` down
+	// preserves the substrate and the deployed tag for the warm reconcile).
+	if err := writeStoppedMarker(paths.StateFile(), st); err != nil {
+		return err
+	}
 	fmt.Fprintln(out, "lenny down: stack stopped")
 	return nil
+}
+
+// writeStoppedMarker rewrites the state file as the Stopped marker a
+// non-`--purge` lenny down leaves behind. It preserves the substrate handle
+// (the Docker container name or the Linux kubeconfig) and the deployed image
+// tag so a warm lenny up reconciles against them, and clears the live-stack
+// fields (StartedAt and the host-side forwarder address) so nothing reads the
+// marker as a running stack. spec: §17.4 (the substrate and the deployed tag
+// persist across a non-`--purge` down).
+func writeStoppedMarker(path string, prior State) error {
+	marker := State{
+		Stopped:          true,
+		K3sContainer:     prior.K3sContainer,
+		K3sPID:           prior.K3sPID,
+		KubeconfigPath:   prior.KubeconfigPath,
+		DeployedImageTag: prior.DeployedImageTag,
+		K3sEnabled:       prior.K3sEnabled,
+	}
+	return writeState(path, marker)
 }
 
 // resolveRoot resolves the Embedded Mode state directory: the explicit

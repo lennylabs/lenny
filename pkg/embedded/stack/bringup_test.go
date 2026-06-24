@@ -288,6 +288,88 @@ func TestUpWarmReconcileReappliesOnTagMismatch_spec_17_4(t *testing.T) {
 	}
 }
 
+// TestUpDownUpWarmRestartSkipsReapply drives the realistic warm-restart
+// workflow the §17.4 fast path names: a first lenny up runs the full
+// import/apply/seed, a non-`--purge` lenny down stops the substrate while
+// persisting the Stopped marker (with the deployed tag), and a second lenny up
+// at the same CLI version reconciles against the preserved tag and skips the
+// expensive import, manifest apply, and echo seed. Without the persisted tag
+// the down→up path would re-import and re-apply every time, defeating the
+// 20-35s warm restart the substrate-persistence model buys.
+//
+// diagnosis: a failure means a non-`--purge` lenny down dropped the deployed
+// image tag, so the next lenny up cannot recognize the persisted control plane
+// as current and re-runs the platform-image import and the manifest apply that
+// the §17.4 warm restart is supposed to skip.
+//
+// spec: §17.4 (the substrate and the imported-image store persist across a
+// non-`--purge` down; a warm up at an unchanged CLI version reuses the
+// persisted control plane and skips the re-import and re-apply).
+func TestUpDownUpWarmRestartSkipsReapply_spec_17_4(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	const resolved = "ghcr.io/lennylabs/runtime-echo-embedded@sha256:" +
+		"4444444444444444444444444444444444444444444444444444444444444444"
+
+	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
+	withSubstrateSeams(t, true, l, nil)
+	withActivationSeams(t, resolved)
+	withRuntimeClassSeam(t)
+	calls := withBringUpSeams(t)
+	// The persisted gateway answers as ready on the warm reconcile, so a
+	// matching deployed tag reuses the control plane.
+	prevReady := warmGatewayReadyFn
+	t.Cleanup(func() { warmGatewayReadyFn = prevReady })
+	warmGatewayReadyFn = func(context.Context, string) bool { return true }
+	// Stub the substrate-stop seams so lenny down does not stop a real process
+	// or container; the fakeLauncher records no PID and no container handle.
+	prevStop, prevProc := stopSubstrateContainer, stopSubstrateProcess
+	t.Cleanup(func() { stopSubstrateContainer, stopSubstrateProcess = prevStop, prevProc })
+	stopSubstrateContainer = func(string) {}
+	stopSubstrateProcess = func(int) {}
+
+	// ----- First up: full import/apply/seed at v5.5.5. -----
+	if err := RunUp(context.Background(), UpOptions{
+		Root: root, HTTPSPort: freeLoopbackPort(t), CLIVersion: "v5.5.5", Out: io.Discard, ErrOut: io.Discard,
+	}); err != nil {
+		t.Fatalf("first RunUp: %v", err)
+	}
+	for _, leg := range []string{"import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
+		if !containsLeg(calls.snapshot(), leg) {
+			t.Fatalf("first up skipped the %q leg; want a full first-run apply (order=%v)", leg, calls.snapshot())
+		}
+	}
+
+	// ----- Non-purge down: persists the Stopped marker with the deployed tag. -----
+	if err := RunDown(context.Background(), DownOptions{Root: root, Out: io.Discard, ErrOut: io.Discard}); err != nil {
+		t.Fatalf("RunDown: %v", err)
+	}
+	marker, ok, err := readState(NewPaths(root).StateFile())
+	if err != nil || !ok || !marker.Stopped {
+		t.Fatalf("after down: marker ok=%v stopped=%v err=%v, want a preserved Stopped marker", ok, marker.Stopped, err)
+	}
+	if marker.DeployedImageTag != "v5.5.5" {
+		t.Fatalf("after down: marker DeployedImageTag = %q, want the preserved v5.5.5", marker.DeployedImageTag)
+	}
+
+	// ----- Second up at the same CLI version: reuse the persisted control plane. -----
+	before := len(calls.snapshot())
+	if err := RunUp(context.Background(), UpOptions{
+		Root: root, HTTPSPort: freeLoopbackPort(t), CLIVersion: "v5.5.5", Out: io.Discard, ErrOut: io.Discard,
+	}); err != nil {
+		t.Fatalf("second RunUp: %v", err)
+	}
+	second := calls.snapshot()[before:]
+	for _, leg := range []string{"secret", "import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
+		if containsLeg(second, leg) {
+			t.Errorf("warm down→up ran the %q leg; want it skipped against the persisted tag (legs=%v)", leg, second)
+		}
+	}
+	if !containsLeg(second, "wait") {
+		t.Errorf("warm down→up skipped the gateway-readiness wait: %v", second)
+	}
+}
+
 // containsLeg reports whether the recorded leg list s holds v.
 func containsLeg(s []string, v string) bool {
 	for _, x := range s {

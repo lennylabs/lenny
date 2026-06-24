@@ -61,11 +61,14 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 		return Status{}, err
 	}
 	paths := NewPaths(root)
-	st, ok, err := readState(paths.StateFile())
+	st, ok, err := readRunningState(paths.StateFile())
 	if err != nil {
 		return Status{}, err
 	}
 	if !ok {
+		// No stack file, or the Stopped marker a non-`--purge` lenny down left
+		// behind: the substrate handle and deployed tag persist on disk but the
+		// stack is not running, so status reports it not running. spec: §17.4.
 		return Status{Running: false, ActiveSessions: -1}, nil
 	}
 

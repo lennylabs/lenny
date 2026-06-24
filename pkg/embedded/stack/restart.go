@@ -63,7 +63,7 @@ func RunRestart(ctx context.Context, opts RestartOptions) error {
 		return errors.New("component cannot be restarted individually; restartable components are gateway, controller, and ops")
 	}
 	paths := NewPaths(root)
-	if _, ok, err := readState(paths.StateFile()); err != nil {
+	if _, ok, err := readRunningState(paths.StateFile()); err != nil {
 		return err
 	} else if !ok {
 		return ErrNoRunningStack

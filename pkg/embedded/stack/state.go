@@ -47,8 +47,24 @@ type State struct {
 	// were imported and rendered under. lenny up compares it against the
 	// running CLI version on a warm bring-up and re-imports and re-applies
 	// on a mismatch, so a stale image is not run after a lenny upgrade
-	// (C4). Empty until the S7 bring-up records it.
+	// (C4). Empty until the S7 bring-up records it. A non-`--purge` lenny
+	// down preserves it (alongside the substrate handle) in the Stopped
+	// marker so the next warm lenny up can match it and skip the expensive
+	// re-import and re-apply.
 	DeployedImageTag string `json:"deployedImageTag,omitempty"`
+	// Stopped marks a state record left behind by a non-`--purge` lenny down:
+	// the substrate and its imported-image store persist on disk (or in the
+	// stopped Docker container), but the stack is not running. lenny status,
+	// the running-gateway/substrate resolvers, and lenny restart treat a
+	// Stopped record as no running stack, while a warm lenny up still reads
+	// its DeployedImageTag to decide whether the persisted control plane can
+	// be reused. The deployed tag survives a non-`--purge` down only through
+	// this marker, so the down→up warm path skips the re-import and re-apply
+	// the §17.4 fast-restart depends on; `--purge` discards the record
+	// entirely. spec: §17.4 (the substrate and imported-image store persist
+	// across a non-`--purge` down; a warm up reconciles against the recorded
+	// deployed tag).
+	Stopped bool `json:"stopped,omitempty"`
 	// KubeconfigPath is the embedded k3s admin kubeconfig. On the Linux
 	// launcher it is k3s' generated admin kubeconfig; on the Docker-backed
 	// launcher it is the host-rewritten kubeconfig whose server URL points
@@ -106,6 +122,29 @@ func removeState(path string) error {
 	return nil
 }
 
+// readRunningState loads the stack state from path and reports ok=true only
+// when a stack is recorded as running. It returns ok=false when no state file
+// exists and when the recorded state is the Stopped marker a non-`--purge`
+// lenny down leaves behind: a stopped stack persists its substrate handle and
+// deployed tag on disk but is not running, so the status, running-gateway,
+// running-substrate, and restart callers must read it as "no running stack".
+// The warm-reconcile read in Up uses readState directly so it still sees the
+// preserved DeployedImageTag.
+//
+// spec: §17.4 (a non-`--purge` lenny down stops the stack while persisting the
+// substrate and the imported-image store; lenny status then reports it not
+// running).
+func readRunningState(path string) (s State, ok bool, err error) {
+	st, ok, err := readState(path)
+	if err != nil || !ok {
+		return State{}, false, err
+	}
+	if st.Stopped {
+		return State{}, false, nil
+	}
+	return st, true, nil
+}
+
 // ErrNoRunningStack is returned by RunningGateway when no Embedded
 // Mode stack is recorded as running.
 var ErrNoRunningStack = errors.New("embedded: no running stack")
@@ -126,7 +165,7 @@ func RunningGateway(root string) (string, error) {
 		return "", err
 	}
 	paths := NewPaths(resolved)
-	st, ok, err := readState(paths.StateFile())
+	st, ok, err := readRunningState(paths.StateFile())
 	if err != nil {
 		return "", err
 	}
@@ -180,7 +219,7 @@ func RunningSubstrate(root string) (Substrate, error) {
 		return Substrate{}, err
 	}
 	paths := NewPaths(resolved)
-	st, ok, err := readState(paths.StateFile())
+	st, ok, err := readRunningState(paths.StateFile())
 	if err != nil {
 		return Substrate{}, err
 	}

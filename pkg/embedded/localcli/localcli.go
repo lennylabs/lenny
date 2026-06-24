@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
@@ -144,17 +145,30 @@ State lives under ~/.lenny/ (override with LENNY_HOME). The embedded
 stack is for local development only; lenny up prints a non-suppressible
 production-warning banner.`
 
+// runUp is the foreground bring-up seam cmdUp drives. It defaults to the real
+// stack.RunUp and is a package-level var so a unit test can substitute it to
+// capture the UpOptions cmdUp assembles (in particular the LENNY_ECHO_TARBALL
+// override threading) without provisioning a real substrate.
+var runUp = stack.RunUp
+
 // cmdUp implements `lenny up`. version is recorded as the deployed image tag
 // so a warm bring-up reconciles against it and re-imports and re-applies the
-// embedded manifests on a CLI-upgrade mismatch (C4).
+// embedded manifests on a CLI-upgrade mismatch (C4). The LENNY_ECHO_TARBALL
+// operator override threads through to UpOptions.EchoTarball: the in-process
+// foreground bring-up is the only bring-up path (the detached supervisor was
+// removed), so this is where the documented override is read. The tier-4
+// smoke harness builds lenny into a bare temp dir with no co-located tarball
+// and supplies it solely through this env var. spec: §24.19.1 (the
+// LENNY_ECHO_TARBALL operator override / --file import path).
 func cmdUp(ctx context.Context, args []string, stdout, stderr io.Writer, version string) int {
 	httpPort, httpsPort := parsePortFlags(args)
-	err := stack.RunUp(ctx, stack.UpOptions{
-		HTTPPort:   httpPort,
-		HTTPSPort:  httpsPort,
-		CLIVersion: version,
-		Out:        stdout,
-		ErrOut:     stderr,
+	err := runUp(ctx, stack.UpOptions{
+		HTTPPort:    httpPort,
+		HTTPSPort:   httpsPort,
+		EchoTarball: os.Getenv("LENNY_ECHO_TARBALL"),
+		CLIVersion:  version,
+		Out:         stdout,
+		ErrOut:      stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny up: %v\n", err)

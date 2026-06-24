@@ -78,11 +78,16 @@ func TestRunDownNoStack(t *testing.T) {
 }
 
 // TestRunDownStopsRecordedStack covers the RunDown teardown of a recorded
-// stack: it removes the recorded substrate container, clears the state
-// file, and reports the stop. The §17.4 control plane runs as in-cluster
-// pods, so the teardown is substrate-level rather than a host-process kill.
+// stack: it stops the substrate, reports the stop, and rewrites the state
+// file as a Stopped marker that preserves the deployed image tag rather than
+// deleting it, so a later lenny status reads no running stack while the warm
+// reconcile still sees the persisted tag. The §17.4 control plane runs as
+// in-cluster pods, so the teardown is substrate-level rather than a
+// host-process kill.
 //
-// spec: §24.19 (lenny down tears the running stack down).
+// spec: §17.4 (a non-`--purge` down preserves the deployed tag for the warm
+// reconcile while reporting no running stack), §24.19 (lenny down tears the
+// running stack down).
 func TestRunDownStopsRecordedStack_spec_24_19(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("LENNY_HOME", root)
@@ -91,7 +96,7 @@ func TestRunDownStopsRecordedStack_spec_24_19(t *testing.T) {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 
-	st := State{K3sEnabled: true, GatewayForwarderAddr: "127.0.0.1:8443"}
+	st := State{K3sEnabled: true, GatewayForwarderAddr: "127.0.0.1:8443", DeployedImageTag: "v7.0.0"}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
@@ -99,8 +104,21 @@ func TestRunDownStopsRecordedStack_spec_24_19(t *testing.T) {
 	if err := RunDown(context.Background(), DownOptions{Out: &out}); err != nil {
 		t.Fatalf("RunDown with a recorded stack: %v", err)
 	}
-	if _, err := os.Stat(paths.StateFile()); !os.IsNotExist(err) {
-		t.Error("RunDown left the state file in place after stopping the stack")
+	// The state file persists as a Stopped marker that preserves the deployed
+	// tag for the warm reconcile, while readRunningState reads it as no
+	// running stack.
+	marker, ok, err := readState(paths.StateFile())
+	if err != nil || !ok {
+		t.Fatalf("RunDown removed the state file; want a preserved Stopped marker (ok=%v err=%v)", ok, err)
+	}
+	if !marker.Stopped {
+		t.Error("RunDown did not mark the state file as Stopped")
+	}
+	if marker.DeployedImageTag != "v7.0.0" {
+		t.Errorf("Stopped marker DeployedImageTag = %q, want the preserved v7.0.0", marker.DeployedImageTag)
+	}
+	if _, running, err := readRunningState(paths.StateFile()); err != nil || running {
+		t.Errorf("readRunningState after down = running=%v err=%v, want not running", running, err)
 	}
 	if !strings.Contains(out.String(), "stopping the embedded stack") {
 		t.Errorf("RunDown output = %q, want the stopping message", out.String())
@@ -136,7 +154,7 @@ func TestRunDownStopsDockerContainer_spec_17_4(t *testing.T) {
 	removeSubstrateContainer = func(name string) { removed = append(removed, name) }
 
 	const handle = "lenny-embedded-k3s-demo"
-	st := State{K3sContainer: handle, K3sEnabled: true}
+	st := State{K3sContainer: handle, K3sEnabled: true, DeployedImageTag: "v7.0.0"}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
@@ -152,8 +170,15 @@ func TestRunDownStopsDockerContainer_spec_17_4(t *testing.T) {
 	if len(removed) != 0 {
 		t.Errorf("RunDown force-removed the container on a non-purge down: %v", removed)
 	}
-	if _, err := os.Stat(paths.StateFile()); !os.IsNotExist(err) {
-		t.Error("RunDown left the state file (and its container handle) in place")
+	// The state file persists as a Stopped marker that keeps the container
+	// handle and the deployed tag so a warm lenny up can stop/restart the same
+	// container and skip the re-import when the CLI version is unchanged.
+	marker, ok, err := readState(paths.StateFile())
+	if err != nil || !ok {
+		t.Fatalf("RunDown removed the state file; want a preserved Stopped marker (ok=%v err=%v)", ok, err)
+	}
+	if !marker.Stopped || marker.K3sContainer != handle || marker.DeployedImageTag != "v7.0.0" {
+		t.Errorf("Stopped marker = %+v, want Stopped with the container handle and deployed tag preserved", marker)
 	}
 }
 

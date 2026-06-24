@@ -64,3 +64,41 @@ func TestEmbeddedGatewayAddressIsLoopbackOnly_spec_17_4(t *testing.T) {
 		t.Errorf("gateway URL %q is not a loopback address", url)
 	}
 }
+
+// TestEmbeddedStoppedStackResolvesNoRunningGateway asserts that the Stopped
+// marker a non-`--purge` lenny down leaves behind (which preserves the
+// substrate handle and the deployed image tag on disk so a warm up can reuse
+// the persisted control plane) does not resolve to a reachable gateway URL.
+// The marker keeps state on disk but the stack is not running, so the CLI must
+// fail closed with ErrNoRunningStack rather than dial a stale loopback
+// endpoint that nothing is answering on.
+//
+// diagnosis: a failure means a stopped embedded stack still resolves to a
+// gateway URL, so a CLI command would dial a forwarder address with no live
+// gateway behind it, or treat torn-down state as live, instead of reporting no
+// running stack.
+//
+// spec: §17.4 (a non-`--purge` lenny down stops the stack while persisting the
+// substrate and the deployed tag; the stopped stack is not running and the CLI
+// reaches no gateway through it).
+func TestEmbeddedStoppedStackResolvesNoRunningGateway_spec_17_4(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	paths := stack.NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	// The Stopped marker preserves the loopback forwarder address and the
+	// deployed tag, but marks the stack stopped: the substrate persists, the
+	// stack does not run.
+	state := `{"gatewayForwarderAddr":"127.0.0.1:8443","deployedImageTag":"v1.2.3","k3sEnabled":true,"stopped":true}`
+	if err := os.WriteFile(paths.StateFile(), []byte(state), 0o600); err != nil {
+		t.Fatalf("seed stopped marker: %v", err)
+	}
+
+	if _, err := stack.RunningGateway(root); err == nil {
+		t.Fatal("RunningGateway resolved a URL for a stopped stack; want ErrNoRunningStack (fail closed)")
+	} else if !strings.Contains(err.Error(), "no running stack") {
+		t.Errorf("RunningGateway error = %v, want a no-running-stack error", err)
+	}
+}
