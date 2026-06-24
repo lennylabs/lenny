@@ -17,8 +17,8 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// withBringUpSeams stubs the in-cluster bring-up seams Up drives after
-// provisionSubstrate (the dev-bearer Secret create, the platform-bundle
+// withBringUpSeams stubs the in-cluster bring-up seams Up drives after the
+// substrate is started (the dev-bearer Secret create, the platform-bundle
 // import, the two-phase manifest apply, the gateway-readiness wait, the
 // registry seed, and the echo-pool apply) to no-ops, and restores them. It is
 // combined with withSubstrateSeams/withActivationSeams so a test can drive Up
@@ -159,7 +159,7 @@ func TestUpReportsSubstrateFailure_spec_17_4(t *testing.T) {
 func TestUpSequenceOrder_spec_17_4(t *testing.T) {
 	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
 	withSubstrateSeams(t, true, l, nil)
-	// Stub the §4.7 activation seams so provisionSubstrate resolves an echo
+	// Stub the §4.7 activation seams so provisionClusterState resolves an echo
 	// digest (so the echo pool apply is not skipped) and creates no real
 	// objects.
 	withActivationSeams(t, "ghcr.io/lennylabs/runtime-echo-embedded@sha256:"+
@@ -313,7 +313,7 @@ func TestUpDownUpWarmRestartSkipsReapply_spec_17_4(t *testing.T) {
 
 	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
 	withSubstrateSeams(t, true, l, nil)
-	withActivationSeams(t, resolved)
+	activation := withActivationSeams(t, resolved)
 	withRuntimeClassSeam(t)
 	calls := withBringUpSeams(t)
 	// The persisted gateway answers as ready on the warm reconcile, so a
@@ -339,6 +339,12 @@ func TestUpDownUpWarmRestartSkipsReapply_spec_17_4(t *testing.T) {
 			t.Fatalf("first up skipped the %q leg; want a full first-run apply (order=%v)", leg, calls.snapshot())
 		}
 	}
+	// The first up ran the per-cluster-state legs (the echo component image
+	// import among them), which §17.4 designates as one-time first-run costs.
+	if !activation.imageImported {
+		t.Fatalf("first up did not import the echo component image; want the first-run import")
+	}
+	activation.imageImported = false
 
 	// ----- Non-purge down: persists the Stopped marker with the deployed tag. -----
 	if err := RunDown(context.Background(), DownOptions{Root: root, Out: io.Discard, ErrOut: io.Discard}); err != nil {
@@ -367,6 +373,14 @@ func TestUpDownUpWarmRestartSkipsReapply_spec_17_4(t *testing.T) {
 	}
 	if !containsLeg(second, "wait") {
 		t.Errorf("warm down→up skipped the gateway-readiness wait: %v", second)
+	}
+	// The warm down→up reuse must also skip the per-cluster-state legs that
+	// provisionClusterState runs (the echo component image import and the CRD
+	// install), the one-time first-run costs §17.4 names. A re-import on the
+	// warm restart would re-read the echo tarball the persisted containerd
+	// image store already holds, undercutting the 20-35s warm-restart target.
+	if activation.imageImported {
+		t.Errorf("warm down→up re-imported the echo component image; want it skipped against the persisted image store")
 	}
 }
 
@@ -473,7 +487,7 @@ func indexOf(s []string, v string) int {
 func TestUpSkipsPoolWhenEchoImageUnresolved_spec_4_7(t *testing.T) {
 	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
 	withSubstrateSeams(t, true, l, nil)
-	// Empty resolved image: provisionSubstrate skips the Runtime CR apply.
+	// Empty resolved image: provisionClusterState skips the Runtime CR apply.
 	withActivationSeams(t, "")
 	withRuntimeClassSeam(t)
 	calls := withBringUpSeams(t)
@@ -493,7 +507,7 @@ func TestUpSkipsPoolWhenEchoImageUnresolved_spec_4_7(t *testing.T) {
 }
 
 // withRuntimeClassSeam stubs the runc RuntimeClass install seam to a no-op so
-// provisionSubstrate does not dial a real API server in a unit test.
+// provisionClusterState does not dial a real API server in a unit test.
 func withRuntimeClassSeam(t *testing.T) {
 	t.Helper()
 	prev := ensureRuntimeClassFn
@@ -559,6 +573,48 @@ func TestWarmGatewayReadyFalseOnUnreachableSubstrate_spec_17_4(t *testing.T) {
 	// reports not-ready fail-closed.
 	if warmGatewayReady(context.Background(), filepath.Join(t.TempDir(), "no-such-kubeconfig.yaml")) {
 		t.Error("warmGatewayReady reported ready against a missing kubeconfig, want false (fail-closed)")
+	}
+}
+
+// TestResolveWarmGatewayReadyTimeout covers the warm-reconcile readiness-window
+// override (C4): with no override the window is the default pod-restart window,
+// a valid duration override is honored, and an unparseable or non-positive
+// override falls back to the default rather than disabling the wait. The window
+// must be large enough that a gateway restarting with the persisted substrate
+// is recognized as healthy rather than misread as unhealthy and forced into a
+// full re-import and re-apply.
+//
+// spec: §17.4 (the down→up warm restart reuses the persisted control plane; a
+// non-spec default is operator-tunable).
+func TestResolveWarmGatewayReadyTimeout(t *testing.T) {
+	cases := []struct {
+		name     string
+		override string
+		want     time.Duration
+	}{
+		{"unset uses the default pod-restart window", "", defaultWarmGatewayReadyTimeout},
+		{"a valid duration override is honored", "30s", 30 * time.Second},
+		{"an unparseable override falls back", "not-a-duration", defaultWarmGatewayReadyTimeout},
+		{"a zero override falls back rather than disabling the wait", "0s", defaultWarmGatewayReadyTimeout},
+		{"a negative override falls back", "-5s", defaultWarmGatewayReadyTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.override == "" {
+				os.Unsetenv(warmGatewayReadyTimeoutEnvVar)
+			} else {
+				t.Setenv(warmGatewayReadyTimeoutEnvVar, tc.override)
+			}
+			if got := resolveWarmGatewayReadyTimeout(); got != tc.want {
+				t.Errorf("resolveWarmGatewayReadyTimeout(override=%q) = %s, want %s", tc.override, got, tc.want)
+			}
+		})
+	}
+	// The default window is comfortably larger than a few seconds so a
+	// just-restarted gateway pod is not misread as unhealthy on the down→up
+	// warm path.
+	if defaultWarmGatewayReadyTimeout <= 30*time.Second {
+		t.Errorf("defaultWarmGatewayReadyTimeout = %s, want a pod-restart-comparable window so a restarting gateway is not forced into a full re-apply", defaultWarmGatewayReadyTimeout)
 	}
 }
 

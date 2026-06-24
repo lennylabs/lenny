@@ -175,26 +175,29 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	}
 
 	// ----- Embedded Kubernetes layer -----
-	// The substrate provisions on every host the launcher supports: a
-	// managed k3s child process on Linux, a Docker-backed k3s container
-	// under Docker Desktop's Linux VM on macOS and Windows. The CRDs
-	// install and the in-cluster control plane runs against the launcher's
-	// (host-rewritten) kubeconfig; only the substrate provisioning below the
-	// gateway/controllers/CRDs differs per host. provisionSubstrate also
-	// imports the echo image, creates the agent namespace and the runc
-	// RuntimeClass, and applies the echo Runtime CR. spec: §17.4.
-	// A persisted prior bring-up records the deployed image tag. lenny up
-	// reads it before provisioning so a warm bring-up can decide whether to
-	// re-import and re-apply (a CLI-upgrade tag mismatch) or skip the
-	// expensive import/apply legs (a tag match against a healthy substrate).
-	// spec: §17.4 (an upgrade re-imports and re-applies on a mismatch).
+	// The substrate starts on every host the launcher supports: a managed k3s
+	// child process on Linux, a Docker-backed k3s container under Docker
+	// Desktop's Linux VM on macOS and Windows. On a warm down→up cycle the
+	// launcher restarts the persisted (stopped) substrate; on a first run it
+	// provisions a fresh one. Only the substrate provisioning below the
+	// gateway/controllers/CRDs differs per host. The substrate start is
+	// unconditional because a warm reuse must still restart a stopped
+	// substrate; the per-cluster-state legs (CRD install, agent namespace, runc
+	// RuntimeClass, echo image import, echo Runtime CR apply) are deferred to
+	// provisionClusterState, which a warm tag-match reuse skips. spec: §17.4.
+	//
+	// A persisted prior bring-up records the deployed image tag. lenny up reads
+	// it before deciding so a warm bring-up can decide whether to re-import and
+	// re-apply (a CLI-upgrade tag mismatch) or skip the expensive
+	// import/apply/seed legs (a tag match against a healthy substrate). spec:
+	// §17.4 (an upgrade re-imports and re-applies on a mismatch).
 	priorState, _, _ := readState(paths.StateFile())
 
-	res := s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
+	res := s.startSubstrate(ctx, paths, out)
 	if !res.enabled {
 		// §17.4 S1: the gateway runs as an in-cluster pod, so an unavailable
 		// substrate makes lenny up report the failure rather than degrade to
-		// an in-process executor. provisionSubstrate already wrote the cause.
+		// an in-process executor. startSubstrate already wrote the cause.
 		return nil, errSubstrateUnavailable
 	}
 
@@ -202,19 +205,27 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// Decide whether the persisted substrate can be reused as-is or must be
 	// re-imported and re-applied. A tag mismatch (the CLI was upgraded since
 	// the last bring-up) or an unhealthy persisted control plane forces the
-	// full import/apply/seed legs; a matching tag against an already-ready
-	// gateway skips them so a warm lenny up restarts in seconds. spec: §17.4
-	// (the substrate persists across down/up; an upgrade re-imports and
-	// re-applies; an unhealthy substrate falls back to a fresh apply).
+	// full import/apply/seed legs; a matching tag against a gateway that comes
+	// ready (the down→up warm case, where the just-restarted gateway settles
+	// within a pod-restart window) skips them so a warm lenny up restarts in
+	// seconds without re-reading the echo tarball or re-installing the CRDs.
+	// spec: §17.4 (the substrate persists across down/up; an upgrade re-imports
+	// and re-applies; an unhealthy substrate falls back to a fresh apply; the
+	// CRD install and component image imports are one-time first-run costs).
 	reapply := needsReapply(ctx, priorState, cfg.CLIVersion, res.kubeconfig, out)
 
 	if reapply {
-		// ----- In-cluster control plane -----
+		// ----- Cluster state and in-cluster control plane -----
+		// The one-time first-run costs (CRD install, agent namespace, runc
+		// RuntimeClass, echo image import, echo Runtime CR) and the
+		// platform-bundle import + manifest apply run together only on a first
+		// run or a re-apply, so a warm tag-match reuse pays none of them.
+		res = s.provisionClusterState(ctx, res, paths, cfg.EchoTarball, out)
 		if err := s.applyControlPlane(ctx, res, keyFile, out); err != nil {
 			return nil, err
 		}
 	} else {
-		fmt.Fprintln(out, "lenny up: reusing the persisted control plane (image tag unchanged, gateway ready)")
+		fmt.Fprintln(out, "lenny up: reusing the persisted control plane (image tag unchanged, gateway healthy)")
 	}
 
 	// ----- Host-side forwarder -----
@@ -238,7 +249,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 
 	if reapply {
 		// ----- Echo seed: registry record + warm pool -----
-		// The Runtime CR was applied in provisionSubstrate. Register the echo
+		// The Runtime CR was applied in provisionClusterState. Register the echo
 		// runtime record through the gateway /v1/admin/bootstrap path (which
 		// needs the gateway answering) and apply the echo SandboxTemplate/
 		// SandboxWarmPool pair directly, so the unconditionally-registered
@@ -333,7 +344,7 @@ func (s *Stack) seedEcho(ctx context.Context, forwarderAddr string, res substrat
 		return err
 	}
 	if res.echoImageRef == "" {
-		// The echo image did not import, so provisionSubstrate skipped the
+		// The echo image did not import, so provisionClusterState skipped the
 		// Runtime CR apply. Skip the pool too rather than warm a pod for a
 		// runtime whose image is absent. The registry record is still seeded
 		// above so the runtime resolves, surfacing a precise failure on a
@@ -394,24 +405,30 @@ func (s *Stack) recordState(paths Paths, res substrateResult, forwarderAddr, cli
 	return nil
 }
 
-// needsReapply decides whether a bring-up must re-import the platform images
-// and re-apply the embedded manifests, or can reuse the persisted control
-// plane as-is. It forces a re-apply (returns true) when there is no prior
-// recorded bring-up, when the running CLI version differs from the deployed
-// image tag the prior bring-up recorded (the CLI was upgraded, so a stale
-// image must not run), or when the persisted control plane is unhealthy (the
-// gateway Deployment is not Ready). A matching tag against an already-ready
-// gateway returns false so a warm lenny up skips the expensive import/apply
-// legs and restarts in seconds.
+// needsReapply decides whether a bring-up must run the one-time first-run
+// costs (the CRD install, the component image imports, and the manifest apply)
+// or can reuse the persisted control plane as-is. It forces a re-apply (returns
+// true) when there is no prior recorded bring-up, when the running CLI version
+// differs from the deployed image tag the prior bring-up recorded (the CLI was
+// upgraded, so a stale image must not run), or when the persisted control plane
+// does not become healthy. A matching tag against a gateway that becomes Ready
+// returns false so a warm lenny up skips the expensive CRD install, image
+// import, manifest apply, and echo seed and restarts in seconds.
 //
-// The health probe is the warmGatewayReadyFn seam (the gateway Deployment
-// readiness against the persisted substrate's kubeconfig), bounded short so a
-// down substrate does not stall the decision: an unready gateway reads as
-// unhealthy and forces the full apply, fail-safe toward a working bring-up.
+// The health check is the warmGatewayReadyFn seam (the gateway Deployment
+// readiness against the persisted substrate's kubeconfig). It waits a window
+// comparable to a normal pod restart rather than probing once, because the
+// headline warm case is the down→up cycle: startSubstrate has just restarted
+// the stopped substrate, so the gateway pod is restarting and is not Ready in
+// the first seconds. Waiting the restart window distinguishes a gateway coming
+// back up (reuse) from a genuinely broken persisted substrate (the window
+// elapses without a Ready gateway, so re-apply, fail-safe toward a working
+// bring-up).
 //
 // spec: §17.4 (the substrate persists across down/up; an upgrade re-imports
 // and re-applies on a CLI-version / image-tag mismatch; an unhealthy
-// persisted substrate falls back to a fresh apply).
+// persisted substrate falls back to a fresh apply; the CRD install and
+// component image imports are one-time first-run costs a warm up skips).
 func needsReapply(ctx context.Context, prior State, cliVersion, kubeconfig string, out io.Writer) bool {
 	if prior.DeployedImageTag == "" {
 		// No prior bring-up recorded a deployed tag (a first run, or a state
@@ -458,10 +475,11 @@ func (s *Stack) State() State { return s.state }
 // the running stack.
 func (s *Stack) CACertPath() string { return s.tls.CACertPath }
 
-// substrateResult is the outcome of provisionSubstrate: whether the
-// embedded cluster came up, the admin kubeconfig path, the §4.7
-// gateway↔adapter callback address the controller stamps onto agent pods,
-// and the import-time-resolved echo runtime image reference.
+// substrateResult is the outcome of the substrate bring-up: whether the
+// embedded cluster came up (startSubstrate), the admin kubeconfig path, the
+// §4.7 gateway↔adapter callback address the controller stamps onto agent pods,
+// and the import-time-resolved echo runtime image reference (filled in by
+// provisionClusterState on a first run or re-apply).
 type substrateResult struct {
 	enabled             bool
 	kubeconfig          string
@@ -516,29 +534,37 @@ var (
 	// importEchoRuntimeImageFn is the bring-up echo-image import seam. It
 	// defaults to the real (*Stack).importEchoRuntimeImage and is a
 	// package-level var so a unit test can drive the §4.7 activation sequence
-	// in provisionSubstrate (namespace create, import, Runtime-CR apply) with a
-	// controllable resolved digest, without a live ctr or containerd. spec:
+	// in provisionClusterState (namespace create, import, Runtime-CR apply) with
+	// a controllable resolved digest, without a live ctr or containerd. spec:
 	// §24.19.1 (the --file import path), §4.7.
 	importEchoRuntimeImageFn = (*Stack).importEchoRuntimeImage
 )
 
-// provisionSubstrate brings the embedded Kubernetes substrate up on every
-// host the launcher supports: a managed k3s child process on Linux, a
-// Docker-backed k3s container under Docker Desktop's Linux VM on macOS and
-// Windows. It installs the CRDs against the launcher's (host-rewritten)
-// kubeconfig and computes the §4.7 gateway↔adapter callback address from the
-// launcher's substrate-specific host. The OS branch is confined to this
-// provisioning layer; the in-cluster gateway, controllers, CRDs, and storage
-// interfaces above it are byte-identical across operating systems. A
-// substrate that does not come up makes the in-cluster control plane
-// unavailable; the §17.4 bring-up reports the substrate failure (proposal
-// 0017 C2).
+// startSubstrate brings the embedded Kubernetes substrate up on every host
+// the launcher supports: a managed k3s child process on Linux, a Docker-backed
+// k3s container under Docker Desktop's Linux VM on macOS and Windows. On a warm
+// down→up cycle the launcher restarts the persisted (stopped) container or
+// process; on a first run it provisions a fresh substrate. It computes the §4.7
+// gateway↔adapter callback address from the launcher's substrate-specific host.
+// The OS branch is confined to this provisioning layer; the in-cluster gateway,
+// controllers, CRDs, and storage interfaces above it are byte-identical across
+// operating systems. A substrate that does not come up makes the in-cluster
+// control plane unavailable; the §17.4 bring-up reports the substrate failure
+// (proposal 0017 C2).
+//
+// startSubstrate runs unconditionally on every lenny up, because a warm reuse
+// must still restart a stopped substrate. The per-cluster-state legs that
+// §17.4 designates as one-time first-run costs (the CRD install, the agent
+// namespace, the runc RuntimeClass, the echo image import, and the echo Runtime
+// CR apply) are deferred to provisionClusterState, which a warm tag-match reuse
+// skips.
 //
 // spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
 // operating system, and stays identical above the substrate layer; an
-// unavailable substrate makes lenny up report the failure), §4.7, §8.6,
-// §9.1.
-func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball string, out io.Writer) substrateResult {
+// unavailable substrate makes lenny up report the failure; the substrate
+// restart is unconditional while the cluster-state import/apply legs are
+// one-time first-run costs), §4.7, §8.6, §9.1.
+func (s *Stack) startSubstrate(ctx context.Context, paths Paths, out io.Writer) substrateResult {
 	if !substrateSupported() {
 		// On a non-Linux host the embedded k3s runs under Docker Desktop's
 		// Linux VM, so the platform is unsupported only when Docker is
@@ -558,7 +584,7 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 		return substrateResult{}
 	}
 	s.k3s = sup
-	res := substrateResult{
+	return substrateResult{
 		enabled:    true,
 		kubeconfig: sup.KubeconfigPath(),
 		// Compute the gateway's externally-reachable gRPC address from the
@@ -567,17 +593,40 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 		// this provisioning layer branches per OS.
 		gatewayGRPCDialAddr: gatewayGRPCAddr(sup.GatewayHost(), defaultGatewayGRPCPort),
 	}
+}
+
+// provisionClusterState installs the per-cluster-state objects §17.4
+// designates as one-time first-run costs against the (already-started)
+// substrate: the production CRDs, the agent namespace, the runc RuntimeClass,
+// the echo component image import, and the echo Runtime CR. It runs only on a
+// first run or a re-apply (a CLI-version/image-tag mismatch or an unhealthy
+// persisted substrate); a warm tag-match reuse skips it together with
+// applyControlPlane and seedEcho, so the down→up warm restart does not re-read
+// and re-import the echo tarball or re-install the CRDs. It returns res with
+// echoImageRef filled in from the import (empty when the import did not run or
+// failed).
+//
+// Each leg warns rather than aborts on failure: the controllers create
+// namespaced resources lazily, and a CRD-install or namespace hiccup leaves
+// placement inert rather than tearing the substrate down, so the bring-up
+// surfaces it without failing.
+//
+// spec: §17.4 (the CRD install and the component image imports are one-time
+// first-run costs a warm up skips), §4.6.2 (the agent namespace holds the pool
+// CRDs), §5.1 (the Runtime CR), §5.3 (standard->runc), §4.7 (the digest-pinned
+// embedded pod image).
+func (s *Stack) provisionClusterState(ctx context.Context, res substrateResult, paths Paths, echoTarball string, out io.Writer) substrateResult {
 	if err := installSubstrateCRDs(ctx, res.kubeconfig); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
 	}
 	// Create the agent namespace the gateway places into and the
 	// PoolScalingController materializes the seeded pool CRDs into. Both the
 	// gateway's -agent-namespace and the controller's --agent-namespaces are
-	// set to this namespace (in Up's two k3sEnabled blocks), so it must exist
-	// before either places. A create failure warns rather than aborts: the
-	// controllers create namespaced resources lazily, but a missing namespace
-	// would leave placement inert, so the bring-up surfaces it. spec: §4.6.2
-	// (the pool CRDs materialize in the agent namespace), §5.1.
+	// set to this namespace (through the chart's agentNamespaces values), so it
+	// must exist before either places. A create failure warns rather than
+	// aborts: the controllers create namespaced resources lazily, but a missing
+	// namespace would leave placement inert, so the bring-up surfaces it. spec:
+	// §4.6.2 (the pool CRDs materialize in the agent namespace), §5.1.
 	if err := ensureAgentNamespaceFn(ctx, res.kubeconfig, agentNamespace); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: agent namespace create failed: %v\n", err)
 	}

@@ -82,7 +82,7 @@ func TestGatewayHealthy(t *testing.T) {
 	}
 }
 
-// fakeLauncher is a k3s.Launcher test double for provisionSubstrate: it
+// fakeLauncher is a k3s.Launcher test double for startSubstrate: it
 // records whether Start was called, returns a canned start error, and
 // reports a substrate-specific GatewayHost and kubeconfig path. It lets the
 // per-OS substrate-selection logic be exercised without downloading and
@@ -109,13 +109,14 @@ func (f *fakeLauncher) KubeconfigPath() string { return f.kubeconfig }
 func (f *fakeLauncher) GatewayHost() string    { return f.gatewayHost }
 
 // withSubstrateSeams swaps the package-level substrate seams for the
-// duration of a test and restores them, so provisionSubstrate can be driven
-// with a fake launcher, a controllable platform-support verdict, and a
-// no-op CRD install. It also stubs the §4.7 activation seams (the agent
-// namespace create, the echo-image import, and the Runtime-CR apply) to no-ops
-// so a test that does not exercise them is not slowed or blocked by a real ctr
-// or API server; tests that exercise the activation sequence override the
-// activation seams directly through withActivationSeams.
+// duration of a test and restores them, so startSubstrate and
+// provisionClusterState can be driven with a fake launcher, a controllable
+// platform-support verdict, and a no-op CRD install. It also stubs the §4.7
+// activation seams (the agent namespace create, the echo-image import, and the
+// Runtime-CR apply) to no-ops so a test that does not exercise them is not
+// slowed or blocked by a real ctr or API server; tests that exercise the
+// activation sequence override the activation seams directly through
+// withActivationSeams.
 func withSubstrateSeams(t *testing.T, supported bool, l k3s.Launcher, crdErr error) {
 	t.Helper()
 	prevSupported, prevNew, prevCRDs := substrateSupported, newSubstrate, installSubstrateCRDs
@@ -128,8 +129,8 @@ func withSubstrateSeams(t *testing.T, supported bool, l k3s.Launcher, crdErr err
 	newSubstrate = func(k3s.Config) k3s.Launcher { return l }
 	installSubstrateCRDs = func(context.Context, string) error { return crdErr }
 	// Default the activation seams to no-ops with no resolved digest, so the
-	// existing provisionSubstrate tests (which assert substrate selection, not
-	// placement activation) neither dial an API server nor invoke a real ctr.
+	// existing substrate tests (which assert substrate selection, not placement
+	// activation) neither dial an API server nor invoke a real ctr.
 	ensureAgentNamespaceFn = func(context.Context, string, string) error { return nil }
 	importEchoRuntimeImageFn = func(*Stack, string, string, io.Writer) string { return "" }
 	applyEchoRuntimeCRFn = func(context.Context, string, string) error { return nil }
@@ -172,33 +173,33 @@ func withActivationSeams(t *testing.T, resolvedImage string) *activationCalls {
 	return calls
 }
 
-// TestProvisionSubstrateUnsupportedPlatform covers the non-Linux,
-// Docker-absent branch: when the host cannot provision the substrate,
-// provisionSubstrate reports the cluster unavailable and returns a disabled
-// result without constructing a launcher. The §17.4 control plane runs on
-// the substrate, so an unsupported host (no Docker Desktop) leaves the stack
-// unable to come up rather than degrading to a host control plane.
+// TestStartSubstrateUnsupportedPlatform covers the non-Linux, Docker-absent
+// branch: when the host cannot provision the substrate, startSubstrate reports
+// the cluster unavailable and returns a disabled result without constructing a
+// launcher. The §17.4 control plane runs on the substrate, so an unsupported
+// host (no Docker Desktop) leaves the stack unable to come up rather than
+// degrading to a host control plane.
 //
 // spec: §17.4 (the control plane runs as in-cluster pods; on a host without
 // the substrate prerequisite lenny up reports the cluster unavailable).
-func TestProvisionSubstrateUnsupportedPlatform_spec_17_4(t *testing.T) {
+func TestStartSubstrateUnsupportedPlatform_spec_17_4(t *testing.T) {
 	withSubstrateSeams(t, false, &fakeLauncher{}, nil)
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+	res := s.startSubstrate(context.Background(), NewPaths(t.TempDir()), &out)
 	if res.enabled {
-		t.Error("provisionSubstrate on an unsupported host = enabled, want disabled")
+		t.Error("startSubstrate on an unsupported host = enabled, want disabled")
 	}
 	if s.k3s != nil {
-		t.Error("provisionSubstrate constructed a launcher on an unsupported host")
+		t.Error("startSubstrate constructed a launcher on an unsupported host")
 	}
 	if !strings.Contains(out.String(), "unavailable") {
 		t.Errorf("output = %q, want the cluster-unavailable note", out.String())
 	}
 }
 
-// TestProvisionSubstrateStartError covers the start-failure branch: when the
-// launcher fails to start, provisionSubstrate returns a disabled result and
+// TestStartSubstrateStartError covers the start-failure branch: when the
+// launcher fails to start, startSubstrate returns a disabled result and
 // reports the substrate failure. The §17.4 control plane runs on the
 // substrate, so an unavailable substrate makes the bring-up surface the
 // failure rather than routing around it to a host control plane that no
@@ -206,44 +207,46 @@ func TestProvisionSubstrateUnsupportedPlatform_spec_17_4(t *testing.T) {
 //
 // spec: §17.4 (the control plane runs as in-cluster pods; an unavailable
 // substrate makes lenny up report the failure).
-func TestProvisionSubstrateStartError_spec_17_4(t *testing.T) {
+func TestStartSubstrateStartError_spec_17_4(t *testing.T) {
 	fake := &fakeLauncher{startErr: errors.New("boom")}
 	withSubstrateSeams(t, true, fake, nil)
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+	res := s.startSubstrate(context.Background(), NewPaths(t.TempDir()), &out)
 	if res.enabled {
-		t.Error("provisionSubstrate with a failing launcher = enabled, want disabled")
+		t.Error("startSubstrate with a failing launcher = enabled, want disabled")
 	}
 	if !fake.started {
-		t.Error("provisionSubstrate did not attempt to start the launcher")
+		t.Error("startSubstrate did not attempt to start the launcher")
 	}
 	if !strings.Contains(out.String(), "embedded Kubernetes did not start") {
 		t.Errorf("output = %q, want the substrate-failure note", out.String())
 	}
 }
 
-// TestProvisionSubstrateSuccess covers the success branch: when the launcher
-// starts, provisionSubstrate records it on the stack, installs the CRDs, and
-// computes the §4.7 gateway↔adapter callback address from the launcher's
-// substrate-specific GatewayHost joined to the gateway gRPC port. A
-// host.docker.internal GatewayHost (the Docker-backed launcher) is carried
-// into the dial address unchanged, confirming the OS branch stays confined
-// to the launcher's GatewayHost.
+// TestStartSubstrateSuccess covers the success branch: when the launcher
+// starts, startSubstrate records it on the stack and computes the §4.7
+// gateway↔adapter callback address from the launcher's substrate-specific
+// GatewayHost joined to the gateway gRPC port. A host.docker.internal
+// GatewayHost (the Docker-backed launcher) is carried into the dial address
+// unchanged, confirming the OS branch stays confined to the launcher's
+// GatewayHost. The per-cluster-state legs (CRD install, namespace, import) do
+// not run here: they are deferred to provisionClusterState so a warm reuse can
+// skip them.
 //
-// spec: §17.4 (the substrate comes up and the CRDs install against the
-// launcher's kubeconfig), §4.7, §8.6, §9.1.
-func TestProvisionSubstrateSuccess_spec_17_4(t *testing.T) {
+// spec: §17.4 (the substrate comes up; the in-cluster control plane runs above
+// it), §4.7, §8.6, §9.1.
+func TestStartSubstrateSuccess_spec_17_4(t *testing.T) {
 	fake := &fakeLauncher{gatewayHost: "host.docker.internal", kubeconfig: "/k/kubeconfig.yaml"}
 	withSubstrateSeams(t, true, fake, nil)
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+	res := s.startSubstrate(context.Background(), NewPaths(t.TempDir()), &out)
 	if !res.enabled {
-		t.Fatal("provisionSubstrate with a healthy launcher = disabled, want enabled")
+		t.Fatal("startSubstrate with a healthy launcher = disabled, want enabled")
 	}
 	if s.k3s != k3s.Launcher(fake) {
-		t.Error("provisionSubstrate did not record the launcher on the stack")
+		t.Error("startSubstrate did not record the launcher on the stack")
 	}
 	if res.kubeconfig != "/k/kubeconfig.yaml" {
 		t.Errorf("kubeconfig = %q, want /k/kubeconfig.yaml", res.kubeconfig)
@@ -255,38 +258,52 @@ func TestProvisionSubstrateSuccess_spec_17_4(t *testing.T) {
 	}
 }
 
-// TestProvisionSubstrateCRDInstallFailureIsNonFatal covers the CRD-install
-// warning branch: a CRD-install failure does not disable the substrate or
-// fail the bring-up; the cluster is still recorded and the failure is warned
-// about, because the controllers can install the CRDs on their own startup.
+// provisionForTest starts the substrate and runs the cluster-state legs, the
+// two phases the warm reconcile gates separately in Up. The cluster-state
+// tests drive both together so they assert the CRD install, namespace, import,
+// and Runtime-CR apply the way Up runs them on a first run or a re-apply.
+func provisionForTest(t *testing.T, s *Stack, out io.Writer) substrateResult {
+	t.Helper()
+	res := s.startSubstrate(context.Background(), NewPaths(t.TempDir()), out)
+	if !res.enabled {
+		return res
+	}
+	return s.provisionClusterState(context.Background(), res, NewPaths(t.TempDir()), "", out)
+}
+
+// TestProvisionClusterStateCRDInstallFailureIsNonFatal covers the CRD-install
+// warning branch: a CRD-install failure does not fail the bring-up; the failure
+// is warned about, because the controllers can install the CRDs on their own
+// startup.
 //
 // spec: §17.4 (a CRD-install hiccup warns rather than aborts the bring-up).
-func TestProvisionSubstrateCRDInstallFailureIsNonFatal_spec_17_4(t *testing.T) {
+func TestProvisionClusterStateCRDInstallFailureIsNonFatal_spec_17_4(t *testing.T) {
 	fake := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: "/k/kubeconfig.yaml"}
 	withSubstrateSeams(t, true, fake, errors.New("crd boom"))
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+	res := provisionForTest(t, s, &out)
 	if !res.enabled {
-		t.Error("provisionSubstrate with a CRD-install failure = disabled, want enabled (non-fatal)")
+		t.Error("startSubstrate with a CRD-install failure later = disabled, want enabled (non-fatal)")
 	}
 	if !strings.Contains(out.String(), "CRD install failed") {
 		t.Errorf("output = %q, want the CRD-install warning", out.String())
 	}
 }
 
-// TestProvisionSubstrateActivatesPlacement_spec_4_7 covers the §4.7 activation
-// sequence Up wires in Embedded Mode: when the substrate comes up, the CRDs
-// install, the agent namespace is created, the echo image is imported, and the
-// echo Runtime CR is applied carrying the import-time-resolved digest — in that
-// order. The namespace must precede placement (the gateway resolves the pool
-// from it) and the import must precede the CR apply (the CR carries the resolved
-// digest). The resolved digest is recorded on the result for the bootstrap seed.
+// TestProvisionClusterStateActivatesPlacement_spec_4_7 covers the §4.7
+// activation sequence Up wires in Embedded Mode on a first run or re-apply: the
+// CRDs install, the agent namespace is created, the echo image is imported, and
+// the echo Runtime CR is applied carrying the import-time-resolved digest — in
+// that order. The namespace must precede placement (the gateway resolves the
+// pool from it) and the import must precede the CR apply (the CR carries the
+// resolved digest). The resolved digest is recorded on the result for the
+// bootstrap seed.
 //
 // spec: §4.6.2 (the agent namespace holds the pool CRDs), §4.7 (the embedded
 // echo Runtime CR activates the pod path), §5.1 (the Runtime CR is the
 // declarative source).
-func TestProvisionSubstrateActivatesPlacement_spec_4_7(t *testing.T) {
+func TestProvisionClusterStateActivatesPlacement_spec_4_7(t *testing.T) {
 	const resolved = "ghcr.io/lennylabs/runtime-echo-embedded@sha256:" +
 		"4444444444444444444444444444444444444444444444444444444444444444"
 	fake := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: "/k/kubeconfig.yaml"}
@@ -295,7 +312,7 @@ func TestProvisionSubstrateActivatesPlacement_spec_4_7(t *testing.T) {
 
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+	res := provisionForTest(t, s, &out)
 
 	if res.echoImageRef != resolved {
 		t.Errorf("echoImageRef = %q, want the import-time-resolved digest %q", res.echoImageRef, resolved)
@@ -327,7 +344,7 @@ func TestProvisionSubstrateActivatesPlacement_spec_4_7(t *testing.T) {
 	}
 }
 
-// TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7 covers the
+// TestProvisionClusterStateSkipsRuntimeCRWhenImportFails_spec_4_7 covers the
 // Runtime-CR apply gate: when the echo image import resolves no digest (the
 // substrate is up but the tarball is missing or containerd is unreachable), the
 // Runtime CR is not applied, because applying a CR carrying a sentinel digest no
@@ -340,14 +357,14 @@ func TestProvisionSubstrateActivatesPlacement_spec_4_7(t *testing.T) {
 // steady state.
 //
 // spec: §4.7 (the digest-pinned pod image requires the import to resolve), §5.1.
-func TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7(t *testing.T) {
+func TestProvisionClusterStateSkipsRuntimeCRWhenImportFails_spec_4_7(t *testing.T) {
 	fake := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: "/k/kubeconfig.yaml"}
 	withSubstrateSeams(t, true, fake, nil)
 	calls := withActivationSeams(t, "") // import resolves no digest
 
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+	res := provisionForTest(t, s, &out)
 
 	if res.echoImageRef != "" {
 		t.Errorf("echoImageRef = %q, want empty when the import resolves no digest", res.echoImageRef)
@@ -375,12 +392,11 @@ func TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7(t *testing.T) 
 // TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate_spec_4_7
 // pins the actual gateway AgentNamespace gating contract that Up relies on:
 // Up sets the in-cluster gateway's -agent-namespace inside its k3sEnabled
-// block, where k3sEnabled is exactly provisionSubstrate's returned enabled
-// flag (stack.go: `k3sEnabled := sub.enabled`). The gate keys off the
-// substrate being up alone, never off sub.echoImageRef. This test asserts
-// that across both the import-succeeds and
-// the import-fails edges (k3s up in both) provisionSubstrate returns
-// enabled:true, so Up sets AgentNamespace in both, while only the
+// block, where k3sEnabled is exactly the substrate bring-up's returned enabled
+// flag (stack.go: `res.enabled`). The gate keys off the substrate being up
+// alone, never off sub.echoImageRef. This test asserts that across both the
+// import-succeeds and the import-fails edges (k3s up in both) the bring-up
+// returns enabled:true, so Up sets AgentNamespace in both, while only the
 // substrate-down case returns enabled:false and leaves AgentNamespace unset.
 // It documents the real behavior rather than a fail-closed degrade: on the
 // import-failed-but-k3s-up edge the gateway still routes through the §4.7 pod
@@ -426,9 +442,9 @@ func TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate_spec
 
 			s := &Stack{}
 			var out strings.Builder
-			res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+			res := provisionForTest(t, s, &out)
 
-			// Up gates the gateway's AgentNamespace on `k3sEnabled := sub.enabled`
+			// Up gates the gateway's AgentNamespace on `k3sEnabled := res.enabled`
 			// alone. Replicate that exact gating decision and assert the resulting
 			// AgentNamespace state matches the actual landed behavior.
 			gotAgentNamespace := ""
@@ -449,14 +465,14 @@ func TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate_spec
 	}
 }
 
-// TestProvisionSubstrateNamespaceCreateFailureIsNonFatal_spec_4_6_2 covers the
-// agent-namespace create warning branch: a create failure warns rather than
-// aborts the substrate provisioning, mirroring the CRD-install branch, so the
-// bring-up can surface the inert namespace without tearing the substrate down.
+// TestProvisionClusterStateNamespaceCreateFailureIsNonFatal_spec_4_6_2 covers
+// the agent-namespace create warning branch: a create failure warns rather than
+// aborts the bring-up, mirroring the CRD-install branch, so the bring-up can
+// surface the inert namespace without tearing the substrate down.
 //
 // spec: §4.6.2 (the agent namespace holds the pool CRDs), §17.4 (a substrate
 // hiccup warns rather than aborts the bring-up).
-func TestProvisionSubstrateNamespaceCreateFailureIsNonFatal_spec_4_6_2(t *testing.T) {
+func TestProvisionClusterStateNamespaceCreateFailureIsNonFatal_spec_4_6_2(t *testing.T) {
 	fake := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: "/k/kubeconfig.yaml"}
 	withSubstrateSeams(t, true, fake, nil)
 	ensureAgentNamespaceFn = func(context.Context, string, string) error {
@@ -465,7 +481,7 @@ func TestProvisionSubstrateNamespaceCreateFailureIsNonFatal_spec_4_6_2(t *testin
 
 	s := &Stack{}
 	var out strings.Builder
-	res := s.provisionSubstrate(context.Background(), NewPaths(t.TempDir()), "", &out)
+	res := provisionForTest(t, s, &out)
 
 	if !res.enabled {
 		t.Error("a namespace-create failure disabled the substrate, want non-fatal")

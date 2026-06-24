@@ -62,7 +62,7 @@ const devBearerTrustSecretKey = "key"
 // embedded containerd in one ctr images import so the rendered pods resolve
 // their images locally with the default IfNotPresent pull policy.
 //
-// The default echo image is imported on its own by provisionSubstrate's
+// The default echo image is imported on its own by provisionClusterState's
 // importEchoRuntimeImage rather than from this bundle, because that import
 // returns the resolved echo digest the echo Runtime CR and the bootstrap seed
 // must pin to (a multi-image bundle import returns no per-image digest). The
@@ -186,7 +186,7 @@ func ensureDevBearerKey(keyFilePath string) error {
 // default IfNotPresent pull policy rather than entering ImagePullBackOff. A
 // missing bundle is non-fatal and logged: a developer build may not ship the
 // platform bundle, and the echo image is imported on its own by
-// provisionSubstrate because that import returns the digest the echo Runtime
+// provisionClusterState because that import returns the digest the echo Runtime
 // CR and the bootstrap seed pin to (see defaultPlatformBundleName).
 //
 // spec: §17.4 (the bring-up imports the platform images the dev render
@@ -253,22 +253,63 @@ func waitGatewayDeploymentReady(ctx context.Context, kubeconfigPath string) erro
 		gatewayReadinessTimeout, gatewayReadinessInterval)
 }
 
-// warmGatewayReadyTimeout bounds the warm-reconcile gateway-readiness probe
-// so the needsReapply decision returns quickly on a down or still-starting
-// substrate. It is far shorter than gatewayReadinessTimeout because the warm
-// path only asks "is the persisted gateway already up?", not "wait for it to
-// come up": a not-immediately-ready gateway reads as unhealthy and forces the
-// full re-apply.
-const warmGatewayReadyTimeout = 5 * time.Second
-
-// warmGatewayReady reports whether the persisted gateway Deployment is
-// already Ready against the substrate kubeconfig, with a short timeout. It
-// backs the warmGatewayReadyFn seam the warm-reconcile decision consults. A
-// kubeconfig that cannot load, a gateway that is not yet Ready, or any probe
-// error reports not-ready, so needsReapply falls back to the full apply
-// rather than reusing an unhealthy control plane.
+// warmGatewayReadyTimeout bounds the warm-reconcile gateway-readiness probe.
+// The down→up warm path is the headline §17.4 fast-restart case: a non-`--purge`
+// lenny down stops the substrate (docker stop / Linux process kill) while
+// persisting the image store, and the next lenny up restarts the stopped
+// substrate, which restarts the gateway pod. A just-restarted gateway pod is
+// almost never Ready within a few seconds, so the probe waits a window
+// comparable to a normal pod restart before concluding the persisted control
+// plane is unhealthy. This distinguishes "the persisted gateway is starting
+// back up" (wait, then reuse) from "the persisted substrate is genuinely
+// broken" (the window elapses without a Ready gateway, so fall back to a fresh
+// apply). The window is shorter than gatewayReadinessTimeout, which covers a
+// from-scratch first-run schedule plus image pulls; a warm restart reuses the
+// images already present in containerd, so its gateway comes back faster.
 //
-// spec: §17.4 (an unhealthy persisted substrate falls back to a fresh apply).
+// It is operator-tunable through the LENNY_WARM_GATEWAY_READY_TIMEOUT
+// environment variable (a Go duration), because the right window depends on the
+// host's restart latency and is not fixed by the spec.
+var warmGatewayReadyTimeout = resolveWarmGatewayReadyTimeout()
+
+// defaultWarmGatewayReadyTimeout is the warm-reconcile readiness window when
+// LENNY_WARM_GATEWAY_READY_TIMEOUT is unset. 90s covers a gateway pod
+// restarting against images already present in the persisted containerd image
+// store on a constrained laptop, while staying well under the from-scratch
+// gatewayReadinessTimeout.
+const defaultWarmGatewayReadyTimeout = 90 * time.Second
+
+// warmGatewayReadyTimeoutEnvVar is the operator override for the
+// warm-reconcile readiness window. A non-spec default must be overridable
+// (code-best-practices.md: an operator-tunable default carries a flag or env
+// override).
+const warmGatewayReadyTimeoutEnvVar = "LENNY_WARM_GATEWAY_READY_TIMEOUT"
+
+// resolveWarmGatewayReadyTimeout reads the warm-reconcile readiness window
+// from the operator override, falling back to the default. An unparseable or
+// non-positive override falls back rather than disabling the wait.
+func resolveWarmGatewayReadyTimeout() time.Duration {
+	if v := os.Getenv(warmGatewayReadyTimeoutEnvVar); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultWarmGatewayReadyTimeout
+}
+
+// warmGatewayReady reports whether the persisted gateway Deployment becomes
+// Ready against the substrate kubeconfig within warmGatewayReadyTimeout. It
+// backs the warmGatewayReadyFn seam the warm-reconcile decision consults. It
+// waits a pod-restart window rather than probing once, so a gateway that is
+// restarting with the persisted substrate is recognized as healthy (reuse the
+// control plane) rather than misread as unhealthy and forced into a full
+// re-import and re-apply. A kubeconfig that cannot load, or a gateway that
+// never becomes Ready within the window, reports not-ready, so needsReapply
+// falls back to the full apply rather than reusing a genuinely broken control
+// plane.
+//
+// spec: §17.4 (the down→up warm restart reuses the persisted control plane; an
+// unhealthy persisted substrate falls back to a fresh apply).
 func warmGatewayReady(ctx context.Context, kubeconfigPath string) bool {
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
