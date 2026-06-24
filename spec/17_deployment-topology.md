@@ -146,8 +146,15 @@ For local use Lenny provides **three local-dev modes**. Embedded Mode is the pri
 #### Embedded Mode: `lenny up` — Single-binary embedded stack
 
 ```
-lenny up                                  # Brings up a full Lenny stack on localhost
-lenny session new --runtime=echo --attach "hello"    # Ready to use in < 60s
+lenny up                                  # Brings up a full Lenny stack on localhost.
+                                          # The first lenny up imports the platform and runtime
+                                          # images once and may take longer; subsequent bring-ups
+                                          # reuse the persisted substrate and image store and are
+                                          # well under a minute. lenny up reports the gateway ready
+                                          # when it answers; the seeded runtime's pool warms shortly
+                                          # after, so the first session against a still-warming pool
+                                          # may briefly return a pool-warming response.
+lenny session new --runtime=echo --attach "hello"
 lenny down                                 # Tear everything down
 ```
 
@@ -158,37 +165,37 @@ A single statically-linked binary — `lenny` — embeds every Lenny component n
 | Dependency     | Embedded option                                                  | Notes                                                                     |
 |----------------|------------------------------------------------------------------|---------------------------------------------------------------------------|
 | Kubernetes     | [k3s](https://k3s.io) (single-node, rootless where supported)    | On Linux, the pinned k3s binary (`v1.31.4+k3s1`) is downloaded on first `lenny up` into `~/.lenny/k3s/` and supervised as a managed child process. On macOS and Windows, the same pinned k3s version runs as a container under Docker Desktop's Linux VM with the identical cluster-disabling flag set, so the embedded cluster is the same k3s distribution on every host. Rootless mode applies to the Linux child-process launcher. |
-| Postgres       | `embedded-postgres` (PostgreSQL 16 binary bundle)                | `~/.lenny/postgres/`; same Go storage interface as production              |
-| Redis          | Embedded `miniredis`-compatible implementation                   | In-process; lost on `lenny down`                                          |
-| KMS            | In-process soft-HSM (AES-256-GCM with a file-backed master key)  | `~/.lenny/kms/master.key`; operators MUST NOT reuse this key in production |
-| OIDC provider  | Embedded dev-only provider issuing short-lived JWTs              | Single built-in user; rotating signing key                                 |
-| Object storage | Local filesystem (`~/.lenny/artifacts/`)                         | Same artifact-store interface as MinIO/S3                                  |
-| TLS            | Self-signed certs rotated per `lenny up` (valid for 24h)         | Gateway listens on `https://localhost:8443` and `http://localhost:8080`     |
+| Postgres       | In-process in-memory store inside the gateway pod                | Ephemeral; lost on gateway pod restart or `lenny down`. Durable local state requires pointing the gateway at an external Postgres (a single plain Postgres pod, no operator), out of scope for the default profile |
+| Redis          | In-process in-memory store inside the gateway pod                | Ephemeral; lost on gateway pod restart or `lenny down`                     |
+| KMS            | In-process random KEK (`kms.provider: local`)                    | Generated in-process; operators MUST NOT use this for production           |
+| OIDC provider  | Dev bearer-trust path on the in-cluster gateway                  | The CLI mints the dev bearer from a persisted dev key and the in-cluster gateway trusts it through its dev-mode bearer-trust hook (`--bearer-trust-hmac-key-file`) rather than running a separate embedded OIDC pod |
+| Object storage | In-process in-memory blob store inside the gateway pod           | Ephemeral; lost on gateway pod restart or `lenny down`                     |
+| TLS            | Self-signed certs rotated per `lenny up` (valid for 24h)         | The in-cluster gateway serves plaintext HTTP (its production listener). It is reachable from the host through a loopback-only host-side forwarder that binds `127.0.0.1` and fails closed per `EMBEDDED_MODE_LOCAL_ONLY` on any non-loopback bind. The forwarder terminates TLS on the `127.0.0.1:8443` host port with the per-`lenny up` self-signed leaf and relays plaintext HTTP on the `127.0.0.1:8080` host port, so the documented `https://localhost:8443` and `http://localhost:8080` addresses stay correct |
 
-**Same platform code path as production.** Embedded Mode uses the production gateway, controllers, CRDs, and storage interfaces. Within a host, the driver selection differs: `mode=embedded` is signaled by a platform flag that the storage, KMS, and identity interfaces consume to pick their embedded backends. There are no mode-dependent code splits in business logic. The embedded Kubernetes substrate is provisioned per host operating system (a managed k3s child process on Linux, a Docker-backed k3s container on macOS and Windows), and that provisioning is confined to the substrate layer below the gateway, controllers, CRDs, and storage interfaces, which stay identical across operating systems.
+**Same platform code path as production.** Embedded Mode runs the production gateway and controllers as pods inside the embedded Kubernetes cluster, rendered from the production chart under a development profile, so the gateway places each session on an agent pod over the [Section 4.7](04_system-components.md#47-runtime-adapter) adapter boundary exactly as it does in a production cluster. The development profile and the per-host substrate provisioning are confined to the layer below the gateway and controllers, which run from their unmodified production images, so there are no mode-dependent code splits in business logic. Within a host, the development backends are selected by the chart values the development profile sets rather than a host platform flag. The embedded Kubernetes substrate is provisioned per host operating system (a managed k3s child process on Linux, a Docker-backed k3s container on macOS and Windows), and that provisioning is confined to the substrate layer below the gateway, controllers, CRDs, and storage interfaces, which stay identical across operating systems.
 
-**Local isolation fidelity.** The embedded single-node cluster cannot reproduce the full production isolation surface on any host. The `sandboxed` (gVisor) and `microvm` (Kata) isolation profiles ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)) degrade to `standard` (runc) locally: gVisor degrades because the embedded cluster installs no gVisor RuntimeClass or `runsc` containerd-shim, and Kata degrades because it requires hardware virtualization the local substrate cannot nest. This matches the dev-mode fallback to runc ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles), dev mode fallback). The embedded k3s runs with NetworkPolicy enforcement disabled, so the default-deny egress isolation ([§13.2](13_security-model.md#132-network-isolation)) is not exercised locally, consistent with the dev-mode preflight skip of CNI NetworkPolicy support ([§17.6](#176-packaging-and-installation) preflight, dev mode). These gaps apply to all three local-dev modes and to both the Linux and Docker-backed substrates, so an evaluator should not mistake local behavior for the production isolation boundary.
+**Local isolation fidelity.** The embedded single-node cluster cannot reproduce the full production isolation surface on any host. The `sandboxed` (gVisor) and `microvm` (Kata) isolation profiles ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)) degrade to `standard` (runc) locally: gVisor degrades because the embedded cluster installs no gVisor RuntimeClass or `runsc` containerd-shim, and Kata degrades because it requires hardware virtualization the local substrate cannot nest. This matches the dev-mode fallback to runc ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles), dev mode fallback). The embedded k3s runs with NetworkPolicy enforcement disabled, so the default-deny egress isolation ([§13.2](13_security-model.md#132-network-isolation)) is not exercised locally, consistent with the dev-mode preflight skip of CNI NetworkPolicy support ([§17.6](#176-packaging-and-installation) preflight, dev mode). The development profile also disables the admission-webhook and mTLS stack, a gap of the same class as the NetworkPolicy and isolation-profile gaps above. These gaps apply to all three local-dev modes and to both the Linux and Docker-backed substrates, so an evaluator should not mistake local behavior for the production isolation boundary.
 
 **Reference runtimes pre-installed.** `lenny up` installs all reference runtimes from [Section 26](26_reference-runtime-catalog.md) as platform-global records and auto-grants access to the `default` tenant so the developer sees the catalog. The placeholder-pinned Section 26 records register but do not start a session until a runnable image digest, a Runtime CRD instance, and a warm pool exist for them; once those three artifacts are present the runtime's image is pulled on first session start and subsequent sessions reuse the cached image. The Section 26 records are seeded with no warm pool to keep resource usage low on laptops, so a session against one does not start until a runnable digest, an applied Runtime CRD instance, and a warm pool exist for it.
 
-The Section 26 records register through the gateway registry so the developer sees the catalog, but they ship with a placeholder image digest, apply no Runtime CRD instance, and seed no warm pool, so a session against one returns a session-creation failure rather than starting: the gateway routes every session through the pod path, finds no warm pool for the runtime, and fails the create. Starting a session against a Section 26 record requires three artifacts. First, register a runnable image digest on the record (re-register it with the published digest, or import a local image with `lenny image import` and re-register the record under that image). Second, apply a Runtime CRD instance for the runtime carrying the deployment model the embedded substrate runs, because the Sandbox controller resolves the runtime from a Runtime CRD by name and the bootstrap registry-only seed creates no such instance. Third, create a warm pool for the runtime. Importing an image alone supplies a pullable image but applies no CRD and creates no pool, and re-pinning the registry digest and creating a pool without applying a Runtime CRD leave the warm pod creation failing because the Sandbox controller cannot resolve a Runtime CRD that the registry-only seed never creates. In addition to those records, `lenny up` seeds the built-in echo runtime (the [Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime) conformance exemplar, Basic-level) with a runnable image digest, an applied Runtime CRD carrying `deploymentModel: embedded`, and a single-pod warm pool, so a credential-free session runs on an in-cluster pod over the [Section 4.7](04_system-components.md#47-runtime-adapter) boundary; when the embedded cluster or Docker substrate is unavailable the gateway degrades to the in-process echo executor.
+The Section 26 records register through the gateway registry so the developer sees the catalog, but they ship with a placeholder image digest, apply no Runtime CRD instance, and seed no warm pool, so a session against one returns a session-creation failure rather than starting: the gateway routes every session through the pod path, finds no warm pool for the runtime, and fails the create. Starting a session against a Section 26 record requires three artifacts. First, register a runnable image digest on the record (re-register it with the published digest, or import a local image with `lenny image import` and re-register the record under that image). Second, apply a Runtime CRD instance for the runtime carrying the deployment model the embedded substrate runs, because the Sandbox controller resolves the runtime from a Runtime CRD by name and the bootstrap registry-only seed creates no such instance. Third, create a warm pool for the runtime. Importing an image alone supplies a pullable image but applies no CRD and creates no pool, and re-pinning the registry digest and creating a pool without applying a Runtime CRD leave the warm pod creation failing because the Sandbox controller cannot resolve a Runtime CRD that the registry-only seed never creates. In addition to those records, `lenny up` seeds the built-in echo runtime (the [Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime) conformance exemplar, Basic-level) with a runnable image digest, an applied Runtime CRD carrying `deploymentModel: embedded`, and a single-pod warm pool, so a credential-free session runs on an in-cluster pod over the [Section 4.7](04_system-components.md#47-runtime-adapter) boundary. Because the gateway itself runs as an in-cluster pod, there is no host gateway process to fall back to: a substrate that does not come up makes `lenny up` report the substrate failure and the gateway does not start.
 
 **Command surface.**
 
 | Command               | Behavior                                                                                                    |
 |-----------------------|-------------------------------------------------------------------------------------------------------------|
 | `lenny up`            | Starts the embedded stack. Idempotent — subsequent invocations are no-ops if already running.              |
-| `lenny down`          | Gracefully terminates all components. State under `~/.lenny/` is preserved unless `--purge` is passed.      |
+| `lenny down`          | Gracefully terminates all components. The in-memory application stores are ephemeral and not preserved across `lenny down`; the persisted substrate and imported-image store survive a non-`--purge` `lenny down`, and `--purge` removes them. |
 | `lenny status`        | Prints component health and active session count.                                                           |
-| `lenny logs [<component>]` | Tails merged logs or filters to one component (`gateway`, `controller`, `ops`, `postgres`, etc.).          |
+| `lenny logs [<component>]` | Tails merged logs or filters to one pod-backed log source (`gateway`, `controller`, `ops` (the mandatory in-cluster `lenny-ops` Deployment), the `k3s` substrate, and `runtime-<name>` agent pods). |
 | `lenny session ...`   | Session CLI ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)); targets the local stack. |
 
-**Production warning banner.** On every `lenny up` the binary prints a prominent, non-suppressible banner: `"Embedded Mode. NOT for production use. Credentials, KMS master key, and identities are insecure."` The embedded OIDC provider refuses any audience claim not matching `dev.local`; the gateway rejects externally-issued tokens. Any attempt to expose the gateway outside localhost (e.g., by binding `0.0.0.0`) fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+**Production warning banner.** On every `lenny up` the binary prints a prominent, non-suppressible banner: `"Embedded Mode. NOT for production use. Credentials, KMS master key, and identities are insecure."` The in-cluster gateway runs in dev mode and trusts the dev bearer the CLI mints from the persisted dev key through its dev-mode bearer-trust hook; it refuses any token whose `aud` claim is not `dev.local` even when the token is signed by the trusted dev key, and it rejects externally-issued tokens. Any attempt to expose the gateway outside localhost (e.g., by binding `0.0.0.0`) fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
 
 **State and resets.**
 
-- `~/.lenny/` is the sole state directory. `lenny down --purge` removes it.
-- Upgrades: `lenny up` on a newer binary runs the standard schema migration path ([§10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy)) against the embedded Postgres. Rollback is **not** supported in Embedded Mode — the user is expected to `lenny down --purge` and start fresh if they need to revert.
+- The surviving state is the persisted substrate and imported-image store (under `~/.lenny/k3s/` on the Linux launcher and inside the k3s container or Docker VM on the Docker-backed launcher). The application data stores (Postgres, Redis, KMS, artifacts) are in-process in-memory inside the gateway pod and are ephemeral. `lenny down --purge` clears the persisted substrate.
+- Upgrades: the in-memory development backend carries no schema and no Postgres, so the default profile has no schema-migration step. `lenny up` on a newer binary re-imports and re-applies the embedded manifests on a CLI-version/image-tag mismatch, and `lenny down --purge` resets state. The durable schema-migration semantics ([§10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy)) apply only when the gateway is pointed at an external Postgres. Rollback is **not** supported in Embedded Mode — the user is expected to `lenny down --purge` and start fresh if they need to revert.
 
 **Binary-vs-symlink.** The `lenny` binary is the same executable as `lenny-ctl` ([§24](24_lenny-ctl-command-reference.md#24-lenny-ctl-command-reference)) installed under a short name. When invoked as `lenny`, the binary defaults to Embedded Mode ergonomics (local stack, no `--api-url` required); when invoked as `lenny-ctl`, it targets a remote gateway (`--api-url` required). Every command is available under both names; docs use the short form in local/developer contexts and the long form in operator contexts.
 
@@ -312,11 +319,15 @@ lenny-ctl runtime register --file runtime.yaml
 #    Runtime CRD instance is applied for it and a warm pool exists for it; the
 #    registry-only register in step 3 creates neither.
 
-# 5. Apply a Runtime CRD instance for my-agent against the embedded cluster so
-#    the Sandbox controller can resolve the runtime by name. The CRD carries the
-#    deployment model the registered my-agent runtime runs; for a custom
-#    Basic-level image built by docker build this defaults to sidecar.
-cat > runtime-crd.yaml <<'EOF'
+# 5. Materialize the runtime's Runtime, SandboxTemplate, and SandboxWarmPool CRD
+#    set against the embedded kubeconfig through the dynamic-apply path, so the
+#    Sandbox controller resolves the runtime by name and the in-cluster
+#    WarmPoolController reconciles the pool and schedules the pod with no Postgres
+#    and no PoolScalingController. The CRD set carries the deployment model the
+#    registered my-agent runtime runs; for a custom Basic-level image built by
+#    docker build this defaults to sidecar, so the WarmPoolController stamps the
+#    development-profile lenny-adapter container onto the warm pod.
+cat > runtime-crds.yaml <<'EOF'
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -326,12 +337,11 @@ spec:
   integrationLevel: basic
   deploymentModel: sidecar
 EOF
-lenny kubectl apply -f runtime-crd.yaml   # Applies against the embedded kubeconfig
+lenny runtime apply --file runtime-crds.yaml   # Applies the Runtime/SandboxTemplate/SandboxWarmPool
+                                               # CRD set against the embedded kubeconfig
 
-# 6. Create a warm pool for my-agent so a pod is provisioned.
-lenny-ctl pool create --runtime my-agent --warm-count 1
-
-# 7. Test with POST /v1/sessions via curl or the bundled Go/TS client SDK
+# 6. Test with POST /v1/sessions via curl or the bundled Go/TS client SDK. The
+#    curl reaches the gateway on the loopback forwarder port (https://localhost:8443).
 #    `lenny token print` emits a short-lived bearer for the embedded built-in user;
 #    see §24.9 for full reference (Embedded Mode only).
 curl -k -X POST https://localhost:8443/v1/sessions \
@@ -1374,7 +1384,7 @@ Every Lenny installation is described by a tuple of orthogonal choices. The cata
 |---|---|---|
 | **Environment** | `local` \| `dev` \| `staging` \| `prod` | Alert thresholds, log verbosity, `LENNY_DEV_MODE`, TLS strictness, `acknowledgeNoPrometheus` default |
 | **Cluster type** | `laptop` (k3s/kind) \| `eks` \| `gke` \| `aks` \| `openshift` \| `vanilla` (generic k8s) | CNI assumptions, StorageClass defaults, cloud-provider IAM integration, LoadBalancer behavior |
-| **Backends** | `cloud-managed` \| `self-managed` \| `embedded` | Postgres (RDS/CloudSQL/Azure DB vs CloudNativePG/Patroni vs embedded), Redis (ElastiCache/Memorystore/Azure Cache vs Sentinel/Cluster vs miniredis), object storage (S3/GCS/ABS vs MinIO vs local disk) |
+| **Backends** | `cloud-managed` \| `self-managed` \| `embedded` | Postgres (RDS/CloudSQL/Azure DB vs CloudNativePG/Patroni vs in-process in-memory store), Redis (ElastiCache/Memorystore/Azure Cache vs Sentinel/Cluster vs in-process in-memory store), object storage (S3/GCS/ABS vs MinIO vs in-process in-memory store) |
 | **Capacity tier** | `tier1` \| `tier2` \| `tier3` | Gateway replica counts, warm-pool baselines, controller rate limiters, Redis topology — see [§17.8.2](#1782-capacity-tier-reference) |
 | **Isolation profile** | `baseline` \| `sandboxed` (gVisor) \| `hypervisor` (Kata) | Default RuntimeClass for seeded runtimes, T4 webhook requirements |
 
@@ -1556,17 +1566,17 @@ objectStorage:
 
 #### 17.9.6 Embedded Backends (Embedded Mode)
 
-Answer file `answers/laptop.yaml` selects backends=`embedded`, the mode used by `lenny up` ([§17.4](#174-local-development-mode-lenny-dev) Embedded Mode): embedded Postgres (single-node bundle), in-process Redis, local-disk artifact storage, embedded k3s. On Linux this mode requires zero external cloud or cluster dependencies; on macOS and Windows it requires Docker Desktop, which supplies the Linux VM the embedded k3s runs in (see [§17.4](#174-local-development-mode-lenny-dev) Embedded Mode). This mode is the primary path for laptop-scale evaluation of Lenny. Source Mode (`make run`) and Compose Mode (`docker compose up`) are developer-oriented paths for contributors, documented in [§17.4](#174-local-development-mode-lenny-dev).
+Answer file `answers/laptop.yaml` selects backends=`embedded`, the mode used by `lenny up` ([§17.4](#174-local-development-mode-lenny-dev) Embedded Mode): in-process in-memory stores inside the gateway pod (an in-memory Postgres-compatible store, an in-memory Redis, and an in-memory blob store) plus embedded k3s. This state is ephemeral and lost on `lenny down`. On Linux this mode requires zero external cloud or cluster dependencies; on macOS and Windows it requires Docker Desktop, which supplies the Linux VM the embedded k3s runs in (see [§17.4](#174-local-development-mode-lenny-dev) Embedded Mode). This mode is the primary path for laptop-scale evaluation of Lenny. Source Mode (`make run`) and Compose Mode (`docker compose up`) are developer-oriented paths for contributors, documented in [§17.4](#174-local-development-mode-lenny-dev).
 
 #### 17.9.7 Backend-Invariant Requirements
 
 Regardless of backend selection (`cloud-managed`, `self-managed`, or `embedded`), the following requirements apply uniformly:
 
 - **Transaction-mode pooling** for Postgres connections (RLS compatibility)
-- **RLS checkout defense:** Either `connect_query` sentinel (self-managed PgBouncer) **or** per-transaction tenant validation trigger (cloud-managed poolers without `connect_query` support) — exactly one must be active per deployment; see [Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements). The embedded-Postgres Embedded Mode ships the trigger pre-installed.
-- **Redis AUTH + TLS** (no plaintext connections, no unauthenticated access): Redis is deployed with `tls-auth-clients yes` and plaintext port disabled (`port 0`); PgBouncer is deployed with `client_tls_sslmode = require`. See [Section 10.3](10_gateway-internals.md#103-mtls-pki) for the full server-side enforcement requirements, startup TLS probe, and integration test requirements (NET-004). Embedded Mode Redis runs loopback-only and is exempt from AUTH/TLS.
+- **RLS checkout defense:** Either `connect_query` sentinel (self-managed PgBouncer) **or** per-transaction tenant validation trigger (cloud-managed poolers without `connect_query` support) — exactly one must be active per deployment; see [Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements). Embedded Mode runs the in-memory Postgres-compatible store, which carries no RLS trigger.
+- **Redis AUTH + TLS** (no plaintext connections, no unauthenticated access): Redis is deployed with `tls-auth-clients yes` and plaintext port disabled (`port 0`); PgBouncer is deployed with `client_tls_sslmode = require`. See [Section 10.3](10_gateway-internals.md#103-mtls-pki) for the full server-side enforcement requirements, startup TLS probe, and integration test requirements (NET-004). Embedded Mode runs an in-process in-memory Redis inside the gateway pod and is exempt from AUTH/TLS.
 - **Tenant key prefix** (`t:{tenant_id}:`) enforced at the Redis wrapper layer
-- **S3-compatible API** for object storage (all cloud and self-managed providers above satisfy this; the Embedded Mode local-disk driver implements the same `ArtifactStore` interface)
+- **S3-compatible API** for object storage (all cloud and self-managed providers above satisfy this; the Embedded Mode in-process in-memory blob store implements the same `ArtifactStore` interface)
 - **Encryption at rest** for all persistent stores (exempt in Embedded Mode, which prints the non-suppressible production-warning banner documented in [§17.4](#174-local-development-mode-lenny-dev))
 - **Interface contracts** ([Section 12.6](12_storage-architecture.md#126-interface-design)) are identical across backends — the gateway does not branch on backend selection
 
