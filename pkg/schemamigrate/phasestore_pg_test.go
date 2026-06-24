@@ -11,7 +11,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // setupPhaseDB brings up an embedded Postgres, applies migration 0134

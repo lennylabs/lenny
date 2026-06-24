@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // spec: §4.9 line 1647 — a nil Bus (no Postgres fallback configured) is a

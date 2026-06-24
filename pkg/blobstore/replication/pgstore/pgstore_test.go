@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/migrations"
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	"github.com/lennylabs/lenny/pkg/blobstore/replication/pgstore"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // TestReplicationStateRoundTrip brings up an embedded Postgres, applies

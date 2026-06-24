@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	"github.com/lennylabs/lenny/pkg/ops/escalation/pgstore"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // TestPgStoreRoundTrip brings up an embedded Postgres, creates the

@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/pgstore"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // setup brings up an embedded Postgres, applies migration 0121 (the
