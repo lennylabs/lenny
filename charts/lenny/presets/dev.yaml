@@ -124,17 +124,28 @@ runtimeClasses:
 # imports. spec: §17.4.
 controller:
   adapterImage: ghcr.io/lennylabs/lenny-adapter:0.1.0
-  # Single replica, advisory-only anti-affinity: the embedded cluster is
-  # a single node, so a second replica and a required anti-affinity rule
-  # cannot schedule and add no resilience.
+  # Single replica on the single-node embedded cluster. The chart's
+  # controller anti-affinity (controller.antiAffinity) keeps only the
+  # advisory `preferred`/`required` modes with no off setting, so this
+  # profile leaves the chart default `preferred`. At one replica the
+  # preferredDuringScheduling rule is inert (there is no peer pod to
+  # schedule away from and the rule never blocks scheduling), so it adds
+  # no resilience and does not delay bring-up. Removing the anti-affinity
+  # block outright would be a chart-template change outside this profile.
   replicas: 1
-  antiAffinity: preferred
   # Tag-based image reference matching the imported tag; IfNotPresent so
-  # the locally-imported image is never re-pulled from the registry.
+  # the locally-imported image is never re-pulled from the registry. The
+  # repository is resolved by the chart from platform.registry.url
+  # (ghcr.io/lennylabs) plus the component name, so only tag and
+  # pullPolicy are set here.
   image:
-    repository: ghcr.io/lennylabs/lenny-controller
     tag: "0.1.0"
     pullPolicy: IfNotPresent
+  # The gateway and controller readiness/liveness probe delays are
+  # hardcoded in the chart templates with no values knob, so this profile
+  # cannot trim them; the rendered pods keep the chart-default
+  # initialDelaySeconds. At a single replica the probe delay only affects
+  # how quickly the pod first reports Ready, not whether it schedules.
   # Small request for single-node bring-up.
   resources:
     requests:
@@ -154,13 +165,15 @@ security:
   oidc:
     bearerTrustKeySecret: lenny-embedded-dev-bearer-key
 
-# Gateway development posture: single replica (single node), no
-# PodDisruptionBudget (one replica), a NodePort Service the loopback
-# host-side forwarder targets, small resource requests, and a tag-based
-# image reference matching the imported tag with IfNotPresent so the
-# locally-imported image is never re-pulled. The production topology
+# Gateway development posture: single replica (single node), the gateway
+# PodDisruptionBudget disabled (one replica), a NodePort Service the
+# loopback host-side forwarder targets, small resource requests, and a
+# tag-based image reference matching the imported tag with IfNotPresent so
+# the locally-imported image is never re-pulled. The production topology
 # fronts the gateway with an Ingress (type ClusterIP); the dev profile
-# pins a NodePort because Embedded Mode has no Ingress. spec: §17.4.
+# pins a NodePort because Embedded Mode has no Ingress. The repository is
+# resolved by the chart from platform.registry.url plus the component
+# name, so only tag and pullPolicy are set here. spec: §17.4.
 gateway:
   replicas: 1
   service:
@@ -169,7 +182,6 @@ gateway:
   podDisruptionBudget:
     enabled: false
   image:
-    repository: ghcr.io/lennylabs/lenny-gateway
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   resources:
@@ -182,12 +194,16 @@ gateway:
 
 # lenny-ops is mandatory: the chart hard-fails on any attempt to disable
 # it, so the dev profile keeps it enabled with a single replica and its
-# image bundled in the embedded import set. Tag-based reference with
+# image bundled in the embedded import set. The chart renders the
+# lenny-ops PodDisruptionBudget unconditionally with no disable knob, so
+# unlike the gateway PDB it is not turned off here; at a single replica
+# its maxUnavailable never blocks, so it is inert. The repository is
+# resolved by the chart from platform.registry.url plus the component
+# name, so only tag and pullPolicy are set here. Tag-based reference with
 # IfNotPresent. spec: §17.4.
 ops:
   replicas: 1
   image:
-    repository: ghcr.io/lennylabs/lenny-ops
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   resources:

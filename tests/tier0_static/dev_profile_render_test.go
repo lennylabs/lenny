@@ -200,6 +200,56 @@ func TestDevProfileSingleReplicaControlPlane(t *testing.T) {
 	}
 }
 
+// TestDevProfilePDBPosture pins the §17.4 dev-profile PodDisruptionBudget
+// posture to what the chart's knobs actually deliver: the gateway PDB is
+// disabled, and the mandatory lenny-ops PDB (which the chart renders
+// unconditionally, with no disable knob) is the only PDB that remains. At
+// a single replica its maxUnavailable never blocks, so it is inert. The
+// dev.yaml comments document exactly this, so the profile and the chart
+// render agree rather than asserting a "no PDBs" posture the chart cannot
+// produce.
+//
+// spec: §17.4 (dev profile)
+func TestDevProfilePDBPosture(t *testing.T) {
+	m := renderDevProfile(t)
+
+	pdbs := m.FindAll("PodDisruptionBudget")
+	var names []string
+	for _, p := range pdbs {
+		names = append(names, p.Name)
+	}
+	if len(pdbs) != 1 || (len(pdbs) == 1 && pdbs[0].Name != "lenny-ops") {
+		t.Errorf("dev profile must render exactly the mandatory lenny-ops PDB, got %v", names)
+	}
+}
+
+// TestDevProfileControllerAntiAffinityInert pins the §17.4 dev-profile
+// controller pod anti-affinity to the chart's advisory `preferred` mode:
+// the chart exposes only `preferred`/`required` with no off setting, so
+// the profile leaves the advisory default, which is inert at a single
+// replica (no peer pod to schedule away from, the rule never blocks
+// scheduling). The render must carry the preferred term and not the
+// `required` term that would harden it.
+//
+// spec: §17.4 (dev profile)
+func TestDevProfileControllerAntiAffinityInert(t *testing.T) {
+	m := renderDevProfile(t)
+
+	dep := m.MustFind(t, "Deployment", "lenny-controller")
+	podSpec := podSpecOf(dep)
+	affinity, _ := podSpec["affinity"].(map[string]any)
+	paa, _ := affinity["podAntiAffinity"].(map[string]any)
+	if paa == nil {
+		t.Fatalf("dev profile controller must carry the chart-default podAntiAffinity block")
+	}
+	if _, hard := paa["requiredDuringSchedulingIgnoredDuringExecution"]; hard {
+		t.Errorf("dev profile controller must not harden anti-affinity to required at a single node")
+	}
+	if _, soft := paa["preferredDuringSchedulingIgnoredDuringExecution"]; !soft {
+		t.Errorf("dev profile controller must keep the advisory preferred anti-affinity term")
+	}
+}
+
 // TestDevProfileTagBasedImagesAndAdapter asserts the control-plane
 // Deployments carry concrete tag-based image references with
 // pullPolicy IfNotPresent (the locally-imported image is never re-pulled)
@@ -340,11 +390,16 @@ func primaryContainerImage(t *testing.T, m helm.Manifests, depName string) (imag
 
 // podContainers returns the pod-spec containers list of a Deployment.
 func podContainers(dep helm.Manifest) []any {
+	containers, _ := podSpecOf(dep)["containers"].([]any)
+	return containers
+}
+
+// podSpecOf returns the pod spec (spec.template.spec) of a Deployment.
+func podSpecOf(dep helm.Manifest) map[string]any {
 	spec, _ := dep.Raw["spec"].(map[string]any)
 	tmpl, _ := spec["template"].(map[string]any)
 	podSpec, _ := tmpl["spec"].(map[string]any)
-	containers, _ := podSpec["containers"].([]any)
-	return containers
+	return podSpec
 }
 
 // controllerArgs extracts the --flag args of the lenny-controller
