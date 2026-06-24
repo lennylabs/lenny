@@ -372,10 +372,11 @@ func TestProvisionSubstrateSkipsRuntimeCRWhenImportFails_spec_4_7(t *testing.T) 
 
 // TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate_spec_4_7
 // pins the actual gateway AgentNamespace gating contract that Up relies on:
-// Up sets s.gwSpec.AgentNamespace inside `if k3sEnabled`, where k3sEnabled is
-// exactly provisionSubstrate's returned enabled flag (stack.go: `k3sEnabled :=
-// sub.enabled`). The gate keys off the substrate being up alone, never off
-// sub.echoImageRef. This test asserts that across both the import-succeeds and
+// Up sets the in-cluster gateway's -agent-namespace inside its k3sEnabled
+// block, where k3sEnabled is exactly provisionSubstrate's returned enabled
+// flag (stack.go: `k3sEnabled := sub.enabled`). The gate keys off the
+// substrate being up alone, never off sub.echoImageRef. This test asserts
+// that across both the import-succeeds and
 // the import-fails edges (k3s up in both) provisionSubstrate returns
 // enabled:true, so Up sets AgentNamespace in both, while only the
 // substrate-down case returns enabled:false and leaves AgentNamespace unset.

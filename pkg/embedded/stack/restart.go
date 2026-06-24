@@ -39,9 +39,9 @@ type RestartOptions struct {
 }
 
 // errRestartNotWired marks the Kubernetes rollout-restart that replaces the
-// removed host-process supervisor IPC. S6 removes the supervisor restart
-// path; the Deployment rollout-restart against the embedded kubeconfig
-// lands in the next build step (proposal 0017 C5).
+// removed host-process supervisor IPC. C2 removes the host-process supervisor
+// restart path; the Deployment rollout-restart against the embedded
+// kubeconfig lands in the next build step (proposal 0017 C5).
 var errRestartNotWired = errors.New("embedded: the in-cluster rollout-restart is not yet wired (proposal 0017 C5)")
 
 // RunRestart implements the foreground `lenny restart <component>` command.
