@@ -213,3 +213,20 @@ ops:
     limits:
       cpu: 250m
       memory: 256Mi
+
+# Pin the §13.1 etcd encryption-at-rest aescbc key so the build-time
+# render is deterministic. The lenny-etcd-encryption ConfigMap is
+# OPERATOR-STEP documentation: a manifest apply cannot reconfigure the
+# embedded k3s kube-apiserver to consume it, so the rendered
+# EncryptionConfiguration is inert in Embedded Mode. Left unset, the
+# chart generates a fresh random key on every render (randAlphaNum), which
+# would make the pre-rendered embedded manifests differ on each `make
+# generate` and break the tier-11 sync check. The application data stores
+# are in-process and in-memory in Embedded Mode and never reach etcd, so
+# the encryption-at-rest exemption already disclosed for Embedded Mode
+# holds and the fixed dev key carries no production secret. spec: §17.4,
+# §13.1.
+etcdEncryption:
+  aescbcKeys:
+    - name: key1
+      secret: bGVubnktZW1iZWRkZWQtZGV2LWFlc2NiYy1rZXktMzJieQ==
