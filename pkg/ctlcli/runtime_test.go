@@ -135,6 +135,26 @@ func TestRuntimeUnknownSubcommand(t *testing.T) {
 	}
 }
 
+// TestRuntimeApplyRoutesToEmbeddedVerb checks the shared-`runtime`-token
+// dispatch split: `lenny-ctl runtime apply` reaches the Embedded Mode
+// CRD-apply verb in localcli rather than the runtime-author cmdRuntime group,
+// so with no running stack it exits 3 EMBEDDED_MODE_REQUIRED (localcli's
+// no-stack code) rather than 2 (cmdRuntime's "unknown subcommand apply"). The
+// runtime-author subcommands (init/validate/publish) still reach cmdRuntime,
+// which the surrounding tests cover. spec: §17.4 (the runtime-apply verb),
+// §24.18 (the runtime-author group).
+func TestRuntimeApplyRoutesToEmbeddedVerb(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"runtime", "apply", "--file", "/tmp/runtime-crds.yaml"}, &stdout, &stderr)
+	if code != 3 {
+		t.Errorf("runtime apply with no stack: exit %d, want 3 (EMBEDDED_MODE_REQUIRED from localcli)", code)
+	}
+	if !strings.Contains(stderr.String(), "EMBEDDED_MODE_REQUIRED") {
+		t.Errorf("stderr = %q, want the localcli EMBEDDED_MODE_REQUIRED marker (proves it routed to the embedded verb)", stderr.String())
+	}
+}
+
 // TestRuntimeValidateOnScaffold checks that `runtime validate` accepts a
 // freshly scaffolded repository.
 func TestRuntimeValidateOnScaffold(t *testing.T) {

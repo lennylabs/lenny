@@ -39,10 +39,15 @@ const (
 
 // Local reports whether name is one of the §24.19 / §24.9 Embedded Mode
 // local commands. lenny-ctl uses it to decide whether to delegate an
-// invocation to the embedded stack (§24.19 line 266).
+// invocation to the embedded stack (§24.19 line 266). The `runtime` token is
+// shared with the lenny-ctl runtime-author group (init/validate/publish): only
+// `runtime apply` is an Embedded Mode command, so lenny-ctl dispatch routes the
+// subcommands before consulting Local (it claims `runtime` here so the
+// short-name lenny binary's Main dispatches `runtime apply`). spec: §17.4 (the
+// runtime-apply verb), §24.18 (the runtime-author group).
 func Local(name string) bool {
 	switch name {
-	case "up", "down", "status", "logs", "restart", "token", "image", "session":
+	case "up", "down", "status", "logs", "restart", "token", "image", "session", "runtime":
 		return true
 	default:
 		return false
@@ -72,6 +77,8 @@ func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writ
 		return cmdImage(args, stdout, stderr)
 	case "session":
 		return cmdSession(args, stdout, stderr)
+	case "runtime":
+		return cmdRuntime(ctx, args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny: %q is not an Embedded Mode command\n", name)
 		return 2
@@ -135,6 +142,10 @@ Embedded Mode commands (§17.4, §24.19):
                            Session operations (§24.17) over the MCP/REST
                            client SDK; new --runtime <name> starts one.
                            --api-url / --token target a remote gateway
+  runtime apply --file <path>
+                           Apply a runtime's Runtime/SandboxTemplate/
+                           SandboxWarmPool CRD set to the embedded cluster so
+                           the gateway resolves it by name and a pool warms
   version                  Print the local CLI build version (offline)
 
 Flags:

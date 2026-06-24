@@ -178,6 +178,35 @@ func RunningGateway(root string) (string, error) {
 	return "https://" + st.GatewayForwarderAddr, nil
 }
 
+// RunningKubeconfig returns the embedded k3s admin kubeconfig path recorded
+// by the running stack, so a local command can reach the in-cluster API
+// server (the §17.4 control plane the runtime-apply verb applies CRDs to). It
+// returns ErrNoRunningStack when no stack is recorded, so a caller can surface
+// the §24.19.1 EMBEDDED_MODE_REQUIRED diagnostic instead of a lower-level
+// kubeconfig-load error. The root argument selects the LENNY_HOME-equivalent
+// state directory; an empty root uses the default.
+//
+// spec: §17.4 (the in-cluster control plane is reached through the embedded
+// kubeconfig).
+func RunningKubeconfig(root string) (string, error) {
+	resolved, err := resolveRoot(root)
+	if err != nil {
+		return "", err
+	}
+	paths := NewPaths(resolved)
+	st, ok, err := readRunningState(paths.StateFile())
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", ErrNoRunningStack
+	}
+	if st.KubeconfigPath == "" {
+		return "", fmt.Errorf("embedded: stack state at %s has no kubeconfigPath", paths.StateFile())
+	}
+	return st.KubeconfigPath, nil
+}
+
 // Substrate describes how the embedded k3s is provisioned on the running
 // stack, so a local command (the §24.19.1 image bridge) can reach the
 // embedded containerd through the substrate's mechanism. The Linux

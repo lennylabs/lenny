@@ -68,7 +68,7 @@ func TestMainUnknownCommand(t *testing.T) {
 // spec: §24.19 line 266 — Local enumerates the Embedded Mode commands
 // that lenny-ctl delegates to the local stack so it behaves identically.
 func TestLocalEnumeratesEmbeddedCommands(t *testing.T) {
-	for _, name := range []string{"up", "down", "status", "logs", "restart", "token", "image", "session"} {
+	for _, name := range []string{"up", "down", "status", "logs", "restart", "token", "image", "session", "runtime"} {
 		if !Local(name) {
 			t.Errorf("Local(%q) = false, want true", name)
 		}
