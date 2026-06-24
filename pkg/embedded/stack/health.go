@@ -11,9 +11,10 @@ import (
 // probeHealthz issues a single GET to the gateway's unauthenticated
 // liveness endpoint and returns nil when it answers 2xx. The §17.4
 // in-cluster gateway serves the same /healthz endpoint it serves in
-// production; lenny up reaches it through the host-side forwarder. The
-// readiness-poll wait that wraps it lands with the in-cluster bring-up
-// (proposal 0017 C2).
+// production; lenny status reaches it through the host-side forwarder to
+// report whether the gateway answers. The bring-up readiness wait gates on
+// the gateway Deployment reporting Ready (waitDeploymentReady) rather than
+// this HTTP probe.
 //
 // spec: §17.4 (lenny up reports the gateway ready when it answers).
 func probeHealthz(ctx context.Context, baseURL string) error {

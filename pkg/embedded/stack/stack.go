@@ -29,6 +29,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 	"github.com/lennylabs/lenny/pkg/embedded/tlsgen"
@@ -85,30 +86,35 @@ type Stack struct {
 	out   io.Writer
 }
 
-// errBringUpNotWired marks the in-cluster bring-up sequence that replaces
-// the removed host-process control plane. S6 removes the host-process legs
-// (the embedded Postgres/Redis/OIDC backends and the host gateway and
-// controller processes) and the in-cluster bring-up (image import,
-// manifest apply, host-side forwarder, and readiness wait) lands in the
-// next build step (proposal 0017 C2). Up provisions the substrate so the
-// substrate-selection path stays exercised, then returns this sentinel
-// until the in-cluster legs are wired.
-var errBringUpNotWired = errors.New("embedded: the in-cluster bring-up is not yet wired (proposal 0017 C2)")
+// errSubstrateUnavailable marks a bring-up where the embedded Kubernetes
+// substrate did not come up. The §17.4 control plane runs as in-cluster
+// pods, so without the substrate there is no gateway to start: lenny up
+// reports the substrate failure and the gateway does not start, rather than
+// degrading to an in-process executor (S1). spec: §17.4.
+var errSubstrateUnavailable = errors.New("embedded: the Kubernetes substrate did not come up; the in-cluster gateway cannot start")
+
+// httpHost binds the host-side forwarder's plaintext relay and TLS
+// terminator to loopback only, so the §17.4 EMBEDDED_MODE_LOCAL_ONLY
+// fail-closed constraint holds (the forwarder rejects a non-loopback bind).
+const httpHost = "127.0.0.1"
 
 // Up brings up the §17.4 Embedded Mode stack. The control plane runs as
 // in-cluster pods rendered from the production chart under a development
-// profile: lenny up provisions the substrate, imports the component images,
-// applies the embedded manifests, starts the host-side gateway forwarder,
-// and waits for readiness.
+// profile: lenny up provisions the substrate, imports the deduplicated
+// platform image bundle (overlapping the import with the apply of the
+// non-image objects), creates the dev bearer-trust Secret, applies the
+// embedded manifests, seeds the echo runtime (its registry record, Runtime
+// CR, and its SandboxTemplate/SandboxWarmPool pair), starts the host-side
+// gateway forwarder, and waits for the gateway Deployment to report Ready.
 //
 // The host-process control plane (embedded Postgres, Redis, the dev OIDC
-// provider, and the host gateway and controller processes) is removed; the
-// in-cluster bring-up sequence lands in the next build step (proposal 0017
-// C2). Up provisions the substrate and generates the self-signed TLS
-// material here, then returns errBringUpNotWired until those legs are wired.
+// provider, and the host gateway and controller processes) is removed. An
+// unavailable substrate makes lenny up report the substrate failure (S1):
+// there is no host gateway to fall back to.
 //
 // spec: §17.4 (the control plane runs as in-cluster pods rendered from the
-// chart).
+// chart), §4.6.2 (the echo pool materializes directly without Postgres),
+// §10.2 (dev bearer trust).
 func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	out := cfg.Out
 	if out == nil {
@@ -151,19 +157,182 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	}
 	s.tls = mat
 
+	// ----- Dev bearer-trust signing key -----
+	// Persist the dev HMAC key the CLI mints its bearer from before the
+	// gateway pod is applied, so the Secret created below carries the key
+	// the in-cluster gateway must trust. spec: §17.4 (dev bearer trust).
+	keyFile := paths.OIDCKeyFile()
+	if err := ensureDevBearerKey(keyFile); err != nil {
+		return nil, err
+	}
+
 	// ----- Embedded Kubernetes layer -----
 	// The substrate provisions on every host the launcher supports: a
 	// managed k3s child process on Linux, a Docker-backed k3s container
 	// under Docker Desktop's Linux VM on macOS and Windows. The CRDs
 	// install and the in-cluster control plane runs against the launcher's
 	// (host-rewritten) kubeconfig; only the substrate provisioning below the
-	// gateway/controllers/CRDs differs per host. spec: §17.4.
-	s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
+	// gateway/controllers/CRDs differs per host. provisionSubstrate also
+	// imports the echo image, creates the agent namespace and the runc
+	// RuntimeClass, and applies the echo Runtime CR. spec: §17.4.
+	res := s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
+	if !res.enabled {
+		// §17.4 S1: the gateway runs as an in-cluster pod, so an unavailable
+		// substrate makes lenny up report the failure rather than degrade to
+		// an in-process executor. provisionSubstrate already wrote the cause.
+		return nil, errSubstrateUnavailable
+	}
 
-	// The image import, the manifest apply, the host-side forwarder, and
-	// the readiness wait that replace the host-process legs land in the next
-	// build step (proposal 0017 C2).
-	return nil, errBringUpNotWired
+	// ----- In-cluster control plane -----
+	if err := s.applyControlPlane(ctx, res, keyFile, out); err != nil {
+		return nil, err
+	}
+
+	// ----- Host-side forwarder -----
+	// The forwarder terminates TLS on 127.0.0.1:8443 with the per-lenny-up
+	// self-signed leaf and forwards plaintext HTTP to the gateway node port,
+	// carrying the EMBEDDED_MODE_LOCAL_ONLY fail-closed loopback check. The
+	// in-cluster gateway serves plaintext HTTP and cannot answer a TLS
+	// handshake directly. spec: §17.4, §3 EMBEDDED_MODE_LOCAL_ONLY.
+	forwarderAddr, err := s.startForwarder(cfg, out)
+	if err != nil {
+		return nil, err
+	}
+
+	// ----- Gateway readiness -----
+	// lenny up reports the gateway ready when its Deployment reports Ready;
+	// the seeded echo pool warms in the background afterward (S4).
+	fmt.Fprintln(out, "lenny up: waiting for the gateway to become ready")
+	if err := waitGatewayDeployReadyFn(ctx, res.kubeconfig); err != nil {
+		return nil, err
+	}
+
+	// ----- Echo seed: registry record + warm pool -----
+	// The Runtime CR was applied in provisionSubstrate. Register the echo
+	// runtime record through the gateway /v1/admin/bootstrap path (which
+	// needs the gateway answering) and apply the echo SandboxTemplate/
+	// SandboxWarmPool pair directly, so the unconditionally-registered
+	// WarmPoolController pre-warms the pod with no Postgres-backed
+	// PoolScalingController. spec: §4.6.2, §5.2, §15.4.4.
+	if err := s.seedEcho(ctx, forwarderAddr, res, out); err != nil {
+		return nil, err
+	}
+
+	// ----- Record state -----
+	if err := s.recordState(paths, res, forwarderAddr); err != nil {
+		return nil, err
+	}
+
+	ok = true
+	return s, nil
+}
+
+// applyControlPlane imports the platform image bundle, creates the dev
+// bearer-trust Secret, and applies the embedded manifests. The image import
+// overlaps the apply of the non-image objects: the import runs concurrently
+// while the Secret create and manifest apply proceed, and the Deployments
+// inside the manifest set come last (the applier orders Deployments after
+// every other kind), so the bundle has landed by the time the gateway pod
+// schedules and the pods do not enter ImagePullBackOff. spec: §17.4.
+func (s *Stack) applyControlPlane(ctx context.Context, res substrateResult, keyFile string, out io.Writer) error {
+	// Start the platform-bundle import in the background and overlap it with
+	// the Secret create and the apply of the non-image objects.
+	importDone := make(chan struct{})
+	go func() {
+		defer close(importDone)
+		importPlatformBundleFn(s, s.paths.Root, out)
+	}()
+
+	// Create the dev bearer-trust Secret before the gateway Deployment is
+	// applied so its mount resolves when the pod schedules.
+	fmt.Fprintln(out, "lenny up: creating the dev bearer-trust secret")
+	if err := createDevBearerSecretFn(ctx, res.kubeconfig, keyFile); err != nil {
+		<-importDone
+		return err
+	}
+
+	// The applier orders namespaces, CRDs, RBAC, config/secret material, and
+	// Services ahead of the Deployments, so the non-image objects apply while
+	// the import is still in flight and the Deployments wait behind it.
+	fmt.Fprintln(out, "lenny up: applying the embedded control-plane manifests")
+	if err := applyManifestsFn(ctx, res.kubeconfig); err != nil {
+		<-importDone
+		return err
+	}
+
+	// The Deployments have been submitted; ensure the bundle import has
+	// finished before the bring-up waits for the gateway pod so the gateway
+	// image is present in containerd.
+	<-importDone
+	return nil
+}
+
+// seedEcho registers the echo runtime record through the gateway bootstrap
+// path and applies the echo warm-pool CRD pair directly. It runs after the
+// gateway is ready (the bootstrap call dials it) and is gated on the import
+// having resolved an echo digest: with no resolved digest the Runtime CR was
+// not applied, so materializing a pool would only ImagePullBackOff. spec:
+// §4.6.2, §5.2, §15.4.4.
+func (s *Stack) seedEcho(ctx context.Context, forwarderAddr string, res substrateResult, out io.Writer) error {
+	if err := installRuntimesFn(ctx, "https://"+forwarderAddr, res.echoImageRef, out); err != nil {
+		return err
+	}
+	if res.echoImageRef == "" {
+		// The echo image did not import, so provisionSubstrate skipped the
+		// Runtime CR apply. Skip the pool too rather than warm a pod for a
+		// runtime whose image is absent. The registry record is still seeded
+		// above so the runtime resolves, surfacing a precise failure on a
+		// session start rather than a silent no-pool.
+		fmt.Fprintln(out, "lenny up: WARNING: echo image not imported; skipping the echo warm-pool apply")
+		return nil
+	}
+	fmt.Fprintln(out, "lenny up: applying the echo warm pool")
+	if err := applyEchoPoolFn(ctx, res.kubeconfig, agentNamespace); err != nil {
+		return err
+	}
+	return nil
+}
+
+// startForwarder starts the loopback-only host-side TLS forwarder in front
+// of the gateway node port and returns the loopback host:port it presents.
+// The forwarder terminates TLS on 127.0.0.1:8443 with the self-signed leaf
+// and forwards plaintext HTTP to the gateway node port, carrying the
+// EMBEDDED_MODE_LOCAL_ONLY fail-closed check. spec: §17.4.
+func (s *Stack) startForwarder(cfg Config, out io.Writer) (string, error) {
+	httpsPort := cfg.HTTPSPort
+	if httpsPort == 0 {
+		httpsPort = defaultHTTPSPort
+	}
+	listenAddr := net.JoinHostPort(httpHost, strconv.Itoa(httpsPort))
+	// The forwarder targets the gateway node port on the launcher's gateway
+	// host: loopback on the Linux launcher (k3s and the node port share the
+	// host) and host loopback on the Docker-backed launcher (the launcher
+	// publishes the in-VM node port to host loopback, C4).
+	upstream := "http://" + net.JoinHostPort(httpHost, strconv.Itoa(gatewayNodePort))
+	fmt.Fprintf(out, "lenny up: starting the host-side gateway forwarder on https://%s\n", listenAddr)
+	proxy, err := startTLSProxy(listenAddr, upstream, s.tls.CertPath, s.tls.KeyPath)
+	if err != nil {
+		return "", err
+	}
+	s.proxy = proxy
+	return listenAddr, nil
+}
+
+// recordState writes the §17.4 stack state file so lenny status, logs, and
+// down can locate the substrate and the host-side forwarder. spec: §17.4.
+func (s *Stack) recordState(paths Paths, res substrateResult, forwarderAddr string) error {
+	st := State{
+		StartedAt:            time.Now(),
+		K3sContainer:         k3sContainerHandle(s.k3s),
+		GatewayForwarderAddr: forwarderAddr,
+		KubeconfigPath:       res.kubeconfig,
+		K3sEnabled:           res.enabled,
+	}
+	s.state = st
+	if err := writeState(paths.StateFile(), st); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Stop tears the stack down in reverse dependency order. It is safe to

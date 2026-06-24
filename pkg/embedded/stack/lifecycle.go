@@ -40,10 +40,10 @@ type UpOptions struct {
 // idempotent — a second invocation is a no-op when a stack is already
 // running. The control plane runs as in-cluster pods, so lenny up brings
 // the stack up in-process (the in-cluster pods outlive the CLI) rather than
-// re-executing a detached host supervisor.
-//
-// The in-cluster bring-up sequence lands in the next build step (proposal
-// 0017 C2); RunUp drives Up directly here.
+// re-executing a detached host supervisor. RunUp drives the in-cluster
+// bring-up through Up, which provisions the substrate, imports the platform
+// images, applies the embedded manifests, seeds the echo runtime, starts the
+// host-side forwarder, and waits for the gateway to become ready.
 func RunUp(ctx context.Context, opts UpOptions) error {
 	out := orDiscard(opts.Out)
 	errOut := orDiscard(opts.ErrOut)

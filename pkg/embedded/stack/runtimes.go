@@ -12,9 +12,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/ctl"
 	"github.com/lennylabs/lenny/pkg/embedded/devauth"
-	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
-	"github.com/lennylabs/lenny/pkg/sandbox/egress"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // defaultTenant is the §17.4 tenant lenny up grants reference-runtime
@@ -32,12 +29,15 @@ const defaultTenant = "default"
 // warm pool: they are placeholder-pinned (§26.3), so under active §4.7
 // placement a session against one does not start until a runnable digest,
 // an applied Runtime CRD, and a warm pool exist for it. In addition to
-// those records, the bootstrap seeds the §15.4.4 echo conformance
-// exemplar with a runnable image, an applied Runtime CRD
-// (deploymentModel: embedded), and a single-pod warm pool (warmCount: 1,
-// the §5.2 hot-pool taxonomy), so a credential-free session runs on an
-// in-cluster pod. The WarmPoolController pre-warms one echo pod at initial
-// fill; the first session claims it once it is idle.
+// those records, the bootstrap seeds the §15.4.4 echo conformance exemplar
+// registry record with a runnable image, so a credential-free session can
+// resolve it. The echo Runtime CRD (deploymentModel: embedded) and its
+// single-pod warm pool (warmCount: 1, the §5.2 hot-pool taxonomy) are
+// applied directly through the dynamic-apply path rather than seeded into
+// the bootstrap, because the no-Postgres development profile registers no
+// PoolScalingController to materialize a poolstore pool row. The
+// WarmPoolController pre-warms one echo pod at initial fill; the first
+// session claims it once it is idle.
 //
 // The handler authenticates with the §17.4 dev-header path: the
 // gateway runs in dev mode, where the X-Lenny-Roles dev header admits
@@ -55,8 +55,8 @@ const defaultTenant = "default"
 // session fails to start; the echo tarball ships with the binary and imports at
 // every bring-up, so this edge is not an expected steady state.
 //
-// spec: §17.4 (Embedded Mode seed), §5.2 (warm pool), §15.4.4 (echo
-// conformance exemplar), §26.1 (auto-grant), §4.7 (digest-pinned pod image).
+// spec: §17.4 (Embedded Mode seed), §15.4.4 (echo conformance exemplar),
+// §26.1 (auto-grant), §4.7 (digest-pinned pod image).
 func installReferenceRuntimes(ctx context.Context, gatewayURL, echoImageRef string, out io.Writer) error {
 	client := ctl.New(ctl.Options{
 		BaseURL:   gatewayURL,
@@ -149,47 +149,20 @@ func grantDefaultTenantAccess(ctx context.Context, client *ctl.Client, out io.Wr
 // gateway's admin.BootstrapRequest fields the Embedded Mode install
 // uses, declared locally so the stack package does not depend on the
 // gateway's admin package.
+//
+// The seed carries no Pools entry. Under the §17.4 no-Postgres development
+// profile the PoolScalingController (registered only with a Postgres DSN
+// and a non-empty --agent-namespaces) never runs, so a seeded poolstore
+// pool row would never materialize into a SandboxWarmPool CRD. The
+// embedded bring-up instead applies the echo SandboxTemplate/SandboxWarmPool
+// pair directly through the dynamic-apply path (ApplyEchoPoolFromConfig), so
+// the unconditionally-registered WarmPoolController pre-warms the pod. spec:
+// §4.6.2 (the PoolScalingController is the Postgres→CRD channel), §17.4
+// (no-Postgres development profile).
 type bootstrapSeed struct {
 	Tenants  []seedTenant  `json:"tenants,omitempty"`
 	Runtimes []seedRuntime `json:"runtimes,omitempty"`
 	Users    []seedUser    `json:"users,omitempty"`
-	// Pools mirrors admin.BootstrapRequest.Pools so the §17.4 Embedded
-	// Mode seed creates the echo warm pool in the same idempotent
-	// bootstrap call that registers the runtime records. The PoolScaling
-	// controller (activated by the embedded --agent-namespaces thread)
-	// materializes each seeded poolstore row into a SandboxWarmPool CRD
-	// per §4.6.2. spec: §5.2 (warm pool), §4.6.2 (registry-to-CRD).
-	Pools []seedPool `json:"pools,omitempty"`
-}
-
-// seedPool mirrors the gateway's admin.PoolPayload fields the §17.4
-// Embedded Mode echo warm pool seed sets, declared locally so the stack
-// package does not depend on the gateway admin package (matching the
-// local seedRuntime declaration). The JSON tags mirror
-// pkg/gateway/admin.PoolPayload.
-type seedPool struct {
-	Name             string `json:"name"`
-	RuntimeRef       string `json:"runtimeRef,omitempty"`
-	WarmCount        int    `json:"warmCount,omitempty"`
-	ResourceClass    string `json:"resourceClass,omitempty"`
-	EgressProfile    string `json:"egressProfile,omitempty"`
-	IsolationProfile string `json:"isolationProfile,omitempty"`
-	// AllowStandardIsolation is the §5.3 deployer opt-in the gateway pool
-	// admission path requires before it admits an explicitly-set
-	// `standard` (runc) profile. The embedded single-node cluster degrades
-	// `sandboxed`/`microvm`, so the echo pool runs `standard` under the
-	// §17.4 local-fidelity disclosure. spec: §17.4, §5.3.
-	AllowStandardIsolation bool `json:"allowStandardIsolation,omitempty"`
-	// DNSPolicy is the §13.2 per-pool DNS opt-out. `cluster-default`
-	// reverts the pool's pods to the Kubernetes default ClusterFirst
-	// resolver (kube-system CoreDNS) instead of a dedicated lenny-system
-	// CoreDNS instance, and the WarmPoolController stamps the
-	// lenny.dev/dns-policy: cluster-default label. The embedded substrate
-	// installs CRD definitions only and runs no dedicated lenny-system
-	// CoreDNS, so the echo pool opts out, mirroring the working Kind
-	// precedent echo-pool-embedded. The opt-out is admitted only for a
-	// `standard` (runc) pool (poolstore.ValidateDNSPolicy). spec: §13.2.
-	DNSPolicy string `json:"dnsPolicy,omitempty"`
 }
 
 type seedTenant struct {
@@ -231,11 +204,16 @@ type seedUser struct {
 
 // buildBootstrapSeed assembles the §17.4 Embedded Mode bootstrap seed:
 // the default tenant, the built-in user, the §26 reference-runtime catalog
-// as platform-global records, and the §15.4.4 echo runtime plus its single-pod
-// warm pool. echoImageRef is the import-time-resolved digest-pinned echo image
+// as platform-global records, and the §15.4.4 echo runtime registry record.
+// echoImageRef is the import-time-resolved digest-pinned echo image
 // reference; when set it overwrites the echo seed's sentinel image so the
 // seeded digest equals the applied Runtime CR's and the containerd image's.
 // An empty echoImageRef leaves the echo seed on its sentinel placeholder.
+//
+// The seed carries no pool. The echo warm pool is materialized directly as a
+// SandboxTemplate/SandboxWarmPool pair (ApplyEchoPoolFromConfig) because the
+// no-Postgres development profile registers no PoolScalingController to project
+// a poolstore row into the CRD. spec: §4.6.2, §17.4.
 func buildBootstrapSeed(echoImageRef string) bootstrapSeed {
 	seed := bootstrapSeed{
 		Tenants: []seedTenant{
@@ -267,56 +245,7 @@ func buildBootstrapSeed(echoImageRef string) bootstrapSeed {
 		echoSeed.Image = echoImageRef
 	}
 	seed.Runtimes = append(seed.Runtimes, echoSeed)
-	// The echo warm pool (warmCount: 1, §5.2 hot-pool taxonomy) is the only
-	// seeded pool: the §26 reference runtimes register without a pool
-	// (placeholder-pinned, no §4.7 pod placement). The pool runs `standard`
-	// (runc) under the §17.4 local-fidelity disclosure, with
-	// allowStandardIsolation set so the gateway admits the explicit
-	// `standard` profile, and dnsPolicy: cluster-default so its pods resolve
-	// through the embedded substrate's kube-system CoreDNS rather than a
-	// dedicated lenny-system instance the embedded substrate does not run.
-	// This mirrors the working Kind precedent echo-pool-embedded.
-	// spec: §5.2 (warm pool), §13.2 (per-pool DNS), §17.4 (Embedded Mode seed).
-	seed.Pools = append(seed.Pools, seedPool{
-		Name:                   "echo-pool-embedded",
-		RuntimeRef:             EchoRuntimeName,
-		WarmCount:              1,
-		ResourceClass:          "small",
-		EgressProfile:          "restricted",
-		IsolationProfile:       "standard",
-		AllowStandardIsolation: true,
-		DNSPolicy:              "cluster-default",
-	})
 	return seed
-}
-
-// EchoSeedPool returns the §17.4 Embedded Mode echo warm pool as the
-// poolstore row the bootstrap seed lands, sourced from buildBootstrapSeed
-// so it cannot drift from the wire seed the embedded stack actually emits.
-// The PoolScalingController materializes this row into the
-// SandboxTemplate/SandboxWarmPool pair (§4.6.2), so a materialization test
-// drives the chain off the real seed rather than a hand-built literal.
-// spec: §5.2 (single-pod hot pool), §13.2 (cluster-default DNS opt-out),
-// §17.4 (Embedded Mode seed).
-func EchoSeedPool() poolstore.Pool {
-	return seedPoolToPoolstore(buildBootstrapSeed("").Pools[0])
-}
-
-// seedPoolToPoolstore maps a bootstrap seedPool wire record into the
-// poolstore.Pool row the gateway bootstrap handler stores
-// (pkg/gateway/admin.applyPoolSeed), so a caller materializing the seed
-// uses the same fields the handler writes. spec: §5.2 (warm pool).
-func seedPoolToPoolstore(p seedPool) poolstore.Pool {
-	return poolstore.Pool{
-		Name:                   p.Name,
-		RuntimeRef:             p.RuntimeRef,
-		WarmCount:              p.WarmCount,
-		ResourceClass:          p.ResourceClass,
-		EgressProfile:          egress.Profile(p.EgressProfile),
-		IsolationProfile:       isolation.Profile(p.IsolationProfile),
-		AllowStandardIsolation: p.AllowStandardIsolation,
-		DNSPolicy:              p.DNSPolicy,
-	}
 }
 
 // seedRuntimeFrom maps a catalog ReferenceRuntime into the bootstrap

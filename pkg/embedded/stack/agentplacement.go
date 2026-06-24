@@ -41,15 +41,153 @@ const agentNamespace = "lenny-agents"
 // spec: §5.3 (isolation profiles), §17.4 (Embedded Mode provisions the substrate).
 const runcRuntimeClassName = "runc"
 
+// The §17.4 echo warm-pool parameters the embedded bring-up applies as a
+// SandboxTemplate/SandboxWarmPool pair. The pool is a §5.2 single-pod hot
+// pool (warmCount 1, so minWarm = maxWarm = 1) named echo-pool-embedded,
+// matching the working Kind precedent. It runs `standard` (runc) isolation
+// under the §17.4 local-fidelity disclosure, the `restricted` egress
+// profile, the `small` resource class, and the §13.2 cluster-default DNS
+// opt-out the embedded substrate requires because it runs no dedicated
+// lenny-system CoreDNS. No Postgres-backed PoolScalingController materializes
+// these in the development profile, so the bring-up applies them directly.
+// spec: §5.2 (single-pod hot pool), §13.2 (cluster-default DNS opt-out),
+// §17.4 (Embedded Mode seed).
+const (
+	// EchoPoolName is the name of the §17.4 echo warm pool the embedded
+	// bring-up applies (the SandboxTemplate and SandboxWarmPool share it).
+	// It matches the Kind precedent echo-pool-embedded, so the gateway's
+	// ResolvePool resolves the same pool the embedded stack materializes.
+	EchoPoolName = "echo-pool-embedded"
+
+	echoPoolWarmCount        = 1
+	echoPoolResourceClass    = "small"
+	echoPoolEgressProfile    = "restricted"
+	echoPoolIsolationProfile = "standard"
+	echoPoolDNSPolicy        = "cluster-default"
+)
+
+// applyEchoPool applies the echo SandboxTemplate/SandboxWarmPool pair to the
+// cluster reachable through kubeconfigPath. Under the §17.4 no-Postgres
+// development profile no PoolScalingController runs, so the canonical
+// poolstore→CRD projection (poolscaling.PoolStoreSource.toConfig) is
+// reproduced here and applied directly, so the unconditionally-registered
+// WarmPoolController pre-warms the echo pod. spec: §4.6.2, §5.2, §17.4.
+func applyEchoPool(ctx context.Context, kubeconfigPath, namespace string) error {
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("embedded echo pool: load kubeconfig %s: %w", kubeconfigPath, err)
+	}
+	return ApplyEchoPoolFromConfig(ctx, cfg, namespace)
+}
+
+// ApplyEchoPoolFromConfig applies the echo SandboxTemplate/SandboxWarmPool
+// pair against an already-resolved rest config. It is the no-Postgres
+// pool-materialization path the bring-up runs (applyEchoPool resolves the
+// kubeconfig and calls it), exported so a tier-2 component test can drive the
+// create and update-in-place reconvergence against a real kube-apiserver with
+// the lenny.dev CRDs installed, without writing a kubeconfig file. spec:
+// §4.6.2, §5.2.
+func ApplyEchoPoolFromConfig(ctx context.Context, cfg *rest.Config, namespace string) error {
+	scheme := runtime.NewScheme()
+	utilruntime.Must(lennyv1alpha1.AddToScheme(scheme))
+	cl, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme})
+	if err != nil {
+		return fmt.Errorf("embedded echo pool: build cluster client: %w", err)
+	}
+	tmpl, pool := echoPoolObjects(namespace)
+	if err := upsertSandboxTemplate(ctx, cl, tmpl); err != nil {
+		return err
+	}
+	return upsertSandboxWarmPool(ctx, cl, pool)
+}
+
+// echoPoolObjects builds the echo SandboxTemplate and SandboxWarmPool in
+// namespace ns. The field mapping reproduces poolscaling.PoolStoreSource.toConfig
+// (pkg/controller/poolscaling/poolstoresource.go) for a single-pod hot pool:
+// the SandboxTemplate carries the runtimeRef, isolation, egress, DNS-policy,
+// and resource-class fields, and the SandboxWarmPool sets templateRef to the
+// pool name with minWarm = maxWarm = warmCount, so the directly-applied pair
+// matches what the PoolScalingController would have produced from the seed.
+// spec: §4.6.2 (the poolstore→CRD projection), §5.2 (single-pod hot pool).
+func echoPoolObjects(ns string) (*lennyv1alpha1.SandboxTemplate, *lennyv1alpha1.SandboxWarmPool) {
+	tmpl := &lennyv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: EchoPoolName, Namespace: ns},
+		Spec: lennyv1alpha1.SandboxTemplateSpec{
+			RuntimeRef:       EchoRuntimeName,
+			IsolationProfile: echoPoolIsolationProfile,
+			EgressProfile:    echoPoolEgressProfile,
+			DNSPolicy:        echoPoolDNSPolicy,
+			ResourceClass:    echoPoolResourceClass,
+		},
+	}
+	pool := &lennyv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: EchoPoolName, Namespace: ns},
+		Spec: lennyv1alpha1.SandboxWarmPoolSpec{
+			TemplateRef: EchoPoolName,
+			MinWarm:     echoPoolWarmCount,
+			MaxWarm:     echoPoolWarmCount,
+		},
+	}
+	return tmpl, pool
+}
+
+// upsertSandboxTemplate creates the SandboxTemplate, or updates its spec in
+// place when one of that name already exists, so a re-run of lenny up
+// reconverges it rather than failing on AlreadyExists.
+func upsertSandboxTemplate(ctx context.Context, cl ctrlclient.Client, tmpl *lennyv1alpha1.SandboxTemplate) error {
+	var existing lennyv1alpha1.SandboxTemplate
+	key := ctrlclient.ObjectKey{Name: tmpl.Name, Namespace: tmpl.Namespace}
+	err := cl.Get(ctx, key, &existing)
+	if apierrors.IsNotFound(err) {
+		if err := cl.Create(ctx, tmpl); err != nil {
+			return fmt.Errorf("embedded echo pool: create SandboxTemplate %s: %w", tmpl.Name, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("embedded echo pool: get SandboxTemplate %s: %w", tmpl.Name, err)
+	}
+	existing.Spec = tmpl.Spec
+	if err := cl.Update(ctx, &existing); err != nil {
+		return fmt.Errorf("embedded echo pool: update SandboxTemplate %s: %w", tmpl.Name, err)
+	}
+	return nil
+}
+
+// upsertSandboxWarmPool creates the SandboxWarmPool, or updates its spec in
+// place when one of that name already exists, so a re-run of lenny up
+// reconverges it. The WarmPoolController-owned status counts are not touched.
+func upsertSandboxWarmPool(ctx context.Context, cl ctrlclient.Client, pool *lennyv1alpha1.SandboxWarmPool) error {
+	var existing lennyv1alpha1.SandboxWarmPool
+	key := ctrlclient.ObjectKey{Name: pool.Name, Namespace: pool.Namespace}
+	err := cl.Get(ctx, key, &existing)
+	if apierrors.IsNotFound(err) {
+		if err := cl.Create(ctx, pool); err != nil {
+			return fmt.Errorf("embedded echo pool: create SandboxWarmPool %s: %w", pool.Name, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("embedded echo pool: get SandboxWarmPool %s: %w", pool.Name, err)
+	}
+	existing.Spec = pool.Spec
+	if err := cl.Update(ctx, &existing); err != nil {
+		return fmt.Errorf("embedded echo pool: update SandboxWarmPool %s: %w", pool.Name, err)
+	}
+	return nil
+}
+
 // Substrate placement seams. They default to the real typed/controller-runtime
 // clients and are package-level vars so a unit test can substitute fakes and
 // assert the §4.7 activation sequence (namespace create, RuntimeClass install,
-// Runtime-CR apply, digest injection) without a live API server, mirroring the
-// existing substrate seams (newSubstrate, installSubstrateCRDs). spec: §4.7, §5.1.
+// Runtime-CR apply, echo-pool apply, digest injection) without a live API
+// server, mirroring the existing substrate seams (newSubstrate,
+// installSubstrateCRDs). spec: §4.7, §5.1, §4.6.2.
 var (
 	ensureAgentNamespaceFn = ensureAgentNamespace
 	ensureRuntimeClassFn   = ensureRuntimeClass
 	applyEchoRuntimeCRFn   = applyEchoRuntimeCR
+	applyEchoPoolFn        = applyEchoPool
 )
 
 // ensureAgentNamespace creates the agent namespace in the embedded cluster

@@ -114,3 +114,105 @@ func TestUpsertRuntimeCRUpdatesInPlace_spec_5_1(t *testing.T) {
 		t.Errorf("Runtime image after re-apply = %q, want the new digest %q", got.Spec.Image, second)
 	}
 }
+
+// TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2 asserts the echo
+// SandboxTemplate/SandboxWarmPool pair the embedded bring-up applies reproduces
+// the canonical poolstore→CRD field mapping (poolscaling.PoolStoreSource.toConfig)
+// for a §5.2 single-pod hot pool: the SandboxWarmPool sets templateRef to the
+// pool name with minWarm = maxWarm = warmCount, and the SandboxTemplate carries
+// the runtimeRef, the §17.4 local-fidelity `standard` isolation, the restricted
+// egress profile, the §13.2 cluster-default DNS opt-out, and the small resource
+// class. A drift between this direct apply and what the controller would have
+// produced from the seed would warm a pod with the wrong template.
+//
+// spec: §4.6.2 (the poolstore→CRD projection), §5.2 (single-pod hot pool),
+// §13.2 (cluster-default DNS opt-out), §17.4 (Embedded Mode echo seed).
+func TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2(t *testing.T) {
+	const ns = "lenny-agents"
+	tmpl, pool := echoPoolObjects(ns)
+
+	if tmpl.Namespace != ns || pool.Namespace != ns {
+		t.Errorf("CRD pair namespaces = %q/%q, want %q", tmpl.Namespace, pool.Namespace, ns)
+	}
+	if tmpl.Name != EchoPoolName || pool.Name != EchoPoolName {
+		t.Errorf("CRD pair names = %q/%q, want %q", tmpl.Name, pool.Name, EchoPoolName)
+	}
+	// §5.2 single-pod hot pool: warmCount maps to minWarm = maxWarm.
+	if pool.Spec.TemplateRef != EchoPoolName {
+		t.Errorf("warm pool templateRef = %q, want %q", pool.Spec.TemplateRef, EchoPoolName)
+	}
+	if pool.Spec.MinWarm != echoPoolWarmCount || pool.Spec.MaxWarm != echoPoolWarmCount {
+		t.Errorf("warm pool minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
+			pool.Spec.MinWarm, pool.Spec.MaxWarm, echoPoolWarmCount, echoPoolWarmCount)
+	}
+	if tmpl.Spec.RuntimeRef != EchoRuntimeName {
+		t.Errorf("template runtimeRef = %q, want %q", tmpl.Spec.RuntimeRef, EchoRuntimeName)
+	}
+	if tmpl.Spec.IsolationProfile != "standard" {
+		t.Errorf("template isolationProfile = %q, want standard (§17.4 local fidelity)", tmpl.Spec.IsolationProfile)
+	}
+	if tmpl.Spec.EgressProfile != "restricted" {
+		t.Errorf("template egressProfile = %q, want restricted", tmpl.Spec.EgressProfile)
+	}
+	if tmpl.Spec.DNSPolicy != "cluster-default" {
+		t.Errorf("template dnsPolicy = %q, want cluster-default (§13.2 opt-out)", tmpl.Spec.DNSPolicy)
+	}
+	if tmpl.Spec.ResourceClass != "small" {
+		t.Errorf("template resourceClass = %q, want small", tmpl.Spec.ResourceClass)
+	}
+	// The echo pool sets no execution mode, so the template leaves it empty
+	// (the §5.2 session default), matching the toConfig mapping for a row
+	// with no ExecutionMode.
+	if tmpl.Spec.ExecutionMode != "" {
+		t.Errorf("template executionMode = %q, want empty (session default)", tmpl.Spec.ExecutionMode)
+	}
+}
+
+// TestApplyEchoPoolFromConfigCreatesAndUpdatesInPlace_spec_4_6_2 asserts the
+// echo-pool direct apply creates the SandboxTemplate/SandboxWarmPool pair when
+// absent and updates them in place on a re-run, so a second lenny up does not
+// fail on AlreadyExists and reconverges the pair rather than duplicating it.
+//
+// spec: §4.6.2 (the bring-up materializes the pool without a PoolScalingController),
+// §5.2 (single-pod hot pool), §17.4 (idempotent re-apply).
+func TestApplyEchoPoolFromConfigCreatesAndUpdatesInPlace_spec_4_6_2(t *testing.T) {
+	const ns = "lenny-agents"
+	cl := fake.NewClientBuilder().WithScheme(lennyScheme(t)).Build()
+	ctx := context.Background()
+
+	tmpl, pool := echoPoolObjects(ns)
+	if err := upsertSandboxTemplate(ctx, cl, tmpl); err != nil {
+		t.Fatalf("create SandboxTemplate: %v", err)
+	}
+	if err := upsertSandboxWarmPool(ctx, cl, pool); err != nil {
+		t.Fatalf("create SandboxWarmPool: %v", err)
+	}
+
+	var gotTmpl lennyv1alpha1.SandboxTemplate
+	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: EchoPoolName, Namespace: ns}, &gotTmpl); err != nil {
+		t.Fatalf("get created SandboxTemplate: %v", err)
+	}
+	var gotPool lennyv1alpha1.SandboxWarmPool
+	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: EchoPoolName, Namespace: ns}, &gotPool); err != nil {
+		t.Fatalf("get created SandboxWarmPool: %v", err)
+	}
+	if gotPool.Spec.MinWarm != echoPoolWarmCount {
+		t.Errorf("created warm pool minWarm = %d, want %d", gotPool.Spec.MinWarm, echoPoolWarmCount)
+	}
+
+	// A second apply must reconverge in place rather than fail on AlreadyExists.
+	tmpl2, pool2 := echoPoolObjects(ns)
+	if err := upsertSandboxTemplate(ctx, cl, tmpl2); err != nil {
+		t.Fatalf("re-apply SandboxTemplate: %v", err)
+	}
+	if err := upsertSandboxWarmPool(ctx, cl, pool2); err != nil {
+		t.Fatalf("re-apply SandboxWarmPool: %v", err)
+	}
+	var pools lennyv1alpha1.SandboxWarmPoolList
+	if err := cl.List(ctx, &pools, ctrlclient.InNamespace(ns)); err != nil {
+		t.Fatalf("list warm pools after re-apply: %v", err)
+	}
+	if len(pools.Items) != 1 {
+		t.Errorf("re-apply produced %d warm pools, want exactly 1 (reconverged in place)", len(pools.Items))
+	}
+}

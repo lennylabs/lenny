@@ -1,0 +1,291 @@
+// SPDX-License-Identifier: MIT
+
+package stack
+
+import (
+	"context"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
+)
+
+// withBringUpSeams stubs the in-cluster bring-up seams Up drives after
+// provisionSubstrate (the dev-bearer Secret create, the platform-bundle
+// import, the manifest apply, the gateway-readiness wait, the registry seed,
+// and the echo-pool apply) to no-ops, and restores them. It is combined with
+// withSubstrateSeams/withActivationSeams so a test can drive Up end to end
+// without an API server, a containerd, or a gateway. It returns a recorder of
+// the order the bring-up legs ran in.
+func withBringUpSeams(t *testing.T) *bringUpCalls {
+	t.Helper()
+	calls := &bringUpCalls{}
+	prevSecret, prevImport, prevApply := createDevBearerSecretFn, importPlatformBundleFn, applyManifestsFn
+	prevWait, prevInstall, prevPool := waitGatewayDeployReadyFn, installRuntimesFn, applyEchoPoolFn
+	t.Cleanup(func() {
+		createDevBearerSecretFn, importPlatformBundleFn, applyManifestsFn = prevSecret, prevImport, prevApply
+		waitGatewayDeployReadyFn, installRuntimesFn, applyEchoPoolFn = prevWait, prevInstall, prevPool
+	})
+	createDevBearerSecretFn = func(context.Context, string, string) error {
+		calls.order = append(calls.order, "secret")
+		return nil
+	}
+	importPlatformBundleFn = func(*Stack, string, io.Writer) {
+		calls.order = append(calls.order, "import")
+	}
+	applyManifestsFn = func(context.Context, string) error {
+		calls.order = append(calls.order, "apply")
+		return nil
+	}
+	waitGatewayDeployReadyFn = func(context.Context, string) error {
+		calls.order = append(calls.order, "wait")
+		return nil
+	}
+	installRuntimesFn = func(_ context.Context, _, _ string, _ io.Writer) error {
+		calls.order = append(calls.order, "seed")
+		calls.seeded = true
+		return nil
+	}
+	applyEchoPoolFn = func(context.Context, string, string) error {
+		calls.order = append(calls.order, "pool")
+		calls.poolApplied = true
+		return nil
+	}
+	return calls
+}
+
+type bringUpCalls struct {
+	order       []string
+	seeded      bool
+	poolApplied bool
+}
+
+// upConfig returns a Config rooted at a temp dir with an ephemeral HTTPS port
+// so the forwarder binds a free loopback port rather than colliding with the
+// default 8443.
+func upConfig(t *testing.T) Config {
+	t.Helper()
+	return Config{Root: t.TempDir(), HTTPSPort: freeLoopbackPort(t), Out: io.Discard}
+}
+
+// freeLoopbackPort reserves a free loopback TCP port and returns it. The
+// forwarder rebinds it immediately, so a brief race is acceptable for a unit
+// test that asserts the bring-up sequence rather than the listener.
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	p := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return p
+}
+
+// TestUpReportsSubstrateFailure_spec_17_4 asserts that when the substrate does
+// not come up, Up reports the substrate failure rather than starting a gateway
+// or degrading to an in-process executor. §17.4 S1: the gateway runs as an
+// in-cluster pod, so an unavailable substrate makes lenny up report the failure.
+//
+// spec: §17.4 (an unavailable substrate makes lenny up report the failure; the
+// gateway does not start).
+func TestUpReportsSubstrateFailure_spec_17_4(t *testing.T) {
+	withSubstrateSeams(t, false, &fakeLauncher{}, nil)
+	calls := withBringUpSeams(t)
+
+	_, err := Up(context.Background(), upConfig(t))
+	if err == nil {
+		t.Fatal("Up with no substrate = nil error, want the substrate-failure error")
+	}
+	// None of the in-cluster bring-up legs should have run.
+	if len(calls.order) != 0 {
+		t.Errorf("bring-up ran in-cluster legs %v with no substrate; want none", calls.order)
+	}
+}
+
+// TestUpSequenceOrder_spec_17_4 asserts the in-cluster bring-up runs its legs
+// in the order the §17.4 sequence requires: the dev-bearer Secret is created
+// before the manifests are applied (so the gateway mount resolves), the
+// gateway-readiness wait precedes the gateway-dialed registry seed, and the
+// echo pool is applied after the runtime is seeded.
+//
+// spec: §17.4 (the bring-up creates the dev-bearer Secret before the gateway
+// Deployment, waits for the gateway, then seeds the echo registry record and
+// applies the warm pool), §4.6.2 (the echo pool is applied directly).
+func TestUpSequenceOrder_spec_17_4(t *testing.T) {
+	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
+	withSubstrateSeams(t, true, l, nil)
+	// Stub the §4.7 activation seams so provisionSubstrate resolves an echo
+	// digest (so the echo pool apply is not skipped) and creates no real
+	// objects.
+	withActivationSeams(t, "ghcr.io/lennylabs/runtime-echo-embedded@sha256:"+
+		"4444444444444444444444444444444444444444444444444444444444444444")
+	withRuntimeClassSeam(t)
+	calls := withBringUpSeams(t)
+
+	s, err := Up(context.Background(), upConfig(t))
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	want := []string{"secret", "apply", "wait", "seed", "pool"}
+	if !subsequence(calls.order, want) {
+		t.Errorf("bring-up order = %v, want the subsequence %v (secret before apply, wait before seed, pool after seed)", calls.order, want)
+	}
+	if !calls.seeded || !calls.poolApplied {
+		t.Errorf("bring-up did not seed the registry record (%v) or apply the echo pool (%v)", calls.seeded, calls.poolApplied)
+	}
+}
+
+// TestUpSkipsPoolWhenEchoImageUnresolved_spec_4_7 asserts that when the echo
+// image did not import (no resolved digest), the bring-up still seeds the
+// registry record but skips the echo warm-pool apply, because materializing a
+// pool for a runtime whose image is absent would only ImagePullBackOff.
+//
+// spec: §4.7 (the digest-pinned pod image), §4.6.2 (the pool is applied only
+// when the echo image resolved).
+func TestUpSkipsPoolWhenEchoImageUnresolved_spec_4_7(t *testing.T) {
+	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
+	withSubstrateSeams(t, true, l, nil)
+	// Empty resolved image: provisionSubstrate skips the Runtime CR apply.
+	withActivationSeams(t, "")
+	withRuntimeClassSeam(t)
+	calls := withBringUpSeams(t)
+
+	s, err := Up(context.Background(), upConfig(t))
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	if !calls.seeded {
+		t.Error("bring-up did not seed the registry record when the echo image was unresolved")
+	}
+	if calls.poolApplied {
+		t.Error("bring-up applied the echo warm pool with no resolved echo image; want it skipped")
+	}
+}
+
+// withRuntimeClassSeam stubs the runc RuntimeClass install seam to a no-op so
+// provisionSubstrate does not dial a real API server in a unit test.
+func withRuntimeClassSeam(t *testing.T) {
+	t.Helper()
+	prev := ensureRuntimeClassFn
+	t.Cleanup(func() { ensureRuntimeClassFn = prev })
+	ensureRuntimeClassFn = func(context.Context, string, string, string) error { return nil }
+}
+
+// subsequence reports whether want appears in order as a (not necessarily
+// contiguous) subsequence of got.
+func subsequence(got, want []string) bool {
+	i := 0
+	for _, g := range got {
+		if i < len(want) && g == want[i] {
+			i++
+		}
+	}
+	return i == len(want)
+}
+
+// TestDeploymentReady covers the gateway-readiness predicate: a Deployment is
+// ready only when its observed generation has caught up to the spec generation
+// and it reports at least one ready replica, so a stale status from before a
+// rollout does not read as ready.
+//
+// spec: §17.4 (lenny up reports the gateway ready when its Deployment is ready).
+func TestDeploymentReady(t *testing.T) {
+	cases := []struct {
+		name string
+		gen  int64
+		obs  int64
+		rdy  int32
+		want bool
+	}{
+		{"ready", 3, 3, 1, true},
+		{"no ready replicas", 3, 3, 0, false},
+		{"status behind spec", 3, 2, 1, false},
+		{"observed ahead", 3, 4, 2, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dep := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Generation: tc.gen},
+				Status: appsv1.DeploymentStatus{
+					ObservedGeneration: tc.obs,
+					ReadyReplicas:      tc.rdy,
+				},
+			}
+			if got := deploymentReady(dep); got != tc.want {
+				t.Errorf("deploymentReady(gen=%d obs=%d ready=%d) = %v, want %v", tc.gen, tc.obs, tc.rdy, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEnsureDevBearerKeyPersistsAndReuses covers the dev-bearer key path: the
+// first call writes a key file, and a second call reuses it rather than rotating
+// it, so a bearer the CLI minted from the persisted key keeps verifying across a
+// re-run of the bring-up.
+//
+// spec: §17.4 (the CLI mints the dev bearer from the persisted dev key the
+// gateway trusts).
+func TestEnsureDevBearerKeyPersistsAndReuses(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "oidc", "signing.key")
+	if err := ensureDevBearerKey(keyFile); err != nil {
+		t.Fatalf("first ensureDevBearerKey: %v", err)
+	}
+	first, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("read key file: %v", err)
+	}
+	if err := ensureDevBearerKey(keyFile); err != nil {
+		t.Fatalf("second ensureDevBearerKey: %v", err)
+	}
+	second, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("re-read key file: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Error("ensureDevBearerKey rotated the persisted key on a re-run; the CLI's already-minted bearer would stop verifying")
+	}
+}
+
+// TestResolvePlatformBundleOverride covers the LENNY_PLATFORM_BUNDLE override:
+// an existing path is resolved, and a non-existent override resolves to empty
+// rather than erroring, because a missing bundle is non-fatal at bring-up.
+func TestResolvePlatformBundleOverride(t *testing.T) {
+	bundle := filepath.Join(t.TempDir(), "bundle.tar")
+	if err := os.WriteFile(bundle, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	t.Setenv(platformBundleEnvVar, bundle)
+	if got := resolvePlatformBundle(); got != bundle {
+		t.Errorf("resolvePlatformBundle override = %q, want %q", got, bundle)
+	}
+
+	t.Setenv(platformBundleEnvVar, filepath.Join(t.TempDir(), "absent.tar"))
+	if got := resolvePlatformBundle(); got != "" {
+		t.Errorf("resolvePlatformBundle with an absent override = %q, want empty", got)
+	}
+}
+
+// TestCreateDevBearerSecretFromConfigMissingKeyFails asserts the dev-bearer
+// Secret create fails closed when the persisted dev key file is absent, rather
+// than creating an empty Secret the gateway would load as a malformed verifier.
+// The read fails before any client is built, so the test needs no API server.
+//
+// spec: §10.2 (the gateway loads the dev HMAC key), §13 (fail closed on a
+// credential-handling path).
+func TestCreateDevBearerSecretFromConfigMissingKeyFails(t *testing.T) {
+	err := createDevBearerSecretFromConfig(context.Background(), &rest.Config{Host: "https://127.0.0.1:1"},
+		filepath.Join(t.TempDir(), "absent.key"))
+	if err == nil {
+		t.Fatal("createDevBearerSecretFromConfig with no key file = nil error, want a read failure")
+	}
+}
