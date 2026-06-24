@@ -9,20 +9,19 @@ import (
 	"os"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/embedded/oidc"
+	"github.com/lennylabs/lenny/pkg/embedded/devauth"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 )
 
 // cmdToken implements `lenny token print`. §17.4: lenny token print
 // emits a short-lived bearer for the embedded built-in user. The token
-// is signed by the embedded OIDC provider's persisted key, which the
-// running stack rotates on every lenny up.
+// is signed by the persisted dev key, which the running stack rotates on
+// every lenny up.
 //
-// The embedded stack starts the gateway with
-// --bearer-trust-hmac-key-file pointed at the embedded OIDC provider's
-// persisted key, so the gateway trusts this provider's key as an
-// additional §10.2 Bearer verifier. The printed token verifies on the
-// gateway's Authorization header:
+// lenny up mounts the same persisted dev key into the in-cluster gateway
+// pod and wires --bearer-trust-hmac-key-file at it, so the dev-mode
+// gateway trusts this key as an additional §10.2 Bearer verifier. The
+// printed token verifies on the gateway's Authorization header:
 //
 //	curl -H "Authorization: Bearer $(lenny token print)" https://localhost:8443/...
 //
@@ -36,7 +35,7 @@ func cmdToken(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: lenny token print [--ttl <duration>]")
 		return 2
 	}
-	ttl := oidc.DefaultTokenTTL
+	ttl := devauth.DefaultTokenTTL
 	for i := 1; i < len(args); i++ {
 		if args[i] == "--ttl" && i+1 < len(args) {
 			d, err := parseTTL(args[i+1])
@@ -71,12 +70,12 @@ func cmdToken(args []string, stdout, stderr io.Writer) int {
 	}
 	// Load the running stack's persisted signing key. rotate=false
 	// reuses the key lenny up wrote.
-	provider, err := oidc.NewWithPersistedKey(keyFile, false)
+	signer, err := devauth.NewWithPersistedKey(keyFile, false)
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny token: %v\n", err)
 		return 1
 	}
-	tok, err := provider.Issue(ttl)
+	tok, err := signer.Issue(ttl)
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny token: %v\n", err)
 		return 1

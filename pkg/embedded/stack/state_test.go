@@ -13,18 +13,12 @@ import (
 func TestWriteReadState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stack.json")
 	want := State{
-		StartedAt:      time.Now().UTC().Truncate(time.Second),
-		SupervisorPID:  111,
-		GatewayPID:     222,
-		ControllerPID:  333,
-		K3sPID:         444,
-		K3sContainer:   "lenny-embedded-k3s-k3s",
-		HTTPAddr:       "127.0.0.1:8080",
-		HTTPSAddr:      "127.0.0.1:8443",
-		PostgresDSN:    "postgres://lenny@127.0.0.1:15433/lenny",
-		RedisURL:       "redis://127.0.0.1:6390/0",
-		KubeconfigPath: "/state/k3s/kubeconfig.yaml",
-		K3sEnabled:     true,
+		StartedAt:            time.Now().UTC().Truncate(time.Second),
+		K3sContainer:         "lenny-embedded-k3s-k3s",
+		GatewayForwarderAddr: "127.0.0.1:8443",
+		DeployedImageTag:     "v0.0.0-dev",
+		KubeconfigPath:       "/state/k3s/kubeconfig.yaml",
+		K3sEnabled:           true,
 	}
 	if err := writeState(path, want); err != nil {
 		t.Fatalf("writeState: %v", err)
@@ -63,7 +57,7 @@ func TestReadStateCorruptFile(t *testing.T) {
 
 func TestRemoveState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stack.json")
-	if err := writeState(path, State{SupervisorPID: 1}); err != nil {
+	if err := writeState(path, State{K3sEnabled: true}); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
 	if err := removeState(path); err != nil {
@@ -132,7 +126,3 @@ func writeSubstrateState(t *testing.T, root, container string) {
 		t.Fatalf("writeState: %v", err)
 	}
 }
-
-// processAlive, the state-file liveness probe, delegates to the
-// build-tagged process-control substrate. Its boundary behavior is
-// covered cross-platform by TestProcessAliveBoundaries in process_test.go.

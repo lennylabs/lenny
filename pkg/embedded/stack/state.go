@@ -10,46 +10,43 @@ import (
 	"time"
 )
 
-// State is the on-disk record of a running Embedded Mode stack. lenny
-// up writes it; lenny down and lenny status read it to locate the
-// child processes and component endpoints. It lives at
-// Paths.StateFile().
+// State is the on-disk record of a running Embedded Mode stack. lenny up
+// writes it; lenny down and lenny status read it to locate the substrate
+// and the host-side gateway forwarder. The §17.4 control plane runs as
+// in-cluster pods rendered from the chart, so the state records the
+// substrate handle, the loopback forwarder address, and the deployed image
+// tag rather than host process identifiers. It lives at Paths.StateFile().
+//
+// spec: §17.4 (the control plane runs as in-cluster pods; lenny up records
+// the substrate and the host-side gateway forwarder).
 type State struct {
 	// StartedAt is when lenny up brought the stack up.
 	StartedAt time.Time `json:"startedAt"`
-	// SupervisorPID is the detached lenny process that hosts the
-	// in-process components (Redis, the OIDC provider, and the TLS
-	// reverse proxy) and supervises the child processes. lenny down
-	// signals it to trigger a graceful teardown of the whole stack.
-	SupervisorPID int `json:"supervisorPid"`
-	// GatewayPID and ControllerPID are the child-process identifiers.
-	GatewayPID    int `json:"gatewayPid"`
-	ControllerPID int `json:"controllerPid"`
-	// K3sPID is the embedded k3s host process identifier on the Linux
-	// managed-child-process launcher. It is zero on the Docker-backed
-	// launcher (macOS and Windows), where k3s runs inside the Docker VM
-	// with no host PID; K3sContainer carries the handle there. It is also
-	// zero when k3s did not start (an unsupported host).
-	K3sPID int `json:"k3sPid,omitempty"`
 	// K3sContainer is the docker container name the Docker-backed launcher
 	// runs the embedded k3s under (macOS and Windows). It is the handle
-	// lenny status probes for liveness in place of the host PID. It is
-	// empty on the Linux child-process launcher, which records a host PID
-	// in K3sPID instead, and empty when k3s did not start.
+	// lenny status probes for liveness. It is empty on the Linux
+	// child-process launcher, which runs k3s as a host process, and empty
+	// when k3s did not start.
 	K3sContainer string `json:"k3sContainer,omitempty"`
-	// HTTPAddr and HTTPSAddr are the gateway's plaintext and
-	// TLS-terminated listen addresses.
-	HTTPAddr  string `json:"httpAddr"`
-	HTTPSAddr string `json:"httpsAddr"`
-	// PostgresDSN and RedisURL are the embedded-backend connection
-	// strings the gateway and controllers were configured with.
-	PostgresDSN string `json:"postgresDsn"`
-	RedisURL    string `json:"redisUrl"`
+	// GatewayForwarderAddr is the loopback host:port the host-side TLS
+	// forwarder presents the in-cluster gateway on (the §17.4
+	// EMBEDDED_MODE_LOCAL_ONLY 127.0.0.1:8443 endpoint). The CLI resolves
+	// its gateway URL from it. The in-cluster gateway serves plaintext HTTP
+	// behind the forwarder, which terminates TLS with the per-lenny-up
+	// self-signed leaf. Empty until the S7 bring-up records it.
+	GatewayForwarderAddr string `json:"gatewayForwarderAddr,omitempty"`
+	// DeployedImageTag is the CLI version tag the deployed component images
+	// were imported and rendered under. lenny up compares it against the
+	// running CLI version on a warm bring-up and re-imports and re-applies
+	// on a mismatch, so a stale image is not run after a lenny upgrade
+	// (C4). Empty until the S7 bring-up records it.
+	DeployedImageTag string `json:"deployedImageTag,omitempty"`
 	// KubeconfigPath is the embedded k3s admin kubeconfig. On the Linux
 	// launcher it is k3s' generated admin kubeconfig; on the Docker-backed
 	// launcher it is the host-rewritten kubeconfig whose server URL points
-	// at the published host port. The gateway and controllers resolve
-	// their cluster connection from it. Empty when k3s did not start.
+	// at the published host port. The applier and the cluster-backed status
+	// and logs commands resolve their cluster connection from it. Empty when
+	// k3s did not start.
 	KubeconfigPath string `json:"kubeconfigPath,omitempty"`
 	// K3sEnabled records whether the embedded Kubernetes layer came up. It
 	// is true on every host where the substrate provisioned (Linux
@@ -105,12 +102,16 @@ func removeState(path string) error {
 // Mode stack is recorded as running.
 var ErrNoRunningStack = errors.New("embedded: no running stack")
 
-// RunningGateway returns the plaintext HTTP URL of the running
-// Embedded Mode gateway (the value `lenny up` recorded in the stack
-// state file). It returns ErrNoRunningStack when no stack is
-// recorded, so callers can present a precise diagnostic instead of a
-// connect-refused error. The root argument selects the LENNY_HOME-
-// equivalent state directory; an empty root uses the default.
+// RunningGateway returns the loopback HTTPS URL of the running Embedded
+// Mode gateway: the host-side TLS forwarder address `lenny up` recorded in
+// the stack state file (§17.4 EMBEDDED_MODE_LOCAL_ONLY 127.0.0.1:8443). It
+// returns ErrNoRunningStack when no stack is recorded, so callers can
+// present a precise diagnostic instead of a connect-refused error. The
+// root argument selects the LENNY_HOME-equivalent state directory; an
+// empty root uses the default.
+//
+// spec: §17.4 (the CLI reaches the in-cluster gateway through the
+// loopback-only host-side forwarder).
 func RunningGateway(root string) (string, error) {
 	resolved, err := resolveRoot(root)
 	if err != nil {
@@ -124,10 +125,10 @@ func RunningGateway(root string) (string, error) {
 	if !ok {
 		return "", ErrNoRunningStack
 	}
-	if st.HTTPAddr == "" {
-		return "", fmt.Errorf("embedded: stack state at %s has no httpAddr", paths.StateFile())
+	if st.GatewayForwarderAddr == "" {
+		return "", fmt.Errorf("embedded: stack state at %s has no gatewayForwarderAddr", paths.StateFile())
 	}
-	return "http://" + st.HTTPAddr, nil
+	return "https://" + st.GatewayForwarderAddr, nil
 }
 
 // Substrate describes how the embedded k3s is provisioned on the running
@@ -179,15 +180,4 @@ func RunningSubstrate(root string) (Substrate, error) {
 		return Substrate{}, ErrNoRunningStack
 	}
 	return Substrate{Container: st.K3sContainer}, nil
-}
-
-// processAlive reports whether a process with the given PID is
-// currently running. A zero or negative PID is treated as not running.
-// The liveness probe itself (signal-0 on unix, OpenProcess on Windows)
-// lives in the build-tagged process-control substrate.
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	return pidAlive(pid)
 }

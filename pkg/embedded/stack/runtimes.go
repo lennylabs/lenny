@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
-	"github.com/lennylabs/lenny/pkg/embedded/oidc"
+	"github.com/lennylabs/lenny/pkg/embedded/devauth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/egress"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -243,9 +243,9 @@ func buildBootstrapSeed(echoImageRef string) bootstrapSeed {
 		},
 		Users: []seedUser{
 			{
-				Subject:  oidc.BuiltInUser,
+				Subject:  devauth.BuiltInUser,
 				TenantID: defaultTenant,
-				Email:    oidc.BuiltInUser,
+				Email:    devauth.BuiltInUser,
 				Roles:    []string{"platform-admin"},
 			},
 		},

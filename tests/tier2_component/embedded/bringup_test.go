@@ -5,13 +5,16 @@
 // Package embedded_test exercises the §17.4 Embedded Mode stack bring-up
 // on a Docker-backed substrate (the macOS and Windows code path). It
 // provisions a real embedded k3s container through the Docker-backed
-// launcher, installs the production CRDs against the launcher's
-// host-rewritten kubeconfig, and starts the production controller against
-// that same kubeconfig. The CRD-install leg asserts a host-process
+// launcher and installs the production CRDs against the launcher's
+// host-rewritten kubeconfig. The CRD-install leg asserts a host-process
 // Kubernetes client reaches the in-container API server across the
-// host/Docker boundary; the controllers-start leg asserts the production
-// controller process comes up and stays alive against that connection,
-// which is the leg the non-Linux gate previously skipped.
+// host/Docker boundary, the same connection the in-cluster control plane's
+// applier makes at bring-up.
+//
+// The §17.4 control plane runs as in-cluster pods rendered from the chart,
+// so the host-process controller-start legs this file previously carried are
+// removed; the in-cluster controller bring-up is exercised by the tier-4
+// embedded smoke (proposal 0017 §5), which runs the controller as a pod.
 //
 // The Docker-backed launcher is the launcher New selects on macOS and
 // Windows; this test constructs it explicitly through NewDockerLauncher so
@@ -19,23 +22,16 @@
 // host. The live macOS/Windows-host leg (Docker Desktop on a real
 // macOS/Windows host) is deferred where CI lacks Docker Desktop: these
 // tests skip when no Docker daemon is reachable, stating that dependency.
-// The controllers-start leg additionally needs the Go toolchain to build
-// the lenny-controller binary and skips with that dependency stated when
-// it is absent.
 //
 // spec: §17.4 (the embedded cluster comes up on every supported host; on
 // macOS and Windows the embedded k3s runs as a Docker-backed container and
-// the CRDs install and the controllers run against the host-rewritten
-// kubeconfig), §24.19 (lenny up brings the substrate up).
+// the CRDs install against the host-rewritten kubeconfig), §24.19 (lenny up
+// brings the substrate up).
 package embedded_test
 
 import (
 	"context"
-	"errors"
-	"net"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -46,7 +42,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // expectedCRDs are the lenny.dev CustomResourceDefinitions the embedded
@@ -123,8 +118,8 @@ func TestDockerBackedBringUpInstallsCRDs(t *testing.T) {
 	}
 
 	// Install the production CRDs against the launcher's host-rewritten
-	// kubeconfig — the same call Up makes. This is the bring-up leg the
-	// non-Linux gate previously skipped.
+	// kubeconfig — the same call the in-cluster applier makes. This is the
+	// cross-boundary connection the in-cluster control plane depends on.
 	kubeconfig := launcher.KubeconfigPath()
 	if err := stack.InstallCRDs(ctx, kubeconfig); err != nil {
 		t.Fatalf("CRD install against the host-rewritten kubeconfig failed: %v", err)
@@ -132,8 +127,8 @@ func TestDockerBackedBringUpInstallsCRDs(t *testing.T) {
 
 	// A host-process Kubernetes client reaches the in-container API server
 	// across the host/Docker boundary through the rewritten kubeconfig —
-	// the connection the production controllers make. Assert every
-	// embedded CRD is registered and established.
+	// the connection the applier and the in-cluster pods' control plane make.
+	// Assert every embedded CRD is registered and established.
 	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		t.Fatalf("load host-rewritten kubeconfig: %v", err)
@@ -152,230 +147,6 @@ func TestDockerBackedBringUpInstallsCRDs(t *testing.T) {
 	if err := stack.InstallCRDs(ctx, kubeconfig); err != nil {
 		t.Errorf("second CRD install errored; bring-up is not idempotent: %v", err)
 	}
-}
-
-// spec: §17.4 (the production controllers run against the launcher's
-// host-rewritten kubeconfig on every supported host; on macOS and Windows
-// the host-process controller reaches the in-container API server across
-// the host/Docker boundary), §24.19.
-// diagnosis: The production controller did not start or did not stay alive
-//
-//	against the Docker-backed substrate's host-rewritten
-//	kubeconfig — the controllers-start leg the non-Linux gate
-//	previously skipped. Either the controller binary failed to
-//	build, the host-rewritten kubeconfig does not reach the
-//	in-container API server across the host/Docker boundary
-//	(check the controller log for a connection-refused or
-//	kubeconfig error), or the installed CRDs failed the
-//	controller's schema-version preflight. Read the controller
-//	log path printed on failure and run `docker logs` for the
-//	lenny-embedded-k3s container.
-func TestDockerBackedBringUpStartsController(t *testing.T) {
-	requireDockerDaemon(t)
-	controllerBin := buildControllerBin(t)
-
-	// A non-default host API port avoids colliding with the CRD-install
-	// test's container, the host-local k3s, or a developer's cluster.
-	cfg := k3s.Config{
-		Dir:          t.TempDir(),
-		APIPort:      26444,
-		ReadyTimeout: 3 * time.Minute,
-	}
-	launcher := k3s.NewDockerLauncher(cfg)
-	t.Cleanup(func() { _ = launcher.Stop() })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	if err := launcher.Start(ctx); err != nil {
-		t.Fatalf("Docker-backed k3s did not come up: %v", err)
-	}
-
-	// The controller's manager start validates every installed CRD's
-	// schema-version annotation before it begins reconciling, so the CRDs
-	// must be installed against the host-rewritten kubeconfig first — the
-	// same order Up follows.
-	kubeconfig := launcher.KubeconfigPath()
-	if err := stack.InstallCRDs(ctx, kubeconfig); err != nil {
-		t.Fatalf("CRD install against the host-rewritten kubeconfig failed: %v", err)
-	}
-
-	// Start the production controller against the launcher's host-rewritten
-	// kubeconfig — the same call Up makes under `if k3sEnabled`, and the
-	// leg the previous non-Linux gate skipped. PostgresDSN is left empty so
-	// the §4.6.1 agent_pod_state mirror is disabled and the controller does
-	// not require a live Postgres: the cross-boundary connection under test
-	// is the controller's manager dialing the in-container API server, which
-	// it makes regardless of the mirror. spec: §17.4.
-	logPath := filepath.Join(t.TempDir(), "controller.log")
-	ctl, err := stack.StartController(stack.ControllerSpec{
-		BinPath:    controllerBin,
-		Kubeconfig: kubeconfig,
-		LogPath:    logPath,
-	})
-	if err != nil {
-		t.Fatalf("starting the production controller against the host-rewritten kubeconfig failed: %v", err)
-	}
-	t.Cleanup(func() { _ = ctl.Stop() })
-
-	if ctl.PID() == 0 {
-		t.Fatal("controller reported PID 0 immediately after StartController; the process did not launch")
-	}
-
-	// The controller must stay alive against the in-container API server.
-	// Its manager resolves the cluster connection from the host-rewritten
-	// KUBECONFIG, validates the installed CRDs' schema-version annotation
-	// across the host/Docker boundary, then starts its informer cache. A
-	// controller that cannot reach the API server (a kubeconfig that does
-	// not traverse the boundary) or that finds the CRDs absent exits
-	// non-zero during startup. Polling Running across the startup window
-	// pins that the controller comes up and stays up against the rewritten
-	// kubeconfig. spec: §17.4.
-	if err := waitControllerStaysAlive(ctx, ctl, 20*time.Second); err != nil {
-		log := readControllerLog(logPath)
-		t.Fatalf("controller did not stay alive against the host-rewritten kubeconfig: %v\ncontroller log:\n%s", err, log)
-	}
-}
-
-// spec: §4.7 (the gateway↔adapter gRPC callback traverses the host/Docker
-// boundary; the controller stamps the launcher's substrate-reachable gateway
-// address onto each agent pod's adapter), §8.6, §9.1, §17.4.
-// diagnosis: The production controller did not come up or did not stay alive
-//
-//	when threaded with the §4.7 cross-boundary gateway callback
-//	address (the Docker-backed launcher's host.docker.internal host
-//	joined to the gateway gRPC port). Either threading the
-//	--gateway-grpc-addr flag broke controller startup, or the
-//	controller could not reach the in-container API server across
-//	the host/Docker boundary. Read the controller log printed on
-//	failure and run `docker logs` for the lenny-embedded-k3s
-//	container.
-func TestDockerBackedBringUpThreadsGatewayCallbackAddr(t *testing.T) {
-	requireDockerDaemon(t)
-	controllerBin := buildControllerBin(t)
-
-	cfg := k3s.Config{
-		Dir:          t.TempDir(),
-		APIPort:      26445,
-		ReadyTimeout: 3 * time.Minute,
-	}
-	launcher := k3s.NewDockerLauncher(cfg)
-	t.Cleanup(func() { _ = launcher.Stop() })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	if err := launcher.Start(ctx); err != nil {
-		t.Fatalf("Docker-backed k3s did not come up: %v", err)
-	}
-
-	// The Docker-backed launcher reaches the host gateway at
-	// host.docker.internal, the alias resolvable inside the Docker VM. This
-	// is the substrate-specific host the stack joins to the gateway gRPC port
-	// and stamps onto agent pods, carrying the §4.7 callback across the
-	// host/Docker boundary. Assert the launcher returns the alias rather than
-	// loopback, then thread the composed dial address through the controller
-	// the way Up does.
-	if got := launcher.GatewayHost(); got != "host.docker.internal" {
-		t.Fatalf("Docker-backed launcher GatewayHost() = %q, want host.docker.internal (the in-VM host alias)", got)
-	}
-	gatewayCallbackAddr := net.JoinHostPort(launcher.GatewayHost(), "50061")
-
-	kubeconfig := launcher.KubeconfigPath()
-	if err := stack.InstallCRDs(ctx, kubeconfig); err != nil {
-		t.Fatalf("CRD install against the host-rewritten kubeconfig failed: %v", err)
-	}
-
-	// Start the production controller threaded with the §4.7 cross-boundary
-	// gateway callback address, the same as Up does under `if k3sEnabled`.
-	// PostgresDSN is left empty so the mirror is disabled; the cross-boundary
-	// connection under test is the controller's manager dialing the
-	// in-container API server while it carries the callback address it stamps
-	// onto pods. spec: §4.7, §17.4.
-	logPath := filepath.Join(t.TempDir(), "controller.log")
-	ctl, err := stack.StartController(stack.ControllerSpec{
-		BinPath:         controllerBin,
-		Kubeconfig:      kubeconfig,
-		GatewayGRPCAddr: gatewayCallbackAddr,
-		LogPath:         logPath,
-	})
-	if err != nil {
-		t.Fatalf("starting the production controller with the §4.7 gateway callback address failed: %v", err)
-	}
-	t.Cleanup(func() { _ = ctl.Stop() })
-
-	// The controller comes up and stays alive with the cross-boundary callback
-	// address threaded in. The address it stamps onto pods is the
-	// host.docker.internal dial address; the controller itself reaches the API
-	// server across the boundary through the host-rewritten kubeconfig. A
-	// controller that rejected the callback flag or could not reach the API
-	// server exits non-zero during startup. spec: §4.7, §17.4.
-	if err := waitControllerStaysAlive(ctx, ctl, 20*time.Second); err != nil {
-		log := readControllerLog(logPath)
-		t.Fatalf("controller did not stay alive with the §4.7 cross-boundary callback address threaded in: %v\ncontroller log:\n%s", err, log)
-	}
-}
-
-// buildControllerBin builds cmd/lenny-controller into a temp directory and
-// returns its path. The Docker-backed controllers-start leg needs the real
-// production controller binary; building it gates on the Go toolchain. A
-// missing toolchain is a genuine external-dependency skip, stated rather
-// than failing, matching the requireDockerDaemon convention.
-func buildControllerBin(t *testing.T) string {
-	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go toolchain absent: building the production controller for the controllers-start leg requires the Go toolchain; " +
-			"the leg runs where the toolchain is available")
-	}
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "lenny-controller")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/lenny-controller")
-	cmd.Dir = schematest.RepoRoot(t)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build cmd/lenny-controller: %v\n%s", err, out)
-	}
-	return bin
-}
-
-// waitControllerStaysAlive polls the controller's liveness across a startup
-// window. The controller resolves its cluster connection, validates the
-// CRDs, and starts its informer cache during this window; a controller that
-// cannot reach the in-container API server exits non-zero before the window
-// elapses. It returns nil when the controller is still running at the end
-// of the window, or an error naming when it stopped.
-func waitControllerStaysAlive(ctx context.Context, ctl *stack.Controller, window time.Duration) error {
-	deadline := time.Now().Add(window)
-	for {
-		if !ctl.Running() {
-			return errControllerExited
-		}
-		if time.Now().After(deadline) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-}
-
-// errControllerExited reports that the controller process exited during
-// the startup window, which means it could not reach the in-container API
-// server across the host/Docker boundary or failed its CRD preflight.
-var errControllerExited = errors.New("controller exited during the startup window (it could not reach the " +
-	"in-container API server across the host/Docker boundary or failed its CRD schema-version preflight)")
-
-// readControllerLog reads the controller log file for the failure report,
-// returning a placeholder when it is unreadable so the diagnosis is never
-// empty.
-func readControllerLog(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "(controller log unreadable: " + err.Error() + ")"
-	}
-	if len(b) == 0 {
-		return "(controller log empty)"
-	}
-	return string(b)
 }
 
 // waitCRDEstablished polls the named CRD through the host-rewritten

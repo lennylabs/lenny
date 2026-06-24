@@ -173,11 +173,12 @@ func withActivationSeams(t *testing.T, resolvedImage string) *activationCalls {
 // TestProvisionSubstrateUnsupportedPlatform covers the non-Linux,
 // Docker-absent branch: when the host cannot provision the substrate,
 // provisionSubstrate reports the cluster unavailable and returns a disabled
-// result without constructing a launcher, so the gateway and stores still
-// come up.
+// result without constructing a launcher. The §17.4 control plane runs on
+// the substrate, so an unsupported host (no Docker Desktop) leaves the stack
+// unable to come up rather than degrading to a host control plane.
 //
-// spec: §17.4 (on a host without the substrate prerequisite the gateway and
-// stores still come up; session placement is unavailable).
+// spec: §17.4 (the control plane runs as in-cluster pods; on a host without
+// the substrate prerequisite lenny up reports the cluster unavailable).
 func TestProvisionSubstrateUnsupportedPlatform_spec_17_4(t *testing.T) {
 	withSubstrateSeams(t, false, &fakeLauncher{}, nil)
 	s := &Stack{}
@@ -195,12 +196,14 @@ func TestProvisionSubstrateUnsupportedPlatform_spec_17_4(t *testing.T) {
 }
 
 // TestProvisionSubstrateStartError covers the start-failure branch: when the
-// launcher fails to start, provisionSubstrate routes around it (the storage
-// and identity paths still come up) and returns a disabled result rather
-// than failing the whole bring-up.
+// launcher fails to start, provisionSubstrate returns a disabled result and
+// reports the substrate failure. The §17.4 control plane runs on the
+// substrate, so an unavailable substrate makes the bring-up surface the
+// failure rather than routing around it to a host control plane that no
+// longer exists.
 //
-// spec: §17.4 (k3s is the component most likely to fail on a constrained
-// host; lenny up continues without the embedded cluster).
+// spec: §17.4 (the control plane runs as in-cluster pods; an unavailable
+// substrate makes lenny up report the failure).
 func TestProvisionSubstrateStartError_spec_17_4(t *testing.T) {
 	fake := &fakeLauncher{startErr: errors.New("boom")}
 	withSubstrateSeams(t, true, fake, nil)
@@ -213,8 +216,8 @@ func TestProvisionSubstrateStartError_spec_17_4(t *testing.T) {
 	if !fake.started {
 		t.Error("provisionSubstrate did not attempt to start the launcher")
 	}
-	if !strings.Contains(out.String(), "continuing without the embedded cluster") {
-		t.Errorf("output = %q, want the route-around note", out.String())
+	if !strings.Contains(out.String(), "embedded Kubernetes did not start") {
+		t.Errorf("output = %q, want the substrate-failure note", out.String())
 	}
 }
 
@@ -445,8 +448,8 @@ func TestProvisionSubstrateImportFailureKeepsSubstrateEnabledForGatewayGate_spec
 
 // TestProvisionSubstrateNamespaceCreateFailureIsNonFatal_spec_4_6_2 covers the
 // agent-namespace create warning branch: a create failure warns rather than
-// aborts the bring-up, mirroring the CRD-install branch, since the storage and
-// identity paths still come up.
+// aborts the substrate provisioning, mirroring the CRD-install branch, so the
+// bring-up can surface the inert namespace without tearing the substrate down.
 //
 // spec: §4.6.2 (the agent namespace holds the pool CRDs), §17.4 (a substrate
 // hiccup warns rather than aborts the bring-up).

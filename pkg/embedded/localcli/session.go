@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/embedded/oidc"
+	"github.com/lennylabs/lenny/pkg/embedded/devauth"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 	"github.com/lennylabs/lenny/pkg/workspacepack"
 	lenny "github.com/lennylabs/lenny/sdks/client/go/lenny"
@@ -241,19 +241,20 @@ func resolveBearer(f sessionFlags) (string, error) {
 }
 
 // mintEmbeddedBearer mints a bearer from the running Embedded Mode stack's
-// persisted OIDC key — the same key `lenny token print` uses and the
-// gateway trusts as an additional §10.2 verifier.
+// persisted dev key — the same key `lenny token print` uses and the
+// in-cluster gateway trusts as an additional §10.2 verifier through
+// --bearer-trust-hmac-key-file.
 func mintEmbeddedBearer() (string, error) {
 	root, err := stack.DefaultRoot()
 	if err != nil {
 		return "", err
 	}
 	paths := stack.NewPaths(root)
-	provider, err := oidc.NewWithPersistedKey(paths.OIDCKeyFile(), false)
+	signer, err := devauth.NewWithPersistedKey(paths.OIDCKeyFile(), false)
 	if err != nil {
-		return "", fmt.Errorf("no embedded OIDC key found; run 'lenny up' or pass --token (%w)", err)
+		return "", fmt.Errorf("no embedded dev key found; run 'lenny up' or pass --token (%w)", err)
 	}
-	return provider.Issue(oidc.DefaultTokenTTL)
+	return signer.Issue(devauth.DefaultTokenTTL)
 }
 
 // cmdSessionNew implements `lenny session new` per §24.17 line 213. With

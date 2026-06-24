@@ -1,41 +1,36 @@
 // SPDX-License-Identifier: MIT
 
-// Package stack orchestrates the §17.4 Embedded Mode single-binary
-// local stack. It brings up the embedded backends — Postgres, Redis,
-// the dev OIDC provider, self-signed TLS, and the embedded Kubernetes
-// layer — and starts the production gateway and controllers
-// configured against them.
+// Package stack orchestrates the §17.4 Embedded Mode single-binary local
+// stack. It provisions the embedded Kubernetes substrate, imports the
+// component images, applies the chart-rendered dev-profile manifests, and
+// exposes the in-cluster gateway to the lenny CLI through a loopback-only
+// host-side forwarder.
 //
-// Embedded Mode uses the production gateway, controllers, CRDs, and
-// storage interfaces. Within a host, the driver selection differs: the
-// embedded backends are reached through the same configuration surface a
-// cluster deployment uses (the gateway's --postgres-dsn, --redis-url,
-// and dev-mode flags). There are no mode-dependent code splits in
-// platform business logic; this package is the orchestration layer
-// outside that business logic. The embedded Kubernetes substrate is
-// provisioned per host operating system (a managed k3s child process on
-// Linux, a Docker-backed k3s container on macOS and Windows), and that
-// provisioning is confined to the substrate layer below the gateway,
-// controllers, CRDs, and storage interfaces, which stay identical across
-// operating systems.
+// Embedded Mode runs the production gateway and controllers as pods inside
+// the embedded Kubernetes cluster, rendered from the production chart under
+// a development profile, so the gateway places each session on an agent pod
+// over the §4.7 adapter boundary exactly as it does in a production cluster.
+// The development profile and the per-host substrate provisioning (a managed
+// k3s child process on Linux, a Docker-backed k3s container on macOS and
+// Windows) are confined to the layer below the gateway and controllers,
+// which run from their unmodified production images, so there are no
+// mode-dependent code splits in platform business logic.
 //
-// spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
-// operating system and stays identical above the substrate layer).
+// spec: §17.4 (the control plane runs as in-cluster pods rendered from the
+// chart; the embedded Kubernetes substrate is provisioned per host operating
+// system and stays identical above the substrate layer).
 package stack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
-	"github.com/lennylabs/lenny/pkg/embedded/oidc"
-	"github.com/lennylabs/lenny/pkg/embedded/postgres"
-	"github.com/lennylabs/lenny/pkg/embedded/redis"
 	"github.com/lennylabs/lenny/pkg/embedded/tlsgen"
 )
 
@@ -46,10 +41,9 @@ const ProductionWarningBanner = "Embedded Mode. NOT for production use. " +
 
 // Default loopback ports for the §17.4 Embedded Mode listeners.
 const (
-	defaultHTTPPort     = 8080
-	defaultHTTPSPort    = 8443
-	defaultPostgresPort = 15433
-	defaultK3sAPIPort   = 6443
+	defaultHTTPPort   = 8080
+	defaultHTTPSPort  = 8443
+	defaultK3sAPIPort = 6443
 	// defaultGatewayGRPCPort is the host port the gateway's §8.6/§9.1
 	// GatewayControl listener binds. In-cluster agent-pod adapters dial it
 	// to forward platform tool calls and ExtendLease across the host/Docker
@@ -63,16 +57,11 @@ type Config struct {
 	// Root is the Embedded Mode state directory. Empty resolves to the
 	// default (~/.lenny, or LENNY_HOME).
 	Root string
-	// HTTPPort and HTTPSPort are the gateway's plaintext and
+	// HTTPPort and HTTPSPort are the host-side forwarder's plaintext and
 	// TLS-terminated loopback ports. Zero uses the §17.4 defaults
 	// (8080 and 8443).
 	HTTPPort  int
 	HTTPSPort int
-	// GatewayBin and ControllerBin are the paths to the production
-	// gateway and controller binaries. Empty triggers discovery
-	// alongside the running lenny binary and on PATH.
-	GatewayBin    string
-	ControllerBin string
 	// EchoTarball overrides the path to the pre-built echo-embedded
 	// docker-save tarball the bring-up imports into the embedded
 	// containerd (the LENNY_ECHO_TARBALL operator override). Empty
@@ -83,39 +72,43 @@ type Config struct {
 	Out io.Writer
 }
 
-// Stack is a running Embedded Mode stack. Up returns it; the caller
-// uses Stop to tear it down.
+// Stack is a running Embedded Mode stack. Up returns it; the caller uses
+// Stop to tear it down. The §17.4 control plane runs as in-cluster pods, so
+// the stack holds the substrate launcher, the self-signed TLS material, and
+// the host-side TLS forwarder rather than host process handles.
 type Stack struct {
-	paths   Paths
-	pg      *postgres.Instance
-	rd      *redis.Server
-	idp     *oidc.Provider
-	k3s     k3s.Launcher
-	tls     tlsgen.Material
-	proxy   *tlsProxy
-	gateway *managedProcess
-	control *managedProcess
-	state   State
-	out     io.Writer
-	// gwSpec and ctlSpec retain the child-process specs so the
-	// supervisor can re-spawn a single component on a §24.19 restart
-	// request without tearing the rest of the stack down. ctlSpec.BinPath
-	// is empty when the controller did not start.
-	gwSpec  gatewaySpec
-	ctlSpec ControllerSpec
+	paths Paths
+	k3s   k3s.Launcher
+	tls   tlsgen.Material
+	proxy *tlsProxy
+	state State
+	out   io.Writer
 }
 
-// Up brings up the Embedded Mode stack. It is idempotent: when a stack
-// is already recorded as running and its gateway responds, Up reports
-// the running stack and returns without starting a second one.
+// errBringUpNotWired marks the in-cluster bring-up sequence that replaces
+// the removed host-process control plane. S6 removes the host-process legs
+// (the embedded Postgres/Redis/OIDC backends and the host gateway and
+// controller processes) and the in-cluster bring-up (image import,
+// manifest apply, host-side forwarder, and readiness wait) lands in the
+// next build step (proposal 0017 C2). Up provisions the substrate so the
+// substrate-selection path stays exercised, then returns this sentinel
+// until the in-cluster legs are wired.
+var errBringUpNotWired = errors.New("embedded: the in-cluster bring-up is not yet wired (proposal 0017 C2)")
+
+// Up brings up the §17.4 Embedded Mode stack. The control plane runs as
+// in-cluster pods rendered from the production chart under a development
+// profile: lenny up provisions the substrate, imports the component images,
+// applies the embedded manifests, starts the host-side gateway forwarder,
+// and waits for readiness.
 //
-// Up performs these steps in order: resolve the state directory,
-// generate self-signed TLS, start embedded Postgres, run schema
-// migrations, start embedded Redis, start the embedded OIDC provider,
-// start the embedded Kubernetes layer when the host supports it, start
-// the production gateway against the embedded backends, start the
-// production controllers, install the §26 reference runtimes, and
-// record the running stack.
+// The host-process control plane (embedded Postgres, Redis, the dev OIDC
+// provider, and the host gateway and controller processes) is removed; the
+// in-cluster bring-up sequence lands in the next build step (proposal 0017
+// C2). Up provisions the substrate and generates the self-signed TLS
+// material here, then returns errBringUpNotWired until those legs are wired.
+//
+// spec: §17.4 (the control plane runs as in-cluster pods rendered from the
+// chart).
 func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	out := cfg.Out
 	if out == nil {
@@ -138,33 +131,9 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		return nil, err
 	}
 
-	httpPort := cfg.HTTPPort
-	if httpPort == 0 {
-		httpPort = defaultHTTPPort
-	}
-	httpsPort := cfg.HTTPSPort
-	if httpsPort == 0 {
-		httpsPort = defaultHTTPSPort
-	}
-	httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
-	httpsAddr := fmt.Sprintf("127.0.0.1:%d", httpsPort)
-
-	// Idempotency: if a recorded stack's gateway still answers, this
-	// invocation is a no-op.
-	if prev, ok, err := readState(paths.StateFile()); err == nil && ok {
-		if processAlive(prev.GatewayPID) && gatewayHealthy(ctx, "http://"+prev.HTTPAddr) {
-			fmt.Fprintf(out, "lenny up: stack already running (gateway pid %d, %s)\n",
-				prev.GatewayPID, "https://"+prev.HTTPSAddr)
-			return &Stack{paths: paths, state: prev, out: out}, nil
-		}
-		// A stale state file: a previous stack did not shut down
-		// cleanly. Clear it and bring a fresh stack up.
-		_ = removeState(paths.StateFile())
-	}
-
 	s := &Stack{paths: paths, out: out}
-	// On any failure after a component starts, tear down what came up
-	// so a failed lenny up does not leak child processes.
+	// On any failure after a component starts, tear down what came up so a
+	// failed lenny up does not leak the substrate.
 	ok := false
 	defer func() {
 		if !ok {
@@ -173,6 +142,8 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	}()
 
 	// ----- Self-signed TLS (rotated per lenny up) -----
+	// The host-side forwarder terminates TLS on 127.0.0.1:8443 with this
+	// leaf; the in-cluster gateway serves plaintext HTTP behind it.
 	fmt.Fprintln(out, "lenny up: generating self-signed TLS material")
 	mat, err := tlsgen.Generate(paths.TLS)
 	if err != nil {
@@ -180,218 +151,26 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	}
 	s.tls = mat
 
-	// ----- Embedded Postgres -----
-	fmt.Fprintln(out, "lenny up: starting embedded Postgres (first run downloads the PostgreSQL 16 bundle)")
-	pg := postgres.New(postgres.Config{
-		DataDir:  paths.Postgres,
-		Port:     defaultPostgresPort,
-		Database: "lenny",
-		Username: "lenny",
-		Password: "lenny",
-	})
-	if err := pg.Start(); err != nil {
-		return nil, err
-	}
-	s.pg = pg
-	dsn := pg.DSN()
-
-	// ----- Schema migrations -----
-	fmt.Fprintln(out, "lenny up: applying schema migrations")
-	if err := applyMigrations(dsn, out); err != nil {
-		return nil, err
-	}
-
-	// ----- Embedded Redis -----
-	fmt.Fprintln(out, "lenny up: starting embedded Redis")
-	rd := redis.New()
-	if err := rd.Start(); err != nil {
-		return nil, err
-	}
-	s.rd = rd
-	redisURL := rd.URL()
-
-	// ----- Embedded OIDC provider -----
-	// The signing key is persisted and rotated per lenny up (§17.4):
-	// rotate=true generates a fresh key and writes it so lenny token
-	// print, running in a separate process, mints tokens this stack
-	// accepts.
-	idp, err := oidc.NewWithPersistedKey(paths.OIDCKeyFile(), true)
-	if err != nil {
-		return nil, err
-	}
-	s.idp = idp
-
 	// ----- Embedded Kubernetes layer -----
 	// The substrate provisions on every host the launcher supports: a
 	// managed k3s child process on Linux, a Docker-backed k3s container
-	// under Docker Desktop's Linux VM on macOS and Windows. On those hosts
-	// the CRDs install and the controllers run against the launcher's
-	// (host-rewritten) kubeconfig, the same as on Linux; only the
-	// substrate provisioning below the gateway/controllers/CRDs differs.
-	// spec: §17.4 (the embedded Kubernetes substrate is provisioned per
-	// host operating system, and stays identical above the substrate
-	// layer).
-	sub := s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
-	k3sEnabled := sub.enabled
-	kubeconfig := sub.kubeconfig
-	gatewayGRPCDialAddr := sub.gatewayGRPCDialAddr
+	// under Docker Desktop's Linux VM on macOS and Windows. The CRDs
+	// install and the in-cluster control plane runs against the launcher's
+	// (host-rewritten) kubeconfig; only the substrate provisioning below the
+	// gateway/controllers/CRDs differs per host. spec: §17.4.
+	s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
 
-	// ----- Production gateway -----
-	fmt.Fprintln(out, "lenny up: starting the gateway")
-	gwBin, err := resolveGatewayBin(cfg.GatewayBin)
-	if err != nil {
-		return nil, err
-	}
-	// The embedded OIDC provider persists its signing key in the
-	// key-file format the gateway's --bearer-trust-hmac-key-file flag
-	// reads. Pointing the gateway at it lets a `lenny token print`
-	// bearer verify on the §10.2 Authorization header.
-	s.gwSpec = gatewaySpec{
-		BinPath:          gwBin,
-		HTTPAddr:         httpAddr,
-		PostgresDSN:      dsn,
-		RedisURL:         redisURL,
-		Kubeconfig:       kubeconfig,
-		LogPath:          paths.Logs + "/gateway.log",
-		OIDCKeyFile:      paths.OIDCKeyFile(),
-		KMSMasterKeyFile: paths.KMSMasterKey(),
-		ArtifactsDir:     paths.Artifacts,
-	}
-	// Bind the §8.6/§9.1 GatewayControl listener only when an embedded
-	// cluster is up: it serves the in-cluster agent-pod adapter, so without
-	// a cluster there is no adapter to serve. The listener binds all host
-	// interfaces (an empty host in :<port>) so the in-cluster adapter under
-	// the Docker VM reaches it across the host/Docker boundary; binding
-	// loopback would make it unreachable from the Docker VM. The controller
-	// stamps the matching substrate-specific dial host onto pods. spec:
-	// §4.7, §8.6.
-	if k3sEnabled {
-		s.gwSpec.GRPCAddr = fmt.Sprintf(":%d", defaultGatewayGRPCPort)
-		// §4.7 pod placement: point the gateway at the agent namespace so it
-		// resolves the warm pool from there and routes every started session onto
-		// a warm pod over the §4.7 adapter boundary instead of the in-process echo
-		// executor. Set here, before startGateway below, because the gateway
-		// consumes gwSpec at launch; setting it in the later controller block would
-		// launch the gateway without -agent-namespace and leave the activation
-		// inert. Gated on the k3sEnabled substrate gate alone, symmetric with the
-		// controller's AgentNamespaces set in the controller block below: the echo
-		// tarball ships with the lenny binary and is imported at every bring-up
-		// where the substrate is up, so the runnable echo image is always present.
-		// When the substrate is down (k3sEnabled false) the field stays empty and
-		// the gateway keeps the in-process echo executor. spec: §17.4, §4.7.
-		s.gwSpec.AgentNamespace = agentNamespace
-	}
-	gw, err := startGateway(s.gwSpec)
-	if err != nil {
-		return nil, err
-	}
-	s.gateway = gw
-
-	if err := waitGatewayHealthy(ctx, "http://"+httpAddr, 60*time.Second); err != nil {
-		return nil, err
-	}
-
-	// ----- TLS-terminating reverse proxy -----
-	proxy, err := startTLSProxy(httpsAddr, "http://"+httpAddr, mat.CertPath, mat.KeyPath)
-	if err != nil {
-		return nil, err
-	}
-	s.proxy = proxy
-
-	// ----- Production controllers (only with the embedded cluster) -----
-	if k3sEnabled {
-		fmt.Fprintln(out, "lenny up: starting the controllers")
-		ctlBin, err := resolveControllerBin(cfg.ControllerBin)
-		if err != nil {
-			fmt.Fprintf(out, "lenny up: WARNING: controller binary not found: %v\n", err)
-		} else {
-			s.ctlSpec = ControllerSpec{
-				BinPath:         ctlBin,
-				PostgresDSN:     dsn,
-				Kubeconfig:      kubeconfig,
-				GatewayGRPCAddr: gatewayGRPCDialAddr,
-				LogPath:         paths.Logs + "/controller.log",
-				// §4.6.2/§5.1: point the controller at the same agent namespace
-				// the gateway places into so the PoolScalingController (and the
-				// mirror reconciler and claim GC) start and materialize the
-				// seeded echo poolstore row into the SandboxTemplate/SandboxWarmPool
-				// CRD pair the gateway claims an idle pod from. The embedded
-				// controller is not given --dedicated-dns-cluster-ip, so the
-				// seeded pool's dnsPolicy: cluster-default keeps the echo pod on
-				// k3s kube-system CoreDNS. Both threads target the same namespace.
-				// spec: §4.6.2, §5.1.
-				AgentNamespaces: agentNamespace,
-			}
-			ctl, err := startController(s.ctlSpec)
-			if err != nil {
-				fmt.Fprintf(out, "lenny up: WARNING: controller did not start: %v\n", err)
-			} else {
-				s.control = ctl
-			}
-		}
-	}
-
-	// ----- §26 reference runtimes -----
-	// Pass the import-time-resolved echo image reference so the bootstrap seed
-	// registers the echo runtime under the same digest the applied Runtime CR
-	// and the containerd image carry. The echo tarball ships with the lenny
-	// binary and is imported at every bring-up where the substrate is up, so a
-	// non-empty reference is the expected steady state whenever k3sEnabled is
-	// true; an empty reference there means the import failed, an edge this
-	// bring-up does not treat as a normal degraded mode. AgentNamespace is set
-	// on k3sEnabled alone (above), so on the k3s-up-but-import-failed edge the
-	// gateway still routes through the §4.7 pod path against the sentinel-pinned
-	// echo seed (no Runtime CR is applied, since the CR apply is gated on a
-	// resolved digest) and an echo session fails to start. The gateway keeps the
-	// in-process echo executor only when the substrate is down (k3sEnabled
-	// false), matching the first k3sEnabled block above.
-	// spec: §15.4.4 (echo exemplar), §4.7 (digest-pinned pod image).
-	fmt.Fprintln(out, "lenny up: installing reference runtimes")
-	if err := installReferenceRuntimes(ctx, "http://"+httpAddr, sub.echoImageRef, out); err != nil {
-		fmt.Fprintf(out, "lenny up: WARNING: reference-runtime install incomplete: %v\n", err)
-	}
-
-	// ----- Record the running stack -----
-	// stack.Up runs inside the detached supervisor process, so the
-	// supervisor PID is this process's PID.
-	st := State{
-		StartedAt:      time.Now().UTC(),
-		SupervisorPID:  os.Getpid(),
-		GatewayPID:     gw.PID(),
-		HTTPAddr:       httpAddr,
-		HTTPSAddr:      httpsAddr,
-		PostgresDSN:    dsn,
-		RedisURL:       redisURL,
-		KubeconfigPath: kubeconfig,
-		K3sEnabled:     k3sEnabled,
-	}
-	if s.control != nil {
-		st.ControllerPID = s.control.PID()
-	}
-	if s.k3s != nil {
-		// The Linux launcher records a host PID; the Docker-backed
-		// launcher records its container name instead, because its k3s
-		// runs inside the Docker VM with no host PID. lenny status probes
-		// whichever handle is set. spec: §24.19.
-		st.K3sPID = s.k3s.PID()
-		st.K3sContainer = k3sContainerHandle(s.k3s)
-	}
-	if err := writeState(paths.StateFile(), st); err != nil {
-		return nil, err
-	}
-	s.state = st
-
-	fmt.Fprintf(out, "\nlenny up: stack ready\n")
-	fmt.Fprintf(out, "  gateway   https://localhost:%d  (http://localhost:%d)\n", httpsPort, httpPort)
-	fmt.Fprintf(out, "  TLS CA    %s\n", mat.CACertPath)
-	fmt.Fprintf(out, "  token     run 'lenny token print' for a bearer for the built-in user\n")
-	ok = true
-	return s, nil
+	// The image import, the manifest apply, the host-side forwarder, and
+	// the readiness wait that replace the host-process legs land in the next
+	// build step (proposal 0017 C2).
+	return nil, errBringUpNotWired
 }
 
 // Stop tears the stack down in reverse dependency order. It is safe to
-// call on a partially started Stack: each component stop is a no-op
-// when that component did not start.
+// call on a partially started Stack: each component stop is a no-op when
+// that component did not start. The §17.4 control plane runs as in-cluster
+// pods, so Stop shuts the host-side forwarder and the substrate launcher;
+// the in-cluster pods stop with the substrate.
 func (s *Stack) Stop(ctx context.Context) error {
 	var firstErr error
 	record := func(err error) {
@@ -402,20 +181,8 @@ func (s *Stack) Stop(ctx context.Context) error {
 	if s.proxy != nil {
 		record(s.proxy.Shutdown(ctx))
 	}
-	if s.control != nil {
-		record(s.control.Stop())
-	}
-	if s.gateway != nil {
-		record(s.gateway.Stop())
-	}
 	if s.k3s != nil {
 		record(s.k3s.Stop())
-	}
-	if s.rd != nil {
-		s.rd.Stop()
-	}
-	if s.pg != nil {
-		record(s.pg.Stop())
 	}
 	return firstErr
 }
@@ -426,9 +193,6 @@ func (s *Stack) State() State { return s.state }
 // CACertPath returns the path of the self-signed CA certificate for
 // the running stack.
 func (s *Stack) CACertPath() string { return s.tls.CACertPath }
-
-// OIDC returns the embedded OIDC provider for the running stack.
-func (s *Stack) OIDC() *oidc.Provider { return s.idp }
 
 // substrateResult is the outcome of provisionSubstrate: whether the
 // embedded cluster came up, the admin kubeconfig path, the §4.7
@@ -485,14 +249,16 @@ var (
 // Windows. It installs the CRDs against the launcher's (host-rewritten)
 // kubeconfig and computes the §4.7 gateway↔adapter callback address from the
 // launcher's substrate-specific host. The OS branch is confined to this
-// provisioning layer; the gateway, controllers, CRDs, and storage
+// provisioning layer; the in-cluster gateway, controllers, CRDs, and storage
 // interfaces above it are byte-identical across operating systems. A
-// substrate that fails to start is routed around: the storage and identity
-// paths still come up and lenny status reports the degraded state.
+// substrate that does not come up makes the in-cluster control plane
+// unavailable; the §17.4 bring-up reports the substrate failure (proposal
+// 0017 C2).
 //
 // spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
-// operating system, and stays identical above the substrate layer), §4.7,
-// §8.6, §9.1.
+// operating system, and stays identical above the substrate layer; an
+// unavailable substrate makes lenny up report the failure), §4.7, §8.6,
+// §9.1.
 func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball string, out io.Writer) substrateResult {
 	if !substrateSupported() {
 		// On a non-Linux host the embedded k3s runs under Docker Desktop's
@@ -500,18 +266,16 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 		// absent. spec: §17.4 (Docker Desktop is the macOS/Windows
 		// prerequisite that supplies the Linux kernel the embedded k3s needs).
 		fmt.Fprintf(out, "lenny up: embedded Kubernetes is unavailable on this host "+
-			"(macOS and Windows require Docker Desktop to run the embedded k3s under its Linux VM); "+
-			"the gateway, stores, and identity provider still come up\n")
+			"(macOS and Windows require Docker Desktop to run the embedded k3s under its Linux VM)\n")
 		return substrateResult{}
 	}
 	fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
 	sup := newSubstrate(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort})
 	if err := sup.Start(ctx); err != nil {
 		// k3s is the §17.4 component most likely to fail on a constrained
-		// host. Route around it: the storage and identity paths still come
-		// up. lenny status reports the degraded state.
+		// host. The in-cluster control plane runs on it, so without the
+		// substrate the bring-up reports the failure (proposal 0017 C2).
 		fmt.Fprintf(out, "lenny up: WARNING: embedded Kubernetes did not start: %v\n", err)
-		fmt.Fprintln(out, "lenny up: continuing without the embedded cluster; session placement is unavailable")
 		return substrateResult{}
 	}
 	s.k3s = sup

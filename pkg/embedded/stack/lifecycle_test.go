@@ -5,8 +5,6 @@ package stack
 import (
 	"bytes"
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,217 +26,51 @@ func TestRunDownNoStack(t *testing.T) {
 	}
 }
 
-// TestRunUpOrchestratesBringUp covers RunUp's orchestration with an injected
-// supervisor spawn: RunUp ensures the state directories, launches the
-// supervisor (here a fake that records a healthy stack), waits for the
-// gateway to answer, and reports the ready stack. The real detached-process
-// spawn is exercised by the tier-4 embedded smoke test; this pins the
-// foreground orchestration around it without a real bring-up.
-//
-// spec: §17.4 (lenny up launches the supervisor and waits for a healthy
-// gateway before reporting the stack ready), §24.19.
-func TestRunUpOrchestratesBringUp_spec_17_4(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("LENNY_HOME", root)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	addr := strings.TrimPrefix(srv.URL, "http://")
-
-	prev := spawnSupervisor
-	t.Cleanup(func() { spawnSupervisor = prev })
-	spawnSupervisor = func(_ string, paths Paths, _ UpOptions) error {
-		// Stand in for the detached supervisor: record a healthy stack so
-		// waitForStack returns immediately.
-		st := State{
-			SupervisorPID: os.Getpid(),
-			GatewayPID:    os.Getpid(),
-			HTTPAddr:      addr,
-			HTTPSAddr:     "127.0.0.1:8443",
-			K3sEnabled:    true,
-		}
-		return writeState(paths.StateFile(), st)
-	}
-
-	var out, errOut bytes.Buffer
-	if err := RunUp(context.Background(), UpOptions{Out: &out, ErrOut: &errOut}); err != nil {
-		t.Fatalf("RunUp: %v\nerrOut: %s", err, errOut.String())
-	}
-	if !strings.Contains(out.String(), "stack ready") {
-		t.Errorf("RunUp output = %q, want the ready report", out.String())
-	}
-	// K3sEnabled is true, so the no-cluster note is omitted.
-	if strings.Contains(out.String(), "session placement is unavailable") {
-		t.Errorf("RunUp reported the cluster unavailable despite K3sEnabled: %q", out.String())
-	}
-}
-
-// TestRunUpReportsSpawnFailure covers RunUp's error path when the supervisor
-// cannot be launched: RunUp returns the spawn error rather than waiting for a
-// stack that will never come up.
-//
-// spec: §17.4, §24.19.
-func TestRunUpReportsSpawnFailure(t *testing.T) {
-	t.Setenv("LENNY_HOME", t.TempDir())
-	prev := spawnSupervisor
-	t.Cleanup(func() { spawnSupervisor = prev })
-	spawnSupervisor = func(string, Paths, UpOptions) error {
-		return errStubSpawn
-	}
-	var out, errOut bytes.Buffer
-	err := RunUp(context.Background(), UpOptions{Out: &out, ErrOut: &errOut})
-	if err == nil {
-		t.Fatal("RunUp with a failing supervisor spawn = nil, want an error")
-	}
-}
-
-// errStubSpawn is the canned spawn failure TestRunUpReportsSpawnFailure
-// injects.
-var errStubSpawn = &stubError{"supervisor spawn failed"}
-
-type stubError struct{ msg string }
-
-func (e *stubError) Error() string { return e.msg }
-
-// TestWaitForStackReturnsWhenGatewayHealthy covers the readiness poll
-// lenny up blocks on after starting the supervisor: when the state file
-// records a live gateway PID and the gateway answers its liveness probe,
-// waitForStack returns nil. The current test process stands in for the
-// live gateway PID (processAlive(self) is true) and an httptest server
-// stands in for the gateway, so the readiness loop is pinned without a
-// real bring-up.
-//
-// spec: §17.4 (lenny up waits for a healthy gateway before reporting the
-// stack ready), §24.19.
-func TestWaitForStackReturnsWhenGatewayHealthy_spec_17_4(t *testing.T) {
-	root := t.TempDir()
-	paths := NewPaths(root)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	// httptest URLs are http://127.0.0.1:PORT; waitForStack joins http:// to
-	// the recorded HTTPAddr, so record the bare host:port.
-	addr := strings.TrimPrefix(srv.URL, "http://")
-	st := State{SupervisorPID: os.Getpid(), GatewayPID: os.Getpid(), HTTPAddr: addr}
-	if err := writeState(paths.StateFile(), st); err != nil {
-		t.Fatalf("writeState: %v", err)
-	}
-	if err := waitForStack(context.Background(), paths, 5*time.Second); err != nil {
-		t.Errorf("waitForStack with a healthy recorded gateway = %v, want nil", err)
-	}
-}
-
-// TestWaitForStackTimesOutWithoutState covers the deadline path: with no
-// state file written (the supervisor never recorded a running stack), the
-// poll loop returns a timeout error rather than blocking forever.
-//
-// spec: §17.4, §24.19 (lenny up surfaces a bring-up that never becomes
-// ready).
-func TestWaitForStackTimesOutWithoutState(t *testing.T) {
-	root := t.TempDir()
-	paths := NewPaths(root)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	err := waitForStack(context.Background(), paths, 1500*time.Millisecond)
-	if err == nil {
-		t.Fatal("waitForStack with no recorded stack = nil, want a timeout error")
-	}
-	if !strings.Contains(err.Error(), "did not become ready") {
-		t.Errorf("error = %q, want it to name the not-ready stack", err)
-	}
-}
-
-// TestWaitForStackHonorsContextCancel covers the cancellation path: a
-// cancelled context makes the poll return the context error rather than
-// spinning to the timeout.
-//
-// spec: §24.19 (the bring-up honors cancellation).
-func TestWaitForStackHonorsContextCancel(t *testing.T) {
-	root := t.TempDir()
-	paths := NewPaths(root)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := waitForStack(ctx, paths, 10*time.Second); err == nil {
-		t.Error("waitForStack with a cancelled context = nil, want the context error")
-	}
-}
-
-// TestRunDownStopsLiveSupervisor covers the RunDown branch that tears down a
-// running supervisor: when the recorded SupervisorPID is alive, RunDown asks
-// for a graceful stop (a no-op on unix that falls through) and then forcibly
-// terminates the supervisor, so the recorded process is gone and the state
-// file is cleared. A parked sleeper stands in for the detached supervisor so
-// the live-supervisor path is pinned without a real bring-up.
+// TestRunDownStopsRecordedStack covers the RunDown teardown of a recorded
+// stack: it removes the recorded substrate container, clears the state
+// file, and reports the stop. The §17.4 control plane runs as in-cluster
+// pods, so the teardown is substrate-level rather than a host-process kill.
 //
 // spec: §24.19 (lenny down tears the running stack down).
-func TestRunDownStopsLiveSupervisor_spec_24_19(t *testing.T) {
+func TestRunDownStopsRecordedStack_spec_24_19(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("LENNY_HOME", root)
 	paths := NewPaths(root)
 	if err := paths.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
-	sup := spawnSleeper(t)
-	// Reap the sleeper once RunDown kills it: the test process is its parent,
-	// so without a Wait the killed child lingers as a zombie the liveness
-	// probe still reports alive.
-	cmd := sup.cmd
-	reaped := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(reaped) }()
-	pid := sup.PID()
-	// Detach the in-memory handle so RunDown reaches the process only by the
-	// recorded PID, the way lenny down does against a state file.
-	sup.cmd = nil
 
-	st := State{SupervisorPID: pid, GatewayPID: 1 << 30, K3sEnabled: false}
+	st := State{K3sEnabled: true, GatewayForwarderAddr: "127.0.0.1:8443"}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
 	var out bytes.Buffer
 	if err := RunDown(context.Background(), DownOptions{Out: &out}); err != nil {
-		t.Fatalf("RunDown with a live supervisor: %v", err)
-	}
-	select {
-	case <-reaped:
-	case <-time.After(20 * time.Second):
-		t.Fatalf("supervisor pid %d not reaped after RunDown", pid)
+		t.Fatalf("RunDown with a recorded stack: %v", err)
 	}
 	if _, err := os.Stat(paths.StateFile()); !os.IsNotExist(err) {
-		t.Error("RunDown left the state file in place after stopping the supervisor")
+		t.Error("RunDown left the state file in place after stopping the stack")
 	}
 	if !strings.Contains(out.String(), "stopping the embedded stack") {
 		t.Errorf("RunDown output = %q, want the stopping message", out.String())
 	}
 }
 
-// TestRunDownCrashedSupervisorRemovesDockerContainer covers the
-// crashed-supervisor teardown on a Docker-backed substrate (macOS and
-// Windows): the recorded supervisor PID is dead, so RunDown takes the
-// supervisor-gone branch and signals the recorded host PIDs. The
-// Docker-backed k3s runs inside the Docker VM with no host PID
-// (st.K3sPID == 0), so those signals never reach it; RunDown must remove
-// the container by its recorded handle before removeState discards the
-// handle, or a crashed supervisor leaks the container with nothing to find
-// it by. The substrate-container removal seam is injected so the test
-// asserts the removal without invoking a real docker.
+// TestRunDownRemovesDockerContainer covers the teardown on a Docker-backed
+// substrate (macOS and Windows): the Docker-backed k3s runs inside the
+// Docker VM, so RunDown must remove the container by its recorded handle
+// before removeState discards the handle, or a teardown leaks the container
+// with nothing to find it by. The substrate-container removal seam is
+// injected so the test asserts the removal without invoking a real docker.
 //
-// diagnosis: a failure means lenny down on a crashed supervisor orphans the
-// embedded k3s container on macOS/Windows — the named no-leak invariant the
-// substrate-lifecycle scope requires holds only on the Linux PID path.
+// diagnosis: a failure means lenny down orphans the embedded k3s container
+// on macOS/Windows — the named no-leak invariant the substrate-lifecycle
+// scope requires holds only on the Linux path.
 //
-// spec: §24.19 (lenny up/down manage the substrate; a crashed supervisor
-// must not leak the Docker-backed k3s container), §17.4 (the embedded
-// substrate is a Docker-backed container on macOS and Windows).
-func TestRunDownCrashedSupervisorRemovesDockerContainer_spec_24_19(t *testing.T) {
+// spec: §24.19 (lenny up/down manage the substrate; a teardown must not
+// leak the Docker-backed k3s container), §17.4 (the embedded substrate is a
+// Docker-backed container on macOS and Windows).
+func TestRunDownRemovesDockerContainer_spec_24_19(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("LENNY_HOME", root)
 	paths := NewPaths(root)
@@ -251,19 +83,8 @@ func TestRunDownCrashedSupervisorRemovesDockerContainer_spec_24_19(t *testing.T)
 	t.Cleanup(func() { removeSubstrateContainer = prev })
 	removeSubstrateContainer = func(name string) { removed = append(removed, name) }
 
-	// A Docker-backed stack whose supervisor and child PIDs are all dead, and
-	// whose k3s handle is the container name (K3sPID == 0, as the
-	// Docker-backed launcher records). RunDown takes the supervisor-gone
-	// branch.
 	const handle = "lenny-embedded-k3s-demo"
-	st := State{
-		SupervisorPID: 1 << 30,
-		GatewayPID:    1 << 30,
-		ControllerPID: 1 << 30,
-		K3sPID:        0,
-		K3sContainer:  handle,
-		K3sEnabled:    true,
-	}
+	st := State{K3sContainer: handle, K3sEnabled: true}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
@@ -313,7 +134,7 @@ func TestRunDownPurgeRemovesDockerContainerBeforeDiscardingRoot_spec_24_19(t *te
 	}
 
 	const handle = "lenny-embedded-k3s-demo"
-	st := State{SupervisorPID: 1 << 30, GatewayPID: 1 << 30, K3sContainer: handle, K3sEnabled: true}
+	st := State{K3sContainer: handle, K3sEnabled: true}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
@@ -331,9 +152,9 @@ func TestRunDownPurgeRemovesDockerContainerBeforeDiscardingRoot_spec_24_19(t *te
 }
 
 // TestRunDownLinuxSubstrateRemovesNoContainer confirms the removal is a
-// no-op on the Linux child-process substrate, which records a host PID in
-// K3sPID and no container handle: RemoveContainer is called with an empty
-// handle and removes nothing, so the Linux teardown is unchanged.
+// no-op on the Linux child-process substrate, which records no container
+// handle: RemoveContainer is called with an empty handle and removes
+// nothing, so the Linux teardown is unchanged.
 //
 // diagnosis: a failure means the Docker-container teardown leaked into the
 // Linux path, which has no container to remove.
@@ -353,8 +174,8 @@ func TestRunDownLinuxSubstrateRemovesNoContainer_spec_24_19(t *testing.T) {
 	t.Cleanup(func() { removeSubstrateContainer = prev })
 	removeSubstrateContainer = func(name string) { removedHandles = append(removedHandles, name) }
 
-	// A Linux stack: a recorded host PID, no container handle.
-	st := State{SupervisorPID: 1 << 30, GatewayPID: 1 << 30, K3sPID: 1 << 30, K3sEnabled: true}
+	// A Linux stack: a recorded kubeconfig, no container handle.
+	st := State{KubeconfigPath: "/state/k3s/kubeconfig.yaml", K3sEnabled: true}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
@@ -386,28 +207,6 @@ func TestRunDownPurgeRemovesRoot(t *testing.T) {
 	// §17.4: lenny down --purge removes ~/.lenny entirely.
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Error("state directory still present after --purge")
-	}
-}
-
-func TestRunDownStaleStateFile(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("LENNY_HOME", root)
-	paths := NewPaths(root)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	// A state file whose recorded PIDs are dead: RunDown must clear it
-	// without error.
-	stale := State{SupervisorPID: 1 << 30, GatewayPID: 1 << 30, K3sEnabled: false}
-	if err := writeState(paths.StateFile(), stale); err != nil {
-		t.Fatalf("writeState: %v", err)
-	}
-	var out bytes.Buffer
-	if err := RunDown(context.Background(), DownOptions{Out: &out}); err != nil {
-		t.Fatalf("RunDown with a stale state file: %v", err)
-	}
-	if _, err := os.Stat(paths.StateFile()); !os.IsNotExist(err) {
-		t.Error("RunDown left the stale state file in place")
 	}
 }
 
@@ -480,34 +279,6 @@ func TestRunLogsMergesAndPrefixes(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "controller | ctl-line") {
 		t.Errorf("merged output %q missing the prefixed controller line", out.String())
-	}
-}
-
-// TestRunLogsAcceptsExpandedComponentList covers the §24.19 line 263
-// component allow-list: ops, postgres, redis, kms, oidc, and
-// runtime-<name>.
-//
-// spec: §24.19 line 263.
-func TestRunLogsAcceptsExpandedComponentList_spec_24_19_263(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("LENNY_HOME", root)
-	paths := NewPaths(root)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	for _, c := range []string{"ops", "postgres", "redis", "kms", "oidc", "supervisor"} {
-		if err := os.WriteFile(logFilePath(paths, c), []byte(c+"-line\n"), 0o644); err != nil {
-			t.Fatalf("seed %s log: %v", c, err)
-		}
-	}
-	for _, c := range []string{"ops", "postgres", "redis", "kms", "oidc"} {
-		var out bytes.Buffer
-		if err := RunLogs(context.Background(), LogsOptions{Component: c, Out: &out}); err != nil {
-			t.Fatalf("RunLogs %s: %v", c, err)
-		}
-		if !strings.Contains(out.String(), c+"-line") {
-			t.Errorf("RunLogs %s output %q missing seed line", c, out.String())
-		}
 	}
 }
 
@@ -652,41 +423,6 @@ func TestCollectStatusNoStack(t *testing.T) {
 	}
 }
 
-// TestWriteStatusRendersResourceColumns covers the §24.19 line 262
-// rendering: CPU% and RSS columns next to component health, with "—"
-// for un-sampled rows.
-//
-// spec: §24.19 line 262.
-func TestWriteStatusRendersResourceColumns_spec_24_19_262(t *testing.T) {
-	s := Status{
-		Running:        true,
-		StartedAt:      time.Unix(0, 0).UTC(),
-		ActiveSessions: 3,
-		Components: []ComponentStatus{
-			{Name: "gateway", Healthy: true, Detail: "pid 1", Resource: ResourceUsage{Sampled: true, CPUPercent: 12.5, RSSBytes: 87432 * 1024}},
-			{Name: "postgres", Healthy: true, Detail: "embedded"},
-		},
-	}
-	var out bytes.Buffer
-	WriteStatus(&out, s)
-	got := out.String()
-	if !strings.Contains(got, "CPU%") || !strings.Contains(got, "RSS") {
-		t.Errorf("WriteStatus header missing CPU%%/RSS columns: %q", got)
-	}
-	if !strings.Contains(got, "12.5") {
-		t.Errorf("WriteStatus output %q missing CPU sample", got)
-	}
-	if !strings.Contains(got, "MiB") {
-		t.Errorf("WriteStatus output %q missing RSS suffix", got)
-	}
-	if !strings.Contains(got, "—") {
-		t.Errorf("WriteStatus output %q missing em-dash for un-sampled row", got)
-	}
-	if !strings.Contains(got, "active sessions: 3") {
-		t.Errorf("WriteStatus output %q missing active-session count", got)
-	}
-}
-
 func TestCollectStatusRecordedStack(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("LENNY_HOME", root)
@@ -694,14 +430,12 @@ func TestCollectStatusRecordedStack(t *testing.T) {
 	if err := paths.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
-	// Record a stack whose gateway PID is dead so the probe reports
-	// the gateway as down without needing a real process.
+	// Record a stack whose forwarder address points at an unbound loopback
+	// port so the gateway probe reports it down without a real process, and
+	// no substrate handle so k3s reports down.
 	st := State{
-		SupervisorPID: os.Getpid(),
-		GatewayPID:    1 << 30,
-		HTTPAddr:      "127.0.0.1:8080",
-		HTTPSAddr:     "127.0.0.1:8443",
-		K3sEnabled:    false,
+		GatewayForwarderAddr: "127.0.0.1:1",
+		K3sEnabled:           false,
 	}
 	if err := writeState(paths.StateFile(), st); err != nil {
 		t.Fatalf("writeState: %v", err)
@@ -717,13 +451,10 @@ func TestCollectStatusRecordedStack(t *testing.T) {
 	for _, c := range status.Components {
 		byName[c.Name] = c
 	}
-	if c, ok := byName["supervisor"]; !ok || !c.Healthy {
-		t.Errorf("supervisor component = %+v, want healthy (current process)", c)
-	}
 	if c, ok := byName["gateway"]; !ok || c.Healthy {
-		t.Errorf("gateway component = %+v, want unhealthy (dead PID)", c)
+		t.Errorf("gateway component = %+v, want unhealthy (unbound forwarder port)", c)
 	}
 	if c, ok := byName["k3s"]; !ok || c.Healthy {
-		t.Errorf("k3s component = %+v, want down when K3sEnabled is false", c)
+		t.Errorf("k3s component = %+v, want down when no substrate handle is recorded", c)
 	}
 }
