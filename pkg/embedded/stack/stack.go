@@ -90,6 +90,12 @@ type Stack struct {
 	k3s   k3s.Launcher
 	tls   tlsgen.Material
 	proxy *tlsProxy
+	// relay is the §17.4 127.0.0.1:8080 HTTP leg: a plain TCP relay to the
+	// same gateway node port the TLS proxy targets. The in-cluster gateway
+	// serves plaintext HTTP, so the HTTP leg forwards bytes raw rather than
+	// terminating TLS. spec: §17.4 (the 127.0.0.1:8080 HTTP leg is a plain TCP
+	// relay to the same node port).
+	relay *tcpRelay
 	state State
 	out   io.Writer
 }
@@ -359,29 +365,52 @@ func (s *Stack) seedEcho(ctx context.Context, forwarderAddr string, res substrat
 	return nil
 }
 
-// startForwarder starts the loopback-only host-side TLS forwarder in front
-// of the gateway node port and returns the loopback host:port it presents.
-// The forwarder terminates TLS on 127.0.0.1:8443 with the self-signed leaf
-// and forwards plaintext HTTP to the gateway node port, carrying the
-// EMBEDDED_MODE_LOCAL_ONLY fail-closed check. spec: §17.4.
+// startForwarder starts the loopback-only host-side forwarder in front of the
+// gateway node port and returns the loopback host:port the TLS leg presents.
+// The forwarder has two legs to the same node port: the TLS leg terminates TLS
+// on 127.0.0.1:8443 with the self-signed leaf and forwards plaintext HTTP, and
+// the HTTP leg is a plain TCP relay on 127.0.0.1:8080 (proposal 0017 C2/C4).
+// Both legs target the gateway node port and both carry the
+// EMBEDDED_MODE_LOCAL_ONLY fail-closed loopback bind check. The two host ports
+// are the same ones the host gateway used, so the documented
+// https://localhost:8443 and http://localhost:8080 addresses stay correct and
+// only the mechanism behind them changes. spec: §17.4.
 func (s *Stack) startForwarder(cfg Config, out io.Writer) (string, error) {
 	httpsPort := cfg.HTTPSPort
 	if httpsPort == 0 {
 		httpsPort = defaultHTTPSPort
 	}
-	listenAddr := net.JoinHostPort(httpHost, strconv.Itoa(httpsPort))
+	httpPort := cfg.HTTPPort
+	if httpPort == 0 {
+		httpPort = defaultHTTPPort
+	}
 	// The forwarder targets the gateway node port on the launcher's gateway
 	// host: loopback on the Linux launcher (k3s and the node port share the
 	// host) and host loopback on the Docker-backed launcher (the launcher
 	// publishes the in-VM node port to host loopback, C4).
-	upstream := "http://" + net.JoinHostPort(httpHost, strconv.Itoa(gatewayNodePort))
-	fmt.Fprintf(out, "lenny up: starting the host-side gateway forwarder on https://%s\n", listenAddr)
-	proxy, err := startTLSProxy(listenAddr, upstream, s.tls.CertPath, s.tls.KeyPath)
+	nodePortAddr := net.JoinHostPort(httpHost, strconv.Itoa(gatewayNodePort))
+
+	tlsAddr := net.JoinHostPort(httpHost, strconv.Itoa(httpsPort))
+	fmt.Fprintf(out, "lenny up: starting the host-side gateway forwarder on https://%s\n", tlsAddr)
+	proxy, err := startTLSProxy(tlsAddr, "http://"+nodePortAddr, s.tls.CertPath, s.tls.KeyPath)
 	if err != nil {
 		return "", err
 	}
 	s.proxy = proxy
-	return listenAddr, nil
+
+	// The HTTP leg is a plain TCP relay to the same node port: the in-cluster
+	// gateway serves plaintext HTTP, so the host port presents it raw rather
+	// than through a second TLS-terminating proxy. spec: §17.4 (the
+	// 127.0.0.1:8080 HTTP leg is a plain TCP relay to the same node port).
+	httpAddr := net.JoinHostPort(httpHost, strconv.Itoa(httpPort))
+	fmt.Fprintf(out, "lenny up: starting the host-side gateway HTTP relay on http://%s\n", httpAddr)
+	relay, err := startTCPRelay(httpAddr, nodePortAddr)
+	if err != nil {
+		return "", err
+	}
+	s.relay = relay
+
+	return tlsAddr, nil
 }
 
 // recordState writes the §17.4 stack state file so lenny status, logs, and
@@ -461,6 +490,11 @@ func (s *Stack) Stop(ctx context.Context) error {
 	}
 	if s.proxy != nil {
 		record(s.proxy.Shutdown(ctx))
+	}
+	if s.relay != nil {
+		// Tear down the §17.4 127.0.0.1:8080 HTTP relay leg alongside the TLS
+		// proxy, so both forwarder legs stop with the stack.
+		record(s.relay.Shutdown(ctx))
 	}
 	if s.k3s != nil {
 		record(s.k3s.Stop())

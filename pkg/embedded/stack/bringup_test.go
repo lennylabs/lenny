@@ -104,12 +104,18 @@ func (c *bringUpCalls) snapshot() []string {
 	return out
 }
 
-// upConfig returns a Config rooted at a temp dir with an ephemeral HTTPS port
-// so the forwarder binds a free loopback port rather than colliding with the
-// default 8443.
+// upConfig returns a Config rooted at a temp dir with ephemeral HTTP and HTTPS
+// ports so both forwarder legs (the TLS proxy and the 127.0.0.1:8080 HTTP
+// relay) bind free loopback ports rather than colliding with the defaults
+// 8443 and 8080 or with another concurrent bring-up test.
 func upConfig(t *testing.T) Config {
 	t.Helper()
-	return Config{Root: t.TempDir(), HTTPSPort: freeLoopbackPort(t), Out: io.Discard}
+	return Config{
+		Root:      t.TempDir(),
+		HTTPPort:  freeLoopbackPort(t),
+		HTTPSPort: freeLoopbackPort(t),
+		Out:       io.Discard,
+	}
 }
 
 // freeLoopbackPort reserves a free loopback TCP port and returns it. The
@@ -330,7 +336,8 @@ func TestUpDownUpWarmRestartSkipsReapply_spec_17_4(t *testing.T) {
 
 	// ----- First up: full import/apply/seed at v5.5.5. -----
 	if err := RunUp(context.Background(), UpOptions{
-		Root: root, HTTPSPort: freeLoopbackPort(t), CLIVersion: "v5.5.5", Out: io.Discard, ErrOut: io.Discard,
+		Root: root, HTTPPort: freeLoopbackPort(t), HTTPSPort: freeLoopbackPort(t),
+		CLIVersion: "v5.5.5", Out: io.Discard, ErrOut: io.Discard,
 	}); err != nil {
 		t.Fatalf("first RunUp: %v", err)
 	}
@@ -361,7 +368,8 @@ func TestUpDownUpWarmRestartSkipsReapply_spec_17_4(t *testing.T) {
 	// ----- Second up at the same CLI version: reuse the persisted control plane. -----
 	before := len(calls.snapshot())
 	if err := RunUp(context.Background(), UpOptions{
-		Root: root, HTTPSPort: freeLoopbackPort(t), CLIVersion: "v5.5.5", Out: io.Discard, ErrOut: io.Discard,
+		Root: root, HTTPPort: freeLoopbackPort(t), HTTPSPort: freeLoopbackPort(t),
+		CLIVersion: "v5.5.5", Out: io.Discard, ErrOut: io.Discard,
 	}); err != nil {
 		t.Fatalf("second RunUp: %v", err)
 	}

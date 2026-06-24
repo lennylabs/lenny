@@ -6,13 +6,17 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
+	"github.com/lennylabs/lenny/pkg/embedded/tlsgen"
 )
 
 // TestGatewayGRPCAddr covers the §4.7 substrate-agnostic gateway↔adapter
@@ -552,5 +556,82 @@ func TestNeedsReapply_spec_17_4(t *testing.T) {
 					tc.priorTag, tc.cliVersion, tc.gwReady, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestStartForwarderStartsBothLegs covers the §17.4 host-side forwarder: it
+// must start both legs to the same gateway node port, the TLS leg terminating
+// TLS on the loopback HTTPS port and the HTTP leg relaying raw bytes on the
+// loopback HTTP port. The forwarder binds custom loopback ports here so the
+// test does not collide with the default 8443/8080 the host gateway used.
+// Stop then tears both legs down. spec: §17.4 (the 127.0.0.1:8080 HTTP leg is
+// a plain TCP relay to the same node port; the forwarder is torn down with the
+// stack).
+func TestStartForwarderStartsBothLegs_spec_17_4(t *testing.T) {
+	mat, err := tlsgen.Generate(t.TempDir())
+	if err != nil {
+		t.Fatalf("tlsgen.Generate: %v", err)
+	}
+	httpsPort, _ := strconv.Atoi(freePort(t))
+	httpPort, _ := strconv.Atoi(freePort(t))
+
+	s := &Stack{tls: mat}
+	addr, err := s.startForwarder(Config{HTTPPort: httpPort, HTTPSPort: httpsPort}, io.Discard)
+	if err != nil {
+		t.Fatalf("startForwarder: %v", err)
+	}
+	// The returned address is the TLS leg's loopback HTTPS port.
+	wantTLS := "127.0.0.1:" + strconv.Itoa(httpsPort)
+	if addr != wantTLS {
+		t.Errorf("startForwarder returned %q, want the TLS leg address %q", addr, wantTLS)
+	}
+	if s.proxy == nil {
+		t.Error("startForwarder did not set the TLS proxy leg")
+	}
+	if s.relay == nil {
+		t.Fatal("startForwarder did not set the HTTP relay leg")
+	}
+	// The HTTP relay binds the loopback HTTP port.
+	wantHTTP := "127.0.0.1:" + strconv.Itoa(httpPort)
+	if got := s.relay.Addr(); got != wantHTTP {
+		t.Errorf("HTTP relay Addr() = %q, want %q", got, wantHTTP)
+	}
+	// Both legs are bound: dialing each host port connects.
+	for _, hostPort := range []string{wantTLS, wantHTTP} {
+		conn, derr := net.DialTimeout("tcp", hostPort, time.Second)
+		if derr != nil {
+			t.Errorf("dial %s before Stop: %v", hostPort, derr)
+			continue
+		}
+		_ = conn.Close()
+	}
+
+	// Stop tears both legs down: each host port is then refused.
+	if err := s.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	for _, hostPort := range []string{wantTLS, wantHTTP} {
+		conn, derr := net.DialTimeout("tcp", hostPort, 500*time.Millisecond)
+		if derr == nil {
+			_ = conn.Close()
+			t.Errorf("dial %s succeeded after Stop; want both legs torn down", hostPort)
+		}
+	}
+}
+
+// TestStartForwarderUsesDefaultPorts covers the §17.4 default loopback ports:
+// a zero HTTPPort/HTTPSPort in Config resolves to the documented 8080/8443.
+// The test asserts the resolution rather than binding the real ports, so it
+// does not collide with a host gateway forwarder if one is up.
+//
+// spec: §17.4 (the host ports default to 8080 and 8443, the same the host
+// gateway used).
+func TestStartForwarderDefaultPortsResolve_spec_17_4(t *testing.T) {
+	// The defaults are the package constants the documented addresses use.
+	if defaultHTTPPort != 8080 {
+		t.Errorf("defaultHTTPPort = %d, want 8080", defaultHTTPPort)
+	}
+	if defaultHTTPSPort != 8443 {
+		t.Errorf("defaultHTTPSPort = %d, want 8443", defaultHTTPSPort)
 	}
 }

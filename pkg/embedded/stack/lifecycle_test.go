@@ -25,7 +25,7 @@ func TestRunUpPropagatesSubstrateFailure_spec_17_4(t *testing.T) {
 	withSubstrateSeams(t, false, &fakeLauncher{}, nil)
 	withBringUpSeams(t)
 	var out, errOut bytes.Buffer
-	err := RunUp(context.Background(), UpOptions{Root: root, HTTPSPort: freeLoopbackPort(t), Out: &out, ErrOut: &errOut})
+	err := RunUp(context.Background(), UpOptions{Root: root, HTTPPort: freeLoopbackPort(t), HTTPSPort: freeLoopbackPort(t), Out: &out, ErrOut: &errOut})
 	if err == nil {
 		t.Fatal("RunUp with no substrate = nil, want the substrate-failure error")
 	}
@@ -51,7 +51,8 @@ func TestRunUpSucceedsAndRecordsCLIVersion_spec_17_4(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	if err := RunUp(context.Background(), UpOptions{
-		Root: root, HTTPSPort: freeLoopbackPort(t), CLIVersion: "v3.1.4", Out: &out, ErrOut: &errOut,
+		Root: root, HTTPPort: freeLoopbackPort(t), HTTPSPort: freeLoopbackPort(t),
+		CLIVersion: "v3.1.4", Out: &out, ErrOut: &errOut,
 	}); err != nil {
 		t.Fatalf("RunUp: %v", err)
 	}

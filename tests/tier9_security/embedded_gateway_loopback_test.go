@@ -102,3 +102,42 @@ func TestEmbeddedStoppedStackResolvesNoRunningGateway_spec_17_4(t *testing.T) {
 		t.Errorf("RunningGateway error = %v, want a no-running-stack error", err)
 	}
 }
+
+// TestEmbeddedForwarderLegsFailClosedOnNonLoopback asserts that both host-side
+// forwarder legs (the TLS proxy on 127.0.0.1:8443 and the 127.0.0.1:8080 HTTP
+// relay the proposal-0017 forwarder adds) bind loopback only and fail closed
+// under §17.4 EMBEDDED_MODE_LOCAL_ONLY on any non-loopback bind. Both legs gate
+// their bind on the same EmbeddedModeLocalOnly check, so the HTTP leg cannot
+// expose the in-cluster gateway off-host any more than the TLS leg can. The
+// test drives the shared gate over the loopback and non-loopback address
+// families directly.
+//
+// diagnosis: a failure means a host-side forwarder leg would bind a
+// non-loopback host address, exposing the embedded gateway off-host and
+// violating the §17.4 EMBEDDED_MODE_LOCAL_ONLY fail-closed invariant, or it
+// would reject a legitimate loopback bind and break the local stack.
+//
+// spec: §17.4 (EMBEDDED_MODE_LOCAL_ONLY: the host-side forwarder binds
+// loopback only; both the TLS leg and the 127.0.0.1:8080 HTTP relay leg fail
+// closed on a non-loopback bind).
+func TestEmbeddedForwarderLegsFailClosedOnNonLoopback_spec_17_4(t *testing.T) {
+	// Loopback host forms the forwarder must accept (the legs bind these).
+	for _, loopback := range []string{"127.0.0.1:8080", "127.0.0.1:8443", "localhost:8080", "[::1]:8080"} {
+		if err := stack.EmbeddedModeLocalOnly(loopback); err != nil {
+			t.Errorf("EmbeddedModeLocalOnly(%q) = %v, want nil (a loopback bind is allowed)", loopback, err)
+		}
+	}
+	// Non-loopback host forms every forwarder leg must reject fail-closed: a
+	// wildcard bind, a LAN address, and a routable hostname all expose the
+	// gateway off-host.
+	for _, nonLoopback := range []string{"0.0.0.0:8080", "0.0.0.0:8443", "10.0.0.5:8080", "192.168.1.10:8080", "example.com:8080"} {
+		err := stack.EmbeddedModeLocalOnly(nonLoopback)
+		if err == nil {
+			t.Errorf("EmbeddedModeLocalOnly(%q) = nil, want a fail-closed EMBEDDED_MODE_LOCAL_ONLY rejection", nonLoopback)
+			continue
+		}
+		if !strings.Contains(err.Error(), "EMBEDDED_MODE_LOCAL_ONLY") {
+			t.Errorf("EmbeddedModeLocalOnly(%q) error = %v, does not carry the EMBEDDED_MODE_LOCAL_ONLY code", nonLoopback, err)
+		}
+	}
+}
