@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -18,6 +19,21 @@ import (
 
 	lennyv1alpha1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
+
+// runtimeImageDigestPattern mirrors the §5.3 supply-chain pattern the Runtime
+// CRD enforces on spec.image at the embedded API server
+// (+kubebuilder:validation:Pattern=`@sha256:[A-Fa-f0-9]{64}$` in
+// pkg/apis/lenny/v1alpha1/runtime_types.go; embedded copy
+// pkg/embedded/crds/lenny.dev_runtimes.yaml). The pattern is reproduced here so
+// the verb fails closed with a clear, actionable message before apply when a
+// runtime file carries a tag-based image (the docker-build output a runtime
+// author starts from, for example `my-agent:dev`), rather than letting the
+// write reach the API server and surface a raw OpenAPI pattern rejection. The
+// CRD pattern is unanchored at the start and anchored at the end ($), the same
+// match the API server applies, so any reference this gate accepts the API
+// server also accepts and any it rejects the API server also rejects. spec: §5.3
+// (digest-pinned image references), §17.4 (the runtime-apply verb).
+var runtimeImageDigestPattern = regexp.MustCompile(`@sha256:[A-Fa-f0-9]{64}$`)
 
 // The §4.6.2 pool defaults the runtime-apply verb stamps onto the derived
 // SandboxTemplate/SandboxWarmPool when the runtime file does not pin them.
@@ -82,9 +98,15 @@ func RunRuntimeApply(ctx context.Context, kubeconfigPath, path string) error {
 
 // loadRuntimeFile reads path and decodes the single Runtime resource it
 // carries. The §17.4 walkthrough's runtime-crds.yaml is a one-document
-// Runtime; a missing name or empty image is rejected so the verb fails closed
-// rather than applying an unresolvable CRD set the API server would reject
-// partway through. spec: §5.1 (the Runtime declarative record).
+// Runtime; a missing name, an empty image, or a tag-based (non-digest-pinned)
+// image is rejected so the verb fails closed rather than applying an
+// unresolvable CRD set the API server would reject partway through. The image
+// check mirrors the §5.3 supply-chain pattern the Runtime CRD enforces at the
+// API server, so a runtime author who starts from a tag-based docker-build
+// reference (for example `my-agent:dev`) gets an actionable message naming the
+// digest-pinned form rather than a raw OpenAPI pattern rejection deep in the
+// apply. spec: §5.1 (the Runtime declarative record), §5.3 (digest-pinned
+// images).
 func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -99,6 +121,14 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 	}
 	if rt.Spec.Image == "" {
 		return nil, fmt.Errorf("embedded runtime apply: %s carries no spec.image", path)
+	}
+	if !runtimeImageDigestPattern.MatchString(rt.Spec.Image) {
+		return nil, fmt.Errorf(
+			"embedded runtime apply: %s spec.image %q must be digest-pinned (@sha256:<64-hex>); "+
+				"a tag-based reference is rejected by the Runtime CRD's §5.3 supply-chain pattern. "+
+				"Use the digest from 'lenny image import' output, e.g. my-agent@sha256:<digest>",
+			path, rt.Spec.Image,
+		)
 	}
 	return &rt, nil
 }
@@ -139,10 +169,11 @@ func ApplyRuntimeSetFromConfig(ctx context.Context, cfg *rest.Config, rt *lennyv
 // may omit (type → agent, executionMode → session, isolationProfile →
 // standard, deploymentModel → sidecar, the §17.4 walkthrough default), so a
 // minimal runtime-crds.yaml carrying only name, image, and integrationLevel
-// applies cleanly. The image is passed through as written: §5.3 requires a
-// digest-pinned reference, which the CRD pattern enforces at the API server,
-// so the operator supplies a digest-pinned image in the file. spec: §5.1
-// (Runtime defaults), §4.7 (sidecar default deployment model).
+// applies cleanly. The image is passed through as written: loadRuntimeFile has
+// already rejected any non-digest-pinned reference against the §5.3
+// supply-chain pattern the CRD enforces, so the image reaching here is
+// digest-pinned and the API server accepts it. spec: §5.1 (Runtime defaults),
+// §4.7 (sidecar default deployment model).
 func runtimeCRFromFile(rt *lennyv1alpha1.Runtime) *lennyv1alpha1.Runtime {
 	spec := rt.Spec
 	if spec.Type == "" {

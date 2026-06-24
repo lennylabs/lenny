@@ -5,6 +5,7 @@ package stack
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	lennyv1alpha1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -85,6 +86,78 @@ spec:
 `)
 	if _, err := loadRuntimeFile(noImage); err == nil {
 		t.Error("loadRuntimeFile accepted a Runtime with no spec.image, want an error")
+	}
+}
+
+// TestLoadRuntimeFileRejectsTagBasedImage_spec_5_3 covers the §5.3
+// digest-pinned-image fail-closed gate for the exact tag-based reference a
+// runtime author builds with `docker build -t my-agent:dev`, which the §17.4
+// walkthrough's docker-build step produces. The Runtime CRD enforces the
+// `@sha256:[A-Fa-f0-9]{64}$` pattern at the API server, so the verb must reject
+// a tag-based image before apply with an actionable digest-pinned message
+// rather than letting the write surface a raw OpenAPI pattern rejection. The
+// other tag and malformed-digest cases pin the pattern boundary: a tag-only
+// reference, a bare `@sha256:` with no hex, a too-short digest, and a digest
+// with a trailing tag suffix (so the `$` end anchor is load-bearing) are all
+// rejected, matching exactly what the API server rejects.
+//
+// spec: §5.3 (digest-pinned image references), §17.4 (the walkthrough's
+// docker-build output).
+func TestLoadRuntimeFileRejectsTagBasedImage_spec_5_3(t *testing.T) {
+	// The exact image string the §17.4 walkthrough's docker-build step and its
+	// runtime-crds.yaml carry. Pinning it here keeps code and the documented
+	// walkthrough from drifting: if the spec walkthrough switches to a
+	// digest-pinned reference this case must be revisited.
+	const walkthroughTagImage = "my-agent:dev"
+	rejected := []string{
+		walkthroughTagImage,
+		"my-agent",
+		"ghcr.io/lennylabs/runtime-my-agent@sha256:",
+		"ghcr.io/lennylabs/runtime-my-agent@sha256:abc123",
+		// A valid digest with a trailing tag suffix: the $ end anchor must
+		// reject it, the same as the CRD pattern.
+		testRuntimeImage + ":dev",
+	}
+	for _, img := range rejected {
+		// Quote the image in the YAML: a reference ending in `@sha256:` or a
+		// `:dev` tag carries a colon that an unquoted YAML scalar parses as a
+		// mapping value. Quoting isolates the test to the digest gate rather
+		// than the YAML decode.
+		path := writeRuntimeFile(t, `apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: my-agent
+spec:
+  image: "`+img+`"
+  integrationLevel: basic
+`)
+		_, err := loadRuntimeFile(path)
+		if err == nil {
+			t.Errorf("loadRuntimeFile accepted tag/malformed image %q, want a digest-pinned rejection", img)
+			continue
+		}
+		if !strings.Contains(err.Error(), "digest-pinned") {
+			t.Errorf("loadRuntimeFile(%q) error = %q, want a digest-pinned message", img, err.Error())
+		}
+	}
+
+	// A digest-pinned image (with and without a registry/tag prefix before the
+	// digest) is accepted, matching the API server.
+	for _, img := range []string{
+		testRuntimeImage,
+		"my-agent@sha256:" + "7777777777777777777777777777777777777777777777777777777777777777",
+	} {
+		path := writeRuntimeFile(t, `apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: my-agent
+spec:
+  image: "`+img+`"
+  integrationLevel: basic
+`)
+		if _, err := loadRuntimeFile(path); err != nil {
+			t.Errorf("loadRuntimeFile rejected digest-pinned image %q: %v", img, err)
+		}
 	}
 }
 
