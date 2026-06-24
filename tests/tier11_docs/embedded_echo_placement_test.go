@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-11 documentation check for proposal 0016 (activate pod placement
-// in Embedded Mode with a pod-deployable echo runtime). These tests are
-// NOT under a build tag because they exercise the repository state
-// directly — no external infrastructure required.
+// Tier-11 documentation check for the Embedded Mode echo placement and
+// custom-runtime walkthrough in §17.4. These tests are NOT under a build
+// tag because they exercise the repository state directly — no external
+// infrastructure required.
 //
-// Step S1 of the 0016 build sequence is the spec-correctness floor every
-// later code step builds on: it confirms the C1 spec edits landed and the
-// intra-spec anchors they add resolve to live headings. This file is the
-// regression guard for that floor. A heading rename or a re-introduction
-// of the reconciled "(cold-start on first use)" / placeholder-pinned
-// flows fails here before it ships.
+// Proposal 0016 activated pod placement in Embedded Mode and seeded the
+// pod-deployable echo runtime; proposal 0017 re-architected the gateway and
+// controllers into in-cluster pods rendered from the chart. This file is
+// the regression guard for the resulting §17.4 text: the echo-seed passage,
+// the in-cluster substrate-failure behavior (0017 S1), the echo-runtime
+// quickstart, and the custom-runtime walkthrough that materializes a custom
+// runtime's CRD set through `lenny runtime apply` (0017 S5/C2). A heading
+// rename, a re-introduced "(cold-start on first use)" clause, a
+// re-introduced in-process-executor fallback, or a reverted walkthrough
+// command fails here before it ships.
 
 package tier11_docs_test
 
@@ -60,18 +64,24 @@ func TestEchoPlacementCrossRefsResolveToLiveHeadings(t *testing.T) {
 }
 
 // diagnosis: the §17.4 "Reference runtimes pre-installed" auto-seed
-// reconciliation from proposal 0016 C1 regressed. The paragraph must
-// state that `lenny up` seeds the built-in echo runtime with a runnable
-// digest, an applied Runtime CRD carrying `deploymentModel: embedded`,
-// and a single-pod warm pool, referencing §15.4.4 and §4.7, and must no
-// longer carry the "(cold-start on first use)" clause the embedded stack
-// cannot perform (it wires no DemandSource, so the §5.2 on-demand
-// cold-start path never runs). A re-introduced cold-start clause or a
-// dropped echo-seed passage leaves §17.4 self-contradictory under active
-// placement.
+// reconciliation regressed. The paragraph must state that `lenny up` seeds
+// the built-in echo runtime with a runnable digest, an applied Runtime CRD
+// carrying `deploymentModel: embedded`, and a single-pod warm pool,
+// referencing §15.4.4 and §4.7, and must no longer carry the "(cold-start
+// on first use)" clause the embedded stack cannot perform (it wires no
+// DemandSource, so the §5.2 on-demand cold-start path never runs).
+// Proposal 0017 S1 re-architects the gateway into an in-cluster pod, so the
+// passage must also state the reconciled substrate-failure behavior: there
+// is no host gateway process to fall back to, so an unavailable substrate
+// makes `lenny up` report the substrate failure and the gateway does not
+// start, rather than degrading to an in-process echo executor. A
+// re-introduced cold-start clause, a re-introduced in-process-executor
+// fallback, or a dropped echo-seed passage leaves §17.4 self-contradictory
+// under the in-cluster topology.
 //
-// spec: §17.4 (Embedded Mode seed), §15.4.4 (echo exemplar), §4.7
-// (runtime adapter), §5.2 (warm pool). Proposal 0016 §3 C1.
+// spec: §17.4 (Embedded Mode seed, in-cluster topology), §15.4.4 (echo
+// exemplar), §4.7 (runtime adapter), §5.2 (warm pool). Proposal 0016 §3 C1,
+// proposal 0017 S1.
 func TestEmbeddedEchoSeedPassagePresentAndColdStartReconciled(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "spec", "17_deployment-topology.md")
@@ -88,18 +98,29 @@ func TestEmbeddedEchoSeedPassagePresentAndColdStartReconciled(t *testing.T) {
 		t.Errorf("§17.4 still carries the reconciled \"(cold-start on first use)\" clause; proposal 0016 C1 removes it because the embedded stack performs no on-demand cold start")
 	}
 
+	// Proposal 0017 S1 removes the 0016 "degrades to the in-process echo
+	// executor" fallback clause, which is incoherent once the gateway runs as
+	// an in-cluster pod with no host process to fall back to. Its
+	// re-introduction is a regression.
+	if strings.Contains(content, "degrades to the in-process echo executor") {
+		t.Errorf("§17.4 still carries the \"degrades to the in-process echo executor\" clause; proposal 0017 S1 removes it because the in-cluster gateway has no host process to fall back to")
+	}
+
 	// The appended echo-seed passage must state the three artifacts echo
-	// arrives with and reference the §15.4.4 exemplar and the §4.7 boundary.
+	// arrives with and reference the §15.4.4 exemplar and the §4.7 boundary,
+	// and state the reconciled S1 substrate-failure behavior: an unavailable
+	// substrate makes `lenny up` report the failure and the gateway does not
+	// start.
 	for _, want := range []string{
 		"seeds the built-in echo runtime",
 		"[Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)",
 		"`deploymentModel: embedded`",
 		"single-pod warm pool",
 		"[Section 4.7](04_system-components.md#47-runtime-adapter)",
-		"degrades to the in-process echo executor",
+		"report the substrate failure and the gateway does not start",
 	} {
 		if !strings.Contains(content, want) {
-			t.Errorf("§17.4 echo-seed passage missing %q (proposal 0016 C1 regression)", want)
+			t.Errorf("§17.4 echo-seed passage missing %q (proposal 0017 S1 regression)", want)
 		}
 	}
 }
@@ -131,16 +152,23 @@ func TestEmbeddedQuickstartUsesEchoRuntime(t *testing.T) {
 	}
 }
 
-// diagnosis: the §17.4 custom-runtime walkthrough from proposal 0016 C1
-// regressed. Steps 1-7 must apply a Runtime CRD instance for the custom
-// runtime and create a warm pool for it before the closing curl, because
-// `lenny-ctl runtime register` creates only a gateway registry record:
-// the Sandbox controller resolves the runtime from a Runtime CRD by name
-// and registration creates no SandboxWarmPool. A walkthrough that omits
-// either step ends in a session-creation failure under active placement.
+// diagnosis: the §17.4 custom-runtime walkthrough regressed. The
+// walkthrough must materialize a Runtime CRD instance and a warm pool for
+// the custom runtime before the closing curl, because `lenny-ctl runtime
+// register` creates only a gateway registry record: the Sandbox controller
+// resolves the runtime from a Runtime CRD by name and registration creates
+// no SandboxWarmPool. Proposal 0017 S5 replaces 0016's two non-existent
+// commands (`lenny kubectl apply -f runtime-crd.yaml` and `lenny-ctl pool
+// create --runtime my-agent`) with the single `lenny runtime apply` verb
+// (C2/S16) that applies the Runtime/SandboxTemplate/SandboxWarmPool CRD set
+// to the embedded kubeconfig, so the no-Postgres dev profile materializes
+// the pool without a PoolScalingController. The verb must precede the
+// closing session curl so the curl can start a session. A walkthrough that
+// drops the materialization step, or runs it after the curl, ends in a
+// session-creation failure under active placement.
 //
-// spec: §17.4 (custom-runtime walkthrough), §4.7 (runtime adapter), §5.2
-// (warm pool). Proposal 0016 §3 C1.
+// spec: §17.4 (custom-runtime walkthrough verb), §4.7 (runtime adapter),
+// §5.2 (warm pool). Proposal 0016 §3 C1, proposal 0017 S5/C2.
 func TestCustomRuntimeWalkthroughAppliesCRDAndPoolBeforeCurl(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "spec", "17_deployment-topology.md")
@@ -162,32 +190,32 @@ func TestCustomRuntimeWalkthroughAppliesCRDAndPoolBeforeCurl(t *testing.T) {
 	}
 	walkthrough := content[si:ei]
 
-	// The Runtime-CRD-apply step must precede the warm-pool-create step,
-	// and both must precede the closing session curl, so the step-7 curl
-	// can start a session.
-	applyIdx := strings.Index(walkthrough, "lenny kubectl apply -f runtime-crd.yaml")
-	poolIdx := strings.Index(walkthrough, "lenny-ctl pool create --runtime my-agent")
+	// The `lenny runtime apply` verb (proposal 0017 C2/S16) applies the
+	// runtime's Runtime/SandboxTemplate/SandboxWarmPool CRD set to the
+	// embedded kubeconfig. It must precede the closing session curl so the
+	// Sandbox controller can resolve the runtime by name and the
+	// WarmPoolController can warm a pod before the session starts.
+	applyIdx := strings.Index(walkthrough, "lenny runtime apply")
 	curlIdx := strings.Index(walkthrough, "POST https://localhost:8443/v1/sessions")
 
 	if applyIdx < 0 {
-		t.Error("§17.4 walkthrough does not apply a Runtime CRD instance (`lenny kubectl apply -f runtime-crd.yaml`); proposal 0016 C1 adds it so the Sandbox controller can resolve the runtime by name")
-	}
-	if poolIdx < 0 {
-		t.Error("§17.4 walkthrough does not create a warm pool (`lenny-ctl pool create --runtime my-agent`); proposal 0016 C1 adds it so a pod is provisioned")
+		t.Error("§17.4 walkthrough does not invoke `lenny runtime apply`; proposal 0017 S5/C2 adds the verb that applies the Runtime/SandboxTemplate/SandboxWarmPool CRD set so the Sandbox controller resolves the runtime by name and a pool materializes without a PoolScalingController")
 	}
 	if curlIdx < 0 {
-		t.Fatal("§17.4 walkthrough has no closing session curl to order the prerequisites against")
+		t.Fatal("§17.4 walkthrough has no closing session curl to order the materialization step against")
 	}
 	if applyIdx >= 0 && applyIdx > curlIdx {
-		t.Error("§17.4 walkthrough applies the Runtime CRD after the closing curl; the apply must precede the curl so the session can start")
+		t.Error("§17.4 walkthrough invokes `lenny runtime apply` after the closing curl; the apply must precede the curl so the session can start on a warm pod")
 	}
-	if poolIdx >= 0 && poolIdx > curlIdx {
-		t.Error("§17.4 walkthrough creates the warm pool after the closing curl; the pool create must precede the curl so a pod is provisioned")
-	}
-	// The reconciled step-4 prose must drop the bare "warms a pod on next
-	// session start" claim that assumed registration alone provisions a pod.
-	if strings.Contains(walkthrough, "the pool warms a pod on next session start") {
-		t.Error("§17.4 walkthrough step 4 still claims registration warms a pod on next session start; proposal 0016 C1 reconciles it to require an applied Runtime CRD and a warm pool")
+	// The 0016 walkthrough's two non-existent commands must be gone: S5
+	// replaces them with the single `lenny runtime apply` verb.
+	for _, gone := range []string{
+		"lenny kubectl apply -f runtime-crd.yaml",
+		"lenny-ctl pool create --runtime my-agent",
+	} {
+		if strings.Contains(walkthrough, gone) {
+			t.Errorf("§17.4 walkthrough still invokes %q; proposal 0017 S5 replaces it with the `lenny runtime apply` verb", gone)
+		}
 	}
 }
 
