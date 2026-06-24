@@ -11,6 +11,7 @@ manual edits and PoolScalingController reconciliation writes rather
 than admitting an unvalidated pool configuration. Part of the Phase 3.5
 baseline — rendered unconditionally, no feature-flag gate.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-pool-config-validator") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -45,3 +46,4 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /pool-config-validator
         port: 443
+{{- end }}

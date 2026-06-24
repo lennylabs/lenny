@@ -5,6 +5,7 @@ SandboxClaim resources: rejects a second non-terminal claim for the
 same .spec.sandboxRef. PATCH and PUT are admitted without inspection
 and are not registered here. Scoped to agent namespaces; fail-closed.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-sandboxclaim-guard") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -39,3 +40,4 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /sandboxclaim-guard
         port: 443
+{{- end }}

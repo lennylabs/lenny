@@ -276,7 +276,7 @@ spec:
           no-mesh / external-mTLS deployment can opt out, but the chart
           default is mtls.enabled=true.
       */ -}}
-      {{- if or .Values.mtls.enabled $minioCABundle }}
+      {{- if or .Values.mtls.enabled $minioCABundle .Values.security.oidc.bearerTrustKeySecret }}
       volumes:
         {{- if .Values.mtls.enabled }}
         {{- if .Values.gateway.spiffe.enabled }}
@@ -317,6 +317,18 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        {{- end }}
+        {{- if .Values.security.oidc.bearerTrustKeySecret }}
+        # spec: §10.2 / §17.4 dev-bearer-trust — the dev HMAC key Secret the
+        # `lenny` CLI mints its bearer from. lenny up creates it under the
+        # fixed name the dev profile sets, holding the key under data key
+        # "key". Mirrors the lenny-ops mount of the same Secret.
+        - name: oidc-bearer-trust-key
+          secret:
+            secretName: {{ .Values.security.oidc.bearerTrustKeySecret }}
+            items:
+              - key: key
+                path: key
         {{- end }}
       {{- end }}
       {{- /*
@@ -428,6 +440,19 @@ spec:
             {{- with .Values.auth.oidc.clientId }}
             - --oidc-client-id={{ . }}
             {{- end }}
+            {{- if .Values.security.oidc.bearerTrustKeySecret }}
+            # spec: §10.2 / §17.4 dev-bearer-trust — the §17.4 development
+            # profile mints its CLI bearer from a persisted dev HMAC key and
+            # the in-cluster gateway trusts it through this second §10.2
+            # verifier, wrapped in the dev.local audience pin (a foreign-
+            # audience token signed by the same key is still rejected). The
+            # binary refuses this flag unless --dev-mode is set, so the dev
+            # profile's global.devMode=true is a precondition. Production
+            # leaves security.oidc.bearerTrustKeySecret empty and renders no
+            # flag, so the gateway trusts only its standard §10.2 verifiers.
+            - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+            {{- end }}
+            {{- if .Values.tokenService.enabled }}
             # §4.3 trust boundary: the gateway materializes every §4.9
             # credential lease through lenny-token-service over mTLS;
             # the in-process MintLease path is reserved for dev mode.
@@ -436,6 +461,14 @@ spec:
             # reverse-proxies /v1/oauth/* to the Token Service's HTTP
             # listener so the Token Service is the sole minter.
             - --token-service-http-url=http://lenny-token-service.{{ .Release.Namespace }}.svc:{{ .Values.tokenService.httpPort }}
+            {{- else }}
+            # spec: §17.4 dev profile — tokenService.enabled is false, so the
+            # gateway dials no Token Service. With no --token-service-grpc-addr
+            # / --token-service-http-url the gateway uses its in-process
+            # MintLease / credassign path (cmd/lenny-gateway/main.go reserves
+            # this fallback for dev mode) for §4.9 leases and the §4.3
+            # /v1/oauth/* proxy, so the absent Service is never dialed.
+            {{- end }}
             # §4 KMS provider (F-4.3.11). The gateway wraps the §4.9
             # connector-credential DEKs through this provider.
             - --kms-provider={{ .Values.kms.provider }}
@@ -1446,7 +1479,7 @@ spec:
             - name: llm-proxy
               containerPort: {{ .Values.gateway.llmProxyPort }}
             {{- end }}
-          {{- if or .Values.mtls.enabled $minioCABundle }}
+          {{- if or .Values.mtls.enabled $minioCABundle .Values.security.oidc.bearerTrustKeySecret }}
           volumeMounts:
             {{- if .Values.mtls.enabled }}
             - name: lenny-gateway-tls
@@ -1458,6 +1491,14 @@ spec:
             # added to the Go system trust pool via SSL_CERT_DIR above.
             - name: lenny-minio-ca
               mountPath: /etc/lenny/minio-ca
+              readOnly: true
+            {{- end }}
+            {{- if .Values.security.oidc.bearerTrustKeySecret }}
+            # spec: §10.2 / §17.4 — the dev HMAC bearer-trust key (Secret
+            # key "key"); the gateway loads it via --bearer-trust-hmac-key-file
+            # above. Mirrors the lenny-ops mount of the same Secret.
+            - name: oidc-bearer-trust-key
+              mountPath: /etc/lenny/oidc
               readOnly: true
             {{- end }}
           {{- end }}
@@ -1520,6 +1561,12 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
     lenny.dev/component: gateway
 spec:
+  # spec: §17.4 dev profile — the production topology fronts the gateway with
+  # an Ingress, so the type defaults to ClusterIP. The development profile
+  # pins type: NodePort with a fixed gateway.service.nodePort so the `lenny`
+  # CLI's loopback-only host-side forwarder reaches the in-cluster gateway on
+  # a stable node port.
+  type: {{ .Values.gateway.service.type }}
   selector:
     app.kubernetes.io/name: {{ .Chart.Name }}
     lenny.dev/component: gateway
@@ -1527,6 +1574,9 @@ spec:
     - name: http
       port: {{ .Values.gateway.internalPort }}
       targetPort: http
+      {{- if and (eq .Values.gateway.service.type "NodePort") .Values.gateway.service.nodePort }}
+      nodePort: {{ .Values.gateway.service.nodePort }}
+      {{- end }}
     - name: grpc
       port: {{ .Values.gateway.grpcPort }}
       targetPort: grpc

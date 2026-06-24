@@ -8,7 +8,7 @@ GET /internal/drain-readiness endpoint; an unhealthy or unreachable
 result rejects the eviction. Fail-closed. Rendered only when
 features.drainReadiness is enabled.
 */ -}}
-{{- if .Values.features.drainReadiness }}
+{{- if and .Values.admissionWebhooks.enabled .Values.features.drainReadiness }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-drain-readiness" "egressLabel" "drain-readiness") }}
 ---
 {{/*

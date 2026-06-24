@@ -4,7 +4,13 @@ certificates (§17.2). Each webhook's Certificate is issued by this
 Issuer; cert-manager's CA injector copies the resulting CA into the
 ValidatingWebhookConfiguration caBundle via the
 cert-manager.io/inject-ca-from annotation.
+
+spec: §17.4 dev profile — gated on admissionWebhooks.enabled so the
+development render emits no cert-manager.io/v1 Issuer. With the webhooks
+disabled no Certificate references this Issuer, so a cert-manager-free
+embedded cluster need not resolve the cert-manager.io/v1 GVR at all.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
@@ -14,3 +20,4 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
 spec:
   selfSigned: {}
+{{- end }}

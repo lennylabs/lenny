@@ -11,7 +11,15 @@ tokenService.grpcPort; the binary's listener is bound to that port so
 the Service port and the NetworkPolicy agree. The Token Service binary
 serves no HTTP health endpoint, so the probes are TCP socket checks
 against the listener.
+
+spec: §17.4 dev profile — the whole Token Service (Deployment, Service,
+ServiceAccount, PodDisruptionBudget) is gated on tokenService.enabled.
+Default true preserves the §4.3 trust boundary. The development profile
+sets it false: no lenny-token-service image is bundled, and the gateway
+falls back to its in-process MintLease / credassign dev path (the
+gateway --token-service-* flags are gated on the same key).
 */ -}}
+{{- if .Values.tokenService.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -202,3 +210,4 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}
       lenny.dev/component: token-service
+{{- end }}

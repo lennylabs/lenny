@@ -16,6 +16,7 @@ SandboxTemplates without this webhook — the precise cross-tenant
 credential exposure §4.9 names — so the webhook must not be gated on
 features.llmProxy.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-direct-mode-isolation") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -50,3 +51,4 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /direct-mode-isolation
         port: 443
+{{- end }}

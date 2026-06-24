@@ -12,7 +12,7 @@ Scoped to Pod CREATE in agent namespaces; fail-closed so a pod the
 webhook cannot validate is not admitted with an unverified §13.1
 image-pinning posture.
 */ -}}
-{{- if .Values.platform.registry.requireDigest }}
+{{- if and .Values.admissionWebhooks.enabled .Values.platform.registry.requireDigest }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-registry-digest") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1

@@ -17,7 +17,7 @@ Rendered only when imageVerification.cosign.enabled is true. The
 verified-registry list, the public-key Secret, and the policy
 ConfigMap are supplied through the imageVerification.cosign values.
 */ -}}
-{{- if .Values.imageVerification.cosign.enabled }}
+{{- if and .Values.admissionWebhooks.enabled .Values.imageVerification.cosign.enabled }}
 {{- $cosign := .Values.imageVerification.cosign }}
 {{- if not $cosign.verifiedRegistries }}
 {{- fail "imageVerification.cosign.enabled is true but imageVerification.cosign.verifiedRegistries is empty; an empty verified-registry list would place no image in scope and silently disable the cosign signature gate (§5.2)" }}

@@ -19,5 +19,14 @@ version. The webhook Service and Deployment are deployed ahead of that
 step so the graduation has a running endpoint to point at, and so the
 §15.5 line 2438 / §17.9 conversion-webhook-availability preflight check
 has a Service to verify. F-15.5.2 / F-17.2.4 / F-10.5.6.
+
+spec: §17.4 dev profile — gated on admissionWebhooks.enabled, the same
+gate the validating webhooks carry, so the development render emits no
+conversion-webhook Deployment or its cert-manager Certificate. The
+conversion webhook is dormant today (no CRD carries
+spec.conversion.strategy: Webhook), so disabling it in the development
+profile changes no CRD read or write path.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-crd-conversion") }}
+{{- end }}

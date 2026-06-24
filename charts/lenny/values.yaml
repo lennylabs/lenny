@@ -145,6 +145,16 @@ poolScalingController:
 # is its own Deployment + Service + PodDisruptionBudget running the
 # lenny-webhook image; cert-manager issues each serving certificate.
 admissionWebhooks:
+  # enabled gates the entire §17.2 in-tree admission stack: every webhook
+  # Deployment, Service, PodDisruptionBudget, and ValidatingWebhookConfiguration,
+  # the CRD-conversion webhook, the cosign-verify webhook, every cert-manager
+  # Certificate the webhooks are served by, and the shared self-signed Issuer.
+  # Default true preserves the production fail-closed admission posture. The
+  # §17.4 development profile sets this false so the embedded cluster renders no
+  # cert-manager.io/v1 object and needs no cert-manager: a bare k3s has no
+  # cert-manager CA injector, so the fail-closed webhooks would otherwise never
+  # become Ready and would reject every agent-pod CREATE.
+  enabled: true
   replicas: 2
   image:
     repository: ghcr.io/lennylabs/lenny-webhook
@@ -377,6 +387,16 @@ ingress:
 # service Deployment runs the §13.3 Token Service binary; it is
 # stateless and runs with 2 replicas (§17.1).
 tokenService:
+  # enabled gates the §4.3 Token Service Deployment, its Service, ServiceAccount,
+  # and PodDisruptionBudget, and the gateway's --token-service-grpc-addr /
+  # --token-service-http-url flags. Default true preserves the §4.3 trust
+  # boundary: the gateway materializes every §4.9 credential lease and proxies
+  # /v1/oauth/* through the Token Service. The §17.4 development profile sets
+  # this false so the gateway falls back to the in-process MintLease /
+  # credassign path it reserves for dev mode, and the embedded image bundle
+  # carries no lenny-token-service image (which would otherwise sit in
+  # ImagePullBackOff under imagePullPolicy: IfNotPresent).
+  enabled: true
   replicas: 2
   # rollingUpdate configures the §10.5 / §17.1 Deployment.spec.strategy
   # block on the Token Service. maxUnavailable: 0 keeps full
@@ -2148,6 +2168,17 @@ gateway:
   # no gateway-initiated outbound HTTPS call.
   llmUpstreamEgress:
     enabled: true
+  # service configures the lenny-gateway Service. The production topology
+  # fronts the gateway with an Ingress, so the default type is ClusterIP. The
+  # §17.4 development profile pins type: NodePort with a fixed nodePort so the
+  # `lenny` CLI's loopback-only host-side forwarder can reach the in-cluster
+  # gateway on a stable node port (the launcher publishes it to host loopback
+  # under Docker, and the Linux launcher constrains it to loopback). nodePort
+  # applies only when type is NodePort; an empty nodePort lets Kubernetes
+  # allocate one.
+  service:
+    type: ClusterIP
+    nodePort: ""
   # internalPort is the gateway's internal HTTP port (§13.2). It serves
   # the REST API, /metrics, GET /healthz, and the §12.5
   # GET /internal/drain-readiness endpoint the lenny-drain-readiness
