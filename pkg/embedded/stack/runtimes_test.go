@@ -140,6 +140,7 @@ func TestBuildBootstrapSeedInjectsEchoDigest_spec_4_7(t *testing.T) {
 	}
 	if echo == nil {
 		t.Fatal("seed has no echo runtime")
+		return // unreachable after Fatal; satisfies the nil-deref analyzer
 	}
 	if echo.Image != resolved {
 		t.Errorf("echo seed image = %q, want the import-time-resolved digest %q", echo.Image, resolved)
@@ -165,6 +166,7 @@ func TestBuildBootstrapSeedEchoDigestSentinelWhenUnresolved_spec_4_7(t *testing.
 	}
 	if echo == nil {
 		t.Fatal("seed has no echo runtime")
+		return // unreachable after Fatal; satisfies the nil-deref analyzer
 	}
 	if echo.Image != echoImageSentinel {
 		t.Errorf("echo seed image with no resolved digest = %q, want the sentinel %q", echo.Image, echoImageSentinel)

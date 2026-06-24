@@ -227,13 +227,21 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	return s, nil
 }
 
-// applyControlPlane imports the platform image bundle, creates the dev
-// bearer-trust Secret, and applies the embedded manifests. The image import
-// overlaps the apply of the non-image objects: the import runs concurrently
-// while the Secret create and manifest apply proceed, and the Deployments
-// inside the manifest set come last (the applier orders Deployments after
-// every other kind), so the bundle has landed by the time the gateway pod
-// schedules and the pods do not enter ImagePullBackOff. spec: §17.4.
+// applyControlPlane imports the platform image bundle and applies the
+// embedded manifests in two fenced phases. It overlaps the slow multi-image
+// bundle import with the Secret create and the apply of the non-image
+// objects (namespaces, CRDs, RBAC, config/secret material, Services, and the
+// runc RuntimeClass), then blocks on the import completing, and only then
+// applies the Deployments. The barrier is explicit: the Deployment phase
+// runs after <-importDone, so a scheduled pod never reaches the registry
+// under IfNotPresent before the gateway/controller/ops/adapter images are
+// present in the embedded containerd. Ordering the Deployments last within a
+// single apply pass would not synchronize with the import goroutine, because
+// the non-image apply is near-instantaneous while the import is the slow leg;
+// the explicit <-importDone fence is what enforces the proposal's "apply the
+// Deployments after the import lands" invariant. spec: §17.4 (proposal 0017
+// C2: import the images, apply the non-image objects, fence on the import,
+// then apply the Deployments so pods do not enter ImagePullBackOff).
 func (s *Stack) applyControlPlane(ctx context.Context, res substrateResult, keyFile string, out io.Writer) error {
 	// Start the platform-bundle import in the background and overlap it with
 	// the Secret create and the apply of the non-image objects.
@@ -242,28 +250,44 @@ func (s *Stack) applyControlPlane(ctx context.Context, res substrateResult, keyF
 		defer close(importDone)
 		importPlatformBundleFn(s, s.paths.Root, out)
 	}()
+	// Block on the import before returning on any early error path too, so a
+	// failed Secret create or non-image apply does not leak the import
+	// goroutine.
+	imported := false
+	awaitImport := func() {
+		if !imported {
+			<-importDone
+			imported = true
+		}
+	}
+	defer awaitImport()
 
 	// Create the dev bearer-trust Secret before the gateway Deployment is
 	// applied so its mount resolves when the pod schedules.
 	fmt.Fprintln(out, "lenny up: creating the dev bearer-trust secret")
 	if err := createDevBearerSecretFn(ctx, res.kubeconfig, keyFile); err != nil {
-		<-importDone
 		return err
 	}
 
-	// The applier orders namespaces, CRDs, RBAC, config/secret material, and
-	// Services ahead of the Deployments, so the non-image objects apply while
-	// the import is still in flight and the Deployments wait behind it.
+	// Apply the non-image objects (everything but the Deployments) while the
+	// import is still in flight: none of these objects pulls an image.
 	fmt.Fprintln(out, "lenny up: applying the embedded control-plane manifests")
-	if err := applyManifestsFn(ctx, res.kubeconfig); err != nil {
-		<-importDone
+	if err := applyNonImageManifestsFn(ctx, res.kubeconfig); err != nil {
 		return err
 	}
 
-	// The Deployments have been submitted; ensure the bundle import has
-	// finished before the bring-up waits for the gateway pod so the gateway
-	// image is present in containerd.
-	<-importDone
+	// Fence on the import landing before submitting any Deployment, so the
+	// gateway/controller/ops/adapter images are present in containerd by the
+	// time their pods schedule. This is the proposal's hard ordering
+	// invariant; without it a scheduled pod can ImagePullBackOff against the
+	// registry under IfNotPresent before the bundle import completes.
+	awaitImport()
+
+	// Apply the Deployments now that the import has landed.
+	fmt.Fprintln(out, "lenny up: applying the embedded control-plane deployments")
+	if err := applyDeploymentManifestsFn(ctx, res.kubeconfig); err != nil {
+		return err
+	}
 	return nil
 }
 

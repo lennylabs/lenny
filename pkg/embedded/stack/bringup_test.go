@@ -8,7 +8,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,52 +19,89 @@ import (
 
 // withBringUpSeams stubs the in-cluster bring-up seams Up drives after
 // provisionSubstrate (the dev-bearer Secret create, the platform-bundle
-// import, the manifest apply, the gateway-readiness wait, the registry seed,
-// and the echo-pool apply) to no-ops, and restores them. It is combined with
-// withSubstrateSeams/withActivationSeams so a test can drive Up end to end
-// without an API server, a containerd, or a gateway. It returns a recorder of
-// the order the bring-up legs ran in.
+// import, the two-phase manifest apply, the gateway-readiness wait, the
+// registry seed, and the echo-pool apply) to no-ops, and restores them. It is
+// combined with withSubstrateSeams/withActivationSeams so a test can drive Up
+// end to end without an API server, a containerd, or a gateway. It returns a
+// recorder of the order the bring-up legs ran in.
+//
+// The import seam blocks on a release channel so a test can assert the
+// import-before-Deployment fence: the platform-bundle import does not record
+// "import" until the test releases it, modeling the slow multi-image import
+// that the Deployment apply must wait behind. The default-released form (no
+// hold) keeps the simple ordering tests unblocked.
 func withBringUpSeams(t *testing.T) *bringUpCalls {
 	t.Helper()
 	calls := &bringUpCalls{}
-	prevSecret, prevImport, prevApply := createDevBearerSecretFn, importPlatformBundleFn, applyManifestsFn
+	prevSecret, prevImport := createDevBearerSecretFn, importPlatformBundleFn
+	prevNonImage, prevDeploy := applyNonImageManifestsFn, applyDeploymentManifestsFn
 	prevWait, prevInstall, prevPool := waitGatewayDeployReadyFn, installRuntimesFn, applyEchoPoolFn
 	t.Cleanup(func() {
-		createDevBearerSecretFn, importPlatformBundleFn, applyManifestsFn = prevSecret, prevImport, prevApply
+		createDevBearerSecretFn, importPlatformBundleFn = prevSecret, prevImport
+		applyNonImageManifestsFn, applyDeploymentManifestsFn = prevNonImage, prevDeploy
 		waitGatewayDeployReadyFn, installRuntimesFn, applyEchoPoolFn = prevWait, prevInstall, prevPool
 	})
 	createDevBearerSecretFn = func(context.Context, string, string) error {
-		calls.order = append(calls.order, "secret")
+		calls.record("secret")
 		return nil
 	}
 	importPlatformBundleFn = func(*Stack, string, io.Writer) {
-		calls.order = append(calls.order, "import")
+		if calls.importHold != nil {
+			<-calls.importHold
+		}
+		calls.record("import")
 	}
-	applyManifestsFn = func(context.Context, string) error {
-		calls.order = append(calls.order, "apply")
+	applyNonImageManifestsFn = func(context.Context, string) error {
+		calls.record("apply-nonimage")
+		return nil
+	}
+	applyDeploymentManifestsFn = func(context.Context, string) error {
+		calls.record("apply-deploy")
 		return nil
 	}
 	waitGatewayDeployReadyFn = func(context.Context, string) error {
-		calls.order = append(calls.order, "wait")
+		calls.record("wait")
 		return nil
 	}
 	installRuntimesFn = func(_ context.Context, _, _ string, _ io.Writer) error {
-		calls.order = append(calls.order, "seed")
+		calls.record("seed")
 		calls.seeded = true
 		return nil
 	}
 	applyEchoPoolFn = func(context.Context, string, string) error {
-		calls.order = append(calls.order, "pool")
+		calls.record("pool")
 		calls.poolApplied = true
 		return nil
 	}
 	return calls
 }
 
+// bringUpCalls records the order the bring-up legs ran in. The import leg
+// runs on a separate goroutine, so record guards the slice with a mutex.
 type bringUpCalls struct {
+	mu          sync.Mutex
 	order       []string
 	seeded      bool
 	poolApplied bool
+	// importHold, when non-nil, blocks the import seam until the test sends or
+	// closes it, so a test can prove the Deployment apply waits behind the
+	// import.
+	importHold chan struct{}
+}
+
+func (c *bringUpCalls) record(leg string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.order = append(c.order, leg)
+}
+
+// snapshot returns a copy of the recorded order under the lock.
+func (c *bringUpCalls) snapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.order))
+	copy(out, c.order)
+	return out
 }
 
 // upConfig returns a Config rooted at a temp dir with an ephemeral HTTPS port
@@ -103,16 +142,16 @@ func TestUpReportsSubstrateFailure_spec_17_4(t *testing.T) {
 		t.Fatal("Up with no substrate = nil error, want the substrate-failure error")
 	}
 	// None of the in-cluster bring-up legs should have run.
-	if len(calls.order) != 0 {
-		t.Errorf("bring-up ran in-cluster legs %v with no substrate; want none", calls.order)
+	if order := calls.snapshot(); len(order) != 0 {
+		t.Errorf("bring-up ran in-cluster legs %v with no substrate; want none", order)
 	}
 }
 
 // TestUpSequenceOrder_spec_17_4 asserts the in-cluster bring-up runs its legs
 // in the order the §17.4 sequence requires: the dev-bearer Secret is created
-// before the manifests are applied (so the gateway mount resolves), the
-// gateway-readiness wait precedes the gateway-dialed registry seed, and the
-// echo pool is applied after the runtime is seeded.
+// before the non-image manifests are applied (so the gateway mount resolves),
+// the gateway-readiness wait precedes the gateway-dialed registry seed, and
+// the echo pool is applied after the runtime is seeded.
 //
 // spec: §17.4 (the bring-up creates the dev-bearer Secret before the gateway
 // Deployment, waits for the gateway, then seeds the echo registry record and
@@ -134,13 +173,97 @@ func TestUpSequenceOrder_spec_17_4(t *testing.T) {
 	}
 	defer func() { _ = s.Stop(context.Background()) }()
 
-	want := []string{"secret", "apply", "wait", "seed", "pool"}
-	if !subsequence(calls.order, want) {
-		t.Errorf("bring-up order = %v, want the subsequence %v (secret before apply, wait before seed, pool after seed)", calls.order, want)
+	order := calls.snapshot()
+	want := []string{"secret", "apply-nonimage", "apply-deploy", "wait", "seed", "pool"}
+	if !subsequence(order, want) {
+		t.Errorf("bring-up order = %v, want the subsequence %v (secret before non-image apply, deployments after, wait before seed, pool after seed)", order, want)
 	}
 	if !calls.seeded || !calls.poolApplied {
 		t.Errorf("bring-up did not seed the registry record (%v) or apply the echo pool (%v)", calls.seeded, calls.poolApplied)
 	}
+}
+
+// TestUpImportFencesDeploymentApply_spec_17_4 pins the proposal's hard
+// ordering invariant: the platform-image import must land before the
+// Deployments are applied, so a scheduled pod never reaches the registry
+// under IfNotPresent before its image is present in containerd. The test
+// holds the import seam blocked until after the non-image apply has run, then
+// releases it, and asserts the recorded "import" leg precedes "apply-deploy"
+// and that the Deployment apply never ran before the import completed.
+//
+// spec: §17.4 (proposal 0017 C2: import the images, apply the non-image
+// objects, fence on the import, then apply the Deployments so pods do not
+// enter ImagePullBackOff).
+func TestUpImportFencesDeploymentApply_spec_17_4(t *testing.T) {
+	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
+	withSubstrateSeams(t, true, l, nil)
+	withActivationSeams(t, "ghcr.io/lennylabs/runtime-echo-embedded@sha256:"+
+		"4444444444444444444444444444444444444444444444444444444444444444")
+	withRuntimeClassSeam(t)
+	calls := withBringUpSeams(t)
+	// Block the import until the test releases it. The bring-up runs the
+	// import on its own goroutine concurrently with the non-image apply, so
+	// the apply-nonimage leg records while the import is held, then the
+	// applyControlPlane fence blocks on <-importDone before applyDeploy.
+	calls.importHold = make(chan struct{})
+
+	done := make(chan error, 1)
+	go func() {
+		s, err := Up(context.Background(), upConfig(t))
+		if err == nil {
+			_ = s.Stop(context.Background())
+		}
+		done <- err
+	}()
+
+	// Wait until the non-image apply has recorded, proving the bring-up
+	// reached the apply phase while the import is still held; the Deployment
+	// apply must not have run yet because the import has not completed.
+	waitForLeg(t, calls, "apply-nonimage")
+	if order := calls.snapshot(); indexOf(order, "apply-deploy") >= 0 {
+		t.Fatalf("Deployment apply ran before the import landed: order = %v", order)
+	}
+	// Release the import; the fence unblocks and the Deployment apply proceeds.
+	close(calls.importHold)
+
+	if err := <-done; err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	order := calls.snapshot()
+	importIdx, deployIdx := indexOf(order, "import"), indexOf(order, "apply-deploy")
+	if importIdx < 0 || deployIdx < 0 {
+		t.Fatalf("bring-up missing import (%d) or apply-deploy (%d) leg: order = %v", importIdx, deployIdx, order)
+	}
+	if importIdx > deployIdx {
+		t.Errorf("import landed after the Deployment apply (import=%d, apply-deploy=%d): order = %v; the import must be fenced before the Deployments", importIdx, deployIdx, order)
+	}
+}
+
+// waitForLeg blocks until the named bring-up leg appears in the recorded
+// order or the test times out, so a fence test can synchronize on a leg that
+// runs on the bring-up goroutine.
+func waitForLeg(t *testing.T, calls *bringUpCalls, leg string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if indexOf(calls.snapshot(), leg) >= 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bring-up did not reach the %q leg within the timeout; order = %v", leg, calls.snapshot())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// indexOf returns the first index of v in s, or -1.
+func indexOf(s []string, v string) int {
+	for i, e := range s {
+		if e == v {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestUpSkipsPoolWhenEchoImageUnresolved_spec_4_7 asserts that when the echo

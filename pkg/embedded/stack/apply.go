@@ -30,6 +30,29 @@ import (
 // re-apply) rather than conflicting with a previous apply.
 const applyFieldManager = "lenny-embedded"
 
+// applyPhase selects which subset of the manifest set an apply pass submits.
+// The bring-up fences the slow multi-image bundle import between the two
+// phases: it applies the non-image objects (everything but the Deployments)
+// concurrently with the import, then waits for the import to land, then
+// applies the Deployments, so a scheduled pod never reaches the registry
+// under IfNotPresent before its image is present in containerd (proposal
+// 0017 C2: apply the Deployments after the import lands). spec: §17.4.
+type applyPhase int
+
+const (
+	// applyPhaseAll applies every object in the manifest set in one pass. The
+	// tier-2 envtest and any non-fenced caller use it; the bring-up uses the
+	// split phases below.
+	applyPhaseAll applyPhase = iota
+	// applyPhaseNonDeployments applies every object except the Deployments
+	// (namespaces, CRDs, RBAC, ConfigMaps/Secrets, Services, RuntimeClass).
+	// The bring-up runs this phase concurrently with the image import.
+	applyPhaseNonDeployments
+	// applyPhaseDeployments applies only the Deployments. The bring-up runs
+	// this phase after the image import has landed.
+	applyPhaseDeployments
+)
+
 // ApplyManifests applies the embedded §17.4 control-plane manifest set
 // (the gateway, controllers, RBAC, Services, RuntimeClass, and supporting
 // objects rendered from the production chart under the development
@@ -47,26 +70,44 @@ const applyFieldManager = "lenny-embedded"
 //
 // spec: §17.4 (in-cluster control plane).
 func ApplyManifests(ctx context.Context, kubeconfigPath string) error {
-	return applyManifestsFromKubeconfig(ctx, kubeconfigPath, manifests.FS)
+	return applyManifestsPhaseFromKubeconfig(ctx, kubeconfigPath, manifests.FS, applyPhaseAll)
 }
 
-// applyManifestsFromKubeconfig loads the kubeconfig at kubeconfigPath and
-// applies fsys against the cluster it addresses. It is split from
-// ApplyManifests so the manifest source is injectable: ApplyManifests
-// passes the embedded set, while a tier-2 envtest passes a small
-// representative set the test wrote a kubeconfig for, exercising the same
-// kubeconfig-loading entry point. spec: §17.4 (in-cluster control plane).
-func applyManifestsFromKubeconfig(ctx context.Context, kubeconfigPath string, fsys fs.FS) error {
+// applyNonImageManifests applies every embedded object except the
+// Deployments (the namespaces, CRDs, RBAC, ConfigMaps/Secrets, Services, and
+// RuntimeClass) to the cluster at kubeconfigPath. The bring-up runs it
+// concurrently with the image import: none of these objects pulls an image,
+// so they apply while the bundle is still loading. spec: §17.4.
+func applyNonImageManifests(ctx context.Context, kubeconfigPath string) error {
+	return applyManifestsPhaseFromKubeconfig(ctx, kubeconfigPath, manifests.FS, applyPhaseNonDeployments)
+}
+
+// applyDeploymentManifests applies only the embedded Deployments to the
+// cluster at kubeconfigPath. The bring-up runs it after the image import has
+// landed, so a scheduled pod resolves its image locally under IfNotPresent
+// rather than entering ImagePullBackOff. spec: §17.4.
+func applyDeploymentManifests(ctx context.Context, kubeconfigPath string) error {
+	return applyManifestsPhaseFromKubeconfig(ctx, kubeconfigPath, manifests.FS, applyPhaseDeployments)
+}
+
+// applyManifestsPhaseFromKubeconfig loads the kubeconfig at kubeconfigPath
+// and applies the selected phase of fsys against the cluster it addresses.
+// It is split from the phase entry points so the manifest source is
+// injectable: the real entry points pass the embedded set, while a tier-2
+// envtest passes a small representative set the test wrote a kubeconfig for,
+// exercising the same kubeconfig-loading path. spec: §17.4 (in-cluster
+// control plane).
+func applyManifestsPhaseFromKubeconfig(ctx context.Context, kubeconfigPath string, fsys fs.FS, phase applyPhase) error {
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("embedded apply: load kubeconfig %s: %w", kubeconfigPath, err)
 	}
-	return applyManifestsFromConfig(ctx, cfg, fsys)
+	return applyManifestsPhaseFromConfig(ctx, cfg, fsys, phase)
 }
 
 // applyManifestsFromConfig applies every object in fsys to the cluster
-// addressed by cfg. It is split from applyManifestsFromKubeconfig so a
-// tier-2 envtest can drive the apply against a real kube-apiserver from an
+// addressed by cfg in one pass. It is the envtest entry point: a tier-2
+// envtest drives the full apply against a real kube-apiserver from an
 // already-resolved config without writing a kubeconfig file. The manifest
 // source is injected so the test can supply a small representative set
 // rather than the full embedded render, which references images and CRDs
@@ -74,6 +115,14 @@ func applyManifestsFromKubeconfig(ctx context.Context, kubeconfigPath string, fs
 //
 // spec: §17.4 (in-cluster control plane).
 func applyManifestsFromConfig(ctx context.Context, cfg *rest.Config, fsys fs.FS) error {
+	return applyManifestsPhaseFromConfig(ctx, cfg, fsys, applyPhaseAll)
+}
+
+// applyManifestsPhaseFromConfig applies the objects in fsys selected by
+// phase to the cluster addressed by cfg. The objects are still sorted into
+// the §17.4 dependency order within the phase, so a non-Deployment pass
+// applies namespaces before the namespaced objects they hold. spec: §17.4.
+func applyManifestsPhaseFromConfig(ctx context.Context, cfg *rest.Config, fsys fs.FS, phase applyPhase) error {
 	objs, err := decodeManifests(fsys)
 	if err != nil {
 		return err
@@ -94,11 +143,33 @@ func applyManifestsFromConfig(ctx context.Context, cfg *rest.Config, fsys fs.FS)
 	// namespace, config, and Services exist.
 	sortByApplyOrder(objs)
 	for i := range objs {
+		if !phaseSelects(phase, objs[i].GetKind()) {
+			continue
+		}
 		if err := applyObject(ctx, dyn, mapper, &objs[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// phaseSelects reports whether the apply phase submits an object of the
+// given kind. The bring-up's two-phase fence rests on this split: the
+// non-Deployment phase skips every Deployment so the Deployments are
+// withheld until the image import lands, and the Deployment phase applies
+// only the Deployments. spec: §17.4 (apply the Deployments after the import
+// lands).
+func phaseSelects(phase applyPhase, kind string) bool {
+	switch phase {
+	case applyPhaseAll:
+		return true
+	case applyPhaseNonDeployments:
+		return kind != "Deployment"
+	case applyPhaseDeployments:
+		return kind == "Deployment"
+	default:
+		return false
+	}
 }
 
 // decodeManifests reads every *.yaml file in fsys, splits each into its

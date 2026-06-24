@@ -19,12 +19,13 @@ func ApplyManifestsFromConfigForTest(ctx context.Context, cfg *rest.Config, fsys
 	return applyManifestsFromConfig(ctx, cfg, fsys)
 }
 
-// ApplyManifestsFromKubeconfigForTest exposes applyManifestsFromKubeconfig
-// to the external tier-2 envtest so the §17.4 ApplyManifests entry point
-// (which loads a kubeconfig file) runs end to end against a real
+// ApplyManifestsFromKubeconfigForTest exposes the kubeconfig-loading apply
+// path to the external tier-2 envtest so the §17.4 ApplyManifests entry
+// point (which loads a kubeconfig file) runs end to end against a real
 // kube-apiserver from an injected manifest set, exercising the same
-// kubeconfig-loading path ApplyManifests runs. It is test-only.
+// kubeconfig-loading path ApplyManifests runs. It applies the full set in
+// one pass (the all phase), matching ApplyManifests. It is test-only.
 // spec: §17.4 (in-cluster control plane).
 func ApplyManifestsFromKubeconfigForTest(ctx context.Context, kubeconfigPath string, fsys fs.FS) error {
-	return applyManifestsFromKubeconfig(ctx, kubeconfigPath, fsys)
+	return applyManifestsPhaseFromKubeconfig(ctx, kubeconfigPath, fsys, applyPhaseAll)
 }

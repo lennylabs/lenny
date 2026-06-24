@@ -74,13 +74,20 @@ const platformBundleEnvVar = "LENNY_PLATFORM_BUNDLE"
 // live API server, a real containerd, or a real gateway, mirroring the
 // substrate placement seams. spec: §17.4.
 var (
-	createDevBearerSecretFn  = createDevBearerSecret
-	importPlatformBundleFn   = importPlatformBundle
-	applyManifestsFn         = ApplyManifests
-	waitGatewayDeployReadyFn = waitGatewayDeploymentReady
-	installRuntimesFn        = installReferenceRuntimes
-	gatewayReadinessTimeout  = 3 * time.Minute
-	gatewayReadinessInterval = 2 * time.Second
+	createDevBearerSecretFn = createDevBearerSecret
+	importPlatformBundleFn  = importPlatformBundle
+	// applyNonImageManifestsFn applies the non-Deployment objects and
+	// applyDeploymentManifestsFn applies the Deployments. The bring-up runs
+	// the first concurrently with the image import and the second only after
+	// the import has landed, so the import is fenced before any Deployment is
+	// submitted (proposal 0017 C2). They are separate seams so a unit test can
+	// assert the fence ordering. spec: §17.4.
+	applyNonImageManifestsFn   = applyNonImageManifests
+	applyDeploymentManifestsFn = applyDeploymentManifests
+	waitGatewayDeployReadyFn   = waitGatewayDeploymentReady
+	installRuntimesFn          = installReferenceRuntimes
+	gatewayReadinessTimeout    = 3 * time.Minute
+	gatewayReadinessInterval   = 2 * time.Second
 )
 
 // createDevBearerSecret creates (or updates in place) the dev bearer-trust
