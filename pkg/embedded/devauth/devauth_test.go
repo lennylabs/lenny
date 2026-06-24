@@ -85,6 +85,78 @@ func TestVerifyRejectsForeignSignature(t *testing.T) {
 	}
 }
 
+// TestVerifyRejectsForeignAudience pins the §17.4 audience-rejection
+// control: a token signed by this signer's own key but carrying an
+// audience other than dev.local is rejected at the audience branch even
+// though its signature is valid. This exercises the !hasAudience guard in
+// Verify directly, mirroring the in-cluster gateway's dev-mode audience
+// pin that refuses any token whose aud claim is not dev.local even when it
+// is signed by the trusted dev key.
+//
+// spec: 17.4 (the dev token path refuses any audience other than
+// dev.local even for a validly-signed token), 10.2 (Bearer verifier).
+func TestVerifyRejectsForeignAudience(t *testing.T) {
+	s, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// Mint a token with this signer's own key so the signature is valid,
+	// but stamp a foreign audience so the audience branch, rather than the
+	// signature branch, does the rejecting.
+	now := time.Now()
+	tok, err := s.signer.Sign(jwt.Claims{
+		Issuer:    Issuer,
+		Subject:   BuiltInUser,
+		Audience:  []string{"other"},
+		IssuedAt:  now.Unix(),
+		NotBefore: now.Add(-time.Minute).Unix(),
+		Expiry:    now.Add(time.Hour).Unix(),
+		TenantID:  BuiltInTenant,
+	})
+	if err != nil {
+		t.Fatalf("Sign foreign-audience token: %v", err)
+	}
+	// The same signer can validate the signature, so any rejection here is
+	// the audience guard firing rather than a signature mismatch.
+	if _, err := s.signer.Verify(tok); err != nil {
+		t.Fatalf("foreign-audience token has an invalid signature, the test cannot isolate the audience branch: %v", err)
+	}
+	if _, err := s.Verify(tok); err == nil {
+		t.Error("expected Verify to reject a validly-signed token whose audience is not dev.local")
+	}
+}
+
+// TestExpiredTokenRejected pins that an expired token is rejected even
+// when it is signed by this signer's own key and carries the dev.local
+// audience. §17.4 specifies short-lived tokens; a token past its expiry
+// (beyond the skew allowance) must not verify.
+//
+// spec: 17.4 (the dev signer issues short-lived tokens).
+func TestExpiredTokenRejected(t *testing.T) {
+	s, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Now()
+	// Expire well beyond the jwt skew allowance so the token is
+	// unambiguously past its lifetime.
+	tok, err := s.signer.Sign(jwt.Claims{
+		Issuer:    Issuer,
+		Subject:   BuiltInUser,
+		Audience:  []string{Audience},
+		IssuedAt:  now.Add(-2 * time.Hour).Unix(),
+		NotBefore: now.Add(-2 * time.Hour).Unix(),
+		Expiry:    now.Add(-time.Hour).Unix(),
+		TenantID:  BuiltInTenant,
+	})
+	if err != nil {
+		t.Fatalf("Sign expired token: %v", err)
+	}
+	if _, err := s.Verify(tok); err == nil {
+		t.Error("expected Verify to reject an expired token")
+	}
+}
+
 // spec: 17.4 (the persisted dev key is reused across processes so `lenny
 // token print` mints tokens the running stack accepts).
 func TestPersistedKeyRoundTrip(t *testing.T) {
