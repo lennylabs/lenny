@@ -72,6 +72,45 @@ func TestControllerArgsOmitsGatewayGRPCAddrWhenUnset(t *testing.T) {
 	}
 }
 
+// TestControllerArgsThreadsAgentNamespaces covers the §4.6.2/§5.1 pool
+// materialization activation: when the stack sets the embedded agent
+// namespace (done only when the substrate is up), controllerArgs threads it
+// through --agent-namespaces so the PoolScalingController, the mirror
+// reconciler, and the claim GC start and project the seeded poolstore rows
+// into the SandboxTemplate/SandboxWarmPool CRD pair. The controller gates
+// all three on a non-empty namespace list, so without this flag the warm
+// pool is never materialized and the gateway finds no idle pod to claim.
+//
+// spec: §4.6.2 (the PoolScalingController projects poolstore rows into the
+// pool CRDs), §5.1 (the warm-pool resources the projection materializes).
+func TestControllerArgsThreadsAgentNamespaces_spec_4_6_2(t *testing.T) {
+	const ns = "lenny-agents"
+	args := controllerArgs(ControllerSpec{PostgresDSN: "dsn", AgentNamespaces: ns})
+	got, ok := argValue(args, "--agent-namespaces")
+	if !ok {
+		t.Fatal("controllerArgs did not pass --agent-namespaces when the spec set it")
+	}
+	if got != ns {
+		t.Errorf("--agent-namespaces = %q, want %q", got, ns)
+	}
+}
+
+// TestControllerArgsOmitsAgentNamespacesWhenUnset confirms an empty
+// AgentNamespaces leaves the flag off, so a stack without an embedded cluster
+// keeps the PoolScalingController, the mirror reconciler, and the claim GC
+// off (no namespaces to reconcile into). This is the degraded fallback the
+// stack relies on when the substrate does not come up.
+//
+// spec: §4.6.2 (the controller starts the pool reconcilers only when an agent
+// namespace is given), §5.1.
+func TestControllerArgsOmitsAgentNamespacesWhenUnset(t *testing.T) {
+	args := controllerArgs(ControllerSpec{PostgresDSN: "dsn"})
+	if _, ok := argValue(args, "--agent-namespaces"); ok {
+		t.Error("controllerArgs passed --agent-namespaces with no namespace set; " +
+			"the pool reconcilers would start with no namespace to reconcile into")
+	}
+}
+
 // TestControllerEnvThreadsKubeconfig covers the host-rewritten KUBECONFIG
 // threading this step adds: the controller resolves its cluster connection
 // from KUBECONFIG, which the stack points at the launcher's host-rewritten

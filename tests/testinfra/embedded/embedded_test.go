@@ -71,14 +71,26 @@ func TestSkipUnlessAvailableTracksSupportedPlatform(t *testing.T) {
 	}
 }
 
-// spec: §17.4 — Runtime falls back to the §26.7 chat default when the
-// selector env is unset, and honors an operator override (the catalog
-// ships placeholder-pinned images, so an operator points the smoke test
-// at a pullable runtime via LENNY_EMBEDDED_SMOKE_RUNTIME).
+// spec: §17.4, §26.7 — Runtime falls back to the §26.7 chat user-facing
+// default when the selector env is unset, and honors an operator override.
+// The test-smoke-embedded Makefile target sets the override to echo, the
+// credential-free runtime `lenny up` auto-seeds with a runnable image, an
+// applied Runtime CRD, and a single-pod warm pool; the §26 reference
+// runtimes ship placeholder-pinned, so pointing the smoke at one of them
+// requires the operator to register a pullable image, apply a Runtime CRD,
+// and create a warm pool first.
 func TestRuntimeSelectorDefaultAndOverride(t *testing.T) {
 	t.Setenv(embedded.RuntimeEnv, "")
 	if got := embedded.Runtime(); got != embedded.DefaultRuntime {
 		t.Errorf("Runtime() default = %q, want %q", got, embedded.DefaultRuntime)
+	}
+	// The Makefile default override the smoke runs under: echo, the
+	// auto-seeded runnable runtime. DefaultRuntime stays chat (the §26.7
+	// user-facing default), so the override is what makes the smoke target
+	// the runnable runtime.
+	t.Setenv(embedded.RuntimeEnv, "echo")
+	if got := embedded.Runtime(); got != "echo" {
+		t.Errorf("Runtime() echo override = %q, want %q", got, "echo")
 	}
 	t.Setenv(embedded.RuntimeEnv, "claude-code")
 	if got := embedded.Runtime(); got != "claude-code" {

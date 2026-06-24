@@ -147,7 +147,7 @@ For local use Lenny provides **three local-dev modes**. Embedded Mode is the pri
 
 ```
 lenny up                                  # Brings up a full Lenny stack on localhost
-lenny session new --runtime=chat --attach "hello"    # Ready to use in < 60s
+lenny session new --runtime=echo --attach "hello"    # Ready to use in < 60s
 lenny down                                 # Tear everything down
 ```
 
@@ -169,7 +169,9 @@ A single statically-linked binary — `lenny` — embeds every Lenny component n
 
 **Local isolation fidelity.** The embedded single-node cluster cannot reproduce the full production isolation surface on any host. The `sandboxed` (gVisor) and `microvm` (Kata) isolation profiles ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles)) degrade to `standard` (runc) locally: gVisor degrades because the embedded cluster installs no gVisor RuntimeClass or `runsc` containerd-shim, and Kata degrades because it requires hardware virtualization the local substrate cannot nest. This matches the dev-mode fallback to runc ([§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles), dev mode fallback). The embedded k3s runs with NetworkPolicy enforcement disabled, so the default-deny egress isolation ([§13.2](13_security-model.md#132-network-isolation)) is not exercised locally, consistent with the dev-mode preflight skip of CNI NetworkPolicy support ([§17.6](#176-packaging-and-installation) preflight, dev mode). These gaps apply to all three local-dev modes and to both the Linux and Docker-backed substrates, so an evaluator should not mistake local behavior for the production isolation boundary.
 
-**Reference runtimes pre-installed.** `lenny up` installs all reference runtimes from [Section 26](26_reference-runtime-catalog.md) as platform-global records and auto-grants access to the `default` tenant so the developer can invoke any of them without further configuration. Container images are pulled lazily on first session start for each runtime; subsequent sessions reuse the cached image. The warm pool defaults are overridden to `warmCount: 0` (cold-start on first use) to keep resource usage low on laptops.
+**Reference runtimes pre-installed.** `lenny up` installs all reference runtimes from [Section 26](26_reference-runtime-catalog.md) as platform-global records and auto-grants access to the `default` tenant so the developer sees the catalog. The placeholder-pinned Section 26 records register but do not start a session until a runnable image digest, a Runtime CRD instance, and a warm pool exist for them; once those three artifacts are present the runtime's image is pulled on first session start and subsequent sessions reuse the cached image. The Section 26 records are seeded with no warm pool to keep resource usage low on laptops, so a session against one does not start until a runnable digest, an applied Runtime CRD instance, and a warm pool exist for it.
+
+The Section 26 records register through the gateway registry so the developer sees the catalog, but they ship with a placeholder image digest, apply no Runtime CRD instance, and seed no warm pool, so a session against one returns a session-creation failure rather than starting: the gateway routes every session through the pod path, finds no warm pool for the runtime, and fails the create. Starting a session against a Section 26 record requires three artifacts. First, register a runnable image digest on the record (re-register it with the published digest, or import a local image with `lenny image import` and re-register the record under that image). Second, apply a Runtime CRD instance for the runtime carrying the deployment model the embedded substrate runs, because the Sandbox controller resolves the runtime from a Runtime CRD by name and the bootstrap registry-only seed creates no such instance. Third, create a warm pool for the runtime. Importing an image alone supplies a pullable image but applies no CRD and creates no pool, and re-pinning the registry digest and creating a pool without applying a Runtime CRD leave the warm pod creation failing because the Sandbox controller cannot resolve a Runtime CRD that the registry-only seed never creates. In addition to those records, `lenny up` seeds the built-in echo runtime (the [Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime) conformance exemplar, Basic-level) with a runnable image digest, an applied Runtime CRD carrying `deploymentModel: embedded`, and a single-pod warm pool, so a credential-free session runs on an in-cluster pod over the [Section 4.7](04_system-components.md#47-runtime-adapter) boundary; when the embedded cluster or Docker substrate is unavailable the gateway degrades to the in-process echo executor.
 
 **Command surface.**
 
@@ -305,10 +307,31 @@ spec:
 EOF
 lenny-ctl runtime register --file runtime.yaml
 
-# 4. The embedded gateway's CRD controller picks up the runtime automatically;
-#    the pool warms a pod on next session start.
+# 4. The embedded gateway's CRD controller picks the registry record up
+#    automatically. A session against the runtime starts on a pod only once a
+#    Runtime CRD instance is applied for it and a warm pool exists for it; the
+#    registry-only register in step 3 creates neither.
 
-# 5. Test with POST /v1/sessions via curl or the bundled Go/TS client SDK
+# 5. Apply a Runtime CRD instance for my-agent against the embedded cluster so
+#    the Sandbox controller can resolve the runtime by name. The CRD carries the
+#    deployment model the registered my-agent runtime runs; for a custom
+#    Basic-level image built by docker build this defaults to sidecar.
+cat > runtime-crd.yaml <<'EOF'
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: my-agent
+spec:
+  image: my-agent:dev
+  integrationLevel: basic
+  deploymentModel: sidecar
+EOF
+lenny kubectl apply -f runtime-crd.yaml   # Applies against the embedded kubeconfig
+
+# 6. Create a warm pool for my-agent so a pod is provisioned.
+lenny-ctl pool create --runtime my-agent --warm-count 1
+
+# 7. Test with POST /v1/sessions via curl or the bundled Go/TS client SDK
 #    `lenny token print` emits a short-lived bearer for the embedded built-in user;
 #    see §24.9 for full reference (Embedded Mode only).
 curl -k -X POST https://localhost:8443/v1/sessions \

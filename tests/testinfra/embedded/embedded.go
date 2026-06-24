@@ -16,12 +16,14 @@
 // and on macOS and Windows it needs the docker CLI on PATH so Docker
 // Desktop supplies the Linux kernel the binary cannot embed. On first
 // run the bring-up also needs network access to download the k3s and
-// PostgreSQL bundles (§17.4). Session start additionally pulls the
-// runtime image, which the reference catalog ships placeholder-pinned
-// (§17.4 / catalog.go), so `session new` succeeds only once an operator
-// points the chosen runtime at a pullable image. The bring-up is
-// therefore expensive and host-dependent; SkipUnlessAvailable gates the
-// test behind an explicit LENNY_EMBEDDED_SMOKE opt-in and the
+// PostgreSQL bundles (§17.4). `lenny up` auto-seeds the echo runtime with
+// a runnable image digest, an applied Runtime CRD, and a single-pod warm
+// pool, so `session new --runtime echo` places a session on a pod with no
+// operator setup; the §26 reference runtimes ship placeholder-pinned
+// (§17.4 / catalog.go) and need a registered pullable image, an applied
+// Runtime CRD, and a warm pool before a session against one starts. The
+// bring-up is therefore expensive and host-dependent; SkipUnlessAvailable
+// gates the test behind an explicit LENNY_EMBEDDED_SMOKE opt-in and the
 // cross-platform substrate prerequisite (Linux, or a non-Linux host with
 // Docker on PATH) so the unit and tier-4 suites stay green on developer
 // laptops and CI runners that lack the substrate. This mirrors the
@@ -51,14 +53,21 @@ import (
 const SmokeOptInEnv = "LENNY_EMBEDDED_SMOKE"
 
 // RuntimeEnv names the environment variable that selects the runtime
-// `lenny session new` targets in the smoke test. The reference catalog
-// ships placeholder-pinned images that cannot be pulled, so an operator
-// running the smoke test sets this to a runtime whose image is pullable
-// on the host (or pre-loads the chat image). It defaults to DefaultRuntime.
+// `lenny session new` targets in the smoke test. `lenny up` auto-seeds the
+// echo runtime with a runnable image digest, an applied Runtime CRD, and a
+// single-pod warm pool, so the test-smoke-embedded Makefile target defaults
+// this to echo (the only invocation surface), and the smoke places a session
+// with no operator setup. The §26 reference catalog ships placeholder-pinned
+// images, so pointing the smoke at one of those runtimes requires an
+// operator to register a pullable image, apply a Runtime CRD, and create a
+// warm pool first. When this variable is unset it falls back to
+// DefaultRuntime.
 const RuntimeEnv = "LENNY_EMBEDDED_SMOKE_RUNTIME"
 
 // DefaultRuntime is the runtime the smoke test targets when RuntimeEnv
-// is unset. chat is the §26.7 zero-config default `lenny up` seeds.
+// is unset. chat is the §26.7 user-facing default `lenny up` surfaces; the
+// test-smoke-embedded Makefile target overrides RuntimeEnv to echo, the
+// credential-free runtime `lenny up` runs on a pod out of the box.
 const DefaultRuntime = "chat"
 
 // UpTimeoutEnv names the environment variable that overrides the
@@ -155,8 +164,12 @@ func Runtime() string {
 	return DefaultRuntime
 }
 
-// Build compiles cmd/lenny into a fresh temp binary and returns its
-// path. A build failure fails the test.
+// Build compiles cmd/lenny into a fresh temp binary and returns its path.
+// It also builds the sibling lenny-gateway and lenny-controller binaries
+// into the same directory: the embedded stack shells out to them
+// (resolveBin resolves a sibling next to the lenny binary), so a stale or
+// absent gateway/controller binary fails the bring-up. A build failure
+// fails the test.
 func Build(t testing.TB) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "lenny-embedded-it-*")
@@ -164,13 +177,15 @@ func Build(t testing.TB) string {
 		t.Fatalf("embedded.Build: mkdtemp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	bin := filepath.Join(dir, "lenny")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/lenny")
-	cmd.Dir = schematest.RepoRoot(t)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("embedded.Build: build cmd/lenny: %v\n%s", err, out)
+	root := schematest.RepoRoot(t)
+	for _, c := range []string{"lenny", "lenny-gateway", "lenny-controller"} {
+		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, c), "./cmd/"+c)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("embedded.Build: build cmd/%s: %v\n%s", c, err, out)
+		}
 	}
-	return bin
+	return filepath.Join(dir, "lenny")
 }
 
 // Result is the outcome of one CLI invocation.

@@ -25,6 +25,11 @@ type UpOptions struct {
 	// the §17.4 defaults.
 	HTTPPort  int
 	HTTPSPort int
+	// EchoTarball overrides the path to the pre-built echo-embedded
+	// docker-save tarball the bring-up imports (the LENNY_ECHO_TARBALL
+	// operator override). Empty discovers it alongside the lenny binary.
+	// spec: §24.19.1 (the --file import path).
+	EchoTarball string
 	// Out and ErrOut receive progress and error output.
 	Out    io.Writer
 	ErrOut io.Writer
@@ -163,10 +168,11 @@ func RunSupervisor(ctx context.Context, opts UpOptions) error {
 		return err
 	}
 	st, err := Up(ctx, Config{
-		Root:      root,
-		HTTPPort:  opts.HTTPPort,
-		HTTPSPort: opts.HTTPSPort,
-		Out:       orDiscard(opts.Out),
+		Root:        root,
+		HTTPPort:    opts.HTTPPort,
+		HTTPSPort:   opts.HTTPSPort,
+		EchoTarball: opts.EchoTarball,
+		Out:         orDiscard(opts.Out),
 	})
 	if err != nil {
 		return err

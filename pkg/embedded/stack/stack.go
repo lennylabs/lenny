@@ -73,6 +73,12 @@ type Config struct {
 	// alongside the running lenny binary and on PATH.
 	GatewayBin    string
 	ControllerBin string
+	// EchoTarball overrides the path to the pre-built echo-embedded
+	// docker-save tarball the bring-up imports into the embedded
+	// containerd (the LENNY_ECHO_TARBALL operator override). Empty
+	// triggers discovery alongside the running lenny binary, where the
+	// tarball ships. spec: §24.19.1 (the --file import path).
+	EchoTarball string
 	// Out receives human-readable progress output. Nil discards it.
 	Out io.Writer
 }
@@ -225,7 +231,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// spec: §17.4 (the embedded Kubernetes substrate is provisioned per
 	// host operating system, and stays identical above the substrate
 	// layer).
-	sub := s.provisionSubstrate(ctx, paths, out)
+	sub := s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
 	k3sEnabled := sub.enabled
 	kubeconfig := sub.kubeconfig
 	gatewayGRPCDialAddr := sub.gatewayGRPCDialAddr
@@ -261,6 +267,19 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// §4.7, §8.6.
 	if k3sEnabled {
 		s.gwSpec.GRPCAddr = fmt.Sprintf(":%d", defaultGatewayGRPCPort)
+		// §4.7 pod placement: point the gateway at the agent namespace so it
+		// resolves the warm pool from there and routes every started session onto
+		// a warm pod over the §4.7 adapter boundary instead of the in-process echo
+		// executor. Set here, before startGateway below, because the gateway
+		// consumes gwSpec at launch; setting it in the later controller block would
+		// launch the gateway without -agent-namespace and leave the activation
+		// inert. Gated on the k3sEnabled substrate gate alone, symmetric with the
+		// controller's AgentNamespaces set in the controller block below: the echo
+		// tarball ships with the lenny binary and is imported at every bring-up
+		// where the substrate is up, so the runnable echo image is always present.
+		// When the substrate is down (k3sEnabled false) the field stays empty and
+		// the gateway keeps the in-process echo executor. spec: §17.4, §4.7.
+		s.gwSpec.AgentNamespace = agentNamespace
 	}
 	gw, err := startGateway(s.gwSpec)
 	if err != nil {
@@ -292,6 +311,16 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 				Kubeconfig:      kubeconfig,
 				GatewayGRPCAddr: gatewayGRPCDialAddr,
 				LogPath:         paths.Logs + "/controller.log",
+				// §4.6.2/§5.1: point the controller at the same agent namespace
+				// the gateway places into so the PoolScalingController (and the
+				// mirror reconciler and claim GC) start and materialize the
+				// seeded echo poolstore row into the SandboxTemplate/SandboxWarmPool
+				// CRD pair the gateway claims an idle pod from. The embedded
+				// controller is not given --dedicated-dns-cluster-ip, so the
+				// seeded pool's dnsPolicy: cluster-default keeps the echo pod on
+				// k3s kube-system CoreDNS. Both threads target the same namespace.
+				// spec: §4.6.2, §5.1.
+				AgentNamespaces: agentNamespace,
 			}
 			ctl, err := startController(s.ctlSpec)
 			if err != nil {
@@ -303,8 +332,22 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	}
 
 	// ----- §26 reference runtimes -----
+	// Pass the import-time-resolved echo image reference so the bootstrap seed
+	// registers the echo runtime under the same digest the applied Runtime CR
+	// and the containerd image carry. The echo tarball ships with the lenny
+	// binary and is imported at every bring-up where the substrate is up, so a
+	// non-empty reference is the expected steady state whenever k3sEnabled is
+	// true; an empty reference there means the import failed, an edge this
+	// bring-up does not treat as a normal degraded mode. AgentNamespace is set
+	// on k3sEnabled alone (above), so on the k3s-up-but-import-failed edge the
+	// gateway still routes through the §4.7 pod path against the sentinel-pinned
+	// echo seed (no Runtime CR is applied, since the CR apply is gated on a
+	// resolved digest) and an echo session fails to start. The gateway keeps the
+	// in-process echo executor only when the substrate is down (k3sEnabled
+	// false), matching the first k3sEnabled block above.
+	// spec: §15.4.4 (echo exemplar), §4.7 (digest-pinned pod image).
 	fmt.Fprintln(out, "lenny up: installing reference runtimes")
-	if err := installReferenceRuntimes(ctx, "http://"+httpAddr, out); err != nil {
+	if err := installReferenceRuntimes(ctx, "http://"+httpAddr, sub.echoImageRef, out); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: reference-runtime install incomplete: %v\n", err)
 	}
 
@@ -388,12 +431,23 @@ func (s *Stack) CACertPath() string { return s.tls.CACertPath }
 func (s *Stack) OIDC() *oidc.Provider { return s.idp }
 
 // substrateResult is the outcome of provisionSubstrate: whether the
-// embedded cluster came up, the admin kubeconfig path, and the §4.7
-// gateway↔adapter callback address the controller stamps onto agent pods.
+// embedded cluster came up, the admin kubeconfig path, the §4.7
+// gateway↔adapter callback address the controller stamps onto agent pods,
+// and the import-time-resolved echo runtime image reference.
 type substrateResult struct {
 	enabled             bool
 	kubeconfig          string
 	gatewayGRPCDialAddr string
+	// echoImageRef is the digest-pinned echoImageRepository@sha256:<digest>
+	// reference the bring-up resolved when it imported the echo-embedded
+	// tarball into the embedded containerd. It is empty when the substrate
+	// did not come up or, with the substrate up, the import failed. Only the
+	// substrate-down case keeps the gateway on the in-process echo executor;
+	// with k3s up AgentNamespace stays set and the gateway routes through the
+	// §4.7 pod path regardless. S6 injects it into the bootstrap seed
+	// (overwriting echoRuntime.Image) and the applied echo Runtime CRD.
+	// spec: §24.19.1 (the --file import path), §4.7 (digest-pinned pod image).
+	echoImageRef string
 }
 
 // Substrate-provisioning seams. They default to the real k3s launcher and
@@ -416,6 +470,13 @@ var (
 	// container without invoking a real docker. spec: §24.19 (a crashed
 	// supervisor must not leak the Docker-backed k3s container).
 	removeSubstrateContainer = k3s.RemoveContainer
+	// importEchoRuntimeImageFn is the bring-up echo-image import seam. It
+	// defaults to the real (*Stack).importEchoRuntimeImage and is a
+	// package-level var so a unit test can drive the §4.7 activation sequence
+	// in provisionSubstrate (namespace create, import, Runtime-CR apply) with a
+	// controllable resolved digest, without a live ctr or containerd. spec:
+	// §24.19.1 (the --file import path), §4.7.
+	importEchoRuntimeImageFn = (*Stack).importEchoRuntimeImage
 )
 
 // provisionSubstrate brings the embedded Kubernetes substrate up on every
@@ -432,7 +493,7 @@ var (
 // spec: §17.4 (the embedded Kubernetes substrate is provisioned per host
 // operating system, and stays identical above the substrate layer), §4.7,
 // §8.6, §9.1.
-func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, out io.Writer) substrateResult {
+func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball string, out io.Writer) substrateResult {
 	if !substrateSupported() {
 		// On a non-Linux host the embedded k3s runs under Docker Desktop's
 		// Linux VM, so the platform is unsupported only when Docker is
@@ -466,7 +527,91 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, out io.Writ
 	if err := installSubstrateCRDs(ctx, res.kubeconfig); err != nil {
 		fmt.Fprintf(out, "lenny up: WARNING: CRD install failed: %v\n", err)
 	}
+	// Create the agent namespace the gateway places into and the
+	// PoolScalingController materializes the seeded pool CRDs into. Both the
+	// gateway's -agent-namespace and the controller's --agent-namespaces are
+	// set to this namespace (in Up's two k3sEnabled blocks), so it must exist
+	// before either places. A create failure warns rather than aborts: the
+	// controllers create namespaced resources lazily, but a missing namespace
+	// would leave placement inert, so the bring-up surfaces it. spec: §4.6.2
+	// (the pool CRDs materialize in the agent namespace), §5.1.
+	if err := ensureAgentNamespaceFn(ctx, res.kubeconfig, agentNamespace); err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: agent namespace create failed: %v\n", err)
+	}
+	// Install the §5.3 `runc` RuntimeClass the seeded echo pool's `standard`
+	// isolation profile resolves to. A bare k3s cluster ships no RuntimeClass
+	// objects, so without it the WarmPoolController fails to render the echo pod
+	// ("runtimeclass \"runc\" not found") and placement stays inert. The handler
+	// is k3s/containerd's built-in `runc`, so no out-of-band runtime is needed.
+	// spec: §5.3 (standard->runc), §17.4 (Embedded Mode provisions the substrate).
+	if err := ensureRuntimeClassFn(ctx, res.kubeconfig, runcRuntimeClassName, runcRuntimeClassName); err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: runtimeclass install failed: %v\n", err)
+	}
+	// Import the pre-built echo-embedded image into the embedded containerd
+	// and record the import-time-resolved digest. The import runs after the
+	// substrate is up (so containerd is reachable) and before the Runtime-CR
+	// apply and bootstrap seed, so the resolved digest-pinned reference is
+	// available to both, gated on the substrate coming up alone (no separate
+	// runnable-image precondition: the tarball ships with the binary). A
+	// failed import leaves echoImageRef empty, but with k3s up AgentNamespace
+	// stays set, so the gateway routes through the §4.7 pod path and the echo
+	// session fails to start rather than falling back to the in-process echo
+	// executor. spec: §24.19.1 (the --file import path), §17.4
+	// (Embedded Mode bring-up), §4.7 (digest-pinned pod image).
+	res.echoImageRef = importEchoRuntimeImageFn(s, paths.Root, echoTarball, out)
+	// Apply the cluster-scoped echo Runtime CR carrying the import-time-resolved
+	// digest and deploymentModel: embedded. The Sandbox controller resolves the
+	// runtime from a Runtime CR by name, so without this the seeded registry
+	// record and warm pool leave the warm pod failing to render. It runs only
+	// when the import resolved a digest: an empty echoImageRef means no echo
+	// image reached containerd, so applying a CR carrying a sentinel
+	// digest that no containerd image matches would only ImagePullBackOff. The
+	// seeded digest, the CR digest, and the containerd image digest are
+	// identical because all three resolve from the same imported image. spec:
+	// §4.7 (embedded deployment model), §5.1 (Runtime CR).
+	if res.echoImageRef != "" {
+		fmt.Fprintln(out, "lenny up: applying the echo runtime CR")
+		if err := applyEchoRuntimeCRFn(ctx, res.kubeconfig, res.echoImageRef); err != nil {
+			fmt.Fprintf(out, "lenny up: WARNING: echo runtime CR apply failed: %v\n", err)
+		}
+	}
 	return res
+}
+
+// importEchoRuntimeImage imports the pre-built echo-embedded tarball into
+// the embedded containerd and returns the import-time-resolved
+// digest-pinned image reference, or the empty string when the import
+// cannot run (no tarball, unreachable containerd, or a failed import). It
+// resolves the ctr invocation from the live launcher's substrate handle
+// rather than the recorded stack state, because the state file is not
+// written until the end of Up. A failed import is non-fatal: it is logged
+// and returns the empty string; the caller gates the Runtime-CR apply on a
+// non-empty return. With the substrate up AgentNamespace stays set, so the
+// gateway routes through the §4.7 pod path and echo sessions fail to start
+// rather than falling back to the in-process echo executor.
+//
+// spec: §24.19.1 (the --file import path), §17.4 (Embedded Mode bring-up
+// per host operating system), §4.7 (the digest-pinned embedded pod image).
+func (s *Stack) importEchoRuntimeImage(root, echoTarball string, out io.Writer) string {
+	tarball, err := resolveEchoTarball(echoTarball)
+	if err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: echo runtime image not imported: %v\n", err)
+		return ""
+	}
+	ctr, code := CtrCommandForSubstrate(root, k3sContainerHandle(s.k3s), out)
+	if code != 0 {
+		// CtrCommandForSubstrate already wrote a K3S_UNAVAILABLE diagnostic.
+		fmt.Fprintln(out, "lenny up: WARNING: echo runtime image not imported; the embedded containerd is unreachable")
+		return ""
+	}
+	fmt.Fprintln(out, "lenny up: importing the echo runtime image into the embedded containerd")
+	ref, err := importEchoImage(ctr, tarball, out, out)
+	if err != nil {
+		fmt.Fprintf(out, "lenny up: WARNING: echo runtime image import failed: %v\n", err)
+		return ""
+	}
+	fmt.Fprintf(out, "lenny up: echo runtime image imported as %s\n", ref)
+	return ref
 }
 
 // gatewayHealthy reports whether the gateway at baseURL answers its

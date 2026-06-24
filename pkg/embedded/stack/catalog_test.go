@@ -47,6 +47,76 @@ func TestReferenceRuntimesIntegrationLevels(t *testing.T) {
 	}
 }
 
+// TestEchoRuntimeEntry_spec_15_4_4 asserts the §15.4.4 echo conformance
+// exemplar is seeded as a credential-free, Basic-level, single-pod warm
+// pool runtime distinct from the §26 reference catalog. spec: §15.4.4,
+// §5.2, §17.4.
+func TestEchoRuntimeEntry_spec_15_4_4(t *testing.T) {
+	echo := EchoRuntime()
+	if echo.Name != EchoRuntimeName {
+		t.Errorf("echo name = %q, want %q", echo.Name, EchoRuntimeName)
+	}
+	// echo-embedded is Basic-level (cmd/runtimes/echo-embedded), unlike the
+	// Full §26 reference runtimes.
+	if echo.IntegrationLevel != "basic" {
+		t.Errorf("echo integrationLevel = %q, want basic", echo.IntegrationLevel)
+	}
+	// The image is the canonical echo-embedded repository, digest-pinned.
+	if !strings.HasPrefix(echo.Image, echoImageRepository) {
+		t.Errorf("echo image %q is not the canonical echo-embedded repository", echo.Image)
+	}
+	if !strings.Contains(echo.Image, "@sha256:") {
+		t.Errorf("echo image %q is not digest-pinned", echo.Image)
+	}
+	// §5.2 hot-pool taxonomy: a single-pod warm pool (warmCount: 1) so the
+	// WarmPoolController pre-warms one echo pod.
+	if echo.DefaultPoolConfig == nil || echo.DefaultPoolConfig.WarmCount != 1 {
+		t.Errorf("echo defaultPoolConfig = %+v, want warmCount 1", echo.DefaultPoolConfig)
+	}
+	if echo.DefaultPoolConfig.ResourceClass != "small" {
+		t.Errorf("echo resourceClass = %q, want small", echo.DefaultPoolConfig.ResourceClass)
+	}
+	// Credential-free: no LLM provider, no supportedProviders, no
+	// credentialCapabilities. §13: the runtime leases no credentials.
+	if len(echo.SupportedProviders) != 0 {
+		t.Errorf("echo declares supportedProviders %v, want none (credential-free)", echo.SupportedProviders)
+	}
+	if echo.CredentialCapabilities != nil {
+		t.Errorf("echo declares credentialCapabilities %+v, want none (credential-free)", echo.CredentialCapabilities)
+	}
+	// echo carries its own credential-free marker rather than the §26
+	// reference-runtime marker.
+	if echo.Labels["lenny.dev/reference-runtime"] == "true" {
+		t.Errorf("echo carries the §26 reference-runtime marker, want the echo-runtime marker only: %v", echo.Labels)
+	}
+	if echo.Labels["lenny.dev/echo-runtime"] != "true" {
+		t.Errorf("echo missing the echo-runtime marker label, got %v", echo.Labels)
+	}
+}
+
+// TestEchoRuntimeNotInReferenceCatalog_spec_26_1 asserts echo is declared
+// outside the §26 referenceRuntimes slice so the §26-only loops
+// (placeholderPinnedRuntimes, the bootstrap-seed reference loop) do not
+// treat the runnable echo record as a placeholder-pinned §26 entry. spec:
+// §26.1, §15.4.4.
+func TestEchoRuntimeNotInReferenceCatalog_spec_26_1(t *testing.T) {
+	for _, rt := range ReferenceRuntimes() {
+		if rt.Name == EchoRuntimeName {
+			t.Fatalf("echo must not appear in the §26 reference catalog")
+		}
+	}
+	// echo's sentinel image must not be the §26 placeholder digest, so the
+	// placeholder-pin scan never lists echo.
+	if hasPlaceholderDigest(EchoRuntime().Image) {
+		t.Error("echo image must not carry the §26 placeholder digest")
+	}
+	for _, name := range placeholderPinnedRuntimes() {
+		if name == EchoRuntimeName {
+			t.Error("placeholderPinnedRuntimes must not list the runnable echo runtime")
+		}
+	}
+}
+
 func TestReferenceRuntimesReturnsCopy(t *testing.T) {
 	first := ReferenceRuntimes()
 	first[0].Name = "mutated"
@@ -57,7 +127,7 @@ func TestReferenceRuntimesReturnsCopy(t *testing.T) {
 }
 
 func TestBuildBootstrapSeed(t *testing.T) {
-	seed := buildBootstrapSeed()
+	seed := buildBootstrapSeed("")
 	// §17.4: lenny up creates the default tenant.
 	if len(seed.Tenants) != 1 || seed.Tenants[0].ID != defaultTenant {
 		t.Errorf("seed tenants = %+v, want the default tenant", seed.Tenants)
@@ -79,9 +149,10 @@ func TestBuildBootstrapSeed(t *testing.T) {
 	if !hasAdmin {
 		t.Errorf("built-in user roles = %v, want platform-admin", seed.Users[0].Roles)
 	}
-	// Every §26 reference runtime is seeded as a type:agent record.
-	if len(seed.Runtimes) != len(referenceRuntimes) {
-		t.Errorf("seed has %d runtimes, want %d", len(seed.Runtimes), len(referenceRuntimes))
+	// Every §26 reference runtime plus the §15.4.4 echo exemplar is seeded
+	// as a type:agent record.
+	if len(seed.Runtimes) != len(referenceRuntimes)+1 {
+		t.Errorf("seed has %d runtimes, want %d (the §26 catalog plus echo)", len(seed.Runtimes), len(referenceRuntimes)+1)
 	}
 	for _, rt := range seed.Runtimes {
 		if rt.Type != "agent" {
@@ -91,10 +162,19 @@ func TestBuildBootstrapSeed(t *testing.T) {
 			t.Errorf("runtime %s seeded without an image", rt.Name)
 		}
 		// §5.1 line 51: labels are required from v1. The gateway bootstrap
-		// handler rejects a create without them, so every reference-runtime
-		// seed must carry at least one label or `lenny up` fails to install.
+		// handler rejects a create without them, so every seeded runtime
+		// must carry at least one label or `lenny up` fails to install.
 		if len(rt.Labels) == 0 {
 			t.Errorf("runtime %s seeded without labels (§5.1 line 51 requires them)", rt.Name)
+		}
+		// The §26 reference runtimes carry the reference-runtime marker;
+		// echo is the §15.4.4 conformance exemplar rather than a §26
+		// reference runtime, so it carries its own credential-free marker.
+		if rt.Name == EchoRuntimeName {
+			if rt.Labels["lenny.dev/echo-runtime"] != "true" {
+				t.Errorf("echo runtime missing the echo-runtime marker label, got %v", rt.Labels)
+			}
+			continue
 		}
 		if rt.Labels["lenny.dev/reference-runtime"] != "true" {
 			t.Errorf("runtime %s missing the reference-runtime marker label, got %v", rt.Name, rt.Labels)

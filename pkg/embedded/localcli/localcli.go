@@ -31,8 +31,10 @@ const (
 	// EMBEDDED_MODE_REQUIRED code: a local command that requires a
 	// running Embedded Mode stack was invoked without one.
 	exitEmbeddedModeRequired = 3
-	// exitK3sUnavailable is §24.19.1 line 282 K3S_UNAVAILABLE.
-	exitK3sUnavailable = 4
+	// exitK3sUnavailable is §24.19.1 line 282 K3S_UNAVAILABLE. The image
+	// bridge that returns this code now lives in pkg/embedded/stack; this
+	// alias keeps a single normative value the CLI dispatch compares against.
+	exitK3sUnavailable = stack.ExitK3sUnavailable
 )
 
 // Supervising reports whether this process was launched as the detached
@@ -49,11 +51,17 @@ func Supervising() bool {
 // controller children. The precondition is Supervising().
 func RunSupervise(args []string, stdout, stderr io.Writer) int {
 	httpPort, httpsPort := parsePortFlags(args)
+	// LENNY_ECHO_TARBALL is the operator override for the pre-built
+	// echo-embedded tarball the bring-up imports; the detached supervisor
+	// inherits the parent's environment, so it is read here and threaded
+	// into the stack Config. Empty discovers the tarball alongside the lenny
+	// binary, where it ships. spec: §24.19.1 (the --file import path).
 	err := stack.RunSupervisor(context.Background(), stack.UpOptions{
-		HTTPPort:  httpPort,
-		HTTPSPort: httpsPort,
-		Out:       stdout,
-		ErrOut:    stderr,
+		HTTPPort:    httpPort,
+		HTTPSPort:   httpsPort,
+		EchoTarball: os.Getenv("LENNY_ECHO_TARBALL"),
+		Out:         stdout,
+		ErrOut:      stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny supervisor: %v\n", err)
