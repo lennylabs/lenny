@@ -28,6 +28,14 @@ type State struct {
 	// child-process launcher, which runs k3s as a host process, and empty
 	// when k3s did not start.
 	K3sContainer string `json:"k3sContainer,omitempty"`
+	// K3sPID is the process-group leader PID of the embedded k3s on the Linux
+	// child-process launcher. lenny up starts k3s in its own process group so
+	// it outlives the foreground lenny up process (the in-cluster pods must
+	// survive the CLI), so a later lenny down must terminate the recorded
+	// process group out of process. It is zero on the Docker-backed launcher,
+	// which records K3sContainer instead, and zero when k3s did not start.
+	// spec: §17.4 (the substrate outlives the CLI; lenny down stops it).
+	K3sPID int `json:"k3sPid,omitempty"`
 	// GatewayForwarderAddr is the loopback host:port the host-side TLS
 	// forwarder presents the in-cluster gateway on (the §17.4
 	// EMBEDDED_MODE_LOCAL_ONLY 127.0.0.1:8443 endpoint). The CLI resolves

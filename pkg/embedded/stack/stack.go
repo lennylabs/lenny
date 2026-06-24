@@ -69,6 +69,14 @@ type Config struct {
 	// triggers discovery alongside the running lenny binary, where the
 	// tarball ships. spec: §24.19.1 (the --file import path).
 	EchoTarball string
+	// CLIVersion is the running lenny CLI build version. A warm lenny up
+	// compares it against the deployed image tag the prior bring-up recorded
+	// and re-imports and re-applies the embedded manifests on a mismatch, so
+	// a stale image is not run after a lenny upgrade (C4). Empty (a source
+	// build's "dev") still reconciles against a recorded non-empty tag.
+	// spec: §17.4 (an upgrade re-imports and re-applies on a CLI-version /
+	// image-tag mismatch).
+	CLIVersion string
 	// Out receives human-readable progress output. Nil discards it.
 	Out io.Writer
 }
@@ -175,6 +183,13 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	// gateway/controllers/CRDs differs per host. provisionSubstrate also
 	// imports the echo image, creates the agent namespace and the runc
 	// RuntimeClass, and applies the echo Runtime CR. spec: §17.4.
+	// A persisted prior bring-up records the deployed image tag. lenny up
+	// reads it before provisioning so a warm bring-up can decide whether to
+	// re-import and re-apply (a CLI-upgrade tag mismatch) or skip the
+	// expensive import/apply legs (a tag match against a healthy substrate).
+	// spec: §17.4 (an upgrade re-imports and re-applies on a mismatch).
+	priorState, _, _ := readState(paths.StateFile())
+
 	res := s.provisionSubstrate(ctx, paths, cfg.EchoTarball, out)
 	if !res.enabled {
 		// §17.4 S1: the gateway runs as an in-cluster pod, so an unavailable
@@ -183,9 +198,23 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		return nil, errSubstrateUnavailable
 	}
 
-	// ----- In-cluster control plane -----
-	if err := s.applyControlPlane(ctx, res, keyFile, out); err != nil {
-		return nil, err
+	// ----- Version-aware warm reconcile -----
+	// Decide whether the persisted substrate can be reused as-is or must be
+	// re-imported and re-applied. A tag mismatch (the CLI was upgraded since
+	// the last bring-up) or an unhealthy persisted control plane forces the
+	// full import/apply/seed legs; a matching tag against an already-ready
+	// gateway skips them so a warm lenny up restarts in seconds. spec: §17.4
+	// (the substrate persists across down/up; an upgrade re-imports and
+	// re-applies; an unhealthy substrate falls back to a fresh apply).
+	reapply := needsReapply(ctx, priorState, cfg.CLIVersion, res.kubeconfig, out)
+
+	if reapply {
+		// ----- In-cluster control plane -----
+		if err := s.applyControlPlane(ctx, res, keyFile, out); err != nil {
+			return nil, err
+		}
+	} else {
+		fmt.Fprintln(out, "lenny up: reusing the persisted control plane (image tag unchanged, gateway ready)")
 	}
 
 	// ----- Host-side forwarder -----
@@ -207,19 +236,21 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		return nil, err
 	}
 
-	// ----- Echo seed: registry record + warm pool -----
-	// The Runtime CR was applied in provisionSubstrate. Register the echo
-	// runtime record through the gateway /v1/admin/bootstrap path (which
-	// needs the gateway answering) and apply the echo SandboxTemplate/
-	// SandboxWarmPool pair directly, so the unconditionally-registered
-	// WarmPoolController pre-warms the pod with no Postgres-backed
-	// PoolScalingController. spec: §4.6.2, §5.2, §15.4.4.
-	if err := s.seedEcho(ctx, forwarderAddr, res, out); err != nil {
-		return nil, err
+	if reapply {
+		// ----- Echo seed: registry record + warm pool -----
+		// The Runtime CR was applied in provisionSubstrate. Register the echo
+		// runtime record through the gateway /v1/admin/bootstrap path (which
+		// needs the gateway answering) and apply the echo SandboxTemplate/
+		// SandboxWarmPool pair directly, so the unconditionally-registered
+		// WarmPoolController pre-warms the pod with no Postgres-backed
+		// PoolScalingController. spec: §4.6.2, §5.2, §15.4.4.
+		if err := s.seedEcho(ctx, forwarderAddr, res, out); err != nil {
+			return nil, err
+		}
 	}
 
 	// ----- Record state -----
-	if err := s.recordState(paths, res, forwarderAddr); err != nil {
+	if err := s.recordState(paths, res, forwarderAddr, cfg.CLIVersion); err != nil {
 		return nil, err
 	}
 
@@ -343,12 +374,16 @@ func (s *Stack) startForwarder(cfg Config, out io.Writer) (string, error) {
 }
 
 // recordState writes the §17.4 stack state file so lenny status, logs, and
-// down can locate the substrate and the host-side forwarder. spec: §17.4.
-func (s *Stack) recordState(paths Paths, res substrateResult, forwarderAddr string) error {
+// down can locate the substrate and the host-side forwarder. It records the
+// CLI version as the deployed image tag so a later warm lenny up reconciles
+// against it (C4). spec: §17.4.
+func (s *Stack) recordState(paths Paths, res substrateResult, forwarderAddr, cliVersion string) error {
 	st := State{
 		StartedAt:            time.Now(),
 		K3sContainer:         k3sContainerHandle(s.k3s),
+		K3sPID:               s.k3s.PID(),
 		GatewayForwarderAddr: forwarderAddr,
+		DeployedImageTag:     cliVersion,
 		KubeconfigPath:       res.kubeconfig,
 		K3sEnabled:           res.enabled,
 	}
@@ -357,6 +392,42 @@ func (s *Stack) recordState(paths Paths, res substrateResult, forwarderAddr stri
 		return err
 	}
 	return nil
+}
+
+// needsReapply decides whether a bring-up must re-import the platform images
+// and re-apply the embedded manifests, or can reuse the persisted control
+// plane as-is. It forces a re-apply (returns true) when there is no prior
+// recorded bring-up, when the running CLI version differs from the deployed
+// image tag the prior bring-up recorded (the CLI was upgraded, so a stale
+// image must not run), or when the persisted control plane is unhealthy (the
+// gateway Deployment is not Ready). A matching tag against an already-ready
+// gateway returns false so a warm lenny up skips the expensive import/apply
+// legs and restarts in seconds.
+//
+// The health probe is the warmGatewayReadyFn seam (the gateway Deployment
+// readiness against the persisted substrate's kubeconfig), bounded short so a
+// down substrate does not stall the decision: an unready gateway reads as
+// unhealthy and forces the full apply, fail-safe toward a working bring-up.
+//
+// spec: §17.4 (the substrate persists across down/up; an upgrade re-imports
+// and re-applies on a CLI-version / image-tag mismatch; an unhealthy
+// persisted substrate falls back to a fresh apply).
+func needsReapply(ctx context.Context, prior State, cliVersion, kubeconfig string, out io.Writer) bool {
+	if prior.DeployedImageTag == "" {
+		// No prior bring-up recorded a deployed tag (a first run, or a state
+		// file from before the tag field existed): apply.
+		return true
+	}
+	if prior.DeployedImageTag != cliVersion {
+		fmt.Fprintf(out, "lenny up: CLI version %q differs from the deployed image tag %q; re-importing and re-applying\n",
+			cliVersion, prior.DeployedImageTag)
+		return true
+	}
+	if !warmGatewayReadyFn(ctx, kubeconfig) {
+		fmt.Fprintln(out, "lenny up: the persisted control plane is not ready; re-applying the embedded manifests")
+		return true
+	}
+	return false
 }
 
 // Stop tears the stack down in reverse dependency order. It is safe to
@@ -418,15 +489,30 @@ var (
 	substrateSupported   = k3s.SupportedPlatform
 	newSubstrate         = k3s.New
 	installSubstrateCRDs = InstallCRDs
+	// stopSubstrateContainer stops the Docker-backed k3s container by its
+	// recorded handle while persisting it and its containerd image store.
+	// lenny down (without --purge) calls it so a warm lenny up restarts the
+	// persisted container. It is a package-level var so a unit test can assert
+	// the persist-stop teardown without invoking a real docker. spec: §17.4
+	// (lenny down persists the substrate and the imported-image store).
+	stopSubstrateContainer = k3s.StopContainer
 	// removeSubstrateContainer force-removes the Docker-backed k3s container
-	// by its recorded handle. lenny down calls it on the crashed-supervisor
-	// teardown path and lenny down --purge calls it before discarding the
-	// state directory that holds the handle, so neither orphans the container
-	// the graceful Stack.Stop path would have removed. It is a package-level
-	// var so a unit test can assert the teardown removes the recorded
-	// container without invoking a real docker. spec: §24.19 (a crashed
-	// supervisor must not leak the Docker-backed k3s container).
+	// by its recorded handle, discarding its containerd image store. lenny
+	// down --purge calls it before discarding the state directory that holds
+	// the handle, so --purge does not orphan the container the graceful
+	// Stack.Stop path would have removed. It is a package-level var so a unit
+	// test can assert the teardown removes the recorded container without
+	// invoking a real docker. spec: §17.4 (--purge removes the persisted
+	// substrate and the imported-image store).
 	removeSubstrateContainer = k3s.RemoveContainer
+	// stopSubstrateProcess terminates the Linux k3s process group by its
+	// recorded leader PID, persisting the data directory. lenny up starts k3s
+	// in its own process group so it outlives the foreground lenny up, so
+	// lenny down terminates the recorded group out of process. It is a
+	// package-level var so a unit test can assert the teardown without killing
+	// a real process. spec: §17.4 (the Linux substrate outlives the CLI;
+	// lenny down stops it).
+	stopSubstrateProcess = k3s.StopProcessGroup
 	// importEchoRuntimeImageFn is the bring-up echo-image import seam. It
 	// defaults to the real (*Stack).importEchoRuntimeImage and is a
 	// package-level var so a unit test can drive the §4.7 activation sequence
@@ -463,7 +549,7 @@ func (s *Stack) provisionSubstrate(ctx context.Context, paths Paths, echoTarball
 		return substrateResult{}
 	}
 	fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
-	sup := newSubstrate(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort})
+	sup := newSubstrate(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort, GatewayNodePort: gatewayNodePort})
 	if err := sup.Start(ctx); err != nil {
 		// k3s is the §17.4 component most likely to fail on a constrained
 		// host. The in-cluster control plane runs on it, so without the

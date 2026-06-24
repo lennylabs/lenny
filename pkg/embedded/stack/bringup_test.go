@@ -183,6 +183,121 @@ func TestUpSequenceOrder_spec_17_4(t *testing.T) {
 	}
 }
 
+// TestUpWarmReconcileSkipsReapplyOnTagMatch asserts a warm lenny up against a
+// persisted substrate whose recorded deployed tag matches the running CLI
+// version and whose gateway is already ready reuses the control plane: it
+// skips the image import, the manifest apply, and the echo seed, and records
+// the unchanged tag. This is the fast warm-restart path (C4).
+//
+// diagnosis: a failure means a warm lenny up re-runs the expensive
+// import/apply/seed legs even though the persisted control plane is current
+// and healthy, defeating the §17.4 substrate-persistence fast-restart.
+//
+// spec: §17.4 (the substrate persists across down/up; a matching tag against
+// a ready gateway reuses the persisted control plane).
+func TestUpWarmReconcileSkipsReapplyOnTagMatch_spec_17_4(t *testing.T) {
+	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
+	withSubstrateSeams(t, true, l, nil)
+	withActivationSeams(t, "ghcr.io/lennylabs/runtime-echo-embedded@sha256:"+
+		"4444444444444444444444444444444444444444444444444444444444444444")
+	withRuntimeClassSeam(t)
+	calls := withBringUpSeams(t)
+	// The persisted gateway is healthy, so a matching tag reuses it.
+	prev := warmGatewayReadyFn
+	t.Cleanup(func() { warmGatewayReadyFn = prev })
+	warmGatewayReadyFn = func(context.Context, string) bool { return true }
+
+	cfg := upConfig(t)
+	cfg.CLIVersion = "v9.9.9"
+	// Record a prior bring-up at the same CLI version so the warm reconcile
+	// reuses the persisted control plane.
+	paths := NewPaths(cfg.Root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	if err := writeState(paths.StateFile(), State{DeployedImageTag: "v9.9.9", K3sEnabled: true}); err != nil {
+		t.Fatalf("seed prior state: %v", err)
+	}
+
+	s, err := Up(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	for _, leg := range []string{"secret", "import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
+		if containsLeg(calls.snapshot(), leg) {
+			t.Errorf("warm reconcile ran the %q leg on a tag match; want it skipped (order=%v)", leg, calls.snapshot())
+		}
+	}
+	// The gateway-readiness wait still runs so lenny up reports the gateway
+	// ready before returning.
+	if !containsLeg(calls.snapshot(), "wait") {
+		t.Errorf("warm reconcile skipped the gateway-readiness wait: %v", calls.snapshot())
+	}
+	if s.State().DeployedImageTag != "v9.9.9" {
+		t.Errorf("warm reconcile recorded tag %q, want the unchanged v9.9.9", s.State().DeployedImageTag)
+	}
+}
+
+// TestUpWarmReconcileReappliesOnTagMismatch asserts a warm lenny up whose
+// recorded deployed tag differs from the running CLI version (a CLI upgrade)
+// re-imports the platform images and re-applies the manifests, so a stale
+// image is not run after an upgrade (C4).
+//
+// diagnosis: a failure means a CLI upgrade keeps running the previously
+// deployed image tag because lenny up did not re-import and re-apply.
+//
+// spec: §17.4 (an upgrade re-imports and re-applies on a CLI-version /
+// image-tag mismatch).
+func TestUpWarmReconcileReappliesOnTagMismatch_spec_17_4(t *testing.T) {
+	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
+	withSubstrateSeams(t, true, l, nil)
+	withActivationSeams(t, "ghcr.io/lennylabs/runtime-echo-embedded@sha256:"+
+		"4444444444444444444444444444444444444444444444444444444444444444")
+	withRuntimeClassSeam(t)
+	calls := withBringUpSeams(t)
+	// Even a healthy gateway does not suppress the re-apply on a tag mismatch.
+	prev := warmGatewayReadyFn
+	t.Cleanup(func() { warmGatewayReadyFn = prev })
+	warmGatewayReadyFn = func(context.Context, string) bool { return true }
+
+	cfg := upConfig(t)
+	cfg.CLIVersion = "v2.0.0"
+	paths := NewPaths(cfg.Root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	if err := writeState(paths.StateFile(), State{DeployedImageTag: "v1.0.0", K3sEnabled: true}); err != nil {
+		t.Fatalf("seed prior state: %v", err)
+	}
+
+	s, err := Up(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	for _, leg := range []string{"import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
+		if !containsLeg(calls.snapshot(), leg) {
+			t.Errorf("tag-mismatch reconcile skipped the %q leg; want a full re-apply (order=%v)", leg, calls.snapshot())
+		}
+	}
+	if s.State().DeployedImageTag != "v2.0.0" {
+		t.Errorf("reconcile recorded tag %q, want the upgraded v2.0.0", s.State().DeployedImageTag)
+	}
+}
+
+// containsLeg reports whether the recorded leg list s holds v.
+func containsLeg(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 // TestUpImportFencesDeploymentApply_spec_17_4 pins the proposal's hard
 // ordering invariant: the platform-image import must land before the
 // Deployments are applied, so a scheduled pod never reaches the registry
@@ -348,6 +463,20 @@ func TestDeploymentReady(t *testing.T) {
 				t.Errorf("deploymentReady(gen=%d obs=%d ready=%d) = %v, want %v", tc.gen, tc.obs, tc.rdy, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestWarmGatewayReadyFalseOnUnreachableSubstrate covers the warm-reconcile
+// health backing function: a kubeconfig that does not load (or names an
+// unreachable API server) reports not-ready, so the warm reconcile falls back
+// to a fresh apply rather than reusing an unhealthy persisted control plane.
+//
+// spec: §17.4 (an unhealthy persisted substrate falls back to a fresh apply).
+func TestWarmGatewayReadyFalseOnUnreachableSubstrate_spec_17_4(t *testing.T) {
+	// An absent kubeconfig path cannot build a rest config, so the probe
+	// reports not-ready fail-closed.
+	if warmGatewayReady(context.Background(), filepath.Join(t.TempDir(), "no-such-kubeconfig.yaml")) {
+		t.Error("warmGatewayReady reported ready against a missing kubeconfig, want false (fail-closed)")
 	}
 }
 

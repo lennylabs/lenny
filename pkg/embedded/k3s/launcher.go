@@ -44,11 +44,29 @@ const (
 type Launcher interface {
 	// Start provisions the substrate, downloading or pulling the pinned
 	// k3s when absent, and blocks until the API server is reachable or
-	// ReadyTimeout elapses.
+	// ReadyTimeout elapses. A persisted substrate (a stopped Docker-backed
+	// container or an existing Linux data directory) is reused rather than
+	// re-provisioned, so a warm lenny up restarts the embedded cluster
+	// instead of paying the one-time provisioning cost again. spec: §17.4
+	// (the substrate and the imported-image store persist across
+	// lenny down/up).
 	Start(ctx context.Context) error
-	// Stop tears the substrate down. Stop is idempotent and safe to call
-	// before Start.
+	// Stop pauses the substrate while persisting its state so a warm lenny
+	// up can restart it: it stops the Docker-backed container (which keeps
+	// the container and its containerd image store) and terminates the Linux
+	// child process (whose data directory persists on disk). Stop is
+	// idempotent and safe to call before Start. lenny down (without --purge)
+	// calls Stop. spec: §17.4 (lenny down persists the substrate and the
+	// imported-image store; --purge removes them).
 	Stop() error
+	// Remove tears the substrate down and discards its persisted state: it
+	// force-removes the Docker-backed container (and its containerd image
+	// store) and, on the Linux child process, terminates the process (the
+	// data directory is then removed by lenny down --purge's purgeRoot).
+	// Remove is idempotent and safe to call before Start. lenny down --purge
+	// and a failed bring-up call Remove. spec: §17.4 (--purge removes the
+	// persisted substrate and the imported-image store).
+	Remove() error
 	// Running reports whether the substrate is alive.
 	Running() bool
 	// PID returns the host process identifier of the substrate when it is
@@ -89,6 +107,15 @@ type Config struct {
 	Dir string
 	// APIPort is the host port the k3s API server is reachable on.
 	APIPort int
+	// GatewayNodePort is the fixed NodePort the development profile pins the
+	// in-cluster gateway Service to. The Docker-backed launcher publishes it
+	// to host loopback (-p 127.0.0.1:<nodePort>:<nodePort>) so the host-side
+	// forwarder reaches the in-VM node port; the Linux launcher constrains
+	// the kube-proxy NodePort bind to loopback instead (the node port is
+	// already on the host's interfaces). Zero leaves the publish off. spec:
+	// §17.4 (the CLI reaches the in-cluster gateway through the loopback-only
+	// host-side forwarder in front of the node port; EMBEDDED_MODE_LOCAL_ONLY).
+	GatewayNodePort int
 	// DownloadTimeout bounds the one-time binary download or image pull.
 	// Zero defaults to 5 minutes.
 	DownloadTimeout time.Duration

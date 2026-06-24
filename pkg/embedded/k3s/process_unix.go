@@ -50,6 +50,41 @@ func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) {
 	}
 }
 
+// StopProcessGroup terminates the embedded k3s process group by its recorded
+// leader PID, out of process. lenny up starts k3s in its own process group
+// (processGroupSysProcAttr) so it outlives the foreground lenny up; a later
+// lenny down runs in a fresh process with no live launcher, so it signals the
+// recorded group directly. It sends SIGTERM to the whole group and escalates
+// to SIGKILL after grace, mirroring terminateProcessGroup but reading the PID
+// from recorded state rather than a live *exec.Cmd. A zero or already-exited
+// PID is a no-op (the negative-PID signal to an absent group is benign and
+// ignored). Stopping the process leaves the k3s data directory on disk, so a
+// warm lenny up restarts against it; lenny down --purge removes the data
+// directory afterward through purgeRoot.
+//
+// spec: §17.4 (the Linux substrate outlives the CLI; lenny down stops it and
+// persists its data directory unless --purge removes it).
+func StopProcessGroup(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if syscall.Kill(-pid, syscall.SIGTERM) != nil {
+		// No such group: the substrate is already gone. Nothing to escalate.
+		return
+	}
+	// Give the group a grace window to exit on SIGTERM, then escalate. The
+	// down process does not own the group, so it cannot Wait on it; it polls
+	// liveness with signal 0 instead.
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if syscall.Kill(-pid, 0) != nil {
+			return // the group has exited
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+}
+
 // runningAsRoot reports whether the current process is root. k3s rootless
 // mode is only added when the supervisor itself is non-root. On Windows
 // the launcher is unsupported, so the substrate reports false there.

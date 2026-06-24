@@ -62,17 +62,6 @@ func TestMainUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestMainRejectsDirectSupervise(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := Main([]string{"__supervise"}, &stdout, &stderr, testVersion)
-	if code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
-	}
-	if !strings.Contains(stderr.String(), "internal subcommand") {
-		t.Errorf("stderr = %q, want the internal-subcommand rejection", stderr.String())
-	}
-}
-
 // spec: §24.19 line 266 — Local enumerates the Embedded Mode commands
 // that lenny-ctl delegates to the local stack so it behaves identically.
 func TestLocalEnumeratesEmbeddedCommands(t *testing.T) {

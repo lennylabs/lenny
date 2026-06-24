@@ -92,6 +92,7 @@ type fakeLauncher struct {
 	startErr    error
 	started     bool
 	stopped     bool
+	removed     bool
 	gatewayHost string
 	kubeconfig  string
 }
@@ -101,6 +102,7 @@ func (f *fakeLauncher) Start(context.Context) error {
 	return f.startErr
 }
 func (f *fakeLauncher) Stop() error            { f.stopped = true; return nil }
+func (f *fakeLauncher) Remove() error          { f.removed = true; return nil }
 func (f *fakeLauncher) Running() bool          { return f.started && f.startErr == nil }
 func (f *fakeLauncher) PID() int               { return 0 }
 func (f *fakeLauncher) KubeconfigPath() string { return f.kubeconfig }
@@ -486,5 +488,53 @@ func TestPurgeRootRemovesStateDir(t *testing.T) {
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Errorf("purgeRoot left the state directory in place (stat err: %v)", err)
+	}
+}
+
+// withWarmGatewayReady overrides the warm-reconcile gateway-health seam so a
+// test can drive the healthy / unhealthy persisted-substrate branches of
+// needsReapply without a real API server, and restores it.
+func withWarmGatewayReady(t *testing.T, ready bool) {
+	t.Helper()
+	prev := warmGatewayReadyFn
+	t.Cleanup(func() { warmGatewayReadyFn = prev })
+	warmGatewayReadyFn = func(context.Context, string) bool { return ready }
+}
+
+// TestNeedsReapply covers the version-aware warm-reconcile decision (C4): a
+// bring-up re-imports and re-applies when there is no prior deployed tag,
+// when the CLI version differs from the deployed tag (a CLI upgrade), or when
+// the persisted control plane is unhealthy; it reuses the persisted control
+// plane only on a matching tag against a ready gateway.
+//
+// spec: §17.4 (the substrate persists across down/up; an upgrade re-imports
+// and re-applies on a CLI-version / image-tag mismatch; an unhealthy
+// persisted substrate falls back to a fresh apply).
+func TestNeedsReapply_spec_17_4(t *testing.T) {
+	cases := []struct {
+		name       string
+		priorTag   string
+		cliVersion string
+		gwReady    bool
+		want       bool
+	}{
+		{"no prior tag forces apply", "", "v1.2.3", true, true},
+		{"tag mismatch forces apply", "v1.2.2", "v1.2.3", true, true},
+		{"tag match but unhealthy forces apply", "v1.2.3", "v1.2.3", false, true},
+		{"tag match and healthy skips apply", "v1.2.3", "v1.2.3", true, false},
+		// A dev source build records and compares the empty-equivalent "dev"
+		// tag; a matching dev tag against a ready gateway still skips.
+		{"matching dev tag and healthy skips apply", "dev", "dev", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withWarmGatewayReady(t, tc.gwReady)
+			prior := State{DeployedImageTag: tc.priorTag}
+			got := needsReapply(context.Background(), prior, tc.cliVersion, "/no/kubeconfig", io.Discard)
+			if got != tc.want {
+				t.Errorf("needsReapply(priorTag=%q, cli=%q, ready=%v) = %v, want %v",
+					tc.priorTag, tc.cliVersion, tc.gwReady, got, tc.want)
+			}
+		})
 	}
 }

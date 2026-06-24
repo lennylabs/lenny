@@ -96,6 +96,13 @@ var (
 	installRuntimesFn          = installReferenceRuntimes
 	gatewayReadinessTimeout    = 3 * time.Minute
 	gatewayReadinessInterval   = 2 * time.Second
+	// warmGatewayReadyFn probes the persisted gateway Deployment readiness
+	// with a short timeout so the warm-reconcile decision (needsReapply) does
+	// not stall on a down substrate. It is a seam so a unit test can drive the
+	// healthy / unhealthy persisted-substrate branches without an API server.
+	// spec: §17.4 (an unhealthy persisted substrate falls back to a fresh
+	// apply).
+	warmGatewayReadyFn = warmGatewayReady
 )
 
 // createDevBearerSecret creates (or updates in place) the dev bearer-trust
@@ -244,6 +251,33 @@ func waitGatewayDeploymentReady(ctx context.Context, kubeconfigPath string) erro
 	}
 	return waitDeploymentReady(ctx, cfg, controlPlaneNamespace, gatewayDeploymentName,
 		gatewayReadinessTimeout, gatewayReadinessInterval)
+}
+
+// warmGatewayReadyTimeout bounds the warm-reconcile gateway-readiness probe
+// so the needsReapply decision returns quickly on a down or still-starting
+// substrate. It is far shorter than gatewayReadinessTimeout because the warm
+// path only asks "is the persisted gateway already up?", not "wait for it to
+// come up": a not-immediately-ready gateway reads as unhealthy and forces the
+// full re-apply.
+const warmGatewayReadyTimeout = 5 * time.Second
+
+// warmGatewayReady reports whether the persisted gateway Deployment is
+// already Ready against the substrate kubeconfig, with a short timeout. It
+// backs the warmGatewayReadyFn seam the warm-reconcile decision consults. A
+// kubeconfig that cannot load, a gateway that is not yet Ready, or any probe
+// error reports not-ready, so needsReapply falls back to the full apply
+// rather than reusing an unhealthy control plane.
+//
+// spec: §17.4 (an unhealthy persisted substrate falls back to a fresh apply).
+func warmGatewayReady(ctx context.Context, kubeconfigPath string) bool {
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, warmGatewayReadyTimeout)
+	defer cancel()
+	return waitDeploymentReady(probeCtx, cfg, controlPlaneNamespace, gatewayDeploymentName,
+		warmGatewayReadyTimeout, gatewayReadinessInterval) == nil
 }
 
 // waitDeploymentReady polls the named Deployment until it reports at least

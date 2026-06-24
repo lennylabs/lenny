@@ -29,6 +29,11 @@ import (
 // require their credentials and are placeholder-pinned out of the box, so echo
 // is the only runtime that runs credential-free.
 //
+// diagnosis: a failure means the seeded echo runtime declares an LLM provider
+// or a credential surface, so the credential-free Embedded Mode default would
+// engage the §13.1 credential-delivery path and lease credentials at the §4.7
+// boundary that the zero-config echo path must never request.
+//
 // spec: §13.1 (credential delivery engages only for a runtime that declares a
 // provider), §15.4.4 (echo conformance exemplar is credential-free), §17.4
 // (Embedded Mode runs the credential-free echo out of the box).

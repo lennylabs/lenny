@@ -184,6 +184,17 @@ func (s *childSupervisor) serverArgs(asRoot bool) []string {
 		"--disable-cloud-controller",
 		"--disable-network-policy",
 		"--flannel-backend", "host-gw",
+		// Constrain the kube-proxy NodePort bind to loopback. --bind-address
+		// scopes only the API server; without this the in-cluster gateway's
+		// NodePort would bind 0.0.0.0 on the Linux host's own interfaces and
+		// expose the gateway at <host-ip>:<nodePort>, bypassing the
+		// loopback-only host-side forwarder and violating the §17.4
+		// EMBEDDED_MODE_LOCAL_ONLY fail-closed invariant. Restricting the
+		// NodePort to 127.0.0.1/32 matches the Docker launcher's containment,
+		// where the in-VM NodePort is published only on host loopback (C4).
+		// spec: §17.4 (EMBEDDED_MODE_LOCAL_ONLY: the gateway is reachable on
+		// host loopback only).
+		"--kube-proxy-arg=nodeport-addresses=127.0.0.1/32",
 	}
 	if !asRoot {
 		args = append(args, "--rootless")
@@ -213,7 +224,11 @@ func (s *childSupervisor) waitReady(ctx context.Context) error {
 	}
 }
 
-// Stop terminates the k3s process group. Stop is idempotent.
+// Stop terminates the k3s process group while persisting the data
+// directory on disk, so a warm lenny up restarts k3s against the existing
+// data directory (which holds the embedded containerd image store) rather
+// than re-provisioning. Stop is idempotent. spec: §17.4 (lenny down
+// persists the substrate and the imported-image store).
 func (s *childSupervisor) Stop() error {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
@@ -229,6 +244,17 @@ func (s *childSupervisor) Stop() error {
 	}
 	s.cmd = nil
 	return nil
+}
+
+// Remove terminates the k3s process group. On the Linux child-process
+// launcher the persisted state is the on-disk data directory, which
+// lenny down --purge removes through purgeRoot after Remove terminates the
+// process; Remove itself only stops the process, so it is equivalent to
+// Stop here. The destroy-versus-persist distinction is in purgeRoot, not in
+// the process termination. Remove is idempotent. spec: §17.4 (--purge
+// removes the persisted substrate; the data-directory removal is purgeRoot's).
+func (s *childSupervisor) Remove() error {
+	return s.Stop()
 }
 
 // Running reports whether the supervised process is still alive.

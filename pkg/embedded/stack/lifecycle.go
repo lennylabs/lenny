@@ -8,15 +8,6 @@ import (
 	"io"
 )
 
-// SuperviseEnvVar named the environment variable the foreground lenny up
-// set when it re-executed itself as the detached host supervisor. The
-// §17.4 control plane now runs as in-cluster pods, so lenny up brings the
-// stack up in-process and there is no detached supervisor to re-exec into.
-// The constant is retained as an empty marker until the hidden
-// __supervise dispatch is removed (proposal 0017 C2); RunSupervisor is a
-// no-op alias for the in-process bring-up.
-const SuperviseEnvVar = "LENNY_EMBEDDED_SUPERVISE"
-
 // UpOptions configures the foreground lenny up command.
 type UpOptions struct {
 	// Root is the Embedded Mode state directory. Empty resolves to the
@@ -31,19 +22,28 @@ type UpOptions struct {
 	// operator override). Empty discovers it alongside the lenny binary.
 	// spec: §24.19.1 (the --file import path).
 	EchoTarball string
+	// CLIVersion is the running lenny CLI build version. lenny up records it
+	// as the deployed image tag and a warm bring-up reconciles against it,
+	// re-importing and re-applying the embedded manifests on a CLI-upgrade
+	// mismatch (C4). spec: §17.4.
+	CLIVersion string
 	// Out and ErrOut receive progress and error output.
 	Out    io.Writer
 	ErrOut io.Writer
 }
 
 // RunUp implements the foreground `lenny up` command. §17.4: lenny up is
-// idempotent — a second invocation is a no-op when a stack is already
-// running. The control plane runs as in-cluster pods, so lenny up brings
-// the stack up in-process (the in-cluster pods outlive the CLI) rather than
-// re-executing a detached host supervisor. RunUp drives the in-cluster
-// bring-up through Up, which provisions the substrate, imports the platform
-// images, applies the embedded manifests, seeds the echo runtime, starts the
+// idempotent — a second invocation reuses the persisted substrate and image
+// store and restarts the in-cluster control plane in seconds. The control
+// plane runs as in-cluster pods, so lenny up brings the stack up in-process
+// (the in-cluster pods outlive the CLI) rather than re-executing a detached
+// host supervisor. RunUp drives the in-cluster bring-up through Up, which
+// provisions (or restarts) the substrate, imports the platform images,
+// applies the embedded manifests, seeds the echo runtime, starts the
 // host-side forwarder, and waits for the gateway to become ready.
+//
+// spec: §17.4 (the control plane runs as in-cluster pods; the substrate and
+// imported-image store persist across down/up).
 func RunUp(ctx context.Context, opts UpOptions) error {
 	out := orDiscard(opts.Out)
 	errOut := orDiscard(opts.ErrOut)
@@ -58,6 +58,7 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 		HTTPPort:    opts.HTTPPort,
 		HTTPSPort:   opts.HTTPSPort,
 		EchoTarball: opts.EchoTarball,
+		CLIVersion:  opts.CLIVersion,
 		Out:         out,
 	})
 	if err != nil {
@@ -67,31 +68,14 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 	return nil
 }
 
-// RunSupervisor is the in-process bring-up entry point. The §17.4 control
-// plane runs as in-cluster pods, so there is no detached host supervisor:
-// RunSupervisor brings the stack up in-process and returns. It is retained
-// so the lenny binary's hidden __supervise dispatch keeps compiling until
-// that dispatch is removed (proposal 0017 C2).
-func RunSupervisor(ctx context.Context, opts UpOptions) error {
-	root, err := resolveRoot(opts.Root)
-	if err != nil {
-		return err
-	}
-	_, err = Up(ctx, Config{
-		Root:        root,
-		HTTPPort:    opts.HTTPPort,
-		HTTPSPort:   opts.HTTPSPort,
-		EchoTarball: opts.EchoTarball,
-		Out:         orDiscard(opts.Out),
-	})
-	return err
-}
-
 // DownOptions configures the lenny down command.
 type DownOptions struct {
 	// Root is the Embedded Mode state directory.
 	Root string
-	// Purge removes the entire state directory after teardown.
+	// Purge removes the persisted substrate and the entire state directory
+	// after teardown. Without it, lenny down stops the substrate while
+	// persisting the substrate and its imported-image store so a warm lenny
+	// up restarts in seconds.
 	Purge bool
 	// Out and ErrOut receive progress and error output.
 	Out    io.Writer
@@ -99,12 +83,22 @@ type DownOptions struct {
 }
 
 // RunDown implements the `lenny down` command. §17.4: lenny down stops the
-// stack; the persisted substrate and imported-image store survive a
-// non-`--purge` down and `--purge` removes them. The in-memory application
-// stores live inside the gateway pod and are lost on down regardless of
-// `--purge`. RunDown stops the substrate (which stops the in-cluster pods)
-// and removes the Docker-backed k3s container by its recorded handle so a
-// teardown does not orphan it.
+// in-cluster control plane by stopping the substrate. By default it persists
+// the substrate and its imported-image store (a Docker-backed `docker stop`
+// keeps the container and its containerd image store; the Linux process stop
+// leaves the k3s data directory on disk), so a warm lenny up restarts in
+// seconds. `--purge` removes the substrate (force-remove the container, then
+// purge the state directory that holds the Linux data directory). The
+// in-memory application stores live inside the gateway pod and are lost on
+// down regardless of `--purge`.
+//
+// The control plane runs as in-cluster pods that outlive the CLI, so RunDown
+// reconstructs the substrate handle from the recorded state file rather than
+// a live launcher: it stops or removes the Docker-backed container by its
+// recorded name and the Linux k3s process group by its recorded leader PID.
+//
+// spec: §17.4 (lenny down persists the substrate and the imported-image
+// store; --purge removes them; the application stores are ephemeral), §24.19.
 func RunDown(ctx context.Context, opts DownOptions) error {
 	out := orDiscard(opts.Out)
 	root, err := resolveRoot(opts.Root)
@@ -128,31 +122,40 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 		return nil
 	}
 
-	fmt.Fprintln(out, "lenny down: stopping the embedded stack")
-	// The substrate-stop that tears down the in-cluster control plane lands
-	// with the version-aware lifecycle in the next build step (proposal 0017
-	// C4). Here RunDown removes the Docker-backed k3s container by its
-	// recorded handle and clears the state file so a teardown does not orphan
-	// the container or leave a stale state record.
-	//
-	// Remove the Docker-backed k3s container (macOS and Windows) by its
-	// recorded handle before removeState and purgeRoot discard it. The
-	// container runs inside the Docker VM, so purgeRoot's os.RemoveAll does
-	// not reach it; without this removal a --purge orphans the container with
-	// no recorded handle to find it by. The handle is empty on the Linux
-	// child-process substrate, where RemoveContainer is a no-op.
-	// spec: §24.19 (lenny up/down manage the substrate; a teardown or --purge
-	// must not leak the Docker-backed k3s container).
-	removeSubstrateContainer(st.K3sContainer)
-	_ = removeState(paths.StateFile())
-	fmt.Fprintln(out, "lenny down: stack stopped")
-
 	if opts.Purge {
+		fmt.Fprintln(out, "lenny down: removing the embedded stack")
+		// Remove the substrate before purgeRoot discards the state directory
+		// that records its handle. The Docker-backed container runs inside the
+		// Docker VM, so purgeRoot's os.RemoveAll never reaches it; without
+		// this removal a --purge orphans the container with no recorded handle
+		// to find it by. The Linux process is terminated by its recorded PID;
+		// its data directory is then removed by purgeRoot below. Each handle
+		// is empty on the other launcher, where its stop is a no-op.
+		// spec: §17.4 (--purge removes the persisted substrate and the
+		// imported-image store).
+		removeSubstrateContainer(st.K3sContainer)
+		stopSubstrateProcess(st.K3sPID)
+		_ = removeState(paths.StateFile())
 		if err := purgeRoot(root); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "lenny down: purged %s\n", root)
+		return nil
 	}
+
+	fmt.Fprintln(out, "lenny down: stopping the embedded stack")
+	// Stop the substrate while persisting it and its imported-image store so a
+	// warm lenny up restarts it. The Docker-backed container is `docker stop`d
+	// (the container and its containerd image store persist); the Linux
+	// process group is terminated by its recorded PID (the k3s data directory
+	// persists on disk). The state file is cleared so a later lenny status
+	// reports no running stack; lenny up rewrites it on the warm restart.
+	// spec: §17.4 (lenny down persists the substrate and the imported-image
+	// store).
+	stopSubstrateContainer(st.K3sContainer)
+	stopSubstrateProcess(st.K3sPID)
+	_ = removeState(paths.StateFile())
+	fmt.Fprintln(out, "lenny down: stack stopped")
 	return nil
 }
 
