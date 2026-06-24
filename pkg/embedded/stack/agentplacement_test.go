@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -168,51 +169,64 @@ func TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2(t *testing.T) {
 	}
 }
 
-// TestApplyEchoPoolFromConfigCreatesAndUpdatesInPlace_spec_4_6_2 asserts the
-// echo-pool direct apply creates the SandboxTemplate/SandboxWarmPool pair when
-// absent and updates them in place on a re-run, so a second lenny up does not
-// fail on AlreadyExists and reconverges the pair rather than duplicating it.
+// TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2 asserts the echo
+// pool pair the bring-up applies is encoded as unstructured objects carrying the
+// lenny.dev/v1alpha1 SandboxTemplate/SandboxWarmPool GVK and preserving the
+// canonical field mapping, so the C1 dynamic-apply path (apply.go applyObject)
+// can resolve each object's GVR via the RESTMapper and server-side-apply it. The
+// echo seed and the runtime-agnostic CLI verb share this dynamic-apply transport
+// rather than a parallel typed-client upsert; the GVK on each object is what lets
+// the shared applier route them. A missing apiVersion/kind would fail RESTMapping
+// at apply time.
 //
-// spec: §4.6.2 (the bring-up materializes the pool without a PoolScalingController),
-// §5.2 (single-pod hot pool), §17.4 (idempotent re-apply).
-func TestApplyEchoPoolFromConfigCreatesAndUpdatesInPlace_spec_4_6_2(t *testing.T) {
+// spec: §4.6.2 (the bring-up materializes the pool CRDs through the
+// dynamic-apply path), §5.2 (single-pod hot pool), §17.4 (one apply path).
+func TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2(t *testing.T) {
 	const ns = "lenny-agents"
-	cl := fake.NewClientBuilder().WithScheme(lennyScheme(t)).Build()
-	ctx := context.Background()
-
-	tmpl, pool := echoPoolObjects(ns)
-	if err := upsertSandboxTemplate(ctx, cl, tmpl); err != nil {
-		t.Fatalf("create SandboxTemplate: %v", err)
+	objs, err := echoPoolUnstructured(ns)
+	if err != nil {
+		t.Fatalf("echoPoolUnstructured: %v", err)
 	}
-	if err := upsertSandboxWarmPool(ctx, cl, pool); err != nil {
-		t.Fatalf("create SandboxWarmPool: %v", err)
+	if len(objs) != 2 {
+		t.Fatalf("echoPoolUnstructured returned %d objects, want 2 (SandboxTemplate + SandboxWarmPool)", len(objs))
 	}
 
-	var gotTmpl lennyv1alpha1.SandboxTemplate
-	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: EchoPoolName, Namespace: ns}, &gotTmpl); err != nil {
-		t.Fatalf("get created SandboxTemplate: %v", err)
-	}
-	var gotPool lennyv1alpha1.SandboxWarmPool
-	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: EchoPoolName, Namespace: ns}, &gotPool); err != nil {
-		t.Fatalf("get created SandboxWarmPool: %v", err)
-	}
-	if gotPool.Spec.MinWarm != echoPoolWarmCount {
-		t.Errorf("created warm pool minWarm = %d, want %d", gotPool.Spec.MinWarm, echoPoolWarmCount)
+	byKind := map[string]unstructured.Unstructured{}
+	for _, o := range objs {
+		if got := o.GetAPIVersion(); got != lennyv1alpha1.GroupVersion.String() {
+			t.Errorf("%s apiVersion = %q, want %q", o.GetKind(), got, lennyv1alpha1.GroupVersion.String())
+		}
+		if o.GetNamespace() != ns {
+			t.Errorf("%s namespace = %q, want %q", o.GetKind(), o.GetNamespace(), ns)
+		}
+		if o.GetName() != EchoPoolName {
+			t.Errorf("%s name = %q, want %q", o.GetKind(), o.GetName(), EchoPoolName)
+		}
+		byKind[o.GetKind()] = o
 	}
 
-	// A second apply must reconverge in place rather than fail on AlreadyExists.
-	tmpl2, pool2 := echoPoolObjects(ns)
-	if err := upsertSandboxTemplate(ctx, cl, tmpl2); err != nil {
-		t.Fatalf("re-apply SandboxTemplate: %v", err)
+	tmpl, ok := byKind["SandboxTemplate"]
+	if !ok {
+		t.Fatal("echoPoolUnstructured produced no SandboxTemplate")
 	}
-	if err := upsertSandboxWarmPool(ctx, cl, pool2); err != nil {
-		t.Fatalf("re-apply SandboxWarmPool: %v", err)
+	if got, _, _ := unstructured.NestedString(tmpl.Object, "spec", "runtimeRef"); got != EchoRuntimeName {
+		t.Errorf("template spec.runtimeRef = %q, want %q", got, EchoRuntimeName)
 	}
-	var pools lennyv1alpha1.SandboxWarmPoolList
-	if err := cl.List(ctx, &pools, ctrlclient.InNamespace(ns)); err != nil {
-		t.Fatalf("list warm pools after re-apply: %v", err)
+	if got, _, _ := unstructured.NestedString(tmpl.Object, "spec", "isolationProfile"); got != "standard" {
+		t.Errorf("template spec.isolationProfile = %q, want standard (§17.4 local fidelity)", got)
 	}
-	if len(pools.Items) != 1 {
-		t.Errorf("re-apply produced %d warm pools, want exactly 1 (reconverged in place)", len(pools.Items))
+
+	pool, ok := byKind["SandboxWarmPool"]
+	if !ok {
+		t.Fatal("echoPoolUnstructured produced no SandboxWarmPool")
+	}
+	if got, _, _ := unstructured.NestedString(pool.Object, "spec", "templateRef"); got != EchoPoolName {
+		t.Errorf("warm pool spec.templateRef = %q, want %q", got, EchoPoolName)
+	}
+	minWarm, _, _ := unstructured.NestedInt64(pool.Object, "spec", "minWarm")
+	maxWarm, _, _ := unstructured.NestedInt64(pool.Object, "spec", "maxWarm")
+	if minWarm != int64(echoPoolWarmCount) || maxWarm != int64(echoPoolWarmCount) {
+		t.Errorf("warm pool minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
+			minWarm, maxWarm, echoPoolWarmCount, echoPoolWarmCount)
 	}
 }

@@ -118,6 +118,35 @@ func applyManifestsFromConfig(ctx context.Context, cfg *rest.Config, fsys fs.FS)
 	return applyManifestsPhaseFromConfig(ctx, cfg, fsys, applyPhaseAll)
 }
 
+// applyObjects server-side-applies a set of already-decoded unstructured
+// objects to the cluster addressed by cfg through the same dynamic client,
+// RESTMapper, and field manager the embedded manifest apply uses (C1). The
+// echo SandboxTemplate/SandboxWarmPool pair the no-Postgres bring-up seeds is
+// applied through this path so the echo seed and the runtime-agnostic CLI verb
+// share one declarative server-side-apply mechanism rather than a parallel
+// typed-client upsert. The objects are applied in §17.4 dependency order, so a
+// namespaced object follows its namespace within the set.
+//
+// spec: §17.4 (in-cluster control plane), §4.6.2 (the bring-up materializes
+// the pool CRDs through the dynamic-apply path).
+func applyObjects(ctx context.Context, cfg *rest.Config, objs []unstructured.Unstructured) error {
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("embedded apply: build dynamic client: %w", err)
+	}
+	mapper, err := newRESTMapper(cfg)
+	if err != nil {
+		return err
+	}
+	sortByApplyOrder(objs)
+	for i := range objs {
+		if err := applyObject(ctx, dyn, mapper, &objs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // applyManifestsPhaseFromConfig applies the objects in fsys selected by
 // phase to the cluster addressed by cfg. The objects are still sorted into
 // the §17.4 dependency order within the phase, so a non-Deployment pass

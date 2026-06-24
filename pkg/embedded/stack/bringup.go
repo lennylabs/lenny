@@ -58,11 +58,19 @@ const devBearerTrustSecretKey = "key"
 // defaultPlatformBundleName is the file name of the deduplicated platform
 // image bundle shipped alongside the lenny binary. The bundle is a single
 // docker-save tarball holding the gateway, controller, lenny-ops, and
-// lenny-adapter images the dev render deploys or stamps plus the default
-// echo image, imported into the embedded containerd in one ctr images
-// import so the rendered pods resolve their images locally with the default
-// IfNotPresent pull policy. spec: §17.4 (the bring-up imports the platform
-// images), §24.19.1 (the --file import path).
+// lenny-adapter images the dev render deploys or stamps, imported into the
+// embedded containerd in one ctr images import so the rendered pods resolve
+// their images locally with the default IfNotPresent pull policy.
+//
+// The default echo image is imported on its own by provisionSubstrate's
+// importEchoRuntimeImage rather than from this bundle, because that import
+// returns the resolved echo digest the echo Runtime CR and the bootstrap seed
+// must pin to (a multi-image bundle import returns no per-image digest). The
+// echo image may also be present in the bundle for a build that ships it
+// there; under IfNotPresent the standalone echo import and any bundle copy
+// load the same image, so a duplicate is harmless and the standalone import
+// stays the source of the digest. spec: §17.4 (the bring-up imports the
+// platform images), §24.19.1 (the --file import path).
 const defaultPlatformBundleName = "lenny-platform-images.tar"
 
 // platformBundleEnvVar is the operator override for the platform image
@@ -165,12 +173,14 @@ func ensureDevBearerKey(keyFilePath string) error {
 }
 
 // importPlatformBundle imports the deduplicated platform image bundle (the
-// gateway, controller, lenny-ops, and lenny-adapter images plus the echo
-// image) into the embedded containerd in one ctr images import, so the
-// rendered control-plane pods resolve their images locally with the default
-// IfNotPresent pull policy rather than entering ImagePullBackOff. A missing
-// bundle is non-fatal and logged: the echo image is imported separately by
-// provisionSubstrate, and a developer build may not ship the platform bundle.
+// gateway, controller, lenny-ops, and lenny-adapter images the dev render
+// deploys or stamps) into the embedded containerd in one ctr images import, so
+// the rendered control-plane pods resolve their images locally with the
+// default IfNotPresent pull policy rather than entering ImagePullBackOff. A
+// missing bundle is non-fatal and logged: a developer build may not ship the
+// platform bundle, and the echo image is imported on its own by
+// provisionSubstrate because that import returns the digest the echo Runtime
+// CR and the bootstrap seed pin to (see defaultPlatformBundleName).
 //
 // spec: §17.4 (the bring-up imports the platform images the dev render
 // deploys), §24.19.1 (the --file import path).

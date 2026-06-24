@@ -100,6 +100,22 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 		t.Errorf("applied template isolationProfile = %q, want standard (§17.4 local fidelity)", tmpl.Spec.IsolationProfile)
 	}
 
+	// ----- Idempotent re-apply -----
+	// A second lenny up re-runs the same dynamic-apply (server-side apply under
+	// the lenny-embedded field manager). It must reconverge the live pair in
+	// place rather than fail on AlreadyExists or duplicate the pool, so the
+	// warm-up path is stable across bring-ups.
+	if err := stack.ApplyEchoPoolFromConfig(ctx, env.RESTConfig(), ns); err != nil {
+		t.Fatalf("re-apply echo pool: %v", err)
+	}
+	var pools lennyv1.SandboxWarmPoolList
+	if err := c.List(ctx, &pools, client.InNamespace(ns)); err != nil {
+		t.Fatalf("list warm pools after re-apply: %v", err)
+	}
+	if len(pools.Items) != 1 {
+		t.Fatalf("re-apply produced %d warm pools, want exactly 1 (reconverged in place)", len(pools.Items))
+	}
+
 	// ----- Negative leg: no RuntimeClass -----
 	// With the `runc` RuntimeClass absent, the WarmPoolController must mark the
 	// pool Degraded and suppress pod creation (decision.Create=0), because
