@@ -67,6 +67,19 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.Labels = cloneMetadata(req.Labels)
 	}
 
+	// spec: §7.1 line 6 — reject an empty metadata key so the on-row
+	// annotation map stays well-formed, mirroring the §14 env and label
+	// key checks above. The metadata round-trips to the §15.1 GET
+	// envelope, so an empty key would echo back an unkeyed annotation.
+	// F-CS4 (0018).
+	for key := range req.Metadata {
+		if key == "" {
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"metadata keys must be non-empty", map[string]any{"field": "metadata"})
+			return nil, false
+		}
+	}
+
 	row.Pool = req.Pool
 
 	// spec: §14 line 154 — per-session timeouts are non-negative and

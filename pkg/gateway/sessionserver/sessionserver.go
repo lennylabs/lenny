@@ -3357,9 +3357,14 @@ func (s *Server) writeSession(w http.ResponseWriter, code int, row sessionstore.
 // writeError writes a §15.1 error envelope. The category and
 // retryable fields are populated from the shared §15.2.1
 // errorclassify table so REST and MCP report the same values for the
-// same code.
+// same code. An unmapped code resolves through the status-aware
+// ClassifyStatus, so an unmapped non-5xx code classifies as
+// (PERMANENT, false) here exactly as it does on the admin surface
+// (ClassifyStatus in tenants.go), rather than the (TRANSIENT, true)
+// fallback the code-only Classify returns. spec: §15.2.1
+// (classification consistency).
 func (s *Server) writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
-	cat, retryable := errorclassify.Classify(code)
+	cat, retryable := errorclassify.ClassifyStatus(code, status)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: errorBody{
