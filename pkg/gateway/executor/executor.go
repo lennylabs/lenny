@@ -32,7 +32,7 @@ var (
 
 // Message captures the §7.2 / §15.4.1 inbound message envelope.
 // Implementations of Executor receive a slice of Messages and emit
-// a slice of OutputParts.
+// a slice of MessageParts.
 type Message struct {
 	// ID is the §15.4.1 stable message identifier. Gateway-assigned
 	// when the sender omits it.
@@ -42,7 +42,7 @@ type Message struct {
 	Role string
 
 	// Content is the message text. Production extends this with
-	// multi-part content (image, file ref) per §15.4.1 OutputPart.
+	// multi-part content (image, file ref) per §15.4.1 MessagePart.
 	Content string
 
 	// From is the §15.4.1 from-object the gateway stamps onto the
@@ -70,8 +70,8 @@ type MessageFrom struct {
 	ID   string
 }
 
-// OutputPart is the §15.4.1 outbound response envelope.
-type OutputPart struct {
+// MessagePart is the §15.4.1 outbound response envelope.
+type MessagePart struct {
 	// Type is the §15.4.1 content type: `text`, `tool_call`,
 	// `tool_result`, etc. The minimal echo executor emits only
 	// `text`. An unregistered unprefixed type is collapsed to `text`
@@ -85,7 +85,7 @@ type OutputPart struct {
 	// is bound by a blob.
 	Ref string `json:"ref,omitempty"`
 
-	// SchemaVersion is the §15.4.1 per-part OutputPart schema revision
+	// SchemaVersion is the §15.4.1 per-part MessagePart schema revision
 	// (default 1). Ingest defaults a missing or non-positive value to
 	// 1 so a durable consumer always reads a value.
 	SchemaVersion int `json:"schemaVersion,omitempty"`
@@ -109,7 +109,7 @@ type OutputPart struct {
 // spec: §15.4.1 lines 1499-1522 (schema_version_ahead), 1575-1579
 // (blob_ref_unresolvable).
 type Response struct {
-	Parts       []OutputPart
+	Parts       []MessagePart
 	Annotations map[string]any
 }
 

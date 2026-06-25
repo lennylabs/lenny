@@ -94,7 +94,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 		tenantID = bind.TenantID
 		slotID = bind.SlotID
 	}
-	var out []OutputPart
+	var out []MessagePart
 	var envAnn map[string]any
 	for _, m := range messages {
 		env := messageEnvelope{
@@ -102,7 +102,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 			Type:          "message",
 			ID:            newMessageID(),
 			From:          resolveFromBlock(m),
-			Input:         []wireOutputPart{{Type: "text", Inline: m.Content}},
+			Input:         []wireMessagePart{{Type: "text", Inline: m.Content}},
 			SlotID:        slotID,
 		}
 		line, err := json.Marshal(env)
@@ -169,7 +169,7 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 // the call is forwarded for execution; deny → a tool_result error is
 // written back). Without a gate the frame is skipped like any other
 // intermediate frame. F-7.2.9, F-7.2.18.
-func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionID string, stream *adapterclient.AttachStream) ([]OutputPart, map[string]any, error) {
+func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionID string, stream *adapterclient.AttachStream) ([]MessagePart, map[string]any, error) {
 	for {
 		frame, err := stream.Recv()
 		if err == io.EOF {
@@ -214,10 +214,10 @@ type toolCallFrame struct {
 // the runtime on a denial (isError:true) so the blocked tool call
 // returns the deny reason rather than executing.
 type toolResultFrame struct {
-	Type    string           `json:"type"`
-	ID      string           `json:"id"`
-	Content []wireOutputPart `json:"content"`
-	IsError bool             `json:"isError"`
+	Type    string            `json:"type"`
+	ID      string            `json:"id"`
+	Content []wireMessagePart `json:"content"`
+	IsError bool              `json:"isError"`
 }
 
 // maybeGateToolCall inspects one frame. When it is a tool_call requiring
@@ -266,7 +266,7 @@ func (e *PodExecutor) maybeGateToolCall(ctx context.Context, tenantID, sessionID
 	denied, mErr := json.Marshal(toolResultFrame{
 		Type:    "tool_result",
 		ID:      call.ID,
-		Content: []wireOutputPart{{Type: "text", Inline: decision.Reason}},
+		Content: []wireMessagePart{{Type: "text", Inline: decision.Reason}},
 		IsError: true,
 	})
 	if mErr != nil {

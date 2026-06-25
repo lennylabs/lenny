@@ -235,17 +235,17 @@ A gateway subsystem responsible for delegation orchestration, virtual child MCP 
 
 The default S3-compatible object storage used for artifact, checkpoint, and workspace snapshot storage. Deployments can substitute any S3-compatible service, GCS, or Azure Blob. See [Configuration Reference](configuration).
 
+### MessagePart
+{: #messagepart }
+
+The unit of content delivery in Lenny sessions. MessageParts support multiple types (text, code, image, tool-use, binary blob) and can be delivered inline or via external blob reference. Each part has a 50 MB size limit. Third-party types should use the `x-<vendor>/` namespace prefix. See [API Reference](../api/).
+
 ## O
 
 ### Occupancy Episode
 {: #occupancy-episode }
 
 The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates. See [State Machines](state-machines).
-
-### OutputPart
-{: #outputpart }
-
-The unit of content delivery in Lenny sessions. OutputParts support multiple types (text, code, image, tool-use, binary blob) and can be delivered inline or via external blob reference. Each part has a 50 MB size limit. Third-party types should use the `x-<vendor>/` namespace prefix. See [API Reference](../api/).
 
 ## P
 

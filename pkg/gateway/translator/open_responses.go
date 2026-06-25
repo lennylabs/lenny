@@ -222,7 +222,7 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 // The synchronous executor produces a complete response; the
 // translator chunks the text so streaming clients observe
 // incremental output.
-func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.Time, out []executor.OutputPart) {
+func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.Time, out []executor.MessagePart) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
@@ -342,7 +342,7 @@ func normalizeInput(in any) ([]executor.Message, error) {
 
 // buildOpenResponsesResponse maps executor output to the Open
 // Responses response shape.
-func buildOpenResponsesResponse(id, model, prev string, now time.Time, out []executor.OutputPart) OpenResponsesResponse {
+func buildOpenResponsesResponse(id, model, prev string, now time.Time, out []executor.MessagePart) OpenResponsesResponse {
 	resp := OpenResponsesResponse{
 		ID:                 id,
 		Object:             "response",

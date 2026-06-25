@@ -8,7 +8,7 @@ import (
 )
 
 // ingestResponse converts a runtime `response` frame into the gateway's
-// OutputParts and the §15.4.1 envelope-level degradation annotations a
+// MessageParts and the §15.4.1 envelope-level degradation annotations a
 // live consumer must surface. The gateway is the live consumer at this
 // boundary: it forward-reads the runtime's parts, so it MUST signal when
 // a part carries a schemaVersion ahead of what it understands and it
@@ -21,12 +21,12 @@ import (
 // part's own Annotations.
 //
 // spec: §15.4.1 lines 1499-1522.
-func ingestResponse(env responseEnvelope) ([]OutputPart, map[string]any) {
-	parts := make([]OutputPart, 0, len(env.Output))
+func ingestResponse(env responseEnvelope) ([]MessagePart, map[string]any) {
+	parts := make([]MessagePart, 0, len(env.Output))
 	if env.Text != "" && len(env.Output) == 0 {
 		// Basic-level `{type:"response", text:"..."}` shorthand: a single
 		// v1 text part.
-		parts = append(parts, OutputPart{
+		parts = append(parts, MessagePart{
 			Type:          "text",
 			Text:          env.Text,
 			SchemaVersion: outputtype.MaxKnownSchemaVersion,
@@ -66,7 +66,7 @@ func mergeAnnotations(dst, src map[string]any) map[string]any {
 	return dst
 }
 
-// ingestPart projects one wire OutputPart onto the gateway model and
+// ingestPart projects one wire MessagePart onto the gateway model and
 // applies the §15.4.1 canonical type-registry rule. A non-canonical type
 // (vendor-namespaced or unregistered) collapses to `text` with the
 // original preserved in `annotations.originalType`; an unregistered
@@ -75,12 +75,12 @@ func mergeAnnotations(dst, src map[string]any) map[string]any {
 // passes it through visibly. A missing schemaVersion defaults to 1.
 //
 // spec: §15.4.1 lines 1503, 1522.
-func ingestPart(p wireOutputPart) OutputPart {
+func ingestPart(p wireMessagePart) MessagePart {
 	sv := p.SchemaVersion
 	if sv <= 0 {
 		sv = 1
 	}
-	op := OutputPart{
+	op := MessagePart{
 		Type:          p.Type,
 		Ref:           p.Ref,
 		SchemaVersion: sv,

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/localtools"
 )
 
-// toolResultPart is one §15.4.1 OutputPart in a tool_result's content
+// toolResultPart is one §15.4.1 MessagePart in a tool_result's content
 // array. An adapter-local tool result uses a single inline text part.
 type toolResultPart struct {
 	Type   string `json:"type"`

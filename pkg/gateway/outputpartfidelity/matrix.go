@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package outputpartfidelity encodes the §15.4.1 Translation Fidelity
-// Matrix and ships per-OutputPart translators for the OpenAI Chat
+// Matrix and ships per-MessagePart translators for the OpenAI Chat
 // Completions and Open Responses wire forms. The package is the data
 // model behind the §12.10 fidelity-matrix conformance test: it lets a
 // table-driven test assert that the documented per-field fidelity
@@ -20,7 +20,7 @@
 package outputpartfidelity
 
 // FidelityTag is the §15.4.1 classification of how a single
-// `OutputPart` field survives translation to an external wire format.
+// `MessagePart` field survives translation to an external wire format.
 type FidelityTag string
 
 const (
@@ -59,7 +59,7 @@ const (
 	AdapterOpenResponses Adapter = "open_responses"
 )
 
-// Field names an OutputPart field row in the matrix.
+// Field names a MessagePart field row in the matrix.
 type Field string
 
 const (
@@ -95,7 +95,7 @@ func Adapters() []Adapter {
 	return []Adapter{AdapterOpenAICompletions, AdapterOpenResponses}
 }
 
-// Fields returns every OutputPart field row covered by the matrix in
+// Fields returns every MessagePart field row covered by the matrix in
 // the same order the spec lists them.
 func Fields() []Field {
 	return []Field{

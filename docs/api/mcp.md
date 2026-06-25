@@ -433,7 +433,7 @@ Returns an MCP Task with streaming progress notifications:
 }
 ```
 
-Progress notifications stream as MCP Task updates containing `OutputPart` arrays translated to MCP content blocks.
+Progress notifications stream as MCP Task updates containing `MessagePart` arrays translated to MCP content blocks.
 
 **Error codes:**
 
@@ -1030,6 +1030,6 @@ Lenny sessions map to MCP Tasks as follows:
 | `cancelled` | Task cancelled |
 | `expired` | Task failed (lease/budget exhausted) |
 
-When a session transitions to `running`, the attached MCP Task streams `OutputPart` arrays translated to MCP content blocks (TextContent, ImageContent, ResourceContent) using the [Translation Fidelity Matrix](internal.html#translation-fidelity-matrix) rules.
+When a session transitions to `running`, the attached MCP Task streams `MessagePart` arrays translated to MCP content blocks (TextContent, ImageContent, ResourceContent) using the [Translation Fidelity Matrix](internal.html#translation-fidelity-matrix) rules.
 
 Elicitation requests from the agent are surfaced as MCP Elicitation prompts, enabling the client to collect human input and relay it back to the session.

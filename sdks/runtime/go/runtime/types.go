@@ -3,7 +3,7 @@
 package runtime
 
 // This file holds the wire and convenience types the runtime-author SDK
-// surfaces. The wire-level structs (OutputPart, MessageEnvelope, the
+// surfaces. The wire-level structs (MessagePart, MessageEnvelope, the
 // inbound and outbound frame types) mirror the §15.4.1 adapter binary
 // protocol. The convenience structs (CreateRequest, Message, Reply,
 // CredentialBundle, AdapterManifest, WorkspacePlan) are §15.7 wrappers
@@ -11,16 +11,16 @@ package runtime
 // stdin framing before invoking Handler methods. They introduce no new
 // wire types.
 
-// schemaVersion is the current OutputPart and MessageEnvelope schema
-// revision (§15.4.1). Producers stamp it on every emitted OutputPart.
+// schemaVersion is the current MessagePart and MessageEnvelope schema
+// revision (§15.4.1). Producers stamp it on every emitted MessagePart.
 const schemaVersion = 1
 
-// OutputPart is the §15.4.1 internal content model. A part either
+// MessagePart is the §15.4.1 internal content model. A part either
 // carries bytes inline or references blob storage; Inline and Ref are
 // mutually exclusive. Basic-level runtimes need only set Type and
 // Inline; the SDK stamps SchemaVersion when it is unset.
-type OutputPart struct {
-	// SchemaVersion identifies the OutputPart schema revision. Defaults
+type MessagePart struct {
+	// SchemaVersion identifies the MessagePart schema revision. Defaults
 	// to 1. The SDK sets it to 1 on any emitted part that leaves it 0.
 	SchemaVersion int `json:"schemaVersion,omitempty"`
 	// ID is a stable part identifier. The adapter generates one when a
@@ -39,14 +39,14 @@ type OutputPart struct {
 	// Annotations is an open metadata map (role, language, final, etc.).
 	Annotations map[string]any `json:"annotations,omitempty"`
 	// Parts holds nested parts for compound outputs (execution_result).
-	Parts []OutputPart `json:"parts,omitempty"`
+	Parts []MessagePart `json:"parts,omitempty"`
 	// Status is one of streaming, complete, or failed.
 	Status string `json:"status,omitempty"`
 }
 
-// Text builds a minimal text OutputPart with SchemaVersion set.
-func Text(s string) OutputPart {
-	return OutputPart{SchemaVersion: schemaVersion, Type: "text", Inline: s}
+// Text builds a minimal text MessagePart with SchemaVersion set.
+func Text(s string) MessagePart {
+	return MessagePart{SchemaVersion: schemaVersion, Type: "text", Inline: s}
 }
 
 // MessageEnvelope is the §15.4.1 unified inbound message format. The
@@ -69,7 +69,7 @@ type MessageEnvelope struct {
 	Delivery        string         `json:"delivery,omitempty"`
 	DelegationDepth int            `json:"delegationDepth,omitempty"`
 	SlotID          string         `json:"slotId,omitempty"`
-	Input           []OutputPart   `json:"input,omitempty"`
+	Input           []MessagePart  `json:"input,omitempty"`
 	Annotations     map[string]any `json:"annotations,omitempty"`
 }
 
@@ -244,10 +244,10 @@ type Message struct {
 // Reply is the value Handler.OnMessage returns. The SDK serializes it
 // into the stdout §15.4.1 response frame: Parts becomes output.
 type Reply struct {
-	// Parts is the OutputPart array the runtime emits for this turn.
+	// Parts is the MessagePart array the runtime emits for this turn.
 	// Nil or empty is valid when output was already emitted via the
 	// lenny/output platform MCP tool.
-	Parts []OutputPart `json:"parts,omitempty"`
+	Parts []MessagePart `json:"parts,omitempty"`
 	// Error reports a structured failure for this turn. When set, the
 	// adapter maps the task to failed and populates TaskResult.error.
 	Error *ResponseError `json:"error,omitempty"`
@@ -262,7 +262,7 @@ type Reply struct {
 
 // TextReply builds a Final Reply carrying a single text part.
 func TextReply(s string) Reply {
-	return Reply{Parts: []OutputPart{Text(s)}, Final: true}
+	return Reply{Parts: []MessagePart{Text(s)}, Final: true}
 }
 
 // --- §15.4.1 wire frame types ------------------------------------------
@@ -291,17 +291,17 @@ type inboundShutdown struct {
 
 // inboundToolResult is the §15.4.1 tool_result frame.
 type inboundToolResult struct {
-	Type    string       `json:"type"`
-	ID      string       `json:"id"`
-	Content []OutputPart `json:"content"`
-	IsError bool         `json:"isError,omitempty"`
-	SlotID  string       `json:"slotId,omitempty"`
+	Type    string        `json:"type"`
+	ID      string        `json:"id"`
+	Content []MessagePart `json:"content"`
+	IsError bool          `json:"isError,omitempty"`
+	SlotID  string        `json:"slotId,omitempty"`
 }
 
 // outboundResponse is the §15.4.1 outbound response frame.
 type outboundResponse struct {
 	Type   string         `json:"type"`
-	Output []OutputPart   `json:"output"`
+	Output []MessagePart  `json:"output"`
 	Error  *ResponseError `json:"error,omitempty"`
 	SlotID string         `json:"slotId,omitempty"`
 }

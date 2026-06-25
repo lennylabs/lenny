@@ -18,8 +18,8 @@ import (
 // authoritative wire schemas:
 //
 //   - line 2405: a `response` frame "matches schemas/lenny-adapter-jsonl.schema.json".
-//   - line 2408: "Every OutputPart produced by the runtime validates
-//     against schemas/outputpart.schema.json".
+//   - line 2408: "Every MessagePart produced by the runtime validates
+//     against schemas/messagepart.schema.json".
 //
 // The schemas are embedded (github.com/lennylabs/lenny/schemas) so this
 // check runs against a third-party runtime in its own repository, where
@@ -27,29 +27,29 @@ import (
 // across every check in a battery.
 
 const (
-	jsonlSchemaID      = "https://schemas.lenny.dev/adapter-jsonl/v1.json"
-	jsonlSchemaFile    = "lenny-adapter-jsonl.schema.json"
-	outputPartSchemaID = "https://schemas.lenny.dev/outputpart/v1.json"
-	outputPartFile     = "outputpart.schema.json"
+	jsonlSchemaID       = "https://schemas.lenny.dev/adapter-jsonl/v1.json"
+	jsonlSchemaFile     = "lenny-adapter-jsonl.schema.json"
+	messagePartSchemaID = "https://schemas.lenny.dev/messagepart/v1.json"
+	messagePartFile     = "messagepart.schema.json"
 )
 
 var (
-	schemaOnce       sync.Once
-	jsonlSchema      *jsonschema.Schema
-	outputPartSchema *jsonschema.Schema
-	schemaErr        error
+	schemaOnce        sync.Once
+	jsonlSchema       *jsonschema.Schema
+	messagePartSchema *jsonschema.Schema
+	schemaErr         error
 )
 
-// loadSchemas compiles the JSONL and OutputPart schemas from the embedded
-// FS. The OutputPart schema is registered under its $id first so the
+// loadSchemas compiles the JSONL and MessagePart schemas from the embedded
+// FS. The MessagePart schema is registered under its $id first so the
 // JSONL schema's `response.output` $ref resolves to it.
 func loadSchemas() error {
 	schemaOnce.Do(func() {
 		c := jsonschema.NewCompiler()
 		c.Draft = jsonschema.Draft2020
 		for id, file := range map[string]string{
-			outputPartSchemaID: outputPartFile,
-			jsonlSchemaID:      jsonlSchemaFile,
+			messagePartSchemaID: messagePartFile,
+			jsonlSchemaID:       jsonlSchemaFile,
 		} {
 			data, err := schemas.FS.ReadFile(file)
 			if err != nil {
@@ -65,8 +65,8 @@ func loadSchemas() error {
 			schemaErr = fmt.Errorf("compile %s: %w", jsonlSchemaFile, schemaErr)
 			return
 		}
-		if outputPartSchema, schemaErr = c.Compile(outputPartSchemaID); schemaErr != nil {
-			schemaErr = fmt.Errorf("compile %s: %w", outputPartFile, schemaErr)
+		if messagePartSchema, schemaErr = c.Compile(messagePartSchemaID); schemaErr != nil {
+			schemaErr = fmt.Errorf("compile %s: %w", messagePartFile, schemaErr)
 			return
 		}
 	})
@@ -89,9 +89,9 @@ func validateJSONLFrame(raw []byte) error {
 	return nil
 }
 
-// validateOutputPart validates one OutputPart against
-// schemas/outputpart.schema.json. spec: §15.4.6 line 2408.
-func validateOutputPart(raw json.RawMessage) error {
+// validateMessagePart validates one MessagePart against
+// schemas/messagepart.schema.json. spec: §15.4.6 line 2408.
+func validateMessagePart(raw json.RawMessage) error {
 	if err := loadSchemas(); err != nil {
 		return err
 	}
@@ -99,15 +99,15 @@ func validateOutputPart(raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return fmt.Errorf("output part not JSON: %w", err)
 	}
-	if err := outputPartSchema.Validate(v); err != nil {
-		return fmt.Errorf("output part does not match %s: %w", outputPartFile, err)
+	if err := messagePartSchema.Validate(v); err != nil {
+		return fmt.Errorf("output part does not match %s: %w", messagePartFile, err)
 	}
 	return nil
 }
 
 // validateResponseFrame validates a `response` frame against the JSONL
-// schema and, when it carries an `output` array, every OutputPart against
-// the OutputPart schema. It is the combined §15.4.6 line 2405 + 2408
+// schema and, when it carries an `output` array, every MessagePart against
+// the MessagePart schema. It is the combined §15.4.6 line 2405 + 2408
 // assertion the response-producing checks run. spec: §15.4.6 lines 2405, 2408.
 func validateResponseFrame(raw []byte) error {
 	if err := validateJSONLFrame(raw); err != nil {
@@ -120,7 +120,7 @@ func validateResponseFrame(raw []byte) error {
 		return fmt.Errorf("response not JSON: %w", err)
 	}
 	for i, part := range resp.Output {
-		if err := validateOutputPart(part); err != nil {
+		if err := validateMessagePart(part); err != nil {
 			return fmt.Errorf("output[%d]: %w", i, err)
 		}
 	}

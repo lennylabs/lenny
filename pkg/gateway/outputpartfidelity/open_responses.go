@@ -12,14 +12,14 @@ import (
 // Per §15.4.1 fidelity matrix, the output item carries:
 //
 //   - Type: a content type (output_text, output_image, output_file)
-//     derived from OutputPart.type (lossy).
-//   - ID: mapped from OutputPart.id ([extended] — recoverable on
+//     derived from MessagePart.type (lossy).
+//   - ID: mapped from MessagePart.id ([extended] — recoverable on
 //     ingest for top-level output items).
-//   - Status: mapped from OutputPart.status ([lossy] — failed is
+//   - Status: mapped from MessagePart.status ([lossy] — failed is
 //     representable; per-part streaming distinctions are not).
 //   - Text/ImageURL/File: the inline content, base64 for binary.
 //
-// Other OutputPart fields are dropped per the matrix.
+// Other MessagePart fields are dropped per the matrix.
 type OpenResponseItem struct {
 	Type     string                  `json:"type"`
 	ID       string                  `json:"id,omitempty"`
@@ -38,7 +38,7 @@ type openResponsesFileBlock struct {
 	MimeType string `json:"mime_type"`
 }
 
-// TranslateOpenResponses converts an OutputPart to a single Open
+// TranslateOpenResponses converts a MessagePart to a single Open
 // Responses output item per the §15.4.1 fidelity matrix.
 //
 // Type collapse:
@@ -52,11 +52,11 @@ type openResponsesFileBlock struct {
 //
 // ID and Status are preserved per the matrix (extended and lossy
 // respectively).
-func TranslateOpenResponses(p runtime.OutputPart) ([]byte, error) {
+func TranslateOpenResponses(p runtime.MessagePart) ([]byte, error) {
 	return json.Marshal(toResponsesItem(p))
 }
 
-func toResponsesItem(p runtime.OutputPart) OpenResponseItem {
+func toResponsesItem(p runtime.MessagePart) OpenResponseItem {
 	item := OpenResponseItem{ID: p.ID, Status: mapResponsesStatus(p.Status)}
 	switch p.Type {
 	case "image", "screenshot":
@@ -91,7 +91,7 @@ func toResponsesItem(p runtime.OutputPart) OpenResponseItem {
 	return item
 }
 
-// mapResponsesStatus maps the OutputPart.status field to the lossy
+// mapResponsesStatus maps the MessagePart.status field to the lossy
 // Open Responses output-item status. Per the matrix, only `failed`
 // has a native representation; `streaming` and `complete` collapse to
 // the unset (default-complete) state.
@@ -103,7 +103,7 @@ func mapResponsesStatus(s string) string {
 }
 
 // ParseOpenResponses parses a single Open Responses output item back
-// into an OutputPart, applying the matrix:
+// into a MessagePart, applying the matrix:
 //
 //   - ID is recovered ([extended]).
 //   - Type and MimeType are reconstructed only from the wire form
@@ -113,12 +113,12 @@ func mapResponsesStatus(s string) string {
 //   - Status comes back only when the wire-form set it to "failed".
 //   - schemaVersion, ref, annotations, parts, protocolHints come back
 //     as the zero value (dropped).
-func ParseOpenResponses(wire []byte) (runtime.OutputPart, error) {
+func ParseOpenResponses(wire []byte) (runtime.MessagePart, error) {
 	var item OpenResponseItem
 	if err := json.Unmarshal(wire, &item); err != nil {
-		return runtime.OutputPart{}, err
+		return runtime.MessagePart{}, err
 	}
-	out := runtime.OutputPart{ID: item.ID, Status: item.Status}
+	out := runtime.MessagePart{ID: item.ID, Status: item.Status}
 	switch item.Type {
 	case "output_text":
 		out.Type = "text"

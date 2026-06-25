@@ -15,7 +15,7 @@ import (
 
 // §24.8 line 113 requires the conformance suite to be schema-driven:
 // "assertions are generated from the published schemas/lenny-adapter.proto,
-// schemas/lenny-adapter-jsonl.schema.json, and schemas/outputpart.schema.json
+// schemas/lenny-adapter-jsonl.schema.json, and schemas/messagepart.schema.json
 // artifacts ... rather than hand-coded against prose" and the validation
 // report "cites the specific schema assertion that failed".
 //

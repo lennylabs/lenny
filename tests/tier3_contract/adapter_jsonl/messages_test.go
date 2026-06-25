@@ -143,7 +143,7 @@ func TestAdapterAcceptsCanonicalMessages(t *testing.T) {
 
 	// Each line must validate against the JSONL schema.
 	c := schematest.NewCompiler(t)
-	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/outputpart/v1.json", "schemas/outputpart.schema.json")
+	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/messagepart/v1.json", "schemas/messagepart.schema.json")
 	jsonl := schematest.MustCompile(t, c, "schemas/lenny-adapter-jsonl.schema.json")
 	for i, line := range lines[:2] {
 		var v any

@@ -97,7 +97,7 @@ func TestOutputSchemaMatchesSpec_spec_8_5_F_8_5_11(t *testing.T) {
 
 // TestRequestInputSchemaMatchesSpec asserts the §8.5 line 539 contract:
 // `lenny/request_input(parts)`. The required input is `parts` (an
-// OutputPart[]), not the legacy flat `prompt` string. `sessionId` and
+// MessagePart[]), not the legacy flat `prompt` string. `sessionId` and
 // `requestId` are extension fields and MUST NOT be required.
 // spec: §8.5 line 539; F-8.5.12.
 func TestRequestInputSchemaMatchesSpec_spec_8_5_F_8_5_12(t *testing.T) {

@@ -56,7 +56,7 @@ data: {"result": {"output": [{"type": "text", "inline": "Review complete."}]}}
 
 | Event | Description |
 |---|---|
-| `agent_output` | Streaming output from the agent. Contains `output: OutputPart[]`. |
+| `agent_output` | Streaming output from the agent. Contains `output: MessagePart[]`. |
 | `tool_use_requested` | Agent wants to call a tool. Contains `tool_call_id`, `tool`, `args`. |
 | `tool_result` | Result of a tool call. Contains `tool_call_id`, `result`. |
 | `elicitation_request` | Agent or tool needs user input. Contains `elicitation_id`, `schema`, `message`. |
@@ -68,9 +68,9 @@ data: {"result": {"output": [{"type": "text", "inline": "Review complete."}]}}
 | `checkpoint_boundary` | Client's cursor fell outside the replay window. Contains `cursor`, `events_lost`, `reason`. |
 | `session_expiring_soon` | Sent 5 minutes before `maxSessionAge` expires. |
 
-### OutputPart Types
+### MessagePart Types
 
-The `agent_output` event's `output` field contains an array of `OutputPart` objects:
+The `agent_output` event's `output` field contains an array of `MessagePart` objects:
 
 | Type | Description |
 |---|---|
@@ -81,10 +81,10 @@ The `agent_output` event's `output` field contains an array of `OutputPart` obje
 | `screenshot` / `image` | Image content. Fields: `type`, `inline` (base64) or `ref` (`lenny-blob://`), `mimeType` (`image/*`). |
 | `diff` | Code diff or patch. Fields: `type`, `inline`, `annotations.language: "diff"`. |
 | `file` | File content (binary or text). Fields: `type`, `inline` or `ref`, `mimeType`. |
-| `execution_result` | Compound output from code execution. Fields: `type`, `parts[]` (each entry is a nested `OutputPart`). |
+| `execution_result` | Compound output from code execution. Fields: `type`, `parts[]` (each entry is a nested `MessagePart`). |
 | `error` | Error or diagnostic. Fields: `type`, `inline`, `annotations.errorCode` (optional). |
 
-See the canonical type registry in [spec §15.4.1](../reference/glossary.html) for per-type field contracts, `schemaVersion`, and the `x-<vendor>/<typeName>` namespace convention for third-party types. Parts either embed bytes via `inline` or reference a blob via `ref` — never both (`OUTPUTPART_INLINE_REF_CONFLICT`). For REST clients, resolve `ref` via `GET /v1/blobs/{ref}`; MCP, OpenAI, and A2A adapters dereference refs internally and never expose `lenny-blob://` URIs to external callers.
+See the canonical type registry in [spec §15.4.1](../reference/glossary.html) for per-type field contracts, `schemaVersion`, and the `x-<vendor>/<typeName>` namespace convention for third-party types. Parts either embed bytes via `inline` or reference a blob via `ref` — never both (`MESSAGEPART_INLINE_REF_CONFLICT`). For REST clients, resolve `ref` via `GET /v1/blobs/{ref}`; MCP, OpenAI, and A2A adapters dereference refs internally and never expose `lenny-blob://` URIs to external callers.
 
 ---
 

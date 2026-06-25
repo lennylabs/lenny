@@ -115,7 +115,7 @@ The `tests/testinfra/` packages are shared building blocks:
 - `ports` — fresh OS-assigned ports
 - `goleak` — goroutine-leak detection
 - `fixtures` — reference-data identifiers (acme, alice, …)
-- `fixtures/generators` — rapid-driven WorkspacePlan / TaskRecord / OutputPart generators
+- `fixtures/generators` — rapid-driven WorkspacePlan / TaskRecord / MessagePart generators
 - `fixtures/seed` — Postgres + Redis seed statements for the compose stack
 - `golden` — golden-file comparison with `--update-golden`
 - `stubs/oidc` — in-process OIDC stub

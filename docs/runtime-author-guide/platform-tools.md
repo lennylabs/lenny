@@ -49,7 +49,7 @@ Spawn a child session on another runtime. The target is opaque --- your runtime 
 |-----------|------|----------|-------------|
 | `target` | string | Yes | Opaque runtime identifier (discovered via `lenny/discover_agents`) |
 | `task` | object | Yes | Task specification containing input and optional file exports |
-| `task.input` | OutputPart[] | Yes | Input content for the child session |
+| `task.input` | MessagePart[] | Yes | Input content for the child session |
 | `task.workspaceFiles` | object | No | File export specification |
 | `task.workspaceFiles.export` | array | No | Array of `{glob, destPrefix}` entries defining which parent workspace files to include in the child's workspace |
 | `lease_slice` | object | No | Budget allocation from parent to child |
@@ -195,7 +195,7 @@ Emit output parts to the parent session or client. Use this for incremental stre
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `output` | OutputPart[] | Yes | Array of output parts to emit |
+| `output` | MessagePart[] | Yes | Array of output parts to emit |
 
 **Returns:** Acknowledgement.
 
@@ -276,7 +276,7 @@ Block until the parent or client provides a response. This is the mechanism for 
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `parts` | OutputPart[] | Yes | Content describing what input is needed |
+| `parts` | MessagePart[] | Yes | Content describing what input is needed |
 
 **Returns:** `MessageEnvelope` containing the response.
 
@@ -304,7 +304,7 @@ Send a message to any task by ID, subject to messaging scope restrictions.
 |-----------|------|----------|-------------|
 | `to` | string | Yes | Target task/session ID |
 | `message` | object | Yes | Message content |
-| `message.parts` | OutputPart[] | Yes | Content parts |
+| `message.parts` | MessagePart[] | Yes | Content parts |
 | `message.inReplyTo` | string | No | If responding to a `request_input`, the request ID |
 | `message.delivery` | string | No | `"immediate"` to interrupt a running session |
 

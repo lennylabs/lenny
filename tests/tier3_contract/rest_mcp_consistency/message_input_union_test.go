@@ -6,10 +6,10 @@
 // REST `/messages` endpoint and the MCP `lenny/send_message` tool. §15.4
 // binds `MessageEnvelope` identically across the stdin binary protocol,
 // the platform MCP server tools, and every external API, so a message's
-// inbound content is the same `oneOf(string, OutputPart[])` union on both
+// inbound content is the same `oneOf(string, MessagePart[])` union on both
 // surfaces. Before F-MS5 the content was a bare string on both, so the
 // structured part-array form was unrepresentable. This test sends both the
-// bare-string form and the OutputPart[] form through each surface and
+// bare-string form and the MessagePart[] form through each surface and
 // asserts both are accepted and delivered, pinning the two surfaces to the
 // one §15.4 union under the §15.2.1 parity rule.
 package rest_mcp_consistency_test
@@ -100,7 +100,7 @@ func restMessageResult(t *testing.T, restURL, id, body string) (status, echoed s
 }
 
 // mcpMessageResult drives the MCP lenny/send_message tool with the given
-// message argument (a bare string or an OutputPart[] array) and returns the
+// message argument (a bare string or a MessagePart[] array) and returns the
 // receipt status and the echoed output text.
 func mcpMessageResult(t *testing.T, mcpURL, id string, message any) (status, echoed string) {
 	t.Helper()
@@ -132,7 +132,7 @@ func mcpMessageResult(t *testing.T, mcpURL, id string, message any) (status, ech
 	return status, echoed
 }
 
-// spec: §15.4 (MessageEnvelope.input oneOf(string, OutputPart[])), §15.2.1
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])), §15.2.1
 // (REST/MCP parity).
 // diagnosis: a failure here means the REST /messages endpoint and the MCP
 // lenny/send_message tool disagree on the §15.4 message-input union — one

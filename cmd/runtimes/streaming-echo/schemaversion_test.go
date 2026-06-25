@@ -12,8 +12,8 @@ import (
 
 // TestHandleMessageStampsSchemaVersion_spec_15_4_1_1499 asserts the
 // streaming-echo reference runtime stamps schemaVersion on every emitted
-// OutputPart — both the text parts it generates and the input parts it
-// echoes verbatim. outputpart.schema.json makes schemaVersion required,
+// MessagePart — both the text parts it generates and the input parts it
+// echoes verbatim. messagepart.schema.json makes schemaVersion required,
 // so a third-party author cloning this runtime inherits compliant output.
 // spec: §15.4.1 line 1499-1501 / 15.4-MED-021.
 func TestHandleMessageStampsSchemaVersion_spec_15_4_1_1499(t *testing.T) {

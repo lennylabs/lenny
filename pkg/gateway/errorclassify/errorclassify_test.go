@@ -129,13 +129,13 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 		{"ERASURE_IN_PROGRESS", CategoryPolicy, false},               // spec: 15:1040
 		{"TENANT_SUSPENDED", CategoryPolicy, false},                  // spec: 15:1096
 		// A representative spread of other newly-added catalog codes.
-		{"TARGET_NOT_READY", CategoryTransient, true},      // spec: 15:1094
-		{"TARGET_TERMINAL", CategoryPermanent, false},      // spec: 15:998
-		{"STORAGE_QUOTA_EXCEEDED", CategoryPolicy, false},  // spec: 15:1024
-		{"BUDGET_EXHAUSTED", CategoryPolicy, false},        // spec: 15:1079
-		{"POD_CRASH", CategoryTransient, true},             // spec: 15:995
-		{"OUTPUTPART_TOO_LARGE", CategoryPermanent, false}, // spec: 15:1038
-		{"ETAG_MISMATCH", CategoryPermanent, false},        // spec: 15:984
+		{"TARGET_NOT_READY", CategoryTransient, true},       // spec: 15:1094
+		{"TARGET_TERMINAL", CategoryPermanent, false},       // spec: 15:998
+		{"STORAGE_QUOTA_EXCEEDED", CategoryPolicy, false},   // spec: 15:1024
+		{"BUDGET_EXHAUSTED", CategoryPolicy, false},         // spec: 15:1079
+		{"POD_CRASH", CategoryTransient, true},              // spec: 15:995
+		{"MESSAGEPART_TOO_LARGE", CategoryPermanent, false}, // spec: 15:1038
+		{"ETAG_MISMATCH", CategoryPermanent, false},         // spec: 15:984
 		// spec: §8.8 line 869 — a one_shot second input round is 400.
 		{"ONE_SHOT_INPUT_EXHAUSTED", CategoryPermanent, false},
 		// Code-internal delegate_task / request_input codes classified

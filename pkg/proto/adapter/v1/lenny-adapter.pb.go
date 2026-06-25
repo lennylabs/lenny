@@ -228,8 +228,8 @@ const (
 	Error_ERROR_CODE_BUDGET_EXHAUSTED                  Error_ErrorCode = 9
 	Error_ERROR_CODE_DEADLINE_EXCEEDED                 Error_ErrorCode = 10
 	Error_ERROR_CODE_DUPLICATE_MESSAGE_ID              Error_ErrorCode = 11
-	Error_ERROR_CODE_OUTPUTPART_TOO_LARGE              Error_ErrorCode = 12
-	Error_ERROR_CODE_OUTPUTPART_INLINE_REF_CONFLICT    Error_ErrorCode = 13
+	Error_ERROR_CODE_MESSAGEPART_TOO_LARGE             Error_ErrorCode = 12
+	Error_ERROR_CODE_MESSAGEPART_INLINE_REF_CONFLICT   Error_ErrorCode = 13
 	Error_ERROR_CODE_ENV_VAR_BLOCKLISTED               Error_ErrorCode = 14
 	Error_ERROR_CODE_GIT_CLONE_REF_RESOLVE_TRANSIENT   Error_ErrorCode = 15
 	Error_ERROR_CODE_GIT_CLONE_REF_UNRESOLVABLE        Error_ErrorCode = 16
@@ -261,8 +261,8 @@ var (
 		9:  "ERROR_CODE_BUDGET_EXHAUSTED",
 		10: "ERROR_CODE_DEADLINE_EXCEEDED",
 		11: "ERROR_CODE_DUPLICATE_MESSAGE_ID",
-		12: "ERROR_CODE_OUTPUTPART_TOO_LARGE",
-		13: "ERROR_CODE_OUTPUTPART_INLINE_REF_CONFLICT",
+		12: "ERROR_CODE_MESSAGEPART_TOO_LARGE",
+		13: "ERROR_CODE_MESSAGEPART_INLINE_REF_CONFLICT",
 		14: "ERROR_CODE_ENV_VAR_BLOCKLISTED",
 		15: "ERROR_CODE_GIT_CLONE_REF_RESOLVE_TRANSIENT",
 		16: "ERROR_CODE_GIT_CLONE_REF_UNRESOLVABLE",
@@ -291,8 +291,8 @@ var (
 		"ERROR_CODE_BUDGET_EXHAUSTED":                  9,
 		"ERROR_CODE_DEADLINE_EXCEEDED":                 10,
 		"ERROR_CODE_DUPLICATE_MESSAGE_ID":              11,
-		"ERROR_CODE_OUTPUTPART_TOO_LARGE":              12,
-		"ERROR_CODE_OUTPUTPART_INLINE_REF_CONFLICT":    13,
+		"ERROR_CODE_MESSAGEPART_TOO_LARGE":             12,
+		"ERROR_CODE_MESSAGEPART_INLINE_REF_CONFLICT":   13,
 		"ERROR_CODE_ENV_VAR_BLOCKLISTED":               14,
 		"ERROR_CODE_GIT_CLONE_REF_RESOLVE_TRANSIENT":   15,
 		"ERROR_CODE_GIT_CLONE_REF_UNRESOLVABLE":        16,
@@ -5802,7 +5802,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x06pod_id\x18\x01 \x01(\tR\x05podId\x12;\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2!.lenny.adapter.v1.PodScrubOutcomeR\aoutcome\x12\x16\n" +
 	"\x06detail\x18\x03 \x01(\tR\x06detail\"\x18\n" +
-	"\x16ReportPodScrubResponse\"\xb3\v\n" +
+	"\x16ReportPodScrubResponse\"\xb5\v\n" +
 	"\x05Error\x125\n" +
 	"\x04code\x18\x01 \x01(\x0e2!.lenny.adapter.v1.Error.ErrorCodeR\x04code\x12<\n" +
 	"\bcategory\x18\x02 \x01(\x0e2 .lenny.adapter.v1.Error.CategoryR\bcategory\x12\x18\n" +
@@ -5813,7 +5813,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x14CATEGORY_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12CATEGORY_TRANSIENT\x10\x01\x12\x16\n" +
 	"\x12CATEGORY_PERMANENT\x10\x02\x12\x13\n" +
-	"\x0fCATEGORY_POLICY\x10\x03\"\xf6\b\n" +
+	"\x0fCATEGORY_POLICY\x10\x03\"\xf8\b\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cERROR_CODE_SESSION_NOT_FOUND\x10\x01\x12%\n" +
@@ -5827,9 +5827,9 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x1bERROR_CODE_BUDGET_EXHAUSTED\x10\t\x12 \n" +
 	"\x1cERROR_CODE_DEADLINE_EXCEEDED\x10\n" +
 	"\x12#\n" +
-	"\x1fERROR_CODE_DUPLICATE_MESSAGE_ID\x10\v\x12#\n" +
-	"\x1fERROR_CODE_OUTPUTPART_TOO_LARGE\x10\f\x12-\n" +
-	")ERROR_CODE_OUTPUTPART_INLINE_REF_CONFLICT\x10\r\x12\"\n" +
+	"\x1fERROR_CODE_DUPLICATE_MESSAGE_ID\x10\v\x12$\n" +
+	" ERROR_CODE_MESSAGEPART_TOO_LARGE\x10\f\x12.\n" +
+	"*ERROR_CODE_MESSAGEPART_INLINE_REF_CONFLICT\x10\r\x12\"\n" +
 	"\x1eERROR_CODE_ENV_VAR_BLOCKLISTED\x10\x0e\x12.\n" +
 	"*ERROR_CODE_GIT_CLONE_REF_RESOLVE_TRANSIENT\x10\x0f\x12)\n" +
 	"%ERROR_CODE_GIT_CLONE_REF_UNRESOLVABLE\x10\x10\x12.\n" +

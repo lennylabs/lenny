@@ -18,7 +18,7 @@ import (
 func TestRunPostAgentOutputNoChainPassesThrough(t *testing.T) {
 	s := &Server{}
 	rec := httptest.NewRecorder()
-	in := []executor.OutputPart{{Type: "text", Text: "hello"}}
+	in := []executor.MessagePart{{Type: "text", Text: "hello"}}
 	out, rejected := s.runPostAgentOutput(context.Background(), rec, "acme", "sess_x", in)
 	if rejected {
 		t.Fatal("empty chain rejected the output")
@@ -33,7 +33,7 @@ func TestRunPostAgentOutputNoChainPassesThrough(t *testing.T) {
 func TestRunPostAgentOutputRejectReturns403(t *testing.T) {
 	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePostAgentOutput, rejectInterceptor{})}
 	rec := httptest.NewRecorder()
-	in := []executor.OutputPart{{Type: "text", Text: "secret"}}
+	in := []executor.MessagePart{{Type: "text", Text: "secret"}}
 	if _, rejected := s.runPostAgentOutput(context.Background(), rec, "acme", "sess_x", in); !rejected {
 		t.Fatal("runPostAgentOutput admitted a REJECT")
 	}
@@ -52,11 +52,11 @@ func TestRunPostAgentOutputRejectReturns403(t *testing.T) {
 // spec: §4.8 line 1054 — a PostAgentOutput MODIFY rewrites the output parts
 // the gateway delivers to the client.
 func TestRunPostAgentOutputModifyRewritesParts(t *testing.T) {
-	modified, _ := json.Marshal([]executor.OutputPart{{Type: "text", Text: "redacted"}})
+	modified, _ := json.Marshal([]executor.MessagePart{{Type: "text", Text: "redacted"}})
 	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePostAgentOutput,
 		routeModifyInterceptor{priority: 150, out: modified})}
 	rec := httptest.NewRecorder()
-	in := []executor.OutputPart{{Type: "text", Text: "original"}}
+	in := []executor.MessagePart{{Type: "text", Text: "original"}}
 	out, rejected := s.runPostAgentOutput(context.Background(), rec, "acme", "sess_x", in)
 	if rejected {
 		t.Fatalf("runPostAgentOutput rejected a legal MODIFY: status %d", rec.Code)

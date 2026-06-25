@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // This file holds the wire and convenience types the runtime-author SDK
-// surfaces. The wire-level types (OutputPart, MessageEnvelope, the
+// surfaces. The wire-level types (MessagePart, MessageEnvelope, the
 // inbound and outbound frame types) mirror the §15.4.1 adapter binary
 // protocol. The convenience types (CreateRequest, Message, Reply,
 // CredentialBundle, AdapterManifest, WorkspacePlan) are §15.7 wrappers
@@ -9,16 +9,16 @@
 // stdin framing before invoking Handler methods. They introduce no new
 // wire types.
 
-// SCHEMA_VERSION is the current OutputPart and MessageEnvelope schema
-// revision (§15.4.1). Producers stamp it on every emitted OutputPart.
+// SCHEMA_VERSION is the current MessagePart and MessageEnvelope schema
+// revision (§15.4.1). Producers stamp it on every emitted MessagePart.
 export const SCHEMA_VERSION = 1;
 
-// OutputPart is the §15.4.1 internal content model. A part either
+// MessagePart is the §15.4.1 internal content model. A part either
 // carries bytes inline or references blob storage; inline and ref are
 // mutually exclusive. Basic-level runtimes need only set type and
 // inline; the SDK stamps schemaVersion when it is unset.
-export interface OutputPart {
-  // schemaVersion identifies the OutputPart schema revision. Defaults
+export interface MessagePart {
+  // schemaVersion identifies the MessagePart schema revision. Defaults
   // to 1. The SDK sets it to 1 on any emitted part that leaves it
   // undefined.
   schemaVersion?: number;
@@ -38,13 +38,13 @@ export interface OutputPart {
   // annotations is an open metadata map (role, language, final, etc.).
   annotations?: Record<string, unknown>;
   // parts holds nested parts for compound outputs (execution_result).
-  parts?: OutputPart[];
+  parts?: MessagePart[];
   // status is one of streaming, complete, or failed.
   status?: string;
 }
 
-// text builds a minimal text OutputPart with schemaVersion set.
-export function text(s: string): OutputPart {
+// text builds a minimal text MessagePart with schemaVersion set.
+export function text(s: string): MessagePart {
   return { schemaVersion: SCHEMA_VERSION, type: "text", inline: s };
 }
 
@@ -69,7 +69,7 @@ export interface MessageEnvelope {
   delivery?: string;
   delegationDepth?: number;
   slotId?: string;
-  input?: OutputPart[];
+  input?: MessagePart[];
 }
 
 // ResponseError is the optional §15.4.1 response.error object and the
@@ -228,10 +228,10 @@ export interface Message {
 // Reply is the value Handler.onMessage returns. The SDK serializes it
 // into the stdout §15.4.1 response frame: parts becomes output.
 export interface Reply {
-  // parts is the OutputPart array the runtime emits for this turn.
+  // parts is the MessagePart array the runtime emits for this turn.
   // Undefined or empty is valid when output was already emitted via
   // the lenny/output platform MCP tool.
-  parts?: OutputPart[];
+  parts?: MessagePart[];
   // error reports a structured failure for this turn. When set, the
   // adapter maps the task to failed and populates TaskResult.error.
   error?: ResponseError;
@@ -292,13 +292,13 @@ export interface AdapterTools {
   toolCall(name: string, args: Record<string, unknown>): Promise<ToolResult>;
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
-  listDir(path: string): Promise<OutputPart[]>;
+  listDir(path: string): Promise<MessagePart[]>;
   deleteFile(path: string): Promise<void>;
 }
 
 // ToolResult is the decoded result of an adapter-local tool call.
 export interface ToolResult {
-  content: OutputPart[];
+  content: MessagePart[];
   isError: boolean;
 }
 
@@ -306,14 +306,14 @@ export interface ToolResult {
 export interface PlatformTools {
   delegateTask(
     target: string,
-    parts: OutputPart[],
+    parts: MessagePart[],
     budget?: Record<string, unknown>,
   ): Promise<TaskHandle>;
   awaitChildren(childIds: string[], mode?: string): Promise<TaskResult2[]>;
   cancelChild(childId: string): Promise<void>;
   discoverAgents(query: Record<string, unknown>): Promise<unknown>;
-  output(parts: OutputPart[]): Promise<void>;
-  requestInput(prompt: OutputPart[]): Promise<OutputPart[]>;
+  output(parts: MessagePart[]): Promise<void>;
+  requestInput(prompt: MessagePart[]): Promise<MessagePart[]>;
   requestElicitation(args: Record<string, unknown>): Promise<unknown>;
   sendMessage(args: Record<string, unknown>): Promise<unknown>;
   memoryWrite(args: Record<string, unknown>): Promise<void>;
@@ -331,7 +331,7 @@ export interface TaskHandle {
 
 // TaskOutput is the output object of a §8.8 TaskResult.
 export interface TaskOutput {
-  parts?: OutputPart[];
+  parts?: MessagePart[];
 }
 
 // TaskResult2 mirrors the §8.8 TaskResult schema returned by

@@ -30,7 +30,7 @@ from lenny_runtime import (
     CreateRequest,
     HandlerTools,
     Message,
-    OutputPart,
+    MessagePart,
     ProtocolError,
     Reply,
     ResponseError,
@@ -44,9 +44,9 @@ _EXIT_RUNTIME_ERROR = 1
 _EXIT_PROTOCOL_ERROR = 2
 
 
-def _echo_parts(parts: list[OutputPart], seq: int) -> list[OutputPart]:
+def _echo_parts(parts: list[MessagePart], seq: int) -> list[MessagePart]:
     """Prefix text parts with the per-session sequence number."""
-    out: list[OutputPart] = []
+    out: list[MessagePart] = []
     for part in parts:
         if part.type == "text" and part.inline:
             out.append(text(f"[delegate seq={seq}] {part.inline}"))

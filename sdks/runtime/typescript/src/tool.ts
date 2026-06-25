@@ -9,13 +9,13 @@
 
 import { randomBytes } from "node:crypto";
 import type { FrameWriter } from "./transport.js";
-import type { AdapterTools, OutputPart, ToolResult } from "./types.js";
+import type { AdapterTools, MessagePart, ToolResult } from "./types.js";
 
 // InboundToolResult is the decoded §15.4.1 tool_result frame.
 export interface InboundToolResult {
   type: string;
   id: string;
-  content?: OutputPart[];
+  content?: MessagePart[];
   isError?: boolean;
   slotId?: string;
 }
@@ -180,7 +180,7 @@ export class AdapterToolset implements AdapterTools {
 
   // listDir invokes the §15.4.1 list_dir adapter-local tool and returns
   // the directory entries the adapter reports.
-  async listDir(path: string): Promise<OutputPart[]> {
+  async listDir(path: string): Promise<MessagePart[]> {
     const tr = await this.toolCall("list_dir", { path });
     toolError(tr, "list_dir");
     return tr.content;

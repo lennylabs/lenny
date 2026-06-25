@@ -204,9 +204,9 @@ export interface DeliveryReceipt {
 }
 
 /**
- * One §8.5 OutputPart returned alongside a delivery receipt.
+ * One §8.5 MessagePart returned alongside a delivery receipt.
  */
-export interface OutputPart {
+export interface MessagePart {
   type: string;
   text?: string;
   data?: unknown;
@@ -217,7 +217,7 @@ export interface OutputPart {
  */
 export interface SendMessagesResponse {
   deliveryReceipt: DeliveryReceipt;
-  output?: OutputPart[];
+  output?: MessagePart[];
 }
 
 /**

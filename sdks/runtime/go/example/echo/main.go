@@ -48,7 +48,7 @@ func (h *echoHandler) OnCreate(context.Context, runtime.CreateRequest) error {
 func (h *echoHandler) OnMessage(_ context.Context, msg runtime.Message) (runtime.Reply, error) {
 	n := h.seq.Add(1)
 	in := msg.Envelope.Input
-	out := make([]runtime.OutputPart, 0, len(in))
+	out := make([]runtime.MessagePart, 0, len(in))
 	for _, p := range in {
 		if p.Type == "text" && p.Inline != "" {
 			out = append(out, runtime.Text(fmt.Sprintf("[echo seq=%d] %s", n, p.Inline)))

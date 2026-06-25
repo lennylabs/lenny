@@ -11,19 +11,19 @@ import (
 )
 
 // spec: §8.2 lines 12-28 — the opaque `target` resolver and the
-// `task.input` OutputPart[] projection. F-8.2.1.
+// `task.input` MessagePart[] projection. F-8.2.1.
 
 func TestFlattenTaskInput_spec_8_2(t *testing.T) {
 	cases := []struct {
 		name  string
-		parts []sessionrecord.OutputPart
+		parts []sessionrecord.MessagePart
 		want  string
 	}{
 		{"nil", nil, ""},
-		{"single text", []sessionrecord.OutputPart{{Type: "text", Inline: "do work"}}, "do work"},
+		{"single text", []sessionrecord.MessagePart{{Type: "text", Inline: "do work"}}, "do work"},
 		{
 			"multiple text concatenated in order",
-			[]sessionrecord.OutputPart{
+			[]sessionrecord.MessagePart{
 				{Type: "text", Inline: "part one "},
 				{Type: "text", Inline: "part two"},
 			},
@@ -31,7 +31,7 @@ func TestFlattenTaskInput_spec_8_2(t *testing.T) {
 		},
 		{
 			"non-text parts skipped",
-			[]sessionrecord.OutputPart{
+			[]sessionrecord.MessagePart{
 				{Type: "text", Inline: "keep"},
 				{Type: "image", Ref: "blob://x"},
 				{Type: "file", Ref: "blob://y"},
@@ -40,16 +40,16 @@ func TestFlattenTaskInput_spec_8_2(t *testing.T) {
 		},
 		{
 			"nested parts flattened",
-			[]sessionrecord.OutputPart{
+			[]sessionrecord.MessagePart{
 				{Type: "text", Inline: "a"},
-				{Type: "group", Parts: []sessionrecord.OutputPart{
+				{Type: "group", Parts: []sessionrecord.MessagePart{
 					{Type: "text", Inline: "b"},
 					{Type: "text", Inline: "c"},
 				}},
 			},
 			"abc",
 		},
-		{"empty inline text contributes nothing", []sessionrecord.OutputPart{{Type: "text", Inline: ""}}, ""},
+		{"empty inline text contributes nothing", []sessionrecord.MessagePart{{Type: "text", Inline: ""}}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -100,10 +100,10 @@ func TestMessagesEchoExecutor(t *testing.T) {
 	}
 }
 
-// spec: §15.4 (MessageEnvelope.input oneOf(string, OutputPart[])).
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])).
 //
 // The REST /messages content field is the §15.4 message-input union. Both
-// the bare-string sugar and the OutputPart[] structured form are accepted
+// the bare-string sugar and the MessagePart[] structured form are accepted
 // over the wire and projected to the same delivered text; a malformed
 // content shape (an object) is rejected fail-closed.
 func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
@@ -119,7 +119,7 @@ func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
 			t.Errorf("bare-string content not echoed: %s", rr.Body.String())
 		}
 	})
-	t.Run("OutputPart array", func(t *testing.T) {
+	t.Run("MessagePart array", func(t *testing.T) {
 		srv, store := newMessagesServer(t)
 		seedRunningSession(t, store, "sess_u_parts")
 		rr := sendRawMessageRequest(t, srv.Handler(), "sess_u_parts",
@@ -134,7 +134,7 @@ func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
 		}
 	})
 	t.Run("malformed content is rejected", func(t *testing.T) {
-		// spec: §15.4 — the union admits only a string or an OutputPart[];
+		// spec: §15.4 — the union admits only a string or a MessagePart[];
 		// an object content shape is rejected with 400 rather than coerced.
 		srv, store := newMessagesServer(t)
 		seedRunningSession(t, store, "sess_u_bad")

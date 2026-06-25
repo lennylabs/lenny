@@ -55,7 +55,7 @@ func TestRuntimeCrashBounds_spec_15_4_1_1889(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 lines 1530-1531 — a `text` OutputPart guarantees type,
+// spec: §15.4.1 lines 1530-1531 — a `text` MessagePart guarantees type,
 // inline, mimeType (text/plain) and carries its own schemaVersion.
 func TestTextPart_spec_15_4_1(t *testing.T) {
 	p := TextPart("hello")
@@ -116,7 +116,7 @@ func TestRetriesExhausted_spec_8_8_936(t *testing.T) {
 
 // spec: §8.8 lines 806-823 — the TaskRecord envelope serializes with the
 // canonical field names and a messages array carrying caller/agent
-// entries with per-entry OutputParts.
+// entries with per-entry MessageParts.
 func TestRecord_JSON_spec_8_8_806(t *testing.T) {
 	rec := Record{
 		SchemaVersion: SchemaVersion,
@@ -124,8 +124,8 @@ func TestRecord_JSON_spec_8_8_806(t *testing.T) {
 		SessionID:     "sess_xyz",
 		State:         "completed",
 		Messages: []Message{
-			{Role: RoleCaller, Parts: []OutputPart{TextPart("do the thing")}},
-			{Role: RoleAgent, Parts: []OutputPart{TextPart("done")}, State: "completed"},
+			{Role: RoleCaller, Parts: []MessagePart{TextPart("do the thing")}},
+			{Role: RoleAgent, Parts: []MessagePart{TextPart("done")}, State: "completed"},
 		},
 	}
 	b, err := json.Marshal(rec)
@@ -202,7 +202,7 @@ func TestResult_JSON_outputErrorMutualExclusion_spec_8_8_922(t *testing.T) {
 		SchemaVersion: SchemaVersion,
 		TaskID:        "child_abc",
 		State:         "completed",
-		Output:        &Output{Parts: []OutputPart{TextPart("result")}, ArtifactRefs: []string{}},
+		Output:        &Output{Parts: []MessagePart{TextPart("result")}, ArtifactRefs: []string{}},
 	}
 	b, _ = json.Marshal(completed)
 	got = map[string]any{}
@@ -219,11 +219,11 @@ func TestResult_JSON_outputErrorMutualExclusion_spec_8_8_922(t *testing.T) {
 	}
 }
 
-// spec: §15.4 (MessageEnvelope.input oneOf(string, OutputPart[])),
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])),
 // §15.2.1 (REST/MCP parity).
 //
 // MessageContent is the §15.4 message-input union: a bare string is sugar
-// for a single text OutputPart, a part array is the structured form, and
+// for a single text MessagePart, a part array is the structured form, and
 // the type round-trips the wire form it was unmarshalled from so a
 // buffered message re-delivers identically.
 func TestMessageContentUnion_spec_15_4(t *testing.T) {
@@ -252,7 +252,7 @@ func TestMessageContentUnion_spec_15_4(t *testing.T) {
 		}
 	})
 
-	t.Run("OutputPart array decodes verbatim", func(t *testing.T) {
+	t.Run("MessagePart array decodes verbatim", func(t *testing.T) {
 		raw := `[{"type":"text","inline":"a"},{"type":"image","ref":"lenny-blob://t/s/p","mimeType":"image/png"}]`
 		var mc MessageContent
 		if err := json.Unmarshal([]byte(raw), &mc); err != nil {
@@ -317,7 +317,7 @@ func TestMessageContentUnion_spec_15_4(t *testing.T) {
 		if got := MessageContentFromText("x").Text(); got != "x" {
 			t.Errorf("MessageContentFromText(x).Text() = %q", got)
 		}
-		fromParts := MessageContentFromParts([]OutputPart{TextPart("p")})
+		fromParts := MessageContentFromParts([]MessagePart{TextPart("p")})
 		if len(fromParts.Parts()) != 1 || fromParts.Text() != "p" {
 			t.Errorf("MessageContentFromParts = %+v", fromParts)
 		}

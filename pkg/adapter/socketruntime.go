@@ -15,7 +15,7 @@ import (
 
 // maxJSONLFrameBytes is the largest single §15.4.1 JSONL frame the
 // sidecar scanner admits. It matches the §15.4.1 line 1548 50 MB
-// OutputPart ceiling so a legal large part frames before the gateway's
+// MessagePart ceiling so a legal large part frames before the gateway's
 // ingress check runs. spec: §15.4.1 line 1548. F-15.4.1 (15.4-INFO-031).
 const maxJSONLFrameBytes = 50 * 1024 * 1024
 
@@ -208,7 +208,7 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	}
 
 	scanner := bufio.NewScanner(conn)
-	// spec: §15.4.1 line 1548 — a single OutputPart may be up to 50 MB.
+	// spec: §15.4.1 line 1548 — a single MessagePart may be up to 50 MB.
 	// The sidecar scanner must admit a frame at that ceiling; a 16 MB cap
 	// would fail framing on a legal 17–50 MB part before it reached the
 	// gateway's §15.4.1 ingress validation. Matches echocore and the

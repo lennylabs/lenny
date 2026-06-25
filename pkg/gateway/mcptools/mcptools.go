@@ -127,15 +127,15 @@ func errInvalidArgs(err error) error {
 	return mcp.NewToolError("VALIDATION_ERROR", fmt.Sprintf("invalid arguments: %v", err), nil)
 }
 
-// maxOutputPartBytes is the §15.4.1 line 1548 hard ceiling: a single
-// OutputPart above 50 MB is rejected at ingress. The gate measures the
+// maxMessagePartBytes is the §15.4.1 line 1548 hard ceiling: a single
+// MessagePart above 50 MB is rejected at ingress. The gate measures the
 // marshaled part (inline payload plus envelope) so a base64-inlined blob
 // that exceeds the cap is refused before it reaches the event stream.
-const maxOutputPartBytes = 50 * 1024 * 1024
+const maxMessagePartBytes = 50 * 1024 * 1024
 
 // sendMessageInputSchema is the §8.5 `lenny/send_message` tool input
 // schema. Its `message` property is the §15.4 `MessageEnvelope.input`
-// union (`oneOf(string, OutputPart[])`) sourced from the single
+// union (`oneOf(string, MessagePart[])`) sourced from the single
 // sessionrecord.MessageContentJSONSchema definition, so the MCP send
 // surface and the REST `/messages` body express the identical union under
 // the §15.2.1 parity rule. `to` is the §8.5 line 537 target id, and the
@@ -147,17 +147,17 @@ var sendMessageInputSchema = json.RawMessage(fmt.Sprintf(
 	sessionrecord.MessageContentJSONSchema,
 ))
 
-// validateOutputPart enforces the two §15.4.1 lines 1542-1548 OutputPart
+// validateMessagePart enforces the two §15.4.1 lines 1542-1548 MessagePart
 // ingress invariants on one `lenny/output` part: `inline` and `ref` are
-// mutually exclusive (both set → `400 OUTPUTPART_INLINE_REF_CONFLICT`),
-// and a part larger than 50 MB is rejected (`413 OUTPUTPART_TOO_LARGE`).
-// The outputpart.schema.json $comment designates both as gateway runtime
+// mutually exclusive (both set → `400 MESSAGEPART_INLINE_REF_CONFLICT`),
+// and a part larger than 50 MB is rejected (`413 MESSAGEPART_TOO_LARGE`).
+// The messagepart.schema.json $comment designates both as gateway runtime
 // checks rather than schema-validation checks. F-15.4.1 (15.4-HIGH-007).
-func validateOutputPart(part json.RawMessage) error {
-	if len(part) > maxOutputPartBytes {
-		return mcp.NewToolError("OUTPUTPART_TOO_LARGE",
+func validateMessagePart(part json.RawMessage) error {
+	if len(part) > maxMessagePartBytes {
+		return mcp.NewToolError("MESSAGEPART_TOO_LARGE",
 			"output part exceeds the 50 MB ceiling",
-			map[string]any{"maxBytes": maxOutputPartBytes, "actualBytes": len(part)})
+			map[string]any{"maxBytes": maxMessagePartBytes, "actualBytes": len(part)})
 	}
 	var probe struct {
 		Inline *json.RawMessage `json:"inline"`
@@ -170,7 +170,7 @@ func validateOutputPart(part json.RawMessage) error {
 			fmt.Sprintf("output part is not a JSON object: %v", err), nil)
 	}
 	if probe.Inline != nil && probe.Ref != nil {
-		return mcp.NewToolError("OUTPUTPART_INLINE_REF_CONFLICT",
+		return mcp.NewToolError("MESSAGEPART_INLINE_REF_CONFLICT",
 			"output part sets both inline and ref, which are mutually exclusive", nil)
 	}
 	return nil
@@ -882,7 +882,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			To string `json:"to"`
 			// Message is the §8.5 content field (renamed from the legacy
 			// `content` to match the §8.5 line 537 schema). It is the §15.4
-			// MessageEnvelope.input union (bare string or OutputPart[]),
+			// MessageEnvelope.input union (bare string or MessagePart[]),
 			// identical to the REST /messages content field under the
 			// §15.2.1 parity rule. F-8.5.16, F-MS5.
 			Message   sessionrecord.MessageContent `json:"message"`
@@ -1040,7 +1040,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		// MODIFY rewrites what the target session receives. The §15.4 union
 		// content is projected to its text form for the interceptor scan and
 		// the maxInputSize bound; the full multipart envelope lands when the
-		// executor carries OutputPart[] end to end. spec: §15.4
+		// executor carries MessagePart[] end to end. spec: §15.4
 		// (MessageEnvelope.input).
 		messageText := in.Message.Text()
 		messageBody := messageText
@@ -1644,15 +1644,15 @@ func Register(srv *mcp.Server, deps Deps) {
 					"output must contain at least one part", nil)
 			}
 			// spec: §15.4.1 lines 1542-1548 — the §4.1 ingress runtime
-			// check the outputpart.schema.json $comment defers to the
+			// check the messagepart.schema.json $comment defers to the
 			// gateway: a part may not carry both `inline` and `ref`
-			// (`400 OUTPUTPART_INLINE_REF_CONFLICT`), and a part larger
-			// than 50 MB is rejected (`413 OUTPUTPART_TOO_LARGE`). The
+			// (`400 MESSAGEPART_INLINE_REF_CONFLICT`), and a part larger
+			// than 50 MB is rejected (`413 MESSAGEPART_TOO_LARGE`). The
 			// size gate uses the marshaled part length, which bounds the
 			// inline payload plus its envelope; it sits below the §13.4
 			// archive ceiling that governs uploads. F-15.4.1 (15.4-HIGH-007).
 			for _, part := range parts {
-				if err := validateOutputPart(part); err != nil {
+				if err := validateMessagePart(part); err != nil {
 					return mcp.ToolResult{}, err
 				}
 			}
@@ -1686,14 +1686,14 @@ func Register(srv *mcp.Server, deps Deps) {
 			Name: "lenny/request_input",
 			// spec: §8.5 line 539 / §8.8 line 951 — the §8.5 contract is
 			// `lenny/request_input(parts)`; the question travels as an
-			// OutputPart[] so an agent can pose a structured prompt
+			// MessagePart[] so an agent can pose a structured prompt
 			// (text, JSON-shaped form, etc.) instead of a flat string.
 			// `requestId` is optional; when omitted the gateway assigns
 			// one and returns it on the resolution. `sessionId` is the
 			// transport fallback used when the principal carries no
 			// SessionID claim. F-8.5.12.
 			Description: "Block until a peer answers via lenny/send_message with a matching inReplyTo (§8.5).",
-			InputSchema: json.RawMessage(`{"type":"object","required":["parts"],"properties":{"parts":{"type":"array","items":{"type":"object"},"description":"OutputPart[] describing the structured question."},"requestId":{"type":"string","description":"Optional caller-supplied request id; gateway assigns one when absent."},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parts"],"properties":{"parts":{"type":"array","items":{"type":"object"},"description":"MessagePart[] describing the structured question."},"requestId":{"type":"string","description":"Optional caller-supplied request id; gateway assigns one when absent."},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 			// principal. F-9.2.13 / F-15.2.15.
@@ -1715,7 +1715,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if len(in.Parts) == 0 {
 				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-					"parts is required and must contain at least one OutputPart", nil)
+					"parts is required and must contain at least one MessagePart", nil)
 			}
 			requestID := in.RequestID
 			if requestID == "" {
@@ -1775,7 +1775,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// (§9.2) both ask the user for input and so share the §7.2
 			// catalog name. F-7.2.17. The event payload carries the §8.5
 			// `parts` array (rather than the legacy flat `prompt`) so
-			// rendering surfaces can re-use the same OutputPart visitor
+			// rendering surfaces can re-use the same MessagePart visitor
 			// the runtime adapter applies. F-8.5.12.
 			//
 			// spec: §8.8 line 869 — a `one_shot` runtime's
@@ -2452,11 +2452,11 @@ func Register(srv *mcp.Server, deps Deps) {
 			// lease_slice?: LeaseSlice)`. `target` is the opaque target id
 			// (the runtime never learns whether it resolves to a standalone
 			// runtime, a derived runtime, or an external registered agent).
-			// `task.input` is an OutputPart[] envelope and
+			// `task.input` is a MessagePart[] envelope and
 			// `task.workspaceFiles.export` carries the §8.7 export specs. No
 			// per-call `maxDepth`: the effective ceiling is resolved at lease
 			// issuance via the §8.2.bis precedence chain (F-8.2.6).
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","target"],"properties":{"parentSessionId":{"type":"string"},"target":{"type":"string","description":"§8.2 opaque delegation target id. The runtime does not know whether it resolves to a standalone runtime, a derived runtime, or an external registered agent; the gateway resolves it server-side. A type:mcp target is rejected with target_not_an_agent."},"poolRef":{"type":"string"},"task":{"type":"object","description":"§8.2 TaskSpec (delegation subset).","properties":{"input":{"type":"array","description":"§15.4.1 OutputPart[] task input delivered to the child as its first message.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"}}}},"workspaceFiles":{"type":"object","properties":{"export":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 export entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace."}}}}},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the task.workspaceFiles.export set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","target"],"properties":{"parentSessionId":{"type":"string"},"target":{"type":"string","description":"§8.2 opaque delegation target id. The runtime does not know whether it resolves to a standalone runtime, a derived runtime, or an external registered agent; the gateway resolves it server-side. A type:mcp target is rejected with target_not_an_agent."},"poolRef":{"type":"string"},"task":{"type":"object","description":"§8.2 TaskSpec (delegation subset).","properties":{"input":{"type":"array","description":"§15.4.1 MessagePart[] task input delivered to the child as its first message.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"}}}},"workspaceFiles":{"type":"object","properties":{"export":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 export entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace."}}}}},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the task.workspaceFiles.export set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 			// principal so the §4 chain payload, §8.2 service Delegate, and
@@ -2473,10 +2473,10 @@ func Register(srv *mcp.Server, deps Deps) {
 				Target  string `json:"target"`
 				PoolRef string `json:"poolRef"`
 				// Task is the §8.2 TaskSpec delegation subset: the input
-				// OutputPart[] and the §8.7 workspaceFiles.export specs.
+				// MessagePart[] and the §8.7 workspaceFiles.export specs.
 				// F-8.2.1.
 				Task struct {
-					Input          []sessionrecord.OutputPart `json:"input"`
+					Input          []sessionrecord.MessagePart `json:"input"`
 					WorkspaceFiles struct {
 						Export []struct {
 							Source     string `json:"source"`
@@ -2613,7 +2613,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// the child receives. The chain payload is the task input
 			// only — delegation metadata (target, poolRef) is structurally
 			// immutable because it is not in the payload. The §8.2
-			// OutputPart[] input is flattened to its text projection for
+			// MessagePart[] input is flattened to its text projection for
 			// the interceptor content and child delivery. F-8.2.1.
 			taskInput := flattenTaskInput(in.Task.Input)
 			if taskInput != "" && deps.Interceptors != nil {
@@ -3312,7 +3312,7 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 // non-nil rejection Result when the chain REJECTs; the caller surfaces
 // the rejection to the agent or client. A nil chain or a malformed
 // MODIFY payload leaves the parts unchanged. spec: §4.8 line 1054.
-func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []executor.OutputPart) ([]executor.OutputPart, *interceptor.Result) {
+func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []executor.MessagePart) ([]executor.MessagePart, *interceptor.Result) {
 	if deps.Interceptors == nil {
 		return parts, nil
 	}
@@ -3331,7 +3331,7 @@ func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID stri
 		recordChainRejection(ctx, deps, tenant, sessionID, interceptor.PhasePostAgentOutput, res)
 		return parts, &res
 	case interceptor.ActionModify:
-		var modified []executor.OutputPart
+		var modified []executor.MessagePart
 		if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
 			return parts, nil
 		}
@@ -4438,11 +4438,11 @@ func textResult(s string) mcp.ToolResult {
 // empty. The `output` field mirrors the executor's text output parts so
 // the runtime's reply travels in the same JSON envelope as the receipt.
 // spec: §15.4 lines 1725-1737; F-7.2.10.
-func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor.OutputPart, now time.Time) string {
+func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor.MessagePart, now time.Time) string {
 	envelope := struct {
 		DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
 		Resolved        string                  `json:"resolved,omitempty"`
-		Output          []executor.OutputPart   `json:"output,omitempty"`
+		Output          []executor.MessagePart  `json:"output,omitempty"`
 	}{
 		DeliveryReceipt: session.DeliveryReceipt{
 			MessageID:   messageID,

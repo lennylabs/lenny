@@ -11,7 +11,7 @@ import { LineReader, dialUnixSocket } from "./transport.js";
 import type {
   AdapterManifest,
   MCPConnection,
-  OutputPart,
+  MessagePart,
   PlatformTools,
   TaskHandle,
   TaskResult2,
@@ -30,7 +30,7 @@ const NONCE_PARAM_KEY = "_lennyNonce";
 
 // stampParts sets schemaVersion on every part that left it unset,
 // honoring the §15.4.1 producer obligation.
-function stampParts(parts: OutputPart[]): OutputPart[] {
+function stampParts(parts: MessagePart[]): MessagePart[] {
   return parts.map((p) =>
     p.schemaVersion === undefined
       ? { ...p, schemaVersion: SCHEMA_VERSION }
@@ -143,13 +143,13 @@ function decodeTaskResults(raw: unknown): TaskResult2[] {
   return [raw as TaskResult2];
 }
 
-// decodeParts decodes a result that is either a bare OutputPart array
+// decodeParts decodes a result that is either a bare MessagePart array
 // or an object with a parts field.
-function decodeParts(raw: unknown): OutputPart[] {
+function decodeParts(raw: unknown): MessagePart[] {
   if (Array.isArray(raw)) {
-    return raw as OutputPart[];
+    return raw as MessagePart[];
   }
-  const wrapped = raw as { parts?: OutputPart[] };
+  const wrapped = raw as { parts?: MessagePart[] };
   return wrapped.parts ?? [];
 }
 
@@ -223,7 +223,7 @@ export class Tools implements PlatformTools {
   // metadata the §8.3 policy validates.
   async delegateTask(
     target: string,
-    parts: OutputPart[],
+    parts: MessagePart[],
     budget?: Record<string, unknown>,
   ): Promise<TaskHandle> {
     const task: Record<string, unknown> = { input: stampParts(parts) };
@@ -268,7 +268,7 @@ export class Tools implements PlatformTools {
   // output invokes the §4.7 lenny/output platform tool, emitting output
   // parts incrementally to the parent or client. The stdout response
   // frame is still required to signal turn completion (§15.4.1).
-  async output(parts: OutputPart[]): Promise<void> {
+  async output(parts: MessagePart[]): Promise<void> {
     await this.platform.callTool("lenny/output", {
       output: stampParts(parts),
     });
@@ -276,7 +276,7 @@ export class Tools implements PlatformTools {
 
   // requestInput invokes the §4.7 lenny/request_input platform tool. It
   // blocks until an answer arrives and returns the answer parts.
-  async requestInput(prompt: OutputPart[]): Promise<OutputPart[]> {
+  async requestInput(prompt: MessagePart[]): Promise<MessagePart[]> {
     const raw = await this.platform.callTool("lenny/request_input", {
       parts: stampParts(prompt),
     });

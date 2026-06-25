@@ -29,7 +29,7 @@ func (e *fromCapturingExecutor) Send(_ context.Context, sessionID string, msgs [
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.msgs[sessionID] = append(e.msgs[sessionID], msgs...)
-	return executor.Response{Parts: []executor.OutputPart{{Type: "text", Text: "ok"}}}, nil
+	return executor.Response{Parts: []executor.MessagePart{{Type: "text", Text: "ok"}}}, nil
 }
 
 func (e *fromCapturingExecutor) Close(context.Context, string) error { return nil }

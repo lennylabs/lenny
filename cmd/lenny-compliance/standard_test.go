@@ -114,7 +114,7 @@ func TestStandardBatteryReusesBasicChecks(t *testing.T) {
 		"message_emits_response", "heartbeat_emits_ack",
 		"unknown_type_ignored", "shutdown_exits_within_deadline",
 		"sequential_messages_handled", "response_matches_jsonl_schema",
-		"outputpart_schema_compliance",
+		"messagepart_schema_compliance",
 	}
 	got := map[string]Check{}
 	for _, c := range r.Checks {

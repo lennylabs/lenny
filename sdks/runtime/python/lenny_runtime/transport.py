@@ -17,7 +17,7 @@ import time
 from typing import Any, BinaryIO, Protocol
 
 # MAX_FRAME_BYTES caps an inbound JSON Lines frame at the §15.4.1
-# OutputPart hard limit. A larger frame is a protocol error.
+# MessagePart hard limit. A larger frame is a protocol error.
 MAX_FRAME_BYTES = 50 * 1024 * 1024
 
 

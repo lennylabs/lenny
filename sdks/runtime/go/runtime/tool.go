@@ -30,7 +30,7 @@ type AdapterTools struct {
 // failed call sets IsError; Content carries the result parts (for a
 // failed call, Content[0].Inline is the error string).
 type ToolResult struct {
-	Content []OutputPart
+	Content []MessagePart
 	IsError bool
 }
 
@@ -96,7 +96,7 @@ func (a *AdapterTools) WriteFile(ctx context.Context, path, content string) erro
 
 // ListDir invokes the §15.4.1 list_dir adapter-local tool and returns
 // the directory entries the adapter reports.
-func (a *AdapterTools) ListDir(ctx context.Context, path string) ([]OutputPart, error) {
+func (a *AdapterTools) ListDir(ctx context.Context, path string) ([]MessagePart, error) {
 	tr, err := a.ToolCall(ctx, "list_dir", map[string]any{"path": path})
 	if err != nil {
 		return nil, err

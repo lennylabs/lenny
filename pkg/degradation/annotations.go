@@ -2,7 +2,7 @@
 
 // Package degradation exports the §15.5 degradation-annotation catalog
 // and the helpers that stamp annotations onto MessageEnvelope and
-// OutputPart wire frames.
+// MessagePart wire frames.
 //
 // The §15.5 line 2461 catalog defines three annotations that observability
 // dashboards, SLO alerts, and forward-compat rollout tracking MUST treat
@@ -18,7 +18,7 @@
 //     terminate.
 //
 // Each helper returns a `map[string]any` ready to drop into the
-// `annotations` field on a MessageEnvelope or OutputPart. The keys
+// `annotations` field on a MessageEnvelope or MessagePart. The keys
 // (`knownVersion`, `encounteredVersion`, `recordType`, `retiredVersion`,
 // `currentVersions`) mirror the spec table verbatim so durable
 // consumers reading a persisted envelope see the same key shape the
@@ -45,12 +45,12 @@ const (
 	AnnotationMcpProtocolVersionRetired = "mcp_protocol_version_retired"
 
 	// AnnotationBlobRefUnresolvable — a consumer could not dereference an
-	// OutputPart `ref` (blob expired, storage unavailable, network
+	// MessagePart `ref` (blob expired, storage unavailable, network
 	// partition). It is a §15.4.1 MessageEnvelope annotation distinct from
 	// the §15.5 schemaVersion family. spec: §15.4.1 lines 1575-1579.
 	AnnotationBlobRefUnresolvable = "blob_ref_unresolvable"
 
-	// AnnotationUnregisteredPlatformType — an unprefixed OutputPart `type`
+	// AnnotationUnregisteredPlatformType — an unprefixed MessagePart `type`
 	// not in the v1 registry was passed through with the custom-type
 	// fallback. It is a §15.4.1 ingress warning carried on the part.
 	// spec: §15.4.1 lines 1503, 1522.
@@ -101,7 +101,7 @@ func McpProtocolVersionRetired(retired string, current []string) map[string]any 
 }
 
 // BlobRefUnresolvable builds the §15.4.1 `blob_ref_unresolvable`
-// annotation body for a consumer that encountered an OutputPart `ref` it
+// annotation body for a consumer that encountered a MessagePart `ref` it
 // could not dereference. `partID` is the unresolvable part's id, `ref`
 // the `lenny-blob://` reference, and `reason` the failure detail (blob
 // expired, storage unavailable, network partition). The consumer also
@@ -119,7 +119,7 @@ func BlobRefUnresolvable(partID, ref, reason string) map[string]any {
 }
 
 // UnregisteredPlatformType builds the §15.4.1 `unregistered_platform_type`
-// warning body for an unprefixed OutputPart `type` the gateway did not
+// warning body for an unprefixed MessagePart `type` the gateway did not
 // find in the v1 registry. `typ` is the unrecognized type string the
 // runtime emitted; the gateway records it before applying the custom-type
 // fallback (collapse to `text` with `annotations.originalType`).

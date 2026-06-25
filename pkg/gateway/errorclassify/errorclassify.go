@@ -336,7 +336,7 @@ var table = map[string]entry{
 	"INVALID_POOL_PROXY_DIALECT":                   {CategoryPermanent, false}, // spec: 04:1476
 	"RUNTIME_LEVEL_UNDERPERFORMS":                  {CategoryPermanent, false}, // spec: 05:41 (declared > observed integrationLevel)
 	"INVALID_BREAKER_SCOPE":                        {CategoryPermanent, false}, // spec: 15:1033
-	"OUTPUTPART_TOO_LARGE":                         {CategoryPermanent, false}, // spec: 15:1038
+	"MESSAGEPART_TOO_LARGE":                        {CategoryPermanent, false}, // spec: 15:1038
 	"LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE":        {CategoryPermanent, false}, // spec: 15:1043
 	"PLATFORM_AUDIT_REGION_UNRESOLVABLE":           {CategoryPermanent, false}, // spec: 15:1044
 	"URL_MODE_ELICITATION_DOMAIN_REQUIRED":         {CategoryPermanent, false}, // spec: 15:1045
@@ -348,7 +348,7 @@ var table = map[string]entry{
 	"GIT_CLONE_REF_UNRESOLVABLE":                   {CategoryPermanent, false}, // spec: 15:1065 (§15.4 family)
 	"EXPORT_SCAN_REQUIRES_INTERCEPTOR":             {CategoryPermanent, false}, // spec: 15:1070
 	"EXPORT_FILE_SCAN_SIZE_EXCEEDED":               {CategoryPermanent, false}, // spec: 15:1071
-	"OUTPUTPART_INLINE_REF_CONFLICT":               {CategoryPermanent, false}, // spec: 15:1081
+	"MESSAGEPART_INLINE_REF_CONFLICT":              {CategoryPermanent, false}, // spec: 15:1081
 	"INVALID_DELIVERY_VALUE":                       {CategoryPermanent, false}, // spec: 15:1082
 	"SDK_DEMOTION_NOT_SUPPORTED":                   {CategoryPermanent, false}, // spec: 15:1083 (§15.4 family)
 	"ELICITATION_INTEGRITY_JUSTIFICATION_REQUIRED": {CategoryPermanent, false}, // spec: 15:1086

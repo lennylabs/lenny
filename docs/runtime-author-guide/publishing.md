@@ -277,7 +277,7 @@ The runtime adapter contract follows a forward-compatibility rule: a runtime ign
 
 - **Unknown message types.** Ignore an inbound `type` you do not recognize. Do not treat it as an error.
 - **New platform tools.** Discover tools through `tools/list` and tolerate tools you do not call. New tools may be added to the platform tool server.
-- **OutputPart fields.** Emitting additional fields in a structured `OutputPart` is safe for downstream consumers; the schema reserves a namespace for custom types. A consumer reads the fields it knows and forwards the rest.
+- **MessagePart fields.** Emitting additional fields in a structured `MessagePart` is safe for downstream consumers; the schema reserves a namespace for custom types. A consumer reads the fields it knows and forwards the rest.
 
 The adapter contract is the stable interface for v1 distribution. See [Adapter Contract](../reference/adapter-contract.md) for the full message set.
 
@@ -364,7 +364,7 @@ Before publishing:
    lenny runtime validate --report compliance.json
    ```
 
-   The suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and `outputpart.schema.json` for structured content parts. Validation failures are reported as structured diffs. See [Testing](testing.md) for the full workflow and [Adapter Contract → Canonical artifacts](../reference/adapter-contract.md#canonical-artifacts) for the schema list.
+   The suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and `messagepart.schema.json` for structured content parts. Validation failures are reported as structured diffs. See [Testing](testing.md) for the full workflow and [Adapter Contract → Canonical artifacts](../reference/adapter-contract.md#canonical-artifacts) for the schema list.
 
 2. **Write a clear description** of what your runtime does, what integration level it implements, and what LLM providers it supports.
 

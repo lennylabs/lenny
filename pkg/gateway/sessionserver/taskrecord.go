@@ -50,7 +50,7 @@ func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) 
 		}
 		rec.Messages = append(rec.Messages, sessionrecord.Message{
 			Role:  role,
-			Parts: []sessionrecord.OutputPart{sessionrecord.TextPart(e.Content)},
+			Parts: []sessionrecord.MessagePart{sessionrecord.TextPart(e.Content)},
 		})
 		if role == sessionrecord.RoleAgent {
 			lastAgent = len(rec.Messages) - 1

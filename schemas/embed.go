@@ -15,7 +15,7 @@ import "embed"
 // FS holds the published wire-contract artifacts §24.8 line 113 names as
 // the source the conformance suite is schema-driven against: the JSON
 // Schemas (lenny-adapter-jsonl.schema.json — every adapter↔binary
-// stdin/stdout message; outputpart.schema.json — the OutputPart envelope;
+// stdin/stdout message; messagepart.schema.json — the MessagePart envelope;
 // lifecycle-events.schema.json — the lifecycle channel; workspaceplan-v1.json)
 // and lenny-adapter.proto (the adapter gRPC contract, whose Error.ErrorCode
 // enum is the closed §15.1 error-code catalog the JSONL schema leaves as an

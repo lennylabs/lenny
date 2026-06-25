@@ -47,19 +47,19 @@ import (
 type InboundMessage struct {
 	Type  string          `json:"type"`
 	ID    string          `json:"id,omitempty"`
-	Input []OutputPart    `json:"input,omitempty"`
+	Input []MessagePart    `json:"input,omitempty"`
 	TS    int64           `json:"ts,omitempty"`         // heartbeat timestamp
 	Reason string         `json:"reason,omitempty"`     // shutdown reason
 	DeadlineMs int        `json:"deadline_ms,omitempty"` // shutdown deadline
 
 	// tool_result fields
-	Content []OutputPart  `json:"content,omitempty"`
+	Content []MessagePart  `json:"content,omitempty"`
 	IsError bool          `json:"isError,omitempty"`
 }
 
-// OutputPart is the Lenny internal content model.
+// MessagePart is the Lenny internal content model.
 // At the Basic level, only "type" and "inline" are required.
-type OutputPart struct {
+type MessagePart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline,omitempty"`
 }
@@ -69,7 +69,7 @@ type OutputPart struct {
 // Response is the primary output message, signaling task completion.
 type Response struct {
 	Type   string       `json:"type"`
-	Output []OutputPart `json:"output"`
+	Output []MessagePart `json:"output"`
 }
 
 // HeartbeatAck acknowledges a heartbeat ping.
@@ -111,7 +111,7 @@ func main() {
 			seq++
 			resp := Response{
 				Type: "response",
-				Output: []OutputPart{
+				Output: []MessagePart{
 					{
 						Type:   "text",
 						Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText),
@@ -176,7 +176,7 @@ func writeJSON(v interface{}) {
 type InboundMessage struct {
     Type  string          `json:"type"`
     ID    string          `json:"id,omitempty"`
-    Input []OutputPart    `json:"input,omitempty"`
+    Input []MessagePart    `json:"input,omitempty"`
     // ...
 }
 ```
@@ -207,12 +207,12 @@ case "message":
     seq++
     resp := Response{
         Type: "response",
-        Output: []OutputPart{{Type: "text", Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText)}},
+        Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText)}},
     }
     writeJSON(resp)
 ```
 
-We extract the text from the first `OutputPart` in the `input` array. We write a `response` message to stdout. The `response` signals task completion --- the adapter forwards the output to the gateway and the gateway delivers it to the client.
+We extract the text from the first `MessagePart` in the `input` array. We write a `response` message to stdout. The `response` signals task completion --- the adapter forwards the output to the gateway and the gateway delivers it to the client.
 
 ### Handling `heartbeat`
 

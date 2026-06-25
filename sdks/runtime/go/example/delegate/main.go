@@ -77,7 +77,7 @@ func (h *delegateHandler) OnMessage(ctx context.Context, msg runtime.Message) (r
 	childParts := results[0].Output.Parts
 
 	// 3. lenny/request_input — confirm the echoed result.
-	if _, err := tools.RequestInput([]runtime.OutputPart{
+	if _, err := tools.RequestInput([]runtime.MessagePart{
 		runtime.Text(fmt.Sprintf("confirm echo of child %s?", handle.TaskID)),
 	}); err != nil {
 		return delegationError(err), nil
@@ -97,8 +97,8 @@ func (h *delegateHandler) OnTerminate(context.Context, runtime.TerminationReason
 }
 
 // echoParts prefixes text parts with the per-session sequence number.
-func echoParts(in []runtime.OutputPart, seq uint64) []runtime.OutputPart {
-	out := make([]runtime.OutputPart, 0, len(in))
+func echoParts(in []runtime.MessagePart, seq uint64) []runtime.MessagePart {
+	out := make([]runtime.MessagePart, 0, len(in))
 	for _, p := range in {
 		if p.Type == "text" && p.Inline != "" {
 			out = append(out, runtime.Text(fmt.Sprintf("[delegate seq=%d] %s", seq, p.Inline)))

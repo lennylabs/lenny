@@ -183,7 +183,7 @@ func (h *delegateHandler) OnMessage(ctx context.Context, m Message) (Reply, erro
 	if err != nil || len(results) == 0 {
 		return Reply{Error: &ResponseError{Code: "E"}, Final: true}, nil
 	}
-	if _, err := tools.RequestInput([]OutputPart{Text("confirm?")}); err != nil {
+	if _, err := tools.RequestInput([]MessagePart{Text("confirm?")}); err != nil {
 		return Reply{Error: &ResponseError{Code: "E"}, Final: true}, nil
 	}
 	if err := tools.Output(results[0].Output.Parts); err != nil {

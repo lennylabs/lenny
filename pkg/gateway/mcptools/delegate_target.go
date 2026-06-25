@@ -73,7 +73,7 @@ func resolveDelegationTarget(ctx context.Context, deps Deps, target string) (ref
 	}
 }
 
-// flattenTaskInput projects a §8.2 `task.input` OutputPart[] into the
+// flattenTaskInput projects a §8.2 `task.input` MessagePart[] into the
 // plain-text content the §4 interceptor chain inspects and the gateway
 // delivers to the child as its first message. v1 producers emit `text`
 // parts; the inline text of every text part (including nested parts) is
@@ -82,9 +82,9 @@ func resolveDelegationTarget(ctx context.Context, deps Deps, target string) (ref
 // non-text parts flattens to the empty string and the child receives no
 // initial message — the same behaviour as an omitted input.
 //
-// spec: §8.2 lines 25-28 (TaskSpec.input is OutputPart[]); §15.4.1
-// lines 1483-1540 (OutputPart envelope, v1 `text` parts).
-func flattenTaskInput(parts []sessionrecord.OutputPart) string {
+// spec: §8.2 lines 25-28 (TaskSpec.input is MessagePart[]); §15.4.1
+// lines 1483-1540 (MessagePart envelope, v1 `text` parts).
+func flattenTaskInput(parts []sessionrecord.MessagePart) string {
 	var b strings.Builder
 	for _, p := range parts {
 		appendPartText(&b, p)
@@ -92,7 +92,7 @@ func flattenTaskInput(parts []sessionrecord.OutputPart) string {
 	return b.String()
 }
 
-func appendPartText(b *strings.Builder, p sessionrecord.OutputPart) {
+func appendPartText(b *strings.Builder, p sessionrecord.MessagePart) {
 	if p.Type == "text" && p.Inline != "" {
 		b.WriteString(p.Inline)
 	}

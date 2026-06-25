@@ -92,14 +92,14 @@ type InputPart struct {
 	Inline string `json:"inline"`
 }
 
-type OutputPart struct {
+type MessagePart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline"`
 }
 
 type ResponseMsg struct {
 	Type   string       `json:"type"`
-	Output []OutputPart `json:"output"`
+	Output []MessagePart `json:"output"`
 }
 
 // --- Manifest ---
@@ -161,7 +161,7 @@ func main() {
 
 			// Emit incremental output via lenny/output (Standard level)
 			mcp.CallTool(ctx, "lenny/output", map[string]interface{}{
-				"output": []OutputPart{
+				"output": []MessagePart{
 					{Type: "text", Inline: fmt.Sprintf("Processing: %s", text)},
 				},
 			})
@@ -169,7 +169,7 @@ func main() {
 			// Send final response
 			resp := ResponseMsg{
 				Type: "response",
-				Output: []OutputPart{
+				Output: []MessagePart{
 					{Type: "text", Inline: result},
 				},
 			}
@@ -234,7 +234,7 @@ func runBasicLevel() {
 			result := processTask(text)
 			writeJSON(ResponseMsg{
 				Type:   "response",
-				Output: []OutputPart{{Type: "text", Inline: result}},
+				Output: []MessagePart{{Type: "text", Inline: result}},
 			})
 		case "heartbeat":
 			writeJSON(map[string]string{"type": "heartbeat_ack"})
@@ -289,14 +289,14 @@ type InputPart struct {
 	Inline string `json:"inline"`
 }
 
-type OutputPart struct {
+type MessagePart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline"`
 }
 
 type ResponseMsg struct {
 	Type   string       `json:"type"`
-	Output []OutputPart `json:"output"`
+	Output []MessagePart `json:"output"`
 }
 
 type AdapterManifest struct {
@@ -381,7 +381,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if len(subTasks) == 0 {
 		writeJSON(ResponseMsg{
 			Type:   "response",
-			Output: []OutputPart{{Type: "text", Inline: "No sub-tasks found. Use 'cmd1:data1 | cmd2:data2' format."}},
+			Output: []MessagePart{{Type: "text", Inline: "No sub-tasks found. Use 'cmd1:data1 | cmd2:data2' format."}},
 		})
 		return
 	}
@@ -397,7 +397,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if err != nil {
 		writeJSON(ResponseMsg{
 			Type:   "response",
-			Output: []OutputPart{{Type: "text", Inline: fmt.Sprintf("Discovery failed: %v", err)}},
+			Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("Discovery failed: %v", err)}},
 		})
 		return
 	}
@@ -410,7 +410,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if len(agents) == 0 {
 		writeJSON(ResponseMsg{
 			Type:   "response",
-			Output: []OutputPart{{Type: "text", Inline: "No worker agents available for delegation."}},
+			Output: []MessagePart{{Type: "text", Inline: "No worker agents available for delegation."}},
 		})
 		return
 	}
@@ -437,7 +437,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 			// The task specification with input for the child
 			"task": map[string]interface{}{
-				"input": []OutputPart{
+				"input": []MessagePart{
 					{Type: "text", Inline: subTask},
 				},
 			},
@@ -463,7 +463,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if len(childIDs) == 0 {
 		writeJSON(ResponseMsg{
 			Type:   "response",
-			Output: []OutputPart{{Type: "text", Inline: "All delegations failed."}},
+			Output: []MessagePart{{Type: "text", Inline: "All delegations failed."}},
 		})
 		return
 	}
@@ -483,7 +483,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if err != nil {
 		writeJSON(ResponseMsg{
 			Type:   "response",
-			Output: []OutputPart{{Type: "text", Inline: fmt.Sprintf("await_children failed: %v", err)}},
+			Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("await_children failed: %v", err)}},
 		})
 		return
 	}
@@ -506,7 +506,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	writeJSON(ResponseMsg{
 		Type: "response",
-		Output: []OutputPart{
+		Output: []MessagePart{
 			{Type: "text", Inline: strings.Join(outputLines, "\n")},
 		},
 	})
@@ -514,7 +514,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 func emitStatus(mcp *mcpclient.Client, ctx context.Context, msg string) {
 	mcp.CallTool(ctx, "lenny/output", map[string]interface{}{
-		"output": []OutputPart{
+		"output": []MessagePart{
 			{Type: "text", Inline: msg},
 		},
 	})

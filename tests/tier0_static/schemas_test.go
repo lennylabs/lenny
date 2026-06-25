@@ -31,7 +31,7 @@ func TestPhase1SchemasParse(t *testing.T) {
 
 	root := schematest.RepoRoot(t)
 	cases := []string{
-		"schemas/outputpart.schema.json",
+		"schemas/messagepart.schema.json",
 		"schemas/lenny-adapter-jsonl.schema.json",
 		"schemas/workspaceplan-v1.json",
 		"schemas/lifecycle-events.schema.json",
@@ -109,18 +109,18 @@ func TestWorkspacePlanExamplesValidate(t *testing.T) {
 }
 
 // spec: 15.4
-// diagnosis: schemas/examples/outputpart.*.json failed to validate
+// diagnosis: schemas/examples/messagepart.*.json failed to validate
 //
-//	against schemas/outputpart.schema.json.
-func TestOutputPartExamplesValidate(t *testing.T) {
+//	against schemas/messagepart.schema.json.
+func TestMessagePartExamplesValidate(t *testing.T) {
 	t.Parallel()
-	validator := schematest.Compile(t, "schemas/outputpart.schema.json")
+	validator := schematest.Compile(t, "schemas/messagepart.schema.json")
 
 	root := schematest.RepoRoot(t)
 	for _, name := range []string{
-		"schemas/examples/outputpart.text.json",
-		"schemas/examples/outputpart.code.json",
-		"schemas/examples/outputpart.image_ref.json",
+		"schemas/examples/messagepart.text.json",
+		"schemas/examples/messagepart.code.json",
+		"schemas/examples/messagepart.image_ref.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
@@ -173,10 +173,10 @@ func TestLifecycleEventExamplesValidate(t *testing.T) {
 //	envelope shape and the `type` discriminator.
 func TestAdapterJSONLExamplesValidate(t *testing.T) {
 	t.Parallel()
-	// The JSONL schema $refs the OutputPart schema by its $id URL.
+	// The JSONL schema $refs the MessagePart schema by its $id URL.
 	// Wire the compiler to resolve that URL locally.
 	c := schematest.NewCompiler(t)
-	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/outputpart/v1.json", "schemas/outputpart.schema.json")
+	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/messagepart/v1.json", "schemas/messagepart.schema.json")
 	jsonlSchema := schematest.MustCompile(t, c, "schemas/lenny-adapter-jsonl.schema.json")
 
 	root := schematest.RepoRoot(t)

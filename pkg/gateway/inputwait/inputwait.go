@@ -60,7 +60,7 @@ type entry struct {
 
 // PendingRequest is one session's pending lenny/request_input round as
 // surfaced to lenny/await_children. RequestID is the correlation id the
-// parent answers with `inReplyTo`; Parts is the OutputPart[] question.
+// parent answers with `inReplyTo`; Parts is the MessagePart[] question.
 // BlockedSince is the wall-clock instant the request was registered —
 // the §8.8 line 990 `blockedSince` witness the subtree deadlock
 // detector reports on each `blockedRequests` entry. spec: §8.8 line

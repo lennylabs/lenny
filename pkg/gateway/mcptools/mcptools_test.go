@@ -400,10 +400,10 @@ func TestSendMessageTool(t *testing.T) {
 
 // TestSendMessageToolAcceptsContentUnion asserts the §8.5
 // lenny/send_message `message` argument is the §15.4 message-input union:
-// a bare string and an OutputPart[] array are both accepted and delivered,
+// a bare string and a MessagePart[] array are both accepted and delivered,
 // and the text projection echoes back. This is the MCP-side half of the
 // §15.2.1 REST/MCP parity the contract suite pins end to end.
-// spec: §15.4 (MessageEnvelope.input oneOf(string, OutputPart[])), §15.2.1
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])), §15.2.1
 // (REST/MCP parity), §8.5 line 537.
 func TestSendMessageToolAcceptsContentUnion_spec_15_4(t *testing.T) {
 	cases := []struct {
@@ -2256,7 +2256,7 @@ func TestAwaitChildrenPrefersArchivedRichBody_spec_8_8_2(t *testing.T) {
 		TaskID:        "sess_c",
 		State:         "completed",
 		Output: &sessionrecord.Output{
-			Parts:        []sessionrecord.OutputPart{sessionrecord.TextPart("ANSWER42")},
+			Parts:        []sessionrecord.MessagePart{sessionrecord.TextPart("ANSWER42")},
 			ArtifactRefs: []string{"lenny-blob://acme/workspace/sess_c/part_1"},
 		},
 	})

@@ -21,7 +21,7 @@
 //     images published to a registry.
 //   - TestThirdPartyRegistration needs the RegisterAdapterUnderTest
 //     entry point in cmd/lenny-compliance.
-//   - TestFidelityMatrix needs the documented per-OutputPart fidelity
+//   - TestFidelityMatrix needs the documented per-MessagePart fidelity
 //     table and the OpenAI/Anthropic translators.
 
 package tier10_conformance_test
@@ -454,10 +454,10 @@ func TestThirdPartyRegistration(t *testing.T) {
 //	was dropped, or a field documented as lossy now survives.
 func TestFidelityMatrix(t *testing.T) {
 	// §12.10 specifies a table-driven test asserting the documented
-	// per-OutputPart fidelity for the OpenAI Chat Completions and Open
+	// per-MessagePart fidelity for the OpenAI Chat Completions and Open
 	// Responses surfaces (the OpenAI Responses API serves the Open
 	// Responses dialect as a proper superset per §15.1). For each
-	// canonical OutputPart type the matrix entry per field is asserted
+	// canonical MessagePart type the matrix entry per field is asserted
 	// against the translator's actual round-trip behavior.
 	//
 	// MCP and Anthropic adapters are exercised by the tier-2
@@ -472,8 +472,8 @@ func TestFidelityMatrix(t *testing.T) {
 
 	cases := []struct {
 		adapter   outputpartfidelity.Adapter
-		translate func(runtime.OutputPart) ([]byte, error)
-		parse     func([]byte) (runtime.OutputPart, error)
+		translate func(runtime.MessagePart) ([]byte, error)
+		parse     func([]byte) (runtime.MessagePart, error)
 	}{
 		{
 			adapter:   outputpartfidelity.AdapterOpenAICompletions,
@@ -507,12 +507,12 @@ func TestFidelityMatrix(t *testing.T) {
 	}
 }
 
-// fidelitySamples returns one OutputPart per canonical type in the
+// fidelitySamples returns one MessagePart per canonical type in the
 // §15.4.1 Canonical Type Registry, each carrying every field the
 // fidelity matrix tracks so per-field assertions can observe what
 // survives translation.
-func fidelitySamples() []runtime.OutputPart {
-	return []runtime.OutputPart{
+func fidelitySamples() []runtime.MessagePart {
+	return []runtime.MessagePart{
 		fidelitySample("text", "text/plain", "hello"),
 		fidelitySample("code", "text/x-go", "package main"),
 		fidelitySample("reasoning_trace", "text/plain", "thinking..."),
@@ -525,8 +525,8 @@ func fidelitySamples() []runtime.OutputPart {
 	}
 }
 
-func fidelitySample(typ, mime, inline string) runtime.OutputPart {
-	return runtime.OutputPart{
+func fidelitySample(typ, mime, inline string) runtime.MessagePart {
+	return runtime.MessagePart{
 		SchemaVersion: 1,
 		ID:            "p_" + typ,
 		Type:          typ,
@@ -534,14 +534,14 @@ func fidelitySample(typ, mime, inline string) runtime.OutputPart {
 		Inline:        inline,
 		Ref:           "lenny-blob://acme/sess/p_" + typ,
 		Annotations:   map[string]any{"role": "assistant"},
-		Parts:         []runtime.OutputPart{{Type: "text", Inline: "child"}},
+		Parts:         []runtime.MessagePart{{Type: "text", Inline: "child"}},
 		Status:        "complete",
 	}
 }
 
 // assertFieldMatrix asserts the documented fidelity tag for a single
 // (adapter, type, field) tuple.
-func assertFieldMatrix(t *testing.T, a outputpartfidelity.Adapter, typ string, f outputpartfidelity.Field, tag outputpartfidelity.FidelityTag, original, round runtime.OutputPart, wire []byte) {
+func assertFieldMatrix(t *testing.T, a outputpartfidelity.Adapter, typ string, f outputpartfidelity.Field, tag outputpartfidelity.FidelityTag, original, round runtime.MessagePart, wire []byte) {
 	t.Helper()
 	switch tag {
 	case outputpartfidelity.TagDropped, outputpartfidelity.TagUnsupported:
@@ -569,7 +569,7 @@ func assertFieldMatrix(t *testing.T, a outputpartfidelity.Adapter, typ string, f
 	}
 }
 
-func fidelityFieldZero(f outputpartfidelity.Field, p runtime.OutputPart) bool {
+func fidelityFieldZero(f outputpartfidelity.Field, p runtime.MessagePart) bool {
 	switch f {
 	case outputpartfidelity.FieldSchemaVersion:
 		return p.SchemaVersion == 0
@@ -596,7 +596,7 @@ func fidelityFieldZero(f outputpartfidelity.Field, p runtime.OutputPart) bool {
 	return true
 }
 
-func fidelityFieldsEqual(f outputpartfidelity.Field, a, b runtime.OutputPart) bool {
+func fidelityFieldsEqual(f outputpartfidelity.Field, a, b runtime.MessagePart) bool {
 	switch f {
 	case outputpartfidelity.FieldSchemaVersion:
 		return a.SchemaVersion == b.SchemaVersion

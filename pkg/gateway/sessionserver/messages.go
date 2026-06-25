@@ -158,7 +158,7 @@ type MessagePayload struct {
 	Role string `json:"role,omitempty"`
 
 	// Content is the §15.4 `MessageEnvelope.input` union: a bare string
-	// or a §15.4.1 `OutputPart[]` array. A bare string is sugar for a
+	// or a §15.4.1 `MessagePart[]` array. A bare string is sugar for a
 	// single text part. The identical union is accepted by the MCP
 	// `lenny/send_message` `message` argument, so the two surfaces are
 	// parallel representations of the one §15.4 message-send contract
@@ -210,7 +210,7 @@ type MessageResponse struct {
 	// Output is the executor's synchronous response. Empty when the
 	// executor delivered the message but produced no immediate
 	// output (e.g., the runtime is awaiting an upstream LLM call).
-	Output []executor.OutputPart `json:"output,omitempty"`
+	Output []executor.MessagePart `json:"output,omitempty"`
 }
 
 // handleMessages implements POST /v1/sessions/{id}/messages.
@@ -425,7 +425,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			Role: role,
 			// §15.4 message-input union projected to its text form for the
 			// gateway's text-only delivery path; the full multipart envelope
-			// lands when the executor carries OutputPart[] end to end.
+			// lands when the executor carries MessagePart[] end to end.
 			// spec: §15.4 (MessageEnvelope.input).
 			Content: m.Content.Text(),
 		})
@@ -448,7 +448,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	deliveryStatus := session.DeliveryStatusDelivered
 	var deliveryReason session.DeliveryReason
 	queueDepth := 0
-	var out []executor.OutputPart
+	var out []executor.MessagePart
 	// respAnnotations carries the §15.4.1 envelope-level degradation
 	// annotations (schema_version_ahead, blob_ref_unresolvable) the
 	// executor, as a live consumer, surfaced while ingesting the runtime's

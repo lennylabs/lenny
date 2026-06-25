@@ -125,7 +125,7 @@ func readAll(resp *http.Response) ([]byte, string) {
 // spec: §15.2.1
 // diagnosis: §15 Translation Fidelity Matrix asserts that the
 // OpenAI Chat Completions wire form drops `schemaVersion`, drops
-// the per-block `id`, and drops annotations on every OutputPart. A
+// the per-block `id`, and drops annotations on every MessagePart. A
 // /v1/chat/completions response containing any of these fields is a
 // regression. The REST surface preserves them (`[exact]`), so the
 // same session driven through both surfaces produces a documented

@@ -8,7 +8,7 @@ import (
 )
 
 // spec: §15.5 item 7 + §15.4.1 line 1524 — `schemaVersion` on every
-// translated `OutputPart` is preserved from the upstream MCP content
+// translated `MessagePart` is preserved from the upstream MCP content
 // block when the producer set one. A durable consumer reading a §8.8
 // TaskRecord that the gateway projected through MCP sees the original
 // revision rather than a forced `1`. F-15.5.13.

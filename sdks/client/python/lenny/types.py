@@ -312,16 +312,16 @@ class DeliveryReceipt:
 
 
 @dataclass
-class OutputPart:
-    """One section 8.5 OutputPart returned alongside a delivery receipt."""
+class MessagePart:
+    """One section 8.5 MessagePart returned alongside a delivery receipt."""
 
     type: str = ""
     text: str = ""
     data: Optional[dict[str, Any]] = None
 
     @classmethod
-    def from_wire(cls, raw: dict[str, Any]) -> "OutputPart":
-        """Decode a section 8.5 OutputPart."""
+    def from_wire(cls, raw: dict[str, Any]) -> "MessagePart":
+        """Decode a section 8.5 MessagePart."""
         return cls(
             type=str(raw.get("type", "")),
             text=str(raw.get("text", "")),
@@ -338,7 +338,7 @@ class SendMessagesResponse:
     """
 
     delivery_receipt: DeliveryReceipt = field(default_factory=DeliveryReceipt)
-    output: list[OutputPart] = field(default_factory=list)
+    output: list[MessagePart] = field(default_factory=list)
 
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> "SendMessagesResponse":
@@ -347,7 +347,7 @@ class SendMessagesResponse:
             delivery_receipt=DeliveryReceipt.from_wire(
                 raw.get("deliveryReceipt") or {}
             ),
-            output=[OutputPart.from_wire(p) for p in raw.get("output") or []],
+            output=[MessagePart.from_wire(p) for p in raw.get("output") or []],
         )
 
 

@@ -102,14 +102,14 @@ type TaskResult struct {
 
 // TaskOutput is the output object of a §8.8 TaskResult.
 type TaskOutput struct {
-	Parts []OutputPart `json:"parts,omitempty"`
+	Parts []MessagePart `json:"parts,omitempty"`
 }
 
 // DelegateTask invokes the §8.2 lenny/delegate_task platform tool. It
 // spawns a child sub-task whose input is parts and returns the child
 // TaskHandle. budget, when non-nil, is forwarded as the delegation
 // budget metadata the §8.3 policy validates.
-func (t *Tools) DelegateTask(target string, parts []OutputPart, budget map[string]any) (TaskHandle, error) {
+func (t *Tools) DelegateTask(target string, parts []MessagePart, budget map[string]any) (TaskHandle, error) {
 	if t == nil || t.platform == nil {
 		return TaskHandle{}, errors.New("delegate_task requires the platform MCP server (Standard level)")
 	}
@@ -176,7 +176,7 @@ func (t *Tools) DiscoverAgents(query map[string]any) (json.RawMessage, error) {
 // Output invokes the §4.7 lenny/output platform tool, emitting output
 // parts incrementally to the parent or client. The stdout response
 // frame is still required to signal turn completion (§15.4.1).
-func (t *Tools) Output(parts []OutputPart) error {
+func (t *Tools) Output(parts []MessagePart) error {
 	if t == nil || t.platform == nil {
 		return errors.New("output requires the platform MCP server (Standard level)")
 	}
@@ -186,7 +186,7 @@ func (t *Tools) Output(parts []OutputPart) error {
 
 // RequestInput invokes the §4.7 lenny/request_input platform tool. It
 // blocks until an answer arrives and returns the answer parts.
-func (t *Tools) RequestInput(prompt []OutputPart) ([]OutputPart, error) {
+func (t *Tools) RequestInput(prompt []MessagePart) ([]MessagePart, error) {
 	if t == nil || t.platform == nil {
 		return nil, errors.New("request_input requires the platform MCP server (Standard level)")
 	}
@@ -280,19 +280,19 @@ func decodeTaskResults(raw json.RawMessage) ([]TaskResult, error) {
 	return []TaskResult{single}, nil
 }
 
-// decodeParts decodes a result that is either a bare OutputPart array or
+// decodeParts decodes a result that is either a bare MessagePart array or
 // an object with a parts field.
-func decodeParts(raw json.RawMessage) ([]OutputPart, error) {
+func decodeParts(raw json.RawMessage) ([]MessagePart, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, "[") {
-		var parts []OutputPart
+		var parts []MessagePart
 		if err := json.Unmarshal(raw, &parts); err != nil {
 			return nil, err
 		}
 		return parts, nil
 	}
 	var wrapped struct {
-		Parts []OutputPart `json:"parts"`
+		Parts []MessagePart `json:"parts"`
 	}
 	if err := json.Unmarshal(raw, &wrapped); err != nil {
 		return nil, err
