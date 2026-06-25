@@ -73,6 +73,21 @@ const (
 	EventPlatformElicitationContentIntegrityFloorChanged EventType = "platform.elicitation_content_integrity_floor_changed"
 	EventTenantElicitationContentIntegrityFloorClamp     EventType = "tenant.elicitation_content_integrity_floor_clamp"
 
+	// EventElicitationURLModeDomainRejected is the §9.2 url-mode
+	// allowlist drop: the gateway drops an agent-initiated url-mode
+	// `lenny/request_elicitation` because the requested URL's domain is
+	// not in the pool's url-mode allowlist (the §15.1
+	// `DOMAIN_NOT_ALLOWLISTED` per-hop rejection). The audit Detail
+	// carries `session_id`, `origin_pod`, `tenant_id`, `host` (the
+	// rejected domain), `reason`, `initiator_type` (`agent`),
+	// `delegation_depth`, and `detected_at`; it never carries the full
+	// URL's query or fragment. Paired with the existing
+	// `lenny_elicitation_dropped_total{reason="domain_not_allowlisted"}`
+	// counter the gateway emits at the same drop point. spec: §16.7
+	// (elicitation.url_mode_domain_rejected); §9.2 (url-mode security
+	// controls). F-EL3.
+	EventElicitationURLModeDomainRejected EventType = "elicitation.url_mode_domain_rejected"
+
 	// §7.2 / §11.7 / §16.7 — interaction-resolution audit events. Every
 	// state-changing user decision (tool-use approve/deny, elicitation
 	// respond/dismiss) writes a §11.7 hash-chained audit row so a
@@ -383,6 +398,7 @@ var catalog = []EventType{
 	EventElicitationContentTamperDetected, EventTenantElicitationContentIntegrityChanged,
 	EventPlatformElicitationContentIntegrityFloorChanged,
 	EventTenantElicitationContentIntegrityFloorClamp,
+	EventElicitationURLModeDomainRejected,
 	EventQuotaFailOpenStarted,
 	EventAdminImpersonationStarted, EventAdminImpersonationEnded,
 	EventComplianceProfileDecommissioned,

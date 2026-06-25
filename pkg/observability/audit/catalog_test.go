@@ -33,6 +33,9 @@ var spec167AuditEvents = []string{
 	"gateway.default_max_depth_changed",
 	"circuit_breaker.state_changed",
 	"elicitation.content_tamper_detected",
+	// §16.7 line 681 — F-EL3 closes the gap; the url-mode allowlist drop
+	// is now audited (the §9.2 DOMAIN_NOT_ALLOWLISTED per-hop rejection).
+	"elicitation.url_mode_domain_rejected",
 	"tenant.elicitation_content_integrity_changed",
 	"platform.elicitation_content_integrity_floor_changed",
 	"tenant.elicitation_content_integrity_floor_clamp",
