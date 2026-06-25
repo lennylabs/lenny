@@ -218,24 +218,53 @@ func k3sLogSource(paths Paths) logSource {
 }
 
 // deploymentLogSource builds the pod-log source for a control-plane component
-// (gateway, controller, ops). The pods are selected by the component label the
-// chart stamps on the Deployment's pod template, so the selector matches the
-// Deployment regardless of its label scheme. spec: §17.4 (the control-plane
-// components run as in-cluster Deployments).
+// (gateway, controller, ops). The pods are selected by the label the chart
+// stamps on that Deployment's pod template, which differs by component: the
+// gateway and controller pods carry the lenny.dev/component selector, while the
+// lenny-ops pods carry app: lenny-ops (the §13.2 NET-051 pod-label exception for
+// the separate operability plane). deploymentPodSelector resolves the right one
+// so the selector tracks each Deployment's actual label scheme. spec: §17.4
+// (the control-plane components run as in-cluster Deployments).
 func deploymentLogSource(client kubernetes.Interface, component string) logSource {
 	return logSource{
 		name:      component,
 		client:    client,
 		namespace: controlPlaneNamespace,
-		selector:  labels.SelectorFromSet(labels.Set{componentLabel: component}),
+		selector:  labels.SelectorFromSet(deploymentPodSelector(component)),
 	}
 }
 
+// deploymentPodSelector returns the pod-template label set the chart stamps on
+// the named control-plane Deployment, so listing pods by it reaches that
+// component's pods. The gateway and controller pods carry
+// lenny.dev/component=<component>; the lenny-ops pods carry app: lenny-ops
+// instead, the §13.2 NET-051 pod-label exception the chart's ops-deployment.yaml
+// and the rendered embedded manifests use (the ops Deployment selector,
+// NetworkPolicies, and PodMonitor all key on app: lenny-ops). A uniform
+// lenny.dev/component selector would match zero ops pods, so lenny logs ops must
+// select on the label ops actually carries. spec: §17.4 (the control-plane
+// components run as in-cluster Deployments), §13.2 (the lenny-ops pod-label
+// exception).
+func deploymentPodSelector(component string) labels.Set {
+	if component == "ops" {
+		return labels.Set{opsAppLabel: opsDeploymentName}
+	}
+	return labels.Set{componentLabel: component}
+}
+
 // componentLabel is the pod label the chart stamps the control-plane component
-// name on (gateway, controller, ops). It matches the gateway and controller
-// Deployment selectors in the embedded manifests, so listing pods by it
-// reaches the right component's pods. spec: §17.4.
+// name on for the gateway and controller. The lenny-ops pods are the §13.2
+// exception and carry opsAppLabel instead (see deploymentPodSelector). spec:
+// §17.4.
 const componentLabel = "lenny.dev/component"
+
+// opsAppLabel is the label key the lenny-ops Deployment stamps its pod-template
+// name on (app: lenny-ops). lenny-ops is a separate operability plane, so its
+// pods carry app: lenny-ops rather than the lenny.dev/component selector the
+// gateway and controller use; the chart's ops Deployment selector, its
+// NET-051 NetworkPolicies, and its PodMonitor all key on this label. spec:
+// §13.2 (the lenny-ops pod-label exception).
+const opsAppLabel = "app"
 
 // runtimeLogSource builds the pod-log source for one runtime's agent pods,
 // selected by the §6.2 runtime-name label the Sandbox controller stamps on

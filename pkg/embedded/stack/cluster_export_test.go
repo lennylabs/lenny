@@ -52,3 +52,14 @@ func ControlPlaneDeploymentNamesForTest() (gateway, controller, ops string) {
 // RestartedAtAnnotationForTest exposes the rollout-restart annotation key so
 // the envtest can assert the rolled Deployment carries it. It is test-only.
 func RestartedAtAnnotationForTest() string { return restartedAtAnnotation }
+
+// DeploymentPodSelectorForTest exposes the per-component pod-log selector so the
+// envtest can list a component's pods against a real kube-apiserver by the same
+// selector lenny logs uses. The lenny-ops Deployment carries the §13.2 app:
+// lenny-ops pod-label exception, so a uniform lenny.dev/component selector would
+// list zero ops pods; this exposes the resolved selector string for that
+// assertion. It is test-only. spec: §17.4, §13.2 (the lenny-ops pod-label
+// exception).
+func DeploymentPodSelectorForTest(component string) string {
+	return deploymentPodSelector(component).String()
+}

@@ -84,14 +84,31 @@ func notReadyDeployment(name, component string) *appsv1.Deployment {
 	return dep
 }
 
-// controlPlanePod builds a control-plane pod carrying the component label, so
-// the logs path lists it under the matching Deployment's selector.
+// controlPlanePod builds a gateway/controller control-plane pod carrying the
+// lenny.dev/component label, so the logs path lists it under the matching
+// Deployment's selector. The lenny-ops pod is the §13.2 label exception; use
+// opsPod for it so the test fixture carries the label the real ops Deployment
+// stamps rather than a fabricated lenny.dev/component=ops.
 func controlPlanePod(name, component string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: controlPlaneNamespace,
 			Labels:    map[string]string{componentLabel: component},
+		},
+	}
+}
+
+// opsPod builds a lenny-ops control-plane pod carrying the app: lenny-ops label
+// the chart's ops-deployment.yaml stamps (the §13.2 NET-051 pod-label exception),
+// rather than the lenny.dev/component label the gateway and controller use, so a
+// test exercises the real label scheme the logs path must select on for ops.
+func opsPod(name string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: controlPlaneNamespace,
+			Labels:    map[string]string{opsAppLabel: opsDeploymentName},
 		},
 	}
 }

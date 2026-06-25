@@ -38,6 +38,74 @@ func controlPlaneDeploymentFixture(name, component string) *appsv1.Deployment {
 	}
 }
 
+// opsPodFixture builds a lenny-ops pod in the default namespace carrying the
+// app: lenny-ops label the chart's ops-deployment.yaml stamps (the §13.2
+// NET-051 pod-label exception), so the envtest can assert the logs selector
+// matches the real ops label scheme rather than a fabricated
+// lenny.dev/component=ops label.
+func opsPodFixture(name, opsDeployment string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    map[string]string{"app": opsDeployment},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "ops", Image: "ghcr.io/lennylabs/lenny-ops:dev"}},
+		},
+	}
+}
+
+// TestLogsOpsSelectorMatchesRealOpsLabel_spec_17_4 covers the §13.2 lenny-ops
+// pod-label exception on the logs path against a real kube-apiserver: the
+// lenny-ops Deployment stamps app: lenny-ops on its pods rather than the
+// lenny.dev/component label the gateway and controller use, so the lenny logs
+// ops selector must list pods by app: lenny-ops. The test creates an ops pod
+// with the real label and asserts the resolved logs selector lists it, while a
+// uniform lenny.dev/component=ops selector lists nothing.
+//
+// diagnosis: a failure means lenny logs ops selects zero pods against the real
+// ops Deployment label scheme and prints "no running pods for ops" even when the
+// mandatory lenny-ops Deployment is running, so an operator cannot read ops logs.
+//
+// spec: §17.4 line 179 (ops streams from the in-cluster pods), §13.2 (the
+// lenny-ops pod-label exception).
+func TestLogsOpsSelectorMatchesRealOpsLabel_spec_17_4(t *testing.T) {
+	env := envtest.Start(t)
+	ctx := context.Background()
+	cfg := env.RESTConfig()
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("build core client: %v", err)
+	}
+	_, _, ops := stack.ControlPlaneDeploymentNamesForTest()
+	if _, err := cs.CoreV1().Pods("default").Create(ctx, opsPodFixture("lenny-ops-xyz", ops), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create ops pod: %v", err)
+	}
+
+	// The logs selector for ops must list the app: lenny-ops pod.
+	opsSelector := stack.DeploymentPodSelectorForTest("ops")
+	matched, err := cs.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: opsSelector})
+	if err != nil {
+		t.Fatalf("list ops pods by logs selector %q: %v", opsSelector, err)
+	}
+	if len(matched.Items) != 1 {
+		t.Errorf("logs selector %q matched %d pods, want the lenny-ops pod; the selector does not track the real ops label scheme",
+			opsSelector, len(matched.Items))
+	}
+
+	// A uniform lenny.dev/component=ops selector (the divergence the fix
+	// corrects) would list zero pods, since the ops Deployment carries no such
+	// label. This guards against a regression back to the uniform selector.
+	uniform, err := cs.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "lenny.dev/component=ops"})
+	if err != nil {
+		t.Fatalf("list ops pods by uniform selector: %v", err)
+	}
+	if len(uniform.Items) != 0 {
+		t.Errorf("a lenny.dev/component=ops selector matched %d pods, want 0 (the ops Deployment carries no such label)", len(uniform.Items))
+	}
+}
+
 // TestStatusReadsDeploymentReadiness_spec_17_4 covers the §17.4 cluster-backed
 // status against a real kube-apiserver: the gateway, controller, and ops rows
 // report their Deployment readiness. A Deployment whose status carries a ready

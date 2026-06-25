@@ -111,6 +111,32 @@ func TestRunLogsStreamsControlPlanePod_spec_17_4(t *testing.T) {
 	}
 }
 
+// TestRunLogsStreamsOpsPod covers the §13.2 lenny-ops pod-label exception on
+// the logs path: the lenny-ops Deployment stamps app: lenny-ops on its pod
+// template rather than the lenny.dev/component label the gateway and controller
+// use, so lenny logs ops must select pods by app: lenny-ops. The fixture seeds a
+// pod carrying the real ops label and asserts its log streams; a uniform
+// lenny.dev/component=ops selector would match zero pods and stream nothing.
+//
+// spec: §17.4 line 179 (ops streams from the in-cluster pods), §13.2 (the
+// lenny-ops pod-label exception), §24.19 line 263.
+func TestRunLogsStreamsOpsPod_spec_17_4(t *testing.T) {
+	recordRunningStack(t)
+	withClusterClient(t, k8sfake.NewSimpleClientset(
+		opsPod("lenny-ops-xyz"),
+	))
+	var out bytes.Buffer
+	if err := RunLogs(context.Background(), LogsOptions{Component: "ops", Out: &out}); err != nil {
+		t.Fatalf("RunLogs ops: %v", err)
+	}
+	if strings.Contains(out.String(), "no running pods for ops") {
+		t.Fatalf("RunLogs ops reported no pods for an app: lenny-ops pod; the selector does not match the real ops label scheme: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "fake logs") {
+		t.Errorf("RunLogs ops output = %q, want the streamed ops pod log", out.String())
+	}
+}
+
 // TestRunLogsControlPlaneNoPodsReportsAndContinues covers the path where a
 // component's Deployment has not scheduled a pod yet: lenny logs reports the
 // component has no running pods rather than failing.
@@ -200,6 +226,7 @@ func TestRunLogsMergedStreamsEveryComponent_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset(
 		controlPlanePod("lenny-gateway-abc", "gateway"),
+		opsPod("lenny-ops-xyz"),
 		agentPod("echo-pod-1", "echo"),
 	))
 	root, err := DefaultRoot()
@@ -215,10 +242,14 @@ func TestRunLogsMergedStreamsEveryComponent_spec_17_4(t *testing.T) {
 		t.Fatalf("RunLogs merged: %v", err)
 	}
 	got := out.String()
-	// The gateway pod and echo agent pod stream the fake-client log body, both
-	// prefixed; the k3s substrate file line is prefixed too.
+	// The gateway pod, the ops pod (selected by its app: lenny-ops label), and the
+	// echo agent pod stream the fake-client log body, each prefixed; the k3s
+	// substrate file line is prefixed too.
 	if !strings.Contains(got, "gateway | fake logs") {
 		t.Errorf("merged output %q missing the prefixed gateway pod log", got)
+	}
+	if !strings.Contains(got, "ops | fake logs") {
+		t.Errorf("merged output %q missing the prefixed ops pod log", got)
 	}
 	if !strings.Contains(got, "k3s | substrate-line") {
 		t.Errorf("merged output %q missing the prefixed k3s substrate line", got)
