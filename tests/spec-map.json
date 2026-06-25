@@ -385,7 +385,8 @@
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
         "tests/tier2_component/stores/runtimestore_test.go",
-        "tests/tier2_component/runtimecapoverride/runtimecapoverride_test.go"
+        "tests/tier2_component/runtimecapoverride/runtimecapoverride_test.go",
+        "tests/tier9_security/injection_gate_failclosed_test.go"
       ],
       "packages": [
         "pkg/runtime"
@@ -579,7 +580,8 @@
       "tests": [
         "pkg/session/state/...",
         "pkg/gateway/sessionserver/messages_test.go",
-        "pkg/gateway/sessionserver/interactions_test.go"
+        "pkg/gateway/sessionserver/interactions_test.go",
+        "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1965,7 +1967,9 @@
       "tests": [
         "pkg/gateway/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
-        "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go"
+        "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -2262,7 +2266,8 @@
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoDuplicatesOrEmpties",
         "pkg/observability/audit/catalog_test.go::TestIsKnownEventType",
-        "tests/tier2_component/stores/deploymentconfigstore_test.go"
+        "tests/tier2_component/stores/deploymentconfigstore_test.go",
+        "tests/tier9_security/elicitation_urlmode_audit_test.go"
       ],
       "packages": [
         "pkg/observability/audit"
