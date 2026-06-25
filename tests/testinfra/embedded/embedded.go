@@ -105,6 +105,49 @@ func UpTimeout() time.Duration {
 	return DefaultUpTimeout
 }
 
+// SidecarRuntimeTarballEnv names the environment variable that points the
+// custom-sidecar tier-4 leg at a docker-save tarball of a genuine
+// sidecar-model runtime image. `lenny up` imports only the platform bundle
+// and the embedded-model echo seed, so the custom-sidecar leg must import a
+// distinct sidecar-model image to prove placement is runtime-agnostic rather
+// than echo-only. The reference sidecar-model runtime is runtime-echo
+// (cmd/runtimes/echo): it dials the abstract @lenny-runtime socket the
+// stamped lenny-adapter container binds and speaks the §15.4.1 JSONL
+// protocol the adapter bridges, exactly the contract a sidecar-model runtime
+// container fulfills (unlike runtime-echo-embedded, the §4.7 embedded model
+// that links the adapter as a library and serves gRPC itself). The
+// test-smoke-embedded Makefile target builds and stages it and sets this
+// variable. spec: §17.4 (the runtime-agnostic custom-runtime walkthrough),
+// §4.7 (the sidecar deployment model), §15.4.1 (the JSONL contract the
+// runtime container speaks to the adapter).
+const SidecarRuntimeTarballEnv = "LENNY_SIDECAR_RUNTIME_TARBALL"
+
+// SidecarRuntimeImage is the OCI reference the custom-sidecar tier-4 leg
+// imports the staged sidecar-model tarball under and references in the
+// runtime's Runtime CRD. It is the build tag the runtime-echo sidecar image
+// carries (the same tag the Makefile docker-saves), so the imported image
+// resolves by tag from the embedded containerd store under the default
+// IfNotPresent pull policy with no registry pull. spec: §4.7, §17.4.
+const SidecarRuntimeImage = "ghcr.io/lennylabs/runtime-echo:dev"
+
+// SidecarRuntimeTarball returns the staged sidecar-model runtime tarball
+// path from SidecarRuntimeTarballEnv, or the empty string when the variable
+// is unset or names a path that does not exist. An empty return signals the
+// custom-sidecar leg to skip its import-and-place sequence (the
+// test-coverage tier-5/6 escape hatch: the genuine sidecar image is a
+// docker-save artifact the leg cannot synthesize, so a host without it
+// states the dependency and skips rather than reusing the echo image).
+func SidecarRuntimeTarball() string {
+	v := strings.TrimSpace(os.Getenv(SidecarRuntimeTarballEnv))
+	if v == "" {
+		return ""
+	}
+	if fi, err := os.Stat(v); err != nil || fi.IsDir() {
+		return ""
+	}
+	return v
+}
+
 // available reports whether the host can provision the Embedded Mode
 // substrate and run the smoke test, returning a human-readable reason
 // when it cannot. The checks are: the go toolchain is on PATH (the

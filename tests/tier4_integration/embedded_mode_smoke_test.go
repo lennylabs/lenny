@@ -209,12 +209,19 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 	t.Logf("lenny session new: created %s", sid)
 
 	// Custom-sidecar-runtime leg (S5/C2): the in-cluster control plane places
-	// any runtime over the §4.7 boundary, not echo alone. Register a custom
-	// sidecar-model runtime through the §17.4 walkthrough (lenny-ctl runtime
-	// publish writes the registry record; lenny runtime apply materializes its
-	// Runtime, SandboxTemplate, and SandboxWarmPool CRD set), start a session,
-	// and assert the controller stamped the lenny-adapter sidecar container on
-	// the placed pod, proving placement is runtime-agnostic. spec: §17.4, §4.7.
+	// any runtime over the §4.7 boundary, not echo alone. The leg imports a
+	// genuine sidecar-model runtime image (runtime-echo, which dials the
+	// abstract @lenny-runtime socket and speaks §15.4.1 JSONL, the contract the
+	// stamped lenny-adapter container bridges), registers it through the §17.4
+	// walkthrough (lenny-ctl runtime publish writes the registry record; lenny
+	// runtime apply materializes its Runtime, SandboxTemplate, and
+	// SandboxWarmPool CRD set), starts a session, and asserts the controller
+	// stamped the lenny-adapter sidecar container on the placed pod, proving
+	// placement is runtime-agnostic rather than echo-only. The genuine sidecar
+	// image is a docker-save artifact (the Makefile stages it and points
+	// LENNY_SIDECAR_RUNTIME_TARBALL at it), so where it is unstaged the leg
+	// states the dependency and skips per the test-coverage tier-5/6 escape
+	// hatch. spec: §17.4, §4.7, §15.4.1.
 	customSidecarRuntimeLeg(t, bin, home)
 
 	// Warm-up persisted-substrate leg (S8). A non-`--purge` `lenny down`
@@ -411,34 +418,68 @@ func warmUpReusesPersistedSubstrate(t *testing.T, bin, home string) {
 // leg registers, places, and inspects.
 const customRuntimeName = "my-agent"
 
-// customRuntimeImage is the image the custom sidecar-model runtime's runtime
-// container references. The leg reuses the echo-embedded image `lenny up`
-// already imported into the substrate's containerd store, so `lenny runtime
-// apply` resolves its tag to a §5.3 digest from the local store with no extra
-// import. The runtime container image is immaterial to the assertion (the leg
-// asserts the stamped lenny-adapter sidecar, which the controller adds from
-// controller.adapterImage for any sidecar-model runtime); reusing an
-// already-imported image keeps the leg self-contained.
-const customRuntimeImage = "ghcr.io/lennylabs/runtime-echo-embedded:dev"
-
-// customSidecarRuntimeLeg registers a custom sidecar-model runtime through the
-// §17.4 walkthrough and asserts the in-cluster control plane places it with the
-// stamped lenny-adapter sidecar, proving placement is runtime-agnostic rather
-// than echo-only. It follows the walkthrough verbatim: `lenny-ctl runtime
-// publish --skip-push` writes the registry record through the gateway admin API
-// (authenticated with the dev bearer the gateway trusts), then `lenny runtime
-// apply` materializes the runtime's Runtime, SandboxTemplate, and
-// SandboxWarmPool CRD set (the no-Postgres pool-materialization path), then
-// `lenny session new` places a session, and finally the placed agent pod is
-// inspected through the embedded kubeconfig for the stamped "adapter" container.
+// customSidecarRuntimeLeg imports a genuine sidecar-model runtime image,
+// registers it through the §17.4 walkthrough, and asserts the in-cluster
+// control plane places it with the stamped lenny-adapter sidecar, proving
+// placement is runtime-agnostic rather than echo-only. The image it imports is
+// runtime-echo (cmd/runtimes/echo), the Basic-level sidecar reference runtime
+// that dials the abstract @lenny-runtime socket and speaks the §15.4.1 JSONL
+// protocol the stamped lenny-adapter container bridges. It is distinct from the
+// runtime-echo-embedded image `lenny up` seeds, which is the §4.7 embedded
+// model (it links the adapter as a library and serves the gRPC contract
+// itself, never dials @lenny-runtime, and never speaks JSONL to a sidecar
+// adapter). Reusing the embedded image under a sidecar label would deadlock the
+// pod (the §6.1 readiness gate never flips because no runtime container bridges
+// the adapter) and would prove nothing the echo leg does not already prove, so
+// the leg imports the genuine sidecar image instead.
+//
+// It follows the walkthrough verbatim: `lenny image import --file` loads the
+// staged sidecar-model tarball into the embedded containerd (the image
+// `lenny up` does not seed), then `lenny-ctl runtime publish --skip-push`
+// writes the registry record through the gateway admin API (authenticated with
+// the dev bearer the gateway trusts), then `lenny runtime apply` materializes
+// the runtime's Runtime, SandboxTemplate, and SandboxWarmPool CRD set (the
+// no-Postgres pool-materialization path), then `lenny session new` places a
+// session, and finally the placed agent pod is inspected through the embedded
+// kubeconfig for the stamped "adapter" container.
+//
+// The genuine sidecar image is a docker-save artifact the leg cannot
+// synthesize, so where LENNY_SIDECAR_RUNTIME_TARBALL does not point at a staged
+// tarball the leg skips and states the dependency (the test-coverage tier-5/6
+// escape hatch; the test-smoke-embedded Makefile target stages it).
 //
 // spec: §17.4 (the custom-runtime walkthrough; a sidecar-model runtime runs
-// with the stamped lenny-adapter container), §4.7 (the adapter sidecar), §5.2
-// (the applied SandboxWarmPool warms a pod), §5.3 (the applied Runtime is
-// digest-pinned).
+// with the stamped lenny-adapter container), §4.7 (the adapter sidecar and the
+// sidecar deployment model), §15.4.1 (the JSONL contract the runtime container
+// speaks to the adapter), §5.2 (the applied SandboxWarmPool warms a pod), §5.3
+// (the applied Runtime is digest-pinned).
 func customSidecarRuntimeLeg(t *testing.T, bin, home string) {
 	t.Helper()
+	sidecarTarball := embedded.SidecarRuntimeTarball()
+	if sidecarTarball == "" {
+		t.Logf("custom-sidecar leg skipped: set %s to a docker-save tarball of a sidecar-model "+
+			"runtime image (the test-smoke-embedded Makefile target stages runtime-echo); the leg "+
+			"cannot reuse the embedded echo seed because the §4.7 embedded model never bridges the "+
+			"sidecar adapter", embedded.SidecarRuntimeTarballEnv)
+		return
+	}
 	ctl := embedded.BuildCtl(t)
+
+	// Step: import the genuine sidecar-model runtime image into the embedded
+	// containerd. `lenny up` imports only the platform bundle and the
+	// embedded-model echo seed, so a sidecar-model image the controller can
+	// pair with the stamped lenny-adapter container must be imported here. The
+	// `--file` path loads the docker-save tarball under the image's build tag in
+	// namespace k8s.io, so the runtime container reference in the Runtime CRD
+	// resolves from the local store under the default IfNotPresent pull policy
+	// with no registry pull. spec: §17.4 (the custom-runtime walkthrough imports
+	// the runtime image), §24.19.1 (the --file import path).
+	imp := embedded.Run(t, bin, home, 2*time.Minute,
+		"image", "import", embedded.SidecarRuntimeImage, "--file", sidecarTarball)
+	if imp.ExitCode != 0 {
+		t.Fatalf("lenny image import %s --file %s: exit %d\nstdout:\n%s\nstderr:\n%s",
+			embedded.SidecarRuntimeImage, sidecarTarball, imp.ExitCode, imp.Stdout, imp.Stderr)
+	}
 
 	// The dev bearer the in-cluster gateway trusts; it carries platform-admin,
 	// so the admin runtimes register endpoint admits the publish step.
@@ -458,31 +499,34 @@ func customSidecarRuntimeLeg(t *testing.T, bin, home string) {
 
 	// Step: register the runtime record through the walkthrough's
 	// `lenny-ctl runtime publish --skip-push` (the image is already in the
-	// substrate store, so no docker push). The §24.16 global flags
-	// (--api-url, --token, --insecure-skip-verify) precede the subcommand. The
-	// TLS forwarder presents the per-`lenny up` self-signed leaf, which the
-	// smoke trusts with --insecure-skip-verify because the leaf is loopback-only.
+	// substrate store from the import above, so no docker push). The §24.16
+	// global flags (--api-url, --token, --insecure-skip-verify) precede the
+	// subcommand. The TLS forwarder presents the per-`lenny up` self-signed
+	// leaf, which the smoke trusts with --insecure-skip-verify because the leaf
+	// is loopback-only.
 	pub := embedded.RunBin(t, ctl, home, 60*time.Second,
 		"--api-url", gatewayURL,
 		"--token", bearer,
 		"--insecure-skip-verify",
 		"runtime", "publish", customRuntimeName,
-		"--image", customRuntimeImage,
+		"--image", embedded.SidecarRuntimeImage,
 		"--skip-push")
 	if pub.ExitCode != 0 {
 		t.Fatalf("lenny-ctl runtime publish: exit %d\nstdout:\n%s\nstderr:\n%s", pub.ExitCode, pub.Stdout, pub.Stderr)
 	}
 
 	// Step: materialize the runtime's CRD set with the §17.4 `lenny runtime
-	// apply` verb (S16). The file declares the sidecar deployment model, so the
-	// controller stamps the adapter sidecar onto the placed pod.
+	// apply` verb (S16). The file declares the sidecar deployment model with the
+	// genuine sidecar-model image, so the controller stamps the lenny-adapter
+	// sidecar onto the placed pod and the runtime container bridges it over the
+	// §15.4.1 JSONL channel.
 	crdFile := filepath.Join(t.TempDir(), "runtime-crds.yaml")
 	body := "apiVersion: lenny.dev/v1alpha1\n" +
 		"kind: Runtime\n" +
 		"metadata:\n" +
 		"  name: " + customRuntimeName + "\n" +
 		"spec:\n" +
-		"  image: " + customRuntimeImage + "\n" +
+		"  image: " + embedded.SidecarRuntimeImage + "\n" +
 		"  integrationLevel: basic\n" +
 		"  deploymentModel: sidecar\n"
 	if err := os.WriteFile(crdFile, []byte(body), 0o600); err != nil {

@@ -178,6 +178,13 @@ test-smoke: ## §17.4 line 276 Source Mode smoke test: boot the gateway, create 
 	@go test -tags smoke -count=1 -timeout 120s -run TestSourceModeSmoke ./tests/tier4_integration/...
 
 ECHO_TARBALL ?= $(CURDIR)/bin/runtime-echo-embedded.tar
+# The genuine sidecar-model runtime tarball the custom-sidecar smoke leg
+# imports. runtime-echo (cmd/runtimes/echo) is the Basic-level sidecar
+# reference: it dials the abstract @lenny-runtime socket the stamped
+# lenny-adapter container binds and speaks §15.4.1 JSONL, unlike the
+# embedded-model echo-embedded image `lenny up` seeds. The custom-sidecar leg
+# imports it so placement is proven runtime-agnostic rather than echo-only.
+SIDECAR_RUNTIME_TARBALL ?= $(CURDIR)/bin/runtime-echo.tar
 
 .PHONY: echo-embedded-tarball
 echo-embedded-tarball: ## Build the echo-embedded image and docker-save it to bin/runtime-echo-embedded.tar, the credential-free pod image the Embedded Mode bring-up imports into the embedded containerd (resolveEchoTarball / LENNY_ECHO_TARBALL).
@@ -187,6 +194,14 @@ echo-embedded-tarball: ## Build the echo-embedded image and docker-save it to bi
 	@echo "  docker save → $(ECHO_TARBALL)"
 	@docker save ghcr.io/lennylabs/runtime-echo-embedded:dev -o $(ECHO_TARBALL)
 
+.PHONY: sidecar-runtime-tarball
+sidecar-runtime-tarball: ## Build the runtime-echo sidecar-model image and docker-save it to bin/runtime-echo.tar, the genuine sidecar-model runtime image the custom-sidecar smoke leg imports to prove placement is runtime-agnostic (LENNY_SIDECAR_RUNTIME_TARBALL).
+	@mkdir -p bin
+	@echo "  image runtime-echo"
+	@docker build --build-arg BINARY=runtimes/echo -t ghcr.io/lennylabs/runtime-echo:dev .
+	@echo "  docker save → $(SIDECAR_RUNTIME_TARBALL)"
+	@docker save ghcr.io/lennylabs/runtime-echo:dev -o $(SIDECAR_RUNTIME_TARBALL)
+
 .PHONY: test-smoke-embedded
-test-smoke-embedded: echo-embedded-tarball ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo tarball first.
-	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags smoke -count=1 -timeout 1500s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...
+test-smoke-embedded: echo-embedded-tarball sidecar-runtime-tarball ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down, plus the custom-sidecar runtime-agnostic leg. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo and sidecar tarballs first.
+	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_SIDECAR_RUNTIME_TARBALL=$${LENNY_SIDECAR_RUNTIME_TARBALL:-$(SIDECAR_RUNTIME_TARBALL)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags smoke -count=1 -timeout 1500s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...
