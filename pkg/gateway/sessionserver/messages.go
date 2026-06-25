@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,11 +16,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/messagerouting"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
+
+// serviceUnavailableRetryAfterSeconds is the Retry-After header the §5.1
+// injection gate sets when it fails closed with SERVICE_UNAVAILABLE on a
+// transient runtime- or override-store read error. SERVICE_UNAVAILABLE is
+// TRANSIENT/503/retryable per the §15.1 catalog; 5 seconds matches the
+// store-recovery cool-down the other transient gateway 503s use.
+// spec: §15.1 (SERVICE_UNAVAILABLE), §5.1 (injection fail-closed).
+const serviceUnavailableRetryAfterSeconds = 5
 
 // transcriptSortField is the only sort key valid on the §15.1
 // transcript: entries are written in monotonic `seq` order and that is
@@ -269,17 +279,50 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// runtime declares capabilities.injection.supported: false. Per
 	// §5.1 injection support defaults to false. The runtime is resolved
 	// to its effective definition, so a derived runtime is checked
-	// against the injection support it inherits from its base. The
-	// check degrades safely when the runtime registry is not wired or
-	// the runtime is not found, so a gateway without a wired registry
-	// does not block injection.
+	// against the injection support it inherits from its base.
+	//
+	// The gate degrades open only on a definite "no record" answer: an
+	// unwired registry (s.runtimes == nil), an empty RuntimeRef, or a
+	// not-found from either backing store. A transient read error from
+	// either the runtime registry or the per-tenant capability-override
+	// store is not a definite answer, so the gate fails closed with a
+	// retryable SERVICE_UNAVAILABLE rather than admitting injection
+	// against an un-overlaid runtime. INJECTION_REJECTED is reserved for
+	// the policy denial (POLICY/non-retryable); a transient infra blip
+	// would mislabel a retryable condition as a permanent policy block.
+	// spec: §5.1 (injection fail-closed).
 	if s.runtimes != nil && row.RuntimeRef != "" {
 		// §5.1 line 49: overlay the session tenant's capability override so
 		// a tenant that disabled injection.supported on this runtime has
-		// the injection gate enforce its narrowed value. F-5.1.20.
-		if rt, err := runtimecapoverride.ResolveForTenant(r.Context(), s.runtimes, s.capOverrides, row.TenantID, row.RuntimeRef); err == nil && !rt.InjectionSupported() {
-			s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
-				"runtime does not support mid-session message injection", nil)
+		// the injection gate enforce its narrowed value. The override-store
+		// read error now propagates from ResolveForTenant, so a transient
+		// override-store blip on the F-5.1.20 tenant-narrowing path fails
+		// closed here instead of admitting injection. F-5.1.20.
+		rt, err := runtimecapoverride.ResolveForTenant(r.Context(), s.runtimes, s.capOverrides, row.TenantID, row.RuntimeRef)
+		switch {
+		case err == nil:
+			if !rt.InjectionSupported() {
+				s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
+					"runtime does not support mid-session message injection", nil)
+				return
+			}
+		case errors.Is(err, runtimestore.ErrNotFound):
+			// No runtime record from either store: degrade open so a
+			// gateway whose registry has no entry for the ref does not
+			// block injection.
+		default:
+			// A transient read error from either backing store: fail
+			// closed. The granular "runtime-store read failed" versus
+			// "override-store read failed" cause is recorded in the
+			// gateway log rather than as a distinct client code, keeping
+			// the client surface coarse (the cause is not an authorization
+			// or existence oracle). spec: §5.1 (injection fail-closed),
+			// §15.1 (SERVICE_UNAVAILABLE).
+			log.Printf("sessionserver: §5.1 injection gate failed closed for session %s runtime %s: resolve error: %v",
+				row.ID, row.RuntimeRef, err)
+			w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
+			s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+				"runtime capability lookup is transiently unavailable; retry", nil)
 			return
 		}
 	}

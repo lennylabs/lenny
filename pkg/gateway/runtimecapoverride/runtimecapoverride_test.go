@@ -146,17 +146,43 @@ func (erroringStore) Get(context.Context, string, string) (runtimestore.Capabili
 	return runtimestore.CapabilityOverride{}, false, errors.New("db down")
 }
 
-// spec: §5.1 line 49 — an override-store read error is swallowed so a
-// store blip never blocks a session operation; the un-overlaid runtime
-// is returned.
-func TestResolveForTenant_StoreErrorDegradesSafe_spec_5_1_49(t *testing.T) {
+// spec: §5.1 line 49 — F-5.1.20: a non-not-found override-store read
+// error propagates from ResolveForTenant rather than being swallowed, so
+// the injection gate can fail closed on the tenant-narrowing path instead
+// of admitting injection against the un-overlaid base runtime. The
+// returned runtime is the zero value on a propagated error.
+func TestResolveForTenant_OverrideStoreErrorPropagates_spec_5_1_49(t *testing.T) {
 	ctx := context.Background()
 	rs := seedRuntime(t)
 	rt, err := runtimecapoverride.ResolveForTenant(ctx, rs, erroringStore{}, "acme", "claude-code")
+	if err == nil {
+		t.Fatal("expected the transient override-store read error to propagate")
+	}
+	if rt.InjectionSupported() {
+		t.Error("expected the zero runtime (not the un-overlaid base) on a propagated error")
+	}
+}
+
+// notFoundStore reports no override (ok=false, err=nil) for every key,
+// the genuine not-found case ResolveForTenant must keep degrading open.
+type notFoundStore struct{ runtimecapoverride.Store }
+
+func (notFoundStore) Get(context.Context, string, string) (runtimestore.CapabilityOverride, bool, error) {
+	return runtimestore.CapabilityOverride{}, false, nil
+}
+
+// spec: §5.1 line 49 — a genuine override not-found (ok=false, err=nil)
+// returns the un-overlaid runtime, the only outcome that yields a usable
+// runtime with err==nil. This is the degrade-open path the injection gate
+// keeps when no tenant override is recorded.
+func TestResolveForTenant_OverrideNotFoundDegradesOpen_spec_5_1_49(t *testing.T) {
+	ctx := context.Background()
+	rs := seedRuntime(t)
+	rt, err := runtimecapoverride.ResolveForTenant(ctx, rs, notFoundStore{}, "acme", "claude-code")
 	if err != nil {
-		t.Fatalf("store error should not propagate: %v", err)
+		t.Fatalf("a genuine override not-found must not propagate an error: %v", err)
 	}
 	if !rt.InjectionSupported() {
-		t.Error("expected the un-overlaid platform default on store error")
+		t.Error("expected the un-overlaid platform default when no override is recorded")
 	}
 }

@@ -5,6 +5,7 @@ package sessionserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -341,6 +342,152 @@ func TestMessagesInjectionResolvesDerivedRuntime(t *testing.T) {
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("derived runtime inheriting injection support: status %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// transientRuntimeStore wraps a runtimestore.Store and returns a
+// transient (non-not-found) read error from Get, simulating a Postgres
+// blip on the runtime-registry read the injection gate must fail closed
+// on. Every other method delegates so a session can still be seeded
+// against the embedded store.
+type transientRuntimeStore struct {
+	runtimestore.Store
+	err error
+}
+
+func (s transientRuntimeStore) Get(context.Context, string) (runtimestore.Runtime, error) {
+	return runtimestore.Runtime{}, s.err
+}
+
+// transientOverrideStore wraps a runtimecapoverride.Store and returns a
+// transient (non-not-found) read error from Get, simulating a Postgres
+// blip on the per-tenant capability-override read. This is the
+// F-5.1.20 tenant-narrowing path the prior error swallow hid: the base
+// runtime declares injection supported, so the gate must fail closed
+// rather than admit injection against the un-overlaid runtime.
+type transientOverrideStore struct {
+	runtimecapoverride.Store
+	err error
+}
+
+func (s transientOverrideStore) Get(context.Context, string, string) (runtimestore.CapabilityOverride, bool, error) {
+	return runtimestore.CapabilityOverride{}, false, s.err
+}
+
+func seedInjectionRuntime(t *testing.T) runtimestore.Store {
+	t.Helper()
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "chatty", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+			Injection:   runtimestore.InjectionCapability{Supported: true},
+		},
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	return runtimes
+}
+
+func seedInjectionSession(t *testing.T, store sessionstore.Store, id, tenant string) {
+	t.Helper()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: tenant, State: session.StateRunning,
+		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+}
+
+func assertInjectionFailsClosed(t *testing.T, rr *httptest.ResponseRecorder) {
+	t.Helper()
+	// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE) —
+	// a transient store read fails closed with a retryable 503
+	// SERVICE_UNAVAILABLE, never an admitted injection (200) and never
+	// the POLICY/non-retryable 403 INJECTION_REJECTED that would mislabel
+	// a recoverable infra blip as a permanent policy denial.
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: %d, want 503 SERVICE_UNAVAILABLE (body=%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "SERVICE_UNAVAILABLE") {
+		t.Errorf("body: %s, want SERVICE_UNAVAILABLE", rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "INJECTION_REJECTED") {
+		t.Errorf("a transient store blip must not surface as the policy denial INJECTION_REJECTED: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"retryable":true`) {
+		t.Errorf("SERVICE_UNAVAILABLE must be retryable: %s", rr.Body.String())
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("a retryable 503 SERVICE_UNAVAILABLE must carry a Retry-After header")
+	}
+}
+
+// diagnosis: the §5.1 injection gate admitted mid-session injection on a
+// transient runtime-registry read error instead of failing closed; a
+// store blip is being treated as a definite "injection supported" answer.
+// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testing.T) {
+	store := memstore.New()
+	runtimes := transientRuntimeStore{Store: seedInjectionRuntime(t), err: errors.New("registry pg read timeout")}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Runtimes:    runtimes,
+	})
+	seedInjectionSession(t, store, "s1", "acme")
+	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	assertInjectionFailsClosed(t, rr)
+}
+
+// diagnosis: the §5.1 injection gate admitted injection on a transient
+// per-tenant override-store read error, the F-5.1.20 tenant-narrowing
+// path the prior ResolveForTenant error swallow hid; the override-store
+// blip must fail closed rather than admit injection against the
+// un-overlaid (injection-on) base runtime.
+// spec: §5.1 line 49 (F-5.1.20 injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *testing.T) {
+	store := memstore.New()
+	overrides := transientOverrideStore{
+		Store: runtimecapoverride.NewMemory(),
+		err:   errors.New("override pg read timeout"),
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:            executor.NewEchoExecutor(),
+		Transcripts:         transcriptstore.NewMemory(),
+		Runtimes:            seedInjectionRuntime(t),
+		CapabilityOverrides: overrides,
+	})
+	seedInjectionSession(t, store, "acme1", "acme")
+	rr := sendMessageRequest(t, srv.Handler(), "acme1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	assertInjectionFailsClosed(t, rr)
+}
+
+// diagnosis: the §5.1 injection gate stopped degrading open on a genuine
+// runtime not-found; a gateway whose registry has no entry for the
+// session's RuntimeRef must keep admitting injection rather than blocking
+// it as a transient failure.
+// spec: §5.1 (injection gate degrades open on a definite no-record answer).
+func TestMessagesInjectionNotFoundDegradesOpen_spec_5_1(t *testing.T) {
+	store := memstore.New()
+	// The registry is wired but has no entry for the session's RuntimeRef,
+	// so Resolve returns ErrNotFound: the gate degrades open.
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Runtimes:    runtimestore.NewMemory(),
+	})
+	seedInjectionSession(t, store, "s1", "acme")
+	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("a genuine runtime not-found must degrade open: status %d, want 200 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
 
