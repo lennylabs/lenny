@@ -4,22 +4,29 @@ package stack
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 )
 
+// restartedAtAnnotation is the pod-template annotation a rollout-restart
+// stamps with the current time to trigger a new rollout of the Deployment,
+// the same key `kubectl rollout restart` writes. Changing a pod-template
+// annotation rolls the Deployment's pods without changing the desired spec.
+const restartedAtAnnotation = "kubectl.kubernetes.io/restartedAt"
+
 // RestartableComponents lists the §24.19 components `lenny restart` can
-// cycle individually. The gateway and controller are separate child
-// processes the supervisor owns, so they restart without tearing the
-// rest of the stack down. The in-process components (Postgres, Redis,
-// the OIDC provider, the TLS proxy) and the embedded k3s node share the
-// supervisor's lifecycle and are restarted with `lenny down` + `lenny
-// up`.
+// cycle individually. The §17.4 control plane runs as in-cluster
+// Deployments, so a restart is a Kubernetes rollout-restart of the named
+// Deployment through the embedded kubeconfig; the pod-backed components are
+// the gateway, controller, and ops Deployments.
 func RestartableComponents() []string {
-	return []string{"gateway", "controller"}
+	return []string{"gateway", "controller", "ops"}
 }
 
 // Restartable reports whether name is a §24.19 individually-restartable
@@ -33,92 +40,6 @@ func Restartable(name string) bool {
 	return false
 }
 
-// RestartComponent stops and re-spawns a single child component from its
-// retained spec, leaving the rest of the stack running. It runs inside
-// the supervisor process, which owns the child processes. It updates the
-// recorded PID in the state file so `lenny status` and `lenny down`
-// track the new process.
-//
-// spec: §24.19 line 264 — restart a single embedded component without
-// tearing down the rest of the stack.
-func (s *Stack) RestartComponent(ctx context.Context, name string) error {
-	switch name {
-	case "gateway":
-		if s.gwSpec.BinPath == "" {
-			return fmt.Errorf("embedded: gateway spec is unavailable; restart the full stack with 'lenny down' && 'lenny up'")
-		}
-		if s.gateway != nil {
-			_ = s.gateway.Stop()
-		}
-		gw, err := startGateway(s.gwSpec)
-		if err != nil {
-			return fmt.Errorf("embedded: restart gateway: %w", err)
-		}
-		s.gateway = gw
-		if err := waitGatewayHealthy(ctx, "http://"+s.gwSpec.HTTPAddr, 60*time.Second); err != nil {
-			return fmt.Errorf("embedded: gateway did not become healthy after restart: %w", err)
-		}
-		s.state.GatewayPID = gw.PID()
-		return writeState(s.paths.StateFile(), s.state)
-	case "controller":
-		if s.ctlSpec.BinPath == "" {
-			return fmt.Errorf("embedded: the controller is not running in this stack (embedded Kubernetes is unavailable)")
-		}
-		if s.control != nil {
-			_ = s.control.Stop()
-		}
-		ctl, err := startController(s.ctlSpec)
-		if err != nil {
-			return fmt.Errorf("embedded: restart controller: %w", err)
-		}
-		s.control = ctl
-		s.state.ControllerPID = ctl.PID()
-		return writeState(s.paths.StateFile(), s.state)
-	default:
-		return fmt.Errorf("embedded: component %q cannot be restarted individually; restartable components are gateway and controller", name)
-	}
-}
-
-// restartResult is the supervisor's reply to a restart request,
-// serialized to Paths.RestartResultFile() so the separate `lenny
-// restart` process can report the outcome.
-type restartResult struct {
-	Component string `json:"component"`
-	OK        bool   `json:"ok"`
-	Error     string `json:"error,omitempty"`
-}
-
-// handleRestartRequest is the supervisor's restart-wakeup handler body.
-// It reads the component name the CLI wrote to the request file, restarts
-// that component, writes the result file, and clears the request. A
-// missing or empty request file is ignored so a spurious wakeup is
-// harmless.
-func (s *Stack) handleRestartRequest(ctx context.Context, paths Paths) {
-	reqPath := paths.RestartRequestFile()
-	b, err := os.ReadFile(reqPath)
-	if err != nil {
-		return
-	}
-	component := string(b)
-	// Trim surrounding whitespace the CLI may include.
-	for len(component) > 0 && (component[len(component)-1] == '\n' || component[len(component)-1] == '\r' || component[len(component)-1] == ' ') {
-		component = component[:len(component)-1]
-	}
-	if component == "" {
-		_ = os.Remove(reqPath)
-		return
-	}
-	res := restartResult{Component: component, OK: true}
-	if err := s.RestartComponent(ctx, component); err != nil {
-		res.OK = false
-		res.Error = err.Error()
-	}
-	if data, mErr := json.Marshal(res); mErr == nil {
-		_ = os.WriteFile(paths.RestartResultFile(), data, 0o600)
-	}
-	_ = os.Remove(reqPath)
-}
-
 // RestartOptions configures the `lenny restart` command.
 type RestartOptions struct {
 	// Root is the Embedded Mode state directory.
@@ -129,14 +50,14 @@ type RestartOptions struct {
 	Out io.Writer
 }
 
-// RunRestart implements the foreground `lenny restart <component>`
-// command. It validates the request, signals the running supervisor to
-// restart the named component, and waits for the supervisor's result.
-// It runs as a short-lived process separate from the supervisor that
-// owns the child processes, so it communicates through the §24.19
-// restart request/result files plus an OS-specific wakeup (SIGHUP on
-// unix, a named event on Windows) carried by the build-tagged
-// process-control substrate.
+// RunRestart implements the foreground `lenny restart <component>` command.
+// §17.4: it restarts a single in-cluster component. The control plane runs as
+// Deployments, so the restart is a Kubernetes rollout-restart of the named
+// Deployment through the embedded kubeconfig the running stack recorded: it
+// patches the Deployment's pod template with a restartedAt annotation, the
+// same mechanism `kubectl rollout restart` uses, so the Deployment rolls a
+// fresh ReplicaSet without changing its desired spec. The other components
+// (k3s, the runtime pods) are cycled through `lenny down`/`lenny up`.
 //
 // spec: §24.19 line 264.
 func RunRestart(ctx context.Context, opts RestartOptions) error {
@@ -146,67 +67,52 @@ func RunRestart(ctx context.Context, opts RestartOptions) error {
 		return err
 	}
 	if opts.Component == "" {
-		return fmt.Errorf("a <component> argument is required (one of: %v)", RestartableComponents())
+		return errors.New("a <component> argument is required")
 	}
-	if !Restartable(opts.Component) {
-		return fmt.Errorf("component %q cannot be restarted individually; restartable components are %v", opts.Component, RestartableComponents())
+	deployment, ok := componentDeployment(opts.Component)
+	if !ok {
+		return errors.New("component cannot be restarted individually; restartable components are gateway, controller, and ops")
 	}
 	paths := NewPaths(root)
-	st, ok, err := readState(paths.StateFile())
+	st, ok, err := readRunningState(paths.StateFile())
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return ErrNoRunningStack
 	}
-	if !processAlive(st.SupervisorPID) {
-		return fmt.Errorf("the embedded stack supervisor (pid %d) is not running; run 'lenny up' first", st.SupervisorPID)
+	if st.KubeconfigPath == "" {
+		return fmt.Errorf("embedded restart: stack state at %s has no kubeconfigPath", paths.StateFile())
 	}
-
-	// Clear any stale result, write the request, then signal the
-	// supervisor. The result file is the supervisor's reply.
-	_ = os.Remove(paths.RestartResultFile())
-	if err := os.WriteFile(paths.RestartRequestFile(), []byte(opts.Component), 0o600); err != nil {
-		return fmt.Errorf("write restart request: %w", err)
-	}
-	fmt.Fprintf(out, "lenny restart: restarting %s (supervisor pid %d)\n", opts.Component, st.SupervisorPID)
-	if err := sendRestartSignal(st.SupervisorPID, paths); err != nil {
-		_ = os.Remove(paths.RestartRequestFile())
-		return fmt.Errorf("signal supervisor: %w", err)
-	}
-
-	res, err := waitRestartResult(ctx, paths, 90*time.Second)
+	client, err := clusterClientFn(st.KubeconfigPath)
 	if err != nil {
 		return err
 	}
-	if !res.OK {
-		return fmt.Errorf("restart %s: %s", opts.Component, res.Error)
+	if err := rolloutRestartDeployment(ctx, client, controlPlaneNamespace, deployment); err != nil {
+		return err
 	}
-	fmt.Fprintf(out, "lenny restart: %s restarted\n", opts.Component)
+	fmt.Fprintf(out, "lenny restart: rolled the %s Deployment (%s/%s)\n", opts.Component, controlPlaneNamespace, deployment)
 	return nil
 }
 
-// waitRestartResult polls the restart-result file the supervisor writes
-// until it appears or timeout elapses. It removes the file once read.
-func waitRestartResult(ctx context.Context, paths Paths, timeout time.Duration) (restartResult, error) {
-	deadline := time.Now().Add(timeout)
-	for {
-		b, err := os.ReadFile(paths.RestartResultFile())
-		if err == nil {
-			_ = os.Remove(paths.RestartResultFile())
-			var res restartResult
-			if jErr := json.Unmarshal(b, &res); jErr != nil {
-				return restartResult{}, fmt.Errorf("parse restart result: %w", jErr)
-			}
-			return res, nil
-		}
-		if time.Now().After(deadline) {
-			return restartResult{}, fmt.Errorf("the supervisor did not acknowledge the restart within %s", timeout)
-		}
-		select {
-		case <-ctx.Done():
-			return restartResult{}, ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
+// rolloutRestartDeployment patches the named Deployment's pod template with a
+// restartedAt annotation set to now, triggering a rollout of its pods. A
+// strategic-merge patch on the pod-template annotation is the same change
+// `kubectl rollout restart` makes, so the Deployment rolls a new ReplicaSet
+// without altering its desired spec. The patch is idempotent in effect: each
+// call sets a fresh timestamp, so a re-run rolls again rather than failing.
+// spec: §24.19 line 264 (the restart is a Deployment rollout-restart).
+func rolloutRestartDeployment(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
+	patch := fmt.Sprintf(
+		`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,
+		restartedAtAnnotation, time.Now().UTC().Format(time.RFC3339),
+	)
+	_, err := client.AppsV1().Deployments(namespace).Patch(
+		ctx, name, types.StrategicMergePatchType, []byte(patch),
+		metav1.PatchOptions{FieldManager: applyFieldManager},
+	)
+	if err != nil {
+		return fmt.Errorf("embedded restart: roll Deployment %s/%s: %w", namespace, name, err)
 	}
+	return nil
 }

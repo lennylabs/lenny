@@ -13,6 +13,7 @@ package localcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,45 +38,17 @@ const (
 	exitK3sUnavailable = stack.ExitK3sUnavailable
 )
 
-// Supervising reports whether this process was launched as the detached
-// Embedded Mode stack supervisor. `lenny up` re-executes os.Executable()
-// with the LENNY_EMBEDDED_SUPERVISE gate set; because os.Executable()
-// resolves to whichever name (lenny or lenny-ctl) ran `up`, both entry
-// points consult this before normal command dispatch.
-func Supervising() bool {
-	return os.Getenv(stack.SuperviseEnvVar) == "1"
-}
-
-// RunSupervise runs the detached supervisor process that hosts the
-// in-process Embedded Mode components and supervises the gateway and
-// controller children. The precondition is Supervising().
-func RunSupervise(args []string, stdout, stderr io.Writer) int {
-	httpPort, httpsPort := parsePortFlags(args)
-	// LENNY_ECHO_TARBALL is the operator override for the pre-built
-	// echo-embedded tarball the bring-up imports; the detached supervisor
-	// inherits the parent's environment, so it is read here and threaded
-	// into the stack Config. Empty discovers the tarball alongside the lenny
-	// binary, where it ships. spec: §24.19.1 (the --file import path).
-	err := stack.RunSupervisor(context.Background(), stack.UpOptions{
-		HTTPPort:    httpPort,
-		HTTPSPort:   httpsPort,
-		EchoTarball: os.Getenv("LENNY_ECHO_TARBALL"),
-		Out:         stdout,
-		ErrOut:      stderr,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "lenny supervisor: %v\n", err)
-		return 1
-	}
-	return 0
-}
-
 // Local reports whether name is one of the §24.19 / §24.9 Embedded Mode
 // local commands. lenny-ctl uses it to decide whether to delegate an
-// invocation to the embedded stack (§24.19 line 266).
+// invocation to the embedded stack (§24.19 line 266). The `runtime` token is
+// shared with the lenny-ctl runtime-author group (init/validate/publish): only
+// `runtime apply` is an Embedded Mode command, so lenny-ctl dispatch routes the
+// subcommands before consulting Local (it claims `runtime` here so the
+// short-name lenny binary's Main dispatches `runtime apply`). spec: §17.4 (the
+// runtime-apply verb), §24.18 (the runtime-author group).
 func Local(name string) bool {
 	switch name {
-	case "up", "down", "status", "logs", "restart", "token", "image", "session":
+	case "up", "down", "status", "logs", "restart", "token", "image", "session", "runtime":
 		return true
 	default:
 		return false
@@ -85,11 +58,12 @@ func Local(name string) bool {
 // Run dispatches a single Embedded Mode local command and returns its
 // process exit code. The precondition is Local(name). It is the entry
 // point both lenny and lenny-ctl use for the §24.19 local-command
-// surface.
-func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) int {
+// surface. version is the running CLI build version; lenny up records it as
+// the deployed image tag so a warm bring-up reconciles against it (C4).
+func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer, version string) int {
 	switch name {
 	case "up":
-		return cmdUp(ctx, args, stdout, stderr)
+		return cmdUp(ctx, args, stdout, stderr, version)
 	case "down":
 		return cmdDown(ctx, args, stdout, stderr)
 	case "status":
@@ -104,6 +78,8 @@ func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writ
 		return cmdImage(args, stdout, stderr)
 	case "session":
 		return cmdSession(args, stdout, stderr)
+	case "runtime":
+		return cmdRuntime(ctx, args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny: %q is not an Embedded Mode command\n", name)
 		return 2
@@ -112,15 +88,11 @@ func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writ
 
 // Main is the entry point for the short-name lenny binary. version is
 // the build version cmd/lenny stamps via the release ldflag. It handles
-// the supervisor gate, version, and help, then dispatches local
-// commands through Run.
+// version and help, then dispatches local commands through Run. The §17.4
+// control plane runs as in-cluster pods that outlive the CLI, so lenny up
+// brings the stack up in-process; there is no detached host supervisor to
+// re-exec into.
 func Main(args []string, stdout, stderr io.Writer, version string) int {
-	// The hidden __supervise re-exec is gated on the environment
-	// variable before argument parsing so it is never reachable as a
-	// user command.
-	if Supervising() {
-		return RunSupervise(args, stdout, stderr)
-	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, Usage)
 		return 2
@@ -133,17 +105,12 @@ func Main(args []string, stdout, stderr io.Writer, version string) int {
 		// spec: §24.0 line 23, §17.6 line 360.
 		fmt.Fprintf(stdout, "lenny %s\n", version)
 		return 0
-	case "__supervise":
-		// Reachable only via the env-gated path above; a direct
-		// invocation is rejected.
-		fmt.Fprintln(stderr, "lenny: __supervise is an internal subcommand")
-		return 2
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, Usage)
 		return 0
 	default:
 		if Local(args[0]) {
-			return Run(ctx, args[0], args[1:], stdout, stderr)
+			return Run(ctx, args[0], args[1:], stdout, stderr, version)
 		}
 		fmt.Fprintf(stderr, "lenny: unknown command %q\n\n%s\n", args[0], Usage)
 		return 2
@@ -157,21 +124,32 @@ Usage:
   lenny <command> [flags]
 
 Embedded Mode commands (§17.4, §24.19):
-  up                       Start the embedded stack (idempotent)
-  down [--purge]           Stop the stack; --purge removes ~/.lenny
+  up                       Start the embedded stack (idempotent; reuses the
+                           persisted substrate and image store on a warm start)
+  down [--purge]           Stop the stack, persisting the substrate and image
+                           store for a fast warm restart; --purge removes them
+                           and ~/.lenny. The in-memory application stores are
+                           lost on down either way.
   status [--json]          Print component health and active session count
   logs [<component>] [--follow]
                            Tail merged logs, or one of: gateway, controller,
-                           ops, postgres, redis, kms, oidc, k3s, supervisor,
-                           or runtime-<name>; --follow streams new lines
-  restart <component>      Restart one component (gateway or controller)
-                           without tearing down the rest of the stack
+                           ops, k3s, or runtime-<name>; the control-plane and
+                           runtime logs stream from the in-cluster pods and
+                           k3s from the substrate log; --follow streams new
+                           lines
+  restart <component>      Roll one control-plane Deployment (gateway,
+                           controller, or ops) through a Kubernetes
+                           rollout-restart without tearing down the stack
   token print [--ttl <d>]  Print a bearer token for the built-in user
   image <import|list|rm>   Manage images in the embedded containerd store
   session <new|send|interrupt|cancel|list|get|logs>
                            Session operations (§24.17) over the MCP/REST
                            client SDK; new --runtime <name> starts one.
                            --api-url / --token target a remote gateway
+  runtime apply --file <path>
+                           Apply a runtime's Runtime/SandboxTemplate/
+                           SandboxWarmPool CRD set to the embedded cluster so
+                           the gateway resolves it by name and a pool warms
   version                  Print the local CLI build version (offline)
 
 Flags:
@@ -182,14 +160,30 @@ State lives under ~/.lenny/ (override with LENNY_HOME). The embedded
 stack is for local development only; lenny up prints a non-suppressible
 production-warning banner.`
 
-// cmdUp implements `lenny up`.
-func cmdUp(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// runUp is the foreground bring-up seam cmdUp drives. It defaults to the real
+// stack.RunUp and is a package-level var so a unit test can substitute it to
+// capture the UpOptions cmdUp assembles (in particular the LENNY_ECHO_TARBALL
+// override threading) without provisioning a real substrate.
+var runUp = stack.RunUp
+
+// cmdUp implements `lenny up`. version is recorded as the deployed image tag
+// so a warm bring-up reconciles against it and re-imports and re-applies the
+// embedded manifests on a CLI-upgrade mismatch (C4). The LENNY_ECHO_TARBALL
+// operator override threads through to UpOptions.EchoTarball: the in-process
+// foreground bring-up is the only bring-up path (the detached supervisor was
+// removed), so this is where the documented override is read. The tier-4
+// smoke harness builds lenny into a bare temp dir with no co-located tarball
+// and supplies it solely through this env var. spec: §24.19.1 (the
+// LENNY_ECHO_TARBALL operator override / --file import path).
+func cmdUp(ctx context.Context, args []string, stdout, stderr io.Writer, version string) int {
 	httpPort, httpsPort := parsePortFlags(args)
-	err := stack.RunUp(ctx, stack.UpOptions{
-		HTTPPort:  httpPort,
-		HTTPSPort: httpsPort,
-		Out:       stdout,
-		ErrOut:    stderr,
+	err := runUp(ctx, stack.UpOptions{
+		HTTPPort:    httpPort,
+		HTTPSPort:   httpsPort,
+		EchoTarball: os.Getenv("LENNY_ECHO_TARBALL"),
+		CLIVersion:  version,
+		Out:         stdout,
+		ErrOut:      stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny up: %v\n", err)
@@ -265,7 +259,11 @@ func cmdLogs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	err := stack.RunLogs(ctx, stack.LogsOptions{Component: component, Follow: follow, Out: stdout})
 	if err != nil {
-		fmt.Fprintf(stderr, "lenny logs: %v\n", err)
+		if errors.Is(err, stack.ErrNoRunningStack) {
+			fmt.Fprintln(stderr, "lenny logs: no embedded stack is running; run 'lenny up' first")
+		} else {
+			fmt.Fprintf(stderr, "lenny logs: %v\n", err)
+		}
 		return 1
 	}
 	return 0

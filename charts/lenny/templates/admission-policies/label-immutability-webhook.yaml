@@ -14,6 +14,7 @@ the lenny.admissionWebhookWorkload helper) so the HA properties
 
 Both are scoped to agent namespaces and fail-closed.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-label-immutability") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -81,3 +82,4 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /tenant-label-immutability
         port: 443
+{{- end }}

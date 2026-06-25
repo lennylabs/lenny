@@ -12,6 +12,7 @@ ephemeral debug containers too) in agent namespaces; fail-closed so a
 pod the webhook cannot validate is not admitted with an unverified
 §13.1 posture.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-pod-security") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -67,3 +68,4 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /pod-security
         port: 443
+{{- end }}

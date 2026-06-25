@@ -129,6 +129,34 @@ func TestServerArgsRootlessGating_spec_17_4_160(t *testing.T) {
 	}
 }
 
+// TestServerArgsConstrainsNodePortToLoopback asserts the Linux launcher
+// constrains the kube-proxy NodePort bind to loopback. --bind-address scopes
+// only the API server; without --kube-proxy-arg=nodeport-addresses=127.0.0.1/32
+// the in-cluster gateway's NodePort binds 0.0.0.0 on the host's interfaces and
+// is reachable at <host-ip>:<nodePort>, bypassing the loopback-only forwarder
+// and violating EMBEDDED_MODE_LOCAL_ONLY.
+//
+// diagnosis: a failure means the embedded gateway is exposed on a non-loopback
+// host address on Linux, violating the §17.4 EMBEDDED_MODE_LOCAL_ONLY
+// fail-closed invariant.
+//
+// spec: §17.4 (EMBEDDED_MODE_LOCAL_ONLY: the gateway is reachable on host
+// loopback only).
+func TestServerArgsConstrainsNodePortToLoopback_spec_17_4(t *testing.T) {
+	s := newChild(t)
+	args := s.serverArgs(true)
+	found := false
+	for _, a := range args {
+		if a == "--kube-proxy-arg=nodeport-addresses=127.0.0.1/32" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("serverArgs does not constrain the NodePort bind to loopback: %v", args)
+	}
+}
+
 // TestChildSupervisorHandleBeforeStart covers the child launcher's handle
 // methods on a supervisor that was never started: PID is zero, Running is
 // false, and Stop is a no-op. lenny status and lenny down probe these before
@@ -215,6 +243,37 @@ func TestChildSupervisorStopTerminatesRunningProcess(t *testing.T) {
 	// Stop is idempotent.
 	if err := s.Stop(); err != nil {
 		t.Errorf("second Stop errored: %v", err)
+	}
+}
+
+// TestChildSupervisorRemoveTerminatesRunningProcess covers the Linux
+// launcher's Remove: on the child-process substrate the persisted state is the
+// on-disk data directory (removed by lenny down --purge's purgeRoot), so
+// Remove only terminates the process, equivalent to Stop. The
+// destroy-versus-persist distinction is in purgeRoot.
+//
+// spec: §17.4 (--purge removes the persisted substrate; the data-directory
+// removal is purgeRoot's, after Remove stops the process).
+func TestChildSupervisorRemoveTerminatesRunningProcess_spec_17_4(t *testing.T) {
+	s := newChild(t)
+	cmd := exec.Command("sleep", "120")
+	cmd.SysProcAttr = processGroupSysProcAttr()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleeper: %v", err)
+	}
+	s.cmd = cmd
+	if !s.Running() {
+		t.Fatal("Running for a running child = false, want true")
+	}
+	if err := s.Remove(); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if s.Running() {
+		t.Error("Running after Remove = true, want false")
+	}
+	// Remove is idempotent.
+	if err := s.Remove(); err != nil {
+		t.Errorf("second Remove errored: %v", err)
 	}
 }
 

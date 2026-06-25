@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // TestSessionConditionsMigrationSQL_spec_6_49_7_1 asserts the static SQL

@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/backup/pgstore"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // newTestStore brings up an embedded Postgres, applies the §25.11 backup

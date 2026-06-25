@@ -24,6 +24,12 @@ not have a documented egress-narrowing sub-rule.
 {{- $name := .name -}}
 {{- $egressLabel := .egressLabel | default "" -}}
 {{- $cfg := $.Values.admissionWebhooks -}}
+{{- /* spec: §17.4 dev profile — gate every webhook workload (Deployment,
+       Service, PDB, and the cert-manager Certificate) on
+       admissionWebhooks.enabled so the development render emits no
+       cert-manager.io/v1 Certificate and the embedded cluster needs no
+       cert-manager. Default true keeps the production admission stack. */ -}}
+{{- if $cfg.enabled -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -159,4 +165,5 @@ spec:
   issuerRef:
     name: lenny-webhook-selfsign
     kind: Issuer
+{{- end -}}
 {{- end -}}

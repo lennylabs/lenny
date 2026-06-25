@@ -463,15 +463,15 @@ Session commands route through the **MCP** client SDK, not REST. They exercise t
 
 ## Local Stack
 
-The Embedded Mode stack (`lenny up`) is managed entirely through local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
+The Embedded Mode stack (`lenny up`) is managed entirely through local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway is reachable at `https://localhost:8443` through a loopback-only host-side forwarder.
 
 | Command | Description |
 |---|---|
-| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack. Idempotent. Prints the local gateway URL and the non-suppressible "NOT for production use" banner. |
-| `lenny down [--purge]` | Gracefully terminate all embedded components. `--purge` additionally deletes `~/.lenny/`. |
+| `lenny up` | Render the production chart under a development profile and run the gateway, controllers, and reference runtimes as pods in the embedded k3s, on in-process in-memory stores with no separate Postgres, Redis, KMS, or identity-provider process. Idempotent. Prints the local gateway URL and the non-suppressible "NOT for production use" banner. |
+| `lenny down [--purge]` | Gracefully terminate all embedded components. The in-memory application stores are ephemeral and not preserved across `lenny down`. A non-`--purge` `lenny down` keeps the persisted substrate and imported-image store; `--purge` additionally removes them. |
 | `lenny status` | Print component health, active session count, and resource usage. |
-| `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`. |
-| `lenny restart [<component>]` | Restart a single embedded component without tearing down the rest of the stack. |
+| `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `k3s`, or `runtime-<name>`. The component logs are streamed from the backing pods. |
+| `lenny restart [<component>]` | Rollout-restart one of the pod-backed components (`gateway`, `controller`, `ops`) as a Kubernetes Deployment through the embedded kubeconfig, without tearing down the rest of the stack. |
 
 Invoked as `lenny` (short name) these commands default to the local stack; invoked as `lenny-ctl <same-command>` they behave identically but are documented under the operator-tool framing.
 

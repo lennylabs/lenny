@@ -9,6 +9,7 @@ state. Scoped to the sandboxtemplates resource on DELETE; fail-closed
 with a 5s timeout so an unreachable webhook denies the deletion rather
 than admitting a delete it cannot verify against the safety invariant.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-sandboxtemplate-deletion-guard") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -43,3 +44,4 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /sandboxtemplate-deletion-guard
         port: 443
+{{- end }}

@@ -3,6 +3,8 @@
 package embedded_test
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -133,5 +135,57 @@ func TestUpTimeoutDefaultAndOverride(t *testing.T) {
 		if got := embedded.UpTimeout(); got != embedded.DefaultUpTimeout {
 			t.Errorf("UpTimeout() with %q = %s, want default %s", bad, got, embedded.DefaultUpTimeout)
 		}
+	}
+}
+
+// spec: §17.4, §4.7 — the custom-sidecar tier-4 leg imports a genuine
+// sidecar-model runtime image (runtime-echo) to prove placement is
+// runtime-agnostic rather than echo-only, and the genuine sidecar image is a
+// docker-save artifact the leg cannot synthesize. SidecarRuntimeTarball
+// resolves the staged tarball from LENNY_SIDECAR_RUNTIME_TARBALL and returns
+// the empty string (which signals the leg to skip per the test-coverage
+// tier-5/6 escape hatch) when the variable is unset, names a path that does
+// not exist, or names a directory. A non-empty return must point at an
+// existing file so the leg's `lenny image import --file` has a real tarball to
+// load.
+func TestSidecarRuntimeTarballResolution(t *testing.T) {
+	// Unset resolves to empty so the leg skips rather than reusing the echo
+	// seed under a sidecar label.
+	t.Setenv(embedded.SidecarRuntimeTarballEnv, "")
+	if got := embedded.SidecarRuntimeTarball(); got != "" {
+		t.Errorf("SidecarRuntimeTarball() unset = %q, want empty", got)
+	}
+
+	// A path that does not exist resolves to empty: a stale or wrong override
+	// must not be passed to `lenny image import` where it would fail the import.
+	missing := filepath.Join(t.TempDir(), "no-such-tarball.tar")
+	t.Setenv(embedded.SidecarRuntimeTarballEnv, missing)
+	if got := embedded.SidecarRuntimeTarball(); got != "" {
+		t.Errorf("SidecarRuntimeTarball() missing path = %q, want empty", got)
+	}
+
+	// A directory resolves to empty: `lenny image import --file` needs a
+	// regular file, so a directory override is treated as absent.
+	dir := t.TempDir()
+	t.Setenv(embedded.SidecarRuntimeTarballEnv, dir)
+	if got := embedded.SidecarRuntimeTarball(); got != "" {
+		t.Errorf("SidecarRuntimeTarball() directory = %q, want empty", got)
+	}
+
+	// An existing file resolves to its path so the leg runs its import.
+	tarball := filepath.Join(t.TempDir(), "runtime-echo.tar")
+	if err := os.WriteFile(tarball, []byte("docker-save tarball"), 0o600); err != nil {
+		t.Fatalf("write fixture tarball: %v", err)
+	}
+	t.Setenv(embedded.SidecarRuntimeTarballEnv, tarball)
+	if got := embedded.SidecarRuntimeTarball(); got != tarball {
+		t.Errorf("SidecarRuntimeTarball() existing file = %q, want %q", got, tarball)
+	}
+
+	// Surrounding whitespace is trimmed so a stray newline in a CI env-file
+	// does not defeat the existence check.
+	t.Setenv(embedded.SidecarRuntimeTarballEnv, "  "+tarball+" \n")
+	if got := embedded.SidecarRuntimeTarball(); got != tarball {
+		t.Errorf("SidecarRuntimeTarball() trimmed = %q, want %q", got, tarball)
 	}
 }

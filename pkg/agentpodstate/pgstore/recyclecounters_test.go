@@ -11,7 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	"github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // recycleSchema is the §12.6 agent_pod_state table sliced to what the

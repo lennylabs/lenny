@@ -9,7 +9,7 @@ nav_order: 1
 
 **Goal:** install Lenny on your laptop, chat with an agent, and shut it down -- in under five minutes.
 
-You'll use `lenny up`, a single binary that runs the whole platform on your machine: an embedded Kubernetes cluster, the database and cache it needs, a stand-in key-management service and identity provider for development, the gateway, the management plane, and the reference runtimes. On Linux it needs no external services and no prior Kubernetes setup. On macOS and Windows the embedded Kubernetes cluster runs inside Docker Desktop's Linux VM, so Docker Desktop is the one prerequisite to install first.
+`lenny up` is a single binary that runs the whole platform on your machine. It renders the production chart under a development profile and runs the gateway, the management plane, the controllers, and the reference runtimes as pods in an embedded Kubernetes cluster (k3s). The application data stores are in-process in-memory backends inside the gateway pod, so there is no separate database, cache, key-management, or identity-provider process. In development mode the CLI mints a development bearer from a persisted local key, and the in-cluster gateway trusts it. On Linux it needs no external services and no prior Kubernetes setup. On macOS and Windows the embedded Kubernetes cluster runs inside Docker Desktop's Linux VM, so Docker Desktop is the one prerequisite to install first.
 
 This is the recommended starting point for anyone evaluating Lenny. If you're going to contribute to the gateway or controllers themselves and want faster iteration, see [Local Development](../runtime-author-guide/local-development.html) for `make run` (native process) and `docker compose up` (containerized) alternatives.
 
@@ -55,7 +55,7 @@ Ready in 47s. Try: lenny session new --runtime chat --message "hello"
 
 The warning banner is deliberate: the embedded stack uses stub credentials and is meant for development and evaluation, not production. It cannot be suppressed.
 
-`lenny up` runs the same gateway, controller, and management-plane binaries a production cluster runs. Only the external dependencies (Postgres, Redis, KMS, identity provider) are replaced with in-process equivalents.
+`lenny up` renders the production chart under a development profile and runs the same gateway, controller, and management-plane binaries a production cluster runs, as pods in an embedded k3s. The application data stores (Postgres, Redis, and KMS) are in-process in-memory backends inside the gateway pod. In place of a standalone identity provider, the CLI mints a development bearer from a persisted local key and the in-cluster gateway trusts it in development mode.
 
 ---
 
@@ -148,9 +148,11 @@ lenny-ctl diagnose connectivity             # end-to-end dependency check
 When you're done:
 
 ```bash
-lenny down          # shuts down the stack; keeps your data in ~/.lenny/
-lenny down --purge  # also deletes ~/.lenny/ for a clean slate
+lenny down          # stop everything; keep the persisted substrate and image store
+lenny down --purge  # also remove the persisted substrate and image store for a fresh start
 ```
+
+The in-memory application stores are ephemeral and not preserved across `lenny down`. A non-`--purge` `lenny down` keeps the persisted substrate and the imported-image store, so the next `lenny up` reuses them; `--purge` removes them.
 
 ---
 
@@ -170,9 +172,11 @@ session message     →  Your message and the agent's reply flow through
                          any mid-session user prompts.
 (idle)               →  Between messages the agent stays warm -- no
                          re-initialization cost for the next turn.
-lenny down           →  Everything shuts down gracefully. Your session
-                         history lives in the embedded database and is
-                         still there the next time you run `lenny up`.
+lenny down           →  Everything shuts down gracefully. The in-memory
+                         application stores, including session history, are
+                         lost; the persisted substrate and imported-image
+                         store survive a non-`--purge` down, so the next
+                         `lenny up` reuses them.
 ```
 
 A few properties you saw in action, which apply equally to a production install:

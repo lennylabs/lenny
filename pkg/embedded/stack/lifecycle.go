@@ -6,23 +6,15 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"time"
 )
-
-// SuperviseEnvVar names the environment variable the foreground lenny
-// up sets when it re-executes itself as the detached supervisor. The
-// lenny binary checks it to dispatch to RunSupervisor.
-const SuperviseEnvVar = "LENNY_EMBEDDED_SUPERVISE"
 
 // UpOptions configures the foreground lenny up command.
 type UpOptions struct {
 	// Root is the Embedded Mode state directory. Empty resolves to the
 	// default.
 	Root string
-	// HTTPPort and HTTPSPort are the gateway listen ports. Zero uses
-	// the §17.4 defaults.
+	// HTTPPort and HTTPSPort are the host-side forwarder listen ports.
+	// Zero uses the §17.4 defaults.
 	HTTPPort  int
 	HTTPSPort int
 	// EchoTarball overrides the path to the pre-built echo-embedded
@@ -30,16 +22,28 @@ type UpOptions struct {
 	// operator override). Empty discovers it alongside the lenny binary.
 	// spec: §24.19.1 (the --file import path).
 	EchoTarball string
+	// CLIVersion is the running lenny CLI build version. lenny up records it
+	// as the deployed image tag and a warm bring-up reconciles against it,
+	// re-importing and re-applying the embedded manifests on a CLI-upgrade
+	// mismatch (C4). spec: §17.4.
+	CLIVersion string
 	// Out and ErrOut receive progress and error output.
 	Out    io.Writer
 	ErrOut io.Writer
 }
 
-// RunUp implements the foreground `lenny up` command. §17.4: lenny up
-// is idempotent — a second invocation is a no-op when a stack is
-// already running. When no stack is running, RunUp re-executes the
-// lenny binary as a detached supervisor process that hosts the stack,
-// then waits for the supervisor to record a healthy gateway.
+// RunUp implements the foreground `lenny up` command. §17.4: lenny up is
+// idempotent — a second invocation reuses the persisted substrate and image
+// store and restarts the in-cluster control plane in seconds. The control
+// plane runs as in-cluster pods, so lenny up brings the stack up in-process
+// (the in-cluster pods outlive the CLI) rather than re-executing a detached
+// host supervisor. RunUp drives the in-cluster bring-up through Up, which
+// provisions (or restarts) the substrate, imports the platform images,
+// applies the embedded manifests, seeds the echo runtime, starts the
+// host-side forwarder, and waits for the gateway to become ready.
+//
+// spec: §17.4 (the control plane runs as in-cluster pods; the substrate and
+// imported-image store persist across down/up).
 func RunUp(ctx context.Context, opts UpOptions) error {
 	out := orDiscard(opts.Out)
 	errOut := orDiscard(opts.ErrOut)
@@ -48,160 +52,19 @@ func RunUp(ctx context.Context, opts UpOptions) error {
 	if err != nil {
 		return err
 	}
-	paths := NewPaths(root)
 
-	// Idempotency check: a recorded stack whose supervisor and gateway
-	// are alive means lenny up is a no-op.
-	if st, ok, err := readState(paths.StateFile()); err == nil && ok {
-		if processAlive(st.SupervisorPID) && processAlive(st.GatewayPID) {
-			fmt.Fprintf(out, "lenny up: stack already running (supervisor pid %d)\n", st.SupervisorPID)
-			fmt.Fprintf(out, "  gateway https://localhost%s\n", portSuffix(st.HTTPSAddr))
-			return nil
-		}
-	}
-
-	if err := paths.EnsureDirs(); err != nil {
-		return err
-	}
-
-	if err := spawnSupervisor(root, paths, opts); err != nil {
-		return err
-	}
-
-	fmt.Fprintln(out, "lenny up: bringing the embedded stack up (first run downloads PostgreSQL and k3s)")
-	if err := waitForStack(ctx, paths, 6*time.Minute); err != nil {
-		fmt.Fprintf(errOut, "lenny up: %v\n", err)
-		fmt.Fprintf(errOut, "lenny up: see %s for supervisor output\n", paths.Logs+"/supervisor.log")
-		return err
-	}
-	st, _, _ := readState(paths.StateFile())
-	fmt.Fprintf(out, "\n  %s\n\n", ProductionWarningBanner)
-	fmt.Fprintf(out, "lenny up: stack ready\n")
-	fmt.Fprintf(out, "  gateway   https://localhost%s  (http://localhost%s)\n",
-		portSuffix(st.HTTPSAddr), portSuffix(st.HTTPAddr))
-	fmt.Fprintf(out, "  TLS CA    %s\n", paths.TLS+"/ca.crt")
-	fmt.Fprintf(out, "  token     run 'lenny token print' for a bearer for the built-in user\n")
-	if !st.K3sEnabled {
-		fmt.Fprintf(out, "  note      embedded Kubernetes is not running; session placement is unavailable\n")
-	}
-	return nil
-}
-
-// spawnSupervisor re-executes the lenny binary as the detached supervisor
-// that brings the stack up and stays alive to host the in-process
-// components. It is a package-level var so a unit test can substitute a fake
-// that records a healthy stack without re-executing the real binary,
-// exercising RunUp's orchestration (idempotency, wait, ready-report) without
-// a real bring-up. The default implementation detaches the supervisor so it
-// outlives the foreground lenny up process.
-//
-// spec: §17.4 (lenny up re-executes the binary as a detached supervisor),
-// §24.19.
-var spawnSupervisor = func(root string, paths Paths, opts UpOptions) error {
-	self, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("lenny up: resolve own path: %w", err)
-	}
-	args := []string{"__supervise"}
-	if opts.HTTPPort != 0 {
-		args = append(args, "--http-port", fmt.Sprintf("%d", opts.HTTPPort))
-	}
-	if opts.HTTPSPort != 0 {
-		args = append(args, "--https-port", fmt.Sprintf("%d", opts.HTTPSPort))
-	}
-	superLog, err := os.OpenFile(paths.Logs+"/supervisor.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("lenny up: open supervisor log: %w", err)
-	}
-	defer func() { _ = superLog.Close() }()
-
-	cmd := exec.Command(self, args...)
-	cmd.Env = append(os.Environ(), SuperviseEnvVar+"=1", "LENNY_HOME="+root)
-	cmd.Stdout = superLog
-	cmd.Stderr = superLog
-	// Detach the supervisor so it outlives the foreground lenny up
-	// process and its controlling terminal. The detach attributes are
-	// OS-specific (a new session on unix, a detached console process
-	// group on Windows).
-	cmd.SysProcAttr = detachSysProcAttr()
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("lenny up: start supervisor: %w", err)
-	}
-	// The foreground process does not wait on the supervisor; release
-	// it so the supervisor is not left a zombie when lenny up exits.
-	_ = cmd.Process.Release()
-	return nil
-}
-
-// waitForStack blocks until the supervisor records a state file with a
-// live gateway or timeout elapses.
-func waitForStack(ctx context.Context, paths Paths, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		st, ok, err := readState(paths.StateFile())
-		if err == nil && ok && processAlive(st.GatewayPID) {
-			if gatewayHealthy(ctx, "http://"+st.HTTPAddr) {
-				return nil
-			}
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("the embedded stack did not become ready within %s", timeout)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-// RunSupervisor implements the hidden `__supervise` subcommand. It is
-// the detached long-lived process that hosts the in-process Embedded
-// Mode components and supervises the child processes. It brings the
-// stack up, then blocks until a teardown wakeup arrives (a SIGTERM or
-// SIGINT on unix, a named teardown event on Windows), carried by the
-// build-tagged process-control substrate, at which point it tears the
-// stack down gracefully.
-func RunSupervisor(ctx context.Context, opts UpOptions) error {
-	root, err := resolveRoot(opts.Root)
-	if err != nil {
-		return err
-	}
-	st, err := Up(ctx, Config{
+	_, err = Up(ctx, Config{
 		Root:        root,
 		HTTPPort:    opts.HTTPPort,
 		HTTPSPort:   opts.HTTPSPort,
 		EchoTarball: opts.EchoTarball,
-		Out:         orDiscard(opts.Out),
+		CLIVersion:  opts.CLIVersion,
+		Out:         out,
 	})
 	if err != nil {
+		fmt.Fprintf(errOut, "lenny up: %v\n", err)
 		return err
 	}
-	// Block until a teardown or restart wakeup arrives. lenny down asks
-	// for a graceful teardown; lenny restart asks to restart a single
-	// component and keep the supervisor running. The wakeup substrate is
-	// OS-specific (POSIX signals on unix, named events on Windows) and
-	// lives in the build-tagged process-control layer.
-	sigs, err := newSupervisorSignals(root)
-	if err != nil {
-		return err
-	}
-	defer sigs.close()
-	paths := NewPaths(root)
-	// Each restart wakeup restarts one component in place and keeps the
-	// supervisor running; a teardown wakeup (or a cancelled context)
-	// breaks the loop into the graceful Stop path below.
-	// spec: §24.19 — restart a single component without tearing the rest
-	// of the stack down.
-	for sigs.wait(ctx) {
-		st.handleRestartRequest(ctx, paths)
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	if err := st.Stop(shutdownCtx); err != nil {
-		return err
-	}
-	_ = removeState(paths.StateFile())
 	return nil
 }
 
@@ -209,17 +72,42 @@ func RunSupervisor(ctx context.Context, opts UpOptions) error {
 type DownOptions struct {
 	// Root is the Embedded Mode state directory.
 	Root string
-	// Purge removes the entire state directory after teardown.
+	// Purge removes the persisted substrate and the entire state directory
+	// after teardown. Without it, lenny down stops the substrate while
+	// persisting the substrate and its imported-image store so a warm lenny
+	// up restarts in seconds.
 	Purge bool
 	// Out and ErrOut receive progress and error output.
 	Out    io.Writer
 	ErrOut io.Writer
 }
 
-// RunDown implements the `lenny down` command. §17.4: lenny down
-// gracefully terminates all components; state under ~/.lenny/ is
-// preserved unless --purge is passed. RunDown signals the supervisor
-// process, which tears the stack down, then waits for it to exit.
+// RunDown implements the `lenny down` command. §17.4: lenny down stops the
+// in-cluster control plane by stopping the substrate. By default it persists
+// the substrate and its imported-image store (a Docker-backed `docker stop`
+// keeps the container and its containerd image store; the Linux process stop
+// leaves the k3s data directory on disk), so a warm lenny up restarts in
+// seconds. `--purge` removes the substrate (force-remove the container, then
+// purge the state directory that holds the Linux data directory). The
+// in-memory application stores live inside the gateway pod and are lost on
+// down regardless of `--purge`.
+//
+// The control plane runs as in-cluster pods that outlive the CLI, so RunDown
+// reconstructs the substrate handle from the recorded state file rather than
+// a live launcher: it stops or removes the Docker-backed container by its
+// recorded name and the Linux k3s process group by its recorded leader PID.
+//
+// A non-`--purge` down does not delete the state file: it rewrites it as a
+// Stopped marker that preserves the substrate handle and the deployed image
+// tag, so the next warm lenny up reads the tag and skips the expensive
+// re-import and re-apply when the CLI version is unchanged. lenny status reads
+// the marker as no running stack. `--purge` discards the marker and the
+// persisted substrate.
+//
+// spec: §17.4 (lenny down persists the substrate, the imported-image store,
+// and the deployed image tag across a non-`--purge` down so the warm up
+// reconcile can skip the re-import and re-apply; --purge removes them; the
+// application stores are ephemeral), §24.19.
 func RunDown(ctx context.Context, opts DownOptions) error {
 	out := orDiscard(opts.Out)
 	root, err := resolveRoot(opts.Root)
@@ -228,13 +116,22 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 	}
 	paths := NewPaths(root)
 
+	// Read the full recorded state (running or already stopped): --purge must
+	// clean up a substrate left behind by a prior non-`--purge` down, and a
+	// no-op down on an already-stopped stack reports no running stack.
 	st, ok, err := readState(paths.StateFile())
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if !ok || st.Stopped {
 		fmt.Fprintln(out, "lenny down: no embedded stack is running")
 		if opts.Purge {
+			// A non-`--purge` down left the substrate persisted; --purge now
+			// removes it before purgeRoot discards the state directory that
+			// records its handle. With no record (ok == false) both removals
+			// are no-ops on their empty handles.
+			removeSubstrateContainer(st.K3sContainer)
+			stopSubstrateProcess(st.K3sPID)
 			if err := purgeRoot(root); err != nil {
 				return err
 			}
@@ -243,63 +140,66 @@ func RunDown(ctx context.Context, opts DownOptions) error {
 		return nil
 	}
 
-	if processAlive(st.SupervisorPID) {
-		fmt.Fprintf(out, "lenny down: stopping the embedded stack (supervisor pid %d)\n", st.SupervisorPID)
-		// Ask the supervisor to tear the stack down gracefully (a SIGTERM
-		// it catches on unix, a named teardown event on Windows). When
-		// the graceful path returns true the supervisor has already
-		// exited; otherwise fall back to a forced termination so a
-		// crashed or unresponsive supervisor never leaves the stack up.
-		if !gracefulStopSupervisor(st.SupervisorPID, paths) {
-			stopByPID(st.SupervisorPID)
-		}
-	} else {
-		// The supervisor is gone but children may have outlived it.
-		// Signal the recorded gateway, controller, and k3s PIDs
-		// directly so a crashed supervisor does not leak processes.
-		fmt.Fprintln(out, "lenny down: supervisor not running; terminating recorded child processes")
-		for _, pid := range []int{st.ControllerPID, st.GatewayPID, st.K3sPID} {
-			stopByPID(pid)
-		}
-		_ = stopEmbeddedPostgres(st)
-	}
-	// Remove the Docker-backed k3s container (macOS and Windows) by its
-	// recorded handle before removeState and purgeRoot discard it. The
-	// container runs inside the Docker VM with no host PID, so neither the
-	// recorded PIDs the supervisor-gone branch signals nor purgeRoot's
-	// os.RemoveAll reach it; without this removal a crashed supervisor or a
-	// --purge orphans the container with no recorded handle to find it by.
-	// On the live-supervisor path the graceful Stack.Stop already removed
-	// it, so this docker rm is a benign no-op; the handle is empty on the
-	// Linux child-process substrate, where RemoveContainer is a no-op too.
-	// spec: §24.19 (lenny up/down manage the substrate; a crashed supervisor
-	// or --purge must not leak the Docker-backed k3s container).
-	removeSubstrateContainer(st.K3sContainer)
-	_ = removeState(paths.StateFile())
-	fmt.Fprintln(out, "lenny down: stack stopped")
-
 	if opts.Purge {
+		fmt.Fprintln(out, "lenny down: removing the embedded stack")
+		// Remove the substrate before purgeRoot discards the state directory
+		// that records its handle. The Docker-backed container runs inside the
+		// Docker VM, so purgeRoot's os.RemoveAll never reaches it; without
+		// this removal a --purge orphans the container with no recorded handle
+		// to find it by. The Linux process is terminated by its recorded PID;
+		// its data directory is then removed by purgeRoot below. Each handle
+		// is empty on the other launcher, where its stop is a no-op.
+		// spec: §17.4 (--purge removes the persisted substrate and the
+		// imported-image store).
+		removeSubstrateContainer(st.K3sContainer)
+		stopSubstrateProcess(st.K3sPID)
+		_ = removeState(paths.StateFile())
 		if err := purgeRoot(root); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "lenny down: purged %s\n", root)
+		return nil
 	}
+
+	fmt.Fprintln(out, "lenny down: stopping the embedded stack")
+	// Stop the substrate while persisting it and its imported-image store so a
+	// warm lenny up restarts it. The Docker-backed container is `docker stop`d
+	// (the container and its containerd image store persist); the Linux
+	// process group is terminated by its recorded PID (the k3s data directory
+	// persists on disk).
+	stopSubstrateContainer(st.K3sContainer)
+	stopSubstrateProcess(st.K3sPID)
+	// Rewrite the state file as a Stopped marker rather than deleting it: it
+	// preserves the substrate handle and the deployed image tag so the next
+	// warm lenny up matches the tag and skips the re-import and re-apply (the
+	// §17.4 fast warm restart). lenny status reads the marker as no running
+	// stack. StartedAt and the live forwarder address are cleared because the
+	// stack is no longer answering on them. spec: §17.4 (a non-`--purge` down
+	// preserves the substrate and the deployed tag for the warm reconcile).
+	if err := writeStoppedMarker(paths.StateFile(), st); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "lenny down: stack stopped")
 	return nil
 }
 
-// stopEmbeddedPostgres terminates an embedded Postgres instance left
-// running by a crashed supervisor. embedded-postgres records its
-// postmaster PID in the data directory, so a fresh process can stop
-// it.
-func stopEmbeddedPostgres(st State) error {
-	// embedded-postgres writes postmaster.pid into the data directory;
-	// the in-process Stop path is unavailable from a fresh process, so
-	// rely on the OS to reap it when the recorded gateway is gone.
-	// Nothing further is required here: the postmaster is reaped when
-	// its data directory is reused on the next lenny up, or removed by
-	// --purge.
-	_ = st
-	return nil
+// writeStoppedMarker rewrites the state file as the Stopped marker a
+// non-`--purge` lenny down leaves behind. It preserves the substrate handle
+// (the Docker container name or the Linux kubeconfig) and the deployed image
+// tag so a warm lenny up reconciles against them, and clears the live-stack
+// fields (StartedAt and the host-side forwarder address) so nothing reads the
+// marker as a running stack. spec: §17.4 (the substrate and the deployed tag
+// persist across a non-`--purge` down).
+func writeStoppedMarker(path string, prior State) error {
+	marker := State{
+		Stopped:          true,
+		K3sContainer:     prior.K3sContainer,
+		K3sPID:           prior.K3sPID,
+		KubeconfigPath:   prior.KubeconfigPath,
+		DeployedImageTag: prior.DeployedImageTag,
+		K3sEnabled:       prior.K3sEnabled,
+	}
+	return writeState(path, marker)
 }
 
 // resolveRoot resolves the Embedded Mode state directory: the explicit
@@ -317,15 +217,4 @@ func orDiscard(w io.Writer) io.Writer {
 		return io.Discard
 	}
 	return w
-}
-
-// portSuffix returns the :port suffix of a host:port address, or the
-// address unchanged when it has no port.
-func portSuffix(addr string) string {
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[i:]
-		}
-	}
-	return addr
 }

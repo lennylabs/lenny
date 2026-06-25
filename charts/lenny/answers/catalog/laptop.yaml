@@ -2,8 +2,10 @@
 #
 # Dimensions fixed: cluster=laptop, backends=embedded, environment=local,
 # isolationProfile=baseline. This is the embedded-backends posture of
-# §17.9.6 (embedded Postgres, in-process Redis, local-disk artifact
-# storage), equivalent to `lenny up` (§17.4 Embedded Mode).
+# §17.9.6: in-process in-memory stores inside the gateway pod (an in-memory
+# Postgres-compatible store, an in-memory Redis, and an in-memory blob
+# store), equivalent to `lenny up` (§17.4 Embedded Mode). This state is
+# ephemeral and lost on gateway pod restart.
 #
 # Layering: used as-is, or with presets/values-tier1.yaml for capacity.
 #   helm install lenny charts/lenny \

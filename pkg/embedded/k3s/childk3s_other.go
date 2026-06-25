@@ -59,6 +59,9 @@ func (s *childStub) Start(_ context.Context) error {
 // Stop is a no-op: the stub never starts a process.
 func (s *childStub) Stop() error { return nil }
 
+// Remove is a no-op: the stub never starts a process.
+func (s *childStub) Remove() error { return nil }
+
 // Running reports false: the stub never starts a process.
 func (s *childStub) Running() bool { return false }
 

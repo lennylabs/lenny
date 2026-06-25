@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package postgres
+package embpg
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// spec: 17.4 (C2 store removal; the embedded-postgres test wrapper)
 func TestDSNFormat(t *testing.T) {
 	i := New(Config{
 		DataDir:  "/tmp/pg",
@@ -21,12 +22,13 @@ func TestDSNFormat(t *testing.T) {
 	if !strings.HasPrefix(dsn, "postgres://lenny:lenny@127.0.0.1:15433/lenny") {
 		t.Errorf("DSN = %q, want a loopback postgres URL", dsn)
 	}
-	// Embedded Mode Postgres runs without TLS on loopback.
+	// The embedded test Postgres runs without TLS on loopback.
 	if !strings.Contains(dsn, "sslmode=disable") {
 		t.Errorf("DSN = %q, want sslmode=disable", dsn)
 	}
 }
 
+// spec: 17.4 (C2 store removal; the embedded-postgres test wrapper)
 func TestNewDefaultsStartTimeout(t *testing.T) {
 	i := New(Config{DataDir: "/tmp/pg"})
 	if i.cfg.StartTimeout <= 0 {
@@ -34,6 +36,7 @@ func TestNewDefaultsStartTimeout(t *testing.T) {
 	}
 }
 
+// spec: 17.4 (C2 store removal; the embedded-postgres test wrapper)
 func TestStopBeforeStartIsNoOp(t *testing.T) {
 	i := New(Config{DataDir: t.TempDir()})
 	if err := i.Stop(); err != nil {
@@ -44,12 +47,14 @@ func TestStopBeforeStartIsNoOp(t *testing.T) {
 // TestStartStopRoundTrip exercises a full embedded Postgres lifecycle.
 // It downloads the PostgreSQL 16 binary bundle on first run, so it is
 // skipped under -short.
+//
+// spec: 17.4 (C2 store removal; the embedded-postgres test wrapper)
 func TestStartStopRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
 	}
 	// Port 0 asks the kernel for a free ephemeral port so parallel test
-	// binaries do not collide on a fixed port (§17.4).
+	// binaries do not collide on a fixed port.
 	i := New(Config{
 		DataDir:      t.TempDir(),
 		Port:         0,

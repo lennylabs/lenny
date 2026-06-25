@@ -17,7 +17,7 @@ Rendered only when features.compliance is enabled (§17.2 feature-gated
 chart inventory: features.compliance adds lenny-data-residency-validator
 and lenny-t4-node-isolation).
 */ -}}
-{{- if .Values.features.compliance }}
+{{- if and .Values.admissionWebhooks.enabled .Values.features.compliance }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-data-residency-validator") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1

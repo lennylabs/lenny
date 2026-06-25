@@ -761,7 +761,7 @@ _Installer and packaging._
 
 _Local development mode._
 
-- `lenny up` quick-start end-to-end per [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) plus the full Embedded Mode surface: embedded k3s, embedded Postgres, embedded Redis, soft-HSM, embedded OIDC, the `lenny down --purge` lifecycle command, and the production-warning banner. (`lenny image import`/`list`/`rm` and `lenny token print` substrate landed in Phase 2; Phase 17a wires them into the embedded-mode workflow.)
+- `lenny up` quick-start end-to-end per [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) plus the full Embedded Mode surface: the in-cluster control plane rendered from the production chart under a development profile and run as pods in the embedded k3s, on in-process in-memory stores inside the gateway pod, with the gateway dev-mode bearer-trust authentication path, the `lenny down --purge` lifecycle command, and the production-warning banner. (`lenny image import`/`list`/`rm` and `lenny token print` substrate landed in Phase 2; Phase 17a wires them into the embedded-mode workflow.)
 
 _Web playground._
 

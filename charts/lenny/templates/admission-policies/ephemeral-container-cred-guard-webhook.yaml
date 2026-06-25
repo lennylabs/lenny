@@ -8,6 +8,7 @@ fields that inherit the pod fsGroup, or by mounting the credential
 volume. Scoped to agent namespaces and the pods/ephemeralcontainers
 subresource; fail-closed.
 */ -}}
+{{- if .Values.admissionWebhooks.enabled }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-ephemeral-container-cred-guard") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -42,3 +43,4 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /ephemeral-container-cred-guard
         port: 443
+{{- end }}

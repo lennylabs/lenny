@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -112,5 +113,120 @@ func TestUpsertRuntimeCRUpdatesInPlace_spec_5_1(t *testing.T) {
 	}
 	if got.Spec.Image != second {
 		t.Errorf("Runtime image after re-apply = %q, want the new digest %q", got.Spec.Image, second)
+	}
+}
+
+// TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2 asserts the echo
+// SandboxTemplate/SandboxWarmPool pair the embedded bring-up applies reproduces
+// the canonical poolstore→CRD field mapping (poolscaling.PoolStoreSource.toConfig)
+// for a §5.2 single-pod hot pool: the SandboxWarmPool sets templateRef to the
+// pool name with minWarm = maxWarm = warmCount, and the SandboxTemplate carries
+// the runtimeRef, the §17.4 local-fidelity `standard` isolation, the restricted
+// egress profile, the §13.2 cluster-default DNS opt-out, and the small resource
+// class. A drift between this direct apply and what the controller would have
+// produced from the seed would warm a pod with the wrong template.
+//
+// spec: §4.6.2 (the poolstore→CRD projection), §5.2 (single-pod hot pool),
+// §13.2 (cluster-default DNS opt-out), §17.4 (Embedded Mode echo seed).
+func TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2(t *testing.T) {
+	const ns = "lenny-agents"
+	tmpl, pool := echoPoolObjects(ns)
+
+	if tmpl.Namespace != ns || pool.Namespace != ns {
+		t.Errorf("CRD pair namespaces = %q/%q, want %q", tmpl.Namespace, pool.Namespace, ns)
+	}
+	if tmpl.Name != EchoPoolName || pool.Name != EchoPoolName {
+		t.Errorf("CRD pair names = %q/%q, want %q", tmpl.Name, pool.Name, EchoPoolName)
+	}
+	// §5.2 single-pod hot pool: warmCount maps to minWarm = maxWarm.
+	if pool.Spec.TemplateRef != EchoPoolName {
+		t.Errorf("warm pool templateRef = %q, want %q", pool.Spec.TemplateRef, EchoPoolName)
+	}
+	if pool.Spec.MinWarm != echoPoolWarmCount || pool.Spec.MaxWarm != echoPoolWarmCount {
+		t.Errorf("warm pool minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
+			pool.Spec.MinWarm, pool.Spec.MaxWarm, echoPoolWarmCount, echoPoolWarmCount)
+	}
+	if tmpl.Spec.RuntimeRef != EchoRuntimeName {
+		t.Errorf("template runtimeRef = %q, want %q", tmpl.Spec.RuntimeRef, EchoRuntimeName)
+	}
+	if tmpl.Spec.IsolationProfile != "standard" {
+		t.Errorf("template isolationProfile = %q, want standard (§17.4 local fidelity)", tmpl.Spec.IsolationProfile)
+	}
+	if tmpl.Spec.EgressProfile != "restricted" {
+		t.Errorf("template egressProfile = %q, want restricted", tmpl.Spec.EgressProfile)
+	}
+	if tmpl.Spec.DNSPolicy != "cluster-default" {
+		t.Errorf("template dnsPolicy = %q, want cluster-default (§13.2 opt-out)", tmpl.Spec.DNSPolicy)
+	}
+	if tmpl.Spec.ResourceClass != "small" {
+		t.Errorf("template resourceClass = %q, want small", tmpl.Spec.ResourceClass)
+	}
+	// The echo pool sets no execution mode, so the template leaves it empty
+	// (the §5.2 session default), matching the toConfig mapping for a row
+	// with no ExecutionMode.
+	if tmpl.Spec.ExecutionMode != "" {
+		t.Errorf("template executionMode = %q, want empty (session default)", tmpl.Spec.ExecutionMode)
+	}
+}
+
+// TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2 asserts the echo
+// pool pair the bring-up applies is encoded as unstructured objects carrying the
+// lenny.dev/v1alpha1 SandboxTemplate/SandboxWarmPool GVK and preserving the
+// canonical field mapping, so the C1 dynamic-apply path (apply.go applyObject)
+// can resolve each object's GVR via the RESTMapper and server-side-apply it. The
+// echo seed and the runtime-agnostic CLI verb share this dynamic-apply transport
+// rather than a parallel typed-client upsert; the GVK on each object is what lets
+// the shared applier route them. A missing apiVersion/kind would fail RESTMapping
+// at apply time.
+//
+// spec: §4.6.2 (the bring-up materializes the pool CRDs through the
+// dynamic-apply path), §5.2 (single-pod hot pool), §17.4 (one apply path).
+func TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2(t *testing.T) {
+	const ns = "lenny-agents"
+	objs, err := echoPoolUnstructured(ns)
+	if err != nil {
+		t.Fatalf("echoPoolUnstructured: %v", err)
+	}
+	if len(objs) != 2 {
+		t.Fatalf("echoPoolUnstructured returned %d objects, want 2 (SandboxTemplate + SandboxWarmPool)", len(objs))
+	}
+
+	byKind := map[string]unstructured.Unstructured{}
+	for _, o := range objs {
+		if got := o.GetAPIVersion(); got != lennyv1alpha1.GroupVersion.String() {
+			t.Errorf("%s apiVersion = %q, want %q", o.GetKind(), got, lennyv1alpha1.GroupVersion.String())
+		}
+		if o.GetNamespace() != ns {
+			t.Errorf("%s namespace = %q, want %q", o.GetKind(), o.GetNamespace(), ns)
+		}
+		if o.GetName() != EchoPoolName {
+			t.Errorf("%s name = %q, want %q", o.GetKind(), o.GetName(), EchoPoolName)
+		}
+		byKind[o.GetKind()] = o
+	}
+
+	tmpl, ok := byKind["SandboxTemplate"]
+	if !ok {
+		t.Fatal("echoPoolUnstructured produced no SandboxTemplate")
+	}
+	if got, _, _ := unstructured.NestedString(tmpl.Object, "spec", "runtimeRef"); got != EchoRuntimeName {
+		t.Errorf("template spec.runtimeRef = %q, want %q", got, EchoRuntimeName)
+	}
+	if got, _, _ := unstructured.NestedString(tmpl.Object, "spec", "isolationProfile"); got != "standard" {
+		t.Errorf("template spec.isolationProfile = %q, want standard (§17.4 local fidelity)", got)
+	}
+
+	pool, ok := byKind["SandboxWarmPool"]
+	if !ok {
+		t.Fatal("echoPoolUnstructured produced no SandboxWarmPool")
+	}
+	if got, _, _ := unstructured.NestedString(pool.Object, "spec", "templateRef"); got != EchoPoolName {
+		t.Errorf("warm pool spec.templateRef = %q, want %q", got, EchoPoolName)
+	}
+	minWarm, _, _ := unstructured.NestedInt64(pool.Object, "spec", "minWarm")
+	maxWarm, _, _ := unstructured.NestedInt64(pool.Object, "spec", "maxWarm")
+	if minWarm != int64(echoPoolWarmCount) || maxWarm != int64(echoPoolWarmCount) {
+		t.Errorf("warm pool minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
+			minWarm, maxWarm, echoPoolWarmCount, echoPoolWarmCount)
 	}
 }

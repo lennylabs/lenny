@@ -1,0 +1,232 @@
+# §17.4 Embedded Mode development profile.
+#
+# The `lenny up` Embedded Mode renders the production chart with this
+# profile and applies the resulting manifests into the embedded k3s, so
+# the production gateway and controllers run as in-cluster pods on the
+# flannel pod network and place each session on an agent pod over the
+# §4.7 adapter boundary exactly as in a production cluster. Everything in
+# this file is confined to the layer below the gateway and controllers,
+# which run from their unmodified production images, so there are no
+# mode-dependent code splits in business logic.
+#
+# This profile is pre-rendered at build time (`helm template --no-hooks`)
+# and the manifests are embedded under pkg/embedded/manifests/, so the
+# `lenny` CLI never carries a Helm SDK. Layer it on the base values.yaml:
+#
+#   helm template lenny charts/lenny -f charts/lenny/presets/dev.yaml --no-hooks
+#
+# It is a development-only posture: the admission/mTLS/cert-manager stack
+# and the Token Service are disabled, the application data stores are
+# in-process and in-memory, and the gateway is reachable only through a
+# loopback-only host-side forwarder. Never apply it to a real
+# multi-tenant cluster. spec: §17.4.
+
+# devMode relaxes the §4.9 multi-tenant admission controls for local
+# development and is the precondition for the gateway's dev-mode bearer
+# trust path (--bearer-trust-hmac-key-file is refused unless --dev-mode).
+global:
+  devMode: true
+  # spiffeTrustDomain is REQUIRED with no chart default. The embedded
+  # cluster is single-install, so a fixed dev string anchors the §10.3
+  # agent-pod and interceptor identities. spec: §17.4.
+  spiffeTrustDomain: lenny-embedded-dev
+
+# A single fixed agent namespace holds the embedded echo pool's pods.
+# The production default lists two (lenny-agents, lenny-agents-kata); the
+# dev profile keeps only the runc namespace because no Kata node pool
+# exists locally.
+agentNamespaces:
+  - name: lenny-agents
+
+# Disable the §17.2 fail-closed admission stack and its cert-manager
+# prerequisite. A bare k3s has no cert-manager CA injector, so the
+# fail-closed validating webhooks would never become Ready and would
+# reject every agent-pod CREATE. The §17.4 local-fidelity disclosure
+# already records that NetworkPolicy enforcement and the isolation
+# profiles are not exercised locally; the disabled admission/mTLS stack
+# is the same class of disclosed gap. Disabling it also lets a runtime
+# author's locally-imported, tag-based, unsigned image schedule, which
+# the requireDigest / cosign admission policy would otherwise reject.
+# spec: §17.4.
+admissionWebhooks:
+  enabled: false
+
+mtls:
+  enabled: false
+
+certmanager:
+  enabled: false
+
+# Disable the §4.3 Token Service. The lenny-token-service image is not in
+# the embedded import bundle, so under imagePullPolicy: IfNotPresent the
+# pod would sit in permanent ImagePullBackOff. With it off the gateway
+# falls back to its in-process MintLease / credassign dev path for §4.9
+# leases and the §4.3 /v1/oauth/* proxy rather than dialing an absent
+# Service. spec: §17.4.
+tokenService:
+  enabled: false
+
+# Deploy no store pods and require no operator. With no Postgres DSN and
+# no Redis URL the gateway and controller select their in-process
+# in-memory backends (store selection keys on a non-empty Postgres DSN).
+# No CloudNativePG operator, Redis Sentinel, or MinIO is deployed: those
+# chart paths require an operator or HA topologies with mandatory TLS.
+# The cost is that in-memory state is ephemeral and lost on pod restart
+# or `lenny down`, which the §17.4 store table records. Durable local
+# state is available later by pointing the gateway at a single plain
+# Postgres pod (a DSN), which is out of scope for this profile. spec:
+# §17.4.
+postgres:
+  deploy: false
+  dsn: ""
+
+redis:
+  deploy: false
+  url: ""
+
+minio:
+  deploy: false
+  endpoint: ""
+
+# Use the k3s built-in CoreDNS; do not deploy the chart's dedicated
+# CoreDNS. The dedicated CoreDNS enforces the agent-egress split-horizon
+# DNS policy, part of the network-isolation surface §17.4 already
+# discloses is not exercised locally. spec: §17.4.
+coredns:
+  deploy: false
+
+# Render the runc RuntimeClass through the chart's existing
+# runtimeClasses surface so the embedded echo pool can warm. The echo
+# pool carries the `standard` isolation profile, which resolves to the
+# RuntimeClass object named `runc`; the WarmPoolController marks the pool
+# Degraded and suppresses pod creation when that RuntimeClass is absent,
+# and a default k3s cluster ships no RuntimeClass object named runc.
+# Enable only the `standard` profile: the local cluster ships no gVisor
+# or Kata runtime, so the sandboxed and microvm classes are not
+# rendered. spec: §17.4, §5.3.
+runtimeClasses:
+  create: true
+  profiles:
+    standard:
+      enabled: true
+      name: runc
+      handler: runc
+    sandboxed:
+      enabled: false
+    microvm:
+      enabled: false
+
+# Stamp the imported lenny-adapter image onto every sidecar-model agent
+# pod. The §17.4 custom-runtime walkthrough defaults to the sidecar
+# deployment model, which requires the adapter container; podspec.Build
+# rejects a sidecar pod with no adapter image, so the pool cannot warm.
+# The adapter tag matches the chart appVersion the embedded bundle
+# imports. spec: §17.4.
+controller:
+  adapterImage: ghcr.io/lennylabs/lenny-adapter:0.1.0
+  # Single replica on the single-node embedded cluster. The chart's
+  # controller anti-affinity (controller.antiAffinity) keeps only the
+  # advisory `preferred`/`required` modes with no off setting, so this
+  # profile leaves the chart default `preferred`. At one replica the
+  # preferredDuringScheduling rule is inert (there is no peer pod to
+  # schedule away from and the rule never blocks scheduling), so it adds
+  # no resilience and does not delay bring-up. Removing the anti-affinity
+  # block outright would be a chart-template change outside this profile.
+  replicas: 1
+  # Tag-based image reference matching the imported tag; IfNotPresent so
+  # the locally-imported image is never re-pulled from the registry. The
+  # repository is resolved by the chart from platform.registry.url
+  # (ghcr.io/lennylabs) plus the component name, so only tag and
+  # pullPolicy are set here.
+  image:
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  # The gateway and controller readiness/liveness probe delays are
+  # hardcoded in the chart templates with no values knob, so this profile
+  # cannot trim them; the rendered pods keep the chart-default
+  # initialDelaySeconds. At a single replica the probe delay only affects
+  # how quickly the pod first reports Ready, not whether it schedules.
+  # Small request for single-node bring-up.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# Trust the embedded dev bearer at the in-cluster gateway. The `lenny`
+# CLI mints a bearer from a persisted dev HMAC key and sends it as
+# Authorization: Bearer; `lenny up` writes that key into a Secret of this
+# fixed name (data key `key`) before applying the gateway Deployment, and
+# the gateway loads it as a second §10.2 verifier wrapped in the dev.local
+# audience check. spec: §17.4.
+security:
+  oidc:
+    bearerTrustKeySecret: lenny-embedded-dev-bearer-key
+
+# Gateway development posture: single replica (single node), the gateway
+# PodDisruptionBudget disabled (one replica), a NodePort Service the
+# loopback host-side forwarder targets, small resource requests, and a
+# tag-based image reference matching the imported tag with IfNotPresent so
+# the locally-imported image is never re-pulled. The production topology
+# fronts the gateway with an Ingress (type ClusterIP); the dev profile
+# pins a NodePort because Embedded Mode has no Ingress. The repository is
+# resolved by the chart from platform.registry.url plus the component
+# name, so only tag and pullPolicy are set here. spec: §17.4.
+gateway:
+  replicas: 1
+  service:
+    type: NodePort
+    nodePort: 30080
+  podDisruptionBudget:
+    enabled: false
+  image:
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# lenny-ops is mandatory: the chart hard-fails on any attempt to disable
+# it, so the dev profile keeps it enabled with a single replica and its
+# image bundled in the embedded import set. The chart renders the
+# lenny-ops PodDisruptionBudget unconditionally with no disable knob, so
+# unlike the gateway PDB it is not turned off here; at a single replica
+# its maxUnavailable never blocks, so it is inert. The repository is
+# resolved by the chart from platform.registry.url plus the component
+# name, so only tag and pullPolicy are set here. Tag-based reference with
+# IfNotPresent. spec: §17.4.
+ops:
+  replicas: 1
+  image:
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# Pin the §13.1 etcd encryption-at-rest aescbc key so the build-time
+# render is deterministic. The lenny-etcd-encryption ConfigMap is
+# OPERATOR-STEP documentation: a manifest apply cannot reconfigure the
+# embedded k3s kube-apiserver to consume it, so the rendered
+# EncryptionConfiguration is inert in Embedded Mode. Left unset, the
+# chart generates a fresh random key on every render (randAlphaNum), which
+# would make the pre-rendered embedded manifests differ on each `make
+# generate` and break the tier-11 sync check. The application data stores
+# are in-process and in-memory in Embedded Mode and never reach etcd, so
+# the encryption-at-rest exemption already disclosed for Embedded Mode
+# holds and the fixed dev key carries no production secret. spec: §17.4,
+# §13.1.
+etcdEncryption:
+  aescbcKeys:
+    - name: key1
+      secret: bGVubnktZW1iZWRkZWQtZGV2LWFlc2NiYy1rZXktMzJieQ==

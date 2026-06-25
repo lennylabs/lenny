@@ -109,14 +109,10 @@ func progName() string {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	// §24.19 line 256 / §17.4: when `lenny up` (or `lenny-ctl up`)
-	// re-executes os.Executable() as the detached supervisor, the
-	// running binary may be lenny-ctl. Honor the supervisor gate before
-	// normal dispatch so the same build supervises the stack under
-	// either name.
-	if localcli.Supervising() {
-		return localcli.RunSupervise(args, stdout, stderr)
-	}
+	// §24.19 line 256 / §17.4: the embedded control plane runs as in-cluster
+	// pods that outlive the CLI, so `lenny up` brings the stack up in-process
+	// and returns; there is no detached host supervisor to re-exec into under
+	// either binary name.
 	flags, rest := parseGlobalFlags(args)
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, usage)
@@ -136,13 +132,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return cmdLogs(ctx, ops, rest[2:], stdout, stderr)
 		})
 	}
+	// §17.4 / §24.18: the `runtime` token is shared. `lenny runtime apply`
+	// is the Embedded Mode CRD-apply verb localcli owns (it materializes a
+	// runtime's Runtime/SandboxTemplate/SandboxWarmPool against the embedded
+	// kubeconfig), while `runtime init|validate|publish` are the
+	// gateway-and-scaffold runtime-author commands cmdRuntime owns below.
+	// localcli.Local claims the whole `runtime` token, so this disambiguation
+	// routes only `runtime apply` to localcli and lets every other runtime
+	// subcommand fall through to the cmdRuntime case, mirroring the `logs
+	// pods` split above. spec: §17.4 (the runtime-apply verb), §24.18 (the
+	// runtime-author group).
+	if rest[0] == "runtime" && len(rest) > 1 && rest[1] == "apply" {
+		return localcli.Run(ctx, "runtime", rest[1:], stdout, stderr, version)
+	}
 	// §24.19 line 266 / §24.9 line 120: `lenny-ctl <local-command>`
 	// behaves identically to `lenny <local-command>` against the
 	// Embedded Mode stack. The gateway-targeting global flags do not
 	// apply to local commands, so delegate the raw arguments after the
-	// command name.
-	if localcli.Local(rest[0]) {
-		return localcli.Run(ctx, rest[0], rest[1:], stdout, stderr)
+	// command name. The shared `runtime` token is excluded here: it is
+	// dispatched by the disambiguation above (apply) and the cmdRuntime case
+	// below (init/validate/publish), so a bare Local("runtime") claim must
+	// not shadow the runtime-author group.
+	if localcli.Local(rest[0]) && rest[0] != "runtime" {
+		return localcli.Run(ctx, rest[0], rest[1:], stdout, stderr, version)
 	}
 	// §24.16 line 205: only the "json" output format is supported.
 	if flags.output != "" && flags.output != "json" {

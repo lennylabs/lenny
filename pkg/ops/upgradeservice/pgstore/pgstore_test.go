@@ -10,10 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/upgrade"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // startPG brings up an embedded Postgres with migration 0124 applied and

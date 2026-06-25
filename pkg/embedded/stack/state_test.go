@@ -13,18 +13,12 @@ import (
 func TestWriteReadState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stack.json")
 	want := State{
-		StartedAt:      time.Now().UTC().Truncate(time.Second),
-		SupervisorPID:  111,
-		GatewayPID:     222,
-		ControllerPID:  333,
-		K3sPID:         444,
-		K3sContainer:   "lenny-embedded-k3s-k3s",
-		HTTPAddr:       "127.0.0.1:8080",
-		HTTPSAddr:      "127.0.0.1:8443",
-		PostgresDSN:    "postgres://lenny@127.0.0.1:15433/lenny",
-		RedisURL:       "redis://127.0.0.1:6390/0",
-		KubeconfigPath: "/state/k3s/kubeconfig.yaml",
-		K3sEnabled:     true,
+		StartedAt:            time.Now().UTC().Truncate(time.Second),
+		K3sContainer:         "lenny-embedded-k3s-k3s",
+		GatewayForwarderAddr: "127.0.0.1:8443",
+		DeployedImageTag:     "v0.0.0-dev",
+		KubeconfigPath:       "/state/k3s/kubeconfig.yaml",
+		K3sEnabled:           true,
 	}
 	if err := writeState(path, want); err != nil {
 		t.Fatalf("writeState: %v", err)
@@ -63,7 +57,7 @@ func TestReadStateCorruptFile(t *testing.T) {
 
 func TestRemoveState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stack.json")
-	if err := writeState(path, State{SupervisorPID: 1}); err != nil {
+	if err := writeState(path, State{K3sEnabled: true}); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
 	if err := removeState(path); err != nil {
@@ -133,6 +127,104 @@ func writeSubstrateState(t *testing.T, root, container string) {
 	}
 }
 
-// processAlive, the state-file liveness probe, delegates to the
-// build-tagged process-control substrate. Its boundary behavior is
-// covered cross-platform by TestProcessAliveBoundaries in process_test.go.
+// writeRunningState records a running stack state file under root with the
+// given forwarder address and kubeconfig path so RunningGateway and
+// RunningKubeconfig have a state to read.
+func writeRunningState(t *testing.T, root, forwarderAddr, kubeconfigPath string) {
+	t.Helper()
+	paths := NewPaths(root)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	st := State{
+		K3sEnabled:           true,
+		GatewayForwarderAddr: forwarderAddr,
+		KubeconfigPath:       kubeconfigPath,
+	}
+	if err := writeState(paths.StateFile(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+}
+
+// spec: §17.4 (the CLI reaches the in-cluster gateway through the loopback-only
+// host-side forwarder) — RunningGateway returns the recorded forwarder HTTPS
+// URL when a stack is running, ErrNoRunningStack when none is recorded, and a
+// precise error when the running state carries no forwarder address.
+func TestRunningGateway(t *testing.T) {
+	t.Run("no running stack", func(t *testing.T) {
+		root := t.TempDir()
+		if _, err := RunningGateway(root); !errors.Is(err, ErrNoRunningStack) {
+			t.Fatalf("RunningGateway without a stack = %v, want ErrNoRunningStack", err)
+		}
+	})
+
+	t.Run("stopped stack reports no running stack", func(t *testing.T) {
+		root := t.TempDir()
+		paths := NewPaths(root)
+		if err := paths.EnsureDirs(); err != nil {
+			t.Fatalf("EnsureDirs: %v", err)
+		}
+		// A stopped (non-`--purge` lenny down) state must read as not running.
+		st := State{K3sEnabled: true, GatewayForwarderAddr: "127.0.0.1:8443", Stopped: true}
+		if err := writeState(paths.StateFile(), st); err != nil {
+			t.Fatalf("writeState: %v", err)
+		}
+		if _, err := RunningGateway(root); !errors.Is(err, ErrNoRunningStack) {
+			t.Fatalf("RunningGateway on a stopped stack = %v, want ErrNoRunningStack", err)
+		}
+	})
+
+	t.Run("running stack returns the forwarder URL", func(t *testing.T) {
+		root := t.TempDir()
+		writeRunningState(t, root, "127.0.0.1:8443", "/state/k3s/kubeconfig.yaml")
+		got, err := RunningGateway(root)
+		if err != nil {
+			t.Fatalf("RunningGateway: %v", err)
+		}
+		if want := "https://127.0.0.1:8443"; got != want {
+			t.Errorf("RunningGateway = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("running stack with no forwarder address errors", func(t *testing.T) {
+		root := t.TempDir()
+		writeRunningState(t, root, "", "/state/k3s/kubeconfig.yaml")
+		if _, err := RunningGateway(root); err == nil {
+			t.Fatal("RunningGateway with no forwarder address = nil, want a precise error")
+		}
+	})
+}
+
+// spec: §17.4 (the in-cluster control plane is reached through the embedded
+// kubeconfig) — RunningKubeconfig returns the recorded admin kubeconfig path
+// when a stack is running, ErrNoRunningStack when none is recorded, and a
+// precise error when the running state carries no kubeconfig path.
+func TestRunningKubeconfig(t *testing.T) {
+	t.Run("no running stack", func(t *testing.T) {
+		root := t.TempDir()
+		if _, err := RunningKubeconfig(root); !errors.Is(err, ErrNoRunningStack) {
+			t.Fatalf("RunningKubeconfig without a stack = %v, want ErrNoRunningStack", err)
+		}
+	})
+
+	t.Run("running stack returns the kubeconfig path", func(t *testing.T) {
+		root := t.TempDir()
+		const kc = "/state/k3s/kubeconfig.yaml"
+		writeRunningState(t, root, "127.0.0.1:8443", kc)
+		got, err := RunningKubeconfig(root)
+		if err != nil {
+			t.Fatalf("RunningKubeconfig: %v", err)
+		}
+		if got != kc {
+			t.Errorf("RunningKubeconfig = %q, want %q", got, kc)
+		}
+	})
+
+	t.Run("running stack with no kubeconfig path errors", func(t *testing.T) {
+		root := t.TempDir()
+		writeRunningState(t, root, "127.0.0.1:8443", "")
+		if _, err := RunningKubeconfig(root); err == nil {
+			t.Fatal("RunningKubeconfig with no kubeconfig path = nil, want a precise error")
+		}
+	})
+}

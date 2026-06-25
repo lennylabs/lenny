@@ -12,10 +12,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/gateway/quotabudget"
 	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // TestAddTenantTotal_AtomicIncrement brings up an embedded Postgres, applies

@@ -191,6 +191,41 @@ func TestDockerRunArgs(t *testing.T) {
 	}
 }
 
+// TestDockerRunArgsPublishesGatewayNodePortToLoopback asserts the
+// Docker-backed launcher publishes the configured in-VM gateway NodePort to
+// host loopback (-p 127.0.0.1:<nodePort>:<nodePort>) so the host-side
+// forwarder reaches the in-cluster gateway, while the in-VM NodePort's
+// 0.0.0.0 bind stays contained inside the Docker VM. A zero GatewayNodePort
+// publishes nothing.
+//
+// diagnosis: a failure means the in-cluster gateway is unreachable from the
+// host on the Docker-backed substrate (no node-port publish) or is exposed
+// beyond loopback (a publish on a non-loopback host address), violating the
+// §17.4 EMBEDDED_MODE_LOCAL_ONLY fail-closed invariant.
+//
+// spec: §17.4 (the CLI reaches the in-cluster gateway through the
+// loopback-only host-side forwarder in front of the node port;
+// EMBEDDED_MODE_LOCAL_ONLY).
+func TestDockerRunArgsPublishesGatewayNodePortToLoopback(t *testing.T) {
+	d := newDockerLauncherForTest(t, newFakeDocker())
+	d.cfg.GatewayNodePort = 30080
+	joined := strings.Join(d.runArgs(), " ")
+	if !strings.Contains(joined, "-p 127.0.0.1:30080:30080") {
+		t.Errorf("docker run argv does not publish the gateway NodePort to host loopback: %v", d.runArgs())
+	}
+	// The publish must bind host loopback only, never 0.0.0.0 on the host.
+	if strings.Contains(joined, "0.0.0.0:30080") || strings.Contains(joined, " 30080:30080") {
+		t.Errorf("docker run argv publishes the gateway NodePort beyond host loopback: %v", d.runArgs())
+	}
+
+	// A zero GatewayNodePort publishes no gateway port (the API-port publish
+	// is the only -p for the API port).
+	d.cfg.GatewayNodePort = 0
+	if strings.Contains(strings.Join(d.runArgs(), " "), ":30080:") {
+		t.Errorf("docker run argv published a gateway NodePort with none configured: %v", d.runArgs())
+	}
+}
+
 // spec: §4.7 (the gateway↔adapter gRPC+mTLS callback traverses the
 // host/Docker boundary; the in-cluster adapter reaches the host gateway at
 // host.docker.internal), §17.4. The Docker-backed launcher runs k3s inside
@@ -253,11 +288,15 @@ func TestDockerServerArgsMatchLinuxDisableSet(t *testing.T) {
 // spec: §17.4 (Start provisions the container, publishes the API port,
 // and extracts and rewrites the in-container kubeconfig). The end-to-end
 // Start path is exercised against a fake docker that scripts a ready
-// container and an in-container kubeconfig.
+// container and an in-container kubeconfig. No persisted container exists,
+// so Start provisions fresh with a docker run rather than restarting a
+// stopped one (the containerExists probe returns empty).
 func TestDockerLauncherStartProvisionsAndRewritesKubeconfig(t *testing.T) {
 	withLookPathDocker(t, true)
 	fd := newFakeDocker()
-	fd.handlers["inspect"] = func([]string) ([]byte, error) { return []byte("true\n"), nil }
+	// No persisted container: the State.Status probe returns empty so
+	// containerExists is false and Start provisions fresh.
+	fd.handlers["inspect"] = func([]string) ([]byte, error) { return []byte("\n"), nil }
 	fd.handlers["exec"] = func([]string) ([]byte, error) {
 		return []byte("clusters:\n- cluster:\n    server: https://127.0.0.1:6443\n"), nil
 	}
@@ -267,13 +306,17 @@ func TestDockerLauncherStartProvisionsAndRewritesKubeconfig(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// A docker run was issued with the pinned image.
+	// A docker run was issued with the pinned image (fresh provision).
 	runs := fd.callsFor("run")
 	if len(runs) != 1 {
 		t.Fatalf("expected exactly one docker run, got %d: %v", len(runs), runs)
 	}
 	if !hasArg(runs[0], containerImage) {
 		t.Errorf("docker run did not use the pinned image: %v", runs[0])
+	}
+	// No persisted container existed, so Start did not restart one.
+	if starts := fd.callsFor("start"); len(starts) != 0 {
+		t.Errorf("Start issued a docker start with no persisted container: %v", starts)
 	}
 
 	// The kubeconfig was written with its server URL rewritten to the
@@ -464,20 +507,78 @@ func TestDockerLauncherStopBeforeStartReportsNotRunning(t *testing.T) {
 	}
 }
 
-// TestDockerLauncherStopRemovesContainer confirms Stop issues a docker rm
-// for the container and is idempotent before Start.
-func TestDockerLauncherStopRemovesContainer(t *testing.T) {
+// TestDockerLauncherStopPersistsContainer confirms Stop issues a docker stop
+// (not a docker rm) so the container and its containerd image store persist
+// for a warm lenny up, and is idempotent before Start.
+//
+// spec: §17.4 (lenny down persists the substrate and the imported-image
+// store).
+func TestDockerLauncherStopPersistsContainer(t *testing.T) {
 	fd := newFakeDocker()
 	d := newDockerLauncherForTest(t, fd)
 	if err := d.Stop(); err != nil {
 		t.Fatalf("Stop before Start errored: %v", err)
 	}
+	stops := fd.callsFor("stop")
+	if len(stops) == 0 {
+		t.Fatal("Stop did not issue a docker stop")
+	}
+	if !hasArg(stops[0], d.name) {
+		t.Errorf("docker stop did not target the container name %q: %v", d.name, stops[0])
+	}
+	// Stop must not force-remove the container; the image store must survive.
+	if rms := fd.callsFor("rm"); len(rms) != 0 {
+		t.Errorf("Stop force-removed the container instead of persisting it: %v", rms)
+	}
+}
+
+// TestDockerLauncherRemoveRemovesContainer confirms Remove issues a forced
+// docker rm so --purge discards the container and its containerd image store,
+// and is idempotent before Start.
+//
+// spec: §17.4 (--purge removes the persisted substrate and the
+// imported-image store).
+func TestDockerLauncherRemoveRemovesContainer(t *testing.T) {
+	fd := newFakeDocker()
+	d := newDockerLauncherForTest(t, fd)
+	if err := d.Remove(); err != nil {
+		t.Fatalf("Remove before Start errored: %v", err)
+	}
 	rms := fd.callsFor("rm")
 	if len(rms) == 0 {
-		t.Fatal("Stop did not issue a docker rm")
+		t.Fatal("Remove did not issue a docker rm")
 	}
-	if !hasArg(rms[0], d.name) {
-		t.Errorf("docker rm did not target the container name %q: %v", d.name, rms[0])
+	if !hasArg(rms[0], d.name) || !hasArg(rms[0], "-f") {
+		t.Errorf("docker rm was not a forced removal of the container name %q: %v", d.name, rms[0])
+	}
+}
+
+// TestDockerLauncherStartRestartsPersistedContainer confirms a warm Start
+// reuses a persisted (stopped) container with a docker start rather than
+// re-running a fresh one, so the containerd image store is not discarded.
+//
+// spec: §17.4 (a warm lenny up restarts the persisted substrate without
+// re-pulling k3s or re-importing the platform images).
+func TestDockerLauncherStartRestartsPersistedContainer(t *testing.T) {
+	withLookPathDocker(t, true)
+	fd := newFakeDocker()
+	// A persisted container exists: the State.Status probe returns a status.
+	fd.handlers["inspect"] = func([]string) ([]byte, error) { return []byte("exited\n"), nil }
+	fd.handlers["exec"] = func([]string) ([]byte, error) {
+		return []byte("clusters:\n- cluster:\n    server: https://127.0.0.1:6443\n"), nil
+	}
+	d := newDockerLauncherForTest(t, fd)
+
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	starts := fd.callsFor("start")
+	if len(starts) != 1 || !hasArg(starts[0], d.name) {
+		t.Fatalf("warm Start did not docker start the persisted container: %v", starts)
+	}
+	// A warm Start must not provision a fresh container.
+	if runs := fd.callsFor("run"); len(runs) != 0 {
+		t.Errorf("warm Start re-ran a fresh container instead of restarting the persisted one: %v", runs)
 	}
 }
 
@@ -648,6 +749,48 @@ func TestRemoveContainer(t *testing.T) {
 		return []byte("Error: No such container"), errors.New("exit status 1")
 	})
 	RemoveContainer("lenny-embedded-k3s-demo") // must not panic or block
+}
+
+// TestStopContainer covers the persist-stop lenny down (without --purge) uses
+// to halt the Docker-backed k3s container while keeping it and its containerd
+// image store, so a warm lenny up restarts it. An empty handle is a no-op
+// (the Linux substrate records no container), a non-empty handle issues
+// `docker stop <name>` (never a forced rm), and a docker error is swallowed.
+//
+// spec: §17.4 (lenny down persists the substrate and the imported-image
+// store; --purge removes them).
+func TestStopContainer(t *testing.T) {
+	// An empty handle is a no-op and never shells out.
+	withRunDocker(t, func(context.Context, ...string) ([]byte, error) {
+		t.Fatal("StopContainer(\"\") must not shell out to docker")
+		return nil, nil
+	})
+	StopContainer("")
+
+	// A non-empty handle issues a plain docker stop (not a forced rm), so the
+	// container and its image store persist.
+	var got [][]string
+	withRunDocker(t, func(_ context.Context, args ...string) ([]byte, error) {
+		got = append(got, args)
+		return nil, nil
+	})
+	StopContainer("lenny-embedded-k3s-demo")
+	if len(got) != 1 {
+		t.Fatalf("StopContainer issued %d docker calls, want 1: %v", len(got), got)
+	}
+	if got[0][0] != "stop" || !hasArg(got[0], "lenny-embedded-k3s-demo") {
+		t.Errorf("StopContainer issued %v, want a docker stop of the container", got[0])
+	}
+	if hasArg(got[0], "rm") || hasArg(got[0], "-f") {
+		t.Errorf("StopContainer force-removed the container instead of persisting it: %v", got[0])
+	}
+
+	// A docker error (the container is already stopped, or docker is
+	// unavailable) is swallowed.
+	withRunDocker(t, func(context.Context, ...string) ([]byte, error) {
+		return []byte("Error: No such container"), errors.New("exit status 1")
+	})
+	StopContainer("lenny-embedded-k3s-demo") // must not panic or block
 }
 
 func hasArg(args []string, want string) bool {

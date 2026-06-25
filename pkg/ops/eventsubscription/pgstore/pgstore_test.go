@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	embpostgres "github.com/lennylabs/lenny/pkg/embedded/postgres"
 	es "github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription/pgstore"
+	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
 // TestPgStoreRoundTrip_spec_25_5 brings up an embedded Postgres, applies

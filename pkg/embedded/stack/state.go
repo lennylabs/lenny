@@ -10,46 +10,67 @@ import (
 	"time"
 )
 
-// State is the on-disk record of a running Embedded Mode stack. lenny
-// up writes it; lenny down and lenny status read it to locate the
-// child processes and component endpoints. It lives at
-// Paths.StateFile().
+// State is the on-disk record of a running Embedded Mode stack. lenny up
+// writes it; lenny down and lenny status read it to locate the substrate
+// and the host-side gateway forwarder. The §17.4 control plane runs as
+// in-cluster pods rendered from the chart, so the state records the
+// substrate handle, the loopback forwarder address, and the deployed image
+// tag rather than host process identifiers. It lives at Paths.StateFile().
+//
+// spec: §17.4 (the control plane runs as in-cluster pods; lenny up records
+// the substrate and the host-side gateway forwarder).
 type State struct {
 	// StartedAt is when lenny up brought the stack up.
 	StartedAt time.Time `json:"startedAt"`
-	// SupervisorPID is the detached lenny process that hosts the
-	// in-process components (Redis, the OIDC provider, and the TLS
-	// reverse proxy) and supervises the child processes. lenny down
-	// signals it to trigger a graceful teardown of the whole stack.
-	SupervisorPID int `json:"supervisorPid"`
-	// GatewayPID and ControllerPID are the child-process identifiers.
-	GatewayPID    int `json:"gatewayPid"`
-	ControllerPID int `json:"controllerPid"`
-	// K3sPID is the embedded k3s host process identifier on the Linux
-	// managed-child-process launcher. It is zero on the Docker-backed
-	// launcher (macOS and Windows), where k3s runs inside the Docker VM
-	// with no host PID; K3sContainer carries the handle there. It is also
-	// zero when k3s did not start (an unsupported host).
-	K3sPID int `json:"k3sPid,omitempty"`
 	// K3sContainer is the docker container name the Docker-backed launcher
 	// runs the embedded k3s under (macOS and Windows). It is the handle
-	// lenny status probes for liveness in place of the host PID. It is
-	// empty on the Linux child-process launcher, which records a host PID
-	// in K3sPID instead, and empty when k3s did not start.
+	// lenny status probes for liveness. It is empty on the Linux
+	// child-process launcher, which runs k3s as a host process, and empty
+	// when k3s did not start.
 	K3sContainer string `json:"k3sContainer,omitempty"`
-	// HTTPAddr and HTTPSAddr are the gateway's plaintext and
-	// TLS-terminated listen addresses.
-	HTTPAddr  string `json:"httpAddr"`
-	HTTPSAddr string `json:"httpsAddr"`
-	// PostgresDSN and RedisURL are the embedded-backend connection
-	// strings the gateway and controllers were configured with.
-	PostgresDSN string `json:"postgresDsn"`
-	RedisURL    string `json:"redisUrl"`
+	// K3sPID is the process-group leader PID of the embedded k3s on the Linux
+	// child-process launcher. lenny up starts k3s in its own process group so
+	// it outlives the foreground lenny up process (the in-cluster pods must
+	// survive the CLI), so a later lenny down must terminate the recorded
+	// process group out of process. It is zero on the Docker-backed launcher,
+	// which records K3sContainer instead, and zero when k3s did not start.
+	// spec: §17.4 (the substrate outlives the CLI; lenny down stops it).
+	K3sPID int `json:"k3sPid,omitempty"`
+	// GatewayForwarderAddr is the loopback host:port the host-side TLS
+	// forwarder presents the in-cluster gateway on (the §17.4
+	// EMBEDDED_MODE_LOCAL_ONLY 127.0.0.1:8443 endpoint). The CLI resolves
+	// its gateway URL from it. The in-cluster gateway serves plaintext HTTP
+	// behind the forwarder, which terminates TLS with the per-lenny-up
+	// self-signed leaf. Empty until the S7 bring-up records it.
+	GatewayForwarderAddr string `json:"gatewayForwarderAddr,omitempty"`
+	// DeployedImageTag is the CLI version tag the deployed component images
+	// were imported and rendered under. lenny up compares it against the
+	// running CLI version on a warm bring-up and re-imports and re-applies
+	// on a mismatch, so a stale image is not run after a lenny upgrade
+	// (C4). Empty until the S7 bring-up records it. A non-`--purge` lenny
+	// down preserves it (alongside the substrate handle) in the Stopped
+	// marker so the next warm lenny up can match it and skip the expensive
+	// re-import and re-apply.
+	DeployedImageTag string `json:"deployedImageTag,omitempty"`
+	// Stopped marks a state record left behind by a non-`--purge` lenny down:
+	// the substrate and its imported-image store persist on disk (or in the
+	// stopped Docker container), but the stack is not running. lenny status,
+	// the running-gateway/substrate resolvers, and lenny restart treat a
+	// Stopped record as no running stack, while a warm lenny up still reads
+	// its DeployedImageTag to decide whether the persisted control plane can
+	// be reused. The deployed tag survives a non-`--purge` down only through
+	// this marker, so the down→up warm path skips the re-import and re-apply
+	// the §17.4 fast-restart depends on; `--purge` discards the record
+	// entirely. spec: §17.4 (the substrate and imported-image store persist
+	// across a non-`--purge` down; a warm up reconciles against the recorded
+	// deployed tag).
+	Stopped bool `json:"stopped,omitempty"`
 	// KubeconfigPath is the embedded k3s admin kubeconfig. On the Linux
 	// launcher it is k3s' generated admin kubeconfig; on the Docker-backed
 	// launcher it is the host-rewritten kubeconfig whose server URL points
-	// at the published host port. The gateway and controllers resolve
-	// their cluster connection from it. Empty when k3s did not start.
+	// at the published host port. The applier and the cluster-backed status
+	// and logs commands resolve their cluster connection from it. Empty when
+	// k3s did not start.
 	KubeconfigPath string `json:"kubeconfigPath,omitempty"`
 	// K3sEnabled records whether the embedded Kubernetes layer came up. It
 	// is true on every host where the substrate provisioned (Linux
@@ -101,33 +122,89 @@ func removeState(path string) error {
 	return nil
 }
 
+// readRunningState loads the stack state from path and reports ok=true only
+// when a stack is recorded as running. It returns ok=false when no state file
+// exists and when the recorded state is the Stopped marker a non-`--purge`
+// lenny down leaves behind: a stopped stack persists its substrate handle and
+// deployed tag on disk but is not running, so the status, running-gateway,
+// running-substrate, and restart callers must read it as "no running stack".
+// The warm-reconcile read in Up uses readState directly so it still sees the
+// preserved DeployedImageTag.
+//
+// spec: §17.4 (a non-`--purge` lenny down stops the stack while persisting the
+// substrate and the imported-image store; lenny status then reports it not
+// running).
+func readRunningState(path string) (s State, ok bool, err error) {
+	st, ok, err := readState(path)
+	if err != nil || !ok {
+		return State{}, false, err
+	}
+	if st.Stopped {
+		return State{}, false, nil
+	}
+	return st, true, nil
+}
+
 // ErrNoRunningStack is returned by RunningGateway when no Embedded
 // Mode stack is recorded as running.
 var ErrNoRunningStack = errors.New("embedded: no running stack")
 
-// RunningGateway returns the plaintext HTTP URL of the running
-// Embedded Mode gateway (the value `lenny up` recorded in the stack
-// state file). It returns ErrNoRunningStack when no stack is
-// recorded, so callers can present a precise diagnostic instead of a
-// connect-refused error. The root argument selects the LENNY_HOME-
-// equivalent state directory; an empty root uses the default.
+// RunningGateway returns the loopback HTTPS URL of the running Embedded
+// Mode gateway: the host-side TLS forwarder address `lenny up` recorded in
+// the stack state file (§17.4 EMBEDDED_MODE_LOCAL_ONLY 127.0.0.1:8443). It
+// returns ErrNoRunningStack when no stack is recorded, so callers can
+// present a precise diagnostic instead of a connect-refused error. The
+// root argument selects the LENNY_HOME-equivalent state directory; an
+// empty root uses the default.
+//
+// spec: §17.4 (the CLI reaches the in-cluster gateway through the
+// loopback-only host-side forwarder).
 func RunningGateway(root string) (string, error) {
 	resolved, err := resolveRoot(root)
 	if err != nil {
 		return "", err
 	}
 	paths := NewPaths(resolved)
-	st, ok, err := readState(paths.StateFile())
+	st, ok, err := readRunningState(paths.StateFile())
 	if err != nil {
 		return "", err
 	}
 	if !ok {
 		return "", ErrNoRunningStack
 	}
-	if st.HTTPAddr == "" {
-		return "", fmt.Errorf("embedded: stack state at %s has no httpAddr", paths.StateFile())
+	if st.GatewayForwarderAddr == "" {
+		return "", fmt.Errorf("embedded: stack state at %s has no gatewayForwarderAddr", paths.StateFile())
 	}
-	return "http://" + st.HTTPAddr, nil
+	return "https://" + st.GatewayForwarderAddr, nil
+}
+
+// RunningKubeconfig returns the embedded k3s admin kubeconfig path recorded
+// by the running stack, so a local command can reach the in-cluster API
+// server (the §17.4 control plane the runtime-apply verb applies CRDs to). It
+// returns ErrNoRunningStack when no stack is recorded, so a caller can surface
+// the §24.19.1 EMBEDDED_MODE_REQUIRED diagnostic instead of a lower-level
+// kubeconfig-load error. The root argument selects the LENNY_HOME-equivalent
+// state directory; an empty root uses the default.
+//
+// spec: §17.4 (the in-cluster control plane is reached through the embedded
+// kubeconfig).
+func RunningKubeconfig(root string) (string, error) {
+	resolved, err := resolveRoot(root)
+	if err != nil {
+		return "", err
+	}
+	paths := NewPaths(resolved)
+	st, ok, err := readRunningState(paths.StateFile())
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", ErrNoRunningStack
+	}
+	if st.KubeconfigPath == "" {
+		return "", fmt.Errorf("embedded: stack state at %s has no kubeconfigPath", paths.StateFile())
+	}
+	return st.KubeconfigPath, nil
 }
 
 // Substrate describes how the embedded k3s is provisioned on the running
@@ -171,7 +248,7 @@ func RunningSubstrate(root string) (Substrate, error) {
 		return Substrate{}, err
 	}
 	paths := NewPaths(resolved)
-	st, ok, err := readState(paths.StateFile())
+	st, ok, err := readRunningState(paths.StateFile())
 	if err != nil {
 		return Substrate{}, err
 	}
@@ -179,15 +256,4 @@ func RunningSubstrate(root string) (Substrate, error) {
 		return Substrate{}, ErrNoRunningStack
 	}
 	return Substrate{Container: st.K3sContainer}, nil
-}
-
-// processAlive reports whether a process with the given PID is
-// currently running. A zero or negative PID is treated as not running.
-// The liveness probe itself (signal-0 on unix, OpenProcess on Windows)
-// lives in the build-tagged process-control substrate.
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	return pidAlive(pid)
 }

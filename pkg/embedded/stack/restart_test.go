@@ -4,48 +4,61 @@ package stack
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"testing"
-	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
-// spec: §24.19 line 264 — only the supervised child processes (gateway,
-// controller) are individually restartable; the in-process components
-// are cycled with down/up.
+// withClusterClient swaps the package-level cluster-client seam for the
+// duration of a test so the cluster-backed status, logs, and restart paths run
+// against an injected fake clientset rather than a real API server, then
+// restores it.
+func withClusterClient(t *testing.T, client kubernetes.Interface) {
+	t.Helper()
+	prev := clusterClientFn
+	t.Cleanup(func() { clusterClientFn = prev })
+	clusterClientFn = func(string) (kubernetes.Interface, error) { return client, nil }
+}
+
+// recordRunningStack writes a running-stack state file under LENNY_HOME with a
+// recorded kubeconfig path so the cluster-backed commands resolve a client
+// seam. The kubeconfig path need not exist because the client seam is injected.
+func recordRunningStack(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("LENNY_HOME", home)
+	paths := NewPaths(home)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	st := State{
+		K3sEnabled:           true,
+		KubeconfigPath:       "/state/k3s/kubeconfig.yaml",
+		GatewayForwarderAddr: "127.0.0.1:8443",
+	}
+	if err := writeState(paths.StateFile(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+	return home
+}
+
+// spec: §24.19 line 264 — the pod-backed components (gateway, controller,
+// ops Deployments) are individually restartable; the removed host-process
+// components are not.
 func TestRestartableComponents_spec_24_19_264(t *testing.T) {
-	if !Restartable("gateway") || !Restartable("controller") {
-		t.Error("gateway and controller must be restartable")
+	for _, name := range []string{"gateway", "controller", "ops"} {
+		if !Restartable(name) {
+			t.Errorf("Restartable(%q) = false, want true", name)
+		}
 	}
 	for _, name := range []string{"redis", "postgres", "oidc", "k3s", "supervisor", ""} {
 		if Restartable(name) {
 			t.Errorf("Restartable(%q) = true, want false", name)
 		}
-	}
-}
-
-// spec: §24.19 line 264 — an unrecognised component is rejected with a
-// message naming the restartable set rather than silently no-op'ing.
-func TestRestartComponentRejectsUnknown_spec_24_19_264(t *testing.T) {
-	s := &Stack{}
-	err := s.RestartComponent(context.Background(), "redis")
-	if err == nil {
-		t.Fatal("RestartComponent(redis) should error")
-	}
-	if !strings.Contains(err.Error(), "gateway and controller") {
-		t.Errorf("error = %v, want it to name the restartable components", err)
-	}
-}
-
-// A gateway restart with no retained spec (e.g. a Stack reconstructed
-// from disk rather than from Up) reports the limitation instead of
-// spawning a process with an empty binary path.
-func TestRestartComponentGatewayWithoutSpec(t *testing.T) {
-	s := &Stack{}
-	if err := s.RestartComponent(context.Background(), "gateway"); err == nil {
-		t.Fatal("RestartComponent(gateway) without a spec should error")
 	}
 }
 
@@ -75,107 +88,80 @@ func TestRunRestartNoStack_spec_24_19_264(t *testing.T) {
 	}
 }
 
-// A recorded stack whose supervisor PID is dead cannot service a restart
-// request; RunRestart fails fast rather than signalling a stale PID.
-func TestRunRestartDeadSupervisor(t *testing.T) {
+// TestRunRestartRollsDeployment covers the §24.19/§17.4 rollout-restart path:
+// against a recorded stack, RunRestart patches the named control-plane
+// Deployment's pod template with the restartedAt annotation through the
+// embedded kubeconfig, the same change kubectl rollout restart makes, so the
+// Deployment rolls without changing its desired spec. Each restartable
+// component maps to its Deployment.
+//
+// spec: §24.19 line 264 (the restart is a Deployment rollout-restart), §17.4
+// (the control plane runs as in-cluster Deployments).
+func TestRunRestartRollsDeployment_spec_24_19_264(t *testing.T) {
+	cases := []struct {
+		component  string
+		deployment string
+	}{
+		{"gateway", gatewayDeploymentName},
+		{"controller", controllerDeploymentName},
+		{"ops", opsDeploymentName},
+	}
+	for _, tc := range cases {
+		t.Run(tc.component, func(t *testing.T) {
+			recordRunningStack(t)
+			client := k8sfake.NewSimpleClientset(readyDeployment(tc.deployment, tc.component))
+			withClusterClient(t, client)
+
+			var out strings.Builder
+			if err := RunRestart(context.Background(), RestartOptions{Component: tc.component, Out: &out}); err != nil {
+				t.Fatalf("RunRestart(%s): %v", tc.component, err)
+			}
+			got, err := client.AppsV1().Deployments(controlPlaneNamespace).Get(context.Background(), tc.deployment, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("get rolled deployment: %v", err)
+			}
+			if _, ok := got.Spec.Template.Annotations[restartedAtAnnotation]; !ok {
+				t.Errorf("rolled Deployment %s carries no %s annotation; template annotations: %v",
+					tc.deployment, restartedAtAnnotation, got.Spec.Template.Annotations)
+			}
+			if !strings.Contains(out.String(), tc.component) {
+				t.Errorf("restart output %q does not name the rolled component", out.String())
+			}
+		})
+	}
+}
+
+// TestRunRestartMissingDeploymentFailsClosed covers the fail-closed path: a
+// recorded stack whose cluster does not carry the named Deployment surfaces the
+// patch failure rather than reporting a successful restart, so an operator is
+// not told a component rolled when it did not.
+//
+// spec: §24.19 line 264 (the restart targets a real Deployment).
+func TestRunRestartMissingDeploymentFailsClosed_spec_24_19_264(t *testing.T) {
+	recordRunningStack(t)
+	// An empty cluster carries no Deployments.
+	withClusterClient(t, k8sfake.NewSimpleClientset())
+	err := RunRestart(context.Background(), RestartOptions{Component: "gateway"})
+	if err == nil {
+		t.Fatal("RunRestart against a cluster with no gateway Deployment = nil, want a roll failure")
+	}
+}
+
+// TestRunRestartNoKubeconfigFailsClosed covers the path where a recorded stack
+// has no kubeconfig (the substrate did not come up): RunRestart fails closed
+// rather than building a client against an empty path.
+func TestRunRestartNoKubeconfigFailsClosed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LENNY_HOME", home)
 	paths := NewPaths(home)
 	if err := paths.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
-	// A PID above the kernel maximum is never alive.
-	if err := writeState(paths.StateFile(), State{SupervisorPID: 1 << 30, HTTPAddr: "127.0.0.1:8080"}); err != nil {
+	if err := writeState(paths.StateFile(), State{K3sEnabled: true}); err != nil {
 		t.Fatalf("writeState: %v", err)
 	}
 	err := RunRestart(context.Background(), RestartOptions{Component: "gateway"})
-	if err == nil || !strings.Contains(err.Error(), "not running") {
-		t.Errorf("error = %v, want a dead-supervisor error", err)
-	}
-}
-
-// handleRestartRequest is the supervisor's restart-wakeup body: it reads
-// the component name, restarts it, and writes the outcome so the separate
-// `lenny restart` process can report success or failure. The wakeup is an
-// OS-specific signal (SIGHUP on unix, a named event on Windows).
-func TestHandleRestartRequestWritesResult(t *testing.T) {
-	home := t.TempDir()
-	paths := NewPaths(home)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	if err := os.WriteFile(paths.RestartRequestFile(), []byte("redis\n"), 0o600); err != nil {
-		t.Fatalf("write request: %v", err)
-	}
-	s := &Stack{}
-	s.handleRestartRequest(context.Background(), paths)
-
-	if _, err := os.Stat(paths.RestartRequestFile()); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("request file should be cleared after handling, stat err = %v", err)
-	}
-	b, err := os.ReadFile(paths.RestartResultFile())
-	if err != nil {
-		t.Fatalf("read result: %v", err)
-	}
-	var res restartResult
-	if err := json.Unmarshal(b, &res); err != nil {
-		t.Fatalf("unmarshal result: %v", err)
-	}
-	if res.Component != "redis" || res.OK {
-		t.Errorf("result = %+v, want component=redis ok=false", res)
-	}
-	if res.Error == "" {
-		t.Error("a failed restart should record an error message")
-	}
-}
-
-// A spurious restart wakeup with no pending request is harmless: no
-// result file is produced.
-func TestHandleRestartRequestNoRequest(t *testing.T) {
-	home := t.TempDir()
-	paths := NewPaths(home)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	s := &Stack{}
-	s.handleRestartRequest(context.Background(), paths)
-	if _, err := os.Stat(paths.RestartResultFile()); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("no result file should be written for a missing request, stat err = %v", err)
-	}
-}
-
-func TestWaitRestartResultParses(t *testing.T) {
-	home := t.TempDir()
-	paths := NewPaths(home)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	want := restartResult{Component: "gateway", OK: true}
-	data, _ := json.Marshal(want)
-	if err := os.WriteFile(paths.RestartResultFile(), data, 0o600); err != nil {
-		t.Fatalf("write result: %v", err)
-	}
-	got, err := waitRestartResult(context.Background(), paths, 2*time.Second)
-	if err != nil {
-		t.Fatalf("waitRestartResult: %v", err)
-	}
-	if got.Component != "gateway" || !got.OK {
-		t.Errorf("result = %+v, want gateway ok=true", got)
-	}
-	// The result file is consumed so the next request starts clean.
-	if _, err := os.Stat(paths.RestartResultFile()); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("result file should be removed after reading, stat err = %v", err)
-	}
-}
-
-func TestWaitRestartResultTimesOut(t *testing.T) {
-	home := t.TempDir()
-	paths := NewPaths(home)
-	if err := paths.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	_, err := waitRestartResult(context.Background(), paths, 300*time.Millisecond)
-	if err == nil || !strings.Contains(err.Error(), "did not acknowledge") {
-		t.Errorf("error = %v, want a timeout error", err)
+	if err == nil || !strings.Contains(err.Error(), "kubeconfig") {
+		t.Errorf("error = %v, want a missing-kubeconfig rejection", err)
 	}
 }

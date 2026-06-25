@@ -133,14 +133,20 @@ func (d *dockerLauncher) GatewayHost() string {
 	return dockerHostAlias
 }
 
-// Start provisions the k3s container. It removes any stale container
-// under the same name, runs a new detached container that publishes the
-// API server on the host port with the same cluster-disabling flag set
-// the Linux launcher builds, waits for the in-container API server to
-// write its kubeconfig, then extracts that kubeconfig and rewrites its
-// server URL to the published host port. On an unsupported host (a
-// non-Linux host without Docker) it fails closed with the platform
-// diagnostic so the stack routes around the absent cluster.
+// Start provisions the k3s container. It first reuses a persisted
+// container left by a prior lenny up (a `docker start` of the stopped
+// container keeps its containerd image store, so a warm lenny up restarts
+// the embedded cluster without re-pulling k3s or re-importing the platform
+// images); on a fresh provision it runs a new detached container that
+// publishes the API server on the host port with the same cluster-disabling
+// flag set the Linux launcher builds. Either way it waits for the
+// in-container API server to write its kubeconfig, then extracts that
+// kubeconfig and rewrites its server URL to the published host port. On an
+// unsupported host (a non-Linux host without Docker) it fails closed with
+// the platform diagnostic so the stack routes around the absent cluster.
+//
+// spec: §17.4 (the substrate and the imported-image store persist across
+// lenny down/up; a warm lenny up restarts the persisted substrate).
 func (d *dockerLauncher) Start(ctx context.Context) error {
 	if !SupportedPlatform() {
 		return unsupportedPlatformError()
@@ -148,25 +154,48 @@ func (d *dockerLauncher) Start(ctx context.Context) error {
 	if err := os.MkdirAll(d.cfg.Dir, 0o755); err != nil {
 		return fmt.Errorf("embedded k3s: create %s: %w", d.cfg.Dir, err)
 	}
-	// Remove a stale container left by a prior run so the run below does
-	// not collide on the container name. A docker rm of an absent
-	// container is benign here; the error is ignored deliberately.
-	_, _ = d.runDocker(ctx, "rm", "-f", d.name)
-
 	runCtx, cancel := context.WithTimeout(ctx, d.cfg.DownloadTimeout)
 	defer cancel()
-	if out, err := d.runDocker(runCtx, d.runArgs()...); err != nil {
+	if d.containerExists(ctx) {
+		// A persisted container exists. Restart it rather than discarding its
+		// containerd image store. A `docker start` of an already-running
+		// container is benign, so a re-entrant lenny up converges.
+		if out, err := d.runDocker(runCtx, "start", d.name); err != nil {
+			// A persisted container that cannot restart (a docker upgrade
+			// changed its on-disk layout, say) is unrecoverable in place;
+			// remove it and provision fresh so the bring-up still succeeds.
+			_ = d.Remove()
+			if out2, err2 := d.runDocker(runCtx, d.runArgs()...); err2 != nil {
+				return fmt.Errorf("embedded k3s: restart persisted k3s container (%s): %w: %s; fresh provision: %w: %s",
+					bytes.TrimSpace(out), err, bytes.TrimSpace(out2), err2, bytes.TrimSpace(out2))
+			}
+		}
+	} else if out, err := d.runDocker(runCtx, d.runArgs()...); err != nil {
 		return fmt.Errorf("embedded k3s: docker run k3s: %w: %s", err, bytes.TrimSpace(out))
 	}
 	if err := d.waitReady(ctx); err != nil {
-		_ = d.Stop()
+		_ = d.Remove()
 		return err
 	}
 	if err := d.extractKubeconfig(ctx); err != nil {
-		_ = d.Stop()
+		_ = d.Remove()
 		return err
 	}
 	return nil
+}
+
+// containerExists reports whether a container under the launcher's name is
+// present (running or stopped). A persisted stopped container is reused by
+// Start rather than re-provisioned, so lenny up does not re-pull k3s or
+// re-import the platform images on a warm bring-up. Any docker error
+// (absent container, docker unavailable) reports not-present, fail-closed,
+// so Start provisions fresh rather than acting on a phantom container.
+func (d *dockerLauncher) containerExists(ctx context.Context) bool {
+	out, err := d.runDocker(ctx, "inspect", "-f", "{{.State.Status}}", d.name)
+	if err != nil {
+		return false
+	}
+	return len(bytes.TrimSpace(out)) > 0
 }
 
 // dockerHostGatewayMapping is the --add-host value that maps the
@@ -195,20 +224,31 @@ const dockerHostGatewayMapping = dockerHostAlias + ":host-gateway"
 // set), §4.7 (host.docker.internal carries the gateway↔adapter callback
 // across the host/Docker boundary).
 func (d *dockerLauncher) runArgs() []string {
-	return append([]string{
+	args := []string{
 		"run", "-d",
 		"--privileged",
 		"--name", d.name,
 		// Publish the in-container k3s API port to the host port so
-		// host-process controllers and the gateway reach the API server
-		// at 127.0.0.1:<APIPort>.
+		// the in-cluster control plane and the lenny CLI reach the API
+		// server at 127.0.0.1:<APIPort>.
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", d.cfg.APIPort, d.cfg.APIPort),
 		// Map host.docker.internal to the host gateway IP so an in-cluster
 		// agent pod's adapter reaches the host gateway's §8.6/§9.1
 		// GatewayControl listener across the host/Docker boundary.
 		"--add-host", dockerHostGatewayMapping,
-		containerImage,
-	}, d.serverArgs()...)
+	}
+	// Publish the in-VM gateway NodePort to host loopback so the host-side
+	// forwarder reaches the in-cluster gateway. The in-VM NodePort binds
+	// 0.0.0.0 on the node, but publishing only to 127.0.0.1 on the host keeps
+	// that bind contained inside the Docker VM, so the §17.4
+	// EMBEDDED_MODE_LOCAL_ONLY 0.0.0.0 fail-closed invariant holds: the
+	// gateway is reachable from the host on loopback alone (C4). spec: §17.4.
+	if d.cfg.GatewayNodePort != 0 {
+		args = append(args,
+			"-p", fmt.Sprintf("127.0.0.1:%d:%d", d.cfg.GatewayNodePort, d.cfg.GatewayNodePort))
+	}
+	args = append(args, containerImage)
+	return append(args, d.serverArgs()...)
 }
 
 // serverArgs builds the k3s server argv passed to the container. It is
@@ -273,10 +313,25 @@ func (d *dockerLauncher) extractKubeconfig(ctx context.Context) error {
 	return nil
 }
 
-// Stop removes the k3s container. Stop is idempotent and safe to call
-// before Start: a docker rm of an absent container is benign, so the
-// error is ignored.
+// Stop pauses the k3s container while persisting it: `docker stop` halts
+// the container but keeps it and its containerd image store on disk, so a
+// warm lenny up restarts it (Start `docker start`s the stopped container)
+// without re-pulling k3s or re-importing the platform images. Stop is
+// idempotent and safe to call before Start: a docker stop of an absent or
+// already-stopped container is benign, so the error is ignored. lenny down
+// (without --purge) calls Stop. spec: §17.4 (lenny down persists the
+// substrate and the imported-image store).
 func (d *dockerLauncher) Stop() error {
+	_, _ = d.runDocker(context.Background(), "stop", d.name)
+	return nil
+}
+
+// Remove force-removes the k3s container, discarding its containerd image
+// store. Remove is idempotent and safe to call before Start: a docker rm of
+// an absent container is benign, so the error is ignored. lenny down --purge
+// and a failed bring-up call Remove. spec: §17.4 (--purge removes the
+// persisted substrate and the imported-image store).
+func (d *dockerLauncher) Remove() error {
 	_, _ = d.runDocker(context.Background(), "rm", "-f", d.name)
 	return nil
 }
@@ -373,6 +428,27 @@ func ContainerRunning(name string) bool {
 		return false
 	}
 	return strings.TrimSpace(string(out)) == "true"
+}
+
+// StopContainer stops the named Docker-backed k3s container while
+// persisting it, mirroring dockerLauncher.Stop (`docker stop <name>`). lenny
+// down (without --purge) uses it from the recorded container handle to halt
+// the in-cluster control plane while keeping the container and its
+// containerd image store, so a warm lenny up restarts it. An empty name is a
+// no-op so the Linux child-process substrate (which records no container
+// handle) is skipped. A docker stop of an absent or already-stopped
+// container is benign, so the error is ignored; the call is bounded by a
+// timeout so a hung docker call does not stall teardown.
+//
+// spec: §17.4 (lenny down persists the substrate and the imported-image
+// store; --purge removes them).
+func StopContainer(name string) {
+	if name == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, _ = runDocker(ctx, "stop", name)
 }
 
 // RemoveContainer force-removes the named Docker-backed k3s container,
