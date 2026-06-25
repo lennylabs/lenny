@@ -101,6 +101,61 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 	}
 }
 
+// spec: §7.1 (pool selector, line 18 / line 75), §14.1 (CreateSessionRequest.pool)
+// diagnosis: a pinned pool whose profile differs from the deployment
+// default is rejected when the client omits isolationProfile. A failure
+// here means the gate passed the defaulted profile (the deployment
+// DefaultIsolationProfile) into ResolvePool's strict-equality isolation
+// filter, so a client that pinned a pool and deferred to its profile is
+// wrongly rejected 400 pool_not_satisfiable. C6a requires the named pool's
+// own profile to govern when the client requested none: the pool here is
+// microvm while the default is sandboxed, with isolationProfile omitted, so
+// it must schedule.
+func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	// The pinned pool runs the microvm profile, which differs from the
+	// deployment DefaultIsolationProfile (sandboxed) wired below. The client
+	// omits isolationProfile, deferring to the pool, so the gate must let the
+	// pool's own profile govern rather than reject on the defaulted profile.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("microvm-pool", "microvm-tmpl"),
+		podBindTemplate("microvm-tmpl", "echo", string(isolation.ProfileMicrovm)),
+		podBindIdleSandbox("sbx-mv", "microvm-pool", "10.244.2.7"),
+	)
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	registry := podsession.NewRegistry()
+
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-pin-defer" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		TenantAccess:            poolSelectTenantAccess(t, "microvm-pool"),
+	})
+
+	// No IsolationProfile in the body: the client defers to the pinned pool.
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
+		RuntimeRef: "echo", UserID: "alice@acme.com", Pool: "microvm-pool",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 when a pinned pool's profile differs from the default and isolationProfile is omitted; body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := registry.Get("sess-pin-defer"); !ok {
+		t.Fatal("registry holds no binding for the deferred-profile pinned-pool session")
+	}
+}
+
 // spec: §7.1 (pool selector), §14.1 (CreateSessionRequest.pool)
 // diagnosis: an unsatisfiable create-body pool pin is not rejected
 // fail-closed. A failure here means an absent, not-backed, or

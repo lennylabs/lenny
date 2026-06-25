@@ -561,7 +561,12 @@
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
         "pkg/session/...",
-        "tests/tier5_e2e_kind/eager_claim_e2e_test.go"
+        "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1",
+        "tests/tier9_security/pool_access_pin_test.go::TestCreateBodyPoolEnforcesTenantAccess_spec_4"
       ],
       "packages": [
         "pkg/session"

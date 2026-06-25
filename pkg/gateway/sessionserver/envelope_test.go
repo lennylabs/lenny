@@ -383,7 +383,16 @@ func TestCreateRejectsNegativeDelegationLease_spec_14(t *testing.T) {
 	}
 }
 
-func TestCreateEchoesPoolAndDelegationLease_spec_14(t *testing.T) {
+// TestCreateEchoesDelegationLease_spec_14 confirms the §14 delegationLease
+// envelope field round-trips through create to the response and the stored
+// row. The create-body `pool` selector is no longer exercised here: under
+// proposal 0018 C6a a pinned pool is honored or rejected against the warm-pool
+// inventory rather than accepted-echoed-ignored, so a pin against this
+// resolver-less server fails closed with 400 pool_selection_unavailable. The
+// pool honor/reject/store behavior is covered by the envtest-backed cases in
+// pool_selection_component_test.go.
+// spec: §14 (delegationLease envelope field), §14.1 (CreateSessionRequest).
+func TestCreateEchoesDelegationLease_spec_14(t *testing.T) {
 	store := memstore.New()
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
@@ -394,23 +403,16 @@ func TestCreateEchoesPoolAndDelegationLease_spec_14(t *testing.T) {
 	depth, kids := 2, 5
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:      "claude-code",
-		Pool:            "claude-worker-sandboxed-medium",
 		DelegationLease: &sessionstore.DelegationLeaseRequest{MaxDepth: &depth, MaxChildrenTotal: &kids, DelegationPolicyRef: "default-policy"},
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
 	resp := decodeCreate(t, rr)
-	if resp.Pool != "claude-worker-sandboxed-medium" {
-		t.Errorf("pool echo: got %q", resp.Pool)
-	}
 	if resp.DelegationLease == nil || resp.DelegationLease.MaxDepth == nil || *resp.DelegationLease.MaxDepth != 2 {
 		t.Errorf("delegationLease echo: got %+v", resp.DelegationLease)
 	}
 	row, _ := store.Get(context.Background(), "acme", "sess_pool")
-	if row.Pool != "claude-worker-sandboxed-medium" {
-		t.Errorf("stored pool: got %q", row.Pool)
-	}
 	if row.DelegationLeaseRequest == nil || row.DelegationLeaseRequest.DelegationPolicyRef != "default-policy" {
 		t.Errorf("stored delegationLease: got %+v", row.DelegationLeaseRequest)
 	}

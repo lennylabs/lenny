@@ -468,7 +468,13 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// before the claim so an unsatisfiable, unauthorized, or
 	// isolation-inconsistent pin fails fast before any pod is claimed.
 	// F-CS2 (0018).
-	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(isoProf), req.Pool) {
+	//
+	// spec: §7.1 line 18 / line 75 — pass the client's raw request profile
+	// (empty when omitted), not the defaulted isoProf, so a pinned pool's own
+	// profile governs the session's isolation and only an explicitly-requested
+	// inconsistent profile is rejected. See validateRequestEnvelope for the
+	// matching two-step-path rationale. F-CS2 (0018).
+	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool) {
 		return
 	}
 
@@ -509,7 +515,15 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// (same path as the two-step create flow). GET / List read the
 	// persisted values via toResponse so the rich envelope survives a
 	// coordinator handoff.
-	level := s.resolveIsolationLevel(r.Context(), runtimeRef, isoProf, req.Pool)
+	//
+	// spec: §7.1 line 18 / line 75 — when the client pins a pool and omits
+	// isolationProfile, the named pool's own profile governs, so resolve the
+	// level against the pool (effective requested profile empty) and persist
+	// the pool-derived profile on the row so the same-call claim
+	// (claimAtCreate re-resolves from row.IsolationProfile) is consistent
+	// with the pin. F-CS2 (0018).
+	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
+	level := s.resolveIsolationLevel(r.Context(), runtimeRef, effProf, req.Pool)
 	row := sessionstore.Session{
 		ID:               s.idFn(),
 		TenantID:         tenantID,
@@ -517,7 +531,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		RuntimeRef:       runtimeRef,
 		Environment:      req.Environment,
 		State:            session.StateRunning, // skip directly to running per §15.1
-		IsolationProfile: isoProf,
+		IsolationProfile: persistedRowProfile(level, isoProf),
 		// spec: §14.1 line 311 — persist the client-pinned pool so the
 		// same-call claim constrains resolution to it and a client that lost
 		// the response can recover its requested pool. F-CS2 (0018).
@@ -574,7 +588,10 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
 		row.RuntimeRef = afterRoute.RequestedRuntime
-		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf, req.Pool)
+		// spec: §7.1 line 18 / line 75 — re-resolve against the effective
+		// requested profile so a pinned pool's own profile still governs after
+		// a runtime-hint MODIFY. F-CS2 (0018).
+		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, effProf, req.Pool)
 		row.ExecutionMode = afterLevel.ExecutionMode
 		row.ScrubPolicy = afterLevel.ScrubPolicy
 		row.ConversationContinuity = afterLevel.ConversationContinuity

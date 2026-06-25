@@ -2402,11 +2402,17 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 
+	// spec: §7.1 line 18 / line 75 — when a pool is pinned and the client
+	// omits isolationProfile, the named pool's own profile governs, so every
+	// pool resolution on this create defers to the pool (effective requested
+	// profile empty) rather than the deployment default. F-CS2 (0018).
+	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
+
 	// spec: §15.1 line 797 — reject a create that would select a pool in
 	// the `draining` phase with 503 POOL_DRAINING + Retry-After before any
 	// pod claim. The gate resolves the same pool the session would bind
 	// to; it is inert in the Postgres-only posture (no pool binding). F-15.1.8.
-	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, isoProf, req.Pool) {
+	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, effProf, req.Pool) {
 		return
 	}
 
@@ -2458,7 +2464,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// (persistedIsolationLevel in toResponse), so a client that lost
 	// the create response or hits a different replica still sees the
 	// rich level the pool resolved to.
-	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, isoProf, req.Pool)
+	// spec: §7.1 line 18 / line 75 — resolve the level against effProf so a
+	// pinned pool's own profile governs, and persist the pool-derived profile
+	// on the row. The later claim re-resolves from row.IsolationProfile, so
+	// persisting the pool's profile keeps the claim consistent with the pin.
+	// F-CS2 (0018).
+	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, effProf, req.Pool)
 	row := sessionstore.Session{
 		ID:                     s.idFn(),
 		TenantID:               tenantID,
@@ -2466,7 +2477,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		RuntimeRef:             req.RuntimeRef,
 		Environment:            req.Environment,
 		State:                  session.StateCreated,
-		IsolationProfile:       isoProf,
+		IsolationProfile:       persistedRowProfile(level, isoProf),
 		ExecutionMode:          level.ExecutionMode,
 		ScrubPolicy:            level.ScrubPolicy,
 		ConversationContinuity: level.ConversationContinuity,
@@ -2683,6 +2694,42 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		}
 	}
 	return mirror, true, nil
+}
+
+// effectiveRequestedProfile is the §5.3 profile to resolve a session's
+// pool against. spec: §7.1 line 18 / line 75 — a client-pinned pool
+// overrides the default pool selection and the resolved level is
+// populated from the assigned pool's configuration, so when the client
+// pins a pool and omits isolationProfile the pool's own profile governs.
+// In that case the effective requested profile is empty, which lets
+// ResolvePool's `isolationProfile != ""` short-circuit defer to the named
+// pool rather than reject a pool whose profile differs from the deployment
+// default. When the client states a profile explicitly (clientRequested is
+// non-empty) that profile governs and an inconsistent pin is rejected;
+// when no pool is pinned the defaulted profile is used so the level still
+// resolves. clientRequested is the raw request field (empty when omitted);
+// defaulted is the validated profile with the deployment default applied.
+func effectiveRequestedProfile(clientRequested, defaulted isolation.Profile, pinnedPool string) isolation.Profile {
+	if pinnedPool != "" && clientRequested == "" {
+		return ""
+	}
+	return defaulted
+}
+
+// persistedRowProfile is the §5.3 profile to persist on the session row.
+// spec: §7.1 line 75 — the row.IsolationProfile is the source of truth the
+// same-call and later claim re-resolve the pool against, so it must reflect
+// the assigned pool's profile. The resolved level carries the pool's
+// profile when a pool was resolved (including a pinned pool whose profile
+// differs from the deployment default); when no pool resolved cleanly the
+// level falls back to the requested profile, which can be empty if the
+// client deferred to a pinned pool, so fall back to the validated defaulted
+// profile rather than persist an empty profile. F-CS2 (0018).
+func persistedRowProfile(level SessionIsolationLevel, defaulted isolation.Profile) isolation.Profile {
+	if level.IsolationProfile == "" {
+		return defaulted
+	}
+	return isolation.Profile(level.IsolationProfile)
 }
 
 // resolveIsolationLevel computes the §7.1 sessionIsolationLevel for a
