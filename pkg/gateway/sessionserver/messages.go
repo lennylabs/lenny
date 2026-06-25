@@ -31,6 +31,29 @@ import (
 // spec: §15.1 (SERVICE_UNAVAILABLE), §5.1 (injection fail-closed).
 const serviceUnavailableRetryAfterSeconds = 5
 
+// Injection-gate fail-closed cause labels for the
+// lenny_injection_gate_failclosed_total{cause} metric. They distinguish
+// which of the two backing stores the §5.1 injection gate consults
+// returned the transient error. spec: §5.1 (injection fail-closed).
+const (
+	injectionFailClosedCauseOverrideStore = "override_store"
+	injectionFailClosedCauseRuntimeStore  = "runtime_store"
+)
+
+// injectionFailClosedCause attributes a transient ResolveForTenant error
+// to the backing store that produced it. runtimecapoverride wraps an
+// override-store read failure with runtimecapoverride.ErrOverrideStore;
+// any other transient error came from the runtime registry. The label
+// keeps the runtime-store-versus-override-store distinction observable in
+// the metric even though the client code stays the coarse
+// SERVICE_UNAVAILABLE. spec: §5.1 (injection fail-closed).
+func injectionFailClosedCause(err error) string {
+	if errors.Is(err, runtimecapoverride.ErrOverrideStore) {
+		return injectionFailClosedCauseOverrideStore
+	}
+	return injectionFailClosedCauseRuntimeStore
+}
+
 // transcriptSortField is the only sort key valid on the §15.1
 // transcript: entries are written in monotonic `seq` order and that is
 // the only meaningful ordering. spec: §15.1 lines 1228, 1236.
@@ -313,13 +336,20 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		default:
 			// A transient read error from either backing store: fail
 			// closed. The granular "runtime-store read failed" versus
-			// "override-store read failed" cause is recorded in the
-			// gateway log rather than as a distinct client code, keeping
-			// the client surface coarse (the cause is not an authorization
-			// or existence oracle). spec: §5.1 (injection fail-closed),
-			// §15.1 (SERVICE_UNAVAILABLE).
-			log.Printf("sessionserver: §5.1 injection gate failed closed for session %s runtime %s: resolve error: %v",
-				row.ID, row.RuntimeRef, err)
+			// "override-store read failed" cause is recorded in both the
+			// gateway log and the lenny_injection_gate_failclosed_total
+			// metric rather than as a distinct client code, keeping the
+			// client surface coarse (the cause is not an authorization or
+			// existence oracle). The metric label lets an operator see the
+			// runtime-store-versus-override-store distinction the coarse
+			// SERVICE_UNAVAILABLE code hides. spec: §5.1 (injection
+			// fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+			cause := injectionFailClosedCause(err)
+			log.Printf("sessionserver: §5.1 injection gate failed closed for session %s runtime %s (cause=%s): resolve error: %v",
+				row.ID, row.RuntimeRef, cause, err)
+			if s.incInjectionGateFailClosed != nil {
+				s.incInjectionGateFailClosed(cause)
+			}
 			w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
 			s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
 				"runtime capability lookup is transiently unavailable; retry", nil)

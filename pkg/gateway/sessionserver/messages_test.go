@@ -424,30 +424,62 @@ func assertInjectionFailsClosed(t *testing.T, rr *httptest.ResponseRecorder) {
 	}
 }
 
+// failClosedRecorder captures the cause labels passed to the
+// lenny_injection_gate_failclosed_total{cause} metric hook so a test can
+// assert the §5.1 fail-closed branch records the granular backing-store
+// cause as a metric (the "and metrics" half of the §15.1 SERVICE_UNAVAILABLE
+// observability contract), not only as a log line.
+type failClosedRecorder struct{ causes []string }
+
+func (f *failClosedRecorder) inc(cause string) { f.causes = append(f.causes, cause) }
+
+// assertFailClosedMetric confirms the metric hook fired exactly once with
+// the expected backing-store cause label.
+// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+func assertFailClosedMetric(t *testing.T, rec *failClosedRecorder, wantCause string) {
+	t.Helper()
+	if len(rec.causes) != 1 {
+		t.Fatalf("lenny_injection_gate_failclosed_total fired %d times, want exactly 1 (causes=%v)", len(rec.causes), rec.causes)
+	}
+	if rec.causes[0] != wantCause {
+		t.Errorf("fail-closed metric cause=%q, want %q", rec.causes[0], wantCause)
+	}
+}
+
 // diagnosis: the §5.1 injection gate admitted mid-session injection on a
-// transient runtime-registry read error instead of failing closed; a
-// store blip is being treated as a definite "injection supported" answer.
+// transient runtime-registry read error instead of failing closed, or
+// failed closed without recording the granular cause as a metric; a
+// store blip is being treated as a definite "injection supported" answer
+// or the §15.1 SERVICE_UNAVAILABLE observability contract's metric half is
+// missing.
 // spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
 func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testing.T) {
 	store := memstore.New()
 	runtimes := transientRuntimeStore{Store: seedInjectionRuntime(t), err: errors.New("registry pg read timeout")}
+	rec := &failClosedRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		Executor:                   executor.NewEchoExecutor(),
+		Transcripts:                transcriptstore.NewMemory(),
+		Runtimes:                   runtimes,
+		IncInjectionGateFailClosed: rec.inc,
 	})
 	seedInjectionSession(t, store, "s1", "acme")
 	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
 	})
 	assertInjectionFailsClosed(t, rr)
+	// The runtime-registry read failed, so the metric records the
+	// runtime_store cause, distinguishing it from an override-store blip.
+	assertFailClosedMetric(t, rec, "runtime_store")
 }
 
 // diagnosis: the §5.1 injection gate admitted injection on a transient
 // per-tenant override-store read error, the F-5.1.20 tenant-narrowing
-// path the prior ResolveForTenant error swallow hid; the override-store
-// blip must fail closed rather than admit injection against the
-// un-overlaid (injection-on) base runtime.
+// path the prior ResolveForTenant error swallow hid, or failed closed
+// without recording the override_store cause as a metric; the override-
+// store blip must fail closed rather than admit injection against the
+// un-overlaid (injection-on) base runtime and must record the granular
+// cause in both logs and metrics.
 // spec: §5.1 line 49 (F-5.1.20 injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
 func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *testing.T) {
 	store := memstore.New()
@@ -455,17 +487,23 @@ func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t
 		Store: runtimecapoverride.NewMemory(),
 		err:   errors.New("override pg read timeout"),
 	}
+	rec := &failClosedRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:            executor.NewEchoExecutor(),
-		Transcripts:         transcriptstore.NewMemory(),
-		Runtimes:            seedInjectionRuntime(t),
-		CapabilityOverrides: overrides,
+		Executor:                   executor.NewEchoExecutor(),
+		Transcripts:                transcriptstore.NewMemory(),
+		Runtimes:                   seedInjectionRuntime(t),
+		CapabilityOverrides:        overrides,
+		IncInjectionGateFailClosed: rec.inc,
 	})
 	seedInjectionSession(t, store, "acme1", "acme")
 	rr := sendMessageRequest(t, srv.Handler(), "acme1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
 	})
 	assertInjectionFailsClosed(t, rr)
+	// The override-store read failed, so the metric records the
+	// override_store cause, the granular distinction the coarse
+	// SERVICE_UNAVAILABLE client code hides.
+	assertFailClosedMetric(t, rec, "override_store")
 }
 
 // diagnosis: the §5.1 injection gate stopped degrading open on a genuine

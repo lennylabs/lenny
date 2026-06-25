@@ -279,6 +279,16 @@ type Metrics struct {
 	// the gateway classified. F-7.5.9.
 	// spec: §16.1 line 124, §7.3 line 387.
 	warmpoolWarmupFailure *prometheus.CounterVec
+	// injectionGateFailClosed is the
+	// `lenny_injection_gate_failclosed_total{cause}` counter: incremented
+	// once per §5.1 injection-gate fail-closed occurrence when a backing
+	// store the gate consults returns a transient read error. cause is
+	// "runtime_store" or "override_store", recording the granular cause
+	// behind the coarse SERVICE_UNAVAILABLE client code as a metric so the
+	// runtime-store-versus-override-store distinction stays observable.
+	// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE) —
+	// F-5.1.20.
+	injectionGateFailClosed *prometheus.CounterVec
 	// workspaceSealDuration is the §7.1 line 112 seal-and-export
 	// completion-time histogram. Observed once per terminal session at
 	// teardown. Labels: `pool` (the session runtime) and `outcome`
@@ -1698,6 +1708,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §5.1 injection fail-closed — `lenny_injection_gate_failclosed_total
+	// {cause}` records the granular backing-store cause (runtime_store |
+	// override_store) behind a coarse SERVICE_UNAVAILABLE when the §5.1
+	// injection gate fails closed on a transient store read. F-5.1.20.
+	injectionGateFailClosed, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_injection_gate_failclosed_total",
+		Help: "§5.1 injection-gate fail-closed occurrences by backing-store cause (runtime_store | override_store).",
+	}, []string{"cause"})
+	if err != nil {
+		return nil, err
+	}
 	// §7.1 line 112 — `lenny_workspace_seal_duration_seconds` tracks
 	// seal-and-export completion time across all terminal sessions,
 	// labeled by `pool` (session runtime) and `outcome` (success |
@@ -2743,6 +2764,7 @@ func New() (*Metrics, error) {
 		sessionTimeToFirstToken, warmpoolClaims, warmpoolSDKDemotions, warmpoolSDKDemotionDuration,
 		sessionRetryTotal, sessionResumeAttempts, sessionExpiry,
 		warmpoolWarmupFailure,
+		injectionGateFailClosed,
 		workspaceSealDuration,
 		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
@@ -2974,6 +2996,7 @@ func New() (*Metrics, error) {
 		sessionResumeAttempts:                sessionResumeAttempts,
 		sessionExpiry:                        sessionExpiry,
 		warmpoolWarmupFailure:                warmpoolWarmupFailure,
+		injectionGateFailClosed:              injectionGateFailClosed,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
@@ -3521,6 +3544,21 @@ func (m *Metrics) IncWarmpoolWarmupFailure(errorType string) {
 		return
 	}
 	m.warmpoolWarmupFailure.WithLabelValues(errorType).Inc()
+}
+
+// IncInjectionGateFailClosed increments the
+// `lenny_injection_gate_failclosed_total{cause}` counter once per §5.1
+// injection-gate fail-closed occurrence. cause is "runtime_store" when the
+// runtime-registry read failed and "override_store" when the per-tenant
+// capability-override read failed, recording the granular backing-store
+// cause behind the coarse SERVICE_UNAVAILABLE client code as a metric.
+// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE) —
+// F-5.1.20.
+func (m *Metrics) IncInjectionGateFailClosed(cause string) {
+	if m == nil {
+		return
+	}
+	m.injectionGateFailClosed.WithLabelValues(cause).Inc()
 }
 
 // ObserveWorkspaceSealDuration records the §7.1 line 112

@@ -163,6 +163,32 @@ func TestResolveForTenant_OverrideStoreErrorPropagates_spec_5_1_49(t *testing.T)
 	}
 }
 
+// spec: §5.1 line 49 — F-5.1.20: the propagated override-store read error
+// is tagged with runtimecapoverride.ErrOverrideStore so the §5.1 injection
+// gate can attribute its fail-closed metric to the override store rather
+// than the runtime registry, while the underlying cause stays inspectable
+// through the %w chain.
+func TestResolveForTenant_OverrideStoreErrorTaggedWithCause_spec_5_1_49(t *testing.T) {
+	ctx := context.Background()
+	rs := seedRuntime(t)
+	_, err := runtimecapoverride.ResolveForTenant(ctx, rs, erroringStore{}, "acme", "claude-code")
+	if err == nil {
+		t.Fatal("expected the transient override-store read error to propagate")
+	}
+	if !errors.Is(err, runtimecapoverride.ErrOverrideStore) {
+		t.Errorf("override-store error not tagged with ErrOverrideStore: %v", err)
+	}
+	// A runtime-registry read error is NOT tagged with ErrOverrideStore, so
+	// the injection gate attributes it to the runtime store instead.
+	_, rerr := runtimecapoverride.ResolveForTenant(ctx, rs, erroringStore{}, "acme", "nope")
+	if rerr == nil {
+		t.Fatal("expected an error resolving an unknown runtime")
+	}
+	if errors.Is(rerr, runtimecapoverride.ErrOverrideStore) {
+		t.Errorf("a runtime-registry not-found must not be tagged ErrOverrideStore: %v", rerr)
+	}
+}
+
 // notFoundStore reports no override (ok=false, err=nil) for every key,
 // the genuine not-found case ResolveForTenant must keep degrading open.
 type notFoundStore struct{ runtimecapoverride.Store }

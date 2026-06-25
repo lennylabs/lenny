@@ -118,6 +118,25 @@ func assertInjectionGateFailedClosed(t *testing.T, rr *httptest.ResponseRecorder
 	}
 }
 
+// failClosedCauseRecorder captures the cause labels passed to the
+// lenny_injection_gate_failclosed_total{cause} metric hook so the security
+// tier can assert the §5.1 fail-closed branch records the granular
+// backing-store cause as a metric, the "and metrics" half of the §15.1
+// SERVICE_UNAVAILABLE observability contract.
+type failClosedCauseRecorder struct{ causes []string }
+
+func (f *failClosedCauseRecorder) inc(cause string) { f.causes = append(f.causes, cause) }
+
+func assertFailClosedCause(t *testing.T, rec *failClosedCauseRecorder, wantCause string) {
+	t.Helper()
+	if len(rec.causes) != 1 {
+		t.Fatalf("lenny_injection_gate_failclosed_total fired %d times, want exactly 1 (causes=%v)", len(rec.causes), rec.causes)
+	}
+	if rec.causes[0] != wantCause {
+		t.Errorf("fail-closed metric cause=%q, want %q", rec.causes[0], wantCause)
+	}
+}
+
 // diagnosis: the §5.1 injection gate admitted mid-session injection on a
 // transient per-tenant override-store read error, the F-5.1.20
 // tenant-narrowing path the prior ResolveForTenant error swallow hid. A
@@ -132,11 +151,13 @@ func TestInjectionGateFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *te
 		Store: runtimecapoverride.NewMemory(),
 		err:   errors.New("override store pg read timeout"),
 	}
+	rec := &failClosedCauseRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:            executor.NewEchoExecutor(),
-		Transcripts:         transcriptstore.NewMemory(),
-		Runtimes:            seedInjectionCapableRuntime(t),
-		CapabilityOverrides: overrides,
+		Executor:                   executor.NewEchoExecutor(),
+		Transcripts:                transcriptstore.NewMemory(),
+		Runtimes:                   seedInjectionCapableRuntime(t),
+		CapabilityOverrides:        overrides,
+		IncInjectionGateFailClosed: rec.inc,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -147,6 +168,9 @@ func TestInjectionGateFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *te
 	}
 	rr := postInjectionMessage(t, srv.Handler(), "acme1", "acme")
 	assertInjectionGateFailedClosed(t, rr)
+	// The fail-closed branch must record the granular override-store cause
+	// as a metric so the F-5.1.20 path is observable beyond the log line.
+	assertFailClosedCause(t, rec, "override_store")
 }
 
 // diagnosis: the §5.1 injection gate admitted injection on a transient
