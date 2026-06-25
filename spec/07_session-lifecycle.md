@@ -130,7 +130,7 @@ Once a session is attached, the client interacts via a **Lenny session** with bi
 
 | Event                                          | Description                                                                                                                 |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `agent_output(parts: OutputPart[])`            | Streaming output from the agent (replaces `agent_text`)                                                                     |
+| `agent_output(parts: MessagePart[])`            | Streaming output from the agent (replaces `agent_text`)                                                                     |
 | `tool_use_requested(tool_call_id, tool, args)` | Agent wants to call a tool (if approval required)                                                                           |
 | `tool_result(tool_call_id, result)`            | Result of a tool call                                                                                                       |
 | `elicitation_request(elicitation_id, schema)`  | Agent/tool needs user input                                                                                                 |
