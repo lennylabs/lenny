@@ -5,6 +5,7 @@ package stack
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 
@@ -24,15 +25,14 @@ import (
 // CRD enforces on spec.image at the embedded API server
 // (+kubebuilder:validation:Pattern=`@sha256:[A-Fa-f0-9]{64}$` in
 // pkg/apis/lenny/v1alpha1/runtime_types.go; embedded copy
-// pkg/embedded/crds/lenny.dev_runtimes.yaml). The pattern is reproduced here so
-// the verb fails closed with a clear, actionable message before apply when a
-// runtime file carries a tag-based image (the docker-build output a runtime
-// author starts from, for example `my-agent:dev`), rather than letting the
-// write reach the API server and surface a raw OpenAPI pattern rejection. The
-// CRD pattern is unanchored at the start and anchored at the end ($), the same
-// match the API server applies, so any reference this gate accepts the API
-// server also accepts and any it rejects the API server also rejects. spec: §5.3
-// (digest-pinned image references), §17.4 (the runtime-apply verb).
+// pkg/embedded/crds/lenny.dev_runtimes.yaml). The verb compares the parsed
+// image against it to decide whether the reference is already digest-pinned
+// (apply it as written) or tag-based (resolve its content digest from the
+// embedded containerd store first). Any reference this pattern matches the
+// API server also accepts; any it does not match the verb resolves to a
+// digest-pinned form so the apply never reaches the API server with a
+// tag-based image. spec: §5.3 (digest-pinned image references), §17.4 (the
+// runtime-apply verb).
 var runtimeImageDigestPattern = regexp.MustCompile(`@sha256:[A-Fa-f0-9]{64}$`)
 
 // The §4.6.2 pool defaults the runtime-apply verb stamps onto the derived
@@ -62,18 +62,43 @@ const (
 	runtimeApplyResourceClass    = echoPoolResourceClass
 )
 
-// RunRuntimeApply parses the runtime file at path, assembles the runtime's
-// Runtime, SandboxTemplate, and SandboxWarmPool CRD set, and applies the set
-// to the embedded cluster reachable through kubeconfigPath. It is the
-// generalized, runtime-agnostic counterpart of the echo seed's direct pool
-// materialization: under the §17.4 no-Postgres development profile no
-// PoolScalingController runs to project a poolstore row into a SandboxWarmPool
-// CRD, and `lenny-ctl runtime register` writes only the runtime-registry
-// record, so without this set a custom runtime registered through the
-// walkthrough has no Runtime CRD and no pool and ResolvePool returns
-// ErrNoMatchingPool. The verb applies the set so the Sandbox controller
-// resolves the runtime by name and the unconditionally-registered
-// WarmPoolController reconciles the pool to a warm pod.
+// imageDigestResolver resolves a tag-based image reference to the §5.3
+// digest-pinned form the Runtime CRD requires, by reading the content digest
+// the embedded containerd recorded for the image. It is the verb's seam onto
+// the same store-digest resolution the echo seed performs at bring-up
+// (resolveImportedDigest), so a runtime-author's locally-imported tag-based
+// image (the `my-agent:dev` the §17.4 walkthrough's `lenny image import`
+// loads) applies cleanly without the author hand-resolving a digest. A unit
+// test substitutes it to drive the resolve/accept/fail-closed branches
+// without a live containerd. spec: §5.3 (digest-pinned image references),
+// §17.4 (the runtime-author walkthrough imports a tag-based dev image).
+type imageDigestResolver func(repository string) (digest string, err error)
+
+// RunRuntimeApply parses the runtime file at path, resolves a tag-based
+// spec.image to its §5.3 digest-pinned form against the running embedded
+// stack's containerd, assembles the runtime's Runtime, SandboxTemplate, and
+// SandboxWarmPool CRD set, and applies the set to the embedded cluster
+// reachable through kubeconfigPath. It is the generalized, runtime-agnostic
+// counterpart of the echo seed's direct pool materialization: under the §17.4
+// no-Postgres development profile no PoolScalingController runs to project a
+// poolstore row into a SandboxWarmPool CRD, and `lenny-ctl runtime register`
+// writes only the runtime-registry record, so without this set a custom
+// runtime registered through the walkthrough has no Runtime CRD and no pool
+// and ResolvePool returns ErrNoMatchingPool. The verb applies the set so the
+// Sandbox controller resolves the runtime by name and the
+// unconditionally-registered WarmPoolController reconciles the pool to a warm
+// pod.
+//
+// The walkthrough's runtime-crds.yaml carries the tag the author built and
+// imported (`image: my-agent:dev`); the §5.3 Runtime CRD pattern requires a
+// digest, so the verb resolves the tag's content digest from the embedded
+// containerd store (where `lenny image import` already loaded the image) and
+// applies the digest-pinned reference. This keeps the documented walkthrough
+// frictionless for a locally-imported tag-based dev image while the applied
+// Runtime stays digest-pinned, so the API server accepts it. The verb fails
+// closed when the tag names no image in the store, pointing the author at the
+// missing `lenny image import` step rather than letting the apply surface a
+// raw OpenAPI pattern rejection.
 //
 // The SandboxTemplate/SandboxWarmPool pair is applied through the C1
 // dynamic-apply path (applyObjects), and the Runtime CR through the same
@@ -83,10 +108,14 @@ const (
 //
 // spec: §17.4 (the runtime-apply verb materializes the CRD set without a
 // PoolScalingController), §5.2 (ResolvePool lists the applied SandboxWarmPool),
-// §4.6.2 (direct pool materialization).
+// §5.3 (the applied Runtime is digest-pinned), §4.6.2 (direct pool
+// materialization).
 func RunRuntimeApply(ctx context.Context, kubeconfigPath, path string) error {
 	rt, err := loadRuntimeFile(path)
 	if err != nil {
+		return err
+	}
+	if err := resolveRuntimeImage(rt, substrateDigestResolver); err != nil {
 		return err
 	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
@@ -96,17 +125,79 @@ func RunRuntimeApply(ctx context.Context, kubeconfigPath, path string) error {
 	return ApplyRuntimeSetFromConfig(ctx, cfg, rt)
 }
 
+// substrateDigestResolver builds an imageDigestResolver bound to the running
+// embedded stack's containerd, the same store the echo seed and `lenny image`
+// reach through CtrCommand. It is a resolverFactory: resolveRuntimeImage calls
+// it only when the runtime file carries a tag-based image that needs
+// resolving, so an already-digest-pinned apply does not require containerd
+// reachability. It fails closed when no stack is reachable (K3S_UNAVAILABLE /
+// no running stack), because resolving a tag-based image requires the local
+// store the image was imported into. spec: §24.19.1 (the image bridge reaches
+// the embedded containerd store), §5.3 (digest resolution for the applied
+// Runtime).
+func substrateDigestResolver() (imageDigestResolver, error) {
+	ctr, code := CtrCommand(io.Discard)
+	if code != 0 {
+		return nil, fmt.Errorf("embedded runtime apply: the embedded stack is not reachable to resolve "+
+			"a tag-based image digest; run 'lenny up' first (exit %d)", code)
+	}
+	return func(repository string) (string, error) {
+		return resolveImportedDigest(ctr, echoImageNamespace, repository, io.Discard)
+	}, nil
+}
+
+// resolverFactory lazily builds an imageDigestResolver. resolveRuntimeImage
+// invokes it only for a tag-based image, so the substrate-reachability cost
+// (and failure mode) of building the resolver is paid only when a digest
+// actually has to be resolved. A unit test passes a factory that returns a
+// fake resolver without touching containerd.
+type resolverFactory func() (imageDigestResolver, error)
+
+// resolveRuntimeImage normalizes rt.Spec.Image to the §5.3 digest-pinned form
+// the Runtime CRD requires. A reference already carrying an `@sha256:<64-hex>`
+// digest (a §26 reference runtime or a registry-pulled image) is left as
+// written and newResolver is never called. A tag-based reference (the
+// `my-agent:dev` the §17.4 walkthrough builds and imports) is resolved to its
+// content digest from the embedded containerd store and rewritten to
+// `<repository>@sha256:<digest>`, so the applied Runtime is digest-pinned and
+// the API server accepts it. It fails closed when the store is unreachable or
+// the tag names no image in it, with a message pointing the author at the
+// `lenny image import` step the walkthrough runs first, rather than letting
+// the write surface a raw OpenAPI pattern rejection deep in the apply. spec:
+// §5.3 (digest-pinned image references), §17.4 (the walkthrough imports a
+// tag-based dev image before applying the runtime).
+func resolveRuntimeImage(rt *lennyv1alpha1.Runtime, newResolver resolverFactory) error {
+	if runtimeImageDigestPattern.MatchString(rt.Spec.Image) {
+		return nil
+	}
+	resolve, err := newResolver()
+	if err != nil {
+		return err
+	}
+	repository := imageRepository(rt.Spec.Image)
+	digest, err := resolve(repository)
+	if err != nil {
+		return fmt.Errorf(
+			"embedded runtime apply: spec.image %q is tag-based and the §5.3 Runtime CRD pattern requires a "+
+				"digest; resolving its digest from the embedded containerd store failed: %w. "+
+				"Run 'lenny image import %s' first so the image is in the store",
+			rt.Spec.Image, err, rt.Spec.Image,
+		)
+	}
+	rt.Spec.Image = repository + "@" + digest
+	return nil
+}
+
 // loadRuntimeFile reads path and decodes the single Runtime resource it
 // carries. The §17.4 walkthrough's runtime-crds.yaml is a one-document
-// Runtime; a missing name, an empty image, or a tag-based (non-digest-pinned)
-// image is rejected so the verb fails closed rather than applying an
-// unresolvable CRD set the API server would reject partway through. The image
-// check mirrors the §5.3 supply-chain pattern the Runtime CRD enforces at the
-// API server, so a runtime author who starts from a tag-based docker-build
-// reference (for example `my-agent:dev`) gets an actionable message naming the
-// digest-pinned form rather than a raw OpenAPI pattern rejection deep in the
-// apply. spec: §5.1 (the Runtime declarative record), §5.3 (digest-pinned
-// images).
+// Runtime; a missing name or an empty image is rejected so the verb fails
+// closed rather than applying an unresolvable CRD set the API server would
+// reject partway through. The image is not required to be digest-pinned here:
+// resolveRuntimeImage rewrites a tag-based reference to its digest-pinned
+// form against the embedded containerd store before apply, so the
+// walkthrough's `image: my-agent:dev` is accepted and resolved rather than
+// rejected. spec: §5.1 (the Runtime declarative record), §5.3 (digest-pinned
+// images, satisfied by resolveRuntimeImage before apply).
 func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -122,14 +213,6 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 	if rt.Spec.Image == "" {
 		return nil, fmt.Errorf("embedded runtime apply: %s carries no spec.image", path)
 	}
-	if !runtimeImageDigestPattern.MatchString(rt.Spec.Image) {
-		return nil, fmt.Errorf(
-			"embedded runtime apply: %s spec.image %q must be digest-pinned (@sha256:<64-hex>); "+
-				"a tag-based reference is rejected by the Runtime CRD's §5.3 supply-chain pattern. "+
-				"Use the digest from 'lenny image import' output, e.g. my-agent@sha256:<digest>",
-			path, rt.Spec.Image,
-		)
-	}
 	return &rt, nil
 }
 
@@ -139,9 +222,12 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 // upsert (the Runtime CR). It is split from RunRuntimeApply so a tier-2 envtest
 // drives the same apply path against a real kube-apiserver with the lenny.dev
 // CRDs installed, without writing a kubeconfig file, the way
-// ApplyEchoPoolFromConfig exposes the echo seed's apply. The Runtime CR is
-// applied first (the SandboxTemplate's runtimeRef points at it), then the
-// SandboxTemplate and SandboxWarmPool pair. spec: §17.4, §4.6.2.
+// ApplyEchoPoolFromConfig exposes the echo seed's apply. The caller is
+// responsible for digest-resolving rt.Spec.Image (RunRuntimeApply does this
+// via resolveRuntimeImage); rt reaching here carries the digest-pinned image
+// the §5.3 CRD pattern accepts. The Runtime CR is applied first (the
+// SandboxTemplate's runtimeRef points at it), then the SandboxTemplate and
+// SandboxWarmPool pair. spec: §17.4, §5.3, §4.6.2.
 func ApplyRuntimeSetFromConfig(ctx context.Context, cfg *rest.Config, rt *lennyv1alpha1.Runtime) error {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(lennyv1alpha1.AddToScheme(scheme))
@@ -169,11 +255,10 @@ func ApplyRuntimeSetFromConfig(ctx context.Context, cfg *rest.Config, rt *lennyv
 // may omit (type → agent, executionMode → session, isolationProfile →
 // standard, deploymentModel → sidecar, the §17.4 walkthrough default), so a
 // minimal runtime-crds.yaml carrying only name, image, and integrationLevel
-// applies cleanly. The image is passed through as written: loadRuntimeFile has
-// already rejected any non-digest-pinned reference against the §5.3
-// supply-chain pattern the CRD enforces, so the image reaching here is
-// digest-pinned and the API server accepts it. spec: §5.1 (Runtime defaults),
-// §4.7 (sidecar default deployment model).
+// applies cleanly. The image is passed through as resolveRuntimeImage left it:
+// a digest-pinned reference the §5.3 supply-chain pattern the CRD enforces
+// accepts. spec: §5.1 (Runtime defaults), §4.7 (sidecar default deployment
+// model).
 func runtimeCRFromFile(rt *lennyv1alpha1.Runtime) *lennyv1alpha1.Runtime {
 	spec := rt.Spec
 	if spec.Type == "" {

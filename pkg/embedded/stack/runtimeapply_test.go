@@ -3,6 +3,7 @@
 package stack
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,9 +63,11 @@ spec:
 // TestLoadRuntimeFileFailsClosed_spec_5_1 covers the fail-closed loader: a
 // missing file, a Runtime with no name, and a Runtime with no image are each
 // rejected before any apply, so the verb does not apply an unresolvable CRD
-// set the API server would reject partway through.
+// set the API server would reject partway through. A tag-based image is not
+// rejected here: resolveRuntimeImage rewrites it to a digest before apply
+// (see TestResolveRuntimeImage_spec_5_3).
 //
-// spec: §5.1 (a Runtime record requires a name and a digest-pinned image).
+// spec: §5.1 (a Runtime record requires a name and an image).
 func TestLoadRuntimeFileFailsClosed_spec_5_1(t *testing.T) {
 	if _, err := loadRuntimeFile(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
 		t.Error("loadRuntimeFile accepted a missing file, want an error")
@@ -89,75 +92,134 @@ spec:
 	}
 }
 
-// TestLoadRuntimeFileRejectsTagBasedImage_spec_5_3 covers the §5.3
-// digest-pinned-image fail-closed gate for the exact tag-based reference a
-// runtime author builds with `docker build -t my-agent:dev`, which the §17.4
-// walkthrough's docker-build step produces. The Runtime CRD enforces the
-// `@sha256:[A-Fa-f0-9]{64}$` pattern at the API server, so the verb must reject
-// a tag-based image before apply with an actionable digest-pinned message
-// rather than letting the write surface a raw OpenAPI pattern rejection. The
-// other tag and malformed-digest cases pin the pattern boundary: a tag-only
-// reference, a bare `@sha256:` with no hex, a too-short digest, and a digest
-// with a trailing tag suffix (so the `$` end anchor is load-bearing) are all
-// rejected, matching exactly what the API server rejects.
+// testDigest is the 64-hex content digest a fake resolver returns for the
+// imported walkthrough image, standing in for what `ctr images ls` reports
+// after `lenny image import my-agent:dev`.
+const testDigest = "5555555555555555555555555555555555555555555555555555555555555555"
+
+// TestResolveRuntimeImage_spec_5_3 covers the §5.3 digest normalization the
+// verb performs before apply, so the §17.4 walkthrough's tag-based
+// `image: my-agent:dev` applies as a digest-pinned Runtime the CRD accepts.
 //
-// spec: §5.3 (digest-pinned image references), §17.4 (the walkthrough's
-// docker-build output).
-func TestLoadRuntimeFileRejectsTagBasedImage_spec_5_3(t *testing.T) {
-	// The exact image string the §17.4 walkthrough's docker-build step and its
-	// runtime-crds.yaml carry. Pinning it here keeps code and the documented
-	// walkthrough from drifting: if the spec walkthrough switches to a
-	// digest-pinned reference this case must be revisited.
-	const walkthroughTagImage = "my-agent:dev"
-	rejected := []string{
-		walkthroughTagImage,
-		"my-agent",
-		"ghcr.io/lennylabs/runtime-my-agent@sha256:",
-		"ghcr.io/lennylabs/runtime-my-agent@sha256:abc123",
-		// A valid digest with a trailing tag suffix: the $ end anchor must
-		// reject it, the same as the CRD pattern.
-		testRuntimeImage + ":dev",
+// The walkthrough builds and imports a tag-based image (`docker build -t
+// my-agent:dev` / `lenny image import my-agent:dev`) and writes that tag into
+// runtime-crds.yaml. The Runtime CRD enforces the `@sha256:[A-Fa-f0-9]{64}$`
+// pattern at the API server, so the verb resolves the tag's content digest
+// from the embedded containerd store (the same resolveImportedDigest the echo
+// seed uses) and rewrites spec.image to `<repository>@sha256:<digest>`. This
+// keeps the documented walkthrough frictionless for a locally-imported dev
+// image while the applied Runtime stays digest-pinned. The verb fails closed
+// when the tag names no image in the store, pointing the author at the
+// `lenny image import` step rather than letting the write surface a raw
+// OpenAPI pattern rejection.
+//
+// The cases pin: a tag-only reference and a registry/tag reference are both
+// resolved to the digest-pinned form keyed on their repository; an
+// already-digest-pinned reference (a §26 reference runtime) is passed through
+// unchanged with the resolver never consulted; and a tag the store does not
+// know fails closed with an actionable message.
+//
+// spec: §5.3 (digest-pinned image references), §17.4 (the walkthrough imports
+// a tag-based dev image before applying the runtime).
+func TestResolveRuntimeImage_spec_5_3(t *testing.T) {
+	// A resolver factory that returns a resolver yielding testDigest for the
+	// repository the verb extracts from the tag, recording the repository it
+	// was asked for so the test can assert the verb strips the tag before
+	// resolving.
+	var askedFor string
+	resolve := func() (imageDigestResolver, error) {
+		return func(repository string) (string, error) {
+			askedFor = repository
+			return "sha256:" + testDigest, nil
+		}, nil
 	}
-	for _, img := range rejected {
-		// Quote the image in the YAML: a reference ending in `@sha256:` or a
-		// `:dev` tag carries a colon that an unquoted YAML scalar parses as a
-		// mapping value. Quoting isolates the test to the digest gate rather
-		// than the YAML decode.
-		path := writeRuntimeFile(t, `apiVersion: lenny.dev/v1alpha1
-kind: Runtime
-metadata:
-  name: my-agent
-spec:
-  image: "`+img+`"
-  integrationLevel: basic
-`)
-		_, err := loadRuntimeFile(path)
-		if err == nil {
-			t.Errorf("loadRuntimeFile accepted tag/malformed image %q, want a digest-pinned rejection", img)
+
+	// The exact image string the §17.4 walkthrough's docker-build step and its
+	// runtime-crds.yaml carry. Pinning it here keeps the code and the
+	// documented walkthrough aligned: the verb must accept and resolve this
+	// literal so the walkthrough works as written.
+	const walkthroughTagImage = "my-agent:dev"
+	resolveCases := []struct {
+		image    string
+		wantRepo string
+	}{
+		{walkthroughTagImage, "my-agent"},
+		{"my-agent", "my-agent"},
+		{"ghcr.io/acme/my-agent:dev", "ghcr.io/acme/my-agent"},
+	}
+	for _, tc := range resolveCases {
+		rt := &lennyv1alpha1.Runtime{}
+		rt.Name = "my-agent"
+		rt.Spec.Image = tc.image
+		askedFor = ""
+		if err := resolveRuntimeImage(rt, resolve); err != nil {
+			t.Errorf("resolveRuntimeImage(%q): %v", tc.image, err)
 			continue
 		}
-		if !strings.Contains(err.Error(), "digest-pinned") {
-			t.Errorf("loadRuntimeFile(%q) error = %q, want a digest-pinned message", img, err.Error())
+		if askedFor != tc.wantRepo {
+			t.Errorf("resolveRuntimeImage(%q) resolved repository %q, want %q", tc.image, askedFor, tc.wantRepo)
+		}
+		want := tc.wantRepo + "@sha256:" + testDigest
+		if rt.Spec.Image != want {
+			t.Errorf("resolveRuntimeImage(%q) = %q, want %q", tc.image, rt.Spec.Image, want)
+		}
+		if !runtimeImageDigestPattern.MatchString(rt.Spec.Image) {
+			t.Errorf("resolved image %q is not digest-pinned; the API server would reject it", rt.Spec.Image)
 		}
 	}
 
-	// A digest-pinned image (with and without a registry/tag prefix before the
-	// digest) is accepted, matching the API server.
+	// An already-digest-pinned reference is left as written and the resolver is
+	// never consulted (a §26 reference runtime arrives digest-pinned).
 	for _, img := range []string{
 		testRuntimeImage,
 		"my-agent@sha256:" + "7777777777777777777777777777777777777777777777777777777777777777",
 	} {
-		path := writeRuntimeFile(t, `apiVersion: lenny.dev/v1alpha1
-kind: Runtime
-metadata:
-  name: my-agent
-spec:
-  image: "`+img+`"
-  integrationLevel: basic
-`)
-		if _, err := loadRuntimeFile(path); err != nil {
-			t.Errorf("loadRuntimeFile rejected digest-pinned image %q: %v", img, err)
+		rt := &lennyv1alpha1.Runtime{}
+		rt.Name = "my-agent"
+		rt.Spec.Image = img
+		built := false
+		passthrough := func() (imageDigestResolver, error) {
+			built = true
+			return func(string) (string, error) { return "", nil }, nil
 		}
+		if err := resolveRuntimeImage(rt, passthrough); err != nil {
+			t.Errorf("resolveRuntimeImage(%q): %v", img, err)
+		}
+		if built {
+			t.Errorf("resolveRuntimeImage(%q) built a resolver for an already-digest-pinned image", img)
+		}
+		if rt.Spec.Image != img {
+			t.Errorf("resolveRuntimeImage(%q) rewrote a digest-pinned image to %q", img, rt.Spec.Image)
+		}
+	}
+
+	// A tag the store does not know fails closed with a message that names the
+	// `lenny image import` recovery step.
+	rt := &lennyv1alpha1.Runtime{}
+	rt.Name = "my-agent"
+	rt.Spec.Image = "my-agent:dev"
+	failResolve := func() (imageDigestResolver, error) {
+		return func(string) (string, error) {
+			return "", fmt.Errorf("no image named my-agent in containerd namespace k8s.io after import")
+		}, nil
+	}
+	err := resolveRuntimeImage(rt, failResolve)
+	if err == nil {
+		t.Fatal("resolveRuntimeImage accepted a tag the store does not know, want a fail-closed error")
+	}
+	if !strings.Contains(err.Error(), "lenny image import") {
+		t.Errorf("resolveRuntimeImage error = %q, want it to name the 'lenny image import' recovery step", err.Error())
+	}
+
+	// A stack that is not reachable to build the resolver also fails closed.
+	rt2 := &lennyv1alpha1.Runtime{}
+	rt2.Name = "my-agent"
+	rt2.Spec.Image = "my-agent:dev"
+	unreachable := func() (imageDigestResolver, error) {
+		return nil, fmt.Errorf("the embedded stack is not reachable")
+	}
+	if err := resolveRuntimeImage(rt2, unreachable); err == nil {
+		t.Error("resolveRuntimeImage accepted a tag with an unreachable store, want a fail-closed error")
 	}
 }
 
