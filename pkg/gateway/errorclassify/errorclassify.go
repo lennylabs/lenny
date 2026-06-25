@@ -440,4 +440,33 @@ var table = map[string]entry{
 	// row); mirrors REQUEST_INPUT_TIMEOUT — the original request id is
 	// consumed, so the same call is not retryable.
 	"REQUEST_INPUT_CANCELLED": {CategoryTransient, false},
+
+	// spec: §15.1 lines 1101-1104 — the session-lifecycle generic
+	// fallback codes the gateway emits when an atomic create, the
+	// two-step start, or a resume fails for a reason without a more
+	// specific code, plus the JWT-signer-unavailable code. All are
+	// TRANSIENT and retryable: the failing unit rebinds a fresh pod
+	// (creation/start) or the row stays in awaiting_client_action for
+	// an explicit resume retry, and the signer recovers when the
+	// backend does. Adding these as explicit table entries replaces
+	// the per-call-site hardcoded pairs and the unknown-code fallback
+	// these codes relied on before (W2). F-15.2.6.
+	"SESSION_CREATION_FAILED": {CategoryTransient, true}, // spec: 15:1101
+	"STARTING_FAILED":         {CategoryTransient, true}, // spec: 15:1102
+	"RESUME_FAILED":           {CategoryTransient, true}, // spec: 15:1103
+	"KMS_SIGNING_UNAVAILABLE": {CategoryTransient, true}, // spec: 15:1104
+
+	// spec: §15.1 lines 1105-1106 — two non-retryable session/admin
+	// codes. CONFIRMATION_REQUIRED (422) rejects a destructive admin
+	// operation issued without its confirmation flag; the same request
+	// fails identically until the flag is set. SETUP_COMMAND_FAILED
+	// (422) is the deterministic non-zero setup-command exit the
+	// adapter reports as a FailedPrecondition; it is not retryable
+	// without changing the workspace plan or setup script, consistent
+	// with setup_command_failed under retryPolicy.nonRetryableFailures
+	// in §7.3 (F-CS6). The retryable complement (every non-
+	// FailedPrecondition setup-window failure) stays the TRANSIENT
+	// SESSION_CREATION_FAILED/STARTING_FAILED/RESUME_FAILED fallback.
+	"CONFIRMATION_REQUIRED": {CategoryPermanent, false}, // spec: 15:1105
+	"SETUP_COMMAND_FAILED":  {CategoryPermanent, false}, // spec: 15:1106
 }
