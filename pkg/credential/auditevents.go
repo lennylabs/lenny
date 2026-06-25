@@ -20,17 +20,17 @@ const (
 	AuditCredentialRegistered AuditEventType = "credential.registered"
 
 	// AuditCredentialDeleted: a user deleted a credential via
-	// DELETE /v1/credentials/{credential_ref}. Fields: tenant_id,
+	// DELETE /v1/credentials/{credentialRef}. Fields: tenant_id,
 	// user_id, provider, credential_ref.
 	AuditCredentialDeleted AuditEventType = "credential.deleted"
 
 	// AuditCredentialRotated: a user rotated credential material via
-	// PUT /v1/credentials/{credential_ref}. Fields: tenant_id, user_id,
+	// PUT /v1/credentials/{credentialRef}. Fields: tenant_id, user_id,
 	// provider, credential_ref, active_leases_rotated.
 	AuditCredentialRotated AuditEventType = "credential.rotated"
 
 	// AuditCredentialUserRevoked: a user explicitly revoked their
-	// credential via POST /v1/credentials/{credential_ref}/revoke.
+	// credential via POST /v1/credentials/{credentialRef}/revoke.
 	// Fields: tenant_id, user_id, provider, credential_ref, reason,
 	// active_leases_terminated.
 	AuditCredentialUserRevoked AuditEventType = "credential.user_revoked"

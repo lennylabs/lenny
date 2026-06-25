@@ -1434,7 +1434,7 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/admin/tenants/{id}/users/{user_id}/role": {
+    "/v1/admin/tenants/{id}/users/{userId}/role": {
       "put": {
         "operationId": "putV1AdminTenantsByIdUsersByUserIdRole",
         "summary": "Assign or update the platform-managed role for a user within a tenant",
@@ -1445,7 +1445,7 @@
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "requestBody": {
           "required": true,
@@ -1471,7 +1471,7 @@
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": { "204": { "description": "No Content" } }
       }
@@ -1637,7 +1637,7 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/admin/users/{user_id}": {
+    "/v1/admin/users/{userId}": {
       "get": {
         "operationId": "getV1AdminUsersByUserId",
         "summary": "Get a user",
@@ -1646,7 +1646,7 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
@@ -1657,7 +1657,7 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
@@ -1668,11 +1668,11 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "204": { "description": "Deleted" } }
       }
     },
-    "/v1/admin/users/{user_id}/invalidate": {
+    "/v1/admin/users/{userId}/invalidate": {
       "post": {
         "operationId": "postV1AdminUsersByUserIdInvalidate",
         "summary": "Invalidate a user (soft_disable, hard_disable, or full_revoke)",
@@ -1681,14 +1681,14 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "OK" },
           "404": { "description": "User not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
-    "/v1/admin/users/{user_id}/erase": {
+    "/v1/admin/users/{userId}/erase": {
       "post": {
         "operationId": "postV1AdminUsersByUserIdErase",
         "summary": "Initiate a GDPR erasure job for a user",
@@ -1697,14 +1697,14 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "202": { "description": "Erasure job accepted" },
           "404": { "description": "User not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
-    "/v1/admin/erasure-jobs/{job_id}": {
+    "/v1/admin/erasure-jobs/{jobId}": {
       "get": {
         "operationId": "getV1AdminErasureJobsByJobId",
         "summary": "Get the status of a GDPR erasure job",
@@ -1713,7 +1713,7 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "OK" },
           "404": { "description": "Erasure job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
@@ -3072,7 +3072,7 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/admin/erasure-jobs/{job_id}/clear-processing-restriction": {
+    "/v1/admin/erasure-jobs/{jobId}/clear-processing-restriction": {
       "post": {
         "operationId": "postV1AdminErasureJobsByJobIdClearProcessingRestriction",
         "summary": "Clear the GDPR Article 18 processing restriction after a failed erasure",
@@ -3081,11 +3081,11 @@
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "security",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/admin/erasure-jobs/{job_id}/retry": {
+    "/v1/admin/erasure-jobs/{jobId}/retry": {
       "post": {
         "operationId": "postV1AdminErasureJobsByJobIdRetry",
         "summary": "Retry a failed erasure job",
@@ -3094,7 +3094,7 @@
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "security",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       }
     },

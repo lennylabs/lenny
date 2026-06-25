@@ -113,7 +113,7 @@ stateDiagram-v2
 | `running` | `cancelled` | Cancel request | `DELETE /v1/sessions/{id}` |
 | `running` | `expired` | Deadline/budget/lease exhausted | Internal timer |
 | `running` | `resume_pending` | Pod crash with retries remaining | Internal |
-| `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond` |
+| `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond` |
 | `input_required` | `cancelled` | Parent cancels | Internal |
 | `input_required` | `expired` | Deadline reached | Internal timer |
 | `input_required` | `resume_pending` | Pod crash with retries remaining | Internal |

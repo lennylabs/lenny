@@ -52,7 +52,7 @@ func TestRotatePropagatesAndCounts_spec_4_9_1350(t *testing.T) {
 
 	body, _ := json.Marshal(credentialserver.RotateRequest{Secret: "sk-new"})
 	req := asUser(httptest.NewRequest(http.MethodPut, "/v1/credentials/"+ref, bytes.NewReader(body)), "acme", "alice")
-	req.SetPathValue("credential_ref", ref)
+	req.SetPathValue("credentialRef", ref)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -76,7 +76,7 @@ func TestRevokePropagatesAndCounts_spec_4_9_1351(t *testing.T) {
 	ref := registerOne(t, srv)
 
 	req := asUser(httptest.NewRequest(http.MethodPost, "/v1/credentials/"+ref+"/revoke", nil), "acme", "alice")
-	req.SetPathValue("credential_ref", ref)
+	req.SetPathValue("credentialRef", ref)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -102,7 +102,7 @@ func TestRotateNoPropagatorIsZero_spec_4_9_1350(t *testing.T) {
 
 	body, _ := json.Marshal(credentialserver.RotateRequest{Secret: "sk-new"})
 	req := asUser(httptest.NewRequest(http.MethodPut, "/v1/credentials/"+ref, bytes.NewReader(body)), "acme", "alice")
-	req.SetPathValue("credential_ref", ref)
+	req.SetPathValue("credentialRef", ref)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {

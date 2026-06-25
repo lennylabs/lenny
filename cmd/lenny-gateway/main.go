@@ -8952,7 +8952,7 @@ func (a ocsfMetricsAdapter) DeadLettered(string) {}
 // claim, so tenant-admins can downgrade a user with an over-broad OIDC
 // claim by recording an explicit (possibly empty) assignment. A row with
 // no assignment (the state left by `DELETE /v1/admin/tenants/{id}/users/
-// {user_id}/role`) or a missing row leaves the JWT claim authoritative.
+// {userId}/role`) or a missing row leaves the JWT claim authoritative.
 // spec: §10.2 line 294, §15.1 line 828. F-10.2.3, F-15.1.3.
 type userstorePlatformRoles struct {
 	store userstore.Store

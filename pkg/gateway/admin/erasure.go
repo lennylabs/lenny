@@ -25,15 +25,15 @@ type ErasureRunner interface {
 }
 
 // WithErasure wires the §12.8 user-erasure endpoints onto the Router:
-// POST /v1/admin/users/{user_id}/erase initiates a job, and GET
-// /v1/admin/erasure-jobs/{job_id} reports its status.
+// POST /v1/admin/users/{userId}/erase initiates a job, and GET
+// /v1/admin/erasure-jobs/{jobId} reports its status.
 func (r *Router) WithErasure(runner ErasureRunner, jobs erasurejob.Store) *Router {
 	r.erasureRunner = runner
 	r.erasureJobs = jobs
 	return r
 }
 
-// EraseUserRequest is the optional POST /v1/admin/users/{user_id}/erase
+// EraseUserRequest is the optional POST /v1/admin/users/{userId}/erase
 // body. tenantId scopes the erasure for a platform-admin caller; a
 // tenant-admin's tenant is taken from the token.
 type EraseUserRequest struct {
@@ -68,18 +68,18 @@ func summarizeHolds(holds []heldResource) (sessions []string, tuples []map[strin
 	return sessions, tuples
 }
 
-// handleEraseUser implements POST /v1/admin/users/{user_id}/erase —
+// handleEraseUser implements POST /v1/admin/users/{userId}/erase —
 // the §12.8 GDPR erasure initiation. It records an erasure job, starts
 // the dependency-ordered DeleteByUser deletion in the background, and
 // returns the job id immediately so the caller polls
-// GET /v1/admin/erasure-jobs/{job_id} for completion.
+// GET /v1/admin/erasure-jobs/{jobId} for completion.
 //
 // The §12.8 step-0 legal-hold preflight is enforced: a user with a
 // legally-held session is rejected before the job initiates. The
 // billing-event pseudonymization step is not yet enforced; the runner
 // covers the store-deletion core of the erasure sequence.
 func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
-	subject := req.PathValue("user_id")
+	subject := req.PathValue("userId")
 	var body EraseUserRequest
 	if req.Body != nil {
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
@@ -277,7 +277,7 @@ func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subj
 }
 
 // handleRetryErasureJob implements POST
-// /v1/admin/erasure-jobs/{job_id}/retry — the §24.12 / §12.8 line 766
+// /v1/admin/erasure-jobs/{jobId}/retry — the §24.12 / §12.8 line 766
 // operator retry of a failed erasure job. The job must be in the
 // `failed` phase; the handler clears the transient failure fields,
 // resets the job to its first phase, and re-enqueues it on the runner.
@@ -289,7 +289,7 @@ func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subj
 // mid-phase checkpoint. On success the shared completion path lifts the
 // processing restriction. spec: §12.8 line 766; §24.12 line 143.
 func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request) {
-	jobID := req.PathValue("job_id")
+	jobID := req.PathValue("jobId")
 	job, err := r.erasureJobs.Get(req.Context(), jobID)
 	if err != nil {
 		if errors.Is(err, erasurejob.ErrNotFound) {
@@ -344,7 +344,7 @@ func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request)
 }
 
 // clearRestrictionRequest is the POST
-// /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction body.
+// /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction body.
 type clearRestrictionRequest struct {
 	// Justification is the operator's recorded reason for lifting the
 	// restriction. Required (§24.12 line 144 / §12.8 line 764).
@@ -352,7 +352,7 @@ type clearRestrictionRequest struct {
 }
 
 // handleClearErasureRestriction implements POST
-// /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction — the
+// /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction — the
 // §24.12 / §12.8 line 764 manual clear of the GDPR Article 18
 // processing-restriction flag after a failed erasure job. It requires a
 // non-empty justification, records the operator identity and
@@ -360,7 +360,7 @@ type clearRestrictionRequest struct {
 // privileged store path that bypasses the database-level Article 18
 // trigger. spec: §12.8 line 764; §24.12 line 144.
 func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.Request) {
-	jobID := req.PathValue("job_id")
+	jobID := req.PathValue("jobId")
 	var body clearRestrictionRequest
 	if req.Body != nil {
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
@@ -413,12 +413,12 @@ func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.
 	})
 }
 
-// handleGetErasureJob implements GET /v1/admin/erasure-jobs/{job_id} —
+// handleGetErasureJob implements GET /v1/admin/erasure-jobs/{jobId} —
 // the §12.8 erasure-job status query. It returns the current phase, an
 // advisory completion percentage, elapsed time, the per-store deleted
 // counts, and any failure reason.
 func (r *Router) handleGetErasureJob(w http.ResponseWriter, req *http.Request) {
-	jobID := req.PathValue("job_id")
+	jobID := req.PathValue("jobId")
 	job, err := r.erasureJobs.Get(req.Context(), jobID)
 	if err != nil {
 		if errors.Is(err, erasurejob.ErrNotFound) {

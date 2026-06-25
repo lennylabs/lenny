@@ -45,7 +45,7 @@ type User struct {
 	// present on the row. When true, Roles fully replace the user's
 	// OIDC-derived role claim (the §10.2 line 294 precedence rule). When
 	// false — the state left by `DELETE /v1/admin/tenants/{id}/users/
-	// {user_id}/role` — the row is retained (so the user still lists) but
+	// {userId}/role` — the row is retained (so the user still lists) but
 	// the OIDC claim is authoritative again.
 	// spec: §15.1 lines 827-828, §10.2 line 294.
 	RoleAssigned bool

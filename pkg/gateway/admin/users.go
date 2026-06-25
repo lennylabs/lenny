@@ -54,7 +54,7 @@ const (
 )
 
 // InvalidateUserRequest is the §11.4 POST
-// /v1/admin/users/{user_id}/invalidate body.
+// /v1/admin/users/{userId}/invalidate body.
 type InvalidateUserRequest struct {
 	TenantID string `json:"tenantId,omitempty"`
 	Mode     string `json:"mode"`
@@ -288,7 +288,7 @@ func (r *Router) handleListUsers(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleGetUser(w http.ResponseWriter, req *http.Request) {
-	subject := req.PathValue("user_id")
+	subject := req.PathValue("userId")
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
@@ -311,7 +311,7 @@ func (r *Router) handleGetUser(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
-	subject := req.PathValue("user_id")
+	subject := req.PathValue("userId")
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
@@ -393,7 +393,7 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
-	subject := req.PathValue("user_id")
+	subject := req.PathValue("userId")
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
@@ -470,7 +470,7 @@ func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID str
 	return terminated, nil
 }
 
-// handleInvalidateUser implements POST /v1/admin/users/{user_id}/invalidate
+// handleInvalidateUser implements POST /v1/admin/users/{userId}/invalidate
 // — the §11.4 three-tier user invalidation. soft_disable sets the
 // disabled flag so the user is denied new sessions; hard_disable and
 // full_revoke also raise the deleted_at tombstone so the user is
@@ -484,7 +484,7 @@ func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID str
 // best-effort and a partial propagation is reported rather than failing
 // the request.
 func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) {
-	subject := req.PathValue("user_id")
+	subject := req.PathValue("userId")
 	var body InvalidateUserRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)

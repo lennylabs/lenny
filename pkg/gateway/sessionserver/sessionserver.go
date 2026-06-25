@@ -1911,10 +1911,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", read(s.handleWorkspace))
 	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", read(s.handleSetupOutput))
 	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", manage(s.handleToolUseApprove))
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", manage(s.handleToolUseDeny))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond", manage(s.handleElicitationRespond))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss", manage(s.handleElicitationDismiss))
+	// spec: §15.1 path-parameter casing — camelCase route templates.
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/approve", manage(s.handleToolUseApprove))
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", manage(s.handleToolUseDeny))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manage(s.handleElicitationRespond))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manage(s.handleElicitationDismiss))
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }

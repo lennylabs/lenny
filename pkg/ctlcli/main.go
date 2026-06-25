@@ -754,7 +754,7 @@ func cmdMigrate(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 }
 
 // cmdErasureJobs implements the §24.12 erasure-job management group:
-// `erasure-jobs get <job-id>` (GET /v1/admin/erasure-jobs/{job_id}),
+// `erasure-jobs get <job-id>` (GET /v1/admin/erasure-jobs/{jobId}),
 // `erasure-jobs retry <job-id>` (POST .../retry), and
 // `erasure-jobs clear-restriction <job-id> --justification <text>`
 // (POST .../clear-processing-restriction). All require platform-admin.

@@ -383,7 +383,7 @@ func (h *Handler) RunIdleSweeper(ctx context.Context, interval time.Duration) {
 // the §27.6 revocation primitive. It revokes every playground session
 // the named user holds — DEL the session record, SET a pg:revoked
 // marker for each minted bearer, PUBLISH the fan-out — so an OIDC
-// principal invalidation (POST /v1/admin/users/{user_id}/invalidate,
+// principal invalidation (POST /v1/admin/users/{userId}/invalidate,
 // §11.4) disconnects the user's in-flight playground bearers at the next
 // frame boundary and blocks new mints (a subsequent
 // POST /v1/playground/token finds no record and returns 401). It is

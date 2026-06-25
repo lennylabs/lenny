@@ -213,7 +213,7 @@ func TestTreeUnknownSessionReturns404(t *testing.T) {
 	}
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve)
+// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{toolCallId}/approve)
 // diagnosis: tool-use approve on an unknown session returns 404. The
 // path validates the {id} segment before consulting any pending tool
 // call so the error envelope is consistent.
@@ -225,7 +225,7 @@ func TestToolUseApproveUnknownSession(t *testing.T) {
 	}
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny)
+// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{toolCallId}/deny)
 // diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
 func TestToolUseDenyUnknownSession(t *testing.T) {
 	ts := newTestServer(t)
@@ -235,7 +235,7 @@ func TestToolUseDenyUnknownSession(t *testing.T) {
 	}
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond)
+// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitationId}/respond)
 // diagnosis: an elicitation respond against a session with no
 // elicitation registry returns 503 INTERACTIONS_UNAVAILABLE; the
 // session existence check still runs first so an unknown session
@@ -250,7 +250,7 @@ func TestElicitationRespondUnknownSession(t *testing.T) {
 	}
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss)
+// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss)
 // diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
 func TestElicitationDismissUnknownSession(t *testing.T) {
 	ts := newTestServer(t)

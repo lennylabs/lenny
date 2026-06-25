@@ -12,7 +12,7 @@ import (
 )
 
 // handleToolUseApprove implements
-// POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve per §15.1.
+// POST /v1/sessions/{id}/tool-use/{toolCallId}/approve per §15.1.
 func (s *Server) handleToolUseApprove(w http.ResponseWriter, r *http.Request) {
 	s.resolveInteraction(w, r, interactionResolution{
 		kind:  interactionstore.KindToolUse,
@@ -21,7 +21,7 @@ func (s *Server) handleToolUseApprove(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleToolUseDeny implements
-// POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny per §15.1.
+// POST /v1/sessions/{id}/tool-use/{toolCallId}/deny per §15.1.
 // Optional body: {"reason": "<string>"}.
 func (s *Server) handleToolUseDeny(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -40,7 +40,7 @@ func (s *Server) handleToolUseDeny(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleElicitationRespond implements
-// POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond per
+// POST /v1/sessions/{id}/elicitations/{elicitationId}/respond per
 // §15.1. Body: {"response": <value>}.
 func (s *Server) handleElicitationRespond(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -60,7 +60,7 @@ func (s *Server) handleElicitationRespond(w http.ResponseWriter, r *http.Request
 }
 
 // handleElicitationDismiss implements
-// POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss per
+// POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss per
 // §15.1.
 func (s *Server) handleElicitationDismiss(w http.ResponseWriter, r *http.Request) {
 	s.resolveInteraction(w, r, interactionResolution{
@@ -105,17 +105,18 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 	principal, _ := getPrincipal(r)
 	userID := principal.Subject
 
+	// spec: §15.1 path-parameter casing — camelCase route templates.
 	var interactionID string
 	if res.kind == interactionstore.KindToolUse {
-		interactionID = r.PathValue("tool_call_id")
+		interactionID = r.PathValue("toolCallId")
 	} else {
-		interactionID = r.PathValue("elicitation_id")
+		interactionID = r.PathValue("elicitationId")
 	}
 
 	out, err := s.interactions.Resolve(r.Context(), tenantID, sessionID, userID, interactionID,
 		func(in *interactionstore.Interaction) error {
 			if in.Kind != res.kind {
-				// A tool_call_id used on an elicitation endpoint (or
+				// A toolCallId used on an elicitation endpoint (or
 				// vice versa) is treated as not found.
 				return interactionstore.ErrNotFound
 			}

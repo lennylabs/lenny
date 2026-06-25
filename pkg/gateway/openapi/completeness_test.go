@@ -5,8 +5,9 @@ package openapi_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -49,20 +50,19 @@ import (
 // route templates — admin and non-admin — and asserts each one is present
 // in openapi.json. A registered-but-undocumented route fails the test.
 //
-// The C9 snake_case → camelCase route-parameter rename of the live mux is
-// a later build step; until it lands the live mux still registers
-// snake_case parameter names (`{user_id}`, `{credential_ref}`, ...) while
-// the document already uses the renamed camelCase form (the spec §15.1
-// tables were renamed in S6). The comparison therefore normalizes a
-// path's parameter-name casing so it matches structurally on the route
-// rather than the casing. C9's tier-3 assertion pins the exact casing
-// agreement once the live routes are renamed.
+// The comparison is exact, including path-parameter casing: after the
+// snake_case → camelCase route-parameter rename (C9), the live mux and the
+// document both use the camelCase form (`{userId}`, `{jobId}`,
+// `{toolCallId}`, `{elicitationId}`, `{credentialRef}`), matching the
+// §15.1 tables. A casing divergence between a registered route and its
+// documented template fails the test rather than being normalized away.
 //
-// spec: §15.1 (OpenAPI completeness).
+// spec: §15.1 (OpenAPI completeness, path-parameter casing).
 // diagnosis: A route the gateway serve mux registers is absent from the
-// served openapi.json, so the §13 openapi-to-mcp generator emits no MCP
-// tool, scope entry, or SDK surface for it. The named route is registered
-// but undocumented; add its path entry to openapi.json.
+// served openapi.json (or documented under a different parameter casing),
+// so the §13 openapi-to-mcp generator emits no MCP tool, scope entry, or
+// SDK surface for it. The named route is registered but undocumented; add
+// its path entry to openapi.json or align its parameter casing.
 func TestDocumentMatchesRegisteredEndpoints(t *testing.T) {
 	doc := openapi.Document()
 	var parsed map[string]any
@@ -72,7 +72,7 @@ func TestDocumentMatchesRegisteredEndpoints(t *testing.T) {
 	paths, _ := parsed["paths"].(map[string]any)
 	documented := map[string]bool{}
 	for p := range paths {
-		documented[normalizePathParams(p)] = true
+		documented[stripWildcard(p)] = true
 	}
 
 	registered := registeredRouteTemplates(t)
@@ -80,8 +80,8 @@ func TestDocumentMatchesRegisteredEndpoints(t *testing.T) {
 		t.Fatal("no registered route templates enumerated — the live mux walk returned nothing")
 	}
 	for _, route := range registered {
-		if !documented[normalizePathParams(route)] {
-			t.Errorf("registered route %q is absent from openapi.json", route)
+		if !documented[stripWildcard(route)] {
+			t.Errorf("registered route %q is absent from openapi.json (check path-parameter casing)", route)
 		}
 	}
 
@@ -93,9 +93,121 @@ func TestDocumentMatchesRegisteredEndpoints(t *testing.T) {
 	// asserted present; every constructible surface (admin, credential, and
 	// session) is walked live above rather than listed.
 	for _, route := range mainMuxRoutes {
-		if !documented[normalizePathParams(route)] {
-			t.Errorf("main-mux route %q is absent from openapi.json", route)
+		if !documented[stripWildcard(route)] {
+			t.Errorf("main-mux route %q is absent from openapi.json (check path-parameter casing)", route)
 		}
+	}
+}
+
+// stripWildcard removes the trailing `...` catch-all marker Go's
+// http.ServeMux uses on a multi-segment wildcard (`{ref...}`), which
+// OpenAPI documents as a plain `{ref}` template. The comparison stays
+// case-sensitive on the parameter name so a snake_case/camelCase casing
+// divergence still fails the test; only the wildcard-syntax difference is
+// normalized away.
+func stripWildcard(path string) string {
+	return strings.ReplaceAll(path, "...}", "}")
+}
+
+// renamedRouteTemplates are the five route templates whose path parameter
+// was renamed from snake_case to camelCase (C9). The casing-agreement test
+// asserts each renders identically in the §15.1 spec table, openapi.json,
+// and the live mux, and that the retired snake_case template no longer
+// appears in any of the three.
+var renamedRouteTemplates = []struct {
+	camel string // the renamed camelCase route template
+	snake string // the retired snake_case form
+}{
+	{"/v1/admin/users/{userId}", "/v1/admin/users/{user_id}"},
+	{"/v1/admin/erasure-jobs/{jobId}", "/v1/admin/erasure-jobs/{job_id}"},
+	{"/v1/sessions/{id}/tool-use/{toolCallId}/approve", "/v1/sessions/{id}/tool-use/{tool_call_id}/approve"},
+	{"/v1/sessions/{id}/elicitations/{elicitationId}/respond", "/v1/sessions/{id}/elicitations/{elicitation_id}/respond"},
+	{"/v1/credentials/{credentialRef}", "/v1/credentials/{credential_ref}"},
+}
+
+// TestRenamedRoutesAgreeOnCasing pins the C9 casing reconciliation: every
+// renamed camelCase route resolves on the live mux, is documented in
+// openapi.json under the camelCase template, and the §15.1 spec table no
+// longer spells any of the retired snake_case path parameters. The three
+// surfaces (live mux, openapi.json, and the §15.1 table) therefore agree on
+// path-parameter casing.
+//
+// spec: §15.1 (path-parameter casing convention), §15.2.1 (REST/MCP
+// consistency contract).
+// diagnosis: A renamed route is documented or templated under a casing the
+// live mux no longer registers, so a generated MCP tool, SDK call, or doc
+// example targets a path the gateway will not match. Align the named
+// surface's casing with the live mux.
+func TestRenamedRoutesAgreeOnCasing(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	paths, _ := parsed["paths"].(map[string]any)
+	documented := map[string]bool{}
+	for p := range paths {
+		documented[p] = true
+	}
+	registered := map[string]bool{}
+	for _, r := range registeredRouteTemplates(t) {
+		registered[stripWildcard(r)] = true
+	}
+
+	for _, rt := range renamedRouteTemplates {
+		if !registered[rt.camel] {
+			t.Errorf("renamed route %q does not resolve on the live mux", rt.camel)
+		}
+		if !documented[rt.camel] {
+			t.Errorf("renamed route %q is absent from openapi.json", rt.camel)
+		}
+		if documented[rt.snake] {
+			t.Errorf("retired snake_case route %q is still present in openapi.json", rt.snake)
+		}
+	}
+
+	// The §15.1 spec table is the contract source. After C9 + S6 it must
+	// not spell any retired snake_case path parameter as a route template.
+	spec := readSpec(t, "15_external-api-surface.md")
+	for _, snake := range []string{
+		"{user_id}", "{job_id}", "{tool_call_id}", "{elicitation_id}", "{credential_ref}",
+	} {
+		// A route template embeds the parameter between path slashes; the
+		// audit-payload/JSON field references (`Returns user_id`, `details.user_id`)
+		// are not bracketed, so the bracketed form isolates route templates.
+		if strings.Contains(spec, snake) {
+			t.Errorf("§15.1 spec table still spells the retired snake_case route parameter %q; it must be camelCase", snake)
+		}
+	}
+}
+
+// readSpec loads a spec markdown file from the module's spec/ directory.
+func readSpec(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repoRoot(t), "spec", name))
+	if err != nil {
+		t.Fatalf("read spec %s: %v", name, err)
+	}
+	return string(b)
+}
+
+// repoRoot walks up from the working directory to the module root (the
+// directory containing go.mod).
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for d := wd; ; {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			t.Fatalf("no go.mod found above %s", wd)
+		}
+		d = parent
 	}
 }
 
@@ -185,18 +297,6 @@ func registeredRouteTemplates(t *testing.T) []string {
 	out = append(out, walkServeMux(t, sess.Handler())...)
 	sort.Strings(out)
 	return out
-}
-
-// pathParamCasing matches a `{paramName}` template segment.
-var pathParamCasing = regexp.MustCompile(`\{[^}]+\}`)
-
-// normalizePathParams replaces every `{param}` segment with a fixed `{}`
-// placeholder so two route templates that differ only in their
-// path-parameter names compare equal. This bridges the transient gap
-// where the live mux registers snake_case parameters that the document
-// already documents under their camelCase rename (see the test doc).
-func normalizePathParams(path string) string {
-	return pathParamCasing.ReplaceAllString(path, "{}")
 }
 
 // walkServeMux extracts the registered METHOD-and-path patterns from an

@@ -26,8 +26,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
-// spec: §12.8 GDPR user erasure — POST /v1/admin/users/{user_id}/erase
-// and GET /v1/admin/erasure-jobs/{job_id}.
+// spec: §12.8 GDPR user erasure — POST /v1/admin/users/{userId}/erase
+// and GET /v1/admin/erasure-jobs/{jobId}.
 
 var erasureClock = func() time.Time { return time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC) }
 

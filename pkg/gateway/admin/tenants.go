@@ -711,38 +711,39 @@ func (r *Router) Handler() http.Handler {
 	if r.users != nil {
 		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))
 		mux.Handle("GET /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleListUsers)))
-		mux.Handle("GET /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleGetUser)))
-		mux.Handle("PUT /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
-		mux.Handle("POST /v1/admin/users/{user_id}/invalidate", r.requireUserAdmin(http.HandlerFunc(r.handleInvalidateUser)))
-		mux.Handle("DELETE /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
+		// spec: §15.1 path-parameter casing — camelCase route templates.
+		mux.Handle("GET /v1/admin/users/{userId}", r.requireUserAdmin(http.HandlerFunc(r.handleGetUser)))
+		mux.Handle("PUT /v1/admin/users/{userId}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
+		mux.Handle("POST /v1/admin/users/{userId}/invalidate", r.requireUserAdmin(http.HandlerFunc(r.handleInvalidateUser)))
+		mux.Handle("DELETE /v1/admin/users/{userId}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
 		// §15.1 lines 826-828 — tenant-scoped user listing and the
 		// platform-managed role assignment surface. manage_users gate
 		// (platform-admin or tenant-admin); the handler scopes a
 		// tenant-admin to the path tenant.
 		mux.Handle("GET /v1/admin/tenants/{id}/users", r.requireUserAdmin(http.HandlerFunc(r.handleListTenantUsers)))
-		mux.Handle("PUT /v1/admin/tenants/{id}/users/{user_id}/role", r.requireUserAdmin(http.HandlerFunc(r.handlePutTenantUserRole)))
-		mux.Handle("DELETE /v1/admin/tenants/{id}/users/{user_id}/role", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteTenantUserRole)))
+		mux.Handle("PUT /v1/admin/tenants/{id}/users/{userId}/role", r.requireUserAdmin(http.HandlerFunc(r.handlePutTenantUserRole)))
+		mux.Handle("DELETE /v1/admin/tenants/{id}/users/{userId}/role", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteTenantUserRole)))
 		if r.erasureRunner != nil {
 			// §12.8 GDPR user erasure.
-			mux.Handle("POST /v1/admin/users/{user_id}/erase",
+			mux.Handle("POST /v1/admin/users/{userId}/erase",
 				r.requireUserAdmin(http.HandlerFunc(r.handleEraseUser)))
 		}
 	}
 	if r.erasureJobs != nil {
 		// §12.8 erasure-job status query.
-		mux.Handle("GET /v1/admin/erasure-jobs/{job_id}",
+		mux.Handle("GET /v1/admin/erasure-jobs/{jobId}",
 			r.requireUserAdmin(http.HandlerFunc(r.handleGetErasureJob)))
 		// §24.12 line 143 / §12.8 line 766 — operator retry of a failed
 		// erasure job. platform-admin only.
 		if r.erasureRunner != nil && r.users != nil {
-			mux.Handle("POST /v1/admin/erasure-jobs/{job_id}/retry",
+			mux.Handle("POST /v1/admin/erasure-jobs/{jobId}/retry",
 				r.requireAdmin(http.HandlerFunc(r.handleRetryErasureJob)))
 		}
 		// §24.12 line 144 / §12.8 line 764 — manual clear of the GDPR
 		// Article 18 processing restriction after a failed job.
 		// platform-admin only.
 		if r.users != nil {
-			mux.Handle("POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction",
+			mux.Handle("POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction",
 				r.requireAdmin(http.HandlerFunc(r.handleClearErasureRestriction)))
 		}
 	}

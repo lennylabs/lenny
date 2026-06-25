@@ -227,7 +227,7 @@ Client UIs **must** display provenance so users can distinguish platform OAuth f
 ### Responding to an Elicitation
 
 ```
-POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond
+POST /v1/sessions/{id}/elicitations/{elicitationId}/respond
 Content-Type: application/json
 Authorization: Bearer <token>
 
@@ -253,7 +253,7 @@ The response flows back down the elicitation chain to the originating agent.
 If the user declines to answer:
 
 ```
-POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss
+POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss
 Authorization: Bearer <token>
 ```
 
