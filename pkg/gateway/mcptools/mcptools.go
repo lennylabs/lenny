@@ -133,6 +133,20 @@ func errInvalidArgs(err error) error {
 // that exceeds the cap is refused before it reaches the event stream.
 const maxOutputPartBytes = 50 * 1024 * 1024
 
+// sendMessageInputSchema is the §8.5 `lenny/send_message` tool input
+// schema. Its `message` property is the §15.4 `MessageEnvelope.input`
+// union (`oneOf(string, OutputPart[])`) sourced from the single
+// sessionrecord.MessageContentJSONSchema definition, so the MCP send
+// surface and the REST `/messages` body express the identical union under
+// the §15.2.1 parity rule. `to` is the §8.5 line 537 target id, and the
+// `inReplyTo`/`messageId`/`fromSessionId` extensions are unchanged.
+// spec: §8.5 line 537, §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
+// parity).
+var sendMessageInputSchema = json.RawMessage(fmt.Sprintf(
+	`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId (§8.5 line 537)."},"message":%s,"inReplyTo":{"type":"string","description":"§8.8 line 951 — when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"§15.4 line 1784 sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`,
+	sessionrecord.MessageContentJSONSchema,
+))
+
 // validateOutputPart enforces the two §15.4.1 lines 1542-1548 OutputPart
 // ingress invariants on one `lenny/output` part: `inline` and `ref` are
 // mutually exclusive (both set → `400 OUTPUTPART_INLINE_REF_CONFLICT`),
@@ -853,8 +867,10 @@ func Register(srv *mcp.Server, deps Deps) {
 		// §15.4 line 1784 sender-supplied id surface, and
 		// `fromSessionId` enables the §7.2 line 240 topology check
 		// when the calling transport has no principal binding.
-		// F-8.5.16 (rename), F-7.2.22 (fromSessionId).
-		InputSchema: json.RawMessage(`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId (§8.5 line 537)."},"message":{"type":"string","description":"Message content (§8.5 line 537)."},"inReplyTo":{"type":"string","description":"§8.8 line 951 — when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"§15.4 line 1784 sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`),
+		// F-8.5.16 (rename), F-7.2.22 (fromSessionId). The `message`
+		// argument is the §15.4 MessageEnvelope.input union; see
+		// sendMessageInputSchema. F-MS5.
+		InputSchema: sendMessageInputSchema,
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 		// principal so the §7.2 topology lookup and the §4 chain payload
@@ -865,9 +881,12 @@ func Register(srv *mcp.Server, deps Deps) {
 			// `sessionId` to match the §8.5 line 537 schema). F-8.5.16.
 			To string `json:"to"`
 			// Message is the §8.5 content field (renamed from the legacy
-			// `content` to match the §8.5 line 537 schema). F-8.5.16.
-			Message   string `json:"message"`
-			InReplyTo string `json:"inReplyTo"`
+			// `content` to match the §8.5 line 537 schema). It is the §15.4
+			// MessageEnvelope.input union (bare string or OutputPart[]),
+			// identical to the REST /messages content field under the
+			// §15.2.1 parity rule. F-8.5.16, F-MS5.
+			Message   sessionrecord.MessageContent `json:"message"`
+			InReplyTo string                       `json:"inReplyTo"`
 			// MessageID is the §15.4 line 1784 sender-supplied id. When
 			// empty the gateway assigns a `msg_` prefix id so every
 			// receipt is correlatable. F-7.2.10.
@@ -948,7 +967,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		// through to normal delivery — it is then an ordinary threaded
 		// message.
 		if in.InReplyTo != "" && deps.InputWaits != nil {
-			err := deps.InputWaits.Resolve(in.To, in.InReplyTo, in.Message)
+			err := deps.InputWaits.Resolve(in.To, in.InReplyTo, in.Message.Text())
 			if err == nil {
 				// spec: §15.4 lines 1725-1737 — the inReplyTo path
 				// counts as delivered (the runtime consumed the
@@ -975,10 +994,19 @@ func Register(srv *mcp.Server, deps Deps) {
 			(deps.InputWaits != nil && len(deps.InputWaits.PendingForSession(row.ID)) > 0)
 		decision := messagerouting.Classify(row.State, inputRequired, false, messagerouting.SourceInterSession)
 		if decision.Action == messagerouting.ActionBufferInbox || decision.Action == messagerouting.ActionBufferDLQ {
+			// spec: §15.4 (MessageEnvelope.input) — buffer the §15.4 union
+			// content in its wire form (a bare string stays a JSON string, a
+			// part array stays an array) so the deferred redelivery path
+			// re-delivers the original multipart envelope rather than a
+			// text-flattened copy. F-MS5.
+			payload, mErr := json.Marshal(in.Message)
+			if mErr != nil {
+				return mcp.ToolResult{}, fmt.Errorf("marshal buffered message content: %w", mErr)
+			}
 			buffered := sessioninbox.Message{
 				MessageID:       messageID,
 				SenderSessionID: senderID,
-				Payload:         []byte(in.Message),
+				Payload:         payload,
 				EnqueuedAt:      clock(),
 			}
 			var evicted *sessioninbox.Message
@@ -1009,14 +1037,19 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		// §4 PreMessageDelivery: run the interceptor chain over the
 		// message body before delivery. A REJECT blocks the message; a
-		// MODIFY rewrites what the target session receives.
-		messageBody := in.Message
+		// MODIFY rewrites what the target session receives. The §15.4 union
+		// content is projected to its text form for the interceptor scan and
+		// the maxInputSize bound; the full multipart envelope lands when the
+		// executor carries OutputPart[] end to end. spec: §15.4
+		// (MessageEnvelope.input).
+		messageText := in.Message.Text()
+		messageBody := messageText
 		if deps.Interceptors != nil {
 			req := interceptor.Request{
 				Phase:     interceptor.PhasePreMessageDelivery,
 				SessionID: row.ID,
 				TenantID:  tenant,
-				Content:   []byte(in.Message),
+				Content:   []byte(messageText),
 			}
 			// spec: §4.8 line 1040 / §13.5 mitigation 3 — apply the same
 			// content policy the delegation path applies: the target
@@ -1046,9 +1079,9 @@ func Register(srv *mcp.Server, deps Deps) {
 							}
 						}
 					}
-					if maxSize > 0 && len(in.Message) > maxSize {
+					if maxSize > 0 && len(messageText) > maxSize {
 						return mcp.ToolResult{}, mcp.NewToolError(policy.CodeInputTooLarge,
-							fmt.Sprintf("message body is %d bytes, exceeding the target session's contentPolicy.maxInputSize limit of %d bytes", len(in.Message), maxSize),
+							fmt.Sprintf("message body is %d bytes, exceeding the target session's contentPolicy.maxInputSize limit of %d bytes", len(messageText), maxSize),
 							map[string]any{"phase": string(interceptor.PhasePreMessageDelivery)})
 					}
 				}

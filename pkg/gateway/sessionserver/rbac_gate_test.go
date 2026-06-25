@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // spec: §10.2 RBAC permission matrix (session operation categories);
@@ -123,7 +124,7 @@ func TestSessionEndpointAuthorizationMatrix(t *testing.T) {
 			}{
 				{"create", http.MethodPost, "/v1/sessions", sessionserver.CreateSessionRequest{RuntimeRef: "echo"}},
 				{"send-message", http.MethodPost, "/v1/sessions/sess_rbac/messages", sessionserver.MessageRequest{
-					Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+					Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 				}},
 				{"cancel", http.MethodDelete, "/v1/sessions/sess_rbac", nil},
 			} {
@@ -226,7 +227,7 @@ func TestSessionEndpointCustomRoleGrant(t *testing.T) {
 			}{
 				{"create", http.MethodPost, "/v1/sessions", sessionserver.CreateSessionRequest{RuntimeRef: "echo"}},
 				{"send-message", http.MethodPost, "/v1/sessions/sess_rbac/messages", sessionserver.MessageRequest{
-					Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+					Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 				}},
 				{"cancel", http.MethodDelete, "/v1/sessions/sess_rbac", nil},
 			} {
@@ -302,7 +303,7 @@ func TestSessionEndpointCrossTenantRejection(t *testing.T) {
 		{"get", http.MethodGet, "/v1/sessions/sess_globex", nil},
 		{"cancel", http.MethodDelete, "/v1/sessions/sess_globex", nil},
 		{"send-message", http.MethodPost, "/v1/sessions/sess_globex/messages", sessionserver.MessageRequest{
-			Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+			Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 		}},
 	} {
 		var rdr *bytes.Reader

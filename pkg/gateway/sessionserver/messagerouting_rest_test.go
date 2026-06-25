@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // spec: §7.2 paths 1-7 (lines 313-331) — message-delivery routing.
@@ -64,7 +65,7 @@ func TestMessageRouting_InputRequiredBuffersInbox_spec_7_2_319(t *testing.T) {
 	seedSessionState(t, store, "sess_ir", session.StateInputRequired)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_ir", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "while-blocked"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("while-blocked")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
@@ -92,7 +93,7 @@ func TestMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
 	seedSessionState(t, store, "sess_sus", session.StateSuspended)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_sus", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "for-later"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("for-later")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
@@ -115,7 +116,7 @@ func TestMessageRouting_RecoveringBuffersDLQ_spec_7_2_331(t *testing.T) {
 	seedSessionState(t, store, "sess_rp", session.StateResumePending)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_rp", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "dead-letter"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("dead-letter")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
@@ -138,7 +139,7 @@ func TestMessageRouting_RunningDelivers_spec_7_2_path2(t *testing.T) {
 	seedSessionState(t, store, "sess_run", session.StateRunning)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_run", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
@@ -172,7 +173,7 @@ func TestMessageRouting_InboxUnavailableWhenUnwired_spec_15_4(t *testing.T) {
 	seedSessionState(t, store, "sess_nb", session.StateSuspended)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_nb", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "x"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())

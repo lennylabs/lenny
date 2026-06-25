@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // serviceUnavailableRetryAfterSeconds is the Retry-After header the §5.1
@@ -153,9 +154,17 @@ type MessageRequest struct {
 // The wire field names mirror the spec verbatim. spec: §15.4 lines
 // 1672-1721.
 type MessagePayload struct {
-	ID      string `json:"id,omitempty"`
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content"`
+	ID   string `json:"id,omitempty"`
+	Role string `json:"role,omitempty"`
+
+	// Content is the §15.4 `MessageEnvelope.input` union: a bare string
+	// or a §15.4.1 `OutputPart[]` array. A bare string is sugar for a
+	// single text part. The identical union is accepted by the MCP
+	// `lenny/send_message` `message` argument, so the two surfaces are
+	// parallel representations of the one §15.4 message-send contract
+	// under the §15.2.1 parity rule. spec: §15.4 (MessageEnvelope.input),
+	// §15.2.1 (REST/MCP parity).
+	Content sessionrecord.MessageContent `json:"content"`
 
 	// InReplyTo, when set, names a pending `lenny/request_input`
 	// request the gateway resolves directly (§7.2 path 1) instead of
@@ -393,7 +402,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	resolvedReplies := 0
 	for i, m := range req.Messages {
 		if m.InReplyTo != "" && s.inputWaits != nil {
-			if err := s.inputWaits.Resolve(row.ID, m.InReplyTo, m.Content); err == nil {
+			if err := s.inputWaits.Resolve(row.ID, m.InReplyTo, m.Content.Text()); err == nil {
 				resolvedReplies++
 				continue
 			}
@@ -412,9 +421,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			role = "user"
 		}
 		msgs = append(msgs, executor.Message{
-			ID:      m.ID,
-			Role:    role,
-			Content: m.Content,
+			ID:   m.ID,
+			Role: role,
+			// §15.4 message-input union projected to its text form for the
+			// gateway's text-only delivery path; the full multipart envelope
+			// lands when the executor carries OutputPart[] end to end.
+			// spec: §15.4 (MessageEnvelope.input).
+			Content: m.Content.Text(),
 		})
 	}
 

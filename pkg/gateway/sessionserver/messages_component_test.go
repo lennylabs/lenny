@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // spec: §7.2 (per-slot inbox routing on the coordinating gateway replica),
@@ -187,7 +188,7 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 
 	// Slot 01 (running) delivers (path 2) even though slot 02 is blocked.
 	rr := sendMessageRequest(t, srv.Handler(), "sess-slot-01", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "to-slot-01"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("to-slot-01")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("slot 01 status %d, body=%s", rr.Code, rr.Body.String())
@@ -202,7 +203,7 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 
 	// Slot 02 (input_required) buffers (path 3) independently.
 	rr = sendMessageRequest(t, srv.Handler(), "sess-slot-02", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "to-slot-02"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("to-slot-02")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("slot 02 status %d, body=%s", rr.Code, rr.Body.String())
@@ -292,7 +293,7 @@ func TestMessagesWholePodRoutingOnExclusivePod(t *testing.T) {
 	seedConcurrentSession(t, store, "sess-excl", session.StateRunning)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess-excl", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("exclusive status %d, body=%s", rr.Code, rr.Body.String())
@@ -336,7 +337,7 @@ func TestMessagesFailsClosedOnConcurrentBindWithNoSlot(t *testing.T) {
 	seedConcurrentSession(t, store, "sess-bug", session.StateRunning)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess-bug", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "should-fail-closed"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("should-fail-closed")}},
 	})
 	if rr.Code == http.StatusOK {
 		t.Fatalf("delivery on a concurrent bind with no resolved slot returned 200; want a fail-closed error. body=%s", rr.Body.String())

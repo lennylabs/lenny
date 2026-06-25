@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // ttftCapture is a thread-safe recorder for ObserveTimeToFirstToken
@@ -79,7 +80,7 @@ func TestMessagesObservesTTFTOnFirstResponse_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_ttft", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != 200 {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
@@ -130,7 +131,7 @@ func TestMessagesTTFTObservedOnlyOncePerSession_spec_6_3_F_6_3_3(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		rr := sendMessageRequest(t, srv.Handler(), "sess_ttft_once", sessionserver.MessageRequest{
-			Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+			Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 		})
 		if rr.Code != 200 {
 			t.Fatalf("status[%d]: %d, body=%s", i, rr.Code, rr.Body.String())
@@ -170,7 +171,7 @@ func TestMessagesTTFTSkipsNonResponseEvents_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_ttft_skip", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != 200 {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
@@ -206,7 +207,7 @@ func TestMessagesTTFTSkipsUnresolvedIsolation_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_ttft_unresolved", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != 200 {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())

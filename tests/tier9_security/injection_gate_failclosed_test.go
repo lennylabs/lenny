@@ -44,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // failClosedRuntimeStore returns a transient (non-not-found) read error
@@ -89,7 +90,7 @@ func seedInjectionCapableRuntime(t *testing.T) runtimestore.Store {
 func postInjectionMessage(t *testing.T, h http.Handler, id, tenant string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/messages", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)

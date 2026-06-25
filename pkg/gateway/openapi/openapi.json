@@ -428,6 +428,46 @@
           "updatedAt":   { "type": "string", "format": "date-time" },
           "deletedAt":   { "type": "string", "format": "date-time" }
         }
+      },
+      "OutputPart": {
+        "type": "object",
+        "required": ["type"],
+        "description": "§15.4.1 content part. `type` is an open string; `inline` and `ref` are mutually exclusive per the resolution protocol.",
+        "properties": {
+          "type":          { "type": "string" },
+          "mimeType":      { "type": "string" },
+          "inline":        { "type": "string" },
+          "ref":           { "type": "string" },
+          "schemaVersion": { "type": "integer" },
+          "annotations":   { "type": "object", "additionalProperties": true }
+        }
+      },
+      "MessageContent": {
+        "description": "§15.4 MessageEnvelope.input union: a bare string (sugar for a single text OutputPart) or a §15.4.1 OutputPart[] array. The identical union is accepted by the MCP lenny/send_message message argument under the §15.2.1 REST/MCP parity rule.",
+        "oneOf": [
+          { "type": "string", "description": "§15.4 bare-string shorthand: sugar for a single text OutputPart." },
+          { "type": "array", "description": "§15.4.1 OutputPart[] structured content.", "items": { "$ref": "#/components/schemas/OutputPart" } }
+        ]
+      },
+      "MessagePayload": {
+        "type": "object",
+        "required": ["content"],
+        "description": "§15.4 MessageEnvelope on the POST /v1/sessions/{id}/messages batch.",
+        "properties": {
+          "id":        { "type": "string" },
+          "role":      { "type": "string" },
+          "content":   { "$ref": "#/components/schemas/MessageContent" },
+          "inReplyTo": { "type": "string" },
+          "delivery":  { "type": "string", "enum": ["queued", "immediate"], "description": "§15.4 line 1715 closed delivery enum. Absent defaults to queued." }
+        }
+      },
+      "MessageRequest": {
+        "type": "object",
+        "required": ["messages"],
+        "description": "§15.1 POST /v1/sessions/{id}/messages body: a §7.2 batch of MessageEnvelope payloads.",
+        "properties": {
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/MessagePayload" } }
+        }
       }
     }
   },
@@ -854,6 +894,7 @@
         "summary": "Inject a message batch into a session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageRequest" } } } },
         "responses": {
           "200": { "description": "Delivered" },
           "403": { "description": "Injection rejected — runtime has injection.supported false", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },

@@ -22,6 +22,7 @@
 package sessionrecord
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -79,6 +80,135 @@ func TextPart(content string) OutputPart {
 		Inline:        content,
 		Status:        "complete",
 	}
+}
+
+// MessageContent is the §15.4 `MessageEnvelope.input` union: a message's
+// inbound content is either a bare string or a §15.4.1 `OutputPart[]`
+// array. The two forms are one contract — §15.4 binds `MessageEnvelope`
+// identically across the stdin binary protocol, the platform MCP server
+// tools, and every external API, so the REST `/messages` endpoint and the
+// MCP `lenny/send_message` tool accept the same union. A bare string is
+// sugar for a single `text` part: it unmarshals to one OutputPart via
+// TextPart, so a structured consumer always reads `Parts` and never has to
+// branch on which wire form arrived.
+//
+// The zero value is empty (no parts). UnmarshalJSON accepts the bare
+// string (`"hi"`), the part array (`[{"type":"text","inline":"hi"}]`), or
+// JSON null (empty); any other JSON shape is a validation error.
+// MarshalJSON round-trips the form that was unmarshalled (bare string when
+// the input was a bare string, array otherwise) so a buffered message
+// re-delivered from the inbox carries the original wire form.
+//
+// spec: §15.4 (MessageEnvelope.input oneOf(string, OutputPart[])),
+// §15.2.1 (REST/MCP parity).
+type MessageContent struct {
+	// parts is the canonical §15.4.1 OutputPart array. A bare-string
+	// input is normalized to a single text part here at unmarshal time.
+	parts []OutputPart
+	// wasString records that the wire input arrived as a bare string, so
+	// MarshalJSON re-emits the bare-string sugar rather than the array.
+	wasString bool
+}
+
+// MessageContentJSONSchema is the §15.4 `MessageEnvelope.input` union
+// expressed as a JSON Schema fragment: `oneOf(string, OutputPart[])`. It
+// is defined once here so the REST OpenAPI schema and the MCP
+// `lenny/send_message` `inputSchema` express the identical union and the
+// two surfaces cannot drift. The OutputPart branch lists the §15.4.1
+// part fields; `type` is the only required field per the §15.4.1 part
+// contract. A `oneOf` is valid in an MCP tool input schema, so the union
+// is MCP-compliant. spec: §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
+// parity).
+const MessageContentJSONSchema = `{"oneOf":[{"type":"string","description":"§15.4 bare-string shorthand: sugar for a single text OutputPart."},{"type":"array","description":"§15.4.1 OutputPart[] structured content.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"},"schemaVersion":{"type":"integer"},"annotations":{"type":"object"}}}}]}`
+
+// MessageContentFromText builds a MessageContent carrying a single text
+// part from a plain string. It is the constructor the REST and MCP send
+// paths use when the only content is text, and the form a buffered message
+// re-delivers as a bare string.
+// spec: §15.4 (bare string is a single text OutputPart).
+func MessageContentFromText(s string) MessageContent {
+	return MessageContent{parts: []OutputPart{TextPart(s)}, wasString: true}
+}
+
+// MessageContentFromParts builds a MessageContent from an explicit
+// §15.4.1 OutputPart array.
+// spec: §15.4 (MessageEnvelope.input OutputPart[]).
+func MessageContentFromParts(parts []OutputPart) MessageContent {
+	return MessageContent{parts: parts}
+}
+
+// Parts returns the canonical §15.4.1 OutputPart array. A bare-string
+// input is already normalized to a single text part, so a consumer reads
+// Parts uniformly regardless of which wire form arrived.
+func (m MessageContent) Parts() []OutputPart { return m.parts }
+
+// Text projects the content to its plain-text form: the concatenation of
+// every `text` part's inline content. It is the projection the gateway's
+// text-only delivery, transcript, and interceptor paths consume until they
+// carry the full multipart envelope. A non-text part contributes no text.
+// spec: §15.4.1 (text part inline content).
+func (m MessageContent) Text() string {
+	if len(m.parts) == 1 && m.parts[0].Type == "text" {
+		return m.parts[0].Inline
+	}
+	var b strings.Builder
+	for _, p := range m.parts {
+		if p.Type == "text" {
+			b.WriteString(p.Inline)
+		}
+	}
+	return b.String()
+}
+
+// IsEmpty reports whether the content carries no parts.
+func (m MessageContent) IsEmpty() bool { return len(m.parts) == 0 }
+
+// UnmarshalJSON decodes the §15.4 oneOf(string, OutputPart[]) union: a
+// bare JSON string becomes a single text part, a JSON array decodes to the
+// OutputPart slice, and JSON null is the empty value. Any other JSON shape
+// (object, number, bool) is a validation error so a malformed body is
+// rejected rather than silently coerced. spec: §15.4 (MessageEnvelope.input).
+func (m *MessageContent) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	switch {
+	case trimmed == "" || trimmed == "null":
+		m.parts = nil
+		m.wasString = false
+		return nil
+	case trimmed[0] == '"':
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return fmt.Errorf("message content string: %w", err)
+		}
+		m.parts = []OutputPart{TextPart(s)}
+		m.wasString = true
+		return nil
+	case trimmed[0] == '[':
+		var parts []OutputPart
+		if err := json.Unmarshal(data, &parts); err != nil {
+			return fmt.Errorf("message content parts: %w", err)
+		}
+		m.parts = parts
+		m.wasString = false
+		return nil
+	default:
+		return fmt.Errorf("message content must be a string or an OutputPart array, got %.16s", trimmed)
+	}
+}
+
+// MarshalJSON re-emits the union form that was unmarshalled: a bare-string
+// input (or a MessageContentFromText value) marshals back to a JSON string,
+// and a part-array input marshals to the OutputPart array. Round-tripping
+// the original form keeps a buffered message's re-delivered wire body
+// byte-stable on the bare-string path. spec: §15.4 (MessageEnvelope.input).
+func (m MessageContent) MarshalJSON() ([]byte, error) {
+	if m.wasString && len(m.parts) == 1 && m.parts[0].Type == "text" {
+		return json.Marshal(m.parts[0].Inline)
+	}
+	if m.parts == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(m.parts)
 }
 
 // Message is one entry in a §8.8 TaskRecord messages array. State is
