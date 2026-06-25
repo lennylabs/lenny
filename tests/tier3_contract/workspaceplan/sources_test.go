@@ -119,6 +119,63 @@ func TestParserAcceptsCanonicalPlans(t *testing.T) {
 	}
 }
 
+// spec: §14, §15.1 WorkspacePlan JSON Schema
+// diagnosis: the hand-rolled parser (pkg/workspaceplan.Parse) and the
+// published JSON Schema (schemas/workspaceplan-v1.json) disagree on a
+// canonical fixture. The §15.1 contract is that a WorkspacePlan is
+// governed by the published JSON Schema; the gateway validates with the
+// hand-rolled parser instead. Both surfaces must agree on every
+// canonical fixture, or a client whose payload passes the schema is
+// rejected by the gateway (or the reverse). This table is the
+// fixture-drift guard for F-CS5: it routes all six canonical
+// schemas/examples/ fixtures through the parser and asserts each
+// accept/reject matches the tier-0 schema validator's expectValid flag
+// in tests/tier0_static/schemas_test.go (TestWorkspacePlanExamplesValidate),
+// so a fixture file can no longer drift from the parser uncaught.
+// The setuid, unknown-field, and unknown-source-type fixtures reach the
+// parser only through this table; previously they were exercised solely
+// against the schema validator and against inline-JSON copies in the
+// parser tests, which a fixture edit could not invalidate.
+func TestParserMatchesSchemaValidatorOnCanonicalFixtures_spec_15_1(t *testing.T) {
+	// expectValid mirrors the tier-0 truth table in
+	// TestWorkspacePlanExamplesValidate (schemas_test.go). The parser is
+	// a hand-rolled superset validator: it must reject every fixture the
+	// schema rejects and accept every fixture the schema accepts. The
+	// unknown-source-type fixture is accepted by both surfaces (the
+	// open-string source.type discriminator passes the unknown variant
+	// through with a warning rather than a hard reject).
+	fixtures := []struct {
+		name        string
+		expectValid bool
+	}{
+		{"workspaceplan.minimal.json", true},
+		{"workspaceplan.full.json", true},
+		{"workspaceplan.invalid-setuid.json", false},
+		{"workspaceplan.invalid-ssh.json", false},
+		{"workspaceplan.unknown-source-type.json", true},
+		{"workspaceplan.invalid-unknown-field.json", false},
+	}
+	for _, fx := range fixtures {
+		t.Run(fx.name, func(t *testing.T) {
+			body := readExample(t, fx.name)
+			_, _, err := workspaceplan.Parse(body)
+			if fx.expectValid && err != nil {
+				t.Errorf("%s: schema accepts it but the parser rejected it: %v", fx.name, err)
+			}
+			if !fx.expectValid {
+				if err == nil {
+					t.Errorf("%s: schema rejects it but the parser accepted it; a §14 invariant is missing from the parser", fx.name)
+				} else {
+					var ve *workspaceplan.ValidationError
+					if !errors.As(err, &ve) {
+						t.Errorf("%s: parser rejection must be a *ValidationError (the §14 400 WORKSPACE_PLAN_INVALID envelope), got %T (%v)", fx.name, err, err)
+					}
+				}
+			}
+		})
+	}
+}
+
 // spec: §14
 // diagnosis: §14 specifies that two sources writing to the same
 // workspace-relative path produce a `workspace_plan_path_collision`
@@ -297,8 +354,22 @@ func TestGitCloneDefaultPathIsDot_spec_14_91(t *testing.T) {
 // this check would let a session materialise a file capable of
 // privilege escalation when executed in the sandbox.
 func TestParserRejectsSetuidMode(t *testing.T) {
+	// Lead with the canonical schemas/examples fixture so the parser is
+	// exercised against the exact wire payload the tier-0 schema
+	// validator rejects (F-CS5). The fixture's mode "4755" omits the
+	// leading zero the parser's octal regex requires, so the parser
+	// rejects it as invalid_mode_format rather than
+	// setuid_setgid_prohibited; either is a §14 400 WORKSPACE_PLAN_INVALID
+	// rejection, which is what the tier-0 expectValid=false flag asserts.
+	fixture := readExample(t, "workspaceplan.invalid-setuid.json")
+	if _, _, err := workspaceplan.Parse(fixture); err == nil {
+		t.Fatalf("setuid fixture must be rejected; the parser accepted it")
+	}
+
 	// Use the canonical octal-prefixed form the parser accepts; the
-	// regex requires a leading zero (see §14 mode-string format).
+	// regex requires a leading zero (see §14 mode-string format). This
+	// inline case pins the specific setuid_setgid_prohibited reason the
+	// fixture's leading-zero-less mode cannot exercise.
 	body := `{
 		"schemaVersion": 1,
 		"sources": [
@@ -445,13 +516,13 @@ func TestParserSkipsUnknownSourceType(t *testing.T) {
 	// known and unknown variants in the same plan hits a separate
 	// parser code path (path-collision iteration) that is out of
 	// scope for the contract surface this test covers.
-	body := `{
-		"schemaVersion": 1,
-		"sources": [
-			{"type": "futureKind", "path": "x", "futureProp": 42}
-		]
-	}`
-	plan, warnings, err := workspaceplan.Parse([]byte(body))
+	//
+	// Drive the canonical schemas/examples fixture so the parser is
+	// exercised against the exact payload the tier-0 schema validator
+	// accepts (F-CS5); the fixture is the {"type":"futureKind",...}
+	// open-string-discriminator wire form.
+	body := readExample(t, "workspaceplan.unknown-source-type.json")
+	plan, warnings, err := workspaceplan.Parse(body)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

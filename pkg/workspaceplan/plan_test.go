@@ -5,6 +5,8 @@ package workspaceplan_test
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,6 +18,32 @@ import (
 func parse(t *testing.T, body string) (workspaceplan.Plan, []workspaceplan.Warning, error) {
 	t.Helper()
 	return workspaceplan.Parse([]byte(body))
+}
+
+// readExample loads a canonical workspaceplan example by base name from
+// the repo's schemas/examples corpus and returns its raw bytes. It
+// walks up from the package directory to the module root so the parser
+// runs against the same fixture files the tier-0 JSON Schema validator
+// consumes, closing the F-CS5 fixture-drift gap at the unit tier.
+func readExample(t *testing.T, name string) []byte {
+	t.Helper()
+	wd, _ := os.Getwd()
+	root := ""
+	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			root = d
+			break
+		}
+	}
+	if root == "" {
+		t.Fatalf("no go.mod found from %s", wd)
+	}
+	path := filepath.Join(root, "schemas", "examples", name)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return body
 }
 
 func expectErr(t *testing.T, err error, wantReason string) *workspaceplan.ValidationError {
@@ -148,10 +176,12 @@ func TestParseAcceptsEmptySources(t *testing.T) {
 }
 
 func TestParseSkipsUnknownSourceTypeWithWarning(t *testing.T) {
-	body := `{"schemaVersion": 1, "sources": [
-		{"type": "ferrousMode", "magicNumber": 42}
-	]}`
-	plan, warns, err := parse(t, body)
+	// Drive the canonical schemas/examples fixture (a single
+	// {"type":"futureKind",...} source) so the parser is exercised
+	// against the exact payload the tier-0 schema validator accepts via
+	// the open-string source.type discriminator (F-CS5).
+	body := readExample(t, "workspaceplan.unknown-source-type.json")
+	plan, warns, err := workspaceplan.Parse(body)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -160,6 +190,49 @@ func TestParseSkipsUnknownSourceTypeWithWarning(t *testing.T) {
 	}
 	if len(warns) != 1 || warns[0].Code != workspaceplan.WarnUnknownSourceType {
 		t.Errorf("expected unknown-type warning, got %+v", warns)
+	}
+}
+
+// spec: §14, §15.1 WorkspacePlan JSON Schema — the hand-rolled parser
+// and the published JSON Schema (schemas/workspaceplan-v1.json) must
+// agree on every canonical fixture, or a client whose payload passes
+// the schema is rejected by the gateway parser (or the reverse). This
+// table is the unit-tier fixture-drift guard for F-CS5: it routes all
+// six schemas/examples/ fixtures through the parser and asserts each
+// accept/reject matches the tier-0 schema validator's expectValid flag
+// in tests/tier0_static/schemas_test.go. expectValid mirrors that
+// tier-0 truth table; the unknown-source-type fixture is accepted by
+// both surfaces (the open-string discriminator passes it through with a
+// warning).
+func TestParseMatchesSchemaValidatorOnCanonicalFixtures(t *testing.T) {
+	fixtures := []struct {
+		name        string
+		expectValid bool
+	}{
+		{"workspaceplan.minimal.json", true},
+		{"workspaceplan.full.json", true},
+		{"workspaceplan.invalid-setuid.json", false},
+		{"workspaceplan.invalid-ssh.json", false},
+		{"workspaceplan.unknown-source-type.json", true},
+		{"workspaceplan.invalid-unknown-field.json", false},
+	}
+	for _, fx := range fixtures {
+		t.Run(fx.name, func(t *testing.T) {
+			_, _, err := workspaceplan.Parse(readExample(t, fx.name))
+			if fx.expectValid && err != nil {
+				t.Errorf("%s: schema accepts it but the parser rejected it: %v", fx.name, err)
+			}
+			if !fx.expectValid {
+				if err == nil {
+					t.Errorf("%s: schema rejects it but the parser accepted it; a §14 invariant is missing from the parser", fx.name)
+				} else {
+					var ve *workspaceplan.ValidationError
+					if !errors.As(err, &ve) {
+						t.Errorf("%s: parser rejection must be a *ValidationError, got %T (%v)", fx.name, err, err)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -222,6 +295,14 @@ func TestParseRejectsMissingType(t *testing.T) {
 }
 
 func TestParseRejectsExtraFieldsOnKnownVariant(t *testing.T) {
+	// Lead with the canonical schemas/examples fixture (an inlineFile
+	// carrying an unknown "bogusField") so the parser is exercised
+	// against the exact payload the tier-0 schema validator rejects
+	// under additionalProperties:false (F-CS5).
+	fixture := readExample(t, "workspaceplan.invalid-unknown-field.json")
+	_, _, ferr := workspaceplan.Parse(fixture)
+	expectErr(t, ferr, workspaceplan.ReasonUnknownField)
+
 	body := `{"schemaVersion": 1, "sources": [
 		{"type": "inlineFile", "path": "x", "content": "y", "extraField": 42}
 	]}`
@@ -263,7 +344,20 @@ func TestParseRejectsInvalidModeFormat(t *testing.T) {
 }
 
 func TestParseRejectsSetuidMode(t *testing.T) {
-	// 04xxx setuid prohibited; 06xxx setuid+setgid prohibited.
+	// Lead with the canonical schemas/examples fixture so the parser is
+	// exercised against the exact wire payload the tier-0 schema
+	// validator rejects (F-CS5). The fixture's mode "4755" omits the
+	// leading zero the parser's octal regex requires, so it is rejected
+	// as invalid_mode_format rather than setuid_setgid_prohibited; both
+	// are §14 400 WORKSPACE_PLAN_INVALID rejections, matching the tier-0
+	// expectValid=false flag.
+	if _, _, err := parse(t, string(readExample(t, "workspaceplan.invalid-setuid.json"))); err == nil {
+		t.Fatalf("setuid fixture must be rejected; the parser accepted it")
+	}
+
+	// 04xxx setuid prohibited; 06xxx setuid+setgid prohibited. These
+	// inline cases pin the specific setuid_setgid_prohibited reason the
+	// fixture's leading-zero-less mode cannot exercise.
 	for _, m := range []string{"04755", "05755", "06755", "07755"} {
 		body := `{"schemaVersion": 1, "sources":[{"type":"inlineFile","path":"a","content":"b","mode":"` + m + `"}]}`
 		_, _, err := parse(t, body)
