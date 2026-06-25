@@ -115,12 +115,23 @@ func TestRunDownNoStack(t *testing.T) {
 	}
 }
 
+// TestRunLogsNoStack covers `lenny logs` against a stack that is not running:
+// the §17.4 control plane runs as in-cluster pods, so the logs stream through
+// the embedded kubeconfig and a stack that is not up has no pods to stream.
+// lenny logs reports the missing stack with guidance to run lenny up and exits
+// non-zero, matching lenny restart and lenny status.
+//
+// spec: §17.4 line 179, §24.19 line 263 (pod-backed logs require a running
+// stack).
 func TestRunLogsNoStack(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Main([]string{"logs"}, &stdout, &stderr, testVersion)
-	if code != 0 {
-		t.Errorf("exit code = %d, want 0", code)
+	if code == 0 {
+		t.Errorf("exit code = %d, want non-zero when no stack is running", code)
+	}
+	if !strings.Contains(stderr.String(), "lenny up") {
+		t.Errorf("stderr = %q, want guidance to run lenny up", stderr.String())
 	}
 }
 

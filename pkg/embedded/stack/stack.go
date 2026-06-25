@@ -740,12 +740,6 @@ func (s *Stack) importEchoRuntimeImage(root, echoTarball string, out io.Writer) 
 	return ref
 }
 
-// gatewayHealthy reports whether the gateway at baseURL answers its
-// liveness probe.
-func gatewayHealthy(ctx context.Context, baseURL string) bool {
-	return probeHealthz(ctx, baseURL) == nil
-}
-
 // gatewayGRPCAddr joins the substrate launcher's gateway host and the
 // gateway gRPC host port into the §8.6/§9.1 GatewayControl address the
 // controller stamps onto agent pods. The host comes from the launcher

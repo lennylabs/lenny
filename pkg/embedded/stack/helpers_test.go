@@ -37,20 +37,22 @@ func TestResolveRoot(t *testing.T) {
 	}
 }
 
-// TestKnownLogComponent covers the §24.19 line 263 component allow-list:
-// gateway, controller, ops, postgres, redis, kms, oidc, k3s, supervisor.
+// TestKnownLogComponent covers the §24.19 line 263 component allow-list after
+// the in-cluster topology removes the host-process components: the pod-backed
+// sources gateway, controller, ops, and the k3s substrate are accepted, while
+// the removed host-process components postgres, redis, kms, oidc, and
+// supervisor are rejected.
 //
-// spec: §24.19 line 263.
+// spec: §17.4 line 179, §24.19 line 263 (the pod-backed log component set).
 func TestKnownLogComponent(t *testing.T) {
-	for _, c := range []string{
-		"gateway", "controller", "ops", "postgres", "redis",
-		"kms", "oidc", "k3s", "supervisor",
-	} {
+	for _, c := range []string{"gateway", "controller", "ops", "k3s"} {
 		if !knownLogComponent(c) {
 			t.Errorf("knownLogComponent(%q) = false, want true", c)
 		}
 	}
-	if knownLogComponent("not-a-component") {
-		t.Error("knownLogComponent rejected expected to reject bogus name")
+	for _, c := range []string{"postgres", "redis", "kms", "oidc", "supervisor", "not-a-component"} {
+		if knownLogComponent(c) {
+			t.Errorf("knownLogComponent(%q) = true, want false (the host-process components are removed)", c)
+		}
 	}
 }

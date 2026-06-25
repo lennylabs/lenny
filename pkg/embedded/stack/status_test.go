@@ -3,12 +3,206 @@
 package stack
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
 
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 )
+
+// withPoolReady swaps the package-level echo-pool-readiness seam for the
+// duration of a test so the cluster-backed status pool-ready row is driven
+// without a real cluster, then restores it.
+func withPoolReady(t *testing.T, ready bool) {
+	t.Helper()
+	prev := poolReadyFn
+	t.Cleanup(func() { poolReadyFn = prev })
+	poolReadyFn = func(context.Context, string) bool { return ready }
+}
+
+// TestCollectStatusNoStack covers the no-stack path: with no state file,
+// CollectStatus reports the stack not running and an unknown session count, and
+// WriteStatus prints the no-stack message.
+//
+// spec: §17.4 line 178, §24.19 line 262.
+func TestCollectStatusNoStack(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	st, err := CollectStatus(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("CollectStatus: %v", err)
+	}
+	if st.Running {
+		t.Error("CollectStatus reported a running stack with no state file")
+	}
+	if st.ActiveSessions != -1 {
+		t.Errorf("ActiveSessions = %d, want -1 when no stack runs", st.ActiveSessions)
+	}
+	var out bytes.Buffer
+	WriteStatus(&out, st)
+	if !strings.Contains(out.String(), "no embedded stack is running") {
+		t.Errorf("WriteStatus output = %q", out.String())
+	}
+}
+
+// TestCollectStatusReadsDeploymentReadiness covers the §17.4 cluster-backed
+// status: the gateway, controller, and ops rows report their Deployment
+// readiness read through the embedded kubeconfig rather than a host probe. A
+// ready gateway/controller and a still-rolling ops Deployment produce the
+// matching per-component health.
+//
+// spec: §17.4 line 178 (the control plane runs as in-cluster Deployments;
+// status reads their readiness), §24.19 line 262.
+func TestCollectStatusReadsDeploymentReadiness_spec_17_4(t *testing.T) {
+	recordRunningStack(t)
+	client := k8sfake.NewSimpleClientset(
+		readyDeployment(gatewayDeploymentName, "gateway"),
+		readyDeployment(controllerDeploymentName, "controller"),
+		notReadyDeployment(opsDeploymentName, "ops"),
+	)
+	withClusterClient(t, client)
+	withPoolReady(t, false)
+
+	status, err := CollectStatus(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("CollectStatus: %v", err)
+	}
+	byName := map[string]ComponentStatus{}
+	for _, c := range status.Components {
+		byName[c.Name] = c
+	}
+	if c, ok := byName["gateway"]; !ok || !c.Healthy {
+		t.Errorf("gateway row = %+v, want healthy for a ready Deployment", c)
+	}
+	if c, ok := byName["controller"]; !ok || !c.Healthy {
+		t.Errorf("controller row = %+v, want healthy for a ready Deployment", c)
+	}
+	if c, ok := byName["ops"]; !ok || c.Healthy {
+		t.Errorf("ops row = %+v, want down for a still-rolling Deployment", c)
+	}
+}
+
+// TestCollectStatusDistinguishesGatewayUpFromPoolReady covers the §17.4
+// honest-readiness requirement: a ready gateway Deployment with a still-warming
+// echo pool reports the gateway up but PoolReady false, and WriteStatus renders
+// the pool as warming. Once the pool reports a ready idle pod, PoolReady is
+// true. The two states are reported independently so lenny up returning
+// (gateway answers) does not imply the pool is ready.
+//
+// spec: §17.4 line 178 (lenny status distinguishes "gateway up" from
+// "pool ready").
+func TestCollectStatusDistinguishesGatewayUpFromPoolReady_spec_17_4(t *testing.T) {
+	recordRunningStack(t)
+	client := k8sfake.NewSimpleClientset(
+		readyDeployment(gatewayDeploymentName, "gateway"),
+		readyDeployment(controllerDeploymentName, "controller"),
+		readyDeployment(opsDeploymentName, "ops"),
+	)
+	withClusterClient(t, client)
+
+	// Gateway up, pool still warming.
+	withPoolReady(t, false)
+	warming, err := CollectStatus(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("CollectStatus (warming): %v", err)
+	}
+	if !gatewayHealthyRow(warming.Components) {
+		t.Error("gateway row = down, want up for a ready gateway Deployment")
+	}
+	if warming.PoolReady {
+		t.Error("PoolReady = true while the pool is warming, want false")
+	}
+	var out bytes.Buffer
+	WriteStatus(&out, warming)
+	if !strings.Contains(out.String(), "echo pool: warming") {
+		t.Errorf("WriteStatus output = %q, want the pool-warming line", out.String())
+	}
+
+	// Pool now ready.
+	withPoolReady(t, true)
+	ready, err := CollectStatus(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("CollectStatus (ready): %v", err)
+	}
+	if !ready.PoolReady {
+		t.Error("PoolReady = false once the pool reports a ready idle pod, want true")
+	}
+	out.Reset()
+	WriteStatus(&out, ready)
+	if !strings.Contains(out.String(), "echo pool: ready") {
+		t.Errorf("WriteStatus output = %q, want the pool-ready line", out.String())
+	}
+}
+
+// TestCollectStatusMissingDeploymentReportsNotFound covers the path where the
+// control plane is reachable but a Deployment has not been applied yet: the
+// row reports down with a not-found detail rather than erroring, so status
+// reports an un-applied component honestly.
+//
+// spec: §17.4 (status reports a missing control-plane Deployment as down).
+func TestCollectStatusMissingDeploymentReportsNotFound_spec_17_4(t *testing.T) {
+	recordRunningStack(t)
+	// A reachable but empty cluster carries no control-plane Deployments.
+	withClusterClient(t, k8sfake.NewSimpleClientset())
+	withPoolReady(t, false)
+
+	status, err := CollectStatus(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("CollectStatus: %v", err)
+	}
+	byName := map[string]ComponentStatus{}
+	for _, c := range status.Components {
+		byName[c.Name] = c
+	}
+	c, ok := byName["gateway"]
+	if !ok || c.Healthy {
+		t.Errorf("gateway row = %+v, want down for an un-applied Deployment", c)
+	}
+	if !strings.Contains(c.Detail, "not found") {
+		t.Errorf("gateway detail = %q, want a not-found note", c.Detail)
+	}
+}
+
+// TestCollectStatusNoKubeconfigReportsClusterDown covers the path where a
+// recorded stack has no kubeconfig (the substrate did not come up): the
+// gateway/controller/ops rows are all down with an unreachable detail and the
+// pool is reported not ready, rather than CollectStatus erroring.
+//
+// spec: §17.4 (an unreachable control plane reports down rather than failing
+// the status command).
+func TestCollectStatusNoKubeconfigReportsClusterDown_spec_17_4(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LENNY_HOME", home)
+	paths := NewPaths(home)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	if err := writeState(paths.StateFile(), State{K3sEnabled: false}); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+	status, err := CollectStatus(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("CollectStatus: %v", err)
+	}
+	if !status.Running {
+		t.Fatal("CollectStatus reported the recorded stack as not running")
+	}
+	byName := map[string]ComponentStatus{}
+	for _, c := range status.Components {
+		byName[c.Name] = c
+	}
+	for _, name := range []string{"gateway", "controller", "ops"} {
+		if c, ok := byName[name]; !ok || c.Healthy {
+			t.Errorf("%s row = %+v, want down when no embedded kubeconfig is recorded", name, c)
+		}
+	}
+	if status.PoolReady {
+		t.Error("PoolReady = true with no kubeconfig, want false")
+	}
+}
 
 // containerNamedLauncher is a k3s.Launcher that exposes a ContainerName, like
 // the Docker-backed launcher. k3sContainerHandle reads the handle through the

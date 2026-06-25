@@ -7,8 +7,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
@@ -64,25 +62,6 @@ func TestGatewayGRPCAddr_spec_4_7(t *testing.T) {
 				t.Errorf("gatewayGRPCAddr(%q, %d) = %q, want %q", tc.host, tc.port, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestGatewayHealthy covers the bring-up liveness check waitForStack and
-// lenny status share: a gateway answering 2xx is healthy, an unreachable
-// address is not. The probe wraps probeHealthz and reports a boolean.
-//
-// spec: §24.19 (the gateway health probe).
-func TestGatewayHealthy(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	if !gatewayHealthy(context.Background(), srv.URL) {
-		t.Error("gatewayHealthy on a 200 gateway = false, want true")
-	}
-	url := srv.URL
-	srv.Close()
-	if gatewayHealthy(context.Background(), url) {
-		t.Error("gatewayHealthy on a closed gateway = true, want false")
 	}
 }
 

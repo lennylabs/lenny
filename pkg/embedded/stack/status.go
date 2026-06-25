@@ -10,6 +10,11 @@ import (
 	"text/tabwriter"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/lennylabs/lenny/pkg/ctl"
 	"github.com/lennylabs/lenny/pkg/embedded/k3s"
 )
@@ -24,8 +29,8 @@ type ComponentStatus struct {
 	Detail string `json:"detail"`
 }
 
-// Status is the §17.4 lenny status report: per-component health and the
-// active session count.
+// Status is the §17.4 lenny status report: per-component health, the echo
+// pool readiness, and the active session count.
 type Status struct {
 	// Running reports whether an Embedded Mode stack is recorded as
 	// running.
@@ -34,6 +39,12 @@ type Status struct {
 	StartedAt time.Time `json:"startedAt,omitempty"`
 	// Components carries the per-component health.
 	Components []ComponentStatus `json:"components,omitempty"`
+	// PoolReady reports whether the seeded echo warm pool has at least one
+	// claimable ready idle pod. §17.4 distinguishes "gateway up" from "pool
+	// ready" so the readiness is honest: lenny up returns when the gateway
+	// answers and the echo pool warms in the background, so a still-warming
+	// pool is reported separately from the gateway being up. spec: §17.4.
+	PoolReady bool `json:"poolReady"`
 	// ActiveSessions is the count of non-terminal sessions reported by
 	// the gateway. It is -1 when the gateway did not report a count.
 	ActiveSessions int `json:"activeSessions"`
@@ -47,14 +58,17 @@ type StatusOptions struct {
 
 // CollectStatus probes a running Embedded Mode stack and returns its
 // §17.4 / §24.19 status report. The §17.4 control plane runs as in-cluster
-// pods, so the cluster-backed status (substrate, gateway/controller
-// Deployment readiness, and echo pool readiness, distinguishing "gateway
-// up" from "pool ready") lands in the next build step (proposal 0017 C5).
-// Here CollectStatus reports the substrate handle and the gateway forwarder
-// reachability so the command keeps working through the host-process
-// removal.
+// pods, so the gateway, controller, and ops rows read their Deployment
+// readiness through the embedded kubeconfig rather than a host process
+// probe, and the echo pool readiness is reported separately so the report
+// distinguishes "gateway up" from "pool ready" (lenny up returns when the
+// gateway answers; the echo pool warms in the background). The k3s row keeps
+// its substrate-handle probe (a Docker container probe on macOS/Windows, the
+// recorded kubeconfig on Linux). The active session count is read from the
+// gateway admin API through the host-side forwarder.
 //
-// spec: §17.4 line 178, §24.19 line 262.
+// spec: §17.4 line 178 (the control plane runs as in-cluster pods; status
+// distinguishes gateway-up from pool-ready), §24.19 line 262.
 func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 	root, err := resolveRoot(opts.Root)
 	if err != nil {
@@ -74,21 +88,23 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 
 	out := Status{Running: true, StartedAt: st.StartedAt, ActiveSessions: -1}
 
-	// Gateway: probe the host-side forwarder it answers behind.
-	gwHealthy := st.GatewayForwarderAddr != "" && gatewayHealthy(ctx, "https://"+st.GatewayForwarderAddr)
-	out.Components = append(out.Components, ComponentStatus{
-		Name:    "gateway",
-		Healthy: gwHealthy,
-		Detail:  gatewayDetail(st),
-	})
-
-	// Embedded Kubernetes substrate. The Docker-backed launcher records a
-	// container handle and the status probes it by name; the Linux launcher
-	// runs k3s as a host process under the recorded kubeconfig.
+	// The control-plane Deployment rows (gateway, controller, ops) read their
+	// readiness from the embedded cluster. The k3s row keeps its substrate
+	// handle probe. The cluster client is built once and shared across the
+	// three Deployment reads. A kubeconfig the running state never recorded
+	// (the substrate did not come up) leaves the Deployment rows down.
+	clusterComponents := collectClusterComponents(ctx, st.KubeconfigPath)
+	out.Components = append(out.Components, clusterComponents...)
 	out.Components = append(out.Components, k3sComponentStatus(st))
 
-	// Active session count from the gateway admin API.
-	if gwHealthy {
+	// The echo pool readiness is read separately from the gateway readiness so
+	// the report distinguishes "gateway up" from "pool ready". spec: §17.4.
+	if st.KubeconfigPath != "" {
+		out.PoolReady = poolReadyFn(ctx, st.KubeconfigPath)
+	}
+
+	// Active session count from the gateway admin API through the forwarder.
+	if gatewayHealthyRow(out.Components) && st.GatewayForwarderAddr != "" {
 		if n, err := activeSessionCount(ctx, "https://"+st.GatewayForwarderAddr); err == nil {
 			out.ActiveSessions = n
 		}
@@ -96,13 +112,84 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 	return out, nil
 }
 
-// gatewayDetail formats the gateway status detail from the recorded
-// host-side forwarder address.
-func gatewayDetail(st State) string {
-	if st.GatewayForwarderAddr == "" {
-		return "no gateway forwarder recorded"
+// gatewayHealthyRow reports whether the gateway component row in components is
+// healthy, so CollectStatus only queries the active-session count when the
+// gateway Deployment is ready.
+func gatewayHealthyRow(components []ComponentStatus) bool {
+	for _, c := range components {
+		if c.Name == "gateway" {
+			return c.Healthy
+		}
 	}
-	return fmt.Sprintf("https://%s", st.GatewayForwarderAddr)
+	return false
+}
+
+// collectClusterComponents reads the gateway, controller, and ops Deployment
+// readiness from the embedded cluster at kubeconfigPath and returns one
+// ComponentStatus row per Deployment. A kubeconfig that is empty (the
+// substrate did not come up) or cannot build a client yields all rows down
+// with a connection-failure detail, so status reports an unreachable control
+// plane rather than erroring. spec: §17.4 (the control-plane Deployments report
+// readiness through the embedded kubeconfig).
+func collectClusterComponents(ctx context.Context, kubeconfigPath string) []ComponentStatus {
+	rows := make([]ComponentStatus, 0, 3)
+	if kubeconfigPath == "" {
+		return clusterUnreachableRows("no embedded kubeconfig recorded")
+	}
+	client, err := clusterClientFn(kubeconfigPath)
+	if err != nil {
+		return clusterUnreachableRows("embedded cluster unreachable")
+	}
+	for _, c := range []struct{ component, deployment string }{
+		{"gateway", gatewayDeploymentName},
+		{"controller", controllerDeploymentName},
+		{"ops", opsDeploymentName},
+	} {
+		rows = append(rows, deploymentComponentStatus(ctx, client, c.component, c.deployment))
+	}
+	return rows
+}
+
+// clusterUnreachableRows returns the gateway/controller/ops rows all marked
+// down with detail, for the path where the embedded cluster cannot be reached
+// at all.
+func clusterUnreachableRows(detail string) []ComponentStatus {
+	return []ComponentStatus{
+		{Name: "gateway", Healthy: false, Detail: detail},
+		{Name: "controller", Healthy: false, Detail: detail},
+		{Name: "ops", Healthy: false, Detail: detail},
+	}
+}
+
+// deploymentComponentStatus reads the named Deployment in the control-plane
+// namespace and builds its component row: healthy when the Deployment reports
+// at least one ready replica with its status caught up to the latest spec
+// generation (deploymentReady), down with a not-found detail when the
+// Deployment is absent, and down with the error detail on any other read
+// failure. spec: §17.4.
+func deploymentComponentStatus(ctx context.Context, client kubernetes.Interface, component, deployment string) ComponentStatus {
+	dep, err := client.AppsV1().Deployments(controlPlaneNamespace).Get(ctx, deployment, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return ComponentStatus{Name: component, Healthy: false, Detail: fmt.Sprintf("Deployment %s not found", deployment)}
+		}
+		return ComponentStatus{Name: component, Healthy: false, Detail: fmt.Sprintf("read Deployment %s: %v", deployment, err)}
+	}
+	return ComponentStatus{
+		Name:    component,
+		Healthy: deploymentReady(dep),
+		Detail:  deploymentDetail(dep),
+	}
+}
+
+// deploymentDetail formats a Deployment's ready/desired replica counts into a
+// status detail string.
+func deploymentDetail(dep *appsv1.Deployment) string {
+	desired := int32(1)
+	if dep.Spec.Replicas != nil {
+		desired = *dep.Spec.Replicas
+	}
+	return fmt.Sprintf("Deployment %s (%d/%d ready)", dep.Name, dep.Status.ReadyReplicas, desired)
 }
 
 // containerRunning probes whether a Docker-backed k3s container is alive.
@@ -170,10 +257,18 @@ func WriteStatus(w io.Writer, s Status) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", c.Name, health, c.Detail)
 	}
 	_ = tw.Flush()
-	if s.ActiveSessions >= 0 {
-		fmt.Fprintf(w, "\nactive sessions: %d\n", s.ActiveSessions)
+	// The echo pool readiness is reported separately from the gateway row so
+	// the readiness is honest: lenny up returns when the gateway answers and
+	// the pool warms in the background. spec: §17.4.
+	if s.PoolReady {
+		fmt.Fprintf(w, "\necho pool: ready\n")
 	} else {
-		fmt.Fprintf(w, "\nactive sessions: unknown (gateway unreachable)\n")
+		fmt.Fprintf(w, "\necho pool: warming (the first session may return a pool-warming response)\n")
+	}
+	if s.ActiveSessions >= 0 {
+		fmt.Fprintf(w, "active sessions: %d\n", s.ActiveSessions)
+	} else {
+		fmt.Fprintf(w, "active sessions: unknown (gateway unreachable)\n")
 	}
 }
 

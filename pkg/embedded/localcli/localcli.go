@@ -13,6 +13,7 @@ package localcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -132,10 +133,13 @@ Embedded Mode commands (§17.4, §24.19):
   status [--json]          Print component health and active session count
   logs [<component>] [--follow]
                            Tail merged logs, or one of: gateway, controller,
-                           ops, postgres, redis, kms, oidc, k3s, supervisor,
-                           or runtime-<name>; --follow streams new lines
-  restart <component>      Restart one component (gateway or controller)
-                           without tearing down the rest of the stack
+                           ops, k3s, or runtime-<name>; the control-plane and
+                           runtime logs stream from the in-cluster pods and
+                           k3s from the substrate log; --follow streams new
+                           lines
+  restart <component>      Roll one control-plane Deployment (gateway,
+                           controller, or ops) through a Kubernetes
+                           rollout-restart without tearing down the stack
   token print [--ttl <d>]  Print a bearer token for the built-in user
   image <import|list|rm>   Manage images in the embedded containerd store
   session <new|send|interrupt|cancel|list|get|logs>
@@ -255,7 +259,11 @@ func cmdLogs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	err := stack.RunLogs(ctx, stack.LogsOptions{Component: component, Follow: follow, Out: stdout})
 	if err != nil {
-		fmt.Fprintf(stderr, "lenny logs: %v\n", err)
+		if errors.Is(err, stack.ErrNoRunningStack) {
+			fmt.Fprintln(stderr, "lenny logs: no embedded stack is running; run 'lenny up' first")
+		} else {
+			fmt.Fprintf(stderr, "lenny logs: %v\n", err)
+		}
 		return 1
 	}
 	return 0

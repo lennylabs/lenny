@@ -11,13 +11,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 )
 
-// cmdRestart implements `lenny restart <component>` (§24.19 line 264):
-// it restarts a single embedded component without tearing down the rest
-// of the stack. v1 restarts the gateway or the controller, the two
-// supervised child processes that can cycle independently. The
-// in-process components (Postgres, Redis, the OIDC provider, the TLS
-// proxy) and the embedded k3s node share the supervisor lifecycle and
-// are cycled with `lenny down` followed by `lenny up`.
+// cmdRestart implements `lenny restart <component>` (§24.19 line 264): it
+// rolls a single in-cluster control-plane Deployment without tearing down the
+// rest of the stack. The §17.4 control plane runs as in-cluster pods, so the
+// restartable components are the gateway, controller, and ops Deployments, and
+// the restart is a Kubernetes rollout-restart through the embedded kubeconfig.
+// The embedded k3s substrate and the agent (runtime) pods are not individually
+// restartable here; they cycle with `lenny down` followed by `lenny up`.
 func cmdRestart(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	component := ""
 	for _, a := range args {
