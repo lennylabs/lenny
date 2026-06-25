@@ -12,12 +12,12 @@ import (
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
 
-// canonicalSamples returns one OutputPart per canonical type in §15.4.1
+// canonicalSamples returns one MessagePart per canonical type in §15.4.1
 // "Canonical Type Registry (v1)". Each sample has every field the
 // fidelity matrix tracks populated with a distinctive value so the
 // per-field assertions can observe what survives translation.
-func canonicalSamples() []runtime.OutputPart {
-	return []runtime.OutputPart{
+func canonicalSamples() []runtime.MessagePart {
+	return []runtime.MessagePart{
 		{SchemaVersion: 1, ID: "p_text", Type: "text", MimeType: "text/plain", Inline: "hello"},
 		{SchemaVersion: 1, ID: "p_code", Type: "code", MimeType: "text/x-go", Inline: "package main"},
 		{SchemaVersion: 1, ID: "p_reason", Type: "reasoning_trace", MimeType: "text/plain", Inline: "thinking..."},
@@ -30,11 +30,11 @@ func canonicalSamples() []runtime.OutputPart {
 	}
 }
 
-// fullyPopulated returns an OutputPart with every field the fidelity
+// fullyPopulated returns a MessagePart with every field the fidelity
 // matrix tracks set to a distinctive value. Tests use this to confirm
 // the dropped-field cells produce no wire representation.
-func fullyPopulated() runtime.OutputPart {
-	return runtime.OutputPart{
+func fullyPopulated() runtime.MessagePart {
+	return runtime.MessagePart{
 		SchemaVersion: 7,
 		ID:            "p_full",
 		Type:          "text",
@@ -42,7 +42,7 @@ func fullyPopulated() runtime.OutputPart {
 		Inline:        "payload",
 		Ref:           "lenny-blob://acme/sess/p_full?ttl=3600",
 		Annotations:   map[string]any{"role": "assistant", "protocolHints": map[string]any{"openai": map[string]any{}}},
-		Parts:         []runtime.OutputPart{{Type: "text", Inline: "child"}},
+		Parts:         []runtime.MessagePart{{Type: "text", Inline: "child"}},
 		Status:        "complete",
 	}
 }
@@ -157,7 +157,7 @@ func TestOpenAICompletionsTypeLossy(t *testing.T) {
 
 func TestOpenAICompletionsMimeTypeLossy(t *testing.T) {
 	// Non-image MIME types are dropped on the wire.
-	sample := runtime.OutputPart{Type: "file", MimeType: "application/pdf", Inline: "pdfdata"}
+	sample := runtime.MessagePart{Type: "file", MimeType: "application/pdf", Inline: "pdfdata"}
 	wire, err := outputpartfidelity.TranslateOpenAICompletions(sample)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
@@ -171,7 +171,7 @@ func TestOpenAICompletionsMimeTypeLossy(t *testing.T) {
 	}
 
 	// Image/* MIME types survive via image_url data: URL.
-	imgSample := runtime.OutputPart{Type: "image", MimeType: "image/png", Inline: "AAA="}
+	imgSample := runtime.MessagePart{Type: "image", MimeType: "image/png", Inline: "AAA="}
 	wire, _ = outputpartfidelity.TranslateOpenAICompletions(imgSample)
 	round, _ = outputpartfidelity.ParseOpenAICompletions(wire)
 	if round.MimeType != "image/png" {
@@ -228,14 +228,14 @@ func TestOpenResponsesDropsByMatrix(t *testing.T) {
 
 func TestOpenResponsesStatusLossy(t *testing.T) {
 	// `failed` survives; `complete` collapses to unset.
-	failed := runtime.OutputPart{Type: "text", Inline: "x", Status: "failed"}
+	failed := runtime.MessagePart{Type: "text", Inline: "x", Status: "failed"}
 	wire, _ := outputpartfidelity.TranslateOpenResponses(failed)
 	round, _ := outputpartfidelity.ParseOpenResponses(wire)
 	if round.Status != "failed" {
 		t.Errorf("failed status: got %q, want failed", round.Status)
 	}
 
-	complete := runtime.OutputPart{Type: "text", Inline: "x", Status: "complete"}
+	complete := runtime.MessagePart{Type: "text", Inline: "x", Status: "complete"}
 	wire, _ = outputpartfidelity.TranslateOpenResponses(complete)
 	round, _ = outputpartfidelity.ParseOpenResponses(wire)
 	if round.Status != "" {
@@ -261,17 +261,17 @@ func TestOpenResponsesInlineExact(t *testing.T) {
 }
 
 // TestMatrixDrivenRoundTrip is the §12.10 conformance check at the
-// per-OutputPart level. For every (adapter, field) cell, the test:
+// per-MessagePart level. For every (adapter, field) cell, the test:
 //
-//  1. Builds a sample OutputPart that exercises the field.
+//  1. Builds a sample MessagePart that exercises the field.
 //  2. Translates it through the adapter.
-//  3. Parses the wire form back into an OutputPart.
+//  3. Parses the wire form back into a MessagePart.
 //  4. Asserts the field's reconstructed value matches the matrix tag.
 func TestMatrixDrivenRoundTrip(t *testing.T) {
 	cases := []struct {
 		adapter   outputpartfidelity.Adapter
-		translate func(runtime.OutputPart) ([]byte, error)
-		parse     func([]byte) (runtime.OutputPart, error)
+		translate func(runtime.MessagePart) ([]byte, error)
+		parse     func([]byte) (runtime.MessagePart, error)
 	}{
 		{
 			adapter:   outputpartfidelity.AdapterOpenAICompletions,
@@ -303,9 +303,9 @@ func TestMatrixDrivenRoundTrip(t *testing.T) {
 	}
 }
 
-// assertFieldFidelity asserts that the round-tripped OutputPart's field
+// assertFieldFidelity asserts that the round-tripped MessagePart's field
 // reflects the documented fidelity tag.
-func assertFieldFidelity(t *testing.T, a outputpartfidelity.Adapter, f outputpartfidelity.Field, tag outputpartfidelity.FidelityTag, original, round runtime.OutputPart, wire []byte) {
+func assertFieldFidelity(t *testing.T, a outputpartfidelity.Adapter, f outputpartfidelity.Field, tag outputpartfidelity.FidelityTag, original, round runtime.MessagePart, wire []byte) {
 	t.Helper()
 	switch tag {
 	case outputpartfidelity.TagDropped:
@@ -334,7 +334,7 @@ func assertFieldFidelity(t *testing.T, a outputpartfidelity.Adapter, f outputpar
 	}
 }
 
-func fieldIsZero(f outputpartfidelity.Field, p runtime.OutputPart) bool {
+func fieldIsZero(f outputpartfidelity.Field, p runtime.MessagePart) bool {
 	switch f {
 	case outputpartfidelity.FieldSchemaVersion:
 		return p.SchemaVersion == 0
@@ -361,7 +361,7 @@ func fieldIsZero(f outputpartfidelity.Field, p runtime.OutputPart) bool {
 	return true
 }
 
-func fieldsEqual(f outputpartfidelity.Field, a, b runtime.OutputPart) bool {
+func fieldsEqual(f outputpartfidelity.Field, a, b runtime.MessagePart) bool {
 	switch f {
 	case outputpartfidelity.FieldSchemaVersion:
 		return a.SchemaVersion == b.SchemaVersion

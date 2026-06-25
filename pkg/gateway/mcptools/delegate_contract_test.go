@@ -65,11 +65,11 @@ func TestDelegateTaskSchemaMatchesSection82Contract_spec_8_2(t *testing.T) {
 	if !hasTarget {
 		t.Error("delegate_task inputSchema does not require `target`")
 	}
-	// `task.input` must be advertised as the OutputPart[] envelope.
+	// `task.input` must be advertised as the MessagePart[] envelope.
 	taskSchema, _ := props["task"].(map[string]any)
 	taskProps, _ := taskSchema["properties"].(map[string]any)
 	if _, ok := taskProps["input"]; !ok {
-		t.Error("delegate_task task envelope missing `input` (OutputPart[])")
+		t.Error("delegate_task task envelope missing `input` (MessagePart[])")
 	}
 	if _, ok := taskProps["workspaceFiles"]; !ok {
 		t.Error("delegate_task task envelope missing `workspaceFiles`")
@@ -94,7 +94,7 @@ func TestDelegateTaskRejectsMissingTarget_spec_8_2(t *testing.T) {
 	}
 }
 
-// TestDelegateTaskFlattensMultipartInput asserts a multi-part OutputPart[]
+// TestDelegateTaskFlattensMultipartInput asserts a multi-part MessagePart[]
 // `task.input` is concatenated in order (text parts only) and delivered to
 // the child as its first message. spec: §8.2 lines 25-28; §15.4.1. F-8.2.1.
 func TestDelegateTaskFlattensMultipartInput_spec_8_2(t *testing.T) {

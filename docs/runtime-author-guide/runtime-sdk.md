@@ -45,7 +45,7 @@ func main() {
 }
 ```
 
-`Run` reads the inbound frames from stdin, dispatches each message to `OnMessage` in coordinator-local FIFO order on a worker goroutine, answers heartbeats, and honors the shutdown deadline by calling `OnTerminate`. A handler returns a `Reply` built with `runtime.TextReply` or from `runtime.OutputPart` values; `runtime.Text` constructs a text part.
+`Run` reads the inbound frames from stdin, dispatches each message to `OnMessage` in coordinator-local FIFO order on a worker goroutine, answers heartbeats, and honors the shutdown deadline by calling `OnTerminate`. A handler returns a `Reply` built with `runtime.TextReply` or from `runtime.MessagePart` values; `runtime.Text` constructs a text part.
 
 ## Integration levels
 

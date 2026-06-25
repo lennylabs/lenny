@@ -60,11 +60,12 @@ type elicitationDispatcher struct {
 	intercepts func(sess sessionstore.Session) bool
 
 	// dropMetrics, when non-nil, receives a §9.1 drop event for a
-	// url-mode rejection (`reason="domain_not_allowlisted"`). The
-	// §16.7 catalog does not declare a `elicitation.url_mode_domain_rejected`
-	// audit event, so the rejection surfaces only through the metric
-	// and the per-hop tool error envelope. spec: §9.2 line 86;
-	// F-9.2.11.
+	// url-mode rejection (`reason="domain_not_allowlisted"`). The drop
+	// also writes the §16.7 `elicitation.url_mode_domain_rejected`
+	// audit event through `audit` so the policy-relevant rejection is
+	// recorded once per occurrence, alongside the metric and the
+	// per-hop tool error envelope. spec: §9.2 line 86; §16.7
+	// (elicitation.url_mode_domain_rejected). F-9.2.11, F-EL3.
 	dropMetrics ElicitationDropRecorder
 
 	// tamperMetrics, when non-nil, receives a notification every time
@@ -166,10 +167,9 @@ func (d *elicitationDispatcher) dispatch(
 	// elicitation is dropped unless the pool allowlists the URL's
 	// domain; the rejection increments the §9.1
 	// lenny_elicitation_dropped_total{reason="domain_not_allowlisted"}
-	// counter and returns the per-hop DOMAIN_NOT_ALLOWLISTED error.
-	// The §16.7 audit catalog is closed and does not list
-	// `elicitation.url_mode_domain_rejected`, so the rejection does
-	// not write an audit row. F-9.2.11.
+	// counter, writes the §16.7 elicitation.url_mode_domain_rejected
+	// audit row, and returns the per-hop DOMAIN_NOT_ALLOWLISTED error.
+	// F-9.2.11, F-EL3.
 	// The agent-facing dispatch path is always agent-initiated (F-9.2.19
 	// removed the self-declarable initiator), so no connector
 	// expected_domain is in scope here; the §9.2 line 87 connector
@@ -181,6 +181,25 @@ func (d *elicitationDispatcher) dispatch(
 		if errors.As(err, &rej) {
 			if d.dropMetrics != nil {
 				d.dropMetrics.RecordElicitationDrop(elicitationDropDomainNotAllowlisted)
+			}
+			if d.audit != nil {
+				// spec: §16.7 (elicitation.url_mode_domain_rejected) — record
+				// the policy-relevant url-mode drop once per occurrence. The
+				// row carries the rejected `host` and `reason` but never the
+				// full URL's query or fragment. `origin_pod` and `session_id`
+				// are the raising session; `delegation_depth` is the origin
+				// pod's §8 delegation depth; `initiator_type` is the
+				// agent-initiated provenance. F-EL3.
+				d.audit.EmitDelegationEvent(ctx, eventElicitationURLModeDomainRejected, map[string]any{
+					"session_id":       raising.ID,
+					"origin_pod":       raising.ID,
+					"tenant_id":        tenantID,
+					"host":             rej.Host,
+					"reason":           string(rej.Reason),
+					"initiator_type":   string(initiator),
+					"delegation_depth": int(raising.DelegationDepth),
+					"detected_at":      d.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+				})
 			}
 			// §15.1 DOMAIN_NOT_ALLOWLISTED is the spec error code for the
 			// disallowed-domain drop; the disabled / malformed cases share
@@ -262,6 +281,15 @@ func (d *elicitationDispatcher) dispatch(
 // closed audit-catalog constant so a sink that whitelists by the spec
 // catalog accepts the row. spec: §16.7 line 674. F-9.2.3.
 var eventElicitationContentTamperDetected = string(audit.EventElicitationContentTamperDetected)
+
+// eventElicitationURLModeDomainRejected is the §16.7 audit event type
+// emitted when an agent-initiated url-mode elicitation is dropped
+// because the requested URL's domain is not in the pool's url-mode
+// allowlist (the §15.1 DOMAIN_NOT_ALLOWLISTED per-hop rejection). It is
+// the closed audit-catalog constant so a sink that whitelists by the
+// spec catalog accepts the row. spec: §16.7
+// (elicitation.url_mode_domain_rejected). F-EL3.
+var eventElicitationURLModeDomainRejected = string(audit.EventElicitationURLModeDomainRejected)
 
 // resolveMode returns the §9.2 effective content-integrity enforcement
 // mode for tenantID. A nil resolver or an invalid result defaults to

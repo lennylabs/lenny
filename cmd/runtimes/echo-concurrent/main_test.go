@@ -236,7 +236,7 @@ func TestSlotCwdDerivation(t *testing.T) {
 // hanging a concurrent pod.
 // spec: §15.4 (protocol-error exit code 2), §5.2 line 509 (per-slot dispatch).
 func TestPerSlotProtocolErrorFailsTheRuntime(t *testing.T) {
-	// A frame whose `input` is a string, not an OutputPart array: the front
+	// A frame whose `input` is a string, not a MessagePart array: the front
 	// loop accepts it (it reads only type and slotId) but echocore's
 	// handleMessage rejects the body.
 	in := `{"type":"message","id":"m1","slotId":"slot-01","input":"not-an-array"}` + "\n"

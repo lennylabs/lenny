@@ -206,10 +206,10 @@ Re-run a session against a different runtime version using the same workspace an
 | :----- | :-------------------------------------------------------- | :---------------------------- |
 | `POST` | `/v1/sessions/{id}/messages`                              | Send a message to a session   |
 | `GET`  | `/v1/sessions/{id}/messages`                              | List messages (paginated)     |
-| `POST` | `/v1/sessions/{id}/tool-use/{tool_call_id}/approve`       | Approve a pending tool call   |
-| `POST` | `/v1/sessions/{id}/tool-use/{tool_call_id}/deny`          | Deny a pending tool call      |
-| `POST` | `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` | Respond to an elicitation     |
-| `POST` | `/v1/sessions/{id}/elicitations/{elicitation_id}/dismiss` | Dismiss a pending elicitation |
+| `POST` | `/v1/sessions/{id}/tool-use/{toolCallId}/approve`       | Approve a pending tool call   |
+| `POST` | `/v1/sessions/{id}/tool-use/{toolCallId}/deny`          | Deny a pending tool call      |
+| `POST` | `/v1/sessions/{id}/elicitations/{elicitationId}/respond` | Respond to an elicitation     |
+| `POST` | `/v1/sessions/{id}/elicitations/{elicitationId}/dismiss` | Dismiss a pending elicitation |
 
 ### POST /v1/sessions/{id}/messages
 
@@ -235,25 +235,25 @@ List messages sent to or from a session. Paginated with cursor-based navigation.
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404).
 
-### POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve
+### POST /v1/sessions/{id}/tool-use/{toolCallId}/approve
 
 Approve a pending tool call in a human-in-the-loop workflow.
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
 
-### POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny
+### POST /v1/sessions/{id}/tool-use/{toolCallId}/deny
 
 Deny a pending tool call. Optional body: `{"reason": "<string>"}`.
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
 
-### POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond
+### POST /v1/sessions/{id}/elicitations/{elicitationId}/respond
 
 Respond to an elicitation request. Body: `{"response": <value>}`.
 
 **Key error codes:** `ELICITATION_NOT_FOUND` (404), `RESOURCE_NOT_FOUND` (404).
 
-### POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss
+### POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss
 
 Dismiss a pending elicitation. The agent receives a timeout/dismissed signal.
 
@@ -342,9 +342,9 @@ User-managed credentials for the "bring your own API key" workflow. See the [Use
 | :------- | :----------------------------- | :--------------------------- |
 | `POST`   | `/v1/credentials`              | Register a user credential   |
 | `GET`    | `/v1/credentials`              | List user credentials        |
-| `PUT`    | `/v1/credentials/{credential_ref}`        | Update (rotate) a credential |
-| `POST`   | `/v1/credentials/{credential_ref}/revoke` | Revoke a credential          |
-| `DELETE` | `/v1/credentials/{credential_ref}`        | Delete a credential          |
+| `PUT`    | `/v1/credentials/{credentialRef}`        | Update (rotate) a credential |
+| `POST`   | `/v1/credentials/{credentialRef}/revoke` | Revoke a credential          |
+| `DELETE` | `/v1/credentials/{credentialRef}`        | Delete a credential          |
 
 ### POST /v1/credentials
 
@@ -366,19 +366,19 @@ List the authenticated user's registered credentials. No secret material is retu
 
 **Key error codes:** `UNAUTHORIZED` (401).
 
-### PUT /v1/credentials/{credential_ref}
+### PUT /v1/credentials/{credentialRef}
 
 Rotate (replace) the secret material for an existing credential. Active leases are immediately rotated.
 
 **Key error codes:** `USER_CREDENTIAL_NOT_FOUND` (404), `UNAUTHORIZED` (401).
 
-### POST /v1/credentials/{credential_ref}/revoke
+### POST /v1/credentials/{credentialRef}/revoke
 
 Revoke a credential and immediately invalidate all active leases backed by it.
 
 **Key error codes:** `USER_CREDENTIAL_NOT_FOUND` (404), `UNAUTHORIZED` (401).
 
-### DELETE /v1/credentials/{credential_ref}
+### DELETE /v1/credentials/{credentialRef}
 
 Remove a registered credential. Active session leases are unaffected (they continue using the credential until the session ends).
 
@@ -482,7 +482,7 @@ Idempotency keys are scoped per tenant. The header applies to:
 - `POST /v1/sessions/{id}/finalize` (FinalizeWorkspace)
 - `POST /v1/sessions/{id}/start` (StartSession)
 - `POST /v1/sessions/{id}/resume` (Resume)
-- `POST /v1/sessions/{id}/derive`, `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve`, `POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny`
+- `POST /v1/sessions/{id}/derive`, `POST /v1/sessions/{id}/tool-use/{toolCallId}/approve`, `POST /v1/sessions/{id}/tool-use/{toolCallId}/deny`
 
 The header is ignored on read endpoints (GET / HEAD) and on non-listed POST endpoints.
 
@@ -492,4 +492,4 @@ The header is ignored on read endpoints (GET / HEAD) and on non-listed POST endp
 
 The REST API and MCP API share a common service layer. Operations available on both surfaces return semantically identical responses. See the [MCP API Reference](mcp.html#restmcp-consistency-contract) for the full consistency contract.
 
-**REST-only operations** (no MCP tool equivalent): `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{tool_call_id}/approve`, `tool-use/{tool_call_id}/deny`, `elicitations/{elicitation_id}/respond`, and `elicitations/{elicitation_id}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints have no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — they are surfaced as elicitation exchanges on the session's streaming transport, and responses flow back over that same channel.
+**REST-only operations** (no MCP tool equivalent): `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{toolCallId}/approve`, `tool-use/{toolCallId}/deny`, `elicitations/{elicitationId}/respond`, and `elicitations/{elicitationId}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints have no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — they are surfaced as elicitation exchanges on the session's streaming transport, and responses flow back over that same channel.

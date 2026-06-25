@@ -183,7 +183,7 @@ Invoked as the affected user, or as `platform-admin` impersonating the user. Rec
 
 #### Step U2 — Revoke the user credential
 
-<!-- access: api method=POST path=/v1/credentials/{credential_ref}/revoke -->
+<!-- access: api method=POST path=/v1/credentials/{credentialRef}/revoke -->
 ```
 POST /v1/credentials/<credential_ref>/revoke
 Body: {"reason": "<r>", "note": "<optional note>"}
@@ -193,7 +193,7 @@ Effect: the Token Service marks the credential as `revoked`, adds a user-shaped 
 
 Unlike pool revocation, `POST .../revoke` on a user credential retains the record in `revoked` state for audit. Running sessions with active leases are cut off as soon as the deny list propagates (Redis pub/sub with Postgres `LISTEN/NOTIFY` fallback).
 
-If the revocation should be non-disruptive (no mid-session cutoff), use `DELETE /v1/credentials/{credential_ref}` instead — active leases continue using the previously materialized credential until natural TTL expiry.
+If the revocation should be non-disruptive (no mid-session cutoff), use `DELETE /v1/credentials/{credentialRef}` instead — active leases continue using the previously materialized credential until natural TTL expiry.
 
 #### Step U3 — Revoke at the provider
 

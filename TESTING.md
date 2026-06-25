@@ -126,7 +126,7 @@ lenny/
 ├── schemas/                       # Wire-contract artifacts (Phase 1 deliverable)
 │   ├── lenny-adapter.proto
 │   ├── lenny-adapter-jsonl.schema.json
-│   ├── outputpart.schema.json
+│   ├── messagepart.schema.json
 │   └── workspaceplan-v1.json
 ├── migrations/                    # Authoritative Postgres migrations (Phase 1.5)
 ├── charts/lenny/                  # Helm chart
@@ -1320,7 +1320,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 - The nine reference runtimes (§spec/26.3–§spec/26.11: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, `crewai`) run conformance on every nightly. Each runtime declares its integration level (Basic / Standard / Full) per §spec/26.2; the harness asserts the level-specific battery passes and that the runtime advertises only the capabilities it actually implements.
 - Third-party runtimes register themselves via the `RegisterAdapterUnderTest(adapter)` mechanism in the harness.
 
-**Fidelity matrix.** A separate table-driven test asserts the documented OpenAI/Anthropic Completions/Responses translation fidelity. For each `OutputPart` type, the lossy fields are documented and the suite confirms the exact loss.
+**Fidelity matrix.** A separate table-driven test asserts the documented OpenAI/Anthropic Completions/Responses translation fidelity. For each `MessagePart` type, the lossy fields are documented and the suite confirms the exact loss.
 
 **Cadence.** Bundled runtimes: PR. Reference catalog: nightly. Third-party: invoked by `lenny-test conformance` per request.
 
@@ -1447,7 +1447,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.1 Phase 1 — Core types and wire contracts
 
-**Spec/18 components.** Core types (`Runtime`, `SandboxTemplate`, etc.). Wire-contract artifacts under `schemas/` (`lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `outputpart.schema.json`, `workspaceplan-v1.json`).
+**Spec/18 components.** Core types (`Runtime`, `SandboxTemplate`, etc.). Wire-contract artifacts under `schemas/` (`lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, `workspaceplan-v1.json`).
 
 **Test infrastructure to land.**
 - Proto and JSON Schema compilation in Tier 0.
@@ -2214,7 +2214,7 @@ Stable, version-controlled fixtures used across many tests:
 
 ### 18.2 Generated fixtures
 
-For property-based and load tests: generators that produce valid `WorkspacePlan`, `TaskRecord`, `OutputPart` instances under fixed seeds.
+For property-based and load tests: generators that produce valid `WorkspacePlan`, `TaskRecord`, `MessagePart` instances under fixed seeds.
 
 ### 18.3 Golden files
 

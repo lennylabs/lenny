@@ -398,6 +398,59 @@ func TestSendMessageTool(t *testing.T) {
 	}
 }
 
+// TestSendMessageToolAcceptsContentUnion asserts the §8.5
+// lenny/send_message `message` argument is the §15.4 message-input union:
+// a bare string and a MessagePart[] array are both accepted and delivered,
+// and the text projection echoes back. This is the MCP-side half of the
+// §15.2.1 REST/MCP parity the contract suite pins end to end.
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])), §15.2.1
+// (REST/MCP parity), §8.5 line 537.
+func TestSendMessageToolAcceptsContentUnion_spec_15_4(t *testing.T) {
+	cases := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"bare string", `{"to":"sess_union","message":"hi-bare"}`, "hi-bare"},
+		{"single text part", `{"to":"sess_union","message":[{"type":"text","inline":"hi-part"}]}`, "hi-part"},
+		{"multipart", `{"to":"sess_union","message":[{"type":"text","inline":"see "},{"type":"image","ref":"lenny-blob://acme/s/p","mimeType":"image/png"}]}`, "see "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := newMCP(t)
+			now := time.Now()
+			_ = store.Create(context.Background(), sessionstore.Session{
+				ID: "sess_union", TenantID: "acme", State: session.StateRunning,
+				CreatedAt: now, UpdatedAt: now,
+			})
+			resp := call(t, srv.Handler(), "lenny/send_message", tc.args)
+			if e, ok := resp["error"]; ok {
+				t.Fatalf("union input %q returned an error: %v", tc.name, e)
+			}
+			result, _ := resp["result"].(map[string]any)
+			content, _ := result["content"].([]any)
+			if len(content) < 2 {
+				t.Fatalf("send_message must return receipt + echo blocks; got %+v", content)
+			}
+			first, _ := content[0].(map[string]any)
+			var envelope struct {
+				DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
+			}
+			receiptJSON, _ := first["text"].(string)
+			if err := json.Unmarshal([]byte(receiptJSON), &envelope); err != nil {
+				t.Fatalf("first block must be a deliveryReceipt: %v; body=%s", err, receiptJSON)
+			}
+			if envelope.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
+				t.Errorf("union %q status = %q, want delivered", tc.name, envelope.DeliveryReceipt.Status)
+			}
+			second, _ := content[1].(map[string]any)
+			if echo, _ := second["text"].(string); !strings.Contains(echo, tc.want) {
+				t.Errorf("union %q echo = %q, want it to contain %q", tc.name, echo, tc.want)
+			}
+		})
+	}
+}
+
 // TestSendMessageToolDeliveryReceiptOnInReplyTo asserts that the
 // §8.5 inReplyTo path also returns a §15.4 delivery_receipt — the
 // runtime consumed the answer, so status = delivered. The pre-fix
@@ -2203,7 +2256,7 @@ func TestAwaitChildrenPrefersArchivedRichBody_spec_8_8_2(t *testing.T) {
 		TaskID:        "sess_c",
 		State:         "completed",
 		Output: &sessionrecord.Output{
-			Parts:        []sessionrecord.OutputPart{sessionrecord.TextPart("ANSWER42")},
+			Parts:        []sessionrecord.MessagePart{sessionrecord.TextPart("ANSWER42")},
 			ArtifactRefs: []string{"lenny-blob://acme/workspace/sess_c/part_1"},
 		},
 	})

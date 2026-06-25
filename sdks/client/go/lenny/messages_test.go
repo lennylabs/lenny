@@ -27,7 +27,7 @@ func TestSendMessagesPostsBatchAndDecodesReceipt(t *testing.T) {
 				Status:      "delivered",
 				DeliveredAt: "2026-05-26T00:00:00Z",
 			},
-			Output: []OutputPart{{Type: "text", Text: "ok"}},
+			Output: []MessagePart{{Type: "text", Text: "ok"}},
 		})
 	}))
 	defer srv.Close()

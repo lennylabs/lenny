@@ -158,7 +158,7 @@ func TestProjectTerminatedSpellingAndExpired_spec_8_8_862(t *testing.T) {
 }
 
 // spec: §15.2 line 1361 — output projects to a working-status task frame
-// carrying the translated OutputPart content (text block).
+// carrying the translated MessagePart content (text block).
 func TestProjectOutputText_spec_15_2_1361(t *testing.T) {
 	m := decodeFrame(t, projectMCPSessionEvent(ev("response", "s", `{"type":"text","text":"hello"}`)))
 	if m["method"] != "notifications/tasks/statusUpdate" {
@@ -178,7 +178,7 @@ func TestProjectOutputText_spec_15_2_1361(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1361 — a ref OutputPart projects to a resource_link
+// spec: §15.2 line 1361 — a ref MessagePart projects to a resource_link
 // content block carrying the reference for client dereference.
 func TestProjectOutputRef_spec_15_2_1361(t *testing.T) {
 	m := decodeFrame(t, projectMCPSessionEvent(ev("agent_output", "s", `{"type":"file","ref":"blob://abc"}`)))

@@ -21,7 +21,7 @@ type echoHandler struct {
 	messages    int
 	terminated  int
 	lastTermin  TerminationReason
-	replyParts  func(in []OutputPart) []OutputPart
+	replyParts  func(in []MessagePart) []MessagePart
 	replyErr    error
 	createErr   error
 	onMessageFn func(ctx context.Context, m Message)
@@ -274,8 +274,8 @@ func TestEmptyInputExitsCleanly(t *testing.T) {
 // TestShorthandPartsAreCanonical confirms Reply parts emitted via the
 // Text helper carry the canonical field set.
 func TestShorthandPartsAreCanonical(t *testing.T) {
-	h := &echoHandler{replyParts: func([]OutputPart) []OutputPart {
-		return []OutputPart{Text("hello")}
+	h := &echoHandler{replyParts: func([]MessagePart) []MessagePart {
+		return []MessagePart{Text("hello")}
 	}}
 	frames := runSDK(t, h, []string{
 		`{"type":"message","id":"m1","input":[{"type":"text","inline":"x"}]}`,

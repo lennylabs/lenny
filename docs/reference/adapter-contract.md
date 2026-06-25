@@ -148,7 +148,7 @@ The unified message type for all inbound content: initial task, mid-session inje
 |-------|------|------|-------------|
 | `type` | string | All | Always `"message"` |
 | `id` | string | All | Unique message identifier (gateway-assigned ULID, `msg_` prefix) |
-| `input` | OutputPart[] | All | Array of content parts. See OutputPart format below. |
+| `input` | MessagePart[] | All | Array of content parts. See MessagePart format below. |
 | `from` | object | Standard+ | Sender identity. `kind`: `"client"`, `"agent"`, `"system"`, or `"external"`. Adapter-injected; never set by your runtime. |
 | `inReplyTo` | string or null | Standard+ | If set, matches an outstanding `lenny/request_input` call on the target |
 | `threadId` | string or null | Standard+ | Thread label. One implicit thread per session in v1. |
@@ -158,13 +158,13 @@ The unified message type for all inbound content: initial task, mid-session inje
 
 **Basic-level runtimes:** Read only `type`, `id`, and `input`. Ignore all other fields safely.
 
-**The `input` array contains OutputPart objects.** The simplest OutputPart is:
+**The `input` array contains MessagePart objects.** The simplest MessagePart is:
 
 ```json
 { "type": "text", "inline": "Hello, world!" }
 ```
 
-Only `type` and `inline` are required. All other OutputPart fields (`schemaVersion`, `id`, `mimeType`, `ref`, `annotations`, `parts`, `status`) are optional with sensible defaults.
+Only `type` and `inline` are required. All other MessagePart fields (`schemaVersion`, `id`, `mimeType`, `ref`, `annotations`, `parts`, `status`) are optional with sensible defaults.
 
 #### `tool_result` --- Result of an Agent-Requested Tool Call
 
@@ -186,7 +186,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
 |-------|------|-------------|
 | `type` | string | Always `"tool_result"` |
 | `id` | string | Matches the `id` of the `tool_call` this result responds to |
-| `content` | OutputPart[] | Result content |
+| `content` | MessagePart[] | Result content |
 | `isError` | boolean | `true` if tool execution failed. Default `false`. |
 | `slotId` | string or null | Present only when `sessionPolicy.maxConcurrentSessions > 1` |
 
@@ -318,9 +318,9 @@ Registers tracing identifiers that the adapter attaches to all subsequent `lenny
 
 ---
 
-## OutputPart Reference
+## MessagePart Reference
 
-`OutputPart` is Lenny's internal content model -- the unit of content in inbound `message.input[]`, outbound `response.output[]`, `tool_result.content[]`, and platform-tool `lenny/output` payloads. The gateway translates to and from external protocol shapes (MCP content blocks, OpenAI content, A2A parts) at the edge; your runtime always produces and consumes `OutputPart` directly.
+`MessagePart` is Lenny's internal content model -- the unit of content in inbound `message.input[]`, outbound `response.output[]`, `tool_result.content[]`, and platform-tool `lenny/output` payloads. The gateway translates to and from external protocol shapes (MCP content blocks, OpenAI content, A2A parts) at the edge; your runtime always produces and consumes `MessagePart` directly.
 
 The minimal valid part is `{"type": "text", "inline": "hello"}`. All other fields are optional.
 
@@ -335,7 +335,7 @@ The minimal valid part is `{"type": "text", "inline": "hello"}`. All other field
 | `id` | string | adapter-generated | Stable part identifier; enables per-part streaming correlation. |
 | `schemaVersion` | integer | `1` | Envelope schema revision; bump only when emitting fields added in a later registry version. |
 | `annotations` | object | -- | Open metadata map (`language`, `role`, `final`, `audience`, etc.). |
-| `parts` | OutputPart[] | -- | Nested parts for compound outputs (e.g., `execution_result`). |
+| `parts` | MessagePart[] | -- | Nested parts for compound outputs (e.g., `execution_result`). |
 | `status` | string | `complete` | `streaming` / `complete` / `failed` -- primarily for incremental delivery via `lenny/output`. |
 
 **`inline` vs `ref` -- size policy.** The gateway chooses a representation based on payload size; your runtime may emit either form and let the gateway promote it:
@@ -344,9 +344,9 @@ The minimal valid part is `{"type": "text", "inline": "hello"}`. All other field
 |:-----|:---------------|:--------------|
 | ≤ 64 KB | `inline` (UTF-8 or base64) | `inline` populated, `ref` absent |
 | > 64 KB and ≤ 50 MB | Staged to blob store; `ref` set to a `lenny-blob://` URI | `ref` populated, `inline` absent |
-| > 50 MB | Rejected at ingress | `413 OUTPUTPART_TOO_LARGE` |
+| > 50 MB | Rejected at ingress | `413 MESSAGEPART_TOO_LARGE` |
 
-Setting both `inline` and `ref` on the same part is a validation error (`400 OUTPUTPART_INLINE_REF_CONFLICT`).
+Setting both `inline` and `ref` on the same part is a validation error (`400 MESSAGEPART_INLINE_REF_CONFLICT`).
 
 ### Canonical type registry (v1)
 
@@ -360,7 +360,7 @@ Setting both `inline` and `ref` on the same part is a validation error (`400 OUT
 | `image` | `inline` or `ref`, `mimeType` (`image/*`) | General image content. |
 | `diff` | `inline`, `annotations.language: "diff"` | Unified-format diff or patch. |
 | `file` | `inline` or `ref`, `mimeType` | File produced by the agent. |
-| `execution_result` | `parts[]` (each a full OutputPart) | Compound output from code execution (command + stdout + stderr + chart). |
+| `execution_result` | `parts[]` (each a full MessagePart) | Compound output from code execution (command + stdout + stderr + chart). |
 | `error` | `inline` | Error or diagnostic message emitted mid-stream. `annotations.errorCode` optional. |
 
 **Custom types.** Any `type` not listed above is treated as a custom type and collapsed to `text` at the adapter boundary, with the original type preserved in `annotations.originalType`. To avoid colliding with future registry entries, all vendor-defined types MUST use a reverse-DNS namespace: `x-<vendor>/<typeName>` (e.g., `x-acme/heatmap`, `x-myorg/audio-transcript`).
@@ -658,6 +658,6 @@ The adapter protocol is defined by three published schema artifacts. Runtime aut
 |:---------|:--------|:--------------|
 | `lenny-adapter.proto` | gRPC service definition for the gateway ↔ adapter control plane (`Attach`, `SendMessage`, `Checkpoint`, `DemoteSDK`, etc.) and all associated message types. | `https://schemas.lenny.dev/adapter/v1/lenny-adapter.proto` |
 | `lenny-adapter-jsonl.schema.json` | JSON Schema for the stdin/stdout JSON Lines frames exchanged between the adapter and the agent binary (`message`, `tool_call`, `tool_result`, `response`, `heartbeat`, lifecycle frames). | `https://schemas.lenny.dev/adapter/v1/lenny-adapter-jsonl.schema.json` |
-| `outputpart.schema.json` | JSON Schema for the structured `outputParts` field used in `agent_output` events and tool results (text, image, redaction, inline-file parts). | `https://schemas.lenny.dev/adapter/v1/outputpart.schema.json` |
+| `messagepart.schema.json` | JSON Schema for the structured `messageParts` field used in `agent_output` events and tool results (text, image, redaction, inline-file parts). | `https://schemas.lenny.dev/adapter/v1/messagepart.schema.json` |
 
 Each artifact is versioned independently and distributed alongside every Lenny release under `/schemas/adapter/v1/` in the release bundle. Compliance is checked programmatically during `lenny-ctl runtime verify`, which returns structured diff output when a runtime's frames fail validation. Fix your runtime to produce valid frames rather than pinning an older schema version -- the schemas are stable within `v1`, and breaking changes bump the major version.

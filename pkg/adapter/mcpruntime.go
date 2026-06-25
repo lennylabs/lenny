@@ -336,7 +336,7 @@ func (r *MCPRuntime) InitializeResult() mcp.InitializeResult {
 // mcpResponseFrame builds the §15.4.1 `response` frame for an MCP
 // tools/call outcome. A failed call yields a response carrying an
 // `error` object; a successful call yields a single structured
-// OutputPart wrapping the MCP result, plus the MCP `content` blocks
+// MessagePart wrapping the MCP result, plus the MCP `content` blocks
 // flattened to text parts when the result follows the MCP tool-result
 // shape.
 func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error) ([]byte, error) {
@@ -364,8 +364,8 @@ func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error)
 }
 
 // mcpResultParts converts an MCP tools/call result into a §15.4.1
-// OutputPart array. An MCP tool result is `{content: [...], isError}`;
-// each text content block becomes a `text` OutputPart. A result that
+// MessagePart array. An MCP tool result is `{content: [...], isError}`;
+// each text content block becomes a `text` MessagePart. A result that
 // does not follow that shape is wrapped verbatim in a single structured
 // `application/json` part so no information is lost.
 //
@@ -412,7 +412,7 @@ func mcpResultParts(result json.RawMessage) []map[string]any {
 			}
 			// A non-text content block: preserve it as structured JSON.
 			// Drop the producer-stamped schemaVersion from the inline
-			// payload (it is now hoisted to the OutputPart envelope) so
+			// payload (it is now hoisted to the MessagePart envelope) so
 			// the consumer never sees it duplicated.
 			delete(fields, "schemaVersion")
 			raw, _ := json.Marshal(fields)

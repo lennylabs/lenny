@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.lenny.dev/outputpart/v1.json",
-  "title": "OutputPart",
-  "description": "Unified content envelope used by sessions, tasks, audit, and delegation. The building block of every output the platform emits. The spec's open-string extensibility applies to the `type` field (custom types via the `x-<vendor>/<typeName>` namespace), not to top-level keys; additionalProperties is therefore false at the root. Size-based representation (≤64KB inline, 64KB–50MB ref, >50MB rejected with 413 OUTPUTPART_TOO_LARGE) is a gateway runtime check, not a schema-validation check. See spec/15_external-api-surface.md §15.4.",
+  "$id": "https://schemas.lenny.dev/messagepart/v1.json",
+  "title": "MessagePart",
+  "description": "Unified content envelope used by sessions, tasks, audit, and delegation. The building block of every output the platform emits. The spec's open-string extensibility applies to the `type` field (custom types via the `x-<vendor>/<typeName>` namespace), not to top-level keys; additionalProperties is therefore false at the root. Size-based representation (≤64KB inline, 64KB–50MB ref, >50MB rejected with 413 MESSAGEPART_TOO_LARGE) is a gateway runtime check, not a schema-validation check. See spec/15_external-api-surface.md §15.4.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -10,7 +10,7 @@
       "type": "integer",
       "minimum": 1,
       "default": 1,
-      "description": "OutputPart schema revision. Consumers MUST forward-read unknown fields per the open-string evolution rule."
+      "description": "MessagePart schema revision. Consumers MUST forward-read unknown fields per the open-string evolution rule."
     },
     "type": {
       "type": "string",
@@ -54,7 +54,7 @@
     "parts": {
       "type": "array",
       "items": { "$ref": "#" },
-      "description": "Nested OutputParts for compound outputs (for example, an execution_result containing code, stdout, stderr)."
+      "description": "Nested MessageParts for compound outputs (for example, an execution_result containing code, stdout, stderr)."
     },
     "status": {
       "type": "string",
@@ -85,5 +85,5 @@
       }
     }
   ],
-  "$comment": "Validation gates: inline+ref together → 400 OUTPUTPART_INLINE_REF_CONFLICT. Total size >50MB → 413 OUTPUTPART_TOO_LARGE. Annotations are advisory; unknown keys preserved."
+  "$comment": "Validation gates: inline+ref together → 400 MESSAGEPART_INLINE_REF_CONFLICT. Total size >50MB → 413 MESSAGEPART_TOO_LARGE. Annotations are advisory; unknown keys preserved."
 }

@@ -186,9 +186,11 @@ type Server struct {
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
 	// isolation profile) pair maps to, for the §15.1 line 797 pool-drain
-	// admission gate. It defaults to resolvePoolName (CRD-backed); tests
+	// admission gate. The pinnedPool argument carries the §14.1
+	// CreateSessionRequest.pool selector so a client-pinned pool is the one
+	// the gate resolves. It defaults to resolvePoolName (CRD-backed); tests
 	// override it to exercise the gate without a Kubernetes client.
-	poolNameResolver func(ctx context.Context, runtimeRef string, requested isolation.Profile) (string, bool)
+	poolNameResolver func(ctx context.Context, runtimeRef string, requested isolation.Profile, pinnedPool string) (string, bool)
 	// playgroundCaps resolves the §27.6 idle/duration caps for a
 	// §27.3 origin=playground session. Wired post-construction via
 	// SetPlaygroundCaps (the playground bootstrap runs after the session
@@ -525,6 +527,17 @@ type Server struct {
 	// warm-pool startup failure. Nil disables the emission. spec: §16.1
 	// line 124, §7.3 line 387 — F-7.5.9.
 	incWarmpoolWarmupFailure func(errorType string)
+
+	// incInjectionGateFailClosed, when set, increments the
+	// lenny_injection_gate_failclosed_total{cause} counter once per §5.1
+	// injection-gate fail-closed occurrence. cause is "runtime_store" when
+	// the runtime-registry read failed and "override_store" when the
+	// per-tenant capability-override read failed, so the granular
+	// transient-store cause behind the coarse SERVICE_UNAVAILABLE client
+	// code is recorded as a metric alongside the gateway log line. Nil
+	// disables the emission. spec: §5.1 (injection fail-closed),
+	// §15.1 (SERVICE_UNAVAILABLE) — F-5.1.20.
+	incInjectionGateFailClosed func(cause string)
 
 	// uploadTokenTTL is the §7.1 line 58 upload-token expiry stamped on
 	// every minted token. The gateway sets this equal to
@@ -1584,121 +1597,132 @@ type Options struct {
 	// (`setup_command_failed`, etc.). Nil disables the emission.
 	// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.
 	IncWarmpoolWarmupFailure func(errorType string)
+
+	// IncInjectionGateFailClosed, when set, increments the
+	// lenny_injection_gate_failclosed_total{cause} counter once per §5.1
+	// injection-gate fail-closed occurrence. cause is "runtime_store" or
+	// "override_store" depending on which backing-store read returned a
+	// transient error, so the granular cause behind the coarse
+	// SERVICE_UNAVAILABLE client code is observable as a metric. Nil
+	// disables the emission. spec: §5.1 (injection fail-closed),
+	// §15.1 (SERVICE_UNAVAILABLE) — F-5.1.20.
+	IncInjectionGateFailClosed func(cause string)
 }
 
 // New returns a Server bound to the supplied store.
 func New(store sessionstore.Store, opts Options) *Server {
 	s := &Server{
-		store:                    store,
-		clock:                    opts.Clock,
-		idFn:                     opts.IDFunc,
-		deriveAuditSink:          opts.DeriveAuditSink,
-		deriveLock:               opts.DeriveLock,
-		persistDeriveFailureRows: opts.PersistDeriveFailureRows,
-		incDeriveFailureAudit:    opts.IncDeriveFailureAudit,
-		uploadIssuer:             opts.UploadTokenIssuer,
-		uploadVerifier:           opts.UploadTokenVerifier,
-		blobs:                    opts.Blobs,
-		executor:                 opts.Executor,
-		transcripts:              opts.Transcripts,
-		artifacts:                opts.Artifacts,
-		activityStamper:          opts.ActivityStamper,
-		evals:                    opts.Evals,
-		memory:                   opts.Memory,
-		experiments:              opts.Experiments,
-		pools:                    opts.Pools,
-		experimentReporter:       opts.ExperimentRejections,
-		stickyCache:              opts.StickyCache,
-		externalProviders:        opts.ExternalProviders,
-		events:                   opts.Events,
-		dualStore:                opts.DualStore,
-		messaging:                opts.Messaging,
-		interactions:             opts.Interactions,
-		usage:                    opts.Usage,
-		users:                    opts.Users,
-		billing:                  opts.Billing,
-		tenants:                  opts.Tenants,
-		storageQuota:             opts.StorageQuota,
-		defaultIsoProf:           opts.DefaultIsolationProfile,
-		devMode:                  opts.DevMode,
-		multiTenant:              opts.MultiTenant,
-		podBinder:                opts.PodBinder,
-		podRegistry:              opts.PodRegistry,
-		fencer:                   opts.CoordinationFencer,
-		agentNamespace:           opts.AgentNamespace,
-		admissionRL:              opts.AdmissionRateLimitCounter,
-		perRuntimePerMin:         opts.PerRuntimePerMinute,
-		perPoolPerMin:            opts.PerPoolPerMinute,
-		rlMetrics:                opts.RateLimitMetrics,
-		maxConcSessGlobal:        opts.MaxConcurrentSessionsGlobal,
-		maxConcSessPerUser:       opts.MaxConcurrentSessionsPerUser,
-		maxConcSessPerRuntime:    opts.MaxConcurrentSessionsPerRuntime,
-		evalRL:                   opts.EvalRateLimitCounter,
-		evalPerSessionPerMin:     resolveEvalLimit(opts.EvalPerSessionPerMinute, DefaultEvalPerSessionPerMin),
-		evalPerTenantPerMin:      resolveEvalLimit(opts.EvalPerTenantPerMinute, DefaultEvalPerTenantPerMin),
-		sealer:                   opts.Sealer,
-		sealMaxDuration:          opts.WorkspaceSealMaxDuration,
-		sealSleep:                opts.SealSleep,
-		observeSealDuration:      opts.ObserveWorkspaceSealDuration,
-		recordSessionTerminal:    opts.RecordSessionTerminal,
-		observeEvalScore:         opts.ObserveEvalScore,
-		partialManifestCleaner:   opts.PartialManifestCleaner,
-		evictionStateLookup:      opts.EvictionStateLookup,
-		partialManifestLookup:    opts.PartialManifestLookup,
-		treeArchive:              opts.TreeArchive,
-		taskUsage:                opts.TaskUsage,
-		treeBudgetReturner:       opts.TreeBudgetReturner,
-		leaseRegistrar:           opts.LeaseRegistrar,
-		leaseExtDefaults:         opts.LeaseExtensionDefaults,
-		quotaCheckpointer:        opts.QuotaCheckpointer,
-		hwmReader:                opts.HighWatermarkReader,
-		hwmObserver:              opts.HighWatermarkObserver,
-		maxOrphanTasks:           opts.MaxOrphanTasksPerTenant,
-		runtimes:                 opts.Runtimes,
-		capOverrides:             opts.CapabilityOverrides,
-		environments:             opts.Environments,
-		tenantAccess:             opts.TenantAccess,
-		opsEmitter:               opts.OpsEmitter,
-		budgetForget:             opts.BudgetForget,
-		refResolver:              opts.RefResolver,
-		credPools:                opts.CredentialPools,
-		vcsCreds:                 opts.VCSCredentials,
-		defaultNoEnvPolicy:       opts.DefaultNoEnvironmentPolicy,
-		customRoles:              opts.CustomRoles,
-		interceptors:             opts.Interceptors,
-		policyAuditSink:          opts.PolicyAuditSink,
-		uploadSubsystem:          opts.UploadSubsystem,
-		uploadMetrics:            opts.UploadMetrics,
-		midSessionUploadEnabled:  opts.MidSessionUploadEnabled,
-		resumeWindow:             opts.ResumeWindow,
-		sessionLogHook:           opts.SessionLogHook,
-		warmupEstimateSeconds:    opts.WarmupEstimateSeconds,
-		credRouter:               opts.CredentialRouter,
-		preclaimMismatch:         opts.PreclaimMismatch,
-		slotHealth:               opts.SlotHealth,
-		slotStates:               slotstate.NewRegistry(),
-		slotReplacement:          opts.SlotReplacement,
-		slotLeakGauge:            opts.SlotLeakGauge,
-		observeStartupDuration:   opts.ObserveStartupDuration,
-		observeStartupPhase:      opts.ObserveStartupPhase,
-		observeTimeToFirstToken:  opts.ObserveTimeToFirstToken,
-		lifecycleAudit:           opts.LifecycleAuditSink,
-		interactionAudit:         opts.InteractionAuditSink,
-		toolApprovalWaits:        opts.ToolApprovalWaits,
-		treeCycleObserver:        opts.TreeCycleObserver,
-		callbackValidator:        opts.CallbackValidator,
-		callbackSeal:             opts.CallbackSeal,
-		callbackDispatcher:       opts.CallbackDispatcher,
-		inputWaits:               opts.InputWaits,
-		defaultRetention:         opts.DefaultRetention,
-		retryPolicyCaps:          opts.RetryPolicyCaps,
-		envBlocklist:             envblock.New(opts.EnvVarBlocklist),
-		incSessionResumeAttempt:  opts.IncSessionResumeAttempt,
-		incSessionRetry:          opts.IncSessionRetry,
-		incSessionExpiry:         opts.IncSessionExpiry,
-		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
-		uploadTokenTTL:           opts.UploadTokenTTL,
-		uploadAborts:             newUploadAbortRegistry(),
+		store:                      store,
+		clock:                      opts.Clock,
+		idFn:                       opts.IDFunc,
+		deriveAuditSink:            opts.DeriveAuditSink,
+		deriveLock:                 opts.DeriveLock,
+		persistDeriveFailureRows:   opts.PersistDeriveFailureRows,
+		incDeriveFailureAudit:      opts.IncDeriveFailureAudit,
+		uploadIssuer:               opts.UploadTokenIssuer,
+		uploadVerifier:             opts.UploadTokenVerifier,
+		blobs:                      opts.Blobs,
+		executor:                   opts.Executor,
+		transcripts:                opts.Transcripts,
+		artifacts:                  opts.Artifacts,
+		activityStamper:            opts.ActivityStamper,
+		evals:                      opts.Evals,
+		memory:                     opts.Memory,
+		experiments:                opts.Experiments,
+		pools:                      opts.Pools,
+		experimentReporter:         opts.ExperimentRejections,
+		stickyCache:                opts.StickyCache,
+		externalProviders:          opts.ExternalProviders,
+		events:                     opts.Events,
+		dualStore:                  opts.DualStore,
+		messaging:                  opts.Messaging,
+		interactions:               opts.Interactions,
+		usage:                      opts.Usage,
+		users:                      opts.Users,
+		billing:                    opts.Billing,
+		tenants:                    opts.Tenants,
+		storageQuota:               opts.StorageQuota,
+		defaultIsoProf:             opts.DefaultIsolationProfile,
+		devMode:                    opts.DevMode,
+		multiTenant:                opts.MultiTenant,
+		podBinder:                  opts.PodBinder,
+		podRegistry:                opts.PodRegistry,
+		fencer:                     opts.CoordinationFencer,
+		agentNamespace:             opts.AgentNamespace,
+		admissionRL:                opts.AdmissionRateLimitCounter,
+		perRuntimePerMin:           opts.PerRuntimePerMinute,
+		perPoolPerMin:              opts.PerPoolPerMinute,
+		rlMetrics:                  opts.RateLimitMetrics,
+		maxConcSessGlobal:          opts.MaxConcurrentSessionsGlobal,
+		maxConcSessPerUser:         opts.MaxConcurrentSessionsPerUser,
+		maxConcSessPerRuntime:      opts.MaxConcurrentSessionsPerRuntime,
+		evalRL:                     opts.EvalRateLimitCounter,
+		evalPerSessionPerMin:       resolveEvalLimit(opts.EvalPerSessionPerMinute, DefaultEvalPerSessionPerMin),
+		evalPerTenantPerMin:        resolveEvalLimit(opts.EvalPerTenantPerMinute, DefaultEvalPerTenantPerMin),
+		sealer:                     opts.Sealer,
+		sealMaxDuration:            opts.WorkspaceSealMaxDuration,
+		sealSleep:                  opts.SealSleep,
+		observeSealDuration:        opts.ObserveWorkspaceSealDuration,
+		recordSessionTerminal:      opts.RecordSessionTerminal,
+		observeEvalScore:           opts.ObserveEvalScore,
+		partialManifestCleaner:     opts.PartialManifestCleaner,
+		evictionStateLookup:        opts.EvictionStateLookup,
+		partialManifestLookup:      opts.PartialManifestLookup,
+		treeArchive:                opts.TreeArchive,
+		taskUsage:                  opts.TaskUsage,
+		treeBudgetReturner:         opts.TreeBudgetReturner,
+		leaseRegistrar:             opts.LeaseRegistrar,
+		leaseExtDefaults:           opts.LeaseExtensionDefaults,
+		quotaCheckpointer:          opts.QuotaCheckpointer,
+		hwmReader:                  opts.HighWatermarkReader,
+		hwmObserver:                opts.HighWatermarkObserver,
+		maxOrphanTasks:             opts.MaxOrphanTasksPerTenant,
+		runtimes:                   opts.Runtimes,
+		capOverrides:               opts.CapabilityOverrides,
+		environments:               opts.Environments,
+		tenantAccess:               opts.TenantAccess,
+		opsEmitter:                 opts.OpsEmitter,
+		budgetForget:               opts.BudgetForget,
+		refResolver:                opts.RefResolver,
+		credPools:                  opts.CredentialPools,
+		vcsCreds:                   opts.VCSCredentials,
+		defaultNoEnvPolicy:         opts.DefaultNoEnvironmentPolicy,
+		customRoles:                opts.CustomRoles,
+		interceptors:               opts.Interceptors,
+		policyAuditSink:            opts.PolicyAuditSink,
+		uploadSubsystem:            opts.UploadSubsystem,
+		uploadMetrics:              opts.UploadMetrics,
+		midSessionUploadEnabled:    opts.MidSessionUploadEnabled,
+		resumeWindow:               opts.ResumeWindow,
+		sessionLogHook:             opts.SessionLogHook,
+		warmupEstimateSeconds:      opts.WarmupEstimateSeconds,
+		credRouter:                 opts.CredentialRouter,
+		preclaimMismatch:           opts.PreclaimMismatch,
+		slotHealth:                 opts.SlotHealth,
+		slotStates:                 slotstate.NewRegistry(),
+		slotReplacement:            opts.SlotReplacement,
+		slotLeakGauge:              opts.SlotLeakGauge,
+		observeStartupDuration:     opts.ObserveStartupDuration,
+		observeStartupPhase:        opts.ObserveStartupPhase,
+		observeTimeToFirstToken:    opts.ObserveTimeToFirstToken,
+		lifecycleAudit:             opts.LifecycleAuditSink,
+		interactionAudit:           opts.InteractionAuditSink,
+		toolApprovalWaits:          opts.ToolApprovalWaits,
+		treeCycleObserver:          opts.TreeCycleObserver,
+		callbackValidator:          opts.CallbackValidator,
+		callbackSeal:               opts.CallbackSeal,
+		callbackDispatcher:         opts.CallbackDispatcher,
+		inputWaits:                 opts.InputWaits,
+		defaultRetention:           opts.DefaultRetention,
+		retryPolicyCaps:            opts.RetryPolicyCaps,
+		envBlocklist:               envblock.New(opts.EnvVarBlocklist),
+		incSessionResumeAttempt:    opts.IncSessionResumeAttempt,
+		incSessionRetry:            opts.IncSessionRetry,
+		incSessionExpiry:           opts.IncSessionExpiry,
+		incWarmpoolWarmupFailure:   opts.IncWarmpoolWarmupFailure,
+		incInjectionGateFailClosed: opts.IncInjectionGateFailClosed,
+		uploadTokenTTL:             opts.UploadTokenTTL,
+		uploadAborts:               newUploadAbortRegistry(),
 		uploadLimits: newUploadLimiter(
 			opts.MaxConcurrentUploadsPerSession,
 			opts.MaxConcurrentUploadsGlobal,
@@ -1887,10 +1911,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", read(s.handleWorkspace))
 	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", read(s.handleSetupOutput))
 	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", manage(s.handleToolUseApprove))
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", manage(s.handleToolUseDeny))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond", manage(s.handleElicitationRespond))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss", manage(s.handleElicitationDismiss))
+	// spec: §15.1 path-parameter casing — camelCase route templates.
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/approve", manage(s.handleToolUseApprove))
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", manage(s.handleToolUseDeny))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manage(s.handleElicitationRespond))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manage(s.handleElicitationDismiss))
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }
@@ -2333,7 +2358,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	if rlProfile == "" {
 		rlProfile = s.defaultIsoProf
 	}
-	if !s.requireAdmissionRateLimit(w, r, tenantID, req.RuntimeRef, rlProfile) {
+	if !s.requireAdmissionRateLimit(w, r, tenantID, req.RuntimeRef, rlProfile, req.Pool) {
 		return
 	}
 	if !s.requirePolicyChain(w, r, tenantID) {
@@ -2378,11 +2403,17 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 
+	// spec: §7.1 line 18 / line 75 — when a pool is pinned and the client
+	// omits isolationProfile, the named pool's own profile governs, so every
+	// pool resolution on this create defers to the pool (effective requested
+	// profile empty) rather than the deployment default. F-CS2 (0018).
+	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
+
 	// spec: §15.1 line 797 — reject a create that would select a pool in
 	// the `draining` phase with 503 POOL_DRAINING + Retry-After before any
 	// pod claim. The gate resolves the same pool the session would bind
 	// to; it is inert in the Postgres-only posture (no pool binding). F-15.1.8.
-	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, isoProf) {
+	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, effProf, req.Pool) {
 		return
 	}
 
@@ -2434,7 +2465,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// (persistedIsolationLevel in toResponse), so a client that lost
 	// the create response or hits a different replica still sees the
 	// rich level the pool resolved to.
-	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, isoProf)
+	// spec: §7.1 line 18 / line 75 — resolve the level against effProf so a
+	// pinned pool's own profile governs, and persist the pool-derived profile
+	// on the row. The later claim re-resolves from row.IsolationProfile, so
+	// persisting the pool's profile keeps the claim consistent with the pin.
+	// F-CS2 (0018).
+	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, effProf, req.Pool)
 	row := sessionstore.Session{
 		ID:                     s.idFn(),
 		TenantID:               tenantID,
@@ -2442,7 +2478,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		RuntimeRef:             req.RuntimeRef,
 		Environment:            req.Environment,
 		State:                  session.StateCreated,
-		IsolationProfile:       isoProf,
+		IsolationProfile:       persistedRowProfile(level, isoProf),
 		ExecutionMode:          level.ExecutionMode,
 		ScrubPolicy:            level.ScrubPolicy,
 		ConversationContinuity: level.ConversationContinuity,
@@ -2661,6 +2697,42 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 	return mirror, true, nil
 }
 
+// effectiveRequestedProfile is the §5.3 profile to resolve a session's
+// pool against. spec: §7.1 line 18 / line 75 — a client-pinned pool
+// overrides the default pool selection and the resolved level is
+// populated from the assigned pool's configuration, so when the client
+// pins a pool and omits isolationProfile the pool's own profile governs.
+// In that case the effective requested profile is empty, which lets
+// ResolvePool's `isolationProfile != ""` short-circuit defer to the named
+// pool rather than reject a pool whose profile differs from the deployment
+// default. When the client states a profile explicitly (clientRequested is
+// non-empty) that profile governs and an inconsistent pin is rejected;
+// when no pool is pinned the defaulted profile is used so the level still
+// resolves. clientRequested is the raw request field (empty when omitted);
+// defaulted is the validated profile with the deployment default applied.
+func effectiveRequestedProfile(clientRequested, defaulted isolation.Profile, pinnedPool string) isolation.Profile {
+	if pinnedPool != "" && clientRequested == "" {
+		return ""
+	}
+	return defaulted
+}
+
+// persistedRowProfile is the §5.3 profile to persist on the session row.
+// spec: §7.1 line 75 — the row.IsolationProfile is the source of truth the
+// same-call and later claim re-resolve the pool against, so it must reflect
+// the assigned pool's profile. The resolved level carries the pool's
+// profile when a pool was resolved (including a pinned pool whose profile
+// differs from the deployment default); when no pool resolved cleanly the
+// level falls back to the requested profile, which can be empty if the
+// client deferred to a pinned pool, so fall back to the validated defaulted
+// profile rather than persist an empty profile. F-CS2 (0018).
+func persistedRowProfile(level SessionIsolationLevel, defaulted isolation.Profile) isolation.Profile {
+	if level.IsolationProfile == "" {
+		return defaulted
+	}
+	return isolation.Profile(level.IsolationProfile)
+}
+
 // resolveIsolationLevel computes the §7.1 sessionIsolationLevel for a
 // session against its assigned pool. spec: §7.1 line 75 — the field is
 // populated from the assigned pool's configuration at session creation
@@ -2671,11 +2743,14 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 // back to the session-mode level; a session-mode pod is the §5.2
 // default and carries no pod reuse, so the fallback never understates
 // the isolation posture a client would observe.
-func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, requested isolation.Profile) SessionIsolationLevel {
+func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, requested isolation.Profile, pinnedPool string) SessionIsolationLevel {
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		return defaultIsolationLevel(requested)
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested))
+	// spec: §7.1 / §14.1 — when the client pinned a pool, derive the level
+	// from that named pool so the persisted sessionIsolationLevel reflects
+	// the pool the session will bind to. F-CS2 (0018).
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested), pinnedPool)
 	if err != nil {
 		return defaultIsolationLevel(requested)
 	}
@@ -3357,9 +3432,14 @@ func (s *Server) writeSession(w http.ResponseWriter, code int, row sessionstore.
 // writeError writes a §15.1 error envelope. The category and
 // retryable fields are populated from the shared §15.2.1
 // errorclassify table so REST and MCP report the same values for the
-// same code.
+// same code. An unmapped code resolves through the status-aware
+// ClassifyStatus, so an unmapped non-5xx code classifies as
+// (PERMANENT, false) here exactly as it does on the admin surface
+// (ClassifyStatus in tenants.go), rather than the (TRANSIENT, true)
+// fallback the code-only Classify returns. spec: §15.2.1
+// (classification consistency).
 func (s *Server) writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
-	cat, retryable := errorclassify.Classify(code)
+	cat, retryable := errorclassify.ClassifyStatus(code, status)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: errorBody{

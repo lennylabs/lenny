@@ -110,7 +110,7 @@ func ErrIsProtocol(err error) bool {
 }
 
 // maxFrameBytes caps an inbound JSON Lines frame at the §15.4.1
-// OutputPart hard limit. A larger frame is a protocol error.
+// MessagePart hard limit. A larger frame is a protocol error.
 const maxFrameBytes = 50 * 1024 * 1024
 
 // socketEnvVar is the §4.7 environment variable the adapter sets on the
@@ -460,7 +460,7 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 		s.cfg.logf("runtime: OnMessage error: %v", err)
 		if werr := s.w.write(outboundResponse{
 			Type:   "response",
-			Output: []OutputPart{},
+			Output: []MessagePart{},
 			Error:  &ResponseError{Code: "RUNTIME_ERROR", Message: err.Error()},
 			SlotID: env.SlotID,
 		}); werr != nil {
@@ -624,8 +624,8 @@ func (s *session) manifestTaskID() string {
 // stampParts sets SchemaVersion on every part that left it zero,
 // honoring the §15.4.1 producer obligation, and returns a non-nil slice
 // so an empty Reply still serializes as output: [].
-func stampParts(parts []OutputPart) []OutputPart {
-	out := make([]OutputPart, len(parts))
+func stampParts(parts []MessagePart) []MessagePart {
+	out := make([]MessagePart, len(parts))
 	for i, p := range parts {
 		if p.SchemaVersion == 0 {
 			p.SchemaVersion = schemaVersion

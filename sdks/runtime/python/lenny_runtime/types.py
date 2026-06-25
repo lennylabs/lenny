@@ -2,7 +2,7 @@
 
 """Wire and convenience types the runtime-author SDK surfaces.
 
-The wire-level dataclasses (:class:`OutputPart`, :class:`MessageEnvelope`)
+The wire-level dataclasses (:class:`MessagePart`, :class:`MessageEnvelope`)
 mirror the §15.4.1 adapter binary protocol. The convenience dataclasses
 (:class:`CreateRequest`, :class:`Message`, :class:`Reply`,
 :class:`CredentialBundle`, :class:`AdapterManifest`,
@@ -16,13 +16,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# SCHEMA_VERSION is the current OutputPart and MessageEnvelope schema
-# revision (§15.4.1). Producers stamp it on every emitted OutputPart.
+# SCHEMA_VERSION is the current MessagePart and MessageEnvelope schema
+# revision (§15.4.1). Producers stamp it on every emitted MessagePart.
 SCHEMA_VERSION = 1
 
 
 @dataclass
-class OutputPart:
+class MessagePart:
     """§15.4.1 internal content model.
 
     A part either carries bytes inline or references blob storage;
@@ -32,7 +32,7 @@ class OutputPart:
     """
 
     type: str
-    # schema_version identifies the OutputPart schema revision. Defaults
+    # schema_version identifies the MessagePart schema revision. Defaults
     # to 1. The SDK sets it to 1 on any emitted part that leaves it
     # unset.
     schema_version: int = SCHEMA_VERSION
@@ -49,13 +49,13 @@ class OutputPart:
     # annotations is an open metadata map (role, language, final, etc.).
     annotations: dict[str, Any] | None = None
     # parts holds nested parts for compound outputs (execution_result).
-    parts: list[OutputPart] | None = None
+    parts: list[MessagePart] | None = None
     # status is one of streaming, complete, or failed.
     status: str | None = None
 
     @classmethod
-    def from_wire(cls, raw: dict[str, Any]) -> OutputPart:
-        """Build an OutputPart from a §15.4.1 wire object."""
+    def from_wire(cls, raw: dict[str, Any]) -> MessagePart:
+        """Build a MessagePart from a §15.4.1 wire object."""
         nested = raw.get("parts")
         return cls(
             type=str(raw.get("type", "")),
@@ -96,9 +96,9 @@ class OutputPart:
         return out
 
 
-def text(s: str) -> OutputPart:
-    """Build a minimal text OutputPart with ``schema_version`` set."""
-    return OutputPart(type="text", inline=s)
+def text(s: str) -> MessagePart:
+    """Build a minimal text MessagePart with ``schema_version`` set."""
+    return MessagePart(type="text", inline=s)
 
 
 @dataclass
@@ -137,7 +137,7 @@ class MessageEnvelope:
     delivery: str | None = None
     delegation_depth: int = 0
     slot_id: str | None = None
-    input: list[OutputPart] = field(default_factory=list)
+    input: list[MessagePart] = field(default_factory=list)
     annotations: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -163,7 +163,7 @@ class MessageEnvelope:
             delivery=raw.get("delivery"),
             delegation_depth=int(raw.get("delegationDepth", 0)),
             slot_id=raw.get("slotId"),
-            input=[OutputPart.from_wire(p) for p in raw.get("input", [])],
+            input=[MessagePart.from_wire(p) for p in raw.get("input", [])],
             annotations=annotations,
         )
 
@@ -413,10 +413,10 @@ class Reply:
     ``parts`` becomes ``output``.
     """
 
-    # parts is the OutputPart array the runtime emits for this turn.
+    # parts is the MessagePart array the runtime emits for this turn.
     # Empty is valid when output was already emitted via the
     # lenny/output platform MCP tool.
-    parts: list[OutputPart] = field(default_factory=list)
+    parts: list[MessagePart] = field(default_factory=list)
     # error reports a structured failure for this turn. When set, the
     # adapter maps the task to failed and populates TaskResult.error.
     error: ResponseError | None = None
@@ -443,7 +443,7 @@ class ToolResult:
     string).
     """
 
-    content: list[OutputPart] = field(default_factory=list)
+    content: list[MessagePart] = field(default_factory=list)
     is_error: bool = False
 
 
@@ -458,7 +458,7 @@ class TaskHandle:
 class TaskOutput:
     """Output object of a §8.8 TaskResult."""
 
-    parts: list[OutputPart] = field(default_factory=list)
+    parts: list[MessagePart] = field(default_factory=list)
 
 
 @dataclass
@@ -484,7 +484,7 @@ class TaskResult:
             state=str(raw.get("state", "")),
             output=TaskOutput(
                 parts=[
-                    OutputPart.from_wire(p)
+                    MessagePart.from_wire(p)
                     for p in (out.get("parts", []) if isinstance(out, dict) else [])
                 ],
             ),

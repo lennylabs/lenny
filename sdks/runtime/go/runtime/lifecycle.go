@@ -297,7 +297,7 @@ func (lc *Lifecycle) handleTerminate(ctx context.Context, line []byte, s *sessio
 	// adapter maps the error to a DEADLINE_EXCEEDED TaskResult.
 	if err := s.w.write(outboundResponse{
 		Type:   "response",
-		Output: []OutputPart{},
+		Output: []MessagePart{},
 		Error:  &ResponseError{Code: "DEADLINE_EXCEEDED", Message: reason},
 	}); err != nil {
 		s.cfg.logf("runtime: write terminate response: %v", err)

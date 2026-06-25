@@ -15,7 +15,7 @@ import (
 func TestIngestUnregisteredPlatformType_spec_15_4_1_1522(t *testing.T) {
 	env := responseEnvelope{
 		Type:   "response",
-		Output: []wireOutputPart{{Type: "heatmap", Inline: "<<grid>>"}},
+		Output: []wireMessagePart{{Type: "heatmap", Inline: "<<grid>>"}},
 	}
 	parts, envAnn := ingestResponse(env)
 	if envAnn != nil {
@@ -45,7 +45,7 @@ func TestIngestUnregisteredPlatformType_spec_15_4_1_1522(t *testing.T) {
 func TestIngestVendorNamespacedType_spec_15_4_1_1522(t *testing.T) {
 	env := responseEnvelope{
 		Type:   "response",
-		Output: []wireOutputPart{{Type: "x-acme/heatmap", Inline: "v"}},
+		Output: []wireMessagePart{{Type: "x-acme/heatmap", Inline: "v"}},
 	}
 	parts, _ := ingestResponse(env)
 	p := parts[0]
@@ -65,7 +65,7 @@ func TestIngestVendorNamespacedType_spec_15_4_1_1522(t *testing.T) {
 func TestIngestCanonicalTypeUntouched_spec_15_4_1(t *testing.T) {
 	env := responseEnvelope{
 		Type:   "response",
-		Output: []wireOutputPart{{Type: "code", Inline: "print(1)"}},
+		Output: []wireMessagePart{{Type: "code", Inline: "print(1)"}},
 	}
 	parts, envAnn := ingestResponse(env)
 	if envAnn != nil {
@@ -89,7 +89,7 @@ func TestIngestCanonicalTypeUntouched_spec_15_4_1(t *testing.T) {
 func TestIngestSchemaVersionAhead_spec_15_4_1_1501(t *testing.T) {
 	env := responseEnvelope{
 		Type: "response",
-		Output: []wireOutputPart{
+		Output: []wireMessagePart{
 			{Type: "text", Inline: "a", SchemaVersion: 1},
 			{Type: "text", Inline: "b", SchemaVersion: 4},
 		},

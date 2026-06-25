@@ -110,7 +110,7 @@ type putTenantUserRoleRequest struct {
 }
 
 // handlePutTenantUserRole implements PUT
-// /v1/admin/tenants/{id}/users/{user_id}/role — the §15.1 line 827
+// /v1/admin/tenants/{id}/users/{userId}/role — the §15.1 line 827
 // platform-managed role assignment. The named role replaces the user's
 // platform-managed assignment and takes precedence over the OIDC claim
 // (§10.2 line 294). Valid roles are the tenant-scoped built-ins
@@ -126,9 +126,9 @@ func (r *Router) handlePutTenantUserRole(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	userID := strings.TrimSpace(req.PathValue("user_id"))
+	userID := strings.TrimSpace(req.PathValue("userId"))
 	if userID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "user_id is required", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "userId is required", nil)
 		return
 	}
 	var body putTenantUserRoleRequest
@@ -200,7 +200,7 @@ func (r *Router) handlePutTenantUserRole(w http.ResponseWriter, req *http.Reques
 }
 
 // handleDeleteTenantUserRole implements DELETE
-// /v1/admin/tenants/{id}/users/{user_id}/role — the §15.1 line 828
+// /v1/admin/tenants/{id}/users/{userId}/role — the §15.1 line 828
 // removal of the platform-managed role assignment. The user record is
 // retained (so the user still lists) but its assignment is cleared, so
 // the §10.2 role resolver falls through to the OIDC claim. The endpoint
@@ -212,9 +212,9 @@ func (r *Router) handleDeleteTenantUserRole(w http.ResponseWriter, req *http.Req
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	userID := strings.TrimSpace(req.PathValue("user_id"))
+	userID := strings.TrimSpace(req.PathValue("userId"))
 	if userID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "user_id is required", nil)
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "userId is required", nil)
 		return
 	}
 	current, gerr := r.users.Get(req.Context(), tenant, userID)

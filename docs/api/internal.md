@@ -176,7 +176,7 @@ message AttachMessage {
     CredentialRotation credential = 3; // mid-session credential rotation
 
     // Pod → Gateway
-    AgentOutput output = 4;           // streaming agent output (OutputPart[])
+    AgentOutput output = 4;           // streaming agent output (MessagePart[])
     ToolCallRequest tool_call = 5;    // agent requests tool execution
     StatusUpdate status = 6;          // agent status change
     HeartbeatAck heartbeat_ack = 7;   // heartbeat acknowledgment
@@ -188,8 +188,8 @@ message AttachMessage {
 
 - The gateway opens the Attach stream after `StartSession` succeeds.
 - Messages flow in both directions concurrently.
-- The gateway sends `MessageEnvelope` objects containing `OutputPart` arrays as input.
-- The pod sends `AgentOutput` objects containing `OutputPart` arrays as streaming output.
+- The gateway sends `MessageEnvelope` objects containing `MessagePart` arrays as input.
+- The pod sends `AgentOutput` objects containing `MessagePart` arrays as streaming output.
 - The stream remains open for the duration of the session.
 - If the stream is interrupted (network partition, pod restart), the gateway attempts reconnection. The pod must accept a new Attach stream for an in-progress session.
 
@@ -527,7 +527,7 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 
 | Type | Description |
 |:-----|:------------|
-| `response` | Complete or streamed response with `OutputPart[]` |
+| `response` | Complete or streamed response with `MessagePart[]` |
 | `tool_call` | Agent requests tool execution |
 | `heartbeat_ack` | Acknowledges heartbeat |
 | `status` | Optional status/trace update |
@@ -541,14 +541,14 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `2` | Protocol error (could not parse messages) |
 | `137` | SIGKILL (pod not reused) |
 
-For the complete binary protocol specification, including `OutputPart` format, `MessageEnvelope` schema, and level-specific behavior, see the technical design document Section 15.4.
+For the complete binary protocol specification, including `MessagePart` format, `MessageEnvelope` schema, and level-specific behavior, see the technical design document Section 15.4.
 
 ---
 
 ## Translation fidelity matrix
 {: #translation-fidelity-matrix }
 
-Each external protocol adapter translates between `OutputPart` (Lenny's internal content model) and its wire format. The fidelity of this translation varies by adapter:
+Each external protocol adapter translates between `MessagePart` (Lenny's internal content model) and its wire format. The fidelity of this translation varies by adapter:
 
 | Tag | Meaning |
 |:----|:--------|

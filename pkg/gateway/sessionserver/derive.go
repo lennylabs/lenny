@@ -355,7 +355,10 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	// alongside isolationProfile (same path as the plain create flow).
 	// GET /v1/sessions/{id} on a derived row therefore returns the same
 	// rich envelope as a freshly-created row.
-	derivedLevel := s.resolveIsolationLevel(r.Context(), runtimeRef, target)
+	// spec: §7.1 / §14.1 — derive the level from the resolved target pool
+	// (req.TargetPool, or the source's pool when omitted) so the derived
+	// row's persisted level reflects the pool it binds to. F-CS2 (0018).
+	derivedLevel := s.resolveIsolationLevel(r.Context(), runtimeRef, target, pool)
 	derived := sessionstore.Session{
 		ID:                     derivedID,
 		TenantID:               tenantID,

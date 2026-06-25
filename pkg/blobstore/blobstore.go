@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package blobstore implements the §4.5 artifact / blob abstraction
-// that backs `lenny-blob://` references in `OutputPart`, workspace
+// that backs `lenny-blob://` references in `MessagePart`, workspace
 // snapshots, transcripts, and the upload pipeline.
 //
 // The blob-uri scheme is canonical: a blob is addressed by

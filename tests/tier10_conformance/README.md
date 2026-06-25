@@ -12,7 +12,7 @@ The suite is a placeholder. `scaffolds_test.go` is the only file in the tier; ev
 |:--|:--|
 | `TestReferenceCatalogNightly` | §26 reference-runtime OCI images published to a registry |
 | `TestThirdPartyRegistration` | `RegisterAdapterUnderTest` entry point in `cmd/lenny-compliance` |
-| `TestFidelityMatrix` | Documented per-OutputPart fidelity table plus the OpenAI / Anthropic translators |
+| `TestFidelityMatrix` | Documented per-MessagePart fidelity table plus the OpenAI / Anthropic translators |
 
 Once those deliverables land the scaffolds split into per-subject `*_test.go` files and lose their skips.
 

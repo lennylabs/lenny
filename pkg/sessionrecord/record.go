@@ -3,7 +3,7 @@
 // Package sessionrecord models the §8.8 TaskRecord and TaskResult
 // envelopes: the durable, protocol-bridging contract for a delegated
 // task. The types here are the canonical Go representation of the §8.8
-// JSON schemas (TaskRecord, TaskResult) and the §15.4.1 OutputPart
+// JSON schemas (TaskRecord, TaskResult) and the §15.4.1 MessagePart
 // content envelope. The gateway projects a TaskRecord on read (from the
 // session row plus its transcript) and writes a TaskResult into the
 // §8.10 tree archive when a child settles; both routes go through these
@@ -18,10 +18,11 @@
 // gateway, where the stores and the §15.2.1 classifier are available.
 //
 // spec: §8.8 lines 804-940 (TaskRecord / TaskResult); §15.4.1 lines
-// 1479-1540 (OutputPart).
+// 1479-1540 (MessagePart).
 package sessionrecord
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -46,14 +47,14 @@ const (
 	RoleAgent  = "agent"
 )
 
-// OutputPart is the §15.4.1 internal content envelope. It carries its
+// MessagePart is the §15.4.1 internal content envelope. It carries its
 // own per-type SchemaVersion, independent of the enclosing TaskRecord
 // envelope version: the two version axes evolve separately per §8.8
 // line 825. v1 producers emit `text` parts; the full canonical type
 // registry (code, image, diff, file, execution_result, error, ...) is
 // an open string per §15.4.1.
 // spec: §15.4.1 lines 1483-1540.
-type OutputPart struct {
+type MessagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	ID            string         `json:"id,omitempty"`
 	Type          string         `json:"type"`
@@ -61,18 +62,18 @@ type OutputPart struct {
 	Inline        string         `json:"inline,omitempty"`
 	Ref           string         `json:"ref,omitempty"`
 	Annotations   map[string]any `json:"annotations,omitempty"`
-	Parts         []OutputPart   `json:"parts,omitempty"`
+	Parts         []MessagePart  `json:"parts,omitempty"`
 	Status        string         `json:"status,omitempty"`
 }
 
-// TextPart builds a §15.4.1 `text` OutputPart carrying inline content.
+// TextPart builds a §15.4.1 `text` MessagePart carrying inline content.
 // It is the projection used when the source is a plain-text transcript
 // entry; a runtime that emits richer parts (image, file ref) populates
-// OutputPart directly.
+// MessagePart directly.
 // spec: §15.4.1 lines 1530-1531 — `text` guarantees type, inline,
 // mimeType (text/plain).
-func TextPart(content string) OutputPart {
-	return OutputPart{
+func TextPart(content string) MessagePart {
+	return MessagePart{
 		SchemaVersion: SchemaVersion,
 		Type:          "text",
 		MimeType:      "text/plain",
@@ -81,13 +82,142 @@ func TextPart(content string) OutputPart {
 	}
 }
 
+// MessageContent is the §15.4 `MessageEnvelope.input` union: a message's
+// inbound content is either a bare string or a §15.4.1 `MessagePart[]`
+// array. The two forms are one contract — §15.4 binds `MessageEnvelope`
+// identically across the stdin binary protocol, the platform MCP server
+// tools, and every external API, so the REST `/messages` endpoint and the
+// MCP `lenny/send_message` tool accept the same union. A bare string is
+// sugar for a single `text` part: it unmarshals to one MessagePart via
+// TextPart, so a structured consumer always reads `Parts` and never has to
+// branch on which wire form arrived.
+//
+// The zero value is empty (no parts). UnmarshalJSON accepts the bare
+// string (`"hi"`), the part array (`[{"type":"text","inline":"hi"}]`), or
+// JSON null (empty); any other JSON shape is a validation error.
+// MarshalJSON round-trips the form that was unmarshalled (bare string when
+// the input was a bare string, array otherwise) so a buffered message
+// re-delivered from the inbox carries the original wire form.
+//
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])),
+// §15.2.1 (REST/MCP parity).
+type MessageContent struct {
+	// parts is the canonical §15.4.1 MessagePart array. A bare-string
+	// input is normalized to a single text part here at unmarshal time.
+	parts []MessagePart
+	// wasString records that the wire input arrived as a bare string, so
+	// MarshalJSON re-emits the bare-string sugar rather than the array.
+	wasString bool
+}
+
+// MessageContentJSONSchema is the §15.4 `MessageEnvelope.input` union
+// expressed as a JSON Schema fragment: `oneOf(string, MessagePart[])`. It
+// is defined once here so the REST OpenAPI schema and the MCP
+// `lenny/send_message` `inputSchema` express the identical union and the
+// two surfaces cannot drift. The MessagePart branch lists the §15.4.1
+// part fields; `type` is the only required field per the §15.4.1 part
+// contract. A `oneOf` is valid in an MCP tool input schema, so the union
+// is MCP-compliant. spec: §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
+// parity).
+const MessageContentJSONSchema = `{"oneOf":[{"type":"string","description":"§15.4 bare-string shorthand: sugar for a single text MessagePart."},{"type":"array","description":"§15.4.1 MessagePart[] structured content.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"},"schemaVersion":{"type":"integer"},"annotations":{"type":"object"}}}}]}`
+
+// MessageContentFromText builds a MessageContent carrying a single text
+// part from a plain string. It is the constructor the REST and MCP send
+// paths use when the only content is text, and the form a buffered message
+// re-delivers as a bare string.
+// spec: §15.4 (bare string is a single text MessagePart).
+func MessageContentFromText(s string) MessageContent {
+	return MessageContent{parts: []MessagePart{TextPart(s)}, wasString: true}
+}
+
+// MessageContentFromParts builds a MessageContent from an explicit
+// §15.4.1 MessagePart array.
+// spec: §15.4 (MessageEnvelope.input MessagePart[]).
+func MessageContentFromParts(parts []MessagePart) MessageContent {
+	return MessageContent{parts: parts}
+}
+
+// Parts returns the canonical §15.4.1 MessagePart array. A bare-string
+// input is already normalized to a single text part, so a consumer reads
+// Parts uniformly regardless of which wire form arrived.
+func (m MessageContent) Parts() []MessagePart { return m.parts }
+
+// Text projects the content to its plain-text form: the concatenation of
+// every `text` part's inline content. It is the projection the gateway's
+// text-only delivery, transcript, and interceptor paths consume until they
+// carry the full multipart envelope. A non-text part contributes no text.
+// spec: §15.4.1 (text part inline content).
+func (m MessageContent) Text() string {
+	if len(m.parts) == 1 && m.parts[0].Type == "text" {
+		return m.parts[0].Inline
+	}
+	var b strings.Builder
+	for _, p := range m.parts {
+		if p.Type == "text" {
+			b.WriteString(p.Inline)
+		}
+	}
+	return b.String()
+}
+
+// IsEmpty reports whether the content carries no parts.
+func (m MessageContent) IsEmpty() bool { return len(m.parts) == 0 }
+
+// UnmarshalJSON decodes the §15.4 oneOf(string, MessagePart[]) union: a
+// bare JSON string becomes a single text part, a JSON array decodes to the
+// MessagePart slice, and JSON null is the empty value. Any other JSON shape
+// (object, number, bool) is a validation error so a malformed body is
+// rejected rather than silently coerced. spec: §15.4 (MessageEnvelope.input).
+func (m *MessageContent) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	switch {
+	case trimmed == "" || trimmed == "null":
+		m.parts = nil
+		m.wasString = false
+		return nil
+	case trimmed[0] == '"':
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return fmt.Errorf("message content string: %w", err)
+		}
+		m.parts = []MessagePart{TextPart(s)}
+		m.wasString = true
+		return nil
+	case trimmed[0] == '[':
+		var parts []MessagePart
+		if err := json.Unmarshal(data, &parts); err != nil {
+			return fmt.Errorf("message content parts: %w", err)
+		}
+		m.parts = parts
+		m.wasString = false
+		return nil
+	default:
+		return fmt.Errorf("message content must be a string or a MessagePart array, got %.16s", trimmed)
+	}
+}
+
+// MarshalJSON re-emits the union form that was unmarshalled: a bare-string
+// input (or a MessageContentFromText value) marshals back to a JSON string,
+// and a part-array input marshals to the MessagePart array. Round-tripping
+// the original form keeps a buffered message's re-delivered wire body
+// byte-stable on the bare-string path. spec: §15.4 (MessageEnvelope.input).
+func (m MessageContent) MarshalJSON() ([]byte, error) {
+	if m.wasString && len(m.parts) == 1 && m.parts[0].Type == "text" {
+		return json.Marshal(m.parts[0].Inline)
+	}
+	if m.parts == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(m.parts)
+}
+
 // Message is one entry in a §8.8 TaskRecord messages array. State is
 // set only on agent entries that have reached a terminal task state.
 // spec: §8.8 lines 810-817.
 type Message struct {
-	Role  string       `json:"role"`
-	Parts []OutputPart `json:"parts"`
-	State string       `json:"state,omitempty"`
+	Role  string        `json:"role"`
+	Parts []MessagePart `json:"parts"`
+	State string        `json:"state,omitempty"`
 }
 
 // Usage is the §8.8 per-task usage rollup.
@@ -145,8 +275,8 @@ type Result struct {
 // present (possibly empty) when Output itself is set.
 // spec: §8.8 lines 888-891.
 type Output struct {
-	Parts        []OutputPart `json:"parts"`
-	ArtifactRefs []string     `json:"artifactRefs"`
+	Parts        []MessagePart `json:"parts"`
+	ArtifactRefs []string      `json:"artifactRefs"`
 }
 
 // Error is the §8.8 TaskResult.error block. Category is the §15.2.1 /

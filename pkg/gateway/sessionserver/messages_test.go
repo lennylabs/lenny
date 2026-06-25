@@ -5,6 +5,7 @@ package sessionserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
 // spec: §7.2 message injection; §15.1 POST /v1/sessions/{id}/messages.
@@ -72,7 +74,7 @@ func TestMessagesEchoExecutor(t *testing.T) {
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_m1", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{
-			{Role: "user", Content: "hello"},
+			{Role: "user", Content: sessionrecord.MessageContentFromText("hello")},
 		},
 	})
 	if rr.Code != http.StatusOK {
@@ -98,6 +100,52 @@ func TestMessagesEchoExecutor(t *testing.T) {
 	}
 }
 
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])).
+//
+// The REST /messages content field is the §15.4 message-input union. Both
+// the bare-string sugar and the MessagePart[] structured form are accepted
+// over the wire and projected to the same delivered text; a malformed
+// content shape (an object) is rejected fail-closed.
+func TestMessagesAcceptsContentUnion_spec_15_4(t *testing.T) {
+	t.Run("bare string", func(t *testing.T) {
+		srv, store := newMessagesServer(t)
+		seedRunningSession(t, store, "sess_u_bare")
+		rr := sendRawMessageRequest(t, srv.Handler(), "sess_u_bare",
+			`{"messages":[{"role":"user","content":"hi-bare"}]}`)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("bare string union: got %d, body=%s", rr.Code, rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), "hi-bare") {
+			t.Errorf("bare-string content not echoed: %s", rr.Body.String())
+		}
+	})
+	t.Run("MessagePart array", func(t *testing.T) {
+		srv, store := newMessagesServer(t)
+		seedRunningSession(t, store, "sess_u_parts")
+		rr := sendRawMessageRequest(t, srv.Handler(), "sess_u_parts",
+			`{"messages":[{"role":"user","content":[{"type":"text","inline":"hi-parts"},{"type":"image","ref":"lenny-blob://acme/s/p","mimeType":"image/png"}]}]}`)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("part-array union: got %d, body=%s", rr.Code, rr.Body.String())
+		}
+		// Only the text part projects to delivered text; the image part is
+		// carried but contributes no echoed text.
+		if !strings.Contains(rr.Body.String(), "hi-parts") {
+			t.Errorf("part-array text not echoed: %s", rr.Body.String())
+		}
+	})
+	t.Run("malformed content is rejected", func(t *testing.T) {
+		// spec: §15.4 — the union admits only a string or a MessagePart[];
+		// an object content shape is rejected with 400 rather than coerced.
+		srv, store := newMessagesServer(t)
+		seedRunningSession(t, store, "sess_u_bad")
+		rr := sendRawMessageRequest(t, srv.Handler(), "sess_u_bad",
+			`{"messages":[{"role":"user","content":{"type":"text"}}]}`)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("malformed content union: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+		}
+	})
+}
+
 func TestMessagesRejectsEmptyBatch(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_m2")
@@ -118,7 +166,7 @@ func TestMessagesRejectsTerminalSession(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := sendMessageRequest(t, srv.Handler(), "sess_done", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "x"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusConflict {
 		t.Errorf("terminal session: got %d, want 409", rr.Code)
@@ -128,7 +176,7 @@ func TestMessagesRejectsTerminalSession(t *testing.T) {
 func TestMessagesRejectsMissingSession(t *testing.T) {
 	srv, _ := newMessagesServer(t)
 	rr := sendMessageRequest(t, srv.Handler(), "sess_missing", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "x"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("missing: got %d, want 404", rr.Code)
@@ -140,7 +188,7 @@ func TestMessagesRejectsWhenExecutorUnwired(t *testing.T) {
 	seedRunningSession(t, store, "sess_no_exec")
 	srv := sessionserver.New(store, sessionserver.Options{})
 	rr := sendMessageRequest(t, srv.Handler(), "sess_no_exec", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "x"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("no executor: got %d, want 503", rr.Code)
@@ -152,7 +200,7 @@ func TestMessagesRecordsTranscript(t *testing.T) {
 	seedRunningSession(t, store, "sess_tr")
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_tr", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("send: %d", rr.Code)
@@ -214,7 +262,7 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status: %d, want 403 (body=%s)", rr.Code, rr.Body.String())
@@ -262,14 +310,14 @@ func TestMessagesInjectionTenantOverride_spec_5_1_49(t *testing.T) {
 	})
 
 	rrAcme := sendMessageRequest(t, srv.Handler(), "acme1", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rrAcme.Code != http.StatusForbidden || !strings.Contains(rrAcme.Body.String(), "INJECTION_REJECTED") {
 		t.Errorf("acme (override off): status %d body=%s, want 403 INJECTION_REJECTED", rrAcme.Code, rrAcme.Body.String())
 	}
 
 	rrGlx := sendMessageRequest(t, srv.Handler(), "glx1", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rrGlx.Code == http.StatusForbidden {
 		t.Errorf("globex (no override) should keep the injection-on default; got 403 body=%s", rrGlx.Body.String())
@@ -301,7 +349,7 @@ func TestMessagesAllowsInjectionWhenRuntimeSupports(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, want 200 (body=%s)", rr.Code, rr.Body.String())
@@ -337,10 +385,194 @@ func TestMessagesInjectionResolvesDerivedRuntime(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("derived runtime inheriting injection support: status %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// transientRuntimeStore wraps a runtimestore.Store and returns a
+// transient (non-not-found) read error from Get, simulating a Postgres
+// blip on the runtime-registry read the injection gate must fail closed
+// on. Every other method delegates so a session can still be seeded
+// against the embedded store.
+type transientRuntimeStore struct {
+	runtimestore.Store
+	err error
+}
+
+func (s transientRuntimeStore) Get(context.Context, string) (runtimestore.Runtime, error) {
+	return runtimestore.Runtime{}, s.err
+}
+
+// transientOverrideStore wraps a runtimecapoverride.Store and returns a
+// transient (non-not-found) read error from Get, simulating a Postgres
+// blip on the per-tenant capability-override read. This is the
+// F-5.1.20 tenant-narrowing path the prior error swallow hid: the base
+// runtime declares injection supported, so the gate must fail closed
+// rather than admit injection against the un-overlaid runtime.
+type transientOverrideStore struct {
+	runtimecapoverride.Store
+	err error
+}
+
+func (s transientOverrideStore) Get(context.Context, string, string) (runtimestore.CapabilityOverride, bool, error) {
+	return runtimestore.CapabilityOverride{}, false, s.err
+}
+
+func seedInjectionRuntime(t *testing.T) runtimestore.Store {
+	t.Helper()
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "chatty", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+			Injection:   runtimestore.InjectionCapability{Supported: true},
+		},
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	return runtimes
+}
+
+func seedInjectionSession(t *testing.T, store sessionstore.Store, id, tenant string) {
+	t.Helper()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: tenant, State: session.StateRunning,
+		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+}
+
+func assertInjectionFailsClosed(t *testing.T, rr *httptest.ResponseRecorder) {
+	t.Helper()
+	// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE) —
+	// a transient store read fails closed with a retryable 503
+	// SERVICE_UNAVAILABLE, never an admitted injection (200) and never
+	// the POLICY/non-retryable 403 INJECTION_REJECTED that would mislabel
+	// a recoverable infra blip as a permanent policy denial.
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: %d, want 503 SERVICE_UNAVAILABLE (body=%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "SERVICE_UNAVAILABLE") {
+		t.Errorf("body: %s, want SERVICE_UNAVAILABLE", rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "INJECTION_REJECTED") {
+		t.Errorf("a transient store blip must not surface as the policy denial INJECTION_REJECTED: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"retryable":true`) {
+		t.Errorf("SERVICE_UNAVAILABLE must be retryable: %s", rr.Body.String())
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("a retryable 503 SERVICE_UNAVAILABLE must carry a Retry-After header")
+	}
+}
+
+// failClosedRecorder captures the cause labels passed to the
+// lenny_injection_gate_failclosed_total{cause} metric hook so a test can
+// assert the §5.1 fail-closed branch records the granular backing-store
+// cause as a metric (the "and metrics" half of the §15.1 SERVICE_UNAVAILABLE
+// observability contract), not only as a log line.
+type failClosedRecorder struct{ causes []string }
+
+func (f *failClosedRecorder) inc(cause string) { f.causes = append(f.causes, cause) }
+
+// assertFailClosedMetric confirms the metric hook fired exactly once with
+// the expected backing-store cause label.
+// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+func assertFailClosedMetric(t *testing.T, rec *failClosedRecorder, wantCause string) {
+	t.Helper()
+	if len(rec.causes) != 1 {
+		t.Fatalf("lenny_injection_gate_failclosed_total fired %d times, want exactly 1 (causes=%v)", len(rec.causes), rec.causes)
+	}
+	if rec.causes[0] != wantCause {
+		t.Errorf("fail-closed metric cause=%q, want %q", rec.causes[0], wantCause)
+	}
+}
+
+// diagnosis: the §5.1 injection gate admitted mid-session injection on a
+// transient runtime-registry read error instead of failing closed, or
+// failed closed without recording the granular cause as a metric; a
+// store blip is being treated as a definite "injection supported" answer
+// or the §15.1 SERVICE_UNAVAILABLE observability contract's metric half is
+// missing.
+// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testing.T) {
+	store := memstore.New()
+	runtimes := transientRuntimeStore{Store: seedInjectionRuntime(t), err: errors.New("registry pg read timeout")}
+	rec := &failClosedRecorder{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:                   executor.NewEchoExecutor(),
+		Transcripts:                transcriptstore.NewMemory(),
+		Runtimes:                   runtimes,
+		IncInjectionGateFailClosed: rec.inc,
+	})
+	seedInjectionSession(t, store, "s1", "acme")
+	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
+	})
+	assertInjectionFailsClosed(t, rr)
+	// The runtime-registry read failed, so the metric records the
+	// runtime_store cause, distinguishing it from an override-store blip.
+	assertFailClosedMetric(t, rec, "runtime_store")
+}
+
+// diagnosis: the §5.1 injection gate admitted injection on a transient
+// per-tenant override-store read error, the F-5.1.20 tenant-narrowing
+// path the prior ResolveForTenant error swallow hid, or failed closed
+// without recording the override_store cause as a metric; the override-
+// store blip must fail closed rather than admit injection against the
+// un-overlaid (injection-on) base runtime and must record the granular
+// cause in both logs and metrics.
+// spec: §5.1 line 49 (F-5.1.20 injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *testing.T) {
+	store := memstore.New()
+	overrides := transientOverrideStore{
+		Store: runtimecapoverride.NewMemory(),
+		err:   errors.New("override pg read timeout"),
+	}
+	rec := &failClosedRecorder{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:                   executor.NewEchoExecutor(),
+		Transcripts:                transcriptstore.NewMemory(),
+		Runtimes:                   seedInjectionRuntime(t),
+		CapabilityOverrides:        overrides,
+		IncInjectionGateFailClosed: rec.inc,
+	})
+	seedInjectionSession(t, store, "acme1", "acme")
+	rr := sendMessageRequest(t, srv.Handler(), "acme1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
+	})
+	assertInjectionFailsClosed(t, rr)
+	// The override-store read failed, so the metric records the
+	// override_store cause, the granular distinction the coarse
+	// SERVICE_UNAVAILABLE client code hides.
+	assertFailClosedMetric(t, rec, "override_store")
+}
+
+// diagnosis: the §5.1 injection gate stopped degrading open on a genuine
+// runtime not-found; a gateway whose registry has no entry for the
+// session's RuntimeRef must keep admitting injection rather than blocking
+// it as a transient failure.
+// spec: §5.1 (injection gate degrades open on a definite no-record answer).
+func TestMessagesInjectionNotFoundDegradesOpen_spec_5_1(t *testing.T) {
+	store := memstore.New()
+	// The registry is wired but has no entry for the session's RuntimeRef,
+	// so Resolve returns ErrNotFound: the gate degrades open.
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Runtimes:    runtimestore.NewMemory(),
+	})
+	seedInjectionSession(t, store, "s1", "acme")
+	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi")}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("a genuine runtime not-found must degrade open: status %d, want 200 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
 
@@ -403,7 +635,7 @@ func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 				t.Fatalf("seed: %v", err)
 			}
 			rr := sendMessageRequest(t, srv.Handler(), id, sessionserver.MessageRequest{
-				Messages: []sessionserver.MessagePayload{{Content: "early"}},
+				Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("early")}},
 			})
 			if rr.Code != http.StatusConflict {
 				t.Fatalf("pre-running %s: got %d, want 409; body=%s", tc.state, rr.Code, rr.Body.String())
@@ -422,7 +654,7 @@ func TestMessagesAcceptsRunningSession(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_run")
 	rr := sendMessageRequest(t, srv.Handler(), "sess_run", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "live"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("live")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Errorf("running state: got %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -435,7 +667,7 @@ func TestMessagesRejectsInvalidDeliveryValue(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_d")
 	rr := sendMessageRequest(t, srv.Handler(), "sess_d", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "x", Delivery: "burst"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x"), Delivery: "burst"}},
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("delivery=burst: got %d, want 400; body=%s", rr.Code, rr.Body.String())
@@ -454,7 +686,7 @@ func TestMessagesAcceptsCanonicalDeliveryValues(t *testing.T) {
 			srv, store := newMessagesServer(t)
 			seedRunningSession(t, store, "sess_d_"+v)
 			rr := sendMessageRequest(t, srv.Handler(), "sess_d_"+v, sessionserver.MessageRequest{
-				Messages: []sessionserver.MessagePayload{{Content: "x", Delivery: v}},
+				Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x"), Delivery: v}},
 			})
 			if rr.Code != http.StatusOK {
 				t.Errorf("delivery=%q: got %d, want 200; body=%s", v, rr.Code, rr.Body.String())
@@ -482,7 +714,7 @@ func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 	}
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_rr", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "answer", InReplyTo: "req_alpha"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("answer"), InReplyTo: "req_alpha"}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("inReplyTo path: got %d, body=%s", rr.Code, rr.Body.String())
@@ -523,7 +755,7 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	seedRunningSession(t, store, "sess_fall")
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_fall", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "hi", InReplyTo: "req_missing"}},
+		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("hi"), InReplyTo: "req_missing"}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
@@ -566,7 +798,7 @@ func TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_env")
 	_ = sendMessageRequest(t, srv.Handler(), "sess_env", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_env/transcript", nil)
@@ -602,7 +834,7 @@ func TestTranscriptPaginatesWithCanonicalCursor_spec_15_1_1228(t *testing.T) {
 	// Three user→assistant turns ⇒ 6 transcript entries.
 	for i := 0; i < 3; i++ {
 		_ = sendMessageRequest(t, srv.Handler(), "sess_p", sessionserver.MessageRequest{
-			Messages: []sessionserver.MessagePayload{{Role: "user", Content: "ping"}},
+			Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("ping")}},
 		})
 	}
 
@@ -649,7 +881,7 @@ func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 	// hard maximum, so a `?limit=500` request must clamp to 200.
 	for i := 0; i < 250; i++ {
 		_ = sendMessageRequest(t, srv.Handler(), "sess_clamp", sessionserver.MessageRequest{
-			Messages: []sessionserver.MessagePayload{{Role: "user", Content: "x"}},
+			Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("x")}},
 		})
 	}
 	req := httptest.NewRequest(http.MethodGet,
@@ -686,7 +918,7 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	})
 	seedRunningSession(t, store, "sess_expired")
 	_ = sendMessageRequest(t, srv.Handler(), "sess_expired", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "a"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("a")}},
 	})
 	// Mint a cursor at t0, then attempt to use it at t0+25h.
 	enc := pagination.MintCursor(
@@ -724,7 +956,7 @@ func TestMessages_SuspendedTenantRejected_spec_15_1_818(t *testing.T) {
 	})
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_susp", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403, body %s", rr.Code, rr.Body.String())
@@ -750,7 +982,7 @@ func TestMessages_ActiveTenantAdmitted_spec_15_1_818(t *testing.T) {
 	})
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_ok", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hi")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200, body %s", rr.Code, rr.Body.String())

@@ -49,7 +49,7 @@ func getSession(t *testing.T, h http.Handler, id string) *httptest.ResponseRecor
 
 // spec: §8.8 lines 806-823 — GET /v1/sessions/{id} materializes the §8.8
 // TaskRecord envelope projected from the row + transcript: caller/agent
-// messages with per-entry text OutputParts, the terminal state on the
+// messages with per-entry text MessageParts, the terminal state on the
 // final agent turn, and treeUsage absent (null) until descendants
 // settle. F-8.8.1.
 func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
@@ -100,7 +100,7 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 		t.Fatalf("messages len = %d, want 2", len(rec.Messages))
 	}
 	// spec: §8.8 lines 810-817 — user → caller, assistant → agent, each
-	// transcript line becomes a text OutputPart.
+	// transcript line becomes a text MessagePart.
 	if rec.Messages[0].Role != "caller" || rec.Messages[0].Parts[0].Inline != "do the thing" {
 		t.Errorf("caller message = %+v", rec.Messages[0])
 	}

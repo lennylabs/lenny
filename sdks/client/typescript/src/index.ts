@@ -79,7 +79,7 @@ export type {
   IsolationLevel,
   ListOptions,
   MessagePayload,
-  OutputPart,
+  MessagePart,
   SendMessagesRequest,
   SendMessagesResponse,
   Session,

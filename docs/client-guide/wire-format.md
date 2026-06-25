@@ -99,7 +99,7 @@ For the complete list including admin endpoints, see the [REST API Reference](..
 |:------|:-----|:---------|:------|
 | `type` | enum | yes | Always `"message"` on the inbound side. |
 | `input` | array | yes | Ordered array of content parts. Each part has a `type` and type-specific fields. |
-| `input[].type` | enum | yes | See the OutputPart type registry below. The inbound side supports the same registry. |
+| `input[].type` | enum | yes | See the MessagePart type registry below. The inbound side supports the same registry. |
 | `input[].inline` | string | — | Literal payload (e.g., text). |
 | `input[].uploadRef` | string | — | Reference to an already-uploaded file, for large payloads. |
 
@@ -118,7 +118,7 @@ For the complete list including admin endpoints, see the [REST API Reference](..
 | Field | Type | Required | Notes |
 |:------|:-----|:---------|:------|
 | `type` | enum | yes | Always `"response"`. |
-| `output` | array | yes | Ordered array of `OutputPart`. |
+| `output` | array | yes | Ordered array of `MessagePart`. |
 
 Note: the outbound response puts `output` directly on the top level. **TaskResult** (delegation child output) wraps it one level deeper:
 
@@ -133,7 +133,7 @@ Note: the outbound response puts `output` directly on the top level. **TaskResul
 
 ---
 
-## 5. OutputPart type registry
+## 5. MessagePart type registry
 
 Canonical discriminated-union types. See Spec §15 for field-level detail.
 
@@ -147,10 +147,10 @@ Canonical discriminated-union types. See Spec §15 for field-level detail.
 | `image` | `inline` (base64) or `ref`, `mimeType` (`image/*`) | Generic image. |
 | `diff` | `inline` (string), `annotations.language` (`diff`) | Unified-format diff. |
 | `file` | `inline` or `ref`, `mimeType` | File produced by the agent. |
-| `execution_result` | `parts[]` (each part is a full `OutputPart`) | Tool-call result. |
+| `execution_result` | `parts[]` (each part is a full `MessagePart`) | Tool-call result. |
 | `error` | `inline` (human-readable), `annotations.errorCode` (optional) | Error emitted mid-stream. |
 
-Parts with a size above 64 KB are staged to blob storage and delivered with `ref` populated instead of `inline`; parts above 50 MB are rejected at ingress with `413 OUTPUTPART_TOO_LARGE`. Unknown types MUST be preserved and forwarded verbatim by middleware; unprefixed custom types collapse to `text` with `annotations.originalType` set.
+Parts with a size above 64 KB are staged to blob storage and delivered with `ref` populated instead of `inline`; parts above 50 MB are rejected at ingress with `413 MESSAGEPART_TOO_LARGE`. Unknown types MUST be preserved and forwarded verbatim by middleware; unprefixed custom types collapse to `text` with `annotations.originalType` set.
 
 ---
 
@@ -175,14 +175,14 @@ The `id` is a cursor you can pass back via `Last-Event-ID` on reconnect.
 
 | `event:` | `data:` payload | Meaning |
 |:---------|:----------------|:--------|
-| `agent_output` | `{ "output": OutputPart[] }` | One or more parts of agent output. |
+| `agent_output` | `{ "output": MessagePart[] }` | One or more parts of agent output. |
 | `tool_use_requested` | `{ "tool_call_id", "tool", "args" }` | Agent wants to call a tool (if approval required). |
-| `tool_result` | `{ "tool_call_id", "result": { "content": OutputPart[] } }` | Tool call returned. |
+| `tool_result` | `{ "tool_call_id", "result": { "content": MessagePart[] } }` | Tool call returned. |
 | `elicitation_request` | `{ "elicitation_id", "schema" }` | Agent/tool needs user input. |
 | `status_change` | `{ "state" }` | Session state transition (including `suspended` and `input_required`). |
 | `session.resumed` | `{ "resumeMode", "workspaceLost" }` | Session resumed from checkpoint or minimal state. |
 | `children_reattached` | `{ "children": ReattachedChild[] }` | Parent session resumed with active children. |
-| `session_complete` | `{ "result": { "output": OutputPart[] } }` | Session reached terminal state. |
+| `session_complete` | `{ "result": { "output": MessagePart[] } }` | Session reached terminal state. |
 | `error` | `{ "code", "message", "transient" }` | Fatal or recoverable error. |
 | `checkpoint_boundary` | `{ "cursor", "events_lost", "reason", "checkpoint_timestamp" }` | Client's last-seen cursor fell outside the replay window. |
 | `session_expiring_soon` | `{ "maxSessionAge", "remainingSeconds" }` | Sent 5 minutes before `maxSessionAge` expires. |

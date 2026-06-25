@@ -36,10 +36,10 @@ func TestValidateJSONLFrame_spec_15_4_6_2405(t *testing.T) {
 	}
 }
 
-// spec: §15.4.6 line 2408 — every OutputPart the runtime emits validates
-// against schemas/outputpart.schema.json, including the required
+// spec: §15.4.6 line 2408 — every MessagePart the runtime emits validates
+// against schemas/messagepart.schema.json, including the required
 // schemaVersion the §15.4.1 producer contract mandates.
-func TestValidateOutputPart_spec_15_4_6_2408(t *testing.T) {
+func TestValidateMessagePart_spec_15_4_6_2408(t *testing.T) {
 	cases := []struct {
 		name string
 		part string
@@ -52,25 +52,25 @@ func TestValidateOutputPart_spec_15_4_6_2408(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateOutputPart(json.RawMessage(tc.part))
+			err := validateMessagePart(json.RawMessage(tc.part))
 			if tc.ok && err != nil {
-				t.Fatalf("validateOutputPart(%s) = %v, want nil", tc.part, err)
+				t.Fatalf("validateMessagePart(%s) = %v, want nil", tc.part, err)
 			}
 			if !tc.ok && err == nil {
-				t.Fatalf("validateOutputPart(%s) = nil, want a schema error", tc.part)
+				t.Fatalf("validateMessagePart(%s) = nil, want a schema error", tc.part)
 			}
 		})
 	}
 }
 
-// validateResponseFrame validates the frame and every OutputPart it
+// validateResponseFrame validates the frame and every MessagePart it
 // carries, so a response with a schema-invalid part is rejected even
 // when the envelope itself is well-formed. spec: §15.4.6 lines 2405, 2408.
-func TestValidateResponseFrame_rejectsBadOutputPart_spec_15_4_6_2408(t *testing.T) {
+func TestValidateResponseFrame_rejectsBadMessagePart_spec_15_4_6_2408(t *testing.T) {
 	// Envelope is valid JSONL, but the output part omits schemaVersion.
 	frame := `{"type":"response","output":[{"type":"text","inline":"hi"}]}`
 	if err := validateResponseFrame([]byte(frame)); err == nil {
-		t.Fatal("validateResponseFrame accepted a response whose OutputPart violates the schema")
+		t.Fatal("validateResponseFrame accepted a response whose MessagePart violates the schema")
 	}
 	good := `{"type":"response","output":[{"schemaVersion":1,"type":"text","inline":"hi"}]}`
 	if err := validateResponseFrame([]byte(good)); err != nil {
@@ -84,7 +84,7 @@ func TestLoadSchemasCompiles(t *testing.T) {
 	if err := loadSchemas(); err != nil {
 		t.Fatalf("loadSchemas: %v", err)
 	}
-	if jsonlSchema == nil || outputPartSchema == nil {
+	if jsonlSchema == nil || messagePartSchema == nil {
 		t.Fatal("schemas did not compile")
 	}
 }

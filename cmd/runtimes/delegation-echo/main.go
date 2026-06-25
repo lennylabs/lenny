@@ -233,9 +233,9 @@ func loadManifest(path string) (adapterManifest, error) {
 // echo: it echoes the inbound input parts directly.
 func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClient, stderr io.Writer) error {
 	var inbound struct {
-		Type  string       `json:"type"`
-		ID    string       `json:"id"`
-		Input []outputPart `json:"input"`
+		Type  string        `json:"type"`
+		ID    string        `json:"id"`
+		Input []messagePart `json:"input"`
 	}
 	if err := json.Unmarshal(line, &inbound); err != nil {
 		return protocolError{msg: fmt.Sprintf("malformed message envelope: %v", err)}
@@ -257,7 +257,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClie
 		// losing the error context.
 		return w.write(response{
 			Type:   "response",
-			Output: []outputPart{},
+			Output: []messagePart{},
 			Error:  &responseError{Code: "DELEGATION_FAILED", Message: err.Error()},
 		})
 	}
@@ -268,7 +268,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClie
 // server: delegate a sub-task, await the child, confirm via
 // request_input, emit via lenny/output, and return the child's output
 // parts for the stdout `response`.
-func delegateAndEcho(platform *mcpClient, messageID string, input []outputPart, seq uint64) ([]outputPart, error) {
+func delegateAndEcho(platform *mcpClient, messageID string, input []messagePart, seq uint64) ([]messagePart, error) {
 	// 1. lenny/delegate_task — spawn a child whose input is this
 	//    message's input parts. The target id is opaque (§8.2).
 	handleRaw, err := platform.callTool("lenny/delegate_task", map[string]any{
@@ -318,7 +318,7 @@ func delegateAndEcho(platform *mcpClient, messageID string, input []outputPart, 
 	//    finalizing. The platform tool blocks until an answer arrives
 	//    (§8.5, replaces the stdout `input_required` message).
 	if _, err := platform.callTool("lenny/request_input", map[string]any{
-		"parts": []outputPart{{
+		"parts": []messagePart{{
 			SchemaVersion: 1,
 			Type:          "text",
 			Inline:        fmt.Sprintf("delegation-echo: confirm echo of child %s?", child.TaskID),
@@ -354,7 +354,7 @@ type taskResult struct {
 	TaskID        string `json:"taskId"`
 	State         string `json:"state"`
 	Output        struct {
-		Parts []outputPart `json:"parts"`
+		Parts []messagePart `json:"parts"`
 	} `json:"output"`
 	Error *responseError `json:"error"`
 }
@@ -382,15 +382,15 @@ func decodeTaskResults(raw json.RawMessage) ([]taskResult, error) {
 // echoParts stamps schemaVersion on every part and prefixes text parts
 // with the per-session sequence number so multi-message tests can
 // correlate. §15.4.1 producer obligation: schemaVersion MUST be set on
-// every emitted OutputPart.
-func echoParts(in []outputPart, seq uint64) []outputPart {
-	out := make([]outputPart, 0, len(in))
+// every emitted MessagePart.
+func echoParts(in []messagePart, seq uint64) []messagePart {
+	out := make([]messagePart, 0, len(in))
 	for _, p := range in {
 		if p.SchemaVersion == 0 {
 			p.SchemaVersion = 1
 		}
 		if p.Type == "text" && p.Inline != "" {
-			out = append(out, outputPart{
+			out = append(out, messagePart{
 				SchemaVersion: 1,
 				Type:          "text",
 				Inline:        fmt.Sprintf("[delegation-echo seq=%d] %s", seq, p.Inline),
@@ -584,10 +584,10 @@ func (w *writer) write(v any) error {
 	return w.enc.Encode(v)
 }
 
-// outputPart mirrors the §15.4.1 OutputPart wire JSON, restricted to the
+// messagePart mirrors the §15.4.1 MessagePart wire JSON, restricted to the
 // fields delegation-echo reads or writes. SchemaVersion is mandatory per
 // §15.4.1; delegation-echo stamps v1.
-type outputPart struct {
+type messagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	Type          string         `json:"type"`
 	ID            string         `json:"id,omitempty"`
@@ -607,7 +607,7 @@ type responseError struct {
 
 type response struct {
 	Type   string         `json:"type"`
-	Output []outputPart   `json:"output"`
+	Output []messagePart  `json:"output"`
 	Error  *responseError `json:"error,omitempty"`
 }
 

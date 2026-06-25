@@ -169,9 +169,9 @@ func loadManifest(path string) (adapterManifest, error) {
 
 func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClient, stderr io.Writer) error {
 	var inbound struct {
-		Type  string       `json:"type"`
-		ID    string       `json:"id"`
-		Input []outputPart `json:"input"`
+		Type  string        `json:"type"`
+		ID    string        `json:"id"`
+		Input []messagePart `json:"input"`
 	}
 	if err := json.Unmarshal(line, &inbound); err != nil {
 		return protocolError{msg: fmt.Sprintf("malformed message envelope: %v", err)}
@@ -188,7 +188,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClie
 		fmt.Fprintf(stderr, "elicitation-echo: elicitation flow failed: %v\n", err)
 		return w.write(response{
 			Type:   "response",
-			Output: []outputPart{},
+			Output: []messagePart{},
 			Error:  &responseError{Code: "ELICITATION_FAILED", Message: err.Error()},
 		})
 	}
@@ -197,7 +197,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClie
 
 // elicitAndEcho calls `lenny/request_elicitation` with the message
 // input as the prompt and returns the elicitation result parts.
-func elicitAndEcho(platform *mcpClient, input []outputPart, seq uint64) ([]outputPart, error) {
+func elicitAndEcho(platform *mcpClient, input []messagePart, seq uint64) ([]messagePart, error) {
 	prompt := fmt.Sprintf("[elicitation-echo seq=%d] please confirm:", seq)
 	if len(input) > 0 && input[0].Inline != "" {
 		prompt = input[0].Inline
@@ -222,21 +222,21 @@ func elicitAndEcho(platform *mcpClient, input []outputPart, seq uint64) ([]outpu
 	// The result is opaque to us; emit it back as a text part so the
 	// task contract sees a non-empty response.
 	resText := strings.TrimSpace(string(resRaw))
-	return []outputPart{{
+	return []messagePart{{
 		SchemaVersion: 1,
 		Type:          "text",
 		Inline:        fmt.Sprintf("[elicitation-echo seq=%d resolved] %s", seq, resText),
 	}}, nil
 }
 
-func echoParts(in []outputPart, seq uint64) []outputPart {
-	out := make([]outputPart, 0, len(in))
+func echoParts(in []messagePart, seq uint64) []messagePart {
+	out := make([]messagePart, 0, len(in))
 	for _, p := range in {
 		if p.SchemaVersion == 0 {
 			p.SchemaVersion = 1
 		}
 		if p.Type == "text" && p.Inline != "" {
-			out = append(out, outputPart{
+			out = append(out, messagePart{
 				SchemaVersion: 1,
 				Type:          "text",
 				Inline:        fmt.Sprintf("[elicitation-echo seq=%d] %s", seq, p.Inline),
@@ -378,7 +378,7 @@ func (w *writer) write(v any) error {
 	return w.enc.Encode(v)
 }
 
-type outputPart struct {
+type messagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	Type          string         `json:"type"`
 	ID            string         `json:"id,omitempty"`
@@ -396,7 +396,7 @@ type responseError struct {
 
 type response struct {
 	Type   string         `json:"type"`
-	Output []outputPart   `json:"output"`
+	Output []messagePart  `json:"output"`
 	Error  *responseError `json:"error,omitempty"`
 }
 

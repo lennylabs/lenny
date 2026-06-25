@@ -129,13 +129,13 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 		{"ERASURE_IN_PROGRESS", CategoryPolicy, false},               // spec: 15:1040
 		{"TENANT_SUSPENDED", CategoryPolicy, false},                  // spec: 15:1096
 		// A representative spread of other newly-added catalog codes.
-		{"TARGET_NOT_READY", CategoryTransient, true},      // spec: 15:1094
-		{"TARGET_TERMINAL", CategoryPermanent, false},      // spec: 15:998
-		{"STORAGE_QUOTA_EXCEEDED", CategoryPolicy, false},  // spec: 15:1024
-		{"BUDGET_EXHAUSTED", CategoryPolicy, false},        // spec: 15:1079
-		{"POD_CRASH", CategoryTransient, true},             // spec: 15:995
-		{"OUTPUTPART_TOO_LARGE", CategoryPermanent, false}, // spec: 15:1038
-		{"ETAG_MISMATCH", CategoryPermanent, false},        // spec: 15:984
+		{"TARGET_NOT_READY", CategoryTransient, true},       // spec: 15:1094
+		{"TARGET_TERMINAL", CategoryPermanent, false},       // spec: 15:998
+		{"STORAGE_QUOTA_EXCEEDED", CategoryPolicy, false},   // spec: 15:1024
+		{"BUDGET_EXHAUSTED", CategoryPolicy, false},         // spec: 15:1079
+		{"POD_CRASH", CategoryTransient, true},              // spec: 15:995
+		{"MESSAGEPART_TOO_LARGE", CategoryPermanent, false}, // spec: 15:1038
+		{"ETAG_MISMATCH", CategoryPermanent, false},         // spec: 15:984
 		// spec: §8.8 line 869 — a one_shot second input round is 400.
 		{"ONE_SHOT_INPUT_EXHAUSTED", CategoryPermanent, false},
 		// Code-internal delegate_task / request_input codes classified
@@ -156,6 +156,52 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 			// A matrix code must never resolve to the unknown fallback.
 			if cat == CategoryTransient && retr && c.wantCat != CategoryTransient {
 				t.Errorf("%s fell through to the unknown-code fallback", c.code)
+			}
+		})
+	}
+}
+
+// TestClassifySessionLifecycleFallbackCodes asserts the W2 / F-CS6
+// session-lifecycle codes resolve to their authoritative §15.1 catalog
+// (category, retryable) pair instead of a per-call-site hardcoded value
+// or the unknown-code (TRANSIENT, true) fallback. The four generic
+// fallbacks and the signer-unavailable code are TRANSIENT and retryable;
+// the confirmation-flag and deterministic setup-command codes are
+// PERMANENT and not retryable. Because REST writeError and MCP
+// handleToolCall both classify through this one table, a correct entry
+// is what keeps §15.2.1 rule 5(d) parity. F-15.2.6.
+//
+// spec: §15.1 lines 1101-1106 (error catalog), §7.3 (setup_command_failed
+// non-retryable), §4.3 (KMS signer unavailable retryable).
+func TestClassifySessionLifecycleFallbackCodes(t *testing.T) {
+	cases := []struct {
+		code     string
+		wantCat  Category
+		wantRetr bool
+	}{
+		{"SESSION_CREATION_FAILED", CategoryTransient, true}, // spec: 15:1101
+		{"STARTING_FAILED", CategoryTransient, true},         // spec: 15:1102
+		{"RESUME_FAILED", CategoryTransient, true},           // spec: 15:1103
+		{"KMS_SIGNING_UNAVAILABLE", CategoryTransient, true}, // spec: 15:1104
+		{"CONFIRMATION_REQUIRED", CategoryPermanent, false},  // spec: 15:1105
+		{"SETUP_COMMAND_FAILED", CategoryPermanent, false},   // spec: 15:1106
+	}
+	for _, c := range cases {
+		t.Run(c.code, func(t *testing.T) {
+			if !Known(c.code) {
+				t.Fatalf("%s must be a known catalog code after W2/F-CS6", c.code)
+			}
+			cat, retr := Classify(c.code)
+			if cat != c.wantCat {
+				t.Errorf("category = %q, want %q", cat, c.wantCat)
+			}
+			if retr != c.wantRetr {
+				t.Errorf("retryable = %v, want %v", retr, c.wantRetr)
+			}
+			// A permanent code must never resolve to the transient
+			// unknown-code fallback; pin the boundary explicitly.
+			if c.wantCat == CategoryPermanent && cat == CategoryTransient && retr {
+				t.Errorf("%s fell through to the (TRANSIENT, true) fallback", c.code)
 			}
 		})
 	}

@@ -26,7 +26,7 @@ Target id is **opaque** — the runtime does not know whether the target is a st
 
 ```json
 {
-  "input": ["OutputPart[]"],
+  "input": ["MessagePart[]"],
   "workspaceFiles": {
     "export": [{ "glob": "src/auth/**", "destPrefix": "/" }]
   }
@@ -548,8 +548,8 @@ Available on the platform MCP server for every delegation-capable pod:
   "properties": {
     "output": {
       "type": "array",
-      "items": { "$ref": "#/definitions/OutputPart" },
-      "description": "Output parts to emit to the parent/client. Same OutputPart schema as the stdout response.output array."
+      "items": { "$ref": "#/definitions/MessagePart" },
+      "description": "Output parts to emit to the parent/client. Same MessagePart schema as the stdout response.output array."
     }
   },
   "required": ["output"]
@@ -814,15 +814,15 @@ Task records use a messages array forward-compatible with multi-turn dialog:
   "sessionId": "sess_xyz",
   "state": "running",
   "messages": [
-    { "role": "caller", "parts": ["OutputPart[]"] },
-    { "role": "agent",  "parts": ["OutputPart[]"], "state": "completed" }
+    { "role": "caller", "parts": ["MessagePart[]"] },
+    { "role": "agent",  "parts": ["MessagePart[]"], "state": "completed" }
   ],
   "usage": { ... },
   "treeUsage": { ... }
 }
 ```
 
-**Schema versioning in `TaskRecord`.** The top-level `schemaVersion` governs the outer record structure — the set and semantics of fields at the `TaskRecord` level (e.g., `taskId`, `sessionId`, `state`, `usage`, `treeUsage`, and the message-entry envelope fields `role`, `parts`, `state`). It does **not** govern the schema of the `OutputPart` objects nested inside each message's `parts` array: each `OutputPart` carries its own `schemaVersion` field (see [Section 15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)), which independently tracks that type's evolution. This two-level versioning model means a `TaskRecord` written across a rolling gateway upgrade — where different gateway replicas may write messages at different `OutputPart` schema versions — is fully handled: the top-level `schemaVersion` is immutable once the record is created (set by the first writer, per [Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7), and per-entry `OutputPart.schemaVersion` captures any intra-record variation in part schema. Consumers applying the durable-consumer forward-read rule ([Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7) MUST apply it independently at both levels: once for the record envelope and once per `OutputPart` entry.
+**Schema versioning in `TaskRecord`.** The top-level `schemaVersion` governs the outer record structure — the set and semantics of fields at the `TaskRecord` level (e.g., `taskId`, `sessionId`, `state`, `usage`, `treeUsage`, and the message-entry envelope fields `role`, `parts`, `state`). It does **not** govern the schema of the `MessagePart` objects nested inside each message's `parts` array: each `MessagePart` carries its own `schemaVersion` field (see [Section 15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)), which independently tracks that type's evolution. This two-level versioning model means a `TaskRecord` written across a rolling gateway upgrade — where different gateway replicas may write messages at different `MessagePart` schema versions — is fully handled: the top-level `schemaVersion` is immutable once the record is created (set by the first writer, per [Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7), and per-entry `MessagePart.schemaVersion` captures any intra-record variation in part schema. Consumers applying the durable-consumer forward-read rule ([Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7) MUST apply it independently at both levels: once for the record envelope and once per `MessagePart` entry.
 
 **Envelope schema version upgrade constraint.** Because the top-level `schemaVersion` is immutable once created, a `TaskRecord` envelope schema version bump (e.g., from 1 to 2) cannot retroactively update in-flight records. During a rolling gateway upgrade where replica B knows about envelope schema 2 but the record was created at schema 1 by replica A, replica B MUST NOT write new envelope-level fields that are schema-2-only into a schema-1 record. The operational implication: `TaskRecord` envelope schema changes MUST be additive-only (new fields with defaults that schema-1 readers can safely ignore). If a breaking envelope schema change is ever required (a field removed or semantics changed), all active (non-terminal) task records at the old envelope version must drain to terminal state before the new schema version is deployed. In practice, envelope schema bumps should be exceedingly rare -- new envelope fields should be introduced as additive extensions within the current schema version whenever possible, reserving a version bump for structural changes that alter the interpretation of existing fields.
 
@@ -892,7 +892,7 @@ Returned by `lenny/await_children`:
   "taskId": "child_abc123",
   "state": "completed",
   "output": {
-    "parts": ["OutputPart[]"],
+    "parts": ["MessagePart[]"],
     "artifactRefs": ["lenny-blob://tenant_acme/session_xyz/part_ws001?ttl=2592000&enc=aes256gcm"]
   },
   "usage": {
@@ -940,7 +940,7 @@ On failure:
 }
 ```
 
-`TaskResult.schemaVersion` follows the same producer/consumer obligations as `TaskRecord.schemaVersion` ([Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7). The gateway sets `schemaVersion` when constructing the `TaskResult`; consumers must apply the durable-consumer forward-read rule independently for `TaskResult` and for any nested `OutputPart` entries.
+`TaskResult.schemaVersion` follows the same producer/consumer obligations as `TaskRecord.schemaVersion` ([Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7). The gateway sets `schemaVersion` when constructing the `TaskResult`; consumers must apply the durable-consumer forward-read rule independently for `TaskResult` and for any nested `MessagePart` entries.
 
 **`lenny/await_children` modes and behavior:**
 

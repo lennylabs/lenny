@@ -14,6 +14,9 @@ import (
 	"strconv"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -32,6 +35,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
+	"github.com/lennylabs/lenny/pkg/upload"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -83,6 +87,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var demotionUnsupported *podsession.SDKDemotionNotSupported
 	var proxyDialect *PoolProxyDialectError
 	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
+	var archiveLimit *upload.ValidationError
 	switch {
 	case errors.As(err, &levelUnderperforms):
 		// spec: §5.1 line 42 — the runtime declares a higher integrationLevel
@@ -117,17 +122,12 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 			map[string]any{"reason": "sdk_demotion_not_supported"})
 	case errors.As(err, &setupFail):
 		// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — the
-		// gateway records the setup_command_failed audit row + metric so
-		// the §16 alert can fire and operators can correlate the
-		// rejection reason with the per-command stdout/stderr trail. The
-		// envelope itself is the fallback (SESSION_CREATION_FAILED /
-		// STARTING_FAILED) since §7.5 has no dedicated client-facing code.
-		// F-7.5.9.
+		// gateway records the setup_command_failed audit row + metric on
+		// both branches so the §16 alert can fire and operators can
+		// correlate the rejection reason with the per-command
+		// stdout/stderr trail. F-7.5.9.
 		s.recordSetupCommandFailed(setupFail)
-		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
-		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
-			fallbackMsg+": "+err.Error(),
-			map[string]any{"reason": "setup_command_failed"})
+		s.writeSetupCommandError(w, setupFail, fallbackCode, fallbackMsg, err)
 	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
 		s.writeTokenServiceUnavailable(w, err)
 	case errors.As(err, &warming):
@@ -176,6 +176,19 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		// cases so a SlotFailedError wrapping one of those still routes to
 		// the specific handler via the unwrap chain.
 		s.writeSlotFailed(w, slotFailed)
+	case errors.As(err, &archiveLimit):
+		// spec: §15.1 (UPLOAD_ARCHIVE_LIMIT_EXCEEDED, 413/PERMANENT) — an
+		// over-limit or decompression-bomb uploadArchive raised by the §13.4
+		// validator during workspace materialization (archive.Extract, wrapped
+		// through Binder.Prepare's stageWorkspace) is a deterministic client
+		// fault: the same non-conformant archive fails identically on retry. It
+		// is the non-retryable 413 with no Retry-After, not the retryable 503
+		// fallback that would loop a conforming client indefinitely. Placed
+		// before the default so the typed validator error takes its dedicated
+		// code; it cannot collide with the earlier typed cases because
+		// extraction runs before setup commands or credential assignment. The
+		// §13.4 sub-code rides on details.reason. F-CS1.
+		s.writeUploadArchiveLimitExceeded(w, archiveLimit)
 	default:
 		// spec: §7.1 line 28 / §15.1 line 1138 — the atomic-unit fallback
 		// is always retryable; include Retry-After so a client backs off
@@ -184,6 +197,56 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
 			fallbackMsg+": "+err.Error(), nil)
 	}
+}
+
+// writeSetupCommandError chooses the §15.1 envelope for a setup-command
+// failure by inspecting the adapter-reported gRPC status of the wrapped
+// cause. A deterministic non-zero exit (or hard timeout) is reported by
+// the adapter as codes.FailedPrecondition (pkg/adapter/staging.go), which
+// the gateway surfaces as the non-retryable 422 SETUP_COMMAND_FAILED with
+// no Retry-After: per §7.3 setup_command_failed is in
+// retryPolicy.nonRetryableFailures, so a retry against the same workspace
+// plan fails identically. Every other code (the complement of
+// FailedPrecondition: a crashed pod surfaced as Unavailable or
+// DeadlineExceeded, a wrapped or non-status cause that status.Code reports
+// as Unknown, and Internal/Aborted/ResourceExhausted) is a transient
+// setup-window transport failure that §6.2 recovers on a fresh pod, so it
+// keeps the retryable 503 fallback + Retry-After. The same
+// codes.FailedPrecondition-versus-complement boundary governs the /resume
+// row-state demotion in isTransientPodClaimError, so the wire envelope and
+// the row state cannot disagree.
+// spec: §7.3 (setup_command_failed non-retryable), §15.1 (SETUP_COMMAND_FAILED),
+// §6.2 (transient setup failure retried on a fresh pod).
+func (s *Server) writeSetupCommandError(
+	w http.ResponseWriter, setupFail *podsession.SetupCommandFailure, fallbackCode, fallbackMsg string, err error,
+) {
+	if status.Code(setupFail.Cause) == codes.FailedPrecondition {
+		s.writeError(w, http.StatusUnprocessableEntity, "SETUP_COMMAND_FAILED",
+			fallbackMsg+": "+err.Error(),
+			map[string]any{"reason": "setup_command_failed"})
+		return
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+	s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
+		fallbackMsg+": "+err.Error(),
+		map[string]any{"reason": "setup_command_failed"})
+}
+
+// writeUploadArchiveLimitExceeded writes the §15.1 UPLOAD_ARCHIVE_LIMIT_EXCEEDED
+// envelope (413, PERMANENT, non-retryable) for an uploadArchive that violated a
+// §13.4 archive-extraction ceiling (an over-limit entry, a decompression bomb,
+// a path escape, or a forbidden entry kind). No Retry-After is set: the
+// rejection is deterministic for the supplied archive, so a retry of the same
+// bytes fails identically; the client must supply a conformant archive. The
+// §13.4 sub-code (max_decompressed_size, max_entry_size, max_entry_count,
+// path_escapes_root, etc.) rides on details.reason so the client and operators
+// can tie the rejection to the specific ceiling without parsing the message.
+// spec: §15.1 (UPLOAD_ARCHIVE_LIMIT_EXCEEDED, 413/PERMANENT), §13.4 (upload
+// security validator). F-CS1.
+func (s *Server) writeUploadArchiveLimitExceeded(w http.ResponseWriter, ve *upload.ValidationError) {
+	s.writeError(w, http.StatusRequestEntityTooLarge, "UPLOAD_ARCHIVE_LIMIT_EXCEEDED",
+		"archive extraction aborted: the upload violates a §13.4 archive-safety ceiling: "+ve.Error(),
+		map[string]any{"reason": string(ve.Reason)})
 }
 
 // sessionCreationFailedRetryAfterSeconds is the default Retry-After
@@ -311,6 +374,14 @@ type CreateAndStartRequest struct {
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 	Environment      string            `json:"environment,omitempty"`
 
+	// Pool is the §14.1 line 311 client-requested target pool selector.
+	// The combined create-and-start body is the same CreateSessionRequest
+	// envelope (§14.1), so the pool pin is honored or rejected identically
+	// to the two-step create path: a pin that does not exist, is not backed
+	// by the runtime, or is isolation-inconsistent is rejected, and a pin
+	// the tenant is not granted is forbidden. spec: §7.1 / §14.1. F-CS2.
+	Pool string `json:"pool,omitempty"`
+
 	// CallbackURL is the §15.1 line 690 optional completion-notification
 	// webhook. It is validated against the §14 SSRF mitigations at
 	// admission and rejected with 400 INVALID_CALLBACK_URL on failure.
@@ -391,6 +462,22 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §7.1 step 1, §7.1 step 4, §14.1 — honor or reject the
+	// client-pinned pool on the combined create-and-start path on parity
+	// with the two-step create path's validateRequestEnvelope gate. Runs
+	// before the claim so an unsatisfiable, unauthorized, or
+	// isolation-inconsistent pin fails fast before any pod is claimed.
+	// F-CS2 (0018).
+	//
+	// spec: §7.1 line 18 / line 75 — pass the client's raw request profile
+	// (empty when omitted), not the defaulted isoProf, so a pinned pool's own
+	// profile governs the session's isolation and only an explicitly-requested
+	// inconsistent profile is rejected. See validateRequestEnvelope for the
+	// matching two-step-path rationale. F-CS2 (0018).
+	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool) {
+		return
+	}
+
 	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
 	if !planOK {
 		return
@@ -428,15 +515,27 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// (same path as the two-step create flow). GET / List read the
 	// persisted values via toResponse so the rich envelope survives a
 	// coordinator handoff.
-	level := s.resolveIsolationLevel(r.Context(), runtimeRef, isoProf)
+	//
+	// spec: §7.1 line 18 / line 75 — when the client pins a pool and omits
+	// isolationProfile, the named pool's own profile governs, so resolve the
+	// level against the pool (effective requested profile empty) and persist
+	// the pool-derived profile on the row so the same-call claim
+	// (claimAtCreate re-resolves from row.IsolationProfile) is consistent
+	// with the pin. F-CS2 (0018).
+	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
+	level := s.resolveIsolationLevel(r.Context(), runtimeRef, effProf, req.Pool)
 	row := sessionstore.Session{
-		ID:                     s.idFn(),
-		TenantID:               tenantID,
-		UserID:                 req.UserID,
-		RuntimeRef:             runtimeRef,
-		Environment:            req.Environment,
-		State:                  session.StateRunning, // skip directly to running per §15.1
-		IsolationProfile:       isoProf,
+		ID:               s.idFn(),
+		TenantID:         tenantID,
+		UserID:           req.UserID,
+		RuntimeRef:       runtimeRef,
+		Environment:      req.Environment,
+		State:            session.StateRunning, // skip directly to running per §15.1
+		IsolationProfile: persistedRowProfile(level, isoProf),
+		// spec: §14.1 line 311 — persist the client-pinned pool so the
+		// same-call claim constrains resolution to it and a client that lost
+		// the response can recover its requested pool. F-CS2 (0018).
+		Pool:                   req.Pool,
 		ExecutionMode:          level.ExecutionMode,
 		ScrubPolicy:            level.ScrubPolicy,
 		ConversationContinuity: level.ConversationContinuity,
@@ -489,7 +588,10 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
 		row.RuntimeRef = afterRoute.RequestedRuntime
-		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf)
+		// spec: §7.1 line 18 / line 75 — re-resolve against the effective
+		// requested profile so a pinned pool's own profile still governs after
+		// a runtime-hint MODIFY. F-CS2 (0018).
+		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, effProf, req.Pool)
 		row.ExecutionMode = afterLevel.ExecutionMode
 		row.ScrubPolicy = afterLevel.ScrubPolicy
 		row.ConversationContinuity = afterLevel.ConversationContinuity
@@ -1356,8 +1458,13 @@ type startContext struct {
 //
 // spec: §4.1 (proposal), §7.1 steps 3-5, line 75; §4.9 lines 1216-1218; §5.2.
 func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*claimOutcome, error) {
+	// spec: §7.1 / §14.1 — row.Pool carries the client-pinned pool selector.
+	// validateRequestEnvelope already rejected an unsatisfiable, unauthorized,
+	// or isolation-inconsistent pin before claim, so here it constrains
+	// resolution to the named pool (empty leaves resolution by runtime + §5.3
+	// profile). F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return nil, err
 	}
@@ -1555,8 +1662,10 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			return nil, err
 		}
 	}
+	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
+	// (row.Pool); empty resolves by runtime + §5.3 profile. F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return nil, err
 	}
@@ -1668,8 +1777,10 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 // spec: §4.4, §4.6 (proposal); §6.1 lines 30-34 (SDK-warm ConfigureWorkspace);
 // §15.1 (/start precondition); §5.2; §6.3 line 372.
 func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
+	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
+	// (row.Pool); empty resolves by runtime + §5.3 profile. F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return nil, err
 	}
@@ -2530,22 +2641,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			// coordinator's subsequent RPC fails the §4.2
 			// CoordinatorFence check. F-7.1.14 / F-7.3.8.
 			s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
-			// spec: §7.3 line 423 — `awaiting_client_action` is the
-			// "client intervention required" holding state; the explicit
-			// `POST /resume` retry is the client action. A transient pod
-			// claim failure must leave the row in awaiting_client_action
-			// so the client can retry once the pool frees up; only a
-			// non-retryable cause demotes the row to failed. F-7.3.23.
-			if isTransientPodClaimError(err) {
-				if _, uerr := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
-					row.State = session.StateAwaitingClientAction
-					return nil
-				}); uerr != nil {
-					log.Printf("sessionserver: revert resuming → awaiting_client_action for session %s: %v", id, uerr)
-				}
-			} else {
-				s.failSession(r.Context(), tenantID, id)
-			}
+			s.holdOrFailOnResumeError(r.Context(), tenantID, id, err)
 			// spec: §7.3 — a resume claim failure surfaces as a retryable
 			// 503; the row was already persisted (resume requires it), so
 			// `RESUME_FAILED` is the analogous spec-named fallback to
@@ -2635,24 +2731,62 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	s.writeSession(w, http.StatusOK, updated)
 }
 
+// holdOrFailOnResumeError reconciles the §7.2 `resuming` row with the
+// resume failure: a transient cause (per isTransientPodClaimError) reverts
+// the row to `awaiting_client_action` so the explicit `POST /resume` retry
+// can succeed once the condition clears, while a non-retryable cause demotes
+// the row to terminal `failed`. The boundary is the same
+// codes.FailedPrecondition split writeSetupCommandError uses for the wire
+// envelope, so a row that returns the retryable RESUME_FAILED envelope is
+// never demoted to a terminal state the retry would be rejected against.
+// spec: §7.3 line 423 (awaiting_client_action holding state), §6.2 (transient
+// setup failure retried on a fresh pod). F-7.3.23.
+func (s *Server) holdOrFailOnResumeError(ctx context.Context, tenantID, id string, err error) {
+	if isTransientPodClaimError(err) {
+		if _, uerr := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
+			row.State = session.StateAwaitingClientAction
+			return nil
+		}); uerr != nil {
+			log.Printf("sessionserver: revert resuming → awaiting_client_action for session %s: %v", id, uerr)
+		}
+		return
+	}
+	s.failSession(ctx, tenantID, id)
+}
+
 // isTransientPodClaimError reports whether err is a known §5.2 / §4.9
 // pool/credential exhaustion or a §4.3 Token Service outage — failures
 // that the spec catalogues as retryable. The §7.3 `awaiting_client_action`
 // holding state is preserved across these so the explicit client retry
 // (`POST /v1/sessions/{id}/resume`) can succeed once the pool frees up.
-// Any other failure (workspace_validation_failed, setup_command_failed,
-// runtime registry errors) is treated as non-retryable and the row is
-// demoted to failed. F-7.3.23.
+//
+// A setup-time failure is split on the same codes.FailedPrecondition
+// boundary as the wire envelope (writeSetupCommandError): only the
+// deterministic codes.FailedPrecondition setup-command exit (the
+// non-retryable 422 SETUP_COMMAND_FAILED) demotes the row to terminal
+// `failed`. Every other setup-window cause (a crashed pod surfaced as
+// codes.Unavailable / codes.DeadlineExceeded, a wrapped or non-status
+// cause that status.Code reports as codes.Unknown, and the remaining
+// transient codes) is the retryable RESUME_FAILED envelope, so the row
+// stays in `awaiting_client_action` and the explicit resume retry can
+// succeed once the condition clears. Both decisions read
+// status.Code(setupFail.Cause) and branch on codes.FailedPrecondition,
+// so the wire retryability and the row state share one predicate and
+// cannot drift. A workspace_validation_failed or runtime-registry error
+// is still non-retryable and demotes the row to failed. F-7.3.23.
 //
 // spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §4.9 lines 1218/1220
 // (CREDENTIAL_POOL_EXHAUSTED), §4.3 line 214 (TOKEN_SERVICE_UNAVAILABLE),
-// §5.2 lines 602-625 (RUNTIME_UNAVAILABLE pool-warming).
+// §5.2 lines 602-625 (RUNTIME_UNAVAILABLE pool-warming),
+// §7.3 (awaiting_client_action holding state for a retryable resume failure),
+// §6.2 (transient setup failure retried on a fresh pod).
 func isTransientPodClaimError(err error) bool {
 	if err == nil {
 		return false
 	}
 	var warming *podsession.PoolWarmingError
 	var credAssign *podsession.CredentialAssignmentError
+	var setupFail *podsession.SetupCommandFailure
 	switch {
 	case errors.As(err, &warming):
 		return true
@@ -2672,6 +2806,11 @@ func isTransientPodClaimError(err error) bool {
 		// in awaiting_client_action so the client's `POST /resume` retry
 		// routes to the rightful coordinator rather than failing the row.
 		return true
+	case errors.As(err, &setupFail):
+		// spec: §6.2 / §7.3 — only the deterministic codes.FailedPrecondition
+		// setup exit demotes to failed; every other setup-window cause stays
+		// resumable, the exact complement of the non-retryable wire envelope.
+		return status.Code(setupFail.Cause) != codes.FailedPrecondition
 	}
 	return false
 }
@@ -2886,8 +3025,11 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		}
 		return "", nil
 	}
+	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
+	// (row.Pool) on the resume-rebuild path; empty resolves by runtime + §5.3
+	// profile. F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return "", err
 	}

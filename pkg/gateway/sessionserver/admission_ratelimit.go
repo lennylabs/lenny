@@ -39,7 +39,7 @@ type AdmissionRateLimitMetrics interface {
 // the 429 RATE_LIMITED response.
 //
 // spec: §11.1 line 7. F-11.1.2.
-func (s *Server) requireAdmissionRateLimit(w http.ResponseWriter, r *http.Request, tenantID, runtimeRef string, requested isolation.Profile) bool {
+func (s *Server) requireAdmissionRateLimit(w http.ResponseWriter, r *http.Request, tenantID, runtimeRef string, requested isolation.Profile, pinnedPool string) bool {
 	if s.admissionRL == nil || runtimeRef == "" {
 		return true
 	}
@@ -50,7 +50,7 @@ func (s *Server) requireAdmissionRateLimit(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if s.perPoolPerMin > 0 {
-		if pool, ok := s.resolvePoolName(r.Context(), runtimeRef, requested); ok {
+		if pool, ok := s.resolvePoolName(r.Context(), runtimeRef, requested, pinnedPool); ok {
 			if !s.checkAdmissionScope(w, r, "pool", "po:"+tenantID+":"+pool, s.perPoolPerMin, now) {
 				return false
 			}
@@ -94,16 +94,19 @@ func (s *Server) checkAdmissionScope(w http.ResponseWriter, r *http.Request, sco
 }
 
 // resolvePoolName resolves the §5.2 warm pool a (runtime, isolation
-// profile) pair maps to, for the §11.1 per-pool rate-limit key. It
-// returns ("", false) when no pool resolver is wired (the Postgres-only
-// posture) or no pool matches the pair — the per-pool scope is then
-// skipped, the same fallback resolveIsolationLevel uses for the §7.1
-// isolation level. spec: §11.1 line 7. F-11.1.2.
-func (s *Server) resolvePoolName(ctx context.Context, runtimeRef string, requested isolation.Profile) (string, bool) {
+// profile) pair maps to, for the §11.1 per-pool rate-limit key. When the
+// client pinned a pool (the §14.1 CreateSessionRequest.pool selector,
+// passed as pinnedPool), resolution is constrained to that named pool so
+// the per-pool rate-limit scope keys on the actual target. It returns
+// ("", false) when no pool resolver is wired (the Postgres-only posture)
+// or no pool matches the pair — the per-pool scope is then skipped, the
+// same fallback resolveIsolationLevel uses for the §7.1 isolation level.
+// spec: §11.1 line 7; §7.1 / §14.1 (pool selector). F-11.1.2 / F-CS2.
+func (s *Server) resolvePoolName(ctx context.Context, runtimeRef string, requested isolation.Profile, pinnedPool string) (string, bool) {
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		return "", false
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested))
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested), pinnedPool)
 	if err != nil || match.Pool == "" {
 		return "", false
 	}

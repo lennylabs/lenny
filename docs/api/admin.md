@@ -480,8 +480,8 @@ Tenants carry a three-mode configuration for the gateway-origin-binding invarian
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
 | `GET /v1/admin/tenants/{id}/users` | GET | platform-admin, tenant-admin | List users with role assignments |
-| `PUT /v1/admin/tenants/{id}/users/{user_id}/role` | PUT | platform-admin, tenant-admin | Assign or update user role. Body: `{"role": "<role-name>"}` |
-| `DELETE /v1/admin/tenants/{id}/users/{user_id}/role` | DELETE | platform-admin, tenant-admin | Remove platform-managed role assignment |
+| `PUT /v1/admin/tenants/{id}/users/{userId}/role` | PUT | platform-admin, tenant-admin | Assign or update user role. Body: `{"role": "<role-name>"}` |
+| `DELETE /v1/admin/tenants/{id}/users/{userId}/role` | DELETE | platform-admin, tenant-admin | Remove platform-managed role assignment |
 
 ### Custom roles
 
@@ -812,14 +812,14 @@ For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` w
 
 See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken). The CLI command `lenny-ctl admin users rotate-token --user <name>` wraps this endpoint and additionally patches the `lenny-admin-token` Kubernetes Secret.
 
-### POST /v1/admin/users/{user_id}/invalidate
+### POST /v1/admin/users/{userId}/invalidate
 {: .d-inline-block }
 platform-admin tenant-admin
 {: .label .label-red .label-blue }
 
 Terminate all active sessions for a user and revoke their tokens immediately. Used during incident response. `tenant-admin` is scoped to their own tenant.
 
-### POST /v1/admin/users/{user_id}/erase
+### POST /v1/admin/users/{userId}/erase
 {: .d-inline-block }
 platform-admin tenant-admin
 {: .label .label-red .label-blue }
@@ -832,9 +832,9 @@ Initiate a GDPR user-level erasure job. Returns a job ID.
 
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
-| `GET /v1/admin/erasure-jobs/{job_id}` | GET | platform-admin, tenant-admin | Query erasure job status: phase, completion %, time elapsed, errors |
-| `POST /v1/admin/erasure-jobs/{job_id}/retry` | POST | platform-admin | Retry a failed erasure job |
-| `POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction` | POST | platform-admin | Clear the `processing_restricted` flag. Body: `{"justification": "..."}` |
+| `GET /v1/admin/erasure-jobs/{jobId}` | GET | platform-admin, tenant-admin | Query erasure job status: phase, completion %, time elapsed, errors |
+| `POST /v1/admin/erasure-jobs/{jobId}/retry` | POST | platform-admin | Retry a failed erasure job |
+| `POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction` | POST | platform-admin | Clear the `processing_restricted` flag. Body: `{"justification": "..."}` |
 
 ---
 

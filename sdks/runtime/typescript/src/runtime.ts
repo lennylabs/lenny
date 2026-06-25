@@ -23,7 +23,7 @@ import type {
   HandlerTools,
   Message,
   MessageEnvelope,
-  OutputPart,
+  MessagePart,
   Reply,
   TerminationReason,
 } from "./types.js";
@@ -123,7 +123,7 @@ function levelRank(level: IntegrationLevel): number {
 // stampParts sets schemaVersion on every part that left it unset,
 // honoring the §15.4.1 producer obligation, and returns a non-empty
 // array so an empty Reply still serializes as output: [].
-function stampParts(parts: OutputPart[]): OutputPart[] {
+function stampParts(parts: MessagePart[]): MessagePart[] {
   return parts.map((p) =>
     p.schemaVersion === undefined
       ? { ...p, schemaVersion: SCHEMA_VERSION }

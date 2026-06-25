@@ -28,11 +28,11 @@ import (
 //
 // spec: §15.1 line 797 (drain backpressure); §15.1 line 1034
 // (POOL_DRAINING envelope).
-func (s *Server) requirePoolNotDraining(w http.ResponseWriter, r *http.Request, runtimeRef string, requested isolation.Profile) bool {
+func (s *Server) requirePoolNotDraining(w http.ResponseWriter, r *http.Request, runtimeRef string, requested isolation.Profile, pinnedPool string) bool {
 	if s.pools == nil || s.poolNameResolver == nil || runtimeRef == "" {
 		return true
 	}
-	poolName, ok := s.poolNameResolver(r.Context(), runtimeRef, requested)
+	poolName, ok := s.poolNameResolver(r.Context(), runtimeRef, requested, pinnedPool)
 	if !ok || poolName == "" {
 		return true
 	}

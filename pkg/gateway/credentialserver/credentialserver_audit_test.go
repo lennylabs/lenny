@@ -92,7 +92,7 @@ func TestRotateEmitsCredentialRotated_F491(t *testing.T) {
 
 	body, _ := json.Marshal(credentialserver.RotateRequest{Secret: "sk-new-value"})
 	req := asUser(httptest.NewRequest(http.MethodPut, "/v1/credentials/"+ref, bytes.NewReader(body)), "acme", "alice")
-	req.SetPathValue("credential_ref", ref)
+	req.SetPathValue("credentialRef", ref)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -123,7 +123,7 @@ func TestRevokeEmitsUserRevoked_F491(t *testing.T) {
 
 	body, _ := json.Marshal(credentialserver.RevokeRequest{Reason: "suspected_exfiltration"})
 	req := asUser(httptest.NewRequest(http.MethodPost, "/v1/credentials/"+ref+"/revoke", bytes.NewReader(body)), "acme", "alice")
-	req.SetPathValue("credential_ref", ref)
+	req.SetPathValue("credentialRef", ref)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -149,7 +149,7 @@ func TestRevokeWithoutBodyEmitsEmptyReason_F491(t *testing.T) {
 	ref := registerOne(t, srv)
 
 	req := asUser(httptest.NewRequest(http.MethodPost, "/v1/credentials/"+ref+"/revoke", nil), "acme", "alice")
-	req.SetPathValue("credential_ref", ref)
+	req.SetPathValue("credentialRef", ref)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -168,7 +168,7 @@ func TestDeleteEmitsCredentialDeleted_F491(t *testing.T) {
 	ref := registerOne(t, srv)
 
 	req := asUser(httptest.NewRequest(http.MethodDelete, "/v1/credentials/"+ref, nil), "acme", "alice")
-	req.SetPathValue("credential_ref", ref)
+	req.SetPathValue("credentialRef", ref)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {

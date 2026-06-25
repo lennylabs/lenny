@@ -89,7 +89,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 **Deliverables.**
 
 - Core domain types as Go packages: `Runtime`, `SandboxTemplate`, `SandboxWarmPool`, `Sandbox`, `SandboxClaim`, `TaskRecord`, `TaskResult`, and the session state machines (suspended-session state and input-required state).
-- Wire-contract artifacts under `schemas/`: `lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `outputpart.schema.json`, and `workspaceplan-v1.json`.
+- Wire-contract artifacts under `schemas/`: `lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, and `workspaceplan-v1.json`.
 - Generated Go stubs from `lenny-adapter.proto`.
 - buf-driven schema breaking-change detection wired into CI.
 
@@ -227,7 +227,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - `pkg/gateway/sessionserver` ([§15.1](15_external-api-surface.md#151-rest-api) REST handler for `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET /v1/sessions`, `DELETE /v1/sessions/{id}`, and the five state-mutating endpoints `finalize`, `start`, `interrupt`, `terminate`, and `resume`).
 - `POST /v1/sessions/{id}/derive` endpoint per [§7.1](07_session-lifecycle.md#71-normal-flow): per-source advisory lock (`derive_lock:{source_session_id}`), workspace snapshot copy, `allowIsolationDowngrade` admin gate, monotonicity check, and the `persistDeriveFailureRows` audit-only `created → failed` write.
 - `GET /v1/sessions/{id}/workspace` workspace-snapshot tarball endpoint per [§15.1](15_external-api-surface.md#151-rest-api).
-- `GET /v1/blobs/{ref}` blob-dereference endpoint per [§15.1](15_external-api-surface.md#151-rest-api) (load-bearing for every OutputPart `ref` payload above the inline-size threshold).
+- `GET /v1/blobs/{ref}` blob-dereference endpoint per [§15.1](15_external-api-surface.md#151-rest-api) (load-bearing for every MessagePart `ref` payload above the inline-size threshold).
 - Session introspection endpoints `GET /v1/sessions/{id}/transcript`, `GET /v1/sessions/{id}/tree`, `GET /v1/sessions/{id}/webhook-events`, and `POST /v1/sessions/{id}/extend-retention` per [§15.1](15_external-api-surface.md#151-rest-api).
 - Upload Handler subsystem in the gateway per [§7.4](07_session-lifecycle.md#74-upload-safety) and [§13.4](13_security-model.md#134-upload-security): goroutine pool, circuit breaker, staging→validation→promotion pipeline, archive limits (256 MiB, 100:1 compression ratio, 10 000 entries, 64 MiB per entry, depth 32, 4096-byte path), symlink and device-entry rejection, post-promotion symlink re-validation, and the ten `UPLOAD_ARCHIVE_*` error subcodes.
 - `uploadToken` HMAC issuance, validation, single-use invalidation, the automatic 24-hour key rotation timer, and the 5-minute key-overlap window per [§7.1](07_session-lifecycle.md#71-normal-flow). The operator-initiated rotation admin surface ships in Phase 13.

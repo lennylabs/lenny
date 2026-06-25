@@ -55,7 +55,7 @@ func TestRuntimeCrashBounds_spec_15_4_1_1889(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 lines 1530-1531 — a `text` OutputPart guarantees type,
+// spec: §15.4.1 lines 1530-1531 — a `text` MessagePart guarantees type,
 // inline, mimeType (text/plain) and carries its own schemaVersion.
 func TestTextPart_spec_15_4_1(t *testing.T) {
 	p := TextPart("hello")
@@ -116,7 +116,7 @@ func TestRetriesExhausted_spec_8_8_936(t *testing.T) {
 
 // spec: §8.8 lines 806-823 — the TaskRecord envelope serializes with the
 // canonical field names and a messages array carrying caller/agent
-// entries with per-entry OutputParts.
+// entries with per-entry MessageParts.
 func TestRecord_JSON_spec_8_8_806(t *testing.T) {
 	rec := Record{
 		SchemaVersion: SchemaVersion,
@@ -124,8 +124,8 @@ func TestRecord_JSON_spec_8_8_806(t *testing.T) {
 		SessionID:     "sess_xyz",
 		State:         "completed",
 		Messages: []Message{
-			{Role: RoleCaller, Parts: []OutputPart{TextPart("do the thing")}},
-			{Role: RoleAgent, Parts: []OutputPart{TextPart("done")}, State: "completed"},
+			{Role: RoleCaller, Parts: []MessagePart{TextPart("do the thing")}},
+			{Role: RoleAgent, Parts: []MessagePart{TextPart("done")}, State: "completed"},
 		},
 	}
 	b, err := json.Marshal(rec)
@@ -202,7 +202,7 @@ func TestResult_JSON_outputErrorMutualExclusion_spec_8_8_922(t *testing.T) {
 		SchemaVersion: SchemaVersion,
 		TaskID:        "child_abc",
 		State:         "completed",
-		Output:        &Output{Parts: []OutputPart{TextPart("result")}, ArtifactRefs: []string{}},
+		Output:        &Output{Parts: []MessagePart{TextPart("result")}, ArtifactRefs: []string{}},
 	}
 	b, _ = json.Marshal(completed)
 	got = map[string]any{}
@@ -217,4 +217,114 @@ func TestResult_JSON_outputErrorMutualExclusion_spec_8_8_922(t *testing.T) {
 	if _, ok := out["artifactRefs"]; !ok {
 		t.Errorf("output must always carry artifactRefs (possibly empty): %s", b)
 	}
+}
+
+// spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])),
+// §15.2.1 (REST/MCP parity).
+//
+// MessageContent is the §15.4 message-input union: a bare string is sugar
+// for a single text MessagePart, a part array is the structured form, and
+// the type round-trips the wire form it was unmarshalled from so a
+// buffered message re-delivers identically.
+func TestMessageContentUnion_spec_15_4(t *testing.T) {
+	t.Run("bare string is a single text part", func(t *testing.T) {
+		var mc MessageContent
+		if err := json.Unmarshal([]byte(`"hello world"`), &mc); err != nil {
+			t.Fatalf("unmarshal bare string: %v", err)
+		}
+		parts := mc.Parts()
+		if len(parts) != 1 {
+			t.Fatalf("bare string must become exactly one part, got %d", len(parts))
+		}
+		if parts[0].Type != "text" || parts[0].Inline != "hello world" {
+			t.Errorf("bare string part = %+v, want text/inline=hello world", parts[0])
+		}
+		if mc.Text() != "hello world" {
+			t.Errorf("Text() = %q, want %q", mc.Text(), "hello world")
+		}
+		// Round-trips back to the bare-string wire form.
+		b, err := json.Marshal(mc)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if string(b) != `"hello world"` {
+			t.Errorf("bare-string round-trip = %s, want %q", b, `"hello world"`)
+		}
+	})
+
+	t.Run("MessagePart array decodes verbatim", func(t *testing.T) {
+		raw := `[{"type":"text","inline":"a"},{"type":"image","ref":"lenny-blob://t/s/p","mimeType":"image/png"}]`
+		var mc MessageContent
+		if err := json.Unmarshal([]byte(raw), &mc); err != nil {
+			t.Fatalf("unmarshal part array: %v", err)
+		}
+		parts := mc.Parts()
+		if len(parts) != 2 {
+			t.Fatalf("part array len = %d, want 2", len(parts))
+		}
+		if parts[1].Type != "image" || parts[1].Ref != "lenny-blob://t/s/p" {
+			t.Errorf("second part = %+v, want image/ref", parts[1])
+		}
+		// Text() concatenates only the text parts; the image contributes none.
+		if mc.Text() != "a" {
+			t.Errorf("Text() = %q, want %q (image part contributes no text)", mc.Text(), "a")
+		}
+		// A part-array input round-trips to an array, never a bare string.
+		b, err := json.Marshal(mc)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if b[0] != '[' {
+			t.Errorf("part-array round-trip must stay an array, got %s", b)
+		}
+	})
+
+	t.Run("null is empty content", func(t *testing.T) {
+		// spec: §15.4 — a JSON null content is the empty value (no parts).
+		var mc MessageContent
+		if err := json.Unmarshal([]byte(`null`), &mc); err != nil {
+			t.Fatalf("unmarshal null: %v", err)
+		}
+		if !mc.IsEmpty() {
+			t.Errorf("null must be empty, got parts %+v", mc.Parts())
+		}
+		// An absent content field on an enclosing struct leaves the zero
+		// value, which is also empty.
+		var wrap struct {
+			Content MessageContent `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(`{}`), &wrap); err != nil {
+			t.Fatalf("unmarshal absent content: %v", err)
+		}
+		if !wrap.Content.IsEmpty() {
+			t.Errorf("absent content must be empty, got %+v", wrap.Content.Parts())
+		}
+	})
+
+	t.Run("non-string non-array shapes are rejected", func(t *testing.T) {
+		// spec: §15.4 — the union admits only a string or an array; an object,
+		// number, or bool body is a validation error rather than silently
+		// coerced.
+		for _, in := range []string{`{"type":"text"}`, `42`, `true`} {
+			var mc MessageContent
+			if err := json.Unmarshal([]byte(in), &mc); err == nil {
+				t.Errorf("input %q must be rejected, got %+v", in, mc.Parts())
+			}
+		}
+	})
+
+	t.Run("constructors", func(t *testing.T) {
+		if got := MessageContentFromText("x").Text(); got != "x" {
+			t.Errorf("MessageContentFromText(x).Text() = %q", got)
+		}
+		fromParts := MessageContentFromParts([]MessagePart{TextPart("p")})
+		if len(fromParts.Parts()) != 1 || fromParts.Text() != "p" {
+			t.Errorf("MessageContentFromParts = %+v", fromParts)
+		}
+		// A constructed-from-parts value marshals to an array, not a string.
+		b, _ := json.Marshal(fromParts)
+		if b[0] != '[' {
+			t.Errorf("MessageContentFromParts must marshal as array, got %s", b)
+		}
+	})
 }

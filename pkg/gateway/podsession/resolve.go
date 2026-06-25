@@ -25,6 +25,19 @@ var ErrNoMatchingPool = errors.New("podsession: no warm pool matches the runtime
 // gateway cannot resolve to a single pool.
 var ErrAmbiguousPool = errors.New("podsession: more than one warm pool matches the runtime")
 
+// ErrPoolNotSatisfiable reports that a client pinned a specific pool (the
+// §14.1 CreateSessionRequest.pool selector) that does not exist, is not
+// backed by the requested runtime, or whose §5.3 isolation profile does
+// not satisfy the requested isolationProfile. It is a deterministic
+// client fault: the named pin is unsatisfiable for this (runtime,
+// isolationProfile) pair, so the gateway fails closed with
+// 400 VALIDATION_ERROR rather than silently falling back to a different
+// pool. The §4 pool_tenant_access authorization is enforced separately at
+// the gateway layer (which holds the tenant id and the grant store), so a
+// pool the client may not pin is a 403 rather than this 400.
+// spec: §7.1 (pool selector), §14.1 (CreateSessionRequest.pool).
+var ErrPoolNotSatisfiable = errors.New("podsession: the requested pool is not backed by the runtime or is isolation-inconsistent")
+
 // conditionPoolWarmingUp is the §5.2 SandboxTemplate condition type the
 // WarmPoolController sets True while a pool with a positive minWarm has
 // no idle pods and at least one pod still warming. The gateway reads it
@@ -183,13 +196,25 @@ func poolWarming(tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool) (
 // error. ResolvePool returns ErrNoMatchingPool when none match and
 // ErrAmbiguousPool when more than one does.
 //
+// When pool is non-empty the client pinned a specific pool (the §14.1
+// CreateSessionRequest.pool selector): resolution is constrained to that
+// named pool, which still must be backed by runtimeRef and satisfy
+// isolationProfile (mirroring the §15.1 replay targetPool rule "Must be a
+// pool backed by targetRuntime"). A pinned pool that is absent, not
+// backed by the runtime, or isolation-inconsistent returns
+// ErrPoolNotSatisfiable so the gateway fails closed with 400 rather than
+// scheduling on a different pool. The §4 pool_tenant_access authorization
+// for a pinned pool is enforced at the gateway layer (sessionserver),
+// which holds the tenant id and the grant store. spec: §7.1 (pool
+// selector), §14.1 (CreateSessionRequest.pool).
+//
 // policy may be nil. When wired, ResolvePool folds the matched pool's
 // gateway-enforced §5.2 sessionPolicy mirror (maxConcurrentSessions,
 // the service-mode maxConcurrent, allowCrossTenantReuse, and the
 // concurrent-workspace pod-uptime cap) into the PoolMatch, keyed by the
 // resolved pool name. spec: §5.2 (sessionPolicy block, gateway-enforced
 // subset).
-func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyReader, namespace, runtimeRef, isolationProfile string) (PoolMatch, error) {
+func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyReader, namespace, runtimeRef, isolationProfile, pinnedPool string) (PoolMatch, error) {
 	var pools lennyv1.SandboxWarmPoolList
 	if err := reader.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
 		return PoolMatch{}, fmt.Errorf("podsession: list warm pools: %w", err)
@@ -198,6 +223,13 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 	var matches []PoolMatch
 	for i := range pools.Items {
 		pool := &pools.Items[i]
+		// spec: §7.1 / §14.1 — a client-pinned pool constrains resolution to
+		// that one named pool. A non-matching name is skipped; the resolved
+		// set is empty unless the named pool also passes the runtime and
+		// isolation requirements below, which surface as ErrPoolNotSatisfiable.
+		if pinnedPool != "" && pool.Name != pinnedPool {
+			continue
+		}
 		var tmpl lennyv1.SandboxTemplate
 		err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: pool.Spec.TemplateRef}, &tmpl)
 		if apierrors.IsNotFound(err) {
@@ -242,6 +274,14 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 
 	switch len(matches) {
 	case 0:
+		// spec: §7.1 / §14.1 — a client pinned a pool that does not exist,
+		// is not backed by the runtime, or is isolation-inconsistent. That is
+		// a deterministic client fault (400) distinct from the operator-side
+		// "no pool serves this runtime" condition (ErrNoMatchingPool), so the
+		// pinned-pool case returns ErrPoolNotSatisfiable.
+		if pinnedPool != "" {
+			return PoolMatch{}, ErrPoolNotSatisfiable
+		}
 		return PoolMatch{}, ErrNoMatchingPool
 	case 1:
 		m := matches[0]

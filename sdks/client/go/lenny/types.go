@@ -197,10 +197,10 @@ type SendMessagesRequest struct {
 	Messages []MessagePayload `json:"messages"`
 }
 
-// OutputPart mirrors the §8.5 OutputPart shape the executor returns
+// MessagePart mirrors the §8.5 MessagePart shape the executor returns
 // alongside the delivery receipt. The SDK exposes it as the
 // caller-facing structured output of a synchronous message injection.
-type OutputPart struct {
+type MessagePart struct {
 	Type string          `json:"type"`
 	Text string          `json:"text,omitempty"`
 	Data json.RawMessage `json:"data,omitempty"`
@@ -214,7 +214,7 @@ type SendMessagesResponse struct {
 
 	// Output is the executor's synchronous response. Empty when the
 	// executor delivered the message but produced no immediate output.
-	Output []OutputPart `json:"output,omitempty"`
+	Output []MessagePart `json:"output,omitempty"`
 }
 
 // TranscriptEntry mirrors one row of the §15.1 transcript page.

@@ -271,7 +271,7 @@ type chatDelta struct {
 // complete response; the translator chunks the text into
 // whitespace-delimited deltas so streaming clients observe
 // incremental output.
-func writeOpenAIStream(w http.ResponseWriter, sessionID, model string, now time.Time, out []executor.OutputPart) {
+func writeOpenAIStream(w http.ResponseWriter, sessionID, model string, now time.Time, out []executor.MessagePart) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
@@ -328,7 +328,7 @@ func writeOpenAIStream(w http.ResponseWriter, sessionID, model string, now time.
 // chat completion response. Multi-part outputs are concatenated; the
 // translator surfaces only the first `text` part directly. Future
 // commits add tool_call → OpenAI tool_calls translation.
-func buildOpenAIResponse(sessionID, model string, now time.Time, out []executor.OutputPart) OpenAIChatCompletionsResponse {
+func buildOpenAIResponse(sessionID, model string, now time.Time, out []executor.MessagePart) OpenAIChatCompletionsResponse {
 	text := ""
 	for _, p := range out {
 		if p.Type == "text" {

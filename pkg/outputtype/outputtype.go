@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-// Package outputtype encodes the §15.4.1 canonical OutputPart type
+// Package outputtype encodes the §15.4.1 canonical MessagePart type
 // registry (v1) and the ingress classification rule the gateway applies
 // to a runtime's emitted `type` string.
 //
-// The OutputPart `type` is an open string, not a closed enum. Names in
+// The MessagePart `type` is an open string, not a closed enum. Names in
 // the registry below are platform-defined; the `x-<vendor>/` namespace
 // is reserved for third-party extension types. Any other value is a
 // custom type: it collapses to `text` with the original type preserved
@@ -19,7 +19,7 @@ package outputtype
 
 import "strings"
 
-// MaxKnownSchemaVersion is the highest §15.4.1 OutputPart schemaVersion
+// MaxKnownSchemaVersion is the highest §15.4.1 MessagePart schemaVersion
 // the v1 gateway understands. A part stamped above this triggers the
 // `schema_version_ahead` live-consumer degradation signal: the gateway
 // forward-reads the fields it knows and annotates the enclosing envelope.

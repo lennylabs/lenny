@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package outputpart
+package messagepart
 
 import "testing"
 

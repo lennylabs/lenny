@@ -10,7 +10,7 @@ import (
 )
 
 // EchoExecutor is an in-process Executor backing the minimal gateway.
-// For each user message it returns a single `text` OutputPart whose
+// For each user message it returns a single `text` MessagePart whose
 // content echoes the input prefixed with `echo [seq=N]:`, where N is
 // the per-session sequence number. The shape matches the §15.4.4
 // reference echo runtime so contract tests written against that
@@ -45,7 +45,7 @@ func (e *EchoExecutor) Send(_ context.Context, sessionID string, messages []Mess
 		inputs = append(inputs, m.Content)
 	}
 	body := strings.Join(inputs, " | ")
-	return Response{Parts: []OutputPart{{
+	return Response{Parts: []MessagePart{{
 		Type:          "text",
 		Text:          fmt.Sprintf("echo [seq=%d]: %s", seq, body),
 		SchemaVersion: 1,

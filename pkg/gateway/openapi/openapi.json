@@ -428,6 +428,46 @@
           "updatedAt":   { "type": "string", "format": "date-time" },
           "deletedAt":   { "type": "string", "format": "date-time" }
         }
+      },
+      "MessagePart": {
+        "type": "object",
+        "required": ["type"],
+        "description": "§15.4.1 content part. `type` is an open string; `inline` and `ref` are mutually exclusive per the resolution protocol.",
+        "properties": {
+          "type":          { "type": "string" },
+          "mimeType":      { "type": "string" },
+          "inline":        { "type": "string" },
+          "ref":           { "type": "string" },
+          "schemaVersion": { "type": "integer" },
+          "annotations":   { "type": "object", "additionalProperties": true }
+        }
+      },
+      "MessageContent": {
+        "description": "§15.4 MessageEnvelope.input union: a bare string (sugar for a single text MessagePart) or a §15.4.1 MessagePart[] array. The identical union is accepted by the MCP lenny/send_message message argument under the §15.2.1 REST/MCP parity rule.",
+        "oneOf": [
+          { "type": "string", "description": "§15.4 bare-string shorthand: sugar for a single text MessagePart." },
+          { "type": "array", "description": "§15.4.1 MessagePart[] structured content.", "items": { "$ref": "#/components/schemas/MessagePart" } }
+        ]
+      },
+      "MessagePayload": {
+        "type": "object",
+        "required": ["content"],
+        "description": "§15.4 MessageEnvelope on the POST /v1/sessions/{id}/messages batch.",
+        "properties": {
+          "id":        { "type": "string" },
+          "role":      { "type": "string" },
+          "content":   { "$ref": "#/components/schemas/MessageContent" },
+          "inReplyTo": { "type": "string" },
+          "delivery":  { "type": "string", "enum": ["queued", "immediate"], "description": "§15.4 line 1715 closed delivery enum. Absent defaults to queued." }
+        }
+      },
+      "MessageRequest": {
+        "type": "object",
+        "required": ["messages"],
+        "description": "§15.1 POST /v1/sessions/{id}/messages body: a §7.2 batch of MessageEnvelope payloads.",
+        "properties": {
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/MessagePayload" } }
+        }
       }
     }
   },
@@ -854,6 +894,7 @@
         "summary": "Inject a message batch into a session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageRequest" } } } },
         "responses": {
           "200": { "description": "Delivered" },
           "403": { "description": "Injection rejected — runtime has injection.supported false", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
@@ -911,6 +952,141 @@
           { "name": "Last-Event-ID", "in": "header", "schema": { "type": "string" } }
         ],
         "responses": { "200": { "description": "text/event-stream" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/artifacts": {
+      "get": {
+        "operationId": "getV1SessionsByIdArtifacts",
+        "summary": "List session artifacts (paginated)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/logs": {
+      "get": {
+        "operationId": "getV1SessionsByIdLogs",
+        "summary": "Get session logs (paginated, streamable via SSE)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/usage": {
+      "get": {
+        "operationId": "getV1SessionsByIdUsage",
+        "summary": "Get token and resource usage (tree-aggregated when the session has a delegation tree)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/webhook-events": {
+      "get": {
+        "operationId": "getV1SessionsByIdWebhookEvents",
+        "summary": "List undelivered webhook events after retry exhaustion",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/memory": {
+      "get": {
+        "operationId": "getV1SessionsByIdMemory",
+        "summary": "Query the session memory store",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      },
+      "post": {
+        "operationId": "postV1SessionsByIdMemory",
+        "summary": "Write an entry to the session memory store",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/memory/{memoryId}": {
+      "delete": {
+        "operationId": "deleteV1SessionsByIdMemoryByMemoryId",
+        "summary": "Delete a session memory entry",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "memoryId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "204": { "description": "Deleted" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/replay": {
+      "post": {
+        "operationId": "postV1SessionsByIdReplay",
+        "summary": "Re-run a session against a different runtime version using the same workspace and prompt history",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "201": { "description": "Created" },
+          "400": { "description": "INCOMPATIBLE_RUNTIME", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "REPLAY_ON_LIVE_SESSION", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/sessions/{id}/tool-use/{toolCallId}/approve": {
+      "post": {
+        "operationId": "postV1SessionsByIdToolUseByToolCallIdApprove",
+        "summary": "Approve a pending tool call",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "toolCallId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/tool-use/{toolCallId}/deny": {
+      "post": {
+        "operationId": "postV1SessionsByIdToolUseByToolCallIdDeny",
+        "summary": "Deny a pending tool call. Optional body: {\"reason\": \"<string>\"}",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "toolCallId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/elicitations/{elicitationId}/respond": {
+      "post": {
+        "operationId": "postV1SessionsByIdElicitationsByElicitationIdRespond",
+        "summary": "Answer an elicitation request. Body: {\"response\": <value>}",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "elicitationId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/elicitations/{elicitationId}/dismiss": {
+      "post": {
+        "operationId": "postV1SessionsByIdElicitationsByElicitationIdDismiss",
+        "summary": "Dismiss a pending elicitation",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "elicitationId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
       }
     },
     "/metrics": {
@@ -1299,7 +1475,7 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/admin/tenants/{id}/users/{user_id}/role": {
+    "/v1/admin/tenants/{id}/users/{userId}/role": {
       "put": {
         "operationId": "putV1AdminTenantsByIdUsersByUserIdRole",
         "summary": "Assign or update the platform-managed role for a user within a tenant",
@@ -1310,7 +1486,7 @@
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "requestBody": {
           "required": true,
@@ -1336,7 +1512,7 @@
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": { "204": { "description": "No Content" } }
       }
@@ -1502,7 +1678,7 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/v1/admin/users/{user_id}": {
+    "/v1/admin/users/{userId}": {
       "get": {
         "operationId": "getV1AdminUsersByUserId",
         "summary": "Get a user",
@@ -1511,7 +1687,7 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       },
       "put": {
@@ -1522,7 +1698,7 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       },
       "delete": {
@@ -1533,11 +1709,11 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "204": { "description": "Deleted" } }
       }
     },
-    "/v1/admin/users/{user_id}/invalidate": {
+    "/v1/admin/users/{userId}/invalidate": {
       "post": {
         "operationId": "postV1AdminUsersByUserIdInvalidate",
         "summary": "Invalidate a user (soft_disable, hard_disable, or full_revoke)",
@@ -1546,14 +1722,14 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "OK" },
           "404": { "description": "User not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
-    "/v1/admin/users/{user_id}/erase": {
+    "/v1/admin/users/{userId}/erase": {
       "post": {
         "operationId": "postV1AdminUsersByUserIdErase",
         "summary": "Initiate a GDPR erasure job for a user",
@@ -1562,14 +1738,14 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "202": { "description": "Erasure job accepted" },
           "404": { "description": "User not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
-    "/v1/admin/erasure-jobs/{job_id}": {
+    "/v1/admin/erasure-jobs/{jobId}": {
       "get": {
         "operationId": "getV1AdminErasureJobsByJobId",
         "summary": "Get the status of a GDPR erasure job",
@@ -1578,7 +1754,7 @@
         "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "user-management",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "OK" },
           "404": { "description": "Erasure job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
@@ -2723,6 +2899,691 @@
         "x-lenny-required-role": "user",
         "x-lenny-category": "operability",
         "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/artifact-replication/{region}/resume": {
+      "post": {
+        "operationId": "postV1AdminArtifactReplicationByRegionResume",
+        "summary": "Resume ArtifactStore replication for a region",
+        "x-lenny-mcp-tool": "admin.resume_artifact_replication",
+        "x-lenny-scope": "admin.artifact_replication.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "region", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/artifact-replication/{region}/status": {
+      "get": {
+        "operationId": "getV1AdminArtifactReplicationByRegionStatus",
+        "summary": "ArtifactStore replication status for a region",
+        "x-lenny-mcp-tool": "admin.get_artifact_replication_status",
+        "x-lenny-scope": "admin.artifact_replication.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "region", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/audit-events/summary": {
+      "get": {
+        "operationId": "getV1AdminAuditEventsSummary",
+        "summary": "Aggregate audit-event counts by type, actor, and resource",
+        "x-lenny-mcp-tool": "admin.summarize_audit_events",
+        "x-lenny-scope": "admin.audit.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/audit-events/{seq}/republish": {
+      "post": {
+        "operationId": "postV1AdminAuditEventsBySeqRepublish",
+        "summary": "Re-queue a terminally-failed audit row for CloudEvents re-publication",
+        "x-lenny-mcp-tool": "admin.republish_audit_event",
+        "x-lenny-scope": "admin.audit.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "seq", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/audit-events/{seq}/retranslate": {
+      "post": {
+        "operationId": "postV1AdminAuditEventsBySeqRetranslate",
+        "summary": "Re-queue an audit row for OCSF translation",
+        "x-lenny-mcp-tool": "admin.retranslate_audit_event",
+        "x-lenny-scope": "admin.audit.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "seq", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/audit-partitions/{partition}/drop": {
+      "post": {
+        "operationId": "postV1AdminAuditPartitionsByPartitionDrop",
+        "summary": "Force-drop audit rows past their retention TTL after a data-loss acknowledgement",
+        "x-lenny-mcp-tool": "admin.drop_audit_partition",
+        "x-lenny-scope": "admin.audit.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "partition", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/billing-corrections": {
+      "post": {
+        "operationId": "postV1AdminBillingCorrections",
+        "summary": "Create an operator-initiated billing correction",
+        "x-lenny-mcp-tool": "admin.create_billing_correction",
+        "x-lenny-scope": "admin.billing_corrections.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "get": {
+        "operationId": "getV1AdminBillingCorrections",
+        "summary": "List billing corrections",
+        "x-lenny-mcp-tool": "admin.list_billing_corrections",
+        "x-lenny-scope": "admin.billing_corrections.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/billing-corrections/{id}": {
+      "get": {
+        "operationId": "getV1AdminBillingCorrectionsById",
+        "summary": "Get a billing correction",
+        "x-lenny-mcp-tool": "admin.get_billing_correction",
+        "x-lenny-scope": "admin.billing_corrections.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/billing-corrections/{id}/approve": {
+      "post": {
+        "operationId": "postV1AdminBillingCorrectionsByIdApprove",
+        "summary": "Approve a billing correction (four-eyes second approver)",
+        "x-lenny-mcp-tool": "admin.approve_billing_correction",
+        "x-lenny-scope": "admin.billing_corrections.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/billing-corrections/{id}/reject": {
+      "post": {
+        "operationId": "postV1AdminBillingCorrectionsByIdReject",
+        "summary": "Reject a billing correction",
+        "x-lenny-mcp-tool": "admin.reject_billing_correction",
+        "x-lenny-scope": "admin.billing_corrections.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/ca-rotation": {
+      "get": {
+        "operationId": "getV1AdminCaRotation",
+        "summary": "Get cluster-internal CA rotation status",
+        "x-lenny-mcp-tool": "admin.get_ca_rotation",
+        "x-lenny-scope": "admin.ca_rotation.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/ca-rotation/begin": {
+      "post": {
+        "operationId": "postV1AdminCaRotationBegin",
+        "summary": "Begin cluster-internal CA rotation",
+        "x-lenny-mcp-tool": "admin.begin_ca_rotation",
+        "x-lenny-scope": "admin.ca_rotation.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/ca-rotation/promote": {
+      "post": {
+        "operationId": "postV1AdminCaRotationPromote",
+        "summary": "Promote the staged CA",
+        "x-lenny-mcp-tool": "admin.promote_ca_rotation",
+        "x-lenny-scope": "admin.ca_rotation.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/ca-rotation/retire": {
+      "post": {
+        "operationId": "postV1AdminCaRotationRetire",
+        "summary": "Retire the old CA",
+        "x-lenny-mcp-tool": "admin.retire_ca_rotation",
+        "x-lenny-scope": "admin.ca_rotation.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/connectors/{name}/refresh": {
+      "post": {
+        "operationId": "postV1AdminConnectorsByNameRefresh",
+        "summary": "Re-infer connector capabilities from the external endpoint",
+        "x-lenny-mcp-tool": "admin.refresh_connector",
+        "x-lenny-scope": "admin.connectors.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/deployment/config-change": {
+      "post": {
+        "operationId": "postV1AdminDeploymentConfigChange",
+        "summary": "Reconcile the rendered deployment config and emit transition audit events",
+        "x-lenny-mcp-tool": "admin.apply_deployment_config_change",
+        "x-lenny-scope": "admin.deployment.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/erasure-jobs/{jobId}/clear-processing-restriction": {
+      "post": {
+        "operationId": "postV1AdminErasureJobsByJobIdClearProcessingRestriction",
+        "summary": "Clear the GDPR Article 18 processing restriction after a failed erasure",
+        "x-lenny-mcp-tool": "admin.clear_erasure_processing_restriction",
+        "x-lenny-scope": "admin.erasure_jobs.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/erasure-jobs/{jobId}/retry": {
+      "post": {
+        "operationId": "postV1AdminErasureJobsByJobIdRetry",
+        "summary": "Retry a failed erasure job",
+        "x-lenny-mcp-tool": "admin.retry_erasure_job",
+        "x-lenny-scope": "admin.erasure_jobs.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/impersonation": {
+      "post": {
+        "operationId": "postV1AdminImpersonation",
+        "summary": "Start a platform-admin impersonation session",
+        "x-lenny-mcp-tool": "admin.start_impersonation",
+        "x-lenny-scope": "admin.impersonation.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "get": {
+        "operationId": "getV1AdminImpersonation",
+        "summary": "List active impersonation sessions",
+        "x-lenny-mcp-tool": "admin.list_impersonation",
+        "x-lenny-scope": "admin.impersonation.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/impersonation/{id}": {
+      "delete": {
+        "operationId": "deleteV1AdminImpersonationById",
+        "summary": "End an impersonation session",
+        "x-lenny-mcp-tool": "admin.end_impersonation",
+        "x-lenny-scope": "admin.impersonation.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Ended" } }
+      }
+    },
+    "/v1/admin/interceptors": {
+      "post": {
+        "operationId": "postV1AdminInterceptors",
+        "summary": "Register an external interceptor",
+        "x-lenny-mcp-tool": "admin.create_interceptor",
+        "x-lenny-scope": "admin.interceptors.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "operationId": "getV1AdminInterceptors",
+        "summary": "List external interceptors",
+        "x-lenny-mcp-tool": "admin.list_interceptors",
+        "x-lenny-scope": "admin.interceptors.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/interceptors/{name}": {
+      "get": {
+        "operationId": "getV1AdminInterceptorsByName",
+        "summary": "Get an external interceptor",
+        "x-lenny-mcp-tool": "admin.get_interceptor",
+        "x-lenny-scope": "admin.interceptors.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "operationId": "putV1AdminInterceptorsByName",
+        "summary": "Update an external interceptor",
+        "x-lenny-mcp-tool": "admin.update_interceptor",
+        "x-lenny-scope": "admin.interceptors.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "operationId": "deleteV1AdminInterceptorsByName",
+        "summary": "Delete an external interceptor",
+        "x-lenny-mcp-tool": "admin.delete_interceptor",
+        "x-lenny-scope": "admin.interceptors.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/me/operations": {
+      "get": {
+        "operationId": "getV1AdminMeOperations",
+        "summary": "The calling principal's in-flight operations",
+        "x-lenny-mcp-tool": null,
+        "x-lenny-scope": "admin.me.read",
+        "x-lenny-required-role": "user",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/operations": {
+      "get": {
+        "operationId": "getV1AdminOperations",
+        "summary": "List platform operations from the unified inventory",
+        "x-lenny-mcp-tool": "admin.list_operations",
+        "x-lenny-scope": "admin.operations.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/operations/{id}": {
+      "get": {
+        "operationId": "getV1AdminOperationsById",
+        "summary": "Get a platform operation",
+        "x-lenny-mcp-tool": "admin.get_operation",
+        "x-lenny-scope": "admin.operations.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/config": {
+      "get": {
+        "operationId": "getV1AdminPlatformConfig",
+        "summary": "Platform configuration (secrets redacted)",
+        "x-lenny-mcp-tool": "admin.get_platform_config",
+        "x-lenny-scope": "admin.platform.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/version": {
+      "get": {
+        "operationId": "getV1AdminPlatformVersion",
+        "summary": "Platform version",
+        "x-lenny-mcp-tool": "admin.get_platform_version",
+        "x-lenny-scope": "admin.platform.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/bootstrap-override": {
+      "delete": {
+        "operationId": "deleteV1AdminPoolsByNameBootstrapOverride",
+        "summary": "Clear a pool's bootstrapMinWarm override",
+        "x-lenny-mcp-tool": "admin.clear_pool_bootstrap_override",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Cleared" } }
+      }
+    },
+    "/v1/admin/pools/{name}/circuit-breaker": {
+      "put": {
+        "operationId": "putV1AdminPoolsByNameCircuitBreaker",
+        "summary": "Override a pool's SDK-warm circuit-breaker state",
+        "x-lenny-mcp-tool": "admin.update_pool_circuit_breaker",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/resume-reconciliation": {
+      "post": {
+        "operationId": "postV1AdminPoolsByNameResumeReconciliation",
+        "summary": "Reset a stuck pool's admission-denial backoff",
+        "x-lenny-mcp-tool": "admin.resume_pool_reconciliation",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/sync-status": {
+      "get": {
+        "operationId": "getV1AdminPoolsByNameSyncStatus",
+        "summary": "Postgres-versus-CRD generation comparison for a pool",
+        "x-lenny-mcp-tool": "admin.get_pool_sync_status",
+        "x-lenny-scope": "admin.pools.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/upgrade-status": {
+      "get": {
+        "operationId": "getV1AdminPoolsByNameUpgradeStatus",
+        "summary": "Runtime-image rollout status for a pool",
+        "x-lenny-mcp-tool": "admin.get_pool_upgrade_status",
+        "x-lenny-scope": "admin.pools.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/upgrade/start": {
+      "post": {
+        "operationId": "postV1AdminPoolsByNameUpgradeStart",
+        "summary": "Start a runtime-image rollout for a pool",
+        "x-lenny-mcp-tool": "admin.start_pool_upgrade",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/upgrade/proceed": {
+      "post": {
+        "operationId": "postV1AdminPoolsByNameUpgradeProceed",
+        "summary": "Proceed to the next rollout stage",
+        "x-lenny-mcp-tool": "admin.proceed_pool_upgrade",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/upgrade/pause": {
+      "post": {
+        "operationId": "postV1AdminPoolsByNameUpgradePause",
+        "summary": "Pause a runtime-image rollout",
+        "x-lenny-mcp-tool": "admin.pause_pool_upgrade",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/upgrade/resume": {
+      "post": {
+        "operationId": "postV1AdminPoolsByNameUpgradeResume",
+        "summary": "Resume a paused runtime-image rollout",
+        "x-lenny-mcp-tool": "admin.resume_pool_upgrade",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/upgrade/rollback": {
+      "post": {
+        "operationId": "postV1AdminPoolsByNameUpgradeRollback",
+        "summary": "Roll back a runtime-image rollout",
+        "x-lenny-mcp-tool": "admin.rollback_pool_upgrade",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/preflight": {
+      "post": {
+        "operationId": "postV1AdminPreflight",
+        "summary": "Run outbound infra connectivity and schema-version probes",
+        "x-lenny-mcp-tool": "admin.run_preflight",
+        "x-lenny-scope": "admin.preflight.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/quota/reconcile": {
+      "post": {
+        "operationId": "postV1AdminQuotaReconcile",
+        "summary": "Re-aggregate quota counters",
+        "x-lenny-mcp-tool": "admin.reconcile_quota",
+        "x-lenny-scope": "admin.quota.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/sessions/{id}": {
+      "get": {
+        "operationId": "getV1AdminSessionsById",
+        "summary": "Read-through a session by its global id",
+        "x-lenny-mcp-tool": "admin.get_session",
+        "x-lenny-scope": "admin.sessions.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/sessions/{id}/force-terminate": {
+      "post": {
+        "operationId": "postV1AdminSessionsByIdForceTerminate",
+        "summary": "Operator-driven forced terminal transition for a session",
+        "x-lenny-mcp-tool": "admin.force_terminate_session",
+        "x-lenny-scope": "admin.sessions.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/credential-rekey": {
+      "post": {
+        "operationId": "postV1AdminTenantsByIdCredentialRekey",
+        "summary": "Run the KMS-key-rotation re-encryption job for a tenant KEK",
+        "x-lenny-mcp-tool": "admin.credential_rekey",
+        "x-lenny-scope": "admin.credential_rekey.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "get": {
+        "operationId": "getV1AdminTenantsByIdCredentialRekey",
+        "summary": "Verify the credential-rekey state for a tenant KEK",
+        "x-lenny-mcp-tool": "admin.get_credential_rekey",
+        "x-lenny-scope": "admin.credential_rekey.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/force-delete": {
+      "post": {
+        "operationId": "postV1AdminTenantsByIdForceDelete",
+        "summary": "Platform-admin force-delete a tenant with legal-hold escrow override",
+        "x-lenny-mcp-tool": "admin.force_delete_tenant",
+        "x-lenny-scope": "admin.tenants.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/rotate-erasure-salt": {
+      "post": {
+        "operationId": "postV1AdminTenantsByIdRotateErasureSalt",
+        "summary": "Compromise-response erasure-salt rotation for a tenant",
+        "x-lenny-mcp-tool": "admin.rotate_erasure_salt",
+        "x-lenny-scope": "admin.tenants.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial": {
+      "delete": {
+        "operationId": "deleteV1AdminTreesByRootSessionIdSubtreesBySessionIdExtensionDenial",
+        "summary": "Clear the extension-denied flag on a subtree",
+        "x-lenny-mcp-tool": "admin.clear_extension_denial",
+        "x-lenny-scope": "admin.trees.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "rootSessionId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Cleared" } }
+      }
+    },
+    "/v1/admin/users/{user}/rotate-token": {
+      "post": {
+        "operationId": "postV1AdminUsersByUserRotateToken",
+        "summary": "Rotate the initial admin token",
+        "x-lenny-mcp-tool": "admin.rotate_token",
+        "x-lenny-scope": "admin.users.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "user", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/credentials": {
+      "post": {
+        "operationId": "postV1Credentials",
+        "summary": "Register a credential for the authenticated user",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "operationId": "getV1Credentials",
+        "summary": "List the authenticated user's registered credentials",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/credentials/{credentialRef}": {
+      "put": {
+        "operationId": "putV1CredentialsByCredentialRef",
+        "summary": "Rotate (replace) secret material for an existing credential",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "credentialRef", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "operationId": "deleteV1CredentialsByCredentialRef",
+        "summary": "Remove a registered credential",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "credentialRef", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/credentials/{credentialRef}/revoke": {
+      "post": {
+        "operationId": "postV1CredentialsByCredentialRefRevoke",
+        "summary": "Revoke a credential and invalidate all active leases backed by it",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "credentialRef", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }
       }
     }

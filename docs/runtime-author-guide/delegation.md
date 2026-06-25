@@ -427,7 +427,7 @@ Spawn multiple children, wait for all results:
 var handles []string
 for _, file := range filesToReview {
     h := delegateTask("reviewer", TaskSpec{
-        Input: []OutputPart{{Type: "text", Inline: "Review: " + file}},
+        Input: []MessagePart{{Type: "text", Inline: "Review: " + file}},
         WorkspaceFiles: ExportSpec{Glob: file},
     })
     handles = append(handles, h.SessionId)

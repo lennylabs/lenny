@@ -4215,6 +4215,12 @@ func main() {
 		// counter when a §7.5 setup command fails on the warm-pool side
 		// of a bind.
 		IncWarmpoolWarmupFailure: gwMetrics.IncWarmpoolWarmupFailure,
+		// spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE)
+		// — F-5.1.20. Increment the
+		// lenny_injection_gate_failclosed_total{cause} counter when the
+		// §5.1 injection gate fails closed on a transient backing-store
+		// read, labeled runtime_store or override_store.
+		IncInjectionGateFailClosed: gwMetrics.IncInjectionGateFailClosed,
 		// §14 lines 108-150 — the session-completion webhook subsystem.
 		// F-14.1.11 / F-15.1.11.
 		CallbackValidator:  callbackValidator,
@@ -8946,7 +8952,7 @@ func (a ocsfMetricsAdapter) DeadLettered(string) {}
 // claim, so tenant-admins can downgrade a user with an over-broad OIDC
 // claim by recording an explicit (possibly empty) assignment. A row with
 // no assignment (the state left by `DELETE /v1/admin/tenants/{id}/users/
-// {user_id}/role`) or a missing row leaves the JWT claim authoritative.
+// {userId}/role`) or a missing row leaves the JWT claim authoritative.
 // spec: §10.2 line 294, §15.1 line 828. F-10.2.3, F-15.1.3.
 type userstorePlatformRoles struct {
 	store userstore.Store

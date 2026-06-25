@@ -433,7 +433,7 @@ Returns an MCP Task with streaming progress notifications:
 }
 ```
 
-Progress notifications stream as MCP Task updates containing `OutputPart` arrays translated to MCP content blocks.
+Progress notifications stream as MCP Task updates containing `MessagePart` arrays translated to MCP content blocks.
 
 **Error codes:**
 
@@ -1007,7 +1007,7 @@ CI includes contract tests that call the REST endpoint and every built-in adapte
 
 ### 5. REST-only operations
 
-The following REST endpoints have **no MCP tool equivalents**: `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{tool_call_id}/approve`, `tool-use/{tool_call_id}/deny`, `elicitations/{elicitation_id}/respond`, and `elicitations/{elicitation_id}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints carry no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — the gateway surfaces pending elicitations and tool-approval requests as MCP elicitation exchanges on the session's streaming transport, and the client's response flows back over that same channel. MCP-first clients needing the REST-only operations should use the REST API directly.
+The following REST endpoints have **no MCP tool equivalents**: `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{toolCallId}/approve`, `tool-use/{toolCallId}/deny`, `elicitations/{elicitationId}/respond`, and `elicitations/{elicitationId}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints carry no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — the gateway surfaces pending elicitations and tool-approval requests as MCP elicitation exchanges on the session's streaming transport, and the client's response flows back over that same channel. MCP-first clients needing the REST-only operations should use the REST API directly.
 
 ---
 
@@ -1030,6 +1030,6 @@ Lenny sessions map to MCP Tasks as follows:
 | `cancelled` | Task cancelled |
 | `expired` | Task failed (lease/budget exhausted) |
 
-When a session transitions to `running`, the attached MCP Task streams `OutputPart` arrays translated to MCP content blocks (TextContent, ImageContent, ResourceContent) using the [Translation Fidelity Matrix](internal.html#translation-fidelity-matrix) rules.
+When a session transitions to `running`, the attached MCP Task streams `MessagePart` arrays translated to MCP content blocks (TextContent, ImageContent, ResourceContent) using the [Translation Fidelity Matrix](internal.html#translation-fidelity-matrix) rules.
 
 Elicitation requests from the agent are surfaced as MCP Elicitation prompts, enabling the client to collect human input and relay it back to the session.

@@ -144,7 +144,7 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
-	var out []OutputPart
+	var out []MessagePart
 	var envAnn map[string]any
 	for _, m := range messages {
 		env := messageEnvelope{
@@ -152,7 +152,7 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 			Type:          "message",
 			ID:            newMessageID(),
 			From:          resolveFromBlock(m),
-			Input:         []wireOutputPart{{Type: "text", Inline: m.Content}},
+			Input:         []wireMessagePart{{Type: "text", Inline: m.Content}},
 		}
 		line, err := json.Marshal(env)
 		if err != nil {
@@ -256,9 +256,9 @@ func (e *SubprocessExecutor) Output(ctx context.Context, sessionID string) (<-ch
 // readResponse scans stdout for the next `response` envelope. The
 // echo runtime may interleave `heartbeat_ack` and `status` frames;
 // those are skipped. Bounded by the executor's SendTimeout.
-func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessSession) ([]OutputPart, map[string]any, error) {
+func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessSession) ([]MessagePart, map[string]any, error) {
 	type result struct {
-		parts []OutputPart
+		parts []MessagePart
 		ann   map[string]any
 		err   error
 	}
@@ -369,11 +369,11 @@ func (e *SubprocessExecutor) Close(_ context.Context, sessionID string) error {
 // ----- §15.4.1 wire types -----
 
 type messageEnvelope struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	Type          string           `json:"type"`
-	ID            string           `json:"id"`
-	From          fromBlock        `json:"from"`
-	Input         []wireOutputPart `json:"input"`
+	SchemaVersion int               `json:"schemaVersion"`
+	Type          string            `json:"type"`
+	ID            string            `json:"id"`
+	From          fromBlock         `json:"from"`
+	Input         []wireMessagePart `json:"input"`
 	// SlotID is the adapter-assigned §6.4 slot the gateway resolved for the
 	// target session. It is stamped only on the outbound envelope to a
 	// concurrent-pool pod (maxConcurrentSessions > 1); an exclusive
@@ -402,7 +402,7 @@ func resolveFromBlock(m Message) fromBlock {
 	return fromBlock{Kind: "client", ID: "client_gateway"}
 }
 
-type wireOutputPart struct {
+type wireMessagePart struct {
 	Type          string         `json:"type"`
 	Inline        string         `json:"inline,omitempty"`
 	Ref           string         `json:"ref,omitempty"`
@@ -411,9 +411,9 @@ type wireOutputPart struct {
 }
 
 type responseEnvelope struct {
-	Type   string           `json:"type"`
-	Text   string           `json:"text,omitempty"`
-	Output []wireOutputPart `json:"output,omitempty"`
+	Type   string            `json:"type"`
+	Text   string            `json:"text,omitempty"`
+	Output []wireMessagePart `json:"output,omitempty"`
 }
 
 // newMessageID returns a §15.4.1-shaped message id. The schema

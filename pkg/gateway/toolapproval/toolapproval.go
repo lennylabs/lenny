@@ -5,7 +5,7 @@
 // over the §4.7 Attach stream, the gateway records a KindToolUse
 // interaction, publishes a tool_use_requested SSE event, and blocks the
 // in-flight tool call until the owning user resolves it via
-// POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve|deny. This
+// POST /v1/sessions/{id}/tool-use/{toolCallId}/approve|deny. This
 // registry pairs each pending tool call with a channel the blocked
 // executor read waits on, and the §15.1 resolution endpoints deliver
 // the approve / deny verdict onto that channel.

@@ -236,6 +236,14 @@ mappings:
     category_name: Findings
     activity_id: 1
     activity_name: Create
+  - event_type: elicitation.url_mode_domain_rejected
+    match: exact
+    class_uid: 2004
+    class_name: Application Security Finding
+    category_uid: 2
+    category_name: Findings
+    activity_id: 1
+    activity_name: Create
   - event_type: gdpr.erasure_blocked_by_hold
     match: exact
     class_uid: 5001

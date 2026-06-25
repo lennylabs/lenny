@@ -61,8 +61,8 @@
         },
         "input": {
           "type": "array",
-          "items": { "$ref": "https://schemas.lenny.dev/outputpart/v1.json" },
-          "description": "Message content as a list of OutputPart objects."
+          "items": { "$ref": "https://schemas.lenny.dev/messagepart/v1.json" },
+          "description": "Message content as a list of MessagePart objects."
         }
       }
     },
@@ -154,8 +154,8 @@
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "https://schemas.lenny.dev/outputpart/v1.json" },
-          "description": "Result content as a list of OutputPart objects."
+          "items": { "$ref": "https://schemas.lenny.dev/messagepart/v1.json" },
+          "description": "Result content as a list of MessagePart objects."
         },
         "isError": { "type": "boolean", "default": false },
         "slotId": { "type": "string" }
@@ -171,12 +171,12 @@
         "type": { "const": "response" },
         "output": {
           "type": "array",
-          "items": { "$ref": "https://schemas.lenny.dev/outputpart/v1.json" },
-          "description": "Complete task output as a list of OutputPart objects."
+          "items": { "$ref": "https://schemas.lenny.dev/messagepart/v1.json" },
+          "description": "Complete task output as a list of MessagePart objects."
         },
         "text": {
           "type": "string",
-          "description": "Shorthand for text-only responses. The adapter normalizes this to a single text OutputPart in `output`."
+          "description": "Shorthand for text-only responses. The adapter normalizes this to a single text MessagePart in `output`."
         },
         "error": {
           "type": "object",

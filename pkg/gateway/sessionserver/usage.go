@@ -977,7 +977,7 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 // contract.
 // spec: §8.8 lines 888-896; §15.4.1. F-8.8.2.
 func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session) *sessionrecord.Output {
-	out := &sessionrecord.Output{Parts: []sessionrecord.OutputPart{}, ArtifactRefs: []string{}}
+	out := &sessionrecord.Output{Parts: []sessionrecord.MessagePart{}, ArtifactRefs: []string{}}
 	if s.transcripts != nil {
 		if entries, err := s.transcripts.Get(ctx, sess.TenantID, sess.ID); err == nil {
 			for i := len(entries) - 1; i >= 0; i-- {

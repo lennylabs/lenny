@@ -16,7 +16,7 @@ import threading
 from typing import Any
 
 from .transport import FrameWriter
-from .types import OutputPart, ToolResult
+from .types import MessagePart, ToolResult
 
 
 class _Pending:
@@ -59,7 +59,7 @@ class ToolCallRegistry:
         if pending is None:
             return False
         pending.result = ToolResult(
-            content=[OutputPart.from_wire(p) for p in raw.get("content", [])],
+            content=[MessagePart.from_wire(p) for p in raw.get("content", [])],
             is_error=bool(raw.get("isError", False)),
         )
         pending.event.set()
@@ -181,7 +181,7 @@ class AdapterToolset:
         result = self.tool_call("write_file", {"path": path, "content": content})
         _tool_error(result, "write_file")
 
-    def list_dir(self, path: str) -> list[OutputPart]:
+    def list_dir(self, path: str) -> list[MessagePart]:
         """Invoke the §15.4.1 ``list_dir`` adapter-local tool and return
         the directory entries the adapter reports."""
         result = self.tool_call("list_dir", {"path": path})

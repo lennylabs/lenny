@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -115,7 +116,7 @@ func TestMessagesStartsSessionPromptSpan_spec_16_3(t *testing.T) {
 	seedRunningSession(t, store, "sess_prompt_ok")
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_prompt_ok", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -152,7 +153,7 @@ func TestMessagesSpanRecordsExecutorError_spec_16_3(t *testing.T) {
 	seedRunningSession(t, store, "sess_prompt_fail")
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_prompt_fail", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("status: got %d, want 500; body=%s", rr.Code, rr.Body.String())

@@ -25,7 +25,7 @@ import type {
   Handler,
   HandlerTools,
   Message,
-  OutputPart,
+  MessagePart,
   Reply,
 } from "../../src/index.js";
 
@@ -34,7 +34,7 @@ const EXIT_RUNTIME_ERROR = 1;
 const EXIT_PROTOCOL_ERROR = 2;
 
 // echoParts prefixes text parts with the per-session sequence number.
-function echoParts(input: OutputPart[], seq: number): OutputPart[] {
+function echoParts(input: MessagePart[], seq: number): MessagePart[] {
   return input.map((p) =>
     p.type === "text" && p.inline
       ? text(`[delegate seq=${seq}] ${p.inline}`)

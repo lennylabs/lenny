@@ -67,6 +67,38 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.Labels = cloneMetadata(req.Labels)
 	}
 
+	// spec: §7.1 line 6 — reject an empty metadata key so the on-row
+	// annotation map stays well-formed, mirroring the §14 env and label
+	// key checks above. The metadata round-trips to the §15.1 GET
+	// envelope, so an empty key would echo back an unkeyed annotation.
+	// F-CS4 (0018).
+	for key := range req.Metadata {
+		if key == "" {
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"metadata keys must be non-empty", map[string]any{"field": "metadata"})
+			return nil, false
+		}
+	}
+
+	// spec: §7.1 step 1, §7.1 step 4, §14.1 — `pool` is a first-class
+	// client scheduling selector, so a pin the gateway cannot satisfy is
+	// rejected (400/403/503) rather than accepted, echoed, and dropped from
+	// scheduling. validateRequestEnvelope runs before the §7.1 claim, so the
+	// gate fails fast before any pod is claimed. F-CS2 (0018).
+	//
+	// spec: §7.1 line 18 / line 75 — when a pool is pinned, the named pool's
+	// own profile governs the session's isolation (the pin overrides the
+	// default pool selection and the resolved level is populated from the
+	// assigned pool's configuration). Pass the client's raw request profile
+	// (empty when the client omitted isolationProfile), not the defaulted
+	// row.IsolationProfile, so ResolvePool's `isolationProfile != ""`
+	// short-circuit lets the pool's profile govern and rejects only an
+	// explicitly-requested profile the pool does not satisfy. A defaulted
+	// profile would reject a pin whose pool differs from the deployment
+	// default even though the client deferred to the pool. F-CS2 (0018).
+	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool) {
+		return nil, false
+	}
 	row.Pool = req.Pool
 
 	// spec: §14 line 154 — per-session timeouts are non-negative and

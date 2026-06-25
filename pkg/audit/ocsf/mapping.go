@@ -102,6 +102,16 @@ var exactCatalog = map[string]ClassMapping{
 	// §16.7 elicitation content tamper → Application Security Finding.
 	"elicitation.content_tamper_detected": finding(ActivityCreate),
 
+	// §16.7 url-mode allowlist drop → Application Security Finding (2004):
+	// a §9.2 url-mode elicitation is dropped because the requested URL's
+	// domain is not in the pool's url-mode allowlist (the §15.1
+	// DOMAIN_NOT_ALLOWLISTED per-hop rejection). A security-salient policy
+	// rejection, mapped like elicitation.content_tamper_detected so it
+	// reaches a SIEM under the finding class rather than dead-lettering at
+	// translation. spec: §16.7 (elicitation.url_mode_domain_rejected);
+	// §9.2. F-EL3.
+	"elicitation.url_mode_domain_rejected": finding(ActivityCreate),
+
 	// §16.7 circuit-breaker lifecycle → API Activity (6003).
 	"circuit_breaker.state_changed":         apiActivity(ActivityUpdate),
 	"admission.circuit_breaker_rejected":    apiActivity(ActivityUnknown),

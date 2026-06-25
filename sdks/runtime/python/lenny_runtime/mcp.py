@@ -17,7 +17,7 @@ from typing import Any
 from .transport import LineReader, SocketStream, dial_unix_socket
 from .types import (
     AdapterManifest,
-    OutputPart,
+    MessagePart,
     TaskHandle,
     TaskResult,
 )
@@ -33,7 +33,7 @@ MCP_PROTOCOL_VERSION = "2025-03-26"
 NONCE_PARAM_KEY = "_lennyNonce"
 
 
-def _stamp_parts(parts: list[OutputPart]) -> list[dict[str, Any]]:
+def _stamp_parts(parts: list[MessagePart]) -> list[dict[str, Any]]:
     """Serialize parts to wire form, honoring the §15.4.1 producer
     obligation that every part carries a schema version."""
     return [p.to_wire() for p in parts]
@@ -128,13 +128,13 @@ def _decode_task_results(raw: Any) -> list[TaskResult]:
     return [TaskResult.from_wire(raw)]
 
 
-def _decode_parts(raw: Any) -> list[OutputPart]:
-    """Decode a result that is either a bare OutputPart array or an
+def _decode_parts(raw: Any) -> list[MessagePart]:
+    """Decode a result that is either a bare MessagePart array or an
     object with a ``parts`` field."""
     if isinstance(raw, list):
-        return [OutputPart.from_wire(p) for p in raw]
+        return [MessagePart.from_wire(p) for p in raw]
     if isinstance(raw, dict):
-        return [OutputPart.from_wire(p) for p in raw.get("parts", [])]
+        return [MessagePart.from_wire(p) for p in raw.get("parts", [])]
     return []
 
 
@@ -203,7 +203,7 @@ class PlatformTools:
     def delegate_task(
         self,
         target: str,
-        parts: list[OutputPart],
+        parts: list[MessagePart],
         budget: dict[str, Any] | None = None,
     ) -> TaskHandle:
         """Invoke the §8.2 ``lenny/delegate_task`` platform tool.
@@ -246,7 +246,7 @@ class PlatformTools:
         return the raw result for the runtime to decode."""
         return self._platform.call_tool("lenny/discover_agents", query)
 
-    def output(self, parts: list[OutputPart]) -> None:
+    def output(self, parts: list[MessagePart]) -> None:
         """Invoke the §4.7 ``lenny/output`` platform tool, emitting
         output parts incrementally to the parent or client.
 
@@ -255,7 +255,7 @@ class PlatformTools:
         """
         self._platform.call_tool("lenny/output", {"output": _stamp_parts(parts)})
 
-    def request_input(self, prompt: list[OutputPart]) -> list[OutputPart]:
+    def request_input(self, prompt: list[MessagePart]) -> list[MessagePart]:
         """Invoke the §4.7 ``lenny/request_input`` platform tool.
 
         It blocks until an answer arrives and returns the answer parts.

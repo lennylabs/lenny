@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -244,6 +247,137 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 			// spec: §15.1 line 1138 — every retryable 503 carries Retry-After.
 			if ra := w.Header().Get("Retry-After"); ra != "5" {
 				t.Errorf("Retry-After = %q, want 5 (the §7.1 atomic-unit floor)", ra)
+			}
+		})
+	}
+}
+
+// setupFailWith wraps a gRPC status code in the *podsession.SetupCommandFailure
+// the binder produces, so the writePodClaimError / isTransientPodClaimError
+// branch can be exercised at the gRPC-code boundary that governs both the
+// wire envelope and the /resume row-state demotion.
+func setupFailWith(code codes.Code) *podsession.SetupCommandFailure {
+	return &podsession.SetupCommandFailure{
+		Pod:   "sbx-1",
+		Cause: status.Error(code, "run setup commands: boom"),
+	}
+}
+
+// spec: §7.3 (setup_command_failed non-retryable), §15.1 (SETUP_COMMAND_FAILED),
+// §6.2 (transient setup failure retried on a fresh pod) — a deterministic
+// setup-command exit the adapter reports as codes.FailedPrecondition surfaces
+// as the non-retryable 422 SETUP_COMMAND_FAILED with details.reason retained
+// and no Retry-After, while every other gRPC code (the complement of
+// FailedPrecondition: a crashed pod surfaced as Unavailable / DeadlineExceeded,
+// a wrapped non-status cause reported as Unknown, and Internal) stays the
+// retryable 503 fallback + Retry-After so §6.2 recovers it on a fresh pod.
+func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
+	s := New(memstore.New(), Options{})
+
+	t.Run("FailedPrecondition is the non-retryable 422", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			err  error
+		}{
+			{"direct", setupFailWith(codes.FailedPrecondition)},
+			{"wrapped", fmt.Errorf("prepare: %w", setupFailWith(codes.FailedPrecondition))},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				s.writePodClaimError(w, tc.err, "SESSION_CREATION_FAILED",
+					"could not place the session on a warm pod")
+				if w.Code != 422 {
+					t.Fatalf("status = %d, want 422", w.Code)
+				}
+				body := decodeErrorBody(t, w.Body.Bytes())
+				if body["code"] != "SETUP_COMMAND_FAILED" {
+					t.Errorf("code = %v, want SETUP_COMMAND_FAILED", body["code"])
+				}
+				if body["category"] != "PERMANENT" || body["retryable"] != false {
+					t.Errorf("category/retryable = %v/%v, want PERMANENT/false", body["category"], body["retryable"])
+				}
+				details, _ := body["details"].(map[string]any)
+				if details["reason"] != "setup_command_failed" {
+					t.Errorf("details.reason = %v, want setup_command_failed", details["reason"])
+				}
+				// A non-retryable deterministic failure must not invite a retry.
+				if ra := w.Header().Get("Retry-After"); ra != "" {
+					t.Errorf("Retry-After = %q, want absent on the non-retryable SETUP_COMMAND_FAILED", ra)
+				}
+			})
+		}
+	})
+
+	// Every code other than FailedPrecondition is a transient setup-window
+	// transport failure that stays the retryable 503 fallback + Retry-After.
+	t.Run("transient causes stay the retryable 503 fallback", func(t *testing.T) {
+		cases := []struct {
+			name string
+			code codes.Code
+			fall string
+		}{
+			{"unavailable_crashed_pod", codes.Unavailable, "SESSION_CREATION_FAILED"},
+			{"deadline_exceeded", codes.DeadlineExceeded, "STARTING_FAILED"},
+			{"unknown_wrapped_cause", codes.Unknown, "RESUME_FAILED"},
+			{"internal", codes.Internal, "SESSION_CREATION_FAILED"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				s.writePodClaimError(w, setupFailWith(tc.code), tc.fall,
+					"could not place the session on a warm pod")
+				if w.Code != 503 {
+					t.Fatalf("status = %d, want 503 for the transient %s cause", w.Code, tc.code)
+				}
+				body := decodeErrorBody(t, w.Body.Bytes())
+				if body["code"] != tc.fall {
+					t.Errorf("code = %v, want the retryable fallback %s", body["code"], tc.fall)
+				}
+				if body["retryable"] != true {
+					t.Errorf("retryable = %v, want true for the transient %s cause", body["retryable"], tc.code)
+				}
+				details, _ := body["details"].(map[string]any)
+				if details["reason"] != "setup_command_failed" {
+					t.Errorf("details.reason = %v, want setup_command_failed", details["reason"])
+				}
+				if ra := w.Header().Get("Retry-After"); ra != "5" {
+					t.Errorf("Retry-After = %q, want 5 on the retryable fallback", ra)
+				}
+			})
+		}
+	})
+}
+
+// spec: §7.3 (awaiting_client_action holding state for a retryable resume
+// failure), §6.2 (transient setup failure retried on a fresh pod) — the
+// /resume row-state demotion and the wire envelope share one boundary:
+// isTransientPodClaimError treats a SetupCommandFailure whose Cause is any
+// code other than codes.FailedPrecondition as transient (row stays
+// awaiting_client_action), and the deterministic FailedPrecondition exit as
+// non-transient (row demotes to failed). A non-status / wrapped cause reports
+// codes.Unknown and is treated as transient.
+func TestIsTransientPodClaimErrorSetupCommand_spec_7_3(t *testing.T) {
+	cases := []struct {
+		name        string
+		err         error
+		wantTransit bool
+	}{
+		{"failed_precondition_deterministic", setupFailWith(codes.FailedPrecondition), false},
+		{"unavailable_transient", setupFailWith(codes.Unavailable), true},
+		{"deadline_exceeded_transient", setupFailWith(codes.DeadlineExceeded), true},
+		{"internal_transient", setupFailWith(codes.Internal), true},
+		{
+			"non_status_cause_is_unknown_transient",
+			&podsession.SetupCommandFailure{Pod: "sbx-1", Cause: errors.New("wrapped non-status boom")},
+			true,
+		},
+		{"wrapped_failed_precondition_demotes", fmt.Errorf("resume: %w", setupFailWith(codes.FailedPrecondition)), false},
+		{"wrapped_unavailable_resumable", fmt.Errorf("resume: %w", setupFailWith(codes.Unavailable)), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientPodClaimError(tc.err); got != tc.wantTransit {
+				t.Errorf("isTransientPodClaimError = %v, want %v", got, tc.wantTransit)
 			}
 		})
 	}

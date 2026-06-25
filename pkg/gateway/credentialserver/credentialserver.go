@@ -94,11 +94,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/credentials", s.handleRegister)
 	mux.HandleFunc("GET /v1/credentials", s.handleList)
-	// spec: §15.1 lines 711-715 — the credential path identifier is
-	// `{credential_ref}` (F-15.1.13).
-	mux.HandleFunc("PUT /v1/credentials/{credential_ref}", s.handleRotate)
-	mux.HandleFunc("POST /v1/credentials/{credential_ref}/revoke", s.handleRevoke)
-	mux.HandleFunc("DELETE /v1/credentials/{credential_ref}", s.handleDelete)
+	// spec: §15.1 path-parameter casing — the credential path identifier
+	// is camelCase `{credentialRef}` (F-15.1.13).
+	mux.HandleFunc("PUT /v1/credentials/{credentialRef}", s.handleRotate)
+	mux.HandleFunc("POST /v1/credentials/{credentialRef}/revoke", s.handleRevoke)
+	mux.HandleFunc("DELETE /v1/credentials/{credentialRef}", s.handleDelete)
 	return mux
 }
 
@@ -125,12 +125,12 @@ type RegisterRequest struct {
 	Secret      string `json:"secret"`
 }
 
-// RotateRequest is the §15.1 PUT /v1/credentials/{credential_ref} body.
+// RotateRequest is the §15.1 PUT /v1/credentials/{credentialRef} body.
 type RotateRequest struct {
 	Secret string `json:"secret"`
 }
 
-// RevokeRequest is the optional POST /v1/credentials/{credential_ref}/revoke body.
+// RevokeRequest is the optional POST /v1/credentials/{credentialRef}/revoke body.
 // The reason is recorded in the §4.9.2 credential.user_revoked audit
 // event. An empty or absent body is valid.
 type RevokeRequest struct {
@@ -247,7 +247,7 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 	ctx, span := tracing.NewTracer(nil).Start(r.Context(), tracing.SpanCredentialRotate)
 	defer span.End()
 	r = r.WithContext(ctx)
-	ref := r.PathValue("credential_ref")
+	ref := r.PathValue("credentialRef")
 	if !s.ownedBy(r, tenant, user, ref) {
 		writeErr(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found")
 		return
@@ -301,7 +301,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
-	ref := r.PathValue("credential_ref")
+	ref := r.PathValue("credentialRef")
 	if !s.ownedBy(r, tenant, user, ref) {
 		writeErr(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found")
 		return
@@ -346,7 +346,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
-	ref := r.PathValue("credential_ref")
+	ref := r.PathValue("credentialRef")
 	// Get the credential before deleting so the §4.9.2 audit event can
 	// record its provider, and to enforce per-user ownership.
 	c, err := s.store.Get(r.Context(), tenant, ref)

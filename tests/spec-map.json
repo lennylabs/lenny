@@ -385,7 +385,8 @@
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
         "tests/tier2_component/stores/runtimestore_test.go",
-        "tests/tier2_component/runtimecapoverride/runtimecapoverride_test.go"
+        "tests/tier2_component/runtimecapoverride/runtimecapoverride_test.go",
+        "tests/tier9_security/injection_gate_failclosed_test.go"
       ],
       "packages": [
         "pkg/runtime"
@@ -561,7 +562,12 @@
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
         "pkg/session/...",
-        "tests/tier5_e2e_kind/eager_claim_e2e_test.go"
+        "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1",
+        "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1",
+        "tests/tier9_security/pool_access_pin_test.go::TestCreateBodyPoolEnforcesTenantAccess_spec_4"
       ],
       "packages": [
         "pkg/session"
@@ -574,7 +580,8 @@
       "tests": [
         "pkg/session/state/...",
         "pkg/gateway/sessionserver/messages_test.go",
-        "pkg/gateway/sessionserver/interactions_test.go"
+        "pkg/gateway/sessionserver/interactions_test.go",
+        "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1849,7 +1856,7 @@
         "tests/tier4_integration/session_lifecycle_test.go::TestSessionLifecycleAgainstRealGateway",
         "tests/tier4_integration/session_lifecycle_test.go::TestCrossTenantLookupRejectedAgainstRealGateway",
         "tests/tier0_static/schemas_test.go::TestPhase1SchemasParse",
-        "tests/tier0_static/schemas_test.go::TestOutputPartExamplesValidate",
+        "tests/tier0_static/schemas_test.go::TestMessagePartExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestAdapterJSONLExamplesValidate",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterAcceptsCanonicalMessages",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterHeartbeatAckWithin10s",
@@ -1960,7 +1967,9 @@
       "tests": [
         "pkg/gateway/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
-        "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go"
+        "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -1985,7 +1994,7 @@
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
         "tests/tier0_static/schemas_test.go::TestPhase1SchemasParse",
-        "tests/tier0_static/schemas_test.go::TestOutputPartExamplesValidate",
+        "tests/tier0_static/schemas_test.go::TestMessagePartExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestAdapterJSONLExamplesValidate",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterAcceptsCanonicalMessages",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterHeartbeatAckWithin10s",
@@ -2008,10 +2017,10 @@
         "schemas/lenny-adapter.proto",
         "schemas/lenny-adapter-jsonl.schema.json",
         "schemas/lifecycle-events.schema.json",
-        "schemas/outputpart.schema.json"
+        "schemas/messagepart.schema.json"
       ],
       "blocked_until_phase": "1",
-      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Phase 2.8 ships the Full-level streaming-echo runtime, the lifecycle-events JSON Schema, and the --level full conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). pkg/gateway/outputpartfidelity encodes the §15.4.1 Translation Fidelity Matrix and ships per-OutputPart translators that the tier-10 TestFidelityMatrix exercises. Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
+      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Phase 2.8 ships the Full-level streaming-echo runtime, the lifecycle-events JSON Schema, and the --level full conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). pkg/gateway/outputpartfidelity encodes the §15.4.1 Translation Fidelity Matrix and ships per-MessagePart translators that the tier-10 TestFidelityMatrix exercises. Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
     },
     "15.4.3": {
       "title": "Runtime Integration Levels — Full",
@@ -2052,7 +2061,7 @@
         "pkg/api/version"
       ],
       "blocked_until_phase": "5",
-      "notes": "Phase 1 ships only the proto's NegotiateVersion RPC envelope and the schemaVersion fields on WorkspacePlan, OutputPart, and MessageEnvelope. The REST/MCP version-negotiation contract (URL prefixes, deprecation headers, 6-month sunset rule) is a Phase 5 deliverable; tests land alongside the API implementation."
+      "notes": "Phase 1 ships only the proto's NegotiateVersion RPC envelope and the schemaVersion fields on WorkspacePlan, MessagePart, and MessageEnvelope. The REST/MCP version-negotiation contract (URL prefixes, deprecation headers, 6-month sunset rule) is a Phase 5 deliverable; tests land alongside the API implementation."
     },
     "15.6": {
       "title": "Client SDKs",
@@ -2257,7 +2266,8 @@
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoDuplicatesOrEmpties",
         "pkg/observability/audit/catalog_test.go::TestIsKnownEventType",
-        "tests/tier2_component/stores/deploymentconfigstore_test.go"
+        "tests/tier2_component/stores/deploymentconfigstore_test.go",
+        "tests/tier9_security/elicitation_urlmode_audit_test.go"
       ],
       "packages": [
         "pkg/observability/audit"

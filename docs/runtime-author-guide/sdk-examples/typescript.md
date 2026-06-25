@@ -34,7 +34,7 @@ import * as readline from "readline";
 
 // ---- Types ----
 
-interface OutputPart {
+interface MessagePart {
   type: string;
   inline?: string;
 }
@@ -42,12 +42,12 @@ interface OutputPart {
 interface InboundMessage {
   type: string;
   id?: string;
-  input?: OutputPart[];
+  input?: MessagePart[];
   ts?: number;
   reason?: string;
   deadline_ms?: number;
   // tool_result fields
-  content?: OutputPart[];
+  content?: MessagePart[];
   isError?: boolean;
 }
 
@@ -60,7 +60,7 @@ interface ToolCall {
 
 interface Response {
   type: "response";
-  output: OutputPart[];
+  output: MessagePart[];
 }
 
 // ---- State ----

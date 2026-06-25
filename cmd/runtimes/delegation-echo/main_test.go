@@ -512,7 +512,7 @@ func TestSequentialMessages(t *testing.T) {
 // --- helpers under test ------------------------------------------------
 
 func TestEchoPartsStampsSchemaVersion(t *testing.T) {
-	in := []outputPart{{Type: "text", Inline: "x"}}
+	in := []messagePart{{Type: "text", Inline: "x"}}
 	out := echoParts(in, 7)
 	if len(out) != 1 {
 		t.Fatalf("echoParts len = %d, want 1", len(out))
@@ -526,7 +526,7 @@ func TestEchoPartsStampsSchemaVersion(t *testing.T) {
 }
 
 func TestEchoPartsPassesThroughNonText(t *testing.T) {
-	in := []outputPart{{Type: "file", Ref: "lenny-blob://x", SchemaVersion: 3}}
+	in := []messagePart{{Type: "file", Ref: "lenny-blob://x", SchemaVersion: 3}}
 	out := echoParts(in, 1)
 	if out[0].Ref != "lenny-blob://x" || out[0].Type != "file" {
 		t.Errorf("non-text part not passed through verbatim: %+v", out[0])

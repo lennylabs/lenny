@@ -148,7 +148,7 @@ func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter
 // caller must return without delivering); on MODIFY it returns the
 // rewritten parts. A malformed MODIFY payload leaves the parts
 // unchanged. spec: §4.8 line 1054.
-func (s *Server) runPostAgentOutput(ctx context.Context, w http.ResponseWriter, tenantID, sessionID string, out []executor.OutputPart) ([]executor.OutputPart, bool) {
+func (s *Server) runPostAgentOutput(ctx context.Context, w http.ResponseWriter, tenantID, sessionID string, out []executor.MessagePart) ([]executor.MessagePart, bool) {
 	if s.interceptors == nil || s.interceptors.Len(interceptor.PhasePostAgentOutput) == 0 {
 		return out, false
 	}
@@ -167,7 +167,7 @@ func (s *Server) runPostAgentOutput(ctx context.Context, w http.ResponseWriter, 
 		s.recordRouteRejection(ctx, w, interceptor.PhasePostAgentOutput, tenantID, "", res)
 		return out, true
 	case interceptor.ActionModify:
-		var modified []executor.OutputPart
+		var modified []executor.MessagePart
 		if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
 			return out, false
 		}

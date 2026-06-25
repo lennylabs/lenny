@@ -20,18 +20,21 @@ import (
 
 // eventSortField is the sort key for the JSON list view of the events
 // endpoint. Events are written in per-session monotonic `seq` order,
-// the only meaningful ordering. spec: §15.1 line 1228 ("events" listed
-// alongside the paginated endpoints).
+// the only meaningful ordering. spec: §15.1 "Cursor-based pagination"
+// (the {items, cursor, hasMore} list envelope every paginated endpoint
+// returns; the events endpoint serves that envelope under
+// `Accept: application/json`).
 const eventSortField = "seq"
 
 // eventsDefaultSort sorts events in ascending `seq` order so the JSON
 // list view reads chronologically, matching the SSE replay order.
 var eventsDefaultSort = pagination.Sort{Field: eventSortField, Direction: pagination.DirectionAsc}
 
-// eventEnvelopeItem is the JSON shape of an event in the §15.1 line
-// 1228 canonical envelope. The `data` is already-marshalled JSON, kept
-// as a RawMessage so the wire shape matches the SSE `data:` payload
-// byte-for-byte instead of double-encoding.
+// eventEnvelopeItem is the JSON form of an event item inside the §15.1
+// "Cursor-based pagination" list envelope the events endpoint returns
+// under `Accept: application/json`. The `data` is already-marshalled
+// JSON, kept as a RawMessage so the serialized field matches the SSE
+// `data:` payload byte-for-byte instead of double-encoding.
 type eventEnvelopeItem struct {
 	Seq       uint64          `json:"seq"`
 	SessionID string          `json:"sessionId"`

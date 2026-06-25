@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,11 +16,44 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/messagerouting"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
+
+// serviceUnavailableRetryAfterSeconds is the Retry-After header the §5.1
+// injection gate sets when it fails closed with SERVICE_UNAVAILABLE on a
+// transient runtime- or override-store read error. SERVICE_UNAVAILABLE is
+// TRANSIENT/503/retryable per the §15.1 catalog; 5 seconds matches the
+// store-recovery cool-down the other transient gateway 503s use.
+// spec: §15.1 (SERVICE_UNAVAILABLE), §5.1 (injection fail-closed).
+const serviceUnavailableRetryAfterSeconds = 5
+
+// Injection-gate fail-closed cause labels for the
+// lenny_injection_gate_failclosed_total{cause} metric. They distinguish
+// which of the two backing stores the §5.1 injection gate consults
+// returned the transient error. spec: §5.1 (injection fail-closed).
+const (
+	injectionFailClosedCauseOverrideStore = "override_store"
+	injectionFailClosedCauseRuntimeStore  = "runtime_store"
+)
+
+// injectionFailClosedCause attributes a transient ResolveForTenant error
+// to the backing store that produced it. runtimecapoverride wraps an
+// override-store read failure with runtimecapoverride.ErrOverrideStore;
+// any other transient error came from the runtime registry. The label
+// keeps the runtime-store-versus-override-store distinction observable in
+// the metric even though the client code stays the coarse
+// SERVICE_UNAVAILABLE. spec: §5.1 (injection fail-closed).
+func injectionFailClosedCause(err error) string {
+	if errors.Is(err, runtimecapoverride.ErrOverrideStore) {
+		return injectionFailClosedCauseOverrideStore
+	}
+	return injectionFailClosedCauseRuntimeStore
+}
 
 // transcriptSortField is the only sort key valid on the §15.1
 // transcript: entries are written in monotonic `seq` order and that is
@@ -120,9 +154,17 @@ type MessageRequest struct {
 // The wire field names mirror the spec verbatim. spec: §15.4 lines
 // 1672-1721.
 type MessagePayload struct {
-	ID      string `json:"id,omitempty"`
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content"`
+	ID   string `json:"id,omitempty"`
+	Role string `json:"role,omitempty"`
+
+	// Content is the §15.4 `MessageEnvelope.input` union: a bare string
+	// or a §15.4.1 `MessagePart[]` array. A bare string is sugar for a
+	// single text part. The identical union is accepted by the MCP
+	// `lenny/send_message` `message` argument, so the two surfaces are
+	// parallel representations of the one §15.4 message-send contract
+	// under the §15.2.1 parity rule. spec: §15.4 (MessageEnvelope.input),
+	// §15.2.1 (REST/MCP parity).
+	Content sessionrecord.MessageContent `json:"content"`
 
 	// InReplyTo, when set, names a pending `lenny/request_input`
 	// request the gateway resolves directly (§7.2 path 1) instead of
@@ -168,7 +210,7 @@ type MessageResponse struct {
 	// Output is the executor's synchronous response. Empty when the
 	// executor delivered the message but produced no immediate
 	// output (e.g., the runtime is awaiting an upstream LLM call).
-	Output []executor.OutputPart `json:"output,omitempty"`
+	Output []executor.MessagePart `json:"output,omitempty"`
 }
 
 // handleMessages implements POST /v1/sessions/{id}/messages.
@@ -269,17 +311,57 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// runtime declares capabilities.injection.supported: false. Per
 	// §5.1 injection support defaults to false. The runtime is resolved
 	// to its effective definition, so a derived runtime is checked
-	// against the injection support it inherits from its base. The
-	// check degrades safely when the runtime registry is not wired or
-	// the runtime is not found, so a gateway without a wired registry
-	// does not block injection.
+	// against the injection support it inherits from its base.
+	//
+	// The gate degrades open only on a definite "no record" answer: an
+	// unwired registry (s.runtimes == nil), an empty RuntimeRef, or a
+	// not-found from either backing store. A transient read error from
+	// either the runtime registry or the per-tenant capability-override
+	// store is not a definite answer, so the gate fails closed with a
+	// retryable SERVICE_UNAVAILABLE rather than admitting injection
+	// against an un-overlaid runtime. INJECTION_REJECTED is reserved for
+	// the policy denial (POLICY/non-retryable); a transient infra blip
+	// would mislabel a retryable condition as a permanent policy block.
+	// spec: §5.1 (injection fail-closed).
 	if s.runtimes != nil && row.RuntimeRef != "" {
 		// §5.1 line 49: overlay the session tenant's capability override so
 		// a tenant that disabled injection.supported on this runtime has
-		// the injection gate enforce its narrowed value. F-5.1.20.
-		if rt, err := runtimecapoverride.ResolveForTenant(r.Context(), s.runtimes, s.capOverrides, row.TenantID, row.RuntimeRef); err == nil && !rt.InjectionSupported() {
-			s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
-				"runtime does not support mid-session message injection", nil)
+		// the injection gate enforce its narrowed value. The override-store
+		// read error now propagates from ResolveForTenant, so a transient
+		// override-store blip on the F-5.1.20 tenant-narrowing path fails
+		// closed here instead of admitting injection. F-5.1.20.
+		rt, err := runtimecapoverride.ResolveForTenant(r.Context(), s.runtimes, s.capOverrides, row.TenantID, row.RuntimeRef)
+		switch {
+		case err == nil:
+			if !rt.InjectionSupported() {
+				s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
+					"runtime does not support mid-session message injection", nil)
+				return
+			}
+		case errors.Is(err, runtimestore.ErrNotFound):
+			// No runtime record from either store: degrade open so a
+			// gateway whose registry has no entry for the ref does not
+			// block injection.
+		default:
+			// A transient read error from either backing store: fail
+			// closed. The granular "runtime-store read failed" versus
+			// "override-store read failed" cause is recorded in both the
+			// gateway log and the lenny_injection_gate_failclosed_total
+			// metric rather than as a distinct client code, keeping the
+			// client surface coarse (the cause is not an authorization or
+			// existence oracle). The metric label lets an operator see the
+			// runtime-store-versus-override-store distinction the coarse
+			// SERVICE_UNAVAILABLE code hides. spec: §5.1 (injection
+			// fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+			cause := injectionFailClosedCause(err)
+			log.Printf("sessionserver: §5.1 injection gate failed closed for session %s runtime %s (cause=%s): resolve error: %v",
+				row.ID, row.RuntimeRef, cause, err)
+			if s.incInjectionGateFailClosed != nil {
+				s.incInjectionGateFailClosed(cause)
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
+			s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+				"runtime capability lookup is transiently unavailable; retry", nil)
 			return
 		}
 	}
@@ -320,7 +402,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	resolvedReplies := 0
 	for i, m := range req.Messages {
 		if m.InReplyTo != "" && s.inputWaits != nil {
-			if err := s.inputWaits.Resolve(row.ID, m.InReplyTo, m.Content); err == nil {
+			if err := s.inputWaits.Resolve(row.ID, m.InReplyTo, m.Content.Text()); err == nil {
 				resolvedReplies++
 				continue
 			}
@@ -339,9 +421,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			role = "user"
 		}
 		msgs = append(msgs, executor.Message{
-			ID:      m.ID,
-			Role:    role,
-			Content: m.Content,
+			ID:   m.ID,
+			Role: role,
+			// §15.4 message-input union projected to its text form for the
+			// gateway's text-only delivery path; the full multipart envelope
+			// lands when the executor carries MessagePart[] end to end.
+			// spec: §15.4 (MessageEnvelope.input).
+			Content: m.Content.Text(),
 		})
 	}
 
@@ -362,7 +448,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	deliveryStatus := session.DeliveryStatusDelivered
 	var deliveryReason session.DeliveryReason
 	queueDepth := 0
-	var out []executor.OutputPart
+	var out []executor.MessagePart
 	// respAnnotations carries the §15.4.1 envelope-level degradation
 	// annotations (schema_version_ahead, blob_ref_unresolvable) the
 	// executor, as a live consumer, surfaced while ingesting the runtime's
@@ -462,10 +548,18 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		case messagerouting.ActionBufferInbox:
 			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
 			if berr != nil {
-				s.writeError(w, http.StatusServiceUnavailable, "INBOX_UNAVAILABLE",
-					"session inbox is not available; message not buffered",
-					map[string]any{"reason": berr.Error()})
-				return
+				// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
+				// receipt) — an inbox-enqueue failure surfaces as a 200
+				// `delivery_receipt` with `status:"error"`/`reason:
+				// "inbox_unavailable"`, matching the MCP send_message receipt
+				// form (mcptools.buildSendMessageReceiptStatusReason). §15.4
+				// defines `inbox_unavailable` strictly as a receipt status/
+				// reason, and `INBOX_UNAVAILABLE` is in neither the §15.1
+				// catalog nor openapi.json, so the prior 503 envelope was the
+				// non-conforming side. F-MS4.
+				deliveryStatus = session.DeliveryStatusError
+				deliveryReason = session.DeliveryReasonInboxUnavailable
+				break
 			}
 			deliveryStatus = session.DeliveryStatusQueued
 			queueDepth = depth
@@ -477,10 +571,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		case messagerouting.ActionBufferDLQ:
 			dropped, _, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetDLQ, 0)
 			if berr != nil {
-				s.writeError(w, http.StatusServiceUnavailable, "INBOX_UNAVAILABLE",
-					"session dead-letter queue is not available; message not buffered",
-					map[string]any{"reason": berr.Error()})
-				return
+				// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
+				// receipt) — a DLQ-enqueue failure surfaces as the same 200
+				// error/inbox_unavailable receipt as the inbox path above,
+				// keeping the REST and MCP contracts in lockstep. F-MS4.
+				deliveryStatus = session.DeliveryStatusError
+				deliveryReason = session.DeliveryReasonInboxUnavailable
+				break
 			}
 			deliveryStatus = session.DeliveryStatusQueued
 			if dropped {
@@ -511,7 +608,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// first inbound message's sender-supplied id; gateway-assigned
 	// ids carry the `msg_` prefix per §15.4 line 1784. The status is
 	// the §7.2 path outcome computed above (delivered / queued /
-	// dropped). F-7.2.5, F-7.2.10.
+	// dropped / error). An inbox-enqueue failure carries
+	// status:"error"/reason:"inbox_unavailable" per §15.2.1 parity
+	// with the MCP receipt rather than a 503 envelope. F-7.2.5,
+	// F-7.2.10, F-MS4.
 	messageID := ""
 	if len(req.Messages) > 0 {
 		messageID = req.Messages[0].ID

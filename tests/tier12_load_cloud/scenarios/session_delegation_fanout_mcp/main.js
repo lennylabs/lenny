@@ -67,7 +67,7 @@ export default function () {
   for (let i = 0; i < FANOUT; i++) {
     const res = mcpCall(
       'lenny/delegate_task',
-      // spec: §8.2 — opaque `target` id and the `task` OutputPart[] envelope. F-8.2.1.
+      // spec: §8.2 — opaque `target` id and the `task` MessagePart[] envelope. F-8.2.1.
       { parentSessionId: parentID, target: RUNTIME, task: { input: [{ type: 'text', inline: `child-${i}` }] } },
       'mcp_delegate',
     );

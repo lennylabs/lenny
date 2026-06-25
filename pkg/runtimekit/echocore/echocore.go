@@ -36,7 +36,7 @@ type ProtocolError struct{ Msg string }
 // Error implements error.
 func (e ProtocolError) Error() string { return "protocol error: " + e.Msg }
 
-// MaxFrameBytes caps an inbound JSONL frame at the §15.4.1 OutputPart
+// MaxFrameBytes caps an inbound JSONL frame at the §15.4.1 MessagePart
 // hard limit; a larger frame is a protocol error.
 const MaxFrameBytes = 50 * 1024 * 1024
 
@@ -108,23 +108,23 @@ func (w *writer) write(v any) error {
 // prefixing text parts with the per-loop sequence number.
 func handleMessage(w *writer, line []byte, seq *atomic.Uint64) error {
 	var inbound struct {
-		Type  string       `json:"type"`
-		ID    string       `json:"id"`
-		Input []outputPart `json:"input"`
+		Type  string        `json:"type"`
+		ID    string        `json:"id"`
+		Input []messagePart `json:"input"`
 	}
 	if err := json.Unmarshal(line, &inbound); err != nil {
 		return ProtocolError{Msg: fmt.Sprintf("malformed message envelope: %v", err)}
 	}
 	n := seq.Add(1)
-	out := make([]outputPart, 0, len(inbound.Input))
+	out := make([]messagePart, 0, len(inbound.Input))
 	for _, p := range inbound.Input {
 		// §15.4.1 producer obligation: schemaVersion is set on every
-		// emitted OutputPart.
+		// emitted MessagePart.
 		if p.SchemaVersion == 0 {
 			p.SchemaVersion = 1
 		}
 		if p.Type == "text" && p.Inline != "" {
-			out = append(out, outputPart{
+			out = append(out, messagePart{
 				SchemaVersion: 1,
 				Type:          "text",
 				Inline:        fmt.Sprintf("[echo seq=%d] %s", n, p.Inline),
@@ -160,9 +160,9 @@ func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
 	return nil
 }
 
-// outputPart mirrors the §15.4.1 OutputPart wire JSON, restricted to the
+// messagePart mirrors the §15.4.1 MessagePart wire JSON, restricted to the
 // fields Basic-level echo reads or writes. schemaVersion is mandatory.
-type outputPart struct {
+type messagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	Type          string         `json:"type"`
 	ID            string         `json:"id,omitempty"`
@@ -174,8 +174,8 @@ type outputPart struct {
 }
 
 type response struct {
-	Type   string       `json:"type"`
-	Output []outputPart `json:"output"`
+	Type   string        `json:"type"`
+	Output []messagePart `json:"output"`
 }
 
 type heartbeatAck struct {

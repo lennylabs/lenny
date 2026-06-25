@@ -248,7 +248,7 @@ func TestIsolationLevelForPool_FallsBackToRequestedProfile(t *testing.T) {
 // than failing the create. spec: §7.1 line 75.
 func TestResolveIsolationLevel_NoResolverFallsBackToSession(t *testing.T) {
 	s := &Server{} // podBinder nil
-	got := s.resolveIsolationLevel(t.Context(), "claude-code", isolation.ProfileSandboxed)
+	got := s.resolveIsolationLevel(t.Context(), "claude-code", isolation.ProfileSandboxed, "")
 	want := defaultIsolationLevel(isolation.ProfileSandboxed)
 	if got != want {
 		t.Errorf("resolveIsolationLevel without resolver = %+v, want session-mode default %+v", got, want)

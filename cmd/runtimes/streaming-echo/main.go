@@ -394,19 +394,19 @@ func (w *writer) write(v any) error {
 
 func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64) error {
 	var inbound struct {
-		Type  string       `json:"type"`
-		ID    string       `json:"id"`
-		Input []outputPart `json:"input"`
+		Type  string        `json:"type"`
+		ID    string        `json:"id"`
+		Input []messagePart `json:"input"`
 	}
 	if err := json.Unmarshal(line, &inbound); err != nil {
 		return protocolError{msg: fmt.Sprintf("malformed message envelope: %v", err)}
 	}
 	n := seq.Add(1)
-	out := make([]outputPart, 0, len(inbound.Input))
+	out := make([]messagePart, 0, len(inbound.Input))
 	for _, p := range inbound.Input {
 		if p.Type == "text" && p.Inline != "" {
-			out = append(out, outputPart{
-				SchemaVersion: outputPartSchemaVersion,
+			out = append(out, messagePart{
+				SchemaVersion: messagePartSchemaVersion,
 				Type:          "text",
 				Inline:        fmt.Sprintf("[streaming-echo seq=%d] %s", n, p.Inline),
 				ID:            p.ID,
@@ -414,9 +414,9 @@ func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64
 			})
 		} else {
 			// §15.4.1 line 1499: stamp the producer schemaVersion even when
-			// echoing an input part verbatim, so every emitted OutputPart
+			// echoing an input part verbatim, so every emitted MessagePart
 			// satisfies the required field. 15.4-MED-021.
-			p.SchemaVersion = outputPartSchemaVersion
+			p.SchemaVersion = messagePartSchemaVersion
 			out = append(out, p)
 		}
 	}
@@ -443,10 +443,10 @@ func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
 	return nil
 }
 
-type outputPart struct {
+type messagePart struct {
 	// SchemaVersion is the §15.4.1 line 1499 producer obligation: a
 	// producer MUST set schemaVersion to the highest version required by
-	// the fields it emits. outputpart.schema.json:66 makes it required, so
+	// the fields it emits. messagepart.schema.json:66 makes it required, so
 	// it is not omitempty — a v1 text/blob part is stamped with 1. spec:
 	// §15.4.1 line 1499-1501 / 15.4-MED-021.
 	SchemaVersion int            `json:"schemaVersion"`
@@ -459,13 +459,13 @@ type outputPart struct {
 	Status        string         `json:"status,omitempty"`
 }
 
-// outputPartSchemaVersion is the §15.4.1 OutputPart schema revision this
+// messagePartSchemaVersion is the §15.4.1 MessagePart schema revision this
 // reference runtime emits. v1 text/blob parts require version 1.
-const outputPartSchemaVersion = 1
+const messagePartSchemaVersion = 1
 
 type response struct {
-	Type   string       `json:"type"`
-	Output []outputPart `json:"output"`
+	Type   string        `json:"type"`
+	Output []messagePart `json:"output"`
 }
 
 type heartbeatAck struct {

@@ -17,10 +17,22 @@ package runtimecapoverride
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
+
+// ErrOverrideStore tags a transient read failure of the per-tenant
+// capability-override store so a caller can attribute the cause. The
+// runtime-registry read failure surfaces through runtimestore.Resolve and
+// is not wrapped by this sentinel, so a caller can distinguish the two
+// backing stores with errors.Is(err, ErrOverrideStore): a match is the
+// override-store read, anything else is the runtime-registry read. The
+// §5.1 injection gate uses this distinction to label its fail-closed
+// metric. spec: §5.1 line 49 — F-5.1.20.
+var ErrOverrideStore = errors.New("runtimecapoverride: override-store read failed")
 
 // Store persists per-tenant runtime capability overrides keyed by
 // (tenantID, runtimeName).
@@ -107,13 +119,24 @@ func (m *Memory) List(_ context.Context, tenantID string) (map[string]runtimesto
 // tenant has no override for the runtime, the resolved runtime is
 // returned unchanged.
 //
-// The overlay is best-effort: an override-store read error is swallowed
-// and the un-overlaid runtime is returned, matching the degrade-safe
-// posture of the §5.1 capability consumers (a registry or override-store
-// blip never blocks a session operation). The runtime-registry error
-// from Resolve is propagated as before.
+// A read error from either backing store is propagated to the caller
+// rather than swallowed: the runtime registry surfaces it through
+// runtimestore.Resolve, and a non-not-found override-store read error is
+// returned here. Only the genuine not-found case (a store that reports no
+// row, gerr==nil && !ok) yields the un-overlaid runtime. The security
+// gate that consults this resolver (the §5.1 injection gate) fails closed
+// on a propagated transient error, while the non-security capability
+// consumers degrade open by treating any returned error as "no override
+// applied". Propagating the override-store error rather than swallowing
+// it is what lets the injection gate enforce the F-5.1.20 tenant-narrowing
+// value (a tenant setting injection.supported: false) fail-closed: a
+// swallowed override-store blip would otherwise admit injection against
+// the un-overlaid base runtime. The override-store error is wrapped with
+// ErrOverrideStore so the gate can attribute its fail-closed metric to the
+// override store; the runtime-registry error propagates unwrapped.
 //
-// spec: §5.1 line 49 — F-5.1.20.
+// spec: §5.1 line 49 — F-5.1.20 tenant injection-disable enforced
+// fail-closed.
 func ResolveForTenant(ctx context.Context, runtimes runtimestore.Store, overrides Store, tenantID, name string) (runtimestore.Runtime, error) {
 	rt, err := runtimestore.Resolve(ctx, runtimes, name)
 	if err != nil {
@@ -123,7 +146,13 @@ func ResolveForTenant(ctx context.Context, runtimes runtimestore.Store, override
 		return rt, nil
 	}
 	o, ok, gerr := overrides.Get(ctx, tenantID, name)
-	if gerr != nil || !ok {
+	if gerr != nil {
+		// Wrap with ErrOverrideStore so the injection gate can attribute the
+		// fail-closed cause to the override store rather than the runtime
+		// registry. The %w chain keeps the underlying error inspectable.
+		return runtimestore.Runtime{}, fmt.Errorf("%w: %w", ErrOverrideStore, gerr)
+	}
+	if !ok {
 		return rt, nil
 	}
 	return runtimestore.ApplyCapabilityOverride(rt, o), nil

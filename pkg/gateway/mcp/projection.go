@@ -233,7 +233,7 @@ func terminationDetail(data []byte) string {
 // frame: the §15.2.1 row maps output to "MCP streaming content block(s)
 // appended to the attach_session task response" with no standalone
 // notification method, so the projection emits a working-status task
-// frame carrying the translated OutputPart(s) under params.content.
+// frame carrying the translated MessagePart(s) under params.content.
 // Per §8.8 agent output is produced while the task is in the working
 // state; the presence of params.content distinguishes a content append
 // from a pure state transition. spec: §15.2 line 1361; §8.8.
@@ -246,7 +246,7 @@ func projectOutput(ev sessionevents.Event) []byte {
 	return marshalNotification("notifications/tasks/statusUpdate", params)
 }
 
-// outputContentBlocks translates the OutputPart payload the gateway
+// outputContentBlocks translates the MessagePart payload the gateway
 // publishes (`{type, text, ref}`) into the MCP content-block array the
 // streaming task response carries. A `text` part becomes an MCP text
 // content block; a `ref` part becomes a resource_link block carrying the

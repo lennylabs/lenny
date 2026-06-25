@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 // Package erasurejob tracks §12.8 GDPR erasure jobs: the DeleteByUser
-// deletion job initiated by POST /v1/admin/users/{user_id}/erase and
-// queried via GET /v1/admin/erasure-jobs/{job_id}.
+// deletion job initiated by POST /v1/admin/users/{userId}/erase and
+// queried via GET /v1/admin/erasure-jobs/{jobId}.
 //
 // A Job records the §12.8 phase field so a controller restart resumes
 // from the persisted safe point rather than re-running completed

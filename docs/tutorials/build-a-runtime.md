@@ -90,11 +90,11 @@ type InputPart struct {
 // Response is the outbound message format.
 type Response struct {
 	Type   string       `json:"type"`
-	Output []OutputPart `json:"output,omitempty"`
+	Output []MessagePart `json:"output,omitempty"`
 }
 
-// OutputPart is a single content part within a response.
-type OutputPart struct {
+// MessagePart is a single content part within a response.
+type MessagePart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline"`
 }
@@ -127,7 +127,7 @@ func main() {
 
 			resp := Response{
 				Type: "response",
-				Output: []OutputPart{
+				Output: []MessagePart{
 					{Type: "text", Inline: fmt.Sprintf("[%d] Echo: %s", seq, text)},
 				},
 			}
@@ -211,7 +211,7 @@ type InputPart struct {
 	Inline string `json:"inline"`
 }
 
-type OutputPart struct {
+type MessagePart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline"`
 }
@@ -220,7 +220,7 @@ type OutputPart struct {
 
 type ResponseMsg struct {
 	Type   string       `json:"type"`
-	Output []OutputPart `json:"output"`
+	Output []MessagePart `json:"output"`
 }
 
 type ToolCallMsg struct {
@@ -341,7 +341,7 @@ func main() {
 				// Not a math expression; provide a help message
 				resp := ResponseMsg{
 					Type: "response",
-					Output: []OutputPart{
+					Output: []MessagePart{
 						{
 							Type:   "text",
 							Inline: fmt.Sprintf("[%d] Calculator ready. Send an expression like '2 + 3' or '10 * 5'. Use 'save <text>' to write to a file.", seq),
@@ -353,7 +353,7 @@ func main() {
 				// Return the calculation result
 				resp := ResponseMsg{
 					Type: "response",
-					Output: []OutputPart{
+					Output: []MessagePart{
 						{
 							Type:   "text",
 							Inline: fmt.Sprintf("[%d] %s = %s", seq, text, formatNumber(result)),
@@ -381,7 +381,7 @@ func main() {
 				}
 				resp := ResponseMsg{
 					Type: "response",
-					Output: []OutputPart{
+					Output: []MessagePart{
 						{
 							Type:   "text",
 							Inline: fmt.Sprintf("[%d] Failed to save: %s", seq, errorText),
@@ -392,7 +392,7 @@ func main() {
 			} else {
 				resp := ResponseMsg{
 					Type: "response",
-					Output: []OutputPart{
+					Output: []MessagePart{
 						{
 							Type:   "text",
 							Inline: fmt.Sprintf("[%d] Saved '%s' to result.txt", seq, originalContent),

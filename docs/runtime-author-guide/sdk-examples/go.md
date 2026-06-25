@@ -46,19 +46,19 @@ import (
 type InboundMessage struct {
 	Type       string       `json:"type"`
 	ID         string       `json:"id,omitempty"`
-	Input      []OutputPart `json:"input,omitempty"`
+	Input      []MessagePart `json:"input,omitempty"`
 	TS         int64        `json:"ts,omitempty"`
 	Reason     string       `json:"reason,omitempty"`
 	DeadlineMs int          `json:"deadline_ms,omitempty"`
 
 	// tool_result fields
-	Content []OutputPart `json:"content,omitempty"`
+	Content []MessagePart `json:"content,omitempty"`
 	IsError bool         `json:"isError,omitempty"`
 }
 
-// OutputPart is Lenny's internal content model.
+// MessagePart is Lenny's internal content model.
 // At the Basic level, only "type" and "inline" are required.
-type OutputPart struct {
+type MessagePart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline,omitempty"`
 }
@@ -74,7 +74,7 @@ type ToolCall struct {
 // Response signals task completion.
 type Response struct {
 	Type   string       `json:"type"`
-	Output []OutputPart `json:"output"`
+	Output []MessagePart `json:"output"`
 }
 
 // HeartbeatAck acknowledges a heartbeat ping.
@@ -280,7 +280,7 @@ func produceSummary() {
 func writeResponse(text string) {
 	resp := Response{
 		Type: "response",
-		Output: []OutputPart{
+		Output: []MessagePart{
 			{Type: "text", Inline: text},
 		},
 	}

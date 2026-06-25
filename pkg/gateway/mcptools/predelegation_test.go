@@ -41,7 +41,7 @@ func (e *recordingExecutor) Send(_ context.Context, sessionID string, msgs []exe
 	for _, m := range msgs {
 		e.sent[sessionID] = append(e.sent[sessionID], m.Content)
 	}
-	return executor.Response{Parts: []executor.OutputPart{{Type: "text", Text: "ok"}}}, nil
+	return executor.Response{Parts: []executor.MessagePart{{Type: "text", Text: "ok"}}}, nil
 }
 
 func (e *recordingExecutor) Close(context.Context, string) error { return nil }

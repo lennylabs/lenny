@@ -293,7 +293,7 @@
       "contract": ["tests/tier3_contract/adapter_jsonl/..."],
       "conformance": ["tests/tier10_conformance/..."]
     },
-    "schemas/outputpart.schema.json": {
+    "schemas/messagepart.schema.json": {
       "static": ["tests/tier0_static/schemas_test.go"],
       "unit": ["pkg/output/..."],
       "contract": ["tests/tier3_contract/rest_openai_completions/..."]

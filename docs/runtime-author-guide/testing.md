@@ -26,7 +26,7 @@ This page covers the conformance suite, the test categories per integration leve
 | **Forward compatibility** | Unknown message types are ignored rather than rejected |
 | **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds |
 | **Shutdown behavior** | Clean exit within `deadline_ms` on `shutdown` |
-| **Schema compliance** | Every emitted frame and every `OutputPart` validates against the published JSON Schemas |
+| **Schema compliance** | Every emitted frame and every `MessagePart` validates against the published JSON Schemas |
 | **MCP integration** (Standard and Full) | Platform MCP server connection, nonce authentication, tool invocation, connector reachability |
 | **Lifecycle channel** (Full) | Capability handshake, checkpoint, interrupt, credential rotation, deadline signal |
 
@@ -74,10 +74,10 @@ The validator runs a set of test categories for the declared level. Each higher 
 | Category | What it asserts |
 |----------|-----------------|
 | stdin/stdout protocol framing | The binary reads newline-delimited JSON on stdin and writes newline-delimited JSON on stdout, flushes every outbound message before the next read, and ignores unknown inbound `type` values rather than aborting. |
-| `message` / `response` round-trip | A canonical `message` produces a structurally valid `response`, either the full form with an `output` array of `OutputPart` or the Basic-level shorthand `{"type":"response","text":"..."}`. The response validates against the published JSON Lines schema. |
+| `message` / `response` round-trip | A canonical `message` produces a structurally valid `response`, either the full form with an `output` array of `MessagePart` or the Basic-level shorthand `{"type":"response","text":"..."}`. The response validates against the published JSON Lines schema. |
 | heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. Missing the window triggers the adapter's unresponsive-agent escalation. |
 | shutdown within `deadline_ms` | On `shutdown` with a `deadline_ms`, the binary exits cleanly before the deadline elapses. Failing this means the adapter SIGKILLs the process in production, losing unflushed output. |
-| `OutputPart` schema compliance | Every `OutputPart` the runtime produces validates against the published `OutputPart` schema, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
+| `MessagePart` schema compliance | Every `MessagePart` the runtime produces validates against the published `MessagePart` schema, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
 
 ### Standard-level categories (in addition to Basic)
 

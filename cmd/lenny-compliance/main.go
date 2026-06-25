@@ -112,8 +112,8 @@ type checkCase struct {
 // every level. The three schema-driven checks generate their assertions
 // from the published artifacts §24.8 line 113 names rather than from
 // hand-coded prose: response_matches_jsonl_schema (§15.4.6 line 2405,
-// schemas/lenny-adapter-jsonl.schema.json), outputpart_schema_compliance
-// (§15.4.6 line 2408, schemas/outputpart.schema.json), and
+// schemas/lenny-adapter-jsonl.schema.json), messagepart_schema_compliance
+// (§15.4.6 line 2408, schemas/messagepart.schema.json), and
 // response_error_code_in_proto_catalog (§24.8 line 113, the
 // schemas/lenny-adapter.proto Error.ErrorCode enum the JSONL schema leaves
 // open). Each failing assertion is cited in the report by name and source
@@ -128,7 +128,7 @@ func basicCases() []checkCase {
 		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
 		{"sequential_messages_handled", "15.4", checkSequentialMessages},
 		{"response_matches_jsonl_schema", "15.4.6", checkResponseMatchesJSONLSchema},
-		{"outputpart_schema_compliance", "15.4.6", checkOutputPartSchemaCompliance},
+		{"messagepart_schema_compliance", "15.4.6", checkMessagePartSchemaCompliance},
 		{"response_error_code_in_proto_catalog", "24.8", checkResponseErrorCodeCatalog},
 	}
 }
@@ -343,11 +343,11 @@ func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbo
 	return "response validates against " + jsonlSchemaFile, nil
 }
 
-// checkOutputPartSchemaCompliance validates every OutputPart in the
-// runtime's response against the published OutputPart schema. A
-// text-shorthand response (no output array) carries no OutputParts to
+// checkMessagePartSchemaCompliance validates every MessagePart in the
+// runtime's response against the published MessagePart schema. A
+// text-shorthand response (no output array) carries no MessageParts to
 // validate and passes. spec: §15.4.6 line 2408.
-func checkOutputPartSchemaCompliance(binary string, timeout time.Duration, verbose bool) (string, error) {
+func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verbose bool) (string, error) {
 	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
 	if err != nil {
 		return "", err
@@ -371,16 +371,16 @@ func checkOutputPartSchemaCompliance(binary string, timeout time.Duration, verbo
 	}
 	if len(resp.Output) == 0 {
 		// spec: §15.4.1 — the Basic shorthand {type:response,text:"..."}
-		// emits no OutputPart array; the adapter normalizes it. There is
-		// nothing to validate against the OutputPart schema.
-		return "no OutputParts emitted (text shorthand)", nil
+		// emits no MessagePart array; the adapter normalizes it. There is
+		// nothing to validate against the MessagePart schema.
+		return "no MessageParts emitted (text shorthand)", nil
 	}
 	for i, part := range resp.Output {
-		if err := validateOutputPart(part); err != nil {
+		if err := validateMessagePart(part); err != nil {
 			return "", fmt.Errorf("output[%d]: %w", i, err)
 		}
 	}
-	return fmt.Sprintf("%d OutputPart(s) validate against %s", len(resp.Output), outputPartFile), nil
+	return fmt.Sprintf("%d MessagePart(s) validate against %s", len(resp.Output), messagePartFile), nil
 }
 
 // checkResponseErrorCodeCatalog runs the proto-generated error-code

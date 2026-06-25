@@ -11,7 +11,7 @@ import (
 // OpenAIContentBlock is one entry in the OpenAI Chat Completions
 // content array. Chat Completions accepts a `string` content or a
 // content-block array; the array form is what the fidelity matrix
-// covers because a single `OutputPart` maps to a single content block.
+// covers because a single `MessagePart` maps to a single content block.
 //
 // Fields preserved per §15.4.1 fidelity matrix:
 //
@@ -19,7 +19,7 @@ import (
 //   - Text: present when the part collapses to text.
 //   - ImageURL: present when the part is an image_url block.
 //
-// Every other OutputPart field (schemaVersion, id, mimeType, ref,
+// Every other MessagePart field (schemaVersion, id, mimeType, ref,
 // annotations, parts, status, protocolHints) is dropped by the matrix.
 type OpenAIContentBlock struct {
 	Type     string             `json:"type"`
@@ -31,7 +31,7 @@ type openAIImageURLObj struct {
 	URL string `json:"url"`
 }
 
-// TranslateOpenAICompletions converts an OutputPart to a single OpenAI
+// TranslateOpenAICompletions converts a MessagePart to a single OpenAI
 // Chat Completions content block per the §15.4.1 fidelity matrix. The
 // returned bytes are the JSON-marshalled block; callers wrap them into
 // the message content array.
@@ -44,12 +44,12 @@ type openAIImageURLObj struct {
 //   - everything else → text block whose text is the inline content.
 //
 // Dropped fields produce no representation on the wire.
-func TranslateOpenAICompletions(p runtime.OutputPart) ([]byte, error) {
+func TranslateOpenAICompletions(p runtime.MessagePart) ([]byte, error) {
 	return json.Marshal(toOpenAIBlock(p))
 }
 
 // toOpenAIBlock applies the lossy type collapse and emits a content block.
-func toOpenAIBlock(p runtime.OutputPart) OpenAIContentBlock {
+func toOpenAIBlock(p runtime.MessagePart) OpenAIContentBlock {
 	switch p.Type {
 	case "image", "screenshot":
 		return openAIImageBlock(p)
@@ -68,7 +68,7 @@ func toOpenAIBlock(p runtime.OutputPart) OpenAIContentBlock {
 
 // openAIImageBlock builds the image_url block, encoding inline base64
 // as a data: URL so the bytes survive the round trip.
-func openAIImageBlock(p runtime.OutputPart) OpenAIContentBlock {
+func openAIImageBlock(p runtime.MessagePart) OpenAIContentBlock {
 	if p.Inline == "" {
 		return OpenAIContentBlock{Type: "text", Text: ""}
 	}
@@ -83,15 +83,15 @@ func openAIImageBlock(p runtime.OutputPart) OpenAIContentBlock {
 }
 
 // ParseOpenAICompletions parses a single OpenAI Chat Completions
-// content block back into an OutputPart, applying the matrix's
+// content block back into a MessagePart, applying the matrix's
 // dropped-field rule: every field not carried on the wire comes back
 // as the zero value.
-func ParseOpenAICompletions(wire []byte) (runtime.OutputPart, error) {
+func ParseOpenAICompletions(wire []byte) (runtime.MessagePart, error) {
 	var b OpenAIContentBlock
 	if err := json.Unmarshal(wire, &b); err != nil {
-		return runtime.OutputPart{}, err
+		return runtime.MessagePart{}, err
 	}
-	out := runtime.OutputPart{}
+	out := runtime.MessagePart{}
 	switch b.Type {
 	case "image_url":
 		out.Type = "image"

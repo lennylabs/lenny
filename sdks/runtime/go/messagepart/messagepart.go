@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 
-// Package outputpart converts MCP content blocks to the §15.4.1
-// OutputPart array, so a runtime author who produces output using
+// Package messagepart converts MCP content blocks to the §15.4.1
+// MessagePart array, so a runtime author who produces output using
 // MCP-familiar content block objects does not have to perform the
 // field mapping by hand.
 //
 // The spec (§15.4.1, "Optional SDK helper from_mcp_content") names this
 // sub-package and the FromMCPContent entry point as the Go home of the
 // helper. The conversion follows the §15.4.1 "MCP content block →
-// OutputPart mapping (inbound translation)" table.
-package outputpart
+// MessagePart mapping (inbound translation)" table.
+package messagepart
 
 import "github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 
@@ -30,10 +30,10 @@ type MCPContent struct {
 	// Resource holds the EmbeddedResource payload.
 	Resource *MCPResource `json:"resource,omitempty"`
 	// Annotations carries MCP block annotations; well-known keys map
-	// onto OutputPart.annotations.
+	// onto MessagePart.annotations.
 	Annotations map[string]any `json:"annotations,omitempty"`
 	// IsError marks the block as an error per the MCP isError
-	// annotation; it overrides the mapped OutputPart type to error.
+	// annotation; it overrides the mapped MessagePart type to error.
 	IsError bool `json:"isError,omitempty"`
 }
 
@@ -47,24 +47,24 @@ type MCPResource struct {
 }
 
 // FromMCPContent converts a slice of MCP content blocks to a §15.4.1
-// OutputPart array, applying the inbound-translation mapping: a
+// MessagePart array, applying the inbound-translation mapping: a
 // TextContent block becomes a text part, an ImageContent block becomes
 // an image part (inline base64 or a ref for the URL form), and an
 // EmbeddedResource becomes a file part. A block carrying the MCP
 // isError annotation maps to an error part regardless of its block
 // type. Every produced part has SchemaVersion set to the current
 // revision.
-func FromMCPContent(blocks []MCPContent) []runtime.OutputPart {
-	parts := make([]runtime.OutputPart, 0, len(blocks))
+func FromMCPContent(blocks []MCPContent) []runtime.MessagePart {
+	parts := make([]runtime.MessagePart, 0, len(blocks))
 	for _, b := range blocks {
 		parts = append(parts, fromBlock(b))
 	}
 	return parts
 }
 
-// fromBlock maps one MCP content block to an OutputPart.
-func fromBlock(b MCPContent) runtime.OutputPart {
-	p := runtime.OutputPart{SchemaVersion: 1}
+// fromBlock maps one MCP content block to a MessagePart.
+func fromBlock(b MCPContent) runtime.MessagePart {
+	p := runtime.MessagePart{SchemaVersion: 1}
 	switch b.Type {
 	case "text":
 		p.Type = "text"

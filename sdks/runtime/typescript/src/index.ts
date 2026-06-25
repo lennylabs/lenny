@@ -68,7 +68,7 @@ export type {
   MessageEnvelope,
   MessageFrom,
   Reply,
-  OutputPart,
+  MessagePart,
   ResponseError,
   TerminationReason,
   CredentialBundle,
