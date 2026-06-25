@@ -186,9 +186,11 @@ type Server struct {
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
 	// isolation profile) pair maps to, for the §15.1 line 797 pool-drain
-	// admission gate. It defaults to resolvePoolName (CRD-backed); tests
+	// admission gate. The pinnedPool argument carries the §14.1
+	// CreateSessionRequest.pool selector so a client-pinned pool is the one
+	// the gate resolves. It defaults to resolvePoolName (CRD-backed); tests
 	// override it to exercise the gate without a Kubernetes client.
-	poolNameResolver func(ctx context.Context, runtimeRef string, requested isolation.Profile) (string, bool)
+	poolNameResolver func(ctx context.Context, runtimeRef string, requested isolation.Profile, pinnedPool string) (string, bool)
 	// playgroundCaps resolves the §27.6 idle/duration caps for a
 	// §27.3 origin=playground session. Wired post-construction via
 	// SetPlaygroundCaps (the playground bootstrap runs after the session
@@ -2355,7 +2357,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	if rlProfile == "" {
 		rlProfile = s.defaultIsoProf
 	}
-	if !s.requireAdmissionRateLimit(w, r, tenantID, req.RuntimeRef, rlProfile) {
+	if !s.requireAdmissionRateLimit(w, r, tenantID, req.RuntimeRef, rlProfile, req.Pool) {
 		return
 	}
 	if !s.requirePolicyChain(w, r, tenantID) {
@@ -2404,7 +2406,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// the `draining` phase with 503 POOL_DRAINING + Retry-After before any
 	// pod claim. The gate resolves the same pool the session would bind
 	// to; it is inert in the Postgres-only posture (no pool binding). F-15.1.8.
-	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, isoProf) {
+	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, isoProf, req.Pool) {
 		return
 	}
 
@@ -2456,7 +2458,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// (persistedIsolationLevel in toResponse), so a client that lost
 	// the create response or hits a different replica still sees the
 	// rich level the pool resolved to.
-	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, isoProf)
+	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, isoProf, req.Pool)
 	row := sessionstore.Session{
 		ID:                     s.idFn(),
 		TenantID:               tenantID,
@@ -2693,11 +2695,14 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 // back to the session-mode level; a session-mode pod is the §5.2
 // default and carries no pod reuse, so the fallback never understates
 // the isolation posture a client would observe.
-func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, requested isolation.Profile) SessionIsolationLevel {
+func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, requested isolation.Profile, pinnedPool string) SessionIsolationLevel {
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		return defaultIsolationLevel(requested)
 	}
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested))
+	// spec: §7.1 / §14.1 — when the client pinned a pool, derive the level
+	// from that named pool so the persisted sessionIsolationLevel reflects
+	// the pool the session will bind to. F-CS2 (0018).
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested), pinnedPool)
 	if err != nil {
 		return defaultIsolationLevel(requested)
 	}

@@ -374,6 +374,14 @@ type CreateAndStartRequest struct {
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 	Environment      string            `json:"environment,omitempty"`
 
+	// Pool is the §14.1 line 311 client-requested target pool selector.
+	// The combined create-and-start body is the same CreateSessionRequest
+	// envelope (§14.1), so the pool pin is honored or rejected identically
+	// to the two-step create path: a pin that does not exist, is not backed
+	// by the runtime, or is isolation-inconsistent is rejected, and a pin
+	// the tenant is not granted is forbidden. spec: §7.1 / §14.1. F-CS2.
+	Pool string `json:"pool,omitempty"`
+
 	// CallbackURL is the §15.1 line 690 optional completion-notification
 	// webhook. It is validated against the §14 SSRF mitigations at
 	// admission and rejected with 400 INVALID_CALLBACK_URL on failure.
@@ -454,6 +462,16 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §7.1 step 1, §7.1 step 4, §14.1 — honor or reject the
+	// client-pinned pool on the combined create-and-start path on parity
+	// with the two-step create path's validateRequestEnvelope gate. Runs
+	// before the claim so an unsatisfiable, unauthorized, or
+	// isolation-inconsistent pin fails fast before any pod is claimed.
+	// F-CS2 (0018).
+	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(isoProf), req.Pool) {
+		return
+	}
+
 	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
 	if !planOK {
 		return
@@ -491,15 +509,19 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// (same path as the two-step create flow). GET / List read the
 	// persisted values via toResponse so the rich envelope survives a
 	// coordinator handoff.
-	level := s.resolveIsolationLevel(r.Context(), runtimeRef, isoProf)
+	level := s.resolveIsolationLevel(r.Context(), runtimeRef, isoProf, req.Pool)
 	row := sessionstore.Session{
-		ID:                     s.idFn(),
-		TenantID:               tenantID,
-		UserID:                 req.UserID,
-		RuntimeRef:             runtimeRef,
-		Environment:            req.Environment,
-		State:                  session.StateRunning, // skip directly to running per §15.1
-		IsolationProfile:       isoProf,
+		ID:               s.idFn(),
+		TenantID:         tenantID,
+		UserID:           req.UserID,
+		RuntimeRef:       runtimeRef,
+		Environment:      req.Environment,
+		State:            session.StateRunning, // skip directly to running per §15.1
+		IsolationProfile: isoProf,
+		// spec: §14.1 line 311 — persist the client-pinned pool so the
+		// same-call claim constrains resolution to it and a client that lost
+		// the response can recover its requested pool. F-CS2 (0018).
+		Pool:                   req.Pool,
 		ExecutionMode:          level.ExecutionMode,
 		ScrubPolicy:            level.ScrubPolicy,
 		ConversationContinuity: level.ConversationContinuity,
@@ -552,7 +574,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
 		row.RuntimeRef = afterRoute.RequestedRuntime
-		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf)
+		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf, req.Pool)
 		row.ExecutionMode = afterLevel.ExecutionMode
 		row.ScrubPolicy = afterLevel.ScrubPolicy
 		row.ConversationContinuity = afterLevel.ConversationContinuity
@@ -1419,8 +1441,13 @@ type startContext struct {
 //
 // spec: §4.1 (proposal), §7.1 steps 3-5, line 75; §4.9 lines 1216-1218; §5.2.
 func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*claimOutcome, error) {
+	// spec: §7.1 / §14.1 — row.Pool carries the client-pinned pool selector.
+	// validateRequestEnvelope already rejected an unsatisfiable, unauthorized,
+	// or isolation-inconsistent pin before claim, so here it constrains
+	// resolution to the named pool (empty leaves resolution by runtime + §5.3
+	// profile). F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return nil, err
 	}
@@ -1618,8 +1645,10 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			return nil, err
 		}
 	}
+	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
+	// (row.Pool); empty resolves by runtime + §5.3 profile. F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return nil, err
 	}
@@ -1731,8 +1760,10 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 // spec: §4.4, §4.6 (proposal); §6.1 lines 30-34 (SDK-warm ConfigureWorkspace);
 // §15.1 (/start precondition); §5.2; §6.3 line 372.
 func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
+	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
+	// (row.Pool); empty resolves by runtime + §5.3 profile. F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return nil, err
 	}
@@ -2977,8 +3008,11 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		}
 		return "", nil
 	}
+	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
+	// (row.Pool) on the resume-rebuild path; empty resolves by runtime + §5.3
+	// profile. F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		return "", err
 	}

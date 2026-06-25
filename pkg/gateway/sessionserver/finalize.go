@@ -217,8 +217,11 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	if row.PodAssignment == "" || session.IsRecovery(row.State) {
 		return nil, nil
 	}
+	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
+	// (row.Pool) the create persisted; empty resolves by runtime + §5.3
+	// profile. F-CS2 (0018).
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
-		row.RuntimeRef, string(row.IsolationProfile))
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		// spec: §4.3 (proposal: finalize-failure reclaim) / §6.2 — a pre-Prepare
 		// failure (pool resolution) never engages the binder, so its internal

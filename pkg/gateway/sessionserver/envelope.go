@@ -80,6 +80,14 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
+	// spec: §7.1 step 1, §7.1 step 4, §14.1 — `pool` is a first-class
+	// client scheduling selector, so a pin the gateway cannot satisfy is
+	// rejected (400/403/503) rather than accepted, echoed, and dropped from
+	// scheduling. validateRequestEnvelope runs before the §7.1 claim, so the
+	// gate fails fast before any pod is claimed. F-CS2 (0018).
+	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(row.IsolationProfile), req.Pool) {
+		return nil, false
+	}
 	row.Pool = req.Pool
 
 	// spec: §14 line 154 — per-session timeouts are non-negative and

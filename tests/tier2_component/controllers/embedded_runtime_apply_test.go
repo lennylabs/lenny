@@ -131,7 +131,7 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 
 	// The gateway resolves the runtime to the applied pool by name, the
 	// property that fails with ErrNoMatchingPool when no pool is materialized.
-	match, err := podsession.ResolvePool(ctx, c, nil, ns, runtimeName, "standard")
+	match, err := podsession.ResolvePool(ctx, c, nil, ns, runtimeName, "standard", "")
 	if err != nil {
 		t.Fatalf("ResolvePool for the applied runtime: %v", err)
 	}

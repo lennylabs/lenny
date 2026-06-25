@@ -26,7 +26,7 @@ func newDrainGateServer(t *testing.T, drainingPool string) (*Server, *memstore.S
 	s.clock = func() time.Time { return gateClock }
 	// Resolve every (runtimeRef, profile) to the one pool under test so
 	// the gate exercises without a Kubernetes client.
-	s.poolNameResolver = func(context.Context, string, isolation.Profile) (string, bool) {
+	s.poolNameResolver = func(context.Context, string, isolation.Profile, string) (string, bool) {
 		return drainingPool, true
 	}
 	return s, store, pools
@@ -56,7 +56,7 @@ func TestRequirePoolNotDrainingRejects_spec_15_1_797(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/v1/sessions", nil)
-	ok := s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed)
+	ok := s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed, "")
 	if ok {
 		t.Fatal("gate admitted a create against a draining pool")
 	}
@@ -90,17 +90,17 @@ func TestRequirePoolNotDrainingAdmits_spec_15_1_797(t *testing.T) {
 		}
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/v1/sessions", nil)
-		if !s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed) {
+		if !s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed, "") {
 			t.Errorf("gate rejected against an active pool: %d %s", rr.Code, rr.Body.String())
 		}
 	})
 
 	t.Run("resolver finds no pool", func(t *testing.T) {
 		s, _, _ := newDrainGateServer(t, "p")
-		s.poolNameResolver = func(context.Context, string, isolation.Profile) (string, bool) { return "", false }
+		s.poolNameResolver = func(context.Context, string, isolation.Profile, string) (string, bool) { return "", false }
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/v1/sessions", nil)
-		if !s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed) {
+		if !s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed, "") {
 			t.Errorf("gate rejected when no pool resolves: %d", rr.Code)
 		}
 	})
@@ -109,7 +109,7 @@ func TestRequirePoolNotDrainingAdmits_spec_15_1_797(t *testing.T) {
 		s := New(memstore.New(), Options{})
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/v1/sessions", nil)
-		if !s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed) {
+		if !s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed, "") {
 			t.Errorf("gate rejected with no pool store: %d", rr.Code)
 		}
 	})
