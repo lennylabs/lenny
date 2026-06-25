@@ -33,14 +33,22 @@ const controlPlaneNamespace = "default"
 // reports the gateway up, and lenny restart rolls it. spec: §17.4.
 const gatewayDeploymentName = "lenny-gateway"
 
-// gatewayNodePort is the fixed NodePort the development profile pins the
+// GatewayNodePort is the fixed NodePort the development profile pins the
 // gateway Service to (charts/lenny dev profile gateway.service.nodePort).
 // The host-side forwarder reaches the in-cluster gateway on it: on the
 // Linux launcher the node port is bound on the substrate, and on the
 // Docker-backed launcher the launcher publishes it to host loopback (C4).
+// Both launchers constrain the node port to host loopback (the Linux
+// kube-proxy bind via --kube-proxy-arg=nodeport-addresses=127.0.0.1/32, the
+// Docker publish via -p 127.0.0.1:<nodePort>:<nodePort>), so the node port
+// is reachable on 127.0.0.1 alone and never on a non-loopback host address.
+// It is exported so the tier-9 EMBEDDED_MODE_LOCAL_ONLY security check can
+// target the node port off-host and assert it is refused, exercising the C4
+// containment rather than only the forwarder's loopback bind.
 // spec: §17.4 (the CLI reaches the in-cluster gateway through the
-// loopback-only host-side forwarder in front of the node port).
-const gatewayNodePort = 30080
+// loopback-only host-side forwarder in front of the node port; the node port
+// is constrained to loopback so the gateway is unreachable off-host).
+const GatewayNodePort = 30080
 
 // devBearerTrustSecretName is the fixed name the development profile sets
 // for the dev bearer-trust Secret (security.oidc.bearerTrustKeySecret). The

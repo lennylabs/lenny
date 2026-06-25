@@ -388,7 +388,7 @@ func (s *Stack) startForwarder(cfg Config, out io.Writer) (string, error) {
 	// host: loopback on the Linux launcher (k3s and the node port share the
 	// host) and host loopback on the Docker-backed launcher (the launcher
 	// publishes the in-VM node port to host loopback, C4).
-	nodePortAddr := net.JoinHostPort(httpHost, strconv.Itoa(gatewayNodePort))
+	nodePortAddr := net.JoinHostPort(httpHost, strconv.Itoa(GatewayNodePort))
 
 	tlsAddr := net.JoinHostPort(httpHost, strconv.Itoa(httpsPort))
 	fmt.Fprintf(out, "lenny up: starting the host-side gateway forwarder on https://%s\n", tlsAddr)
@@ -609,7 +609,7 @@ func (s *Stack) startSubstrate(ctx context.Context, paths Paths, out io.Writer) 
 		return substrateResult{}
 	}
 	fmt.Fprintln(out, "lenny up: starting embedded Kubernetes (k3s)")
-	sup := newSubstrate(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort, GatewayNodePort: gatewayNodePort})
+	sup := newSubstrate(k3s.Config{Dir: paths.K3s, APIPort: defaultK3sAPIPort, GatewayNodePort: GatewayNodePort})
 	if err := sup.Start(ctx); err != nil {
 		// k3s is the §17.4 component most likely to fail on a constrained
 		// host. The in-cluster control plane runs on it, so without the

@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -160,10 +161,13 @@ func TestEmbeddedForwarderLegsFailClosedOnNonLoopback_spec_17_4(t *testing.T) {
 //     127.0.0.1:8443 with the per-`lenny up` self-signed leaf and forwards to
 //     the plaintext-HTTP in-cluster gateway, so https://localhost:8443
 //     completes the handshake and reaches the gateway.
-//   - non-loopback unreachable: the gateway is unreachable on a non-loopback
-//     host address (the Linux NodePort is constrained to 127.0.0.1/32 and the
-//     Docker NodePort is published only on host loopback), so the §17.4
+//   - non-loopback unreachable: the gateway NodePort (stack.GatewayNodePort)
+//     is unreachable on a non-loopback host address (the Linux NodePort is
+//     constrained to 127.0.0.1/32 by --kube-proxy-arg and the Docker NodePort
+//     is published only on host loopback), so the §17.4
 //     EMBEDDED_MODE_LOCAL_ONLY 0.0.0.0 fail-closed invariant holds end to end.
+//     This leg probes the node port the C4 containment guards, not the
+//     forwarder's host port whose loopback bind is already covered in-process.
 //   - production banner: the non-suppressible production warning banner prints
 //     on `lenny up`.
 //   - CLI bearer auth: the CLI's minted dev bearer authenticates against the
@@ -178,8 +182,9 @@ func TestEmbeddedForwarderLegsFailClosedOnNonLoopback_spec_17_4(t *testing.T) {
 // diagnosis: a failure means a §17.4 EMBEDDED_MODE_LOCAL_ONLY or dev-auth
 // invariant did not hold against a live bring-up. A TLS-termination failure
 // means the forwarder did not present the self-signed leaf or did not reach the
-// plaintext-HTTP gateway. A reachable non-loopback address means the gateway is
-// exposed off-host, violating the local-only constraint. A missing banner means
+// plaintext-HTTP gateway. A reachable NodePort on a non-loopback address means
+// the C4 node-port loopback containment failed and the gateway is exposed
+// off-host, violating the local-only constraint. A missing banner means
 // the non-suppressible production warning was dropped. A 401 on the bearer leg
 // means the in-cluster gateway did not trust the CLI's minted dev bearer.
 //
@@ -237,21 +242,27 @@ func TestEmbeddedGatewayDockerBackedSecurityLegs_spec_17_4(t *testing.T) {
 		}
 	})
 
-	t.Run("gateway_unreachable_on_non_loopback", func(t *testing.T) {
-		// The forwarder host port (the port the CLI dials on 127.0.0.1) must
-		// not answer on a non-loopback host address. Dialing the same port on
-		// the host's primary non-loopback IP must be refused or time out, so
-		// the gateway is not exposed off-host.
+	t.Run("gateway_nodeport_unreachable_on_non_loopback", func(t *testing.T) {
+		// The genuinely-uncovered C4 surface is the gateway NodePort itself,
+		// not the host-side forwarder (the forwarder's loopback-only bind is
+		// already covered in-process by
+		// TestEmbeddedForwarderLegsFailClosedOnNonLoopback via the
+		// EmbeddedModeLocalOnly gate). A bare NodePort binds 0.0.0.0, so C4
+		// constrains it to host loopback on both launchers: the Linux launcher
+		// pins the kube-proxy bind with
+		// --kube-proxy-arg=nodeport-addresses=127.0.0.1/32, and the Docker
+		// launcher publishes the in-VM node port only on host loopback
+		// (-p 127.0.0.1:<nodePort>:<nodePort>), leaving the in-VM 0.0.0.0 bind
+		// contained inside the Docker VM. Dialing the fixed gateway NodePort
+		// (stack.GatewayNodePort) on the host's primary non-loopback IP must be
+		// refused or time out, so the gateway is not exposed off-host through
+		// the node port the forwarder fronts.
 		nonLoopback := primaryNonLoopbackIP(t)
-		_, port, err := net.SplitHostPort(strings.TrimPrefix(gatewayURL, "https://"))
-		if err != nil {
-			t.Fatalf("parse forwarder host:port from %q: %v", gatewayURL, err)
-		}
-		target := net.JoinHostPort(nonLoopback, port)
+		target := net.JoinHostPort(nonLoopback, strconv.Itoa(stack.GatewayNodePort))
 		conn, err := net.DialTimeout("tcp", target, 3*time.Second)
 		if err == nil {
 			_ = conn.Close()
-			t.Fatalf("the embedded gateway forwarder answered on non-loopback address %s; EMBEDDED_MODE_LOCAL_ONLY requires it be unreachable off-host", target)
+			t.Fatalf("the embedded gateway NodePort answered on non-loopback address %s; EMBEDDED_MODE_LOCAL_ONLY requires the node port be constrained to host loopback (Linux kube-proxy nodeport-addresses=127.0.0.1/32, Docker host-loopback publish)", target)
 		}
 	})
 
@@ -290,9 +301,9 @@ func loopbackTLSClient(t *testing.T, home string) *http.Client {
 }
 
 // primaryNonLoopbackIP returns the host's primary non-loopback IPv4 address, so
-// the non-loopback-unreachable leg can dial the gateway forwarder port on an
-// off-host address. The test skips when the host has no non-loopback interface
-// (a constrained CI sandbox), since there is then no off-host address to probe.
+// the non-loopback-unreachable leg can dial the gateway NodePort on an off-host
+// address. The test skips when the host has no non-loopback interface (a
+// constrained CI sandbox), since there is then no off-host address to probe.
 func primaryNonLoopbackIP(t *testing.T) string {
 	t.Helper()
 	addrs, err := net.InterfaceAddrs()
