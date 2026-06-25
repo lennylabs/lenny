@@ -759,15 +759,19 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 475, §7.3 line 387, §4.3 (proposal: finalize-failure
-// reclaim), §6.2 (pre-attached disposition).
-// diagnosis: a setup-command failure during the §4.3 finalize barrier must
-// reclaim the claimed pod (delete the per-pod SandboxClaim per the §6.2
-// pre-attached disposition) and transition the row to the terminal `failed`
-// state, surfacing the setup_command_failed reason. A failure here means the
-// finalize barrier left the row stuck in `finalizing` (un-retryable, since
-// finalize requires `created`) or leaked the claimed pod after the prepare
-// phase aborted.
+// spec: §7.5 line 475, §7.3 line 387 (setup_command_failed non-retryable),
+// §15.1 (SETUP_COMMAND_FAILED), §4.3 (proposal: finalize-failure reclaim),
+// §6.2 (pre-attached disposition).
+// diagnosis: a deterministic non-zero setup-command exit during the §4.3
+// finalize barrier (which the adapter reports as gRPC FailedPrecondition) must
+// surface the non-retryable 422 SETUP_COMMAND_FAILED envelope (retryable:false,
+// no Retry-After, details.reason=setup_command_failed), reclaim the claimed pod
+// (delete the per-pod SandboxClaim per the §6.2 pre-attached disposition), and
+// transition the row to the terminal `failed` state. A failure here means the
+// finalize barrier still returned the retired retryable 503 (telling a client
+// to retry a deterministic failure that will fail identically), left the row
+// stuck in `finalizing`, or leaked the claimed pod after the prepare phase
+// aborted.
 func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
@@ -811,11 +815,32 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	}
 
 	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-setupfail/finalize", nil)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("finalize with a failing setup command: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("finalize with a deterministic failing setup command: status %d, want 422; body=%s", rr.Code, rr.Body.String())
 	}
-	if !bytes.Contains(rr.Body.Bytes(), []byte("setup_command_failed")) {
-		t.Errorf("finalize error body = %s, want setup_command_failed reason", rr.Body.String())
+	var env struct {
+		Error struct {
+			Code      string         `json:"code"`
+			Category  string         `json:"category"`
+			Retryable bool           `json:"retryable"`
+			Details   map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode finalize error envelope: %v (body=%s)", err, rr.Body.String())
+	}
+	if env.Error.Code != "SETUP_COMMAND_FAILED" {
+		t.Errorf("error code = %q, want SETUP_COMMAND_FAILED", env.Error.Code)
+	}
+	if env.Error.Category != "PERMANENT" || env.Error.Retryable {
+		t.Errorf("category/retryable = %q/%v, want PERMANENT/false", env.Error.Category, env.Error.Retryable)
+	}
+	if env.Error.Details["reason"] != "setup_command_failed" {
+		t.Errorf("details.reason = %v, want setup_command_failed", env.Error.Details["reason"])
+	}
+	// A deterministic non-retryable failure must not invite a retry.
+	if ra := rr.Header().Get("Retry-After"); ra != "" {
+		t.Errorf("Retry-After = %q, want absent on the non-retryable SETUP_COMMAND_FAILED", ra)
 	}
 
 	// The session transitioned to the terminal failed state, not stuck in
