@@ -157,9 +157,13 @@ func TestMessageRouting_RunningDelivers_spec_7_2_path2(t *testing.T) {
 }
 
 // TestMessageRouting_InboxUnavailableWhenUnwired covers the degraded
-// path: with no messaging coordinator wired, a buffered path returns
-// 503 INBOX_UNAVAILABLE rather than silently dropping the message.
-func TestMessageRouting_InboxUnavailableWhenUnwired_spec_7_2(t *testing.T) {
+// path: with no messaging coordinator wired, a buffered path returns a
+// 200 `delivery_receipt` carrying status:"error"/reason:"inbox_unavailable"
+// rather than the retired 503 INBOX_UNAVAILABLE envelope, matching the
+// MCP send_message receipt form per the §15.2.1 REST/MCP parity contract.
+// spec: §15.4 (inbox_unavailable receipt), §15.2.1 (REST/MCP parity).
+// F-MS4.
+func TestMessageRouting_InboxUnavailableWhenUnwired_spec_15_4(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		Executor: executor.NewEchoExecutor(),
@@ -170,7 +174,17 @@ func TestMessageRouting_InboxUnavailableWhenUnwired_spec_7_2(t *testing.T) {
 	rr := sendMessageRequest(t, srv.Handler(), "sess_nb", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "x"}},
 	})
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.MessageResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.DeliveryReceipt.Status != session.DeliveryStatusError {
+		t.Errorf("status = %q, want error", resp.DeliveryReceipt.Status)
+	}
+	if resp.DeliveryReceipt.Reason != session.DeliveryReasonInboxUnavailable {
+		t.Errorf("reason = %q, want inbox_unavailable", resp.DeliveryReceipt.Reason)
 	}
 }

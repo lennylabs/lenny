@@ -5,6 +5,7 @@ package mcptools
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,127 @@ func tamperDispatcher(mode elicitation.EnforcementMode, metrics *fakeTamperRecor
 		},
 	}
 	return d, leaf, original
+}
+
+// urlModeDispatcher wires a single-session dispatcher (no ancestors) with
+// a url-mode allowlist and the injected drop/audit recorders, so the §9.2
+// DOMAIN_NOT_ALLOWLISTED drop path can be exercised directly. The url-mode
+// provenance check runs before buildHops, so the store is never reached on
+// the drop path; it returns the raising session for completeness.
+func urlModeDispatcher(allowlist elicitation.URLModeAllowlist, drops *recordingDispatcherDrop, auditor *fakeDelegationAuditor) (*elicitationDispatcher, sessionstore.Session) {
+	now := time.Now()
+	raising := sessionstore.Session{
+		ID: "sess_leaf", TenantID: "acme", UserID: "alice",
+		DelegationDepth: 2, CreatedAt: now, UpdatedAt: now,
+	}
+	store := &slowAncestorStore{leaf: raising, mid: sessionstore.Session{}, slowID: ""}
+	d := &elicitationDispatcher{
+		store:            store,
+		depthPolicy:      elicitation.DepthAllowAll,
+		urlModeAllowlist: allowlist,
+		dropMetrics:      drops,
+		audit:            auditor,
+		clock:            func() time.Time { return now },
+	}
+	return d, raising
+}
+
+// recordingDispatcherDrop captures §9.1 drop-counter calls for the
+// internal dispatcher tests.
+type recordingDispatcherDrop struct{ reasons []string }
+
+func (r *recordingDispatcherDrop) RecordElicitationDrop(reason string) {
+	r.reasons = append(r.reasons, reason)
+}
+
+// TestDispatchURLModeDropWritesAuditRow_spec_16_7 proves the §9.2 url-mode
+// DOMAIN_NOT_ALLOWLISTED drop (F-9.2.11) writes the §16.7
+// elicitation.url_mode_domain_rejected audit row (F-EL3) with the staged
+// payload fields, alongside the existing drop metric and the per-hop tool
+// error. The audit row is the SIEM-visible record of the policy-relevant
+// drop; without it the rejection is observable only through the metric.
+//
+// diagnosis: a failure here means an agent-initiated url-mode elicitation
+// blocked for a disallowed domain is not auditable through the §16.7 path,
+// so a security review cannot reconstruct the drop from the audit log.
+//
+// spec: §16.7 (elicitation.url_mode_domain_rejected); §9.2 line 86. F-EL3,
+// F-9.2.11.
+func TestDispatchURLModeDropWritesAuditRow_spec_16_7(t *testing.T) {
+	drops := &recordingDispatcherDrop{}
+	auditor := &fakeDelegationAuditor{}
+	d, raising := urlModeDispatcher(elicitation.URLModeAllowlist{
+		Enabled:         true,
+		DomainAllowlist: []string{"accounts.example.com"},
+	}, drops, auditor)
+
+	_, err := d.dispatch(context.Background(), "acme", raising,
+		elicitation.Content{Message: "sign in", Schema: map[string]any{}},
+		elicitation.InitiatorAgent, "https://phish.evil.test/login?token=secret")
+
+	var toolErr *mcp.ToolError
+	if !errors.As(err, &toolErr) || toolErr.Code != "DOMAIN_NOT_ALLOWLISTED" {
+		t.Fatalf("dispatch err = %v, want *mcp.ToolError DOMAIN_NOT_ALLOWLISTED", err)
+	}
+	// The drop metric still fires exactly once.
+	if len(drops.reasons) != 1 || drops.reasons[0] != "domain_not_allowlisted" {
+		t.Errorf("drop reasons = %v, want [domain_not_allowlisted]", drops.reasons)
+	}
+	// The §16.7 audit row is written exactly once with the catalog name.
+	if auditor.calls != 1 {
+		t.Fatalf("audit calls = %d, want 1", auditor.calls)
+	}
+	if auditor.typ != "elicitation.url_mode_domain_rejected" {
+		t.Errorf("audit type = %q, want elicitation.url_mode_domain_rejected", auditor.typ)
+	}
+	want := map[string]any{
+		"session_id":       "sess_leaf",
+		"origin_pod":       "sess_leaf",
+		"tenant_id":        "acme",
+		"host":             "phish.evil.test",
+		"reason":           "domain_not_allowlisted",
+		"initiator_type":   "agent",
+		"delegation_depth": 2,
+	}
+	for k, v := range want {
+		if got := auditor.detail[k]; got != v {
+			t.Errorf("audit detail[%q] = %v (%T), want %v", k, got, got, v)
+		}
+	}
+	// The row carries the rejected host but never the full URL's query or
+	// fragment (the staged §16.7 payload contract).
+	for k, v := range auditor.detail {
+		if s, ok := v.(string); ok && strings.Contains(s, "token=secret") {
+			t.Errorf("audit detail[%q] leaked the URL query: %q", k, s)
+		}
+	}
+	if _, err := time.Parse(time.RFC3339Nano, auditor.detail["detected_at"].(string)); err != nil {
+		t.Errorf("detected_at not RFC3339Nano: %v", auditor.detail["detected_at"])
+	}
+}
+
+// TestDispatchURLModeDropNilAuditorNoPanic_spec_16_7 proves the drop path
+// is safe when no auditor is wired (the metric and tool error still fire),
+// so a binary without an audit sink degrades to the metric-only behavior
+// rather than panicking. spec: §16.7; §9.2 line 86. F-EL3.
+func TestDispatchURLModeDropNilAuditorNoPanic_spec_16_7(t *testing.T) {
+	drops := &recordingDispatcherDrop{}
+	d, raising := urlModeDispatcher(elicitation.URLModeAllowlist{
+		Enabled:         true,
+		DomainAllowlist: []string{"accounts.example.com"},
+	}, drops, nil)
+	d.audit = nil
+
+	_, err := d.dispatch(context.Background(), "acme", raising,
+		elicitation.Content{Message: "sign in", Schema: map[string]any{}},
+		elicitation.InitiatorAgent, "https://phish.evil.test/login")
+	var toolErr *mcp.ToolError
+	if !errors.As(err, &toolErr) || toolErr.Code != "DOMAIN_NOT_ALLOWLISTED" {
+		t.Fatalf("dispatch err = %v, want DOMAIN_NOT_ALLOWLISTED", err)
+	}
+	if len(drops.reasons) != 1 {
+		t.Errorf("drop reasons = %v, want one drop even with nil auditor", drops.reasons)
+	}
 }
 
 // TestDispatchEnforceRejectsTamper_spec_9_2_60 proves enforce mode drops

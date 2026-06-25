@@ -462,10 +462,18 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		case messagerouting.ActionBufferInbox:
 			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
 			if berr != nil {
-				s.writeError(w, http.StatusServiceUnavailable, "INBOX_UNAVAILABLE",
-					"session inbox is not available; message not buffered",
-					map[string]any{"reason": berr.Error()})
-				return
+				// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
+				// receipt) — an inbox-enqueue failure surfaces as a 200
+				// `delivery_receipt` with `status:"error"`/`reason:
+				// "inbox_unavailable"`, matching the MCP send_message receipt
+				// form (mcptools.buildSendMessageReceiptStatusReason). §15.4
+				// defines `inbox_unavailable` strictly as a receipt status/
+				// reason, and `INBOX_UNAVAILABLE` is in neither the §15.1
+				// catalog nor openapi.json, so the prior 503 envelope was the
+				// non-conforming side. F-MS4.
+				deliveryStatus = session.DeliveryStatusError
+				deliveryReason = session.DeliveryReasonInboxUnavailable
+				break
 			}
 			deliveryStatus = session.DeliveryStatusQueued
 			queueDepth = depth
@@ -477,10 +485,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		case messagerouting.ActionBufferDLQ:
 			dropped, _, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetDLQ, 0)
 			if berr != nil {
-				s.writeError(w, http.StatusServiceUnavailable, "INBOX_UNAVAILABLE",
-					"session dead-letter queue is not available; message not buffered",
-					map[string]any{"reason": berr.Error()})
-				return
+				// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
+				// receipt) — a DLQ-enqueue failure surfaces as the same 200
+				// error/inbox_unavailable receipt as the inbox path above,
+				// keeping the REST and MCP contracts in lockstep. F-MS4.
+				deliveryStatus = session.DeliveryStatusError
+				deliveryReason = session.DeliveryReasonInboxUnavailable
+				break
 			}
 			deliveryStatus = session.DeliveryStatusQueued
 			if dropped {
@@ -511,7 +522,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// first inbound message's sender-supplied id; gateway-assigned
 	// ids carry the `msg_` prefix per §15.4 line 1784. The status is
 	// the §7.2 path outcome computed above (delivered / queued /
-	// dropped). F-7.2.5, F-7.2.10.
+	// dropped / error). An inbox-enqueue failure carries
+	// status:"error"/reason:"inbox_unavailable" per §15.2.1 parity
+	// with the MCP receipt rather than a 503 envelope. F-7.2.5,
+	// F-7.2.10, F-MS4.
 	messageID := ""
 	if len(req.Messages) > 0 {
 		messageID = req.Messages[0].ID

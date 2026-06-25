@@ -620,11 +620,13 @@ func TestURLModeElicitationAllowedDomain(t *testing.T) {
 // TestURLModeElicitationDisallowedDomain proves a §9.2 url-mode
 // elicitation whose domain is not on the connector allowlist is
 // dropped with DOMAIN_NOT_ALLOWLISTED and increments the
-// `domain_not_allowlisted` drop counter. The §16.7 audit catalog is
-// closed and does not list this rejection, so the dispatcher does
-// not emit an audit row (F-9.2.11).
+// `domain_not_allowlisted` drop counter. The drop also writes the
+// §16.7 elicitation.url_mode_domain_rejected audit row; that audit
+// payload is asserted in the internal dispatcher test
+// TestDispatchURLModeDropWritesAuditRow_spec_16_7 (F-EL3).
 //
-// spec: §9.2 line 86; F-9.2.11.
+// spec: §9.2 line 86; §16.7 (elicitation.url_mode_domain_rejected).
+// F-9.2.11, F-EL3.
 func TestURLModeElicitationDisallowedDomain_spec_9_2_F_9_2_11(t *testing.T) {
 	drops := &recordingDropMetric{}
 	srv, store, interactions := newMCPForChain(t, chainOpts{
