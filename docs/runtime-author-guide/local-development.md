@@ -15,7 +15,7 @@ Two other local modes exist mainly for contributors working on Lenny itself. A r
 
 | Mode | What it runs | Use it to | Limitations |
 |------|--------------|-----------|-------------|
-| **`lenny up`** (recommended) | The whole platform from one binary: embedded k3s, Postgres, Redis, key management, identity, the gateway, the controllers, and the reference runtime catalog. Your runtime runs in a real Kubernetes pod. On Linux the k3s runs as a managed child process; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. | Develop and test your runtime against the real platform, and run end-to-end demos. | Local only, with insecure development credentials and keys. Not for production. Requires Docker Desktop on macOS and Windows. The single-node cluster does not reproduce the production isolation surface (see [Local isolation fidelity](#local-isolation-fidelity)). |
+| **`lenny up`** (recommended) | The whole platform from one binary: an embedded k3s running the gateway, the controllers, and the reference runtime catalog as pods, rendered from the production chart under a development profile. The data stores (Postgres, Redis, key management, and artifacts) are in-process in-memory backends inside the gateway pod. Your runtime runs in a real Kubernetes pod. On Linux the k3s runs as a managed child process; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. | Develop and test your runtime against the real platform, and run end-to-end demos. | Local only, with insecure development credentials and keys. Not for production. Requires Docker Desktop on macOS and Windows. The single-node cluster does not reproduce the production isolation surface (see [Local isolation fidelity](#local-isolation-fidelity)). |
 | **`make run`** | The Lenny source tree with Kubernetes stubbed out: the gateway, an in-process controller, and one agent, all as goroutines in a single process, backed by SQLite and in-memory stores. Your agent runs as a host process rather than in a pod. | Iterate on the gateway or controller source, or run a Basic-level runtime through a fast host-process loop. | No real pod lifecycle, scaling, or isolation. The host-side adapter connects Standard- and Full-level runtimes over Linux abstract Unix sockets, so under `make run` those levels work only on a Linux host. |
 | **`docker compose up`** | The gateway, a controller, and one agent container, plus Postgres, Redis, and MinIO as containers. | Iterate on gateway or controller logic against real storage backends, or run integration tests in CI. | Plain HTTP by default; enable TLS before configuring real credentials. A single agent container, with no scaling. |
 
@@ -29,7 +29,7 @@ The difference between the first two is what runs underneath. `lenny up` is a re
 lenny up
 ```
 
-`lenny up` starts the whole stack: an embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The gateway and controllers run as host child processes, the Postgres runs as a child process, and the Redis runs in-process. The k3s runs as a managed child process on Linux, where the first run downloads it to `~/.lenny/k3s/`; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. Every run after the first starts in seconds.
+`lenny up` renders the production chart under a development profile and runs the gateway, the management plane, the controllers, and the reference runtime catalog as pods in an embedded Kubernetes (k3s). The application data stores (Postgres, Redis, key management, and artifact storage) are in-process in-memory backends inside the gateway pod, so there is no separate Postgres, Redis, KMS, or identity-provider process. The CLI authenticates by minting a development bearer from a persisted local key, and the in-cluster gateway trusts it in development mode. The k3s runs as a managed child process on Linux, where the first run downloads it to `~/.lenny/k3s/`; on macOS and Windows it runs as a container under Docker Desktop's Linux VM. The first run imports the platform and runtime images once and may take longer; every run after the first reuses the persisted substrate and image store and starts in seconds.
 
 **What you need:** on Linux, the `lenny` binary and nothing else. On macOS and Windows, the `lenny` binary plus Docker Desktop, which supplies the Linux VM the embedded k3s runs in. Start Docker Desktop before `lenny up`.
 
@@ -60,13 +60,15 @@ cd my-agent && make image && lenny runtime publish my-agent --image my-agent:dev
 ### Shutting it down
 
 ```bash
-lenny down             # stop everything; keep state in ~/.lenny/
-lenny down --purge     # also wipe ~/.lenny/ for a fresh start
+lenny down             # stop everything; keep the persisted substrate and image store
+lenny down --purge     # also remove the persisted substrate and image store for a fresh start
 ```
+
+The in-memory application stores are ephemeral and not preserved across `lenny down`. A non-`--purge` `lenny down` keeps the persisted substrate and the imported-image store, so the next `lenny up` reuses them; `--purge` removes them.
 
 ### Not for production
 
-`lenny up` is for local development only. Its credentials, master keys, and identities are insecure. The embedded identity provider accepts only the `dev.local` audience, and the gateway fails closed with `EMBEDDED_MODE_LOCAL_ONLY` if you try to expose it beyond localhost.
+`lenny up` is for local development only. Its credentials, master keys, and identities are insecure. In development mode the gateway rejects any token whose audience claim is not `dev.local`, even when signed by the trusted development key, and it fails closed with `EMBEDDED_MODE_LOCAL_ONLY` if you try to expose it beyond localhost.
 
 ### Local isolation fidelity
 {: #local-isolation-fidelity }

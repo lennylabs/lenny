@@ -55,7 +55,7 @@ Ready in 47s. Try: lenny session new --runtime chat --message "hello"
 
 The warning banner is deliberate: the embedded stack uses stub credentials and is meant for development and evaluation, not production. It cannot be suppressed.
 
-`lenny up` runs the same gateway, controller, and management-plane binaries a production cluster runs. Only the external dependencies (Postgres, Redis, KMS, identity provider) are replaced with in-process equivalents.
+`lenny up` renders the production chart under a development profile and runs the same gateway, controller, and management-plane binaries a production cluster runs, as pods in an embedded k3s. The application data stores (Postgres, Redis, and KMS) are in-process in-memory backends inside the gateway pod. In place of a standalone identity provider, the CLI mints a development bearer from a persisted local key and the in-cluster gateway trusts it in development mode.
 
 ---
 
