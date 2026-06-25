@@ -34,6 +34,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -83,47 +85,34 @@ func TestDocumentMatchesRegisteredEndpoints(t *testing.T) {
 		}
 	}
 
-	// The session, blob, usage, metering, OAuth, and OpenAI-compatible
-	// routes register on the main gateway mux (cmd/lenny-gateway) with
-	// production dependencies the unit test cannot construct, so the mux
-	// walk above does not reach them. Assert their presence explicitly so
-	// the document stays complete for the top-level surfaces, matching the
-	// coverage the prior allowlist gave these routes.
-	for _, route := range topLevelRoutes {
+	// A handful of routes register only on the main gateway mux
+	// (cmd/lenny-gateway) and depend on production wiring (the OpenAI-
+	// compatible adapter, the Token Service reverse proxy, the health and
+	// metrics handlers, the top-level MCP adapter) that the unit test cannot
+	// stand up in-process. Those are enumerated from mainMuxRoutes and
+	// asserted present; every constructible surface (admin, credential, and
+	// session) is walked live above rather than listed.
+	for _, route := range mainMuxRoutes {
 		if !documented[normalizePathParams(route)] {
-			t.Errorf("top-level route %q is absent from openapi.json", route)
+			t.Errorf("main-mux route %q is absent from openapi.json", route)
 		}
 	}
 }
 
-// topLevelRoutes are the non-admin gateway routes registered on the main
-// mux (cmd/lenny-gateway) rather than the admin router or credential
-// server, so the serve-mux walk does not enumerate them.
-var topLevelRoutes = []string{
+// mainMuxRoutes are the routes that register only on the main gateway mux
+// (cmd/lenny-gateway) with production dependencies — the OpenAI-compatible
+// adapter mounts, the Token Service OAuth proxy, the top-level MCP adapter,
+// and the health and metrics endpoints — so neither the admin router, the
+// credential server, nor the session server constructed in-process by
+// registeredRouteTemplates registers them. The session, runtime, pool,
+// blob, usage, and metering routes are no longer listed here: the live
+// session-server mux walk enumerates them, so a register-or-deregister
+// drift on those surfaces fails the test rather than passing under a stale
+// list.
+var mainMuxRoutes = []string{
 	"/healthz",
 	"/metrics",
 	"/mcp",
-	"/v1/sessions",
-	"/v1/sessions/start",
-	"/v1/sessions/{id}",
-	"/v1/sessions/{id}/finalize",
-	"/v1/sessions/{id}/start",
-	"/v1/sessions/{id}/interrupt",
-	"/v1/sessions/{id}/terminate",
-	"/v1/sessions/{id}/resume",
-	"/v1/sessions/{id}/derive",
-	"/v1/sessions/{id}/upload",
-	"/v1/sessions/{id}/messages",
-	"/v1/sessions/{id}/transcript",
-	"/v1/sessions/{id}/tree",
-	"/v1/sessions/{id}/workspace",
-	"/v1/sessions/{id}/setup-output",
-	"/v1/sessions/{id}/events",
-	"/v1/sessions/{id}/extend-retention",
-	"/v1/sessions/{id}/eval",
-	"/v1/blobs/{ref}",
-	"/v1/usage",
-	"/v1/metering/events",
 	"/v1/chat/completions",
 	"/v1/responses",
 	"/v1/responses/{id}",
@@ -131,8 +120,9 @@ var topLevelRoutes = []string{
 }
 
 // registeredRouteTemplates builds the admin router (fully wired so every
-// conditional route registers) and the user-facing credential server, then
-// walks each live serve mux to extract the path templates it registers.
+// conditional route registers), the user-facing credential server, and the
+// session-facing server, then walks each live serve mux to extract the path
+// templates it registers.
 func registeredRouteTemplates(t *testing.T) []string {
 	t.Helper()
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
@@ -181,9 +171,18 @@ func registeredRouteTemplates(t *testing.T) []string {
 
 	cred := credentialserver.New(credentialstore.NewMemory(clock))
 
+	// The session-facing serve mux is constructible in-process: New only
+	// stores the injected dependencies, and Handler() registers handler
+	// method values without invoking them, so a memstore-backed server with
+	// an otherwise-zero Options registers the full session route table. This
+	// enumerates the non-admin session routes live the same way the admin and
+	// credential muxes are walked, rather than from a hand-maintained list.
+	sess := sessionserver.New(memstore.New(), sessionserver.Options{Clock: clock})
+
 	var out []string
 	out = append(out, walkServeMux(t, router.Handler())...)
 	out = append(out, walkServeMux(t, cred.Handler())...)
+	out = append(out, walkServeMux(t, sess.Handler())...)
 	sort.Strings(out)
 	return out
 }

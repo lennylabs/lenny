@@ -913,6 +913,141 @@
         "responses": { "200": { "description": "text/event-stream" }, "404": { "description": "Not found" } }
       }
     },
+    "/v1/sessions/{id}/artifacts": {
+      "get": {
+        "operationId": "getV1SessionsByIdArtifacts",
+        "summary": "List session artifacts (paginated)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/logs": {
+      "get": {
+        "operationId": "getV1SessionsByIdLogs",
+        "summary": "Get session logs (paginated, streamable via SSE)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/usage": {
+      "get": {
+        "operationId": "getV1SessionsByIdUsage",
+        "summary": "Get token and resource usage (tree-aggregated when the session has a delegation tree)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/webhook-events": {
+      "get": {
+        "operationId": "getV1SessionsByIdWebhookEvents",
+        "summary": "List undelivered webhook events after retry exhaustion",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/memory": {
+      "get": {
+        "operationId": "getV1SessionsByIdMemory",
+        "summary": "Query the session memory store",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      },
+      "post": {
+        "operationId": "postV1SessionsByIdMemory",
+        "summary": "Write an entry to the session memory store",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/memory/{memoryId}": {
+      "delete": {
+        "operationId": "deleteV1SessionsByIdMemoryByMemoryId",
+        "summary": "Delete a session memory entry",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "memoryId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "204": { "description": "Deleted" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/replay": {
+      "post": {
+        "operationId": "postV1SessionsByIdReplay",
+        "summary": "Re-run a session against a different runtime version using the same workspace and prompt history",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "201": { "description": "Created" },
+          "400": { "description": "INCOMPATIBLE_RUNTIME", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "REPLAY_ON_LIVE_SESSION", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "422": { "description": "ISOLATION_MONOTONICITY_VIOLATED", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/sessions/{id}/tool-use/{toolCallId}/approve": {
+      "post": {
+        "operationId": "postV1SessionsByIdToolUseByToolCallIdApprove",
+        "summary": "Approve a pending tool call",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "toolCallId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/tool-use/{toolCallId}/deny": {
+      "post": {
+        "operationId": "postV1SessionsByIdToolUseByToolCallIdDeny",
+        "summary": "Deny a pending tool call. Optional body: {\"reason\": \"<string>\"}",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "toolCallId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/elicitations/{elicitationId}/respond": {
+      "post": {
+        "operationId": "postV1SessionsByIdElicitationsByElicitationIdRespond",
+        "summary": "Answer an elicitation request. Body: {\"response\": <value>}",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "elicitationId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/elicitations/{elicitationId}/dismiss": {
+      "post": {
+        "operationId": "postV1SessionsByIdElicitationsByElicitationIdDismiss",
+        "summary": "Dismiss a pending elicitation",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "elicitationId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
     "/metrics": {
       "get": {
         "operationId": "getMetrics",
