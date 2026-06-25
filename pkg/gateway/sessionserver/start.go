@@ -35,6 +35,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
+	"github.com/lennylabs/lenny/pkg/upload"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -86,6 +87,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var demotionUnsupported *podsession.SDKDemotionNotSupported
 	var proxyDialect *PoolProxyDialectError
 	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
+	var archiveLimit *upload.ValidationError
 	switch {
 	case errors.As(err, &levelUnderperforms):
 		// spec: §5.1 line 42 — the runtime declares a higher integrationLevel
@@ -174,6 +176,19 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		// cases so a SlotFailedError wrapping one of those still routes to
 		// the specific handler via the unwrap chain.
 		s.writeSlotFailed(w, slotFailed)
+	case errors.As(err, &archiveLimit):
+		// spec: §15.1 (UPLOAD_ARCHIVE_LIMIT_EXCEEDED, 413/PERMANENT) — an
+		// over-limit or decompression-bomb uploadArchive raised by the §13.4
+		// validator during workspace materialization (archive.Extract, wrapped
+		// through Binder.Prepare's stageWorkspace) is a deterministic client
+		// fault: the same non-conformant archive fails identically on retry. It
+		// is the non-retryable 413 with no Retry-After, not the retryable 503
+		// fallback that would loop a conforming client indefinitely. Placed
+		// before the default so the typed validator error takes its dedicated
+		// code; it cannot collide with the earlier typed cases because
+		// extraction runs before setup commands or credential assignment. The
+		// §13.4 sub-code rides on details.reason. F-CS1.
+		s.writeUploadArchiveLimitExceeded(w, archiveLimit)
 	default:
 		// spec: §7.1 line 28 / §15.1 line 1138 — the atomic-unit fallback
 		// is always retryable; include Retry-After so a client backs off
@@ -215,6 +230,23 @@ func (s *Server) writeSetupCommandError(
 	s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
 		fallbackMsg+": "+err.Error(),
 		map[string]any{"reason": "setup_command_failed"})
+}
+
+// writeUploadArchiveLimitExceeded writes the §15.1 UPLOAD_ARCHIVE_LIMIT_EXCEEDED
+// envelope (413, PERMANENT, non-retryable) for an uploadArchive that violated a
+// §13.4 archive-extraction ceiling (an over-limit entry, a decompression bomb,
+// a path escape, or a forbidden entry kind). No Retry-After is set: the
+// rejection is deterministic for the supplied archive, so a retry of the same
+// bytes fails identically; the client must supply a conformant archive. The
+// §13.4 sub-code (max_decompressed_size, max_entry_size, max_entry_count,
+// path_escapes_root, etc.) rides on details.reason so the client and operators
+// can tie the rejection to the specific ceiling without parsing the message.
+// spec: §15.1 (UPLOAD_ARCHIVE_LIMIT_EXCEEDED, 413/PERMANENT), §13.4 (upload
+// security validator). F-CS1.
+func (s *Server) writeUploadArchiveLimitExceeded(w http.ResponseWriter, ve *upload.ValidationError) {
+	s.writeError(w, http.StatusRequestEntityTooLarge, "UPLOAD_ARCHIVE_LIMIT_EXCEEDED",
+		"archive extraction aborted: the upload violates a §13.4 archive-safety ceiling: "+ve.Error(),
+		map[string]any{"reason": string(ve.Reason)})
 }
 
 // sessionCreationFailedRetryAfterSeconds is the default Retry-After

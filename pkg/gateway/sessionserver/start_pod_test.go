@@ -3,10 +3,12 @@
 package sessionserver_test
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -32,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
@@ -48,6 +51,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	"github.com/lennylabs/lenny/pkg/upload"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -860,6 +864,142 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	}
 	if registry.Len() != 0 {
 		t.Errorf("registry holds %d bindings, want 0 — no binding is registered on a failed finalize", registry.Len())
+	}
+}
+
+// manyEntryTar builds an in-memory tar carrying count zero-byte regular
+// entries. With count past upload.MaxEntryCount the §13.4 aggregate validator
+// aborts extraction with a max_entry_count *upload.ValidationError — a
+// memory-cheap decompression-bomb that exercises the archive-limit path without
+// allocating the 256 MiB / 64 MiB size ceilings.
+func manyEntryTar(t *testing.T, count int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for i := 0; i < count; i++ {
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     fmt.Sprintf("f%06d.txt", i),
+			Typeflag: tar.TypeReg,
+			Mode:     0o644,
+			Size:     0,
+		}); err != nil {
+			t.Fatalf("tar header %d: %v", i, err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// spec: §15.1 (UPLOAD_ARCHIVE_LIMIT_EXCEEDED, 413/PERMANENT), §13.4 (upload
+// security validator), §7.4 (upload safety).
+// diagnosis: an over-limit or decompression-bomb uploadArchive raised by the
+// §13.4 validator during the §4.3 finalize materialization barrier must surface
+// the non-retryable 413 UPLOAD_ARCHIVE_LIMIT_EXCEEDED envelope (category
+// PERMANENT, retryable:false, no Retry-After, details.reason carrying the §13.4
+// sub-code) rather than the retryable 503 SESSION_CREATION_FAILED fallback. A
+// failure here means writePodClaimError's switch had no *upload.ValidationError
+// case and fell to the retryable default, so a conforming client would retry the
+// same non-conformant archive indefinitely (F-CS1).
+func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	// Stage an over-limit uploadArchive blob under this session's
+	// tenant+session prefix so the finalize ref-ownership check admits it and
+	// the binder reaches §13.4 extraction.
+	blobs := blobstore.NewMemoryStore(nil)
+	binder.Blobs = blobs
+	ref := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  "sess-fin-archlimit",
+		PartID:     "p1",
+		TTL:        time.Hour,
+	}
+	if _, err := blobs.Put(ref, "application/octet-stream",
+		bytes.NewReader(manyEntryTar(t, upload.MaxEntryCount+1))); err != nil {
+		t.Fatalf("stage over-limit archive blob: %v", err)
+	}
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-fin-archlimit" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The pod was claimed at /create.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+
+	// Finalize binds the plan naming the over-limit archive; the §13.4 validator
+	// aborts extraction during the prepare barrier.
+	finalizeBody := `{"workspacePlan":{"schemaVersion":1,"sources":[{"type":"uploadArchive","pathPrefix":"proj","uploadRef":"` +
+		ref.String() + `","format":"tar"}]}}`
+	rr := postSessionStep(t, h, "/v1/sessions/sess-fin-archlimit/finalize", []byte(finalizeBody))
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("finalize with an over-limit archive: status %d, want 413; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code      string         `json:"code"`
+			Category  string         `json:"category"`
+			Retryable bool           `json:"retryable"`
+			Details   map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode finalize error envelope: %v (body=%s)", err, rr.Body.String())
+	}
+	if env.Error.Code != "UPLOAD_ARCHIVE_LIMIT_EXCEEDED" {
+		t.Errorf("error code = %q, want UPLOAD_ARCHIVE_LIMIT_EXCEEDED (not the retryable SESSION_CREATION_FAILED fallback)", env.Error.Code)
+	}
+	if env.Error.Category != "PERMANENT" || env.Error.Retryable {
+		t.Errorf("category/retryable = %q/%v, want PERMANENT/false", env.Error.Category, env.Error.Retryable)
+	}
+	if env.Error.Details["reason"] != string(upload.ReasonMaxEntryCount) {
+		t.Errorf("details.reason = %v, want %q (the §13.4 sub-code)", env.Error.Details["reason"], upload.ReasonMaxEntryCount)
+	}
+	// A deterministic non-retryable archive rejection must not invite a retry.
+	if ra := rr.Header().Get("Retry-After"); ra != "" {
+		t.Errorf("Retry-After = %q, want absent on the non-retryable UPLOAD_ARCHIVE_LIMIT_EXCEEDED", ra)
+	}
+
+	// The finalize barrier failed the session and reclaimed the claimed pod, so
+	// no pod leaks past the rejected archive.
+	row, err := store.Get(context.Background(), "acme", "sess-fin-archlimit")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the over-limit archive rejection", row.State)
+	}
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+		t.Errorf("per-pod claim still present after the rejected finalize; the pod was not reclaimed")
 	}
 }
 
