@@ -179,6 +179,54 @@ func TestEmbeddedManifestSetDecodes_spec_17_4(t *testing.T) {
 	}
 }
 
+// TestPhaseSelectsFencesDeployments_spec_17_4 pins the §17.4 two-phase fence
+// the bring-up rests on: applyPhaseAll submits every kind; applyPhaseNonDeployments
+// submits everything except Deployments (the objects applied concurrently with
+// the image import); applyPhaseDeployments submits only Deployments (held back
+// until the import lands so a scheduled pod resolves its image locally rather
+// than ImagePullBackOff). An unknown phase selects nothing, so a programming
+// error fences everything out rather than applying the wrong subset.
+//
+// spec: §17.4 (apply the Deployments after the import lands).
+func TestPhaseSelectsFencesDeployments_spec_17_4(t *testing.T) {
+	cases := []struct {
+		phase applyPhase
+		kind  string
+		want  bool
+	}{
+		{applyPhaseAll, "Deployment", true},
+		{applyPhaseAll, "Service", true},
+		{applyPhaseAll, "Namespace", true},
+		{applyPhaseNonDeployments, "Deployment", false},
+		{applyPhaseNonDeployments, "Service", true},
+		{applyPhaseNonDeployments, "ConfigMap", true},
+		{applyPhaseNonDeployments, "RuntimeClass", true},
+		{applyPhaseDeployments, "Deployment", true},
+		{applyPhaseDeployments, "Service", false},
+		{applyPhaseDeployments, "Namespace", false},
+		// An out-of-range phase value selects nothing, so a fence bug withholds
+		// every object rather than applying the wrong subset.
+		{applyPhase(99), "Deployment", false},
+		{applyPhase(99), "Service", false},
+	}
+	for _, tc := range cases {
+		if got := phaseSelects(tc.phase, tc.kind); got != tc.want {
+			t.Errorf("phaseSelects(%d, %q) = %v, want %v", tc.phase, tc.kind, got, tc.want)
+		}
+	}
+
+	// The non-Deployment and Deployment phases must partition the kinds: every
+	// kind is selected by exactly one of the two fenced phases, so the bring-up
+	// applies each object once across the two passes.
+	for _, kind := range []string{"Namespace", "CustomResourceDefinition", "ServiceAccount", "ConfigMap", "Secret", "Service", "RuntimeClass", "Deployment"} {
+		nonDep := phaseSelects(applyPhaseNonDeployments, kind)
+		dep := phaseSelects(applyPhaseDeployments, kind)
+		if nonDep == dep {
+			t.Errorf("kind %q is selected by both fenced phases or neither (non-dep=%v dep=%v); the two phases must partition the kinds", kind, nonDep, dep)
+		}
+	}
+}
+
 // newObj builds a minimal Unstructured carrying apiVersion, kind, and name.
 func newObj(apiVersion, kind, name string) unstructured.Unstructured {
 	return unstructured.Unstructured{Object: map[string]any{

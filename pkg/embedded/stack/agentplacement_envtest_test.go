@@ -150,6 +150,70 @@ func TestApplyEchoRuntimeCRRejectsTagOnlyImage_spec_5_1(t *testing.T) {
 	}
 }
 
+// TestPlacementWrappersDriveActivationFromKubeconfig_spec_4_7 covers the §4.7
+// activation sequence through the kubeconfig-loading wrappers Up calls (the
+// path that loads the launcher's host-rewritten kubeconfig before delegating to
+// the already-tested ...FromConfig variants): ensureAgentNamespace creates the
+// agent namespace, ensureRuntimeClass installs the runc RuntimeClass the
+// standard isolation profile maps to, applyEchoRuntimeCR registers the
+// cluster-scoped echo Runtime CR, and applyEchoPool materializes the echo pool
+// CRDs. Driving them from a written kubeconfig exercises the BuildConfigFromFlags
+// leg the ...FromConfig tests skip, so the bring-up's kubeconfig-resolution path
+// is covered end to end.
+//
+// diagnosis: a failure means the embedded bring-up cannot activate §4.7 pod
+// placement from the launcher's kubeconfig: either the kubeconfig did not load
+// or one of the namespace, RuntimeClass, Runtime CR, or pool applies failed, so
+// the gateway resolves no warm pool and placement stays inert.
+//
+// spec: §4.6.2 (the agent namespace and pool CRDs), §5.3 (the runc RuntimeClass),
+// §4.7 (the echo Runtime CR and the embedded deployment model), §17.4 (Up
+// activates placement from the embedded kubeconfig).
+func TestPlacementWrappersDriveActivationFromKubeconfig_spec_4_7(t *testing.T) {
+	env := envtest.Start(t)
+	ctx := context.Background()
+	cfg := env.RESTConfig()
+	kubeconfigPath := writeKubeconfig(t, cfg)
+
+	const ns = "lenny-agents"
+	if err := stack.EnsureAgentNamespaceForTest(ctx, kubeconfigPath, ns); err != nil {
+		t.Fatalf("ensureAgentNamespace via kubeconfig: %v", err)
+	}
+	if err := stack.EnsureRuntimeClassForTest(ctx, kubeconfigPath, "runc", "runc"); err != nil {
+		t.Fatalf("ensureRuntimeClass via kubeconfig: %v", err)
+	}
+	const image = "ghcr.io/lennylabs/runtime-echo-embedded@sha256:" +
+		"5555555555555555555555555555555555555555555555555555555555555555"
+	if err := stack.ApplyEchoRuntimeCRForTest(ctx, kubeconfigPath, image); err != nil {
+		t.Fatalf("applyEchoRuntimeCR via kubeconfig: %v", err)
+	}
+	if err := stack.ApplyEchoPoolForTest(ctx, kubeconfigPath, ns); err != nil {
+		t.Fatalf("applyEchoPool via kubeconfig: %v", err)
+	}
+
+	// The full activation set must exist after the wrappers ran.
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("build core client: %v", err)
+	}
+	if _, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); err != nil {
+		t.Errorf("agent namespace not created: %v", err)
+	}
+	if _, err := cs.NodeV1().RuntimeClasses().Get(ctx, "runc", metav1.GetOptions{}); err != nil {
+		t.Errorf("runc RuntimeClass not created: %v", err)
+	}
+
+	cl := lennyClient(t, cfg)
+	var rt lennyv1alpha1.Runtime
+	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: stack.EchoRuntimeName}, &rt); err != nil {
+		t.Errorf("echo Runtime CR not applied: %v", err)
+	}
+	var pool lennyv1alpha1.SandboxWarmPool
+	if err := cl.Get(ctx, ctrlclient.ObjectKey{Namespace: ns, Name: stack.EchoPoolName}, &pool); err != nil {
+		t.Errorf("echo SandboxWarmPool not applied: %v", err)
+	}
+}
+
 // lennyClient builds a controller-runtime client carrying the lenny.dev scheme
 // for the envtest control plane.
 func lennyClient(t *testing.T, cfg *rest.Config) ctrlclient.Client {

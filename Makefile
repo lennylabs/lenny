@@ -202,6 +202,36 @@ sidecar-runtime-tarball: ## Build the runtime-echo sidecar-model image and docke
 	@echo "  docker save → $(SIDECAR_RUNTIME_TARBALL)"
 	@docker save ghcr.io/lennylabs/runtime-echo:dev -o $(SIDECAR_RUNTIME_TARBALL)
 
+# The §17.4 platform image bundle the Embedded Mode bring-up imports into the
+# embedded containerd so the in-cluster gateway, controller, lenny-ops, and the
+# controller-stamped lenny-adapter pods resolve their images locally under
+# IfNotPresent rather than ImagePullBackOff. The dev profile
+# (charts/lenny/presets/dev.yaml) pins these images at PLATFORM_BUNDLE_TAG,
+# while `make images` builds them at :dev, so this target retags the built
+# images to that tag and deduplicated-docker-saves them as one tarball the
+# resolvePlatformBundle path picks up through LENNY_PLATFORM_BUNDLE.
+PLATFORM_BUNDLE ?= $(CURDIR)/bin/lenny-platform-images.tar
+# The tag the dev profile pins the bundled platform images at. It MUST match the
+# image.tag values in charts/lenny/presets/dev.yaml (gateway, controller, ops)
+# and controller.adapterImage, so the imported images satisfy the IfNotPresent
+# references the embedded render carries.
+PLATFORM_BUNDLE_TAG ?= 0.1.0
+PLATFORM_BUNDLE_IMAGES := lenny-gateway lenny-controller lenny-ops lenny-adapter
+
+.PHONY: platform-bundle
+platform-bundle: images ## Build and docker-save the §17.4 platform image bundle (bin/lenny-platform-images.tar): the gateway, controller, lenny-ops, and lenny-adapter images retagged to the dev-profile tag, which the Embedded Mode bring-up imports into the embedded containerd (resolvePlatformBundle / LENNY_PLATFORM_BUNDLE).
+	@mkdir -p bin
+	@for b in $(PLATFORM_BUNDLE_IMAGES); do \
+		echo "  retag ghcr.io/lennylabs/$$b:dev → :$(PLATFORM_BUNDLE_TAG)"; \
+		docker tag ghcr.io/lennylabs/$$b:dev ghcr.io/lennylabs/$$b:$(PLATFORM_BUNDLE_TAG) || exit 1; \
+	done
+	@echo "  docker save → $(PLATFORM_BUNDLE)"
+	@docker save $(foreach b,$(PLATFORM_BUNDLE_IMAGES),ghcr.io/lennylabs/$(b):$(PLATFORM_BUNDLE_TAG)) -o $(PLATFORM_BUNDLE)
+
 .PHONY: test-smoke-embedded
-test-smoke-embedded: echo-embedded-tarball sidecar-runtime-tarball ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down, plus the custom-sidecar runtime-agnostic leg. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo and sidecar tarballs first.
-	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_SIDECAR_RUNTIME_TARBALL=$${LENNY_SIDECAR_RUNTIME_TARBALL:-$(SIDECAR_RUNTIME_TARBALL)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags smoke -count=1 -timeout 1500s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...
+test-smoke-embedded: echo-embedded-tarball sidecar-runtime-tarball platform-bundle ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down, plus the custom-sidecar runtime-agnostic leg. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo and sidecar runtime tarballs and the platform image bundle first.
+	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_SIDECAR_RUNTIME_TARBALL=$${LENNY_SIDECAR_RUNTIME_TARBALL:-$(SIDECAR_RUNTIME_TARBALL)} LENNY_PLATFORM_BUNDLE=$${LENNY_PLATFORM_BUNDLE:-$(PLATFORM_BUNDLE)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags smoke -count=1 -timeout 1500s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...
+
+.PHONY: test-smoke-embedded-security
+test-smoke-embedded-security: echo-embedded-tarball platform-bundle ## §17.4 tier-9 Docker-backed EMBEDDED_MODE_LOCAL_ONLY security legs: bring the Docker-backed in-cluster gateway up and probe the loopback forwarder and the NodePort off-host. Needs LENNY_EMBEDDED_SMOKE=1 on a Docker-backed host. Stages the echo tarball and the platform image bundle first.
+	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_PLATFORM_BUNDLE=$${LENNY_PLATFORM_BUNDLE:-$(PLATFORM_BUNDLE)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags security -count=1 -timeout 1500s -run TestEmbeddedGatewayDockerBackedSecurityLegs ./tests/tier9_security/...

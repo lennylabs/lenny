@@ -53,6 +53,15 @@ func ControlPlaneDeploymentNamesForTest() (gateway, controller, ops string) {
 // the envtest can assert the rolled Deployment carries it. It is test-only.
 func RestartedAtAnnotationForTest() string { return restartedAtAnnotation }
 
+// NewClusterClientForTest exposes the default newClusterClient so the external
+// tier-2 envtest exercises the §17.4 cluster-client happy path (load a real
+// kubeconfig and build a working clientset) that the unit test cannot reach
+// because it injects clusterClientFn. It is test-only. spec: §17.4 (the cluster
+// commands reach the in-cluster control plane through the embedded kubeconfig).
+func NewClusterClientForTest(kubeconfigPath string) (kubernetes.Interface, error) {
+	return newClusterClient(kubeconfigPath)
+}
+
 // DeploymentPodSelectorForTest exposes the per-component pod-log selector so the
 // envtest can list a component's pods against a real kube-apiserver by the same
 // selector lenny logs uses. The lenny-ops Deployment carries the §13.2 app:

@@ -654,6 +654,27 @@ func TestEnsureDevBearerKeyPersistsAndReuses(t *testing.T) {
 	}
 }
 
+// TestEnsureDevBearerKeyFailsClosedOnUncreatableDir asserts ensureDevBearerKey
+// surfaces an error rather than silently proceeding when the key file's parent
+// directory cannot be created (a non-directory occupies the path), so a
+// bring-up on a host where the state directory is unwritable fails loudly
+// instead of leaving the gateway with no dev key to trust.
+//
+// spec: §13 (fail closed on a credential-handling path), §17.4 (the dev key
+// the gateway trusts is persisted under the state directory).
+func TestEnsureDevBearerKeyFailsClosedOnUncreatableDir(t *testing.T) {
+	// A regular file occupies the path that ensureDevBearerKey must MkdirAll,
+	// so the directory create fails.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write blocker file: %v", err)
+	}
+	keyFile := filepath.Join(blocker, "oidc", "signing.key")
+	if err := ensureDevBearerKey(keyFile); err == nil {
+		t.Fatal("ensureDevBearerKey with an uncreatable parent dir = nil, want a fail-closed error")
+	}
+}
+
 // TestResolvePlatformBundleOverride covers the LENNY_PLATFORM_BUNDLE override:
 // an existing path is resolved, and a non-existent override resolves to empty
 // rather than erroring, because a missing bundle is non-fatal at bring-up.
@@ -671,6 +692,58 @@ func TestResolvePlatformBundleOverride(t *testing.T) {
 	if got := resolvePlatformBundle(); got != "" {
 		t.Errorf("resolvePlatformBundle with an absent override = %q, want empty", got)
 	}
+}
+
+// TestResolvePlatformBundleWorkingDirFallback covers the no-override fallback
+// branches: with LENNY_PLATFORM_BUNDLE unset, resolvePlatformBundle looks for
+// the default bundle name alongside the binary and then in the working
+// directory, and returns empty when neither holds it. The working-directory
+// leg is the developer-build path where `make images && lenny up` runs from the
+// repo root with the bundle staged there.
+func TestResolvePlatformBundleWorkingDirFallback(t *testing.T) {
+	t.Setenv(platformBundleEnvVar, "")
+
+	// A working directory with no bundle resolves to empty (the binary's own
+	// directory in this test environment does not hold the default bundle).
+	chdir(t, t.TempDir())
+	if got := resolvePlatformBundle(); got != "" {
+		t.Errorf("resolvePlatformBundle with no bundle present = %q, want empty", got)
+	}
+
+	// Staging the default bundle name in the working directory resolves to it.
+	// The resolver reads the bundle path from os.Getwd, which canonicalizes the
+	// macOS /var → /private/var symlink, so the expected path is derived from
+	// the same canonical working directory.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	want := filepath.Join(wd, defaultPlatformBundleName)
+	if err := os.WriteFile(want, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write working-dir bundle: %v", err)
+	}
+	if got := resolvePlatformBundle(); got != want {
+		t.Errorf("resolvePlatformBundle from the working directory = %q, want %q", got, want)
+	}
+}
+
+// chdir changes the working directory to dir for the duration of the test and
+// restores it afterward, so the working-directory fallback branch runs against
+// a controlled directory without leaking the change to other tests.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(prev); err != nil {
+			t.Errorf("restore wd: %v", err)
+		}
+	})
 }
 
 // TestCreateDevBearerSecretFromConfigMissingKeyFails asserts the dev-bearer

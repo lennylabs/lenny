@@ -265,6 +265,80 @@ func TestApplyManifestsFromKubeconfigEntryPoint_spec_17_4(t *testing.T) {
 	}
 }
 
+// TestApplyManifestsTwoPhaseFenceWithholdsDeployments_spec_17_4 covers the
+// §17.4 two-phase fence the bring-up runs through the kubeconfig-loading path:
+// the non-Deployment phase applies the Namespace, ServiceAccount, ConfigMap,
+// and Service while withholding the Deployment, and the Deployment phase then
+// applies only the Deployment. The fence holds the Deployment back until the
+// image import lands, so a scheduled pod resolves its image locally under
+// IfNotPresent rather than entering ImagePullBackOff.
+//
+// diagnosis: a failure means the bring-up cannot fence the Deployments behind
+// the image import through the kubeconfig path, so either the non-Deployment
+// pass applied a Deployment early (pods race the import) or the Deployment pass
+// never applied the gateway/controller, leaving Embedded Mode with no in-cluster
+// control plane.
+//
+// spec: §17.4 (apply the Deployments after the image import lands).
+func TestApplyManifestsTwoPhaseFenceWithholdsDeployments_spec_17_4(t *testing.T) {
+	env := envtest.Start(t)
+	ctx := context.Background()
+	cfg := env.RESTConfig()
+	kubeconfigPath := writeKubeconfig(t, cfg)
+
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("build core client: %v", err)
+	}
+	const ns = "lenny-embed"
+
+	// The non-Deployment phase applies everything but the Deployment.
+	if err := stack.ApplyNonDeploymentsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS()); err != nil {
+		t.Fatalf("non-deployment phase apply: %v", err)
+	}
+	if _, err := cs.CoreV1().Services(ns).Get(ctx, "lenny-gateway", metav1.GetOptions{}); err != nil {
+		t.Errorf("non-deployment phase did not apply the Service: %v", err)
+	}
+	if _, err := cs.AppsV1().Deployments(ns).Get(ctx, "lenny-gateway", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("non-deployment phase applied the Deployment (err=%v); the fence must withhold it until the import lands", err)
+	}
+
+	// The Deployment phase then applies only the Deployment.
+	if err := stack.ApplyDeploymentsFromKubeconfigForTest(ctx, kubeconfigPath, fixtureFS()); err != nil {
+		t.Fatalf("deployment phase apply: %v", err)
+	}
+	if _, err := cs.AppsV1().Deployments(ns).Get(ctx, "lenny-gateway", metav1.GetOptions{}); err != nil {
+		t.Errorf("deployment phase did not apply the Deployment: %v", err)
+	}
+}
+
+// TestNewClusterClientLoadsKubeconfig_spec_17_4 covers the §17.4 cluster-client
+// happy path that the unit test cannot reach (it injects clusterClientFn): the
+// default newClusterClient loads a real kubeconfig and builds a clientset that
+// reaches the API server. It writes a kubeconfig addressing the envtest control
+// plane, then asserts the built client lists namespaces.
+//
+// diagnosis: a failure means the cluster-backed status, logs, and restart
+// commands cannot build a working client from the embedded kubeconfig, so
+// lenny status/logs/restart cannot reach the in-cluster control plane.
+//
+// spec: §17.4 (the cluster commands reach the in-cluster control plane through
+// the embedded kubeconfig).
+func TestNewClusterClientLoadsKubeconfig_spec_17_4(t *testing.T) {
+	env := envtest.Start(t)
+	ctx := context.Background()
+	cfg := env.RESTConfig()
+	kubeconfigPath := writeKubeconfig(t, cfg)
+
+	client, err := stack.NewClusterClientForTest(kubeconfigPath)
+	if err != nil {
+		t.Fatalf("newClusterClient on a valid kubeconfig: %v", err)
+	}
+	if _, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{}); err != nil {
+		t.Errorf("client built by newClusterClient cannot reach the API server: %v", err)
+	}
+}
+
 // writeKubeconfig serializes a kubeconfig file addressing the envtest API
 // server from cfg's TLS client-certificate material, so the ApplyManifests
 // kubeconfig-loading entry point can be exercised against the test control

@@ -29,3 +29,18 @@ func ApplyManifestsFromConfigForTest(ctx context.Context, cfg *rest.Config, fsys
 func ApplyManifestsFromKubeconfigForTest(ctx context.Context, kubeconfigPath string, fsys fs.FS) error {
 	return applyManifestsPhaseFromKubeconfig(ctx, kubeconfigPath, fsys, applyPhaseAll)
 }
+
+// ApplyNonDeploymentsFromKubeconfigForTest and ApplyDeploymentsFromKubeconfigForTest
+// expose the two fenced bring-up phases through the kubeconfig-loading path
+// applyNonImageManifests and applyDeploymentManifests run, with an injected
+// manifest set so the envtest exercises the §17.4 two-phase apply (non-image
+// objects first, Deployments after the import lands) against a real
+// kube-apiserver without the full embedded render. They are test-only.
+// spec: §17.4 (apply the Deployments after the image import lands).
+func ApplyNonDeploymentsFromKubeconfigForTest(ctx context.Context, kubeconfigPath string, fsys fs.FS) error {
+	return applyManifestsPhaseFromKubeconfig(ctx, kubeconfigPath, fsys, applyPhaseNonDeployments)
+}
+
+func ApplyDeploymentsFromKubeconfigForTest(ctx context.Context, kubeconfigPath string, fsys fs.FS) error {
+	return applyManifestsPhaseFromKubeconfig(ctx, kubeconfigPath, fsys, applyPhaseDeployments)
+}
