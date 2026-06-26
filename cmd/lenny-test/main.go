@@ -69,6 +69,8 @@ func main() {
 		os.Exit(runValidateMaps(args[1:]))
 	case "validate-diagnosis":
 		os.Exit(runValidateDiagnosis(args[1:]))
+	case "long-funcs":
+		os.Exit(runLongFuncs(args[1:]))
 	case "list":
 		os.Exit(runList(args[1:]))
 	case "infra":
@@ -110,6 +112,8 @@ Usage:
                                            are in sync with the codebase.
   lenny-test validate-diagnosis [flags]    Verify every component-and-up test has a
                                            // diagnosis: comment.
+  lenny-test long-funcs [flags]            Report functions whose body exceeds a
+                                           line threshold (advisory; never fails).
   lenny-test list [flags]                  Print the tests that would run for a
                                            given selector, without executing them.
   lenny-test infra <up|down|status|prune>  Manage cached test infrastructure.
