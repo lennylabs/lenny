@@ -47,34 +47,68 @@ const scopePrefix = "tools"
 // the §15.1 CI contract asserts every declared x-lenny-scope's
 // domain is in this list. The set is exported so the OpenAPI
 // generator and unit tests can re-use it.
+//
+// Every domain in the §15.1 "Scope taxonomy" bullet is present here in
+// the canonical singular-underscore form so ParseScope and Set.Matches
+// accept every renamed admin scope. The two plural entries `runtimes`
+// and `pools` are the §10.2 / §25.1 playground_allowed_scope ceiling
+// domains (see pkg/gateway/playground/token.go); they sit outside the
+// §15.1 admin taxonomy bullet but inside the closed scope universe, so
+// the playground mint path's read-only ceiling parses.
+//
+// spec:§15.1: closed scope taxonomy; spec:§25.1: scope value syntax;
+// spec:§10.2: playground_allowed_scope ceiling.
 var Domains = map[string]struct{}{
-	"pool":            {},
-	"health":          {},
-	"diagnostics":     {},
-	"recommendations": {},
-	"runbooks":        {},
-	"events":          {},
-	"audit":           {},
-	"drift":           {},
-	"backup":          {},
-	"restore":         {},
-	"upgrade":         {},
-	"locks":           {},
-	"escalation":      {},
-	"logs":            {},
-	"me":              {},
-	"operations":      {},
-	"tenant":          {},
-	"credential_pool": {},
-	"credential":      {},
-	"runtime":         {},
-	"quota":           {},
-	"config":          {},
-	"circuit_breaker": {},
-	"sessions":        {},
-	"runtimes":        {},
-	"pools":           {},
-	"experiment":      {},
+	"pool":                 {},
+	"health":               {},
+	"diagnostics":          {},
+	"recommendations":      {},
+	"runbooks":             {},
+	"events":               {},
+	"audit":                {},
+	"drift":                {},
+	"backup":               {},
+	"restore":              {},
+	"upgrade":              {},
+	"locks":                {},
+	"escalation":           {},
+	"logs":                 {},
+	"me":                   {},
+	"operations":           {},
+	"tenant":               {},
+	"credential_pool":      {},
+	"credential":           {},
+	"runtime":              {},
+	"quota":                {},
+	"config":               {},
+	"circuit_breaker":      {},
+	"artifact_replication": {},
+	"billing_correction":   {},
+	"bootstrap":            {},
+	"ca_rotation":          {},
+	"connector":            {},
+	"credential_rekey":     {},
+	"delegation_policy":    {},
+	"deployment":           {},
+	"environment":          {},
+	"erasure_job":          {},
+	"experiment":           {},
+	"external_adapter":     {},
+	"impersonation":        {},
+	"interceptor":          {},
+	"issued_token":         {},
+	"legal_hold":           {},
+	"platform":             {},
+	"preflight":            {},
+	"rbac":                 {},
+	"schema":               {},
+	"sessions":             {},
+	"tree":                 {},
+	"user":                 {},
+	// §10.2 / §25.1 playground ceiling domains (outside the §15.1
+	// admin taxonomy bullet).
+	"runtimes": {},
+	"pools":    {},
 }
 
 // ErrInvalidScope is returned by ParseScope when a single value does
