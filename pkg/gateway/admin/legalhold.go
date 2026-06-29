@@ -108,10 +108,12 @@ type LegalHoldRequest struct {
 // GC for the named resource and blocks a GDPR erasure of the owner;
 // clearing it restores normal retention. The body names either a
 // session (`sessionId`) or a single artifact (`artifactId`). The
-// operation is platform-admin only: a legal hold is a spoliation
-// control and a tenant-admin must not set or clear one.
+// operation is platform-admin or tenant-admin: a tenant-admin may set or
+// clear a hold on its own tenant, but the body-tenant binding rejects a
+// cross-tenant write so a tenant-admin cannot touch another tenant's holds.
 //
-// spec: §12.8 line 735.
+// spec: §12.8 line 735; §15.1 (legal-hold requires platform-admin or
+// tenant-admin, line 865); §10.2 (tenant-admin own-tenant legal hold, line 280).
 func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 	var body LegalHoldRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -121,6 +123,15 @@ func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 	if body.TenantID == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "tenantId is required",
 			map[string]any{"field": "tenantId"})
+		return
+	}
+	// §10.2 line 280: a tenant-admin sets or clears holds only on its own
+	// tenant. The role gate (requireTenantResourceAdmin) admits any
+	// tenant-admin, so confine the write to the caller's tenant here,
+	// reusing the authorizeTenantPath confinement over the body tenant. A
+	// platform-admin may target any tenant. Fail closed on a mismatch.
+	if _, err := authorizeTenantPath(req, body.TenantID); err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
 	// Exactly one of sessionId / artifactId. The §12.8 endpoint holds a

@@ -1767,7 +1767,7 @@
         "summary": "Set or clear a §12.8 legal hold on a session or artifact",
         "x-lenny-mcp-tool": "admin.set_legal_hold",
         "x-lenny-scope": "tools:legal_hold:write",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "security",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {

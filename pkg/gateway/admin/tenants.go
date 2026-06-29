@@ -757,10 +757,11 @@ func (r *Router) Handler() http.Handler {
 		}
 	}
 	if r.sessions != nil {
-		// §12.8 legal hold set / clear (platform-admin only — a hold is a
-		// spoliation control).
+		// §15.1 line 865 / §10.2 line 280 — legal hold set / clear is
+		// platform-admin or tenant-admin; a tenant-admin is confined to its
+		// own tenant by the body-tenant binding in handleSetLegalHold.
 		mux.Handle("POST /v1/admin/legal-hold",
-			r.requireAdmin(http.HandlerFunc(r.handleSetLegalHold)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleSetLegalHold)))
 		// §15.1 line 865 active-hold listing. platform-admin or
 		// tenant-admin; a tenant-admin is auto-scoped to its own tenant.
 		mux.Handle("GET /v1/admin/legal-holds",

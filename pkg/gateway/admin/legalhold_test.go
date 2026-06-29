@@ -165,18 +165,54 @@ func TestSetLegalHoldNotFound(t *testing.T) {
 	}
 }
 
-func TestSetLegalHoldRequiresPlatformAdmin(t *testing.T) {
+// spec: §15.1 line 865 (legal-hold requires platform-admin or
+// tenant-admin); §10.2 line 280 (tenant-admin own-tenant legal hold).
+//
+// A tenant-admin sets a hold on its own tenant, is rejected (403
+// FORBIDDEN) on a foreign tenant, and a platform-admin sets across
+// tenants. This pins the ADM-2 widening: the POST gate admits a
+// tenant-admin while the body-tenant binding confines the write, so a
+// tenant-admin cannot touch another tenant's holds. Fails against the
+// pre-fix code, which gates the POST platform-admin-only and rejects
+// every tenant-admin call, and which has no body-tenant binding to
+// block a cross-tenant write.
+func TestSetLegalHoldTenantAdminConfinedToOwnTenant(t *testing.T) {
 	router, sessions, _ := newLegalHoldAdmin(t)
-	seedSession(t, sessions, sessionstore.Session{ID: "sess_3", TenantID: "acme", UserID: "carol@acme.com"})
+	seedSession(t, sessions, sessionstore.Session{ID: "sess_own", TenantID: "acme", UserID: "carol@acme.com"})
+	seedSession(t, sessions, sessionstore.Session{ID: "sess_foreign", TenantID: "globex", UserID: "dave@globex.com"})
 
+	// A tenant-admin of acme sets a hold on its own tenant.
 	rr := setLegalHold(t, router.Handler(),
-		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_3", Hold: true}, withTenantAdminPrincipal)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("tenant-admin set hold: status %d, want 403", rr.Code)
+		admin.LegalHoldRequest{TenantID: "acme", SessionID: "sess_own", Hold: true, Note: "incident-own"},
+		withTenantAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("tenant-admin own-tenant set hold: status %d, body %s", rr.Code, rr.Body.String())
 	}
-	got, _ := sessions.Get(context.Background(), "acme", "sess_3")
-	if got.LegalHold {
-		t.Error("a tenant-admin must not be able to set a legal hold")
+	if got, _ := sessions.Get(context.Background(), "acme", "sess_own"); !got.LegalHold {
+		t.Error("tenant-admin own-tenant set must apply the hold")
+	}
+
+	// The same acme tenant-admin is rejected on a foreign (globex) tenant,
+	// and the foreign session's hold stays unset.
+	rr = setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "globex", SessionID: "sess_foreign", Hold: true, Note: "incident-cross"},
+		withTenantAdminPrincipal)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("tenant-admin foreign-tenant set hold: status %d, want 403", rr.Code)
+	}
+	if got, _ := sessions.Get(context.Background(), "globex", "sess_foreign"); got.LegalHold {
+		t.Error("a tenant-admin must not set a hold on another tenant")
+	}
+
+	// A platform-admin sets a hold across tenants.
+	rr = setLegalHold(t, router.Handler(),
+		admin.LegalHoldRequest{TenantID: "globex", SessionID: "sess_foreign", Hold: true, Note: "incident-platform"},
+		withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("platform-admin cross-tenant set hold: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if got, _ := sessions.Get(context.Background(), "globex", "sess_foreign"); !got.LegalHold {
+		t.Error("platform-admin cross-tenant set must apply the hold")
 	}
 }
 
