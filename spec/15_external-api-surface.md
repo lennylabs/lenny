@@ -915,7 +915,7 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 
 **Scope taxonomy.** The `scope` claim values draw from a closed taxonomy so deployers configuring OIDC providers have a single reference to grant against. Format: `tools:<domain>:<action>`.
 
-- **Domains:** `pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`, `circuit_breaker`.
+- **Domains:** `pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`, `circuit_breaker`, `artifact_replication`, `billing_correction`, `bootstrap`, `ca_rotation`, `connector`, `credential_rekey`, `delegation_policy`, `deployment`, `environment`, `erasure_job`, `experiment`, `external_adapter`, `impersonation`, `interceptor`, `issued_token`, `legal_hold`, `platform`, `preflight`, `rbac`, `schema`, `sessions`, `tree`, `user`.
 - **Actions:** `read` (any `_list` / `_get` / `_summary` tool), `write` (any mutating tool), a specific tool action name (e.g., `scale`, `rotate`, `create`, `steal`), or `*` (all actions in the domain).
 - **Enforcement:** every admin-API endpoint declares its `x-lenny-scope` (see MCP extension below). Mismatch → `403 SCOPE_FORBIDDEN` with `requiredScope` and `activeScope` in the response (§25.12).
 
