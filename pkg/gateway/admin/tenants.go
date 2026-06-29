@@ -1122,7 +1122,13 @@ func (r *Router) Handler() http.Handler {
 	// what operations it is permitted to invoke.
 	mux.HandleFunc("GET /v1/admin/me", r.handleMe)
 	mux.HandleFunc("GET /v1/admin/me/authorized-tools", r.handleAuthorizedTools)
-	return mux
+	// §25.1 enforcement point 1: the per-route scope gate runs before
+	// the mux dispatches any handler, so a scope-narrowed token is
+	// rejected with 403 SCOPE_FORBIDDEN before it reaches a destructive
+	// admin handler at its full role ceiling. An absent scope claim, or
+	// a route the document declares no scope for, defers to the role
+	// gate on the matched handler. spec: §15.1 line 914,920; §25.1 line 94.
+	return r.enforceScopes(mux)
 }
 
 // requireAuditReader gates the §25.9 audit-query endpoints on

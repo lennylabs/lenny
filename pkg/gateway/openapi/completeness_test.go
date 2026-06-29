@@ -309,6 +309,13 @@ func registeredRouteTemplates(t *testing.T) []string {
 // rather than a silent miss.
 func walkServeMux(t *testing.T, h http.Handler) []string {
 	t.Helper()
+	// The admin Router wraps its serve mux in the §25.1 scope-enforcement
+	// gate, which embeds and exposes the underlying mux through
+	// admin.MuxUnwrapper so route introspection reaches the registered
+	// patterns past the gate. Unwrap before the type-assert.
+	if u, ok := h.(admin.MuxUnwrapper); ok {
+		h = u.Mux()
+	}
 	mux, ok := h.(*http.ServeMux)
 	if !ok {
 		t.Fatalf("handler is %T, not *http.ServeMux", h)

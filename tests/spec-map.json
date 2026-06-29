@@ -2847,10 +2847,17 @@
     "25.1": {
       "title": "Design Philosophy and Agent Model",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
-      "packages": [],
+      "tests": [
+        "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
+        "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
+        "pkg/gateway/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
+        "pkg/gateway/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
+      ],
+      "packages": [
+        "pkg/gateway/admin"
+      ],
       "blocked_until_phase": "14",
-      "notes": "§25.1 Design Philosophy and Agent Model. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.1 Design Philosophy and Agent Model. The §25.1 enforcement-point-1 admin-API scope gate (proposal 0019 ADM-1) is pinned by the scope-enforcement tests; see TESTING.md §25 for the rest of the operability test plan."
     },
     "25.2": {
       "title": "Architecture Overview",
