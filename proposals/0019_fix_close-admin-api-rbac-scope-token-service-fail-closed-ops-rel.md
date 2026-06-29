@@ -1,6 +1,6 @@
 # Proposal: Close admin-API RBAC/scope, token-service fail-closed, ops-reliability, and CLI behavioral gaps (admin/CLI/ops surface review, 12 findings)
 
-- **Status:** Verified and approved (2026-06-25).
+- **Status:** Approved (2026-06-25).
 - **Date:** 2026-06-25.
 - **Scope:** Reconciles the surfaces outside [proposal 0018](0018_fix_reconcile-the-gateway-external-rest-api-contract-and-close-l.md)'s gateway-REST scope against a converged adversarial review (`tmp/admin-cli-ops-api-review.md`): the gateway admin REST API (`pkg/gateway/admin`), the token service (`pkg/tokenservice`), the `lenny-ops` operability service (`pkg/ops`, `cmd/lenny-ops`), and `lenny-ctl` (`pkg/ctlcli`, `pkg/embedded/localcli`). Twelve findings survived two adversarial refutation rounds. Each is a code-vs-spec divergence against a correct spec, so the fixes land in code, plus one new migration (ADM-3) and one §16.5 alert-rule addition (F-SH-1). The findings verified UPHELD or REVISED in `tmp/admin-cli-ops-api-review.md` are the scope source of truth. Findings refuted or judged by-design after both rounds are recorded in Non-goals.
 
