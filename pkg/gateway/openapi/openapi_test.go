@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 )
 
@@ -144,27 +145,29 @@ func TestAdminEndpointsCarryMCPExtensions_spec_15_1_933(t *testing.T) {
 
 // TestAdminScopesFollowDocumentedSyntax_spec_15_1_933 asserts the
 // §15.1 line 933 "additional check" that every `x-lenny-scope` value
-// conforms to a documented syntax. The spec mandates
-// `tools:<domain>:<action>`; the in-tree openapi.json uses a
-// transitional `admin.<domain>.<verb>` form for some entries — both
-// are accepted by the test so the CI guard catches malformed scopes
-// (typos, missing separators) without forcing the entire OpenAPI
-// document into the canonical form in a single commit.
-//
-// Once every scope is migrated to `tools:<domain>:<action>`, drop the
-// legacy regex branch.
-// spec: §15.1 line 933.
+// conforms to the canonical `tools:<domain>:<action>` syntax and names
+// a domain in the closed §15.1 line 919 taxonomy. The served document
+// carries the canonical form for every admin endpoint; the legacy
+// `admin.<domain>.<verb>` form is rejected outright. Membership is
+// asserted through scopes.ParseScope, which both validates the
+// `tools:<domain>:<action>` syntax and rejects any domain absent from
+// the closed scopes.Domains taxonomy, so the test doubles as the
+// verification that the taxonomy enumerates every served domain.
+// spec: §15.1 line 919 (closed scope taxonomy), line 933 (CI syntax contract).
 func TestAdminScopesFollowDocumentedSyntax_spec_15_1_933(t *testing.T) {
 	doc := openapi.Document()
 	var parsed map[string]any
 	_ = json.Unmarshal(doc, &parsed)
 	paths, _ := parsed["paths"].(map[string]any)
 
-	// `tools:<domain>:<action>` (spec) or `admin.<domain>.<verb>`
-	// (legacy). Allowed characters are lowercase letters, digits, dot,
-	// dash, underscore, colon, and `*` (per §15.1 line 922 wildcard).
+	// The canonical syntax is `tools:<domain>:<action>` with lowercase
+	// letters, digits, and underscore in the domain and action, and `*`
+	// permitted in the action position (per §15.1 line 922 wildcard).
+	// scopes.ParseScope enforces the same grammar plus taxonomy
+	// membership; the regex pins the exact admitted character set so a
+	// malformed value reports a precise syntax error before the
+	// taxonomy check.
 	specScope := regexp.MustCompile(`^tools:[a-z0-9_]+:[a-z0-9_*]+$`)
-	legacyScope := regexp.MustCompile(`^admin\.[a-z0-9_-]+\.[a-z0-9_-]+$`)
 
 	for path, op := range paths {
 		if !strings.HasPrefix(path, "/v1/admin/") {
@@ -184,9 +187,19 @@ func TestAdminScopesFollowDocumentedSyntax_spec_15_1_933(t *testing.T) {
 					method, path, raw)
 				continue
 			}
-			if !specScope.MatchString(scope) && !legacyScope.MatchString(scope) {
-				t.Errorf("%s %s x-lenny-scope %q does not match `tools:<domain>:<action>` or `admin.<domain>.<verb>`",
+			if !specScope.MatchString(scope) {
+				t.Errorf("%s %s x-lenny-scope %q does not match canonical `tools:<domain>:<action>`",
 					method, path, scope)
+				continue
+			}
+			// The wildcard form `tools:*` is not a route-level scope; a
+			// served admin endpoint declares a concrete domain and
+			// action. ParseScope rejects every domain absent from the
+			// closed taxonomy, so a served scope that parses proves its
+			// domain is enumerated.
+			if _, err := scopes.ParseScope(scope); err != nil {
+				t.Errorf("%s %s x-lenny-scope %q is not in the closed §15.1 taxonomy: %v",
+					method, path, scope, err)
 			}
 		}
 	}
