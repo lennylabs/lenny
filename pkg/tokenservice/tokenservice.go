@@ -466,7 +466,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			// emit a `token.exchanged` audit row with the
 			// policy_result reason so the SIEM has cross-tenant
 			// probe evidence.
-			s.emitExchangeAudit(r.Context(), subjectClaims.TenantID, exchangeAuditPayload{
+			if auditErr := s.recordExchangeAudit(r.Context(), subjectClaims.TenantID, exchangeAuditPayload{
 				CallerSub:    callerClaims.Subject,
 				SubjectSub:   subjectClaims.Subject,
 				PolicyResult: "rejected:" + ee.Reason,
@@ -474,7 +474,18 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				Audience:     splitSpace(req.Audience),
 				Scope:        splitScope(req.Scope),
 				Now:          now,
-			})
+			}); auditErr != nil {
+				// §13.3 line 589: fail closed when the rejection-audit
+				// write fails. Return 500 token_exchange_failed with the
+				// originally intended rejection reason in the error
+				// body's detail so operators can reconstruct the attempt,
+				// rather than silently swallowing the rejection by
+				// returning the 4xx the client could retry.
+				writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
+					"§13.3 rejection-audit write failed; intended rejection: "+ee.Reason)
+				finish("token_exchange_failed")
+				return
+			}
 			writeOAuthError(w, mapStatus(ee.Code), ee.Code, ee.Reason)
 			finish(ee.Code)
 			return
@@ -617,10 +628,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			writeIssueStoreError(w, finish, err)
 			return
 		}
-		s.emitExchangeAudit(r.Context(), issued.TenantID, auditPayload)
+		// The accepted-exchange write-before-issue fail-closed obligation
+		// (§13.3 line 589) is met by the production Postgres path above,
+		// which routes through auditStore.RecordWithAudit/writeIssueStoreError.
+		// This in-memory dev path is non-production, so the audit write is
+		// best-effort and the returned error is discarded.
+		_ = s.recordExchangeAudit(r.Context(), issued.TenantID, auditPayload)
 	default:
-		// Test-only path with no durable issued-token store.
-		s.emitExchangeAudit(r.Context(), issued.TenantID, auditPayload)
+		// Test-only path with no durable issued-token store; the audit
+		// write is best-effort here too (non-production), so the error is
+		// discarded.
+		_ = s.recordExchangeAudit(r.Context(), issued.TenantID, auditPayload)
 	}
 
 	writeJSON(w, http.StatusOK, Response{
@@ -657,16 +675,19 @@ func (p exchangeAuditPayload) JSON() json.RawMessage {
 	return json.RawMessage(b)
 }
 
-// emitExchangeAudit writes a token.exchanged audit row through the
-// configured Auditor (the in-memory dev path). When no Auditor is
-// configured the call is a no-op; the durable Postgres write-before-
-// issue path covers the success case via IssuedTokenAuditStore.
-// spec: §13.3 line 587.
-func (s *Server) emitExchangeAudit(ctx context.Context, tenantID string, payload exchangeAuditPayload) {
+// recordExchangeAudit writes a token.exchanged audit row through the
+// configured Auditor (the in-memory dev path) and returns the
+// auditor.Append error so callers can fail closed on a rejection-audit
+// write failure (§13.3 line 589). When no Auditor is configured the call
+// is a no-op returning nil; the durable Postgres write-before-issue path
+// covers the accepted-exchange success case via IssuedTokenAuditStore.
+// spec: §13.3 line 587, line 589.
+func (s *Server) recordExchangeAudit(ctx context.Context, tenantID string, payload exchangeAuditPayload) error {
 	if s.auditor == nil || tenantID == "" {
-		return
+		return nil
 	}
-	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenExchanged), payload.JSON(), payload.Now)
+	_, err := s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenExchanged), payload.JSON(), payload.Now)
+	return err
 }
 
 // rateLimitAuditPayload is the §13.3 token.exchange_rate_limited audit
@@ -956,7 +977,7 @@ func writeOAuthError(w http.ResponseWriter, status int, code, description string
 // rate_limited class are excluded. spec: §16.1. F-13.3.4.
 func is5xxErrorClass(c string) bool {
 	switch c {
-	case "server_error", "token_store_unavailable",
+	case "server_error", "token_exchange_failed", "token_store_unavailable",
 		"token_validation_unavailable", "kms_signing_unavailable":
 		return true
 	}
@@ -968,8 +989,10 @@ func is5xxErrorClass(c string) bool {
 // is unavailability: the caller receives `503 token_store_unavailable`
 // and the §16.5 TokenStoreUnavailable alert fires; the platform does not
 // fall back to issuing tokens without audit coverage. Any other failure
-// (a constraint violation, a logic bug) stays `500 server_error`.
-// spec: §13.3 line 591. F-13.3.4.
+// (a constraint violation, a logic bug) is a `500 token_exchange_failed`:
+// the write-before-issue invariant could not be satisfied so no token is
+// issued, matching the §13.3 line 589 code for a failed exchange write.
+// spec: §13.3 line 589, line 591. F-13.3.4.
 func writeIssueStoreError(w http.ResponseWriter, finish func(string), err error) {
 	if pgtenant.IsUnavailable(err) {
 		w.Header().Set("Retry-After", "5")
@@ -978,9 +1001,9 @@ func writeIssueStoreError(w http.ResponseWriter, finish func(string), err error)
 		finish("token_store_unavailable")
 		return
 	}
-	writeOAuthError(w, http.StatusInternalServerError, "server_error",
+	writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
 		"§13.3 write-before-issue failed: "+err.Error())
-	finish("server_error")
+	finish("token_exchange_failed")
 }
 
 // writeKMSUnavailable writes the §10.2 line 225 / §15.1 line 1102
