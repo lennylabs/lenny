@@ -123,6 +123,35 @@ func TestPgStoreRoundTrip_spec_25_10(t *testing.T) {
 		t.Errorf("target upgradeId = %q, want upgrade-42", gotTarget.UpgradeID)
 	}
 
+	// §25.10 line 3789: PromoteTargetToLive atomically swaps the target row
+	// into the live row and removes the target row. After the promote the
+	// live row carries the target's desired state and upgrade id, and the
+	// target row is gone, so GET /v1/admin/drift?against=target returns
+	// DRIFT_NO_TARGET_SNAPSHOT. F-DR-3.
+	if err := s.PromoteTargetToLive(ctx, "upgrade-42"); err != nil {
+		t.Fatalf("PromoteTargetToLive: %v", err)
+	}
+	promotedLive, ok, err := s.Get(ctx, driftservice.SnapshotLive)
+	if err != nil || !ok {
+		t.Fatalf("Get live after promote: ok=%v err=%v", ok, err)
+	}
+	if promotedLive.UpgradeID != "upgrade-42" {
+		t.Errorf("post-promote live upgradeId = %q, want upgrade-42 (target promoted in)", promotedLive.UpgradeID)
+	}
+	if _, ok, _ := s.Get(ctx, driftservice.SnapshotTarget); ok {
+		t.Error("target row still present after promote; want removed")
+	}
+
+	// A second promote with no target row is a no-op (the live row is left
+	// untouched), the defensive double-promote the swap must tolerate.
+	if err := s.PromoteTargetToLive(ctx, "upgrade-42"); err != nil {
+		t.Fatalf("second PromoteTargetToLive (no target): %v", err)
+	}
+	stillLive, ok, _ := s.Get(ctx, driftservice.SnapshotLive)
+	if !ok || stillLive.UpgradeID != "upgrade-42" {
+		t.Errorf("no-op promote mutated the live row: %+v", stillLive)
+	}
+
 	// The CHECK constraint rejects a third desired-state row (F-25.10.13).
 	bad := live
 	bad.ID = "bogus"

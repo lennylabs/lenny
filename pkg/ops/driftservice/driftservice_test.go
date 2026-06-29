@@ -423,6 +423,10 @@ func (failingStore) Delete(context.Context, string) error {
 	return errors.New("postgres down")
 }
 
+func (failingStore) PromoteTargetToLive(context.Context, string) error {
+	return errors.New("postgres down")
+}
+
 // seedTarget writes a target snapshot with the given upgrade id.
 func seedTarget(t *testing.T, store *driftservice.MemSnapshotStore, upgradeID string) {
 	t.Helper()
@@ -497,4 +501,105 @@ type countingRunningState struct {
 func (c *countingRunningState) RunningState(context.Context, string) (map[string]any, error) {
 	c.calls++
 	return c.state, nil
+}
+
+// spec: 25.10 line 3788 (write bootstrap_seed_snapshot_target early in
+// OpsRoll), 25.10 line 3789 (promote target -> live at Verification
+// completion)
+//
+// TestWriteTargetSnapshotMakesAgainstTargetResolve_spec_25_10_3788 pins
+// the §25.10 line 3788 write: before the write, against=target returns
+// DRIFT_NO_TARGET_SNAPSHOT; after the write, the target report resolves
+// against the written desired state. The pre-write assertion is the
+// regression: F-DR-3 is the unwired writer, so a pre-fix build that never
+// writes the target row keeps GET /v1/admin/drift?against=target at 404.
+func TestWriteTargetSnapshotMakesAgainstTargetResolve_spec_25_10_3788(t *testing.T) {
+	ctx := context.Background()
+	store := driftservice.NewMemSnapshotStore()
+	running := map[string]any{"pools": map[string]any{"p": map[string]any{"minWarm": float64(5)}}}
+	svc := driftservice.NewService(store, fixedRunning{state: running})
+
+	// Pre-write: against=target has no target row.
+	if _, err := svc.Report(ctx, driftservice.ReportParams{Scope: "pools", Against: driftservice.SnapshotTarget}); driftservice.CodeOf(err) != driftservice.ErrCodeNoTargetSnapshot {
+		t.Fatalf("pre-write against=target code = %q, want DRIFT_NO_TARGET_SNAPSHOT", driftservice.CodeOf(err))
+	}
+
+	desired := map[string]any{"pools": map[string]any{"p": map[string]any{"minWarm": float64(5)}}}
+	if err := svc.WriteTargetSnapshot(ctx, "upgrade-1", "lenny-ops", desired); err != nil {
+		t.Fatalf("WriteTargetSnapshot: %v", err)
+	}
+
+	// Post-write: against=target resolves and the row carries the upgrade id
+	// and helm-values provenance.
+	rep, err := svc.Report(ctx, driftservice.ReportParams{Scope: "pools", Against: driftservice.SnapshotTarget})
+	if err != nil {
+		t.Fatalf("post-write against=target Report: %v", err)
+	}
+	if rep == nil {
+		t.Fatal("post-write against=target report is nil")
+	}
+	snap, ok, err := store.Get(ctx, driftservice.SnapshotTarget)
+	if err != nil || !ok {
+		t.Fatalf("target row Get = (%v, %v), want present", ok, err)
+	}
+	if snap.UpgradeID != "upgrade-1" || snap.Source != driftservice.SourceHelmValues {
+		t.Errorf("target row upgradeID=%q source=%q, want upgrade-1/helm-values", snap.UpgradeID, snap.Source)
+	}
+}
+
+// TestWriteTargetSnapshotRejectsNilDesired_spec_25_10_3788 asserts the
+// writer fails closed when handed no rendered values rather than writing
+// an empty target row that would mis-report drift.
+func TestWriteTargetSnapshotRejectsNilDesired_spec_25_10_3788(t *testing.T) {
+	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(), fixedRunning{})
+	if err := svc.WriteTargetSnapshot(context.Background(), "u", "by", nil); driftservice.CodeOf(err) != driftservice.ErrCodeInvalid {
+		t.Fatalf("WriteTargetSnapshot(nil) code = %q, want DRIFT_INVALID", driftservice.CodeOf(err))
+	}
+}
+
+// TestPromoteTargetToLiveSwapsRows_spec_25_10_3789 pins the §25.10 line
+// 3789 promote: the target row becomes the live row and the target row is
+// removed, so against=target then reports DRIFT_NO_TARGET_SNAPSHOT and the
+// live row carries the promoted desired state. F-DR-3.
+func TestPromoteTargetToLiveSwapsRows_spec_25_10_3789(t *testing.T) {
+	ctx := context.Background()
+	store := driftservice.NewMemSnapshotStore()
+	seedLive(t, store, map[string]any{"old": "state"}, time.Unix(1, 0).UTC())
+	target := map[string]any{"new": "state"}
+	svc := driftservice.NewService(store, fixedRunning{})
+	if err := svc.WriteTargetSnapshot(ctx, "upgrade-2", "lenny-ops", target); err != nil {
+		t.Fatalf("WriteTargetSnapshot: %v", err)
+	}
+
+	if err := svc.PromoteTargetToLive(ctx, "upgrade-2"); err != nil {
+		t.Fatalf("PromoteTargetToLive: %v", err)
+	}
+
+	live, ok, err := store.Get(ctx, driftservice.SnapshotLive)
+	if err != nil || !ok {
+		t.Fatalf("live Get = (%v, %v), want present", ok, err)
+	}
+	if v, _ := live.DesiredState["new"].(string); v != "state" {
+		t.Errorf("live desired state = %v, want promoted target {new:state}", live.DesiredState)
+	}
+	if _, ok, _ := store.Get(ctx, driftservice.SnapshotTarget); ok {
+		t.Error("target row still present after promote; want removed")
+	}
+}
+
+// TestPromoteTargetToLiveNoTargetIsNoOp_spec_25_10_3789 asserts a promote
+// with no target row leaves the live row untouched (a defensive call is
+// harmless), the cold-start posture the swap must tolerate.
+func TestPromoteTargetToLiveNoTargetIsNoOp_spec_25_10_3789(t *testing.T) {
+	ctx := context.Background()
+	store := driftservice.NewMemSnapshotStore()
+	seedLive(t, store, map[string]any{"keep": "me"}, time.Unix(1, 0).UTC())
+	svc := driftservice.NewService(store, fixedRunning{})
+	if err := svc.PromoteTargetToLive(ctx, "upgrade-3"); err != nil {
+		t.Fatalf("PromoteTargetToLive (no target): %v", err)
+	}
+	live, ok, _ := store.Get(ctx, driftservice.SnapshotLive)
+	if !ok || live.DesiredState["keep"] != "me" {
+		t.Errorf("live row mutated by no-op promote: %v", live.DesiredState)
+	}
 }

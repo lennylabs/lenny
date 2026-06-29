@@ -103,5 +103,43 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// PromoteTargetToLive atomically promotes the target row into the live
+// row at §25.10 Verification-phase completion (spec line 3789). The whole
+// swap runs in one transaction so a concurrent GET reads either the old
+// live row or the new one, never a torn state: the live row's desired
+// state, source, upgrade id, and provenance are replaced from the target
+// row, then the target row is deleted. A missing target row leaves the
+// live row untouched (the UPDATE matches zero rows) and is not an error,
+// so a defensive double-promote is harmless.
+//
+// spec: §25.10 line 3789 (target → live promotion at Verification
+// completion).
+func (s *Store) PromoteTargetToLive(ctx context.Context, _ string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// UPSERT the live row from the target row in a single statement so the
+	// live row is created on a cold start (no prior live row) and replaced
+	// otherwise. The ON CONFLICT keeps the swap a one-statement upsert.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO bootstrap_seed_snapshot (id, desired_state, source, upgrade_id, written_at, written_by)
+		 SELECT 'live', desired_state, source, upgrade_id, written_at, written_by
+		 FROM bootstrap_seed_snapshot WHERE id='target'
+		 ON CONFLICT (id) DO UPDATE SET
+		   desired_state = EXCLUDED.desired_state,
+		   source        = EXCLUDED.source,
+		   upgrade_id    = EXCLUDED.upgrade_id,
+		   written_at    = EXCLUDED.written_at,
+		   written_by    = EXCLUDED.written_by`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM bootstrap_seed_snapshot WHERE id='target'`); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // Compile-time guard.
 var _ driftservice.SnapshotStore = (*Store)(nil)

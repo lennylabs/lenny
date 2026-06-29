@@ -1741,7 +1741,7 @@ func buildUpgradeService(store upgradeservice.Store, drift *driftservice.Service
 		Baselines: opsBaselineRecorder{store: baselines},
 	}
 	if drift != nil {
-		opts.DriftCleaner = drift
+		opts.DriftManager = drift
 	}
 	return upgradeservice.New(opts)
 }

@@ -263,6 +263,21 @@ func main() {
 			"line 3822 running-state cache that backs GET /v1/admin/drift. Default 60; "+
 			"0 disables caching (every report reads fresh). "+
 			"Override via LENNY_DRIFT_RUNNING_STATE_CACHE_TTL_SECONDS.")
+	// spec: §25.10 line 3788. ops.drift.helmValuesConfigMap names the chart-
+	// rendered ConfigMap the new lenny-ops binary reads its own rendered
+	// Helm values from to write bootstrap_seed_snapshot_target early in
+	// OpsRoll. An empty name leaves the source unconfigured, so the new pod
+	// still self-advances OpsRoll→CRDUpdate but writes no target snapshot
+	// and GET /v1/admin/drift?against=target reports DRIFT_NO_TARGET_SNAPSHOT.
+	driftHelmValuesConfigMap := flag.String("drift-helm-values-configmap",
+		os.Getenv("LENNY_DRIFT_HELM_VALUES_CONFIGMAP"),
+		"§25.10 ops.drift.helmValuesConfigMap — name of the chart-rendered ConfigMap holding "+
+			"the rendered Helm values the OpsRoll startup hook writes into bootstrap_seed_snapshot_target. "+
+			"Empty leaves the target-snapshot write unconfigured. Override via LENNY_DRIFT_HELM_VALUES_CONFIGMAP.")
+	driftHelmValuesKey := flag.String("drift-helm-values-key",
+		envOr("LENNY_DRIFT_HELM_VALUES_KEY", "values.yaml"),
+		"§25.10 ops.drift.helmValuesKey — ConfigMap data key holding the rendered Helm values "+
+			"document (YAML or JSON). Default values.yaml. Override via LENNY_DRIFT_HELM_VALUES_KEY.")
 	// spec: §25.4 line 2396. ops.escalation.requireDurable rejects an
 	// escalation create with ESCALATION_NO_DURABLE_STORE when neither
 	// Postgres nor Redis accepts it, instead of buffering in memory — the
@@ -911,6 +926,26 @@ func main() {
 	// preflighter so both observe the same in-flight upgrade.
 	upgradeStore := buildUpgradeStore(pgPool)
 	upgradeSvc := buildUpgradeService(upgradeStore, driftSvc, opsEmitter, baselineStore, auditRecorder)
+	// §25.8 lines 3508,3511 + §25.10 line 3788: the new-pod OpsRoll startup
+	// path. When this binary started as the new lenny-ops pod during an
+	// upgrade's OpsRoll phase (current_phase==OpsRoll and the persisted
+	// target_version matches this binary's compiled-in version), it stamps
+	// the ops_healthy heartbeat, writes bootstrap_seed_snapshot_target from
+	// the rendered Helm values, then self-advances OpsRoll→CRDUpdate. The
+	// hook is version-gated and a no-op outside that condition, so an
+	// ordinary (non-upgrade) start runs it harmlessly. A hook failure is
+	// logged and does not abort startup: the operator's next proceed and the
+	// OpsRoll watchdog still govern the upgrade.
+	runOpsRollStartupHook(ctx, upgradeStartupHook{
+		Upgrades:   upgradeSvc,
+		Snapshot:   driftSvc,
+		ConfigMaps: configMapsGetter(clientset),
+		Namespace:  envOr("POD_NAMESPACE", *leaderElectNS),
+		Version:    buildVersion,
+		ValuesCM:   *driftHelmValuesConfigMap,
+		ValuesKey:  *driftHelmValuesKey,
+		WrittenBy:  "lenny-ops",
+	})
 	upgradeChecker := buildUpgradeChecker(*releaseChannelManifestPath, buildVersion, pgPool, opsEmitter, auditRecorder)
 	// §25.8 air-gap item 5 (line 3425): the CRD manifests and migration SQL
 	// the upgrade's CRDUpdate/SchemaMigration phases need are compiled into

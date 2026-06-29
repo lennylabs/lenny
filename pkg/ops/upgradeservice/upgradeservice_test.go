@@ -5,6 +5,7 @@ package upgradeservice_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -199,15 +200,24 @@ func TestRollbackHonorsPointOfNoReturn(t *testing.T) {
 	}
 }
 
-// recordingCleaner records DeleteTargetSnapshot calls.
+// recordingCleaner records DeleteTargetSnapshot and PromoteTargetToLive
+// calls so the §25.10 target-snapshot lifecycle (delete on rollback,
+// promote at Verification completion) can be asserted.
 type recordingCleaner struct {
-	calls   []string
-	deleted bool
+	calls        []string
+	deleted      bool
+	promoteCalls []string
+	promoteErr   error
 }
 
 func (c *recordingCleaner) DeleteTargetSnapshot(_ context.Context, upgradeID string) (bool, error) {
 	c.calls = append(c.calls, upgradeID)
 	return c.deleted, nil
+}
+
+func (c *recordingCleaner) PromoteTargetToLive(_ context.Context, upgradeID string) error {
+	c.promoteCalls = append(c.promoteCalls, upgradeID)
+	return c.promoteErr
 }
 
 // TestRollbackDeletesTargetSnapshot_spec_25_8 covers §25.8 line 3551: a
@@ -218,7 +228,7 @@ func TestRollbackDeletesTargetSnapshot_spec_25_8(t *testing.T) {
 	cleaner := &recordingCleaner{deleted: true}
 	svc := upgradeservice.New(upgradeservice.Options{
 		Store:        upgradeservice.NewMemoryStore(),
-		DriftCleaner: cleaner,
+		DriftManager: cleaner,
 		Now:          func() time.Time { return time.Unix(1700000000, 0).UTC() },
 		NewID:        func() string { return "upgrade-xyz" },
 	})
@@ -240,7 +250,7 @@ func TestRollbackDuringPreflightStillCallsCleaner_spec_25_8(t *testing.T) {
 	cleaner := &recordingCleaner{deleted: false}
 	svc := upgradeservice.New(upgradeservice.Options{
 		Store:        upgradeservice.NewMemoryStore(),
-		DriftCleaner: cleaner,
+		DriftManager: cleaner,
 		NewID:        func() string { return "upgrade-pre" },
 	})
 	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
@@ -259,7 +269,7 @@ func TestRollbackFailureSkipsCleaner_spec_25_8(t *testing.T) {
 	cleaner := &recordingCleaner{}
 	svc := upgradeservice.New(upgradeservice.Options{
 		Store:        upgradeservice.NewMemoryStore(),
-		DriftCleaner: cleaner,
+		DriftManager: cleaner,
 		NewID:        func() string { return "upgrade-late" },
 	})
 	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
@@ -400,5 +410,128 @@ func TestUpgradeProgressedCarriesPlatformScope(t *testing.T) {
 	_ = json.Unmarshal(page.Events[0].Event.Data, &data)
 	if data.Pool != upgradeservice.PlatformScope || data.ImageDigest != "sha256:d" {
 		t.Errorf("event data = %+v", data)
+	}
+}
+
+// spec: 25.8 line 3508 (new pod self-advances OpsRoll -> CRDUpdate)
+//
+// TestAdvanceOpsRollSelfAdvancesFromOpsRoll_spec_25_8_3508 pins the
+// new-pod self-advance: AdvanceOpsRoll moves an upgrade at OpsRoll to
+// CRDUpdate, pauses there, and emits the platform.upgrade_ops_rolled
+// audit event. This is the production-reachable transition the §25.8
+// startup hook drives; pre-fix there was no self-advance method at all.
+func TestAdvanceOpsRollSelfAdvancesFromOpsRoll_spec_25_8_3508(t *testing.T) {
+	svc, audits, _ := newService(t)
+	ctx := context.Background()
+	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
+	_, _ = svc.Proceed(ctx) // Preflight -> OpsRoll
+	st, err := svc.AdvanceOpsRoll(ctx)
+	if err != nil {
+		t.Fatalf("AdvanceOpsRoll: %v", err)
+	}
+	if st.Phase != upgrade.CRDUpdate {
+		t.Fatalf("phase = %s, want CRDUpdate", st.Phase)
+	}
+	if !st.Paused {
+		t.Error("CRDUpdate should pause awaiting the operator proceed")
+	}
+	last := (*audits)[len(*audits)-1]
+	if last.Type != string(audit.EventPlatformUpgradeOpsRolled) || last.Actor != "new-ops-pod" {
+		t.Errorf("last audit = %+v, want platform.upgrade_ops_rolled by new-ops-pod", last)
+	}
+}
+
+// TestAdvanceOpsRollRejectsNonOpsRoll_spec_25_8_3508 asserts AdvanceOpsRoll
+// advances only from OpsRoll: at Preflight it returns ErrNotOpsRoll and
+// does not transition, so a startup hook firing outside an in-flight
+// OpsRoll cannot drive an unrelated phase.
+func TestAdvanceOpsRollRejectsNonOpsRoll_spec_25_8_3508(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"}) // Preflight
+	if _, err := svc.AdvanceOpsRoll(ctx); err != upgradeservice.ErrNotOpsRoll {
+		t.Fatalf("AdvanceOpsRoll at Preflight err = %v, want ErrNotOpsRoll", err)
+	}
+	st, _, _ := svc.Status(ctx)
+	if st.Phase != upgrade.Preflight {
+		t.Errorf("phase = %s, want unchanged Preflight", st.Phase)
+	}
+}
+
+// spec: 25.10 line 3789 (promote target -> live at Verification completion)
+//
+// TestProceedPromotesTargetAtVerificationCompletion_spec_25_10_3789 pins
+// that the Verification->Complete proceed promotes the target snapshot
+// into live exactly once, passing the upgrade's operation id. Pre-fix the
+// Proceed path never called the promoter, so against=target stayed live
+// through completion. F-DR-3.
+func TestProceedPromotesTargetAtVerificationCompletion_spec_25_10_3789(t *testing.T) {
+	ctx := context.Background()
+	cleaner := &recordingCleaner{}
+	svc := upgradeservice.New(upgradeservice.Options{
+		Store:        upgradeservice.NewMemoryStore(),
+		DriftManager: cleaner,
+		NewID:        func() string { return "upgrade-prom" },
+	})
+	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
+	// Walk to Verification (6 proceeds), asserting no promote fires before
+	// the final transition.
+	for i := 0; i < 6; i++ {
+		st, err := svc.Proceed(ctx)
+		if err != nil {
+			t.Fatalf("proceed %d: %v", i, err)
+		}
+		if st.Phase == upgrade.Verification {
+			break
+		}
+	}
+	if len(cleaner.promoteCalls) != 0 {
+		t.Fatalf("promote called before Verification completion: %v", cleaner.promoteCalls)
+	}
+	st, err := svc.Proceed(ctx) // Verification -> Complete
+	if err != nil {
+		t.Fatalf("final proceed: %v", err)
+	}
+	if st.Phase != upgrade.Complete {
+		t.Fatalf("phase = %s, want Complete", st.Phase)
+	}
+	if len(cleaner.promoteCalls) != 1 || cleaner.promoteCalls[0] != "upgrade-prom" {
+		t.Fatalf("promote calls = %v, want one call with operation id at completion", cleaner.promoteCalls)
+	}
+}
+
+// TestProceedAbortsCompletionOnPromoteFailure_spec_25_10_3789 asserts the
+// promote runs before the phase is marked Complete and fails closed: when
+// the promoter errors, the final proceed returns the error and the upgrade
+// stays at Verification rather than completing with a stale live snapshot.
+func TestProceedAbortsCompletionOnPromoteFailure_spec_25_10_3789(t *testing.T) {
+	ctx := context.Background()
+	cleaner := &recordingCleaner{promoteErr: errors.New("store down")}
+	svc := upgradeservice.New(upgradeservice.Options{
+		Store:        upgradeservice.NewMemoryStore(),
+		DriftManager: cleaner,
+		NewID:        func() string { return "upgrade-fail" },
+	})
+	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
+	var phase upgrade.Phase
+	for {
+		st, err := svc.Proceed(ctx)
+		if st.Phase == upgrade.Verification {
+			phase = st.Phase
+			break
+		}
+		if err != nil {
+			t.Fatalf("proceed: %v", err)
+		}
+	}
+	if phase != upgrade.Verification {
+		t.Fatalf("setup did not reach Verification, got %s", phase)
+	}
+	if _, err := svc.Proceed(ctx); err == nil {
+		t.Fatal("final proceed should error when the promote fails")
+	}
+	st, _, _ := svc.Status(ctx)
+	if st.Phase != upgrade.Verification {
+		t.Errorf("phase = %s after promote failure, want unchanged Verification (fail closed)", st.Phase)
 	}
 }
