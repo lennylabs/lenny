@@ -241,3 +241,32 @@ func TestPgReconcileSplitBrainRedisWins_spec_25_4(t *testing.T) {
 		t.Errorf("after reconcile = %+v, want bob/epoch9 (Redis wins)", all)
 	}
 }
+
+// TestPgServerTime_spec_25_4 asserts the exported ServerTime reads the
+// Postgres now() at time zone 'UTC' clock the Postgres-Redis clock-skew
+// sampler compares against the Redis TIME clock. The embedded Postgres
+// and the test process share a host clock, so the read sits within a
+// small window of the local wall clock; the assertion proves the read
+// returns a live UTC server time rather than a zero value.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring); the Tier 1
+// clock is Postgres now() at time zone 'UTC'.
+func TestPgServerTime_spec_25_4(t *testing.T) {
+	s, _, ctx := setup(t)
+	before := time.Now().UTC()
+	got, err := s.ServerTime(ctx)
+	if err != nil {
+		t.Fatalf("ServerTime: %v", err)
+	}
+	after := time.Now().UTC()
+	if got.IsZero() {
+		t.Fatal("ServerTime returned the zero time; expected a live server clock read")
+	}
+	// The server clock shares the host clock with the test, so it must sit
+	// inside the [before-2s, after+2s] window. A wider tolerance absorbs
+	// the round-trip and the per-second granularity without flaking.
+	lo, hi := before.Add(-2*time.Second), after.Add(2*time.Second)
+	if got.Before(lo) || got.After(hi) {
+		t.Errorf("ServerTime = %v, outside the expected window [%v, %v]", got, lo, hi)
+	}
+}

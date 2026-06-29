@@ -1298,6 +1298,14 @@ groups:
           annotations:
             description: One or more in-flight operations exceeded their expected inter-step cadence (stalledForSeconds > 0) per the §25.2 Progress Envelope. The gauge clears when every operation advances within its cadence. Investigate via GET /v1/admin/operations/{id}.
             summary: An in-flight operation has stalled
+        - alert: OpsClockSkewExceeded
+          expr: lenny_ops_clock_skew_seconds{pair="postgres-redis"} > 10
+          labels:
+            severity: warning
+          annotations:
+            description: The measured clock skew between the Postgres and Redis dependency clocks exceeds the 10s tolerance NTP is expected to hold. Lease expiresAt computation and outage-epoch reconciliation assume bounded skew, so a sustained breach risks premature or delayed lease expiry. Investigate NTP on the nodes running Postgres and Redis.
+            runbook_url: https://docs.lenny.dev/runbooks/ops-clock-skew
+            summary: Postgres-Redis clock skew exceeds the 10s tolerance
         - alert: SessionCreationSuccessRateBurnRateSlow
           expr: (sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions",status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions"}[1h]))) / (1 - 0.995) > scalar(lenny_slo_burn_rate_slow_multiplier or vector(3))
           for: 6h

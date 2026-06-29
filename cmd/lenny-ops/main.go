@@ -798,8 +798,15 @@ func main() {
 	// fall-through; the §25.4 lock metrics and audit events are emitted from
 	// the service. The HTTP layer applies the §25.4 scope-based
 	// authorization control before the service. F-25.4.6.
-	lockSvc := buildLockService(pgPool, redisClient, lockCoordination,
+	lockSvc, lockMetricsAdapter := buildLockService(pgPool, redisClient, lockCoordination,
 		prometheus.DefaultRegisterer, opsEmitter, auditRecorder, replicaID)
+
+	// §25.4 line 2280: the Postgres-Redis clock-skew sampler. It reads
+	// both dependency clocks and publishes the absolute skew on
+	// lenny_ops_clock_skew_seconds, the producer the OpsClockSkewExceeded
+	// alert needs. nil when either dependency is absent (single-process
+	// degraded mode), in which case the reconciler loop is not registered.
+	clockSkewSampler := buildClockSkewSampler(pgPool, redisClient, lockMetricsAdapter)
 
 	// The §25.11 BackupService. lenny-ops orchestrates backup/restore
 	// Kubernetes Jobs through it. The Postgres-backed ops_backups store,
@@ -1129,6 +1136,13 @@ func main() {
 			// multi-replica deployment re-asserts the §25.13 bundled-rules
 			// gauges from one replica. F-25.4.17.
 			BundleRulesReconcile: bundleRulesReconcile,
+			// §25.4 line 2280: the Postgres-Redis clock-skew sampler. Reads
+			// both dependency clocks and publishes the absolute skew on
+			// lenny_ops_clock_skew_seconds so the OpsClockSkewExceeded alert
+			// has a producer. Leader-only so a multi-replica deployment
+			// publishes one skew sample. nil sampler (single-process degraded
+			// mode) disables the loop. F-SH-1.
+			ClockSkewSample: clockSkewSampleReconciler(clockSkewSampler),
 		},
 		SelfHealthChecks:   selfChecks,
 		SelfHealthInterval: *selfHealthInterval,

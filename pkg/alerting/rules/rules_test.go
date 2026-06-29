@@ -288,6 +288,7 @@ var spec165WarningAlerts = []string{
 	"BackupStorageHigh", "BackupReconcileBlocked", "MinIOArtifactReplicationLagHigh",
 	"MinIOArtifactReplicationLagCritical", "MinIOArtifactReplicationFailed", "CircuitBreakerOpen",
 	"LenniOpsSelfHealthDegraded", "LenniOpsLockSplitBrainDetected", "OperationStalled",
+	"OpsClockSkewExceeded",
 }
 
 // spec165BurnRateSLOs is the §16.5 "SLO error-budget burn-rate alerts"
@@ -399,6 +400,46 @@ func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
 //
 // spec: §4.7 (escalation requirement); §16.5 (PoolSecurityDegraded);
 // §17.7 (runbook). F-5.3.14.
+// TestOpsClockSkewExceededRule_spec_16_5 pins the F-SH-1
+// OpsClockSkewExceeded warning alert: it selects the postgres-redis pair
+// on the lenny_ops_clock_skew_seconds gauge, fires above the 10s NTP
+// tolerance, and resolves to the ops-clock-skew runbook. Pre-fix the
+// alert did not exist, so the gauge a producer now publishes had no rule
+// to read it.
+//
+// spec: §16.5 (OpsClockSkewExceeded warning-alert row); §25.4 line 2280
+// (Postgres-Redis skew >10s alert).
+func TestOpsClockSkewExceededRule_spec_16_5(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "OpsClockSkewExceeded" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("OpsClockSkewExceeded missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	if got.Expr != `lenny_ops_clock_skew_seconds{pair="postgres-redis"} > 10` {
+		t.Errorf("expr = %q, want the postgres-redis pair gauge above the 10s tolerance", got.Expr)
+	}
+	if !strings.Contains(got.Expr, `pair="postgres-redis"`) {
+		t.Errorf("expr %q must select the postgres-redis pair label", got.Expr)
+	}
+	if !strings.Contains(got.Expr, "> 10") {
+		t.Errorf("expr %q must fire above the 10s tolerance per §25.4 line 2280", got.Expr)
+	}
+	if got.RunbookSlug() != "ops-clock-skew" {
+		t.Errorf("runbook slug = %q, want ops-clock-skew", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("OpsClockSkewExceeded does not validate: %v", err)
+	}
+}
+
 func TestPoolSecurityDegradedRule(t *testing.T) {
 	var got Rule
 	for _, r := range Catalog() {
