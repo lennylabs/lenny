@@ -700,6 +700,111 @@ func equalStringSet(a, b map[string]bool) bool {
 	return true
 }
 
+// TestRouteScopesResolvesCanonicalScope_spec_15_1_914 asserts the
+// route-to-scope lookup the §25.1 scope-enforcement middleware consumes
+// resolves the canonical `tools:<domain>:<action>` scope a matched admin
+// route requires, including a newly added admin domain (`legal_hold`), so
+// the taxonomy expansion (S1/S2) is exercised end to end through the
+// document-derived registry. The matcher reuses http.ServeMux pattern
+// routing, the same engine the admin router routes on, so a templated route
+// (`/v1/admin/connectors/{name}`) resolves through a concrete request path.
+//
+// spec: §15.1 (scope enforcement before routing, line 914,920),
+// §25.1 (middleware checks scopes before routing, line 94).
+func TestRouteScopesResolvesCanonicalScope_spec_15_1_914(t *testing.T) {
+	rs := openapi.NewRouteScopes()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		want   string
+	}{
+		{
+			// A newly added admin domain: legal_hold was absent from the
+			// scopes.Domains map and the §15.1 taxonomy before this change,
+			// so resolving it proves the expansion reached the registry.
+			name:   "newly added legal_hold domain",
+			method: http.MethodPost,
+			path:   "/v1/admin/legal-hold",
+			want:   "tools:legal_hold:write",
+		},
+		{
+			// A static route on a pre-existing domain.
+			name:   "static circuit_breaker read",
+			method: http.MethodGet,
+			path:   "/v1/admin/circuit-breakers",
+			want:   "tools:circuit_breaker:read",
+		},
+		{
+			// A templated route resolves through a concrete request path,
+			// proving the {param} template matches the same way the live
+			// admin mux would route the request.
+			name:   "templated connector route",
+			method: http.MethodGet,
+			path:   "/v1/admin/connectors/acme-connector",
+			want:   "tools:connector:read",
+		},
+		{
+			// The destructive audit sub-route carries the fine-grained
+			// scope the handler enforces, reconciled in S2.
+			name:   "fine-grained audit partition drop",
+			method: http.MethodPost,
+			path:   "/v1/admin/audit-partitions/p-2026-06/drop",
+			want:   "tools:audit:partition_drop",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := rs.RequiredScope(tc.method, tc.path)
+			if !ok {
+				t.Fatalf("RequiredScope(%s, %s): no scope resolved, want %q",
+					tc.method, tc.path, tc.want)
+			}
+			if got != tc.want {
+				t.Errorf("RequiredScope(%s, %s) = %q, want %q",
+					tc.method, tc.path, got, tc.want)
+			}
+			// Every resolved route-level scope must parse through the
+			// canonical matcher; a value the matcher rejects could never
+			// be compared against a caller's claim and would silently fail
+			// open.
+			if _, err := scopes.ParseScope(got); err != nil {
+				t.Errorf("resolved scope %q does not parse through scopes.ParseScope: %v", got, err)
+			}
+		})
+	}
+}
+
+// TestRouteScopesUnmatchedRouteHasNoScope_spec_15_1_914 asserts the lookup
+// reports no required scope for a path the document does not declare and for
+// a declared path under a method it does not carry, so the middleware defers
+// to the role ceiling rather than matching against an empty scope. This pins
+// the §25.1 absent-route-scope behavior the enforcement step relies on.
+//
+// spec: §15.1 (x-lenny-scope per operation, line 920),
+// §25.1 (absent claim defers to the role ceiling, line 90).
+func TestRouteScopesUnmatchedRouteHasNoScope_spec_15_1_914(t *testing.T) {
+	rs := openapi.NewRouteScopes()
+
+	if scope, ok := rs.RequiredScope(http.MethodGet, "/v1/admin/does-not-exist"); ok {
+		t.Errorf("unmatched route resolved scope %q, want none", scope)
+	}
+	// DELETE is not registered for /v1/admin/legal-hold (only POST), so a
+	// method miss on an otherwise-known path resolves no scope.
+	if scope, ok := rs.RequiredScope(http.MethodDelete, "/v1/admin/legal-hold"); ok {
+		t.Errorf("method miss resolved scope %q, want none", scope)
+	}
+	// A nil receiver fails closed by reporting no scope rather than
+	// panicking, so a caller that never built the matcher cannot match a
+	// destructive route against an empty scope.
+	var nilRS *openapi.RouteScopes
+	if scope, ok := nilRS.RequiredScope(http.MethodPost, "/v1/admin/legal-hold"); ok {
+		t.Errorf("nil RouteScopes resolved scope %q, want none", scope)
+	}
+}
+
 // spec: §15.5 item 6 — the default tier is `stable` so an unannotated
 // operation reads as covered by the §15.5 items 1–5 guarantees.
 // F-15.5.10.
