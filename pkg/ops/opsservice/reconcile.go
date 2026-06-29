@@ -17,6 +17,11 @@ const (
 	// drains the in-memory escalation buffer to Postgres once a durable
 	// store is available again.
 	EscalationFlushInterval = 30 * time.Second
+	// EscalationEmissionRetryInterval paces the §25.4 escalation
+	// emission-retry loop that re-attempts the escalation_created publish
+	// for any record whose emitted flag is still false, until a destination
+	// recovers. §25.4 fixes this period at 30s.
+	EscalationEmissionRetryInterval = 30 * time.Second
 	// IdempotencyCleanupInterval paces the §25.4 idempotency-cleanup loop
 	// that removes idempotency keys past their TTL.
 	IdempotencyCleanupInterval = 5 * time.Minute
@@ -50,6 +55,11 @@ type Reconciler func(ctx context.Context) error
 type Reconcilers struct {
 	// EscalationFlush drains the in-memory escalation buffer to Postgres.
 	EscalationFlush Reconciler
+	// EscalationEmissionRetry re-attempts the §25.4 escalation_created
+	// publish for any escalation whose emitted flag is still false, so a
+	// record created during a dual Redis-plus-gateway-buffer outage is
+	// emitted once a destination recovers.
+	EscalationEmissionRetry Reconciler
 	// IdempotencyCleanup removes expired idempotency keys.
 	IdempotencyCleanup Reconciler
 	// LockEpochReconcile resolves remediation locks orphaned by an outage.
@@ -75,6 +85,7 @@ func (r Reconcilers) loops() []Loop {
 	}
 	specs := []spec{
 		{"escalation-flush", EscalationFlushInterval, r.EscalationFlush},
+		{"escalation-emission-retry", EscalationEmissionRetryInterval, r.EscalationEmissionRetry},
 		{"idempotency-cleanup", IdempotencyCleanupInterval, r.IdempotencyCleanup},
 		{"lock-epoch-reconcile", LockEpochReconcileInterval, r.LockEpochReconcile},
 		{"drift-snapshot-validate", DriftSnapshotValidateInterval, r.DriftSnapshotValidate},

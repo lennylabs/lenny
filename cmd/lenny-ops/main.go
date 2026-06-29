@@ -1043,6 +1043,16 @@ func main() {
 				}
 				return err
 			},
+			// §25.4 lines 2404, 2429: re-attempt the escalation_created
+			// publish for any record whose emitted flag is still false, so an
+			// escalation created during a dual Redis-plus-gateway-buffer
+			// outage is emitted once a destination recovers. F-REL-1.
+			EscalationEmissionRetry: func(ctx context.Context) error {
+				if n := escalationSvc.RetryEmission(ctx); n > 0 {
+					log.Printf("lenny-ops: escalation emission retry published %d previously-unemitted escalation(s)", n)
+				}
+				return nil
+			},
 			// §25.4 lines 2070-2072, 2127: remove idempotency keys past their
 			// TTL so the ops_idempotency_keys table does not grow unbounded.
 			IdempotencyCleanup: func(ctx context.Context) error {

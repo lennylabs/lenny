@@ -80,9 +80,38 @@ func TestNilReconcilersContributeNoLoops_spec_25_4(t *testing.T) {
 	}
 	for _, name := range svc.LoopNames() {
 		switch name {
-		case "escalation-flush", "idempotency-cleanup", "lock-epoch-reconcile", "drift-snapshot-validate":
+		case "escalation-flush", "escalation-emission-retry", "idempotency-cleanup", "lock-epoch-reconcile", "drift-snapshot-validate":
 			t.Errorf("unwired reconciler %q produced a loop", name)
 		}
+	}
+}
+
+// spec: §25.4 lines 2404, 2429 — wiring the EscalationEmissionRetry
+// reconciler registers an escalation-emission-retry loop, so the §25.4
+// 30s emission-retry that re-publishes records left unemitted by a
+// dual-destination outage has a production caller. This is the tier-7a
+// (load/ordering) regression for F-REL-1: pre-fix the Reconcilers struct
+// carried no emission-retry field, so RetryEmission had no production
+// caller and no loop was registered. The leader-only property of the loop
+// is pinned by the white-box TestEscalationEmissionRetryLoopIsLeaderOnly.
+func TestEscalationEmissionRetryWiresLoop_spec_25_4_F_REL_1(t *testing.T) {
+	noop := func(context.Context) error { return nil }
+	svc, err := opsservice.New(opsservice.Config{
+		ReplicaID:   "r1",
+		Elector:     stoppedElector{},
+		Reconcilers: opsservice.Reconcilers{EscalationEmissionRetry: noop},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	found := false
+	for _, name := range svc.LoopNames() {
+		if name == "escalation-emission-retry" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("loops %v missing escalation-emission-retry", svc.LoopNames())
 	}
 }
 
