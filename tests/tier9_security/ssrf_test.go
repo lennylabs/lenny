@@ -76,7 +76,7 @@ func TestSSRFCallbackValidation(t *testing.T) {
 	//
 	// The connectors table soft-deletes: a DELETEd row keeps its
 	// primary-key id reserved as a tombstone, so a create that reuses an
-	// id fails with 409 RESOURCE_CONFLICT. The positive control persists
+	// id fails with 409 RESOURCE_ALREADY_EXISTS. The positive control persists
 	// a connector row, so it takes a run-unique id no prior run's
 	// tombstone can collide with. The reject ids stay stable: they never
 	// persist.

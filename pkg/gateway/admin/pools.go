@@ -576,7 +576,8 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	}
 	if err := r.pools.Create(req.Context(), pl); err != nil {
 		if errors.Is(err, poolstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"pool with this name already exists", nil)
 			return
 		}

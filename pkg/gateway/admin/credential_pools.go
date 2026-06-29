@@ -517,7 +517,8 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 	}
 	if err := r.credentialPools.Create(req.Context(), pool); err != nil {
 		if errors.Is(err, credentialpoolstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"credential pool with this name already exists in tenant", nil)
 			return
 		}
@@ -783,7 +784,7 @@ func (r *Router) handleDeleteCredentialPool(w http.ResponseWriter, req *http.Req
 
 // errCredentialExists is the mutate sentinel for an add-credential whose
 // id is already present in the pool. handleAddCredential maps it to a
-// 409 RESOURCE_CONFLICT.
+// 409 RESOURCE_ALREADY_EXISTS.
 var errCredentialExists = errors.New("credential id already exists in pool")
 
 // handleAddCredential implements POST
@@ -1269,7 +1270,8 @@ func (r *Router) writeCredentialMutateError(w http.ResponseWriter, err error) {
 	case errors.Is(err, errCredentialNotFound):
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found in pool", nil)
 	case errors.Is(err, errCredentialExists):
-		writeError(w, http.StatusConflict, "RESOURCE_CONFLICT", "credential id already exists in pool", nil)
+		// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+		writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS", "credential id already exists in pool", nil)
 	default:
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	}

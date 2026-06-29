@@ -172,7 +172,8 @@ func (r *Router) handleCreateExternalAdapter(w http.ResponseWriter, req *http.Re
 	}
 	if err := r.externalAdapters.Create(req.Context(), a); err != nil {
 		if errors.Is(err, externaladapterstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT", "external adapter with this name already exists", nil)
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS", "external adapter with this name already exists", nil)
 			return
 		}
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)

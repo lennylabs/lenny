@@ -79,7 +79,7 @@ func TestAddCredentialAppendsAndAudits(t *testing.T) {
 }
 
 // TestAddCredentialDuplicateIDConflicts asserts a duplicate credential
-// id is rejected with 409 RESOURCE_CONFLICT. spec: §15.1 line 876.
+// id is rejected with 409 RESOURCE_ALREADY_EXISTS. spec: §15.1 line 876, 983.
 func TestAddCredentialDuplicateIDConflicts(t *testing.T) {
 	router, store, _ := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")
@@ -90,6 +90,9 @@ func TestAddCredentialDuplicateIDConflicts(t *testing.T) {
 		withTenantAdminPrincipal)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409; body %s", rr.Code, rr.Body.String())
+	}
+	if got := errorCode(t, rr.Body.Bytes()); got != "RESOURCE_ALREADY_EXISTS" {
+		t.Fatalf("code %s, want RESOURCE_ALREADY_EXISTS; body %s", got, rr.Body.String())
 	}
 }
 

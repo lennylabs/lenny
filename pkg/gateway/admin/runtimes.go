@@ -865,7 +865,8 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	}
 	if err := r.runtimes.Create(req.Context(), rt); err != nil {
 		if errors.Is(err, runtimestore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"runtime with this name already exists",
 				map[string]any{"name": body.Name})
 			return

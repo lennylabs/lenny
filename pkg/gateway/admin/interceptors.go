@@ -178,7 +178,8 @@ func (r *Router) handleCreateInterceptor(w http.ResponseWriter, req *http.Reques
 	}
 	if err := r.interceptors.Create(req.Context(), ic); err != nil {
 		if errors.Is(err, interceptorstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"interceptor with this name already exists", nil)
 			return
 		}

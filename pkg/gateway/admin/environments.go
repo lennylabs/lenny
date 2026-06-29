@@ -533,7 +533,8 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 	}
 	if err := r.environments.Create(req.Context(), env); err != nil {
 		if errors.Is(err, environmentstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"environment with this name already exists in tenant", nil)
 			return
 		}

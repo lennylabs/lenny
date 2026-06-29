@@ -93,7 +93,8 @@ func (r *Router) handleCreateCustomRole(w http.ResponseWriter, req *http.Request
 	role.UpdatedAt = role.CreatedAt
 	if err := r.customRoles.Create(req.Context(), role); err != nil {
 		if errors.Is(err, customrolestore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"custom role with this name already exists in tenant", nil)
 			return
 		}

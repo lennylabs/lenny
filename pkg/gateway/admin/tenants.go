@@ -1608,7 +1608,8 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	t.UpdatedAt = t.CreatedAt
 	if err := r.tenants.Create(req.Context(), t); err != nil {
 		if errors.Is(err, tenantstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"tenant with this id already exists",
 				map[string]any{"id": body.ID})
 			return
@@ -2055,7 +2056,8 @@ func (r *Router) handleDecommissionCompliance(w http.ResponseWriter, req *http.R
 	}
 	// Concurrency guard: previousProfile must match the live value.
 	if body.PreviousProfile != current.ComplianceProfile {
-		writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+		// spec: §15.1 line 981 — a state conflict is INVALID_STATE_TRANSITION.
+		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
 			"previousProfile does not match the tenant's current complianceProfile",
 			map[string]any{
 				"currentProfile":  current.ComplianceProfile,

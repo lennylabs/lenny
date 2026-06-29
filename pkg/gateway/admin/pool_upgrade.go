@@ -220,7 +220,8 @@ func writeUpgradeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, runtimeupgrade.ErrInvalidImage):
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	case errors.Is(err, runtimeupgrade.ErrUpgradeActive):
-		writeError(w, http.StatusConflict, "RESOURCE_CONFLICT", err.Error(), nil)
+		// spec: §15.1 line 981 — an upgrade-in-progress state conflict is INVALID_STATE_TRANSITION.
+		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION", err.Error(), nil)
 	case errors.Is(err, runtimeupgradestore.ErrConflict):
 		writeError(w, http.StatusConflict, "CONCURRENT_MODIFICATION",
 			"the upgrade phase changed concurrently; re-read and retry", nil)
