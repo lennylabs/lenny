@@ -144,6 +144,79 @@ func TestTenantStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §15.1 line 823,824 — the PUT
+	// /v1/admin/tenants/{id}/elicitation-content-integrity records mode,
+	// justification, changedAt, and changedBy on the tenant, and the GET
+	// returns them. Migration 0172 adds the three provenance columns; the
+	// pgstore Create/Update/Get paths must round-trip them. ADM-3.
+	// diagnosis: the elicitation_content_integrity_justification,
+	// _changed_at, and _changed_by columns the §15.1 GET body reads are
+	// not persisted by pkg/gateway/tenantstore/pgstore — a tenant-admin
+	// GET after a PUT would return empty provenance.
+	t.Run("elicitation integrity provenance round-trip", func(t *testing.T) {
+		id := tenantID(t)
+		changedAt := time.Now().UTC().Truncate(time.Microsecond)
+		want := tenantstore.Tenant{
+			ID:                                       id,
+			ElicitationContentIntegrity:              "detect-only",
+			ElicitationContentIntegrityJustification: "staging tenant, integrity tooling offline",
+			ElicitationContentIntegrityChangedAt:     changedAt,
+			ElicitationContentIntegrityChangedBy:     "alice@acme.com",
+		}
+		if err := store.Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.ElicitationContentIntegrity != "detect-only" {
+			t.Errorf("stored mode = %q, want detect-only", got.ElicitationContentIntegrity)
+		}
+		if got.ElicitationContentIntegrityJustification != want.ElicitationContentIntegrityJustification {
+			t.Errorf("justification = %q, want %q",
+				got.ElicitationContentIntegrityJustification, want.ElicitationContentIntegrityJustification)
+		}
+		if !got.ElicitationContentIntegrityChangedAt.Equal(changedAt) {
+			t.Errorf("changedAt = %v, want %v", got.ElicitationContentIntegrityChangedAt, changedAt)
+		}
+		if got.ElicitationContentIntegrityChangedBy != "alice@acme.com" {
+			t.Errorf("changedBy = %q, want alice@acme.com", got.ElicitationContentIntegrityChangedBy)
+		}
+
+		// Update must replace the provenance alongside the mode.
+		next := time.Now().UTC().Truncate(time.Microsecond).Add(time.Second)
+		if _, err := store.Update(ctx, id, func(tn *tenantstore.Tenant) error {
+			tn.ElicitationContentIntegrity = "off"
+			tn.ElicitationContentIntegrityJustification = "decommissioned"
+			tn.ElicitationContentIntegrityChangedAt = next
+			tn.ElicitationContentIntegrityChangedBy = "bob@acme.com"
+			return nil
+		}); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		reloaded, _ := store.Get(ctx, id)
+		if reloaded.ElicitationContentIntegrity != "off" ||
+			reloaded.ElicitationContentIntegrityJustification != "decommissioned" ||
+			!reloaded.ElicitationContentIntegrityChangedAt.Equal(next) ||
+			reloaded.ElicitationContentIntegrityChangedBy != "bob@acme.com" {
+			t.Errorf("Update did not persist the provenance: %+v", reloaded)
+		}
+
+		// A tenant that never set a mode reads zero provenance (the
+		// "never set" semantics the §15.1 GET body distinguishes).
+		blankID := tenantID(t)
+		if err := store.Create(ctx, tenantstore.Tenant{ID: blankID}); err != nil {
+			t.Fatalf("Create blank: %v", err)
+		}
+		blank, _ := store.Get(ctx, blankID)
+		if blank.ElicitationContentIntegrityJustification != "" ||
+			!blank.ElicitationContentIntegrityChangedAt.IsZero() ||
+			blank.ElicitationContentIntegrityChangedBy != "" {
+			t.Errorf("unset tenant carries provenance: %+v", blank)
+		}
+	})
+
 	t.Run("duplicate and invalid ids are rejected", func(t *testing.T) {
 		id := tenantID(t)
 		if err := store.Create(ctx, tenantstore.Tenant{ID: id}); err != nil {

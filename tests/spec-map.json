@@ -815,7 +815,8 @@
         "pkg/elicitation/elicitation_test.go::TestProvenanceValidateRejectsConnectorWithoutID",
         "tests/tier2_component/stores/interactionstore_test.go",
         "tests/tier4_integration/elicitation_test.go",
-        "tests/tier9_security/elicitation_tamper_test.go"
+        "tests/tier9_security/elicitation_tamper_test.go",
+        "tests/tier9_security/elicitation_integrity_gate_test.go"
       ],
       "packages": [
         "pkg/elicitation"
@@ -1937,6 +1938,8 @@
         "tests/tier2_component/translators/openai_chat_translator_test.go",
         "tests/tier2_component/translators/openai_responses_translator_test.go",
         "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go",
+        "tests/tier9_security/elicitation_integrity_gate_test.go",
+        "tests/tier9_security/lease_extension_clear_test.go",
         "tests/tier6_e2e_cloud/session_lifecycle_test.go"
       ],
       "packages": [

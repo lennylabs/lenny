@@ -599,10 +599,14 @@ func (r *Router) Handler() http.Handler {
 			mux.Handle("POST /v1/admin/tenants/{id}/rotate-erasure-salt",
 				r.requireAdmin(http.HandlerFunc(r.handleRotateErasureSalt)))
 		}
+		// §15.1 line 823,824: GET/PUT elicitation-content-integrity admit
+		// platform-admin or tenant-admin. The role gate widens to
+		// requireTenantResourceAdmin; each handler confines a non-platform
+		// caller to its own {id} via authorizeTenantPath. ADM-3.
 		mux.Handle("GET /v1/admin/tenants/{id}/elicitation-content-integrity",
-			r.requireAdmin(http.HandlerFunc(r.handleGetElicitationIntegrity)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetElicitationIntegrity)))
 		mux.Handle("PUT /v1/admin/tenants/{id}/elicitation-content-integrity",
-			r.requireAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
 		mux.Handle("POST /v1/admin/tenants/{id}/compliance-profile/decommission",
 			r.requireAdmin(http.HandlerFunc(r.handleDecommissionCompliance)))
 		if r.deploymentConfig != nil {

@@ -90,6 +90,25 @@ type Tenant struct {
 	// applies.
 	ElicitationContentIntegrity string
 
+	// ElicitationContentIntegrityJustification is the §15.1
+	// operator-supplied reason recorded on the last PUT
+	// /v1/admin/tenants/{id}/elicitation-content-integrity. It is
+	// REQUIRED when the stored mode is `detect-only` or `off` so the
+	// audit trail captures why the integrity posture was relaxed. Empty
+	// means the mode was never set or was last set to `enforce` without
+	// one.
+	ElicitationContentIntegrityJustification string
+
+	// ElicitationContentIntegrityChangedAt is the §15.1 UTC instant the
+	// stored elicitation content-integrity mode was last set. Zero means
+	// the tenant has never set a mode.
+	ElicitationContentIntegrityChangedAt time.Time
+
+	// ElicitationContentIntegrityChangedBy is the §15.1 OIDC `sub` of the
+	// operator that last set the stored elicitation content-integrity
+	// mode. Empty means the tenant has never set a mode.
+	ElicitationContentIntegrityChangedBy string
+
 	// MinIsolationProfile is the §5.3 tenant isolation floor: the
 	// weakest §5.3 profile (`standard`, `sandboxed`, `microvm`) the
 	// tenant's sessions may run at. Empty means no tenant floor — the
