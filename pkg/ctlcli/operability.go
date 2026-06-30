@@ -17,10 +17,14 @@ import (
 )
 
 // cmdMe implements the §24.15 `me` group: the caller's own identity,
-// authorized tools, and in-flight operations. All three subcommands
-// target the gateway admin API (§25 lines 4901-4903). spec: §24.15
-// line 180. F-24.15.1.
-func cmdMe(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+// authorized tools, and in-flight operations. Identity (GET
+// /v1/admin/me) and authorized tools (GET /v1/admin/me/authorized-tools)
+// target the gateway admin API (§25 lines 4901-4902), while
+// `me operations` reads the operations inventory hosted by lenny-ops
+// (§15.1 line 909) via the §24.16 --ops-server auto-discovery. spec:
+// §24.15 line 180; §15.1 line 909 (operations inventory assigned to
+// lenny-ops). F-24.15.1.
+func cmdMe(ctx context.Context, flags globalFlags, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		// `lenny-ctl me` with no subcommand maps to GET /v1/admin/me.
 		return gatewayGet(ctx, c, "/v1/admin/me", stdout, stderr)
@@ -30,8 +34,11 @@ func cmdMe(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.
 		// §25 line 4902 — tools the caller can actually invoke.
 		return gatewayGet(ctx, c, "/v1/admin/me/authorized-tools", stdout, stderr)
 	case "operations":
-		// §25 line 4903 — caller's in-flight operations.
-		return gatewayGet(ctx, c, "/v1/admin/me/operations", stdout, stderr)
+		// §25 line 4903 — caller's in-flight operations, served by the
+		// lenny-ops operations inventory (§15.1 line 909).
+		return withOps(ctx, flags, c, stderr, func(ops *ctl.Client) int {
+			return opsGet(ctx, ops, "/v1/admin/me/operations", stdout, stderr)
+		})
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown me subcommand %q (want tools|operations)\n", args[0])
 		return 2

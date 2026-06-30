@@ -262,7 +262,6 @@ func registeredRouteTemplates(t *testing.T) []string {
 		WithBillingCorrections(billingstore.NewMemory(), correctionstore.NewMemory(), 0).
 		WithMigrationManager(migrationStub{}).
 		WithEventBuffer(eventBufferStub{}).
-		WithOperationsInventory(operationsStub{}).
 		WithSessionAdmin(sessionAdminStub{}).
 		WithRecommendations(recommendationsStub{}).
 		WithCARotation(caRotationStub{}).

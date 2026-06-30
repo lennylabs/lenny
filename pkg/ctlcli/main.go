@@ -203,13 +203,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPolicy(ctx, client, rest[1:], stdout, stderr)
 	case "operations":
 		// §24.15 operations group: list active long-running operations and
-		// fetch one by id. Targets the gateway admin API (the Operations
-		// Inventory), not lenny-ops. spec: §24.15 line 181.
-		return cmdOperations(ctx, client, rest[1:], stdout, stderr)
+		// fetch one by id. The operations inventory is hosted by lenny-ops
+		// (§15.1 line 909), so the group resolves the ops endpoint via the
+		// §24.16 --ops-server auto-discovery. spec: §24.15 line 181.
+		return cmdOperations(ctx, flags, client, rest[1:], stdout, stderr)
 	case "me":
-		// §24.15 me group: caller identity, authorized tools, and
-		// in-flight operations. Gateway admin API. spec: §24.15 line 180.
-		return cmdMe(ctx, client, rest[1:], stdout, stderr)
+		// §24.15 me group: caller identity and authorized tools target the
+		// gateway admin API, while `me operations` targets the lenny-ops
+		// inventory (§15.1 line 909). cmdMe routes each. spec: §24.15
+		// line 180.
+		return cmdMe(ctx, flags, client, rest[1:], stdout, stderr)
 	case "audit":
 		// §24.15 audit group: query/summary and the OCSF/EventBus/
 		// partition remediation verbs. Gateway admin API. spec: §24.15
@@ -872,9 +875,12 @@ func cmdSessions(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 // `operations list [--status|--kind|--actor|--tenant|--operation-id|--limit]`
 // (GET /v1/admin/operations, the §25.4 Inventory scatter-gather with a
 // Progress Envelope per record) and `operations get <id>` (GET
-// /v1/admin/operations/{id}). Both target the gateway admin API and
-// require platform-admin. spec: §24.15 line 181.
-func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+// /v1/admin/operations/{id}). The operations inventory is hosted by
+// lenny-ops (§15.1 line 909), so both subcommands resolve the ops
+// endpoint via the §24.16 --ops-server auto-discovery (rules 1-3) and
+// target lenny-ops rather than the gateway. spec: §24.15 line 181;
+// §15.1 line 909 (operations inventory assigned to lenny-ops).
+func cmdOperations(ctx context.Context, flags globalFlags, gateway *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: operations requires a subcommand (list|get)")
 		return 2
@@ -908,28 +914,22 @@ func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, st
 		if enc := q.Encode(); enc != "" {
 			path += "?" + enc
 		}
-		var out map[string]any
-		if err := c.Do(ctx, "GET", path, nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return withOps(ctx, flags, gateway, stderr, func(ops *ctl.Client) int {
+			return opsGet(ctx, ops, path, stdout, stderr)
+		})
 	case "get":
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: operations get requires <id>")
 			return 2
 		}
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/operations/"+args[1], nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		path := "/v1/admin/operations/" + url.PathEscape(args[1])
+		return withOps(ctx, flags, gateway, stderr, func(ops *ctl.Client) int {
+			return opsGet(ctx, ops, path, stdout, stderr)
+		})
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown operations subcommand %q\n", args[0])
 		return 2
 	}
-	return 0
 }
 
 func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {

@@ -9,7 +9,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/ops/me"
-	"github.com/lennylabs/lenny/pkg/ops/operations"
 )
 
 // AuthorizedToolsPayload is the §25.4 GET /v1/admin/me/authorized-tools
@@ -57,49 +56,6 @@ func (r *Router) handleAuthorizedTools(w http.ResponseWriter, req *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(AuthorizedToolsPayload{Tools: tools})
-}
-
-// handleMeOperations implements GET /v1/admin/me/operations — the
-// caller's own in-flight operations. It reuses the §4.0 / §25.4
-// Operations Inventory, scoping the scatter-gather query to the
-// caller's subject and to the non-terminal statuses (in_progress,
-// paused, held, awaiting_flush) so the response is the operator's
-// live work rather than the full platform history.
-// spec: §25 line 4903 — `lenny-ctl me operations` → caller's in-flight
-// operations; §24.15 line 180.
-func (r *Router) handleMeOperations(w http.ResponseWriter, req *http.Request) {
-	p, ok := authmw.FromContext(req.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
-			"endpoint requires authentication",
-			map[string]any{"reason": "auth_required"})
-		return
-	}
-	filter := operations.Filter{
-		Actor: p.Subject,
-		Statuses: []operations.Status{
-			operations.StatusInProgress, operations.StatusPaused,
-			operations.StatusHeld, operations.StatusAwaitingFlush,
-		},
-	}
-	page := r.operationsInventory.List(req.Context(), filter, 0)
-	// The inventory's post-filter enforces the status narrowing but
-	// delegates the actor narrowing to each Source (which MAY ignore it).
-	// Enforce caller-ownership here so a permissive Source can never leak
-	// another operator's operations through the unauthenticated-by-role
-	// me endpoint. The owner field is StartedBy.
-	kept := page.Operations[:0]
-	for _, op := range page.Operations {
-		if op.StartedBy == p.Subject {
-			kept = append(kept, op)
-		}
-	}
-	page.Operations = kept
-	if page.Operations == nil {
-		page.Operations = []operations.Operation{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(page)
 }
 
 // adminToolCatalog returns the full set of admin tools the §13 MCP

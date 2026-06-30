@@ -239,10 +239,9 @@ type Router struct {
 	platformConfig map[string]string
 	platformWired  bool
 
-	recommendations     RecommendationService
-	eventBuffer         EventBufferQuerier
-	eventEmitter        events.EventEmitter
-	operationsInventory OperationsInventory
+	recommendations RecommendationService
+	eventBuffer     EventBufferQuerier
+	eventEmitter    events.EventEmitter
 
 	kmsProbe KMSProbe
 	// elicitationFloor returns the current §9.2 / §17.2 platform-wide
@@ -683,17 +682,6 @@ func (r *Router) Handler() http.Handler {
 	if r.eventBuffer != nil {
 		mux.Handle("GET /v1/admin/events/buffer",
 			r.requireAdmin(http.HandlerFunc(r.handleEventBuffer)))
-	}
-	if r.operationsInventory != nil {
-		// §4.0 / §25.4 unified Operations Inventory.
-		mux.Handle("GET /v1/admin/operations",
-			r.requireAdmin(http.HandlerFunc(r.handleListOperations)))
-		mux.Handle("GET /v1/admin/operations/{id}",
-			r.requireAdmin(http.HandlerFunc(r.handleGetOperation)))
-		// §25 line 4903 — caller's in-flight operations. Every
-		// authenticated caller may read their own slice of the
-		// inventory, so this route is not admin-gated.
-		mux.HandleFunc("GET /v1/admin/me/operations", r.handleMeOperations)
 	}
 	if r.sessionAdmin != nil {
 		// §24.11 platform-admin session investigation: read-through and

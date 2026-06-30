@@ -5,6 +5,7 @@ package ctlcli
 import (
 	"bytes"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -64,30 +65,81 @@ func TestAdminSessionsUnknownSubcommand(t *testing.T) {
 	}
 }
 
-// --- F-24.15.2: operations list / get ---------------------------------
+// --- F-24.15.2 / F-PE-2: operations list / get -------------------------
 
-func TestOperationsListTargetsGateway(t *testing.T) {
-	code, got := runAgainstGateway(t, http.StatusOK, `{"operations":[]}`,
+// TestOperationsListTargetsOps_spec_15_1_909 pins the operations
+// inventory to lenny-ops: §15.1 line 909 assigns /v1/admin/operations to
+// lenny-ops, so the CLI must resolve the ops endpoint (here via
+// --ops-server, which runAgainstOps supplies) rather than the gateway.
+// The gateway no longer serves the route, so a CLI that targeted it would
+// hit a 404. spec: §24.15 line 181; §15.1 line 909.
+func TestOperationsListTargetsOps_spec_15_1_909(t *testing.T) {
+	code, got := runAgainstOps(t, http.StatusOK, `{"operations":[]}`,
 		"operations", "list", "--status", "in_progress", "--limit", "10")
 	if code != 0 {
 		t.Fatalf("exit code: got %d, want 0", code)
 	}
-	if got.method != http.MethodGet || got.path != "/v1/admin/operations" {
+	// runAgainstOps folds the query into got.path.
+	if got.method != http.MethodGet || !strings.HasPrefix(got.path, "/v1/admin/operations") {
 		t.Errorf("request: %s %s, want GET /v1/admin/operations", got.method, got.path)
 	}
-	if !strings.Contains(got.query, "status=in_progress") || !strings.Contains(got.query, "limit=10") {
-		t.Errorf("query = %q, want status + limit filters", got.query)
+	if !strings.Contains(got.path, "status=in_progress") || !strings.Contains(got.path, "limit=10") {
+		t.Errorf("path = %q, want status + limit filters", got.path)
 	}
 }
 
-func TestOperationsGet(t *testing.T) {
-	code, got := runAgainstGateway(t, http.StatusOK, `{"id":"op_1"}`,
+func TestOperationsGetTargetsOps_spec_15_1_909(t *testing.T) {
+	code, got := runAgainstOps(t, http.StatusOK, `{"id":"op_1"}`,
 		"operations", "get", "op_1")
 	if code != 0 {
 		t.Fatalf("exit code: got %d, want 0", code)
 	}
 	if got.method != http.MethodGet || got.path != "/v1/admin/operations/op_1" {
 		t.Errorf("request: %s %s, want GET /v1/admin/operations/op_1", got.method, got.path)
+	}
+}
+
+// TestOperationsListReturnsOpsHostedOperation_spec_15_1_909 is the F-PE-2
+// regression. The operations inventory is hosted by lenny-ops (§15.1
+// line 909); the gateway no longer serves /v1/admin/operations and was
+// previously wired with an empty inventory, so a list that targeted the
+// gateway returned an empty page even while lenny-ops held an in-flight
+// operation. This test drives `operations list` through the full §24.16
+// auto-discovery path (no --ops-server): the gateway advertises the ops
+// URL, lenny-ops returns one in-flight operation, and the CLI surfaces
+// that operation rather than the empty page. Against the pre-fix code the
+// list hit the gateway's empty inventory and would not contain op-1.
+// spec: §24.15 line 181; §15.1 line 909; §24.16 line 201.
+func TestOperationsListReturnsOpsHostedOperation_spec_15_1_909(t *testing.T) {
+	ops := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/admin/operations" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"operations":[{"operationId":"op-1","kind":"platform_upgrade","status":"in_progress"}]}`))
+	}))
+	defer ops.Close()
+
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/admin/platform/version" {
+			// The gateway no longer serves the operations inventory; any
+			// non-version request would be a routing regression.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"gatewayVersion":"dev","opsServiceURL":"` + ops.URL + `"}`))
+	}))
+	defer gateway.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", gateway.URL, "operations", "list", "--status", "in_progress"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("operations list: exit code %d, want 0 (stderr %s)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"op-1"`) {
+		t.Errorf("operations list did not return the ops-hosted operation; stdout=%q", stdout.String())
 	}
 }
 

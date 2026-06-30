@@ -3231,43 +3231,6 @@
         "responses": { "204": { "description": "Deleted" } }
       }
     },
-    "/v1/admin/me/operations": {
-      "get": {
-        "operationId": "getV1AdminMeOperations",
-        "summary": "The calling principal's in-flight operations",
-        "x-lenny-mcp-tool": null,
-        "x-lenny-scope": "tools:me:read",
-        "x-lenny-required-role": "user",
-        "x-lenny-category": "operability",
-        "security": [{ "BearerAuth": [] }],
-        "responses": { "200": { "description": "OK" } }
-      }
-    },
-    "/v1/admin/operations": {
-      "get": {
-        "operationId": "getV1AdminOperations",
-        "summary": "List platform operations from the unified inventory",
-        "x-lenny-mcp-tool": "admin.list_operations",
-        "x-lenny-scope": "tools:operations:read",
-        "x-lenny-required-role": "platform-admin",
-        "x-lenny-category": "operability",
-        "security": [{ "BearerAuth": [] }],
-        "responses": { "200": { "description": "OK" } }
-      }
-    },
-    "/v1/admin/operations/{id}": {
-      "get": {
-        "operationId": "getV1AdminOperationsById",
-        "summary": "Get a platform operation",
-        "x-lenny-mcp-tool": "admin.get_operation",
-        "x-lenny-scope": "tools:operations:read",
-        "x-lenny-required-role": "platform-admin",
-        "x-lenny-category": "operability",
-        "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "OK" } }
-      }
-    },
     "/v1/admin/platform/config": {
       "get": {
         "operationId": "getV1AdminPlatformConfig",

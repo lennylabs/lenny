@@ -20,7 +20,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/mtls"
-	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
 )
@@ -75,17 +74,6 @@ type eventBufferStub struct{}
 
 func (eventBufferStub) Query(uint64, events.EventFilter, int) events.BufferedEventPage {
 	return events.BufferedEventPage{}
-}
-
-// operationsStub satisfies admin.OperationsInventory.
-type operationsStub struct{}
-
-func (operationsStub) List(context.Context, operations.Filter, int) operations.Page {
-	return operations.Page{}
-}
-
-func (operationsStub) Get(context.Context, string) (*operations.Operation, []string, bool) {
-	return nil, nil, false
 }
 
 // sessionAdminStub satisfies admin.SessionAdmin.

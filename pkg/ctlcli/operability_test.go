@@ -25,21 +25,28 @@ func TestMeTargetsGateway_spec_24_15_1(t *testing.T) {
 	}
 }
 
-func TestMeToolsAndOperations_spec_24_15_1(t *testing.T) {
-	for _, c := range []struct {
-		args []string
-		path string
-	}{
-		{[]string{"me", "tools"}, "/v1/admin/me/authorized-tools"},
-		{[]string{"me", "operations"}, "/v1/admin/me/operations"},
-	} {
-		code, got := runAgainstGateway(t, http.StatusOK, `{}`, c.args...)
-		if code != 0 {
-			t.Fatalf("%v: exit code %d, want 0", c.args, code)
-		}
-		if got.path != c.path {
-			t.Errorf("%v: path %q, want %q", c.args, got.path, c.path)
-		}
+func TestMeToolsTargetsGateway_spec_24_15_1(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{}`, "me", "tools")
+	if code != 0 {
+		t.Fatalf("me tools: exit code %d, want 0", code)
+	}
+	if got.path != "/v1/admin/me/authorized-tools" {
+		t.Errorf("me tools: path %q, want /v1/admin/me/authorized-tools", got.path)
+	}
+}
+
+// TestMeOperationsTargetsOps_spec_15_1_909 pins `me operations` to
+// lenny-ops: the operations inventory is assigned to lenny-ops (§15.1
+// line 909), so the per-caller in-flight view resolves the ops endpoint
+// (here via --ops-server) rather than the gateway, which no longer serves
+// the route. spec: §24.15 line 180; §15.1 line 909.
+func TestMeOperationsTargetsOps_spec_15_1_909(t *testing.T) {
+	code, got := runAgainstOps(t, http.StatusOK, `{"operations":[]}`, "me", "operations")
+	if code != 0 {
+		t.Fatalf("me operations: exit code %d, want 0", code)
+	}
+	if got.method != http.MethodGet || got.path != "/v1/admin/me/operations" {
+		t.Errorf("me operations: %s %s, want GET /v1/admin/me/operations", got.method, got.path)
 	}
 }
 

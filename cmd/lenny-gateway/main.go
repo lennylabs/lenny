@@ -320,7 +320,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
-	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
 	"github.com/lennylabs/lenny/pkg/preflight"
@@ -4966,8 +4965,7 @@ func main() {
 		).WithMetrics(recommendationsMetrics))
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEventBuffer).
-		WithEventEmitter(opsEmitter).
-		WithOperationsInventory(operations.New())
+		WithEventEmitter(opsEmitter)
 	if caRotationMgr != nil {
 		adminRouter = adminRouter.WithCARotation(caRotationMgr)
 	}
