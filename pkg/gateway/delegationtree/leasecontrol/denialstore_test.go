@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
 )
 
 // fakeDenialStore is an in-memory leasecontrol.DenialStore double that

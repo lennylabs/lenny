@@ -38,8 +38,8 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 

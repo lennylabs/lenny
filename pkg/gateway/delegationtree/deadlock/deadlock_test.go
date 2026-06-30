@@ -8,7 +8,7 @@ import (
 	"time"
 
 	session "github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/deadlock"
 )
 
 var base = time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)

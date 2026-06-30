@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectortools"
-	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 

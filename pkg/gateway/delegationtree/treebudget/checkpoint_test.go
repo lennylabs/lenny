@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treebudget"
 )
 
 // spec: §11.2 line 29, line 44 — Snapshot reads the tree-wide counters a

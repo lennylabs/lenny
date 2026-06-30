@@ -21,8 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
-	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 )
 
 // Store is the Postgres-backed §8.10 session_tree_archive. Construct

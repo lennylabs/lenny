@@ -41,7 +41,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 

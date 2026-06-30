@@ -7,8 +7,8 @@ import (
 	"errors"
 
 	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
 )
 
 // TenantLister enumerates the tenant ids whose active trees are

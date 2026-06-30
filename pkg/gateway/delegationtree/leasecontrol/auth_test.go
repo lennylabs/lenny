@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
 )
 
 // passThrough is the unary handler the interceptor wraps; it records

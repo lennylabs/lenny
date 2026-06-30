@@ -10,7 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treebudget"
 )
 
 func newReserver(t *testing.T) (*treebudget.Reserver, *miniredis.Miniredis) {

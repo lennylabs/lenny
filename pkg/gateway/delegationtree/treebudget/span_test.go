@@ -12,7 +12,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/lennylabs/lenny/pkg/gateway/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 

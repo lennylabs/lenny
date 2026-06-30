@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive"
 )
 
 func anode(tenant, root, node string) treearchive.ArchivedNode {

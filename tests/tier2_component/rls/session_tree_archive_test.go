@@ -26,9 +26,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive"
+	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
-	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
-	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/treearchive/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

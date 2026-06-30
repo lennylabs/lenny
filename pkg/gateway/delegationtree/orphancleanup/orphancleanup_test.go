@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 )
 
 // seed inserts a session row with the given state and parent.

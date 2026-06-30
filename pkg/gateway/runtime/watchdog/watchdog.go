@@ -38,8 +38,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 )
 
 // FailureReason constants — §6.2 / §11.3 pre-running timeouts.

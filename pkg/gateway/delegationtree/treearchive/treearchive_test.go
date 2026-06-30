@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive"
 )
 
 func node(root, id, state string, settledAt time.Time) treearchive.ArchivedNode {
