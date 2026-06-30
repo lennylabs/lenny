@@ -315,6 +315,12 @@ func (d *driver) printPlan() {
 // gitMove moves the package directory from its old repo-relative location to
 // the new one, creating the intermediate group directory first. git mv
 // preserves rename detection so history follows the file.
+//
+// A self-prefix move (oldRel is a path prefix of newRel, for example
+// policy -> policy/policy, where the package becomes a same-named group's leaf)
+// cannot be a direct git mv: git refuses to move a directory into itself. The
+// move routes through a sibling temp directory instead, so git never sees the
+// destination nested under the live source.
 func (d *driver) gitMove(m rewrite.Move) error {
 	oldRel := rewrite.RepoRel(m.Old)
 	newRel := rewrite.RepoRel(m.New)
@@ -322,16 +328,55 @@ func (d *driver) gitMove(m rewrite.Move) error {
 		return nil
 	}
 	oldDir := filepath.Join(d.root, filepath.FromSlash(oldRel))
-	newDir := filepath.Join(d.root, filepath.FromSlash(newRel))
 	if _, err := os.Stat(oldDir); err != nil {
 		return fmt.Errorf("source directory %s missing: %w", oldRel, err)
 	}
+	if isSelfPrefixMove(oldRel, newRel) {
+		return d.gitMoveSelfPrefix(oldRel, newRel)
+	}
+	return d.gitMoveDirect(oldRel, newRel)
+}
+
+// isSelfPrefixMove reports whether newRel nests under oldRel (oldRel + "/" is a
+// prefix of newRel), the case git mv cannot perform directly.
+func isSelfPrefixMove(oldRel, newRel string) bool {
+	return strings.HasPrefix(newRel, oldRel+"/")
+}
+
+// gitMoveDirect performs the ordinary git mv after creating the destination's
+// parent group directory.
+func (d *driver) gitMoveDirect(oldRel, newRel string) error {
+	newDir := filepath.Join(d.root, filepath.FromSlash(newRel))
 	if err := os.MkdirAll(filepath.Dir(newDir), 0o755); err != nil {
 		return fmt.Errorf("create group directory: %w", err)
 	}
-	out, err := d.git("mv", oldRel, newRel)
-	if err != nil {
+	if out, err := d.git("mv", oldRel, newRel); err != nil {
 		return fmt.Errorf("%s: %s", err, out)
+	}
+	return nil
+}
+
+// gitMoveSelfPrefix moves a package whose destination nests under its own
+// source (oldRel -> oldRel/.../leaf) by routing through a sibling temp
+// directory: git mv <old> <old>__refactor_tmp, then git mv the temp into the
+// final nested location. git never moves a directory into itself this way, and
+// both steps preserve rename detection. The temp name carries a suffix that no
+// package uses, so it cannot collide with a real sibling.
+func (d *driver) gitMoveSelfPrefix(oldRel, newRel string) error {
+	tmpRel := oldRel + "__refactor_tmp"
+	tmpDir := filepath.Join(d.root, filepath.FromSlash(tmpRel))
+	if _, err := os.Stat(tmpDir); err == nil {
+		return fmt.Errorf("self-prefix temp directory %s already exists", tmpRel)
+	}
+	if out, err := d.git("mv", oldRel, tmpRel); err != nil {
+		return fmt.Errorf("self-prefix step 1 (git mv %s %s): %s: %s", oldRel, tmpRel, err, out)
+	}
+	newDir := filepath.Join(d.root, filepath.FromSlash(newRel))
+	if err := os.MkdirAll(filepath.Dir(newDir), 0o755); err != nil {
+		return fmt.Errorf("self-prefix create group directory: %w", err)
+	}
+	if out, err := d.git("mv", tmpRel, newRel); err != nil {
+		return fmt.Errorf("self-prefix step 2 (git mv %s %s): %s: %s", tmpRel, newRel, err, out)
 	}
 	return nil
 }

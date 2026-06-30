@@ -398,6 +398,36 @@ func TestDriver_SkipsOwnRefactorSubtree(t *testing.T) {
 	}
 }
 
+// A self-prefix move (policy -> policy/policy, llmproxy -> llmproxy/llmproxy)
+// cannot be a direct git mv: git refuses to move a directory into itself. The
+// driver must route through a sibling temp directory. This is constructed to
+// FAIL against the pre-fix gitMove, which called git mv <old> <old>/<leaf>
+// directly and aborted with "can not move directory into itself".
+func TestDriver_GitMoveSelfPrefix(t *testing.T) {
+	root := initTempRepo(t)
+	// Lay down a package whose destination nests under itself.
+	writeFile(t, filepath.Join(root, "pkg", "gateway", "policy", "policy.go"),
+		"package policy\n\nvar Engine = 1\n")
+	mustRun(t, root, "git", "add", "-A")
+	mustRun(t, root, "git", "commit", "-q", "-m", "policy", "--no-verify")
+
+	m := rewrite.Move{
+		Old: "github.com/lennylabs/lenny/pkg/gateway/policy",
+		New: "github.com/lennylabs/lenny/pkg/gateway/policy/policy",
+	}
+	d := &driver{root: root}
+	if err := d.gitMove(m); err != nil {
+		t.Fatalf("gitMove self-prefix: %v", err)
+	}
+	// The source file now lives at the nested destination, and the temp dir is gone.
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "policy", "policy", "policy.go")); err != nil {
+		t.Fatalf("self-prefix move did not land the file at the nested destination: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "policy__refactor_tmp")); !os.IsNotExist(err) {
+		t.Fatalf("self-prefix temp directory should be gone; stat err=%v", err)
+	}
+}
+
 func TestDriver_DryRunTouchesNothing(t *testing.T) {
 	root := initTempRepo(t)
 	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{dryRun: true}}
