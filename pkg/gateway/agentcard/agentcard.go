@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/semver"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/semver"
 )
 
 // Key is the publishedMetadata key a generated card is stored under.

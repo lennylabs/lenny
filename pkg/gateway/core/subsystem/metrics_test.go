@@ -13,7 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 )
 
 // spec: §4.1 — NewMetrics registers the four §16.1 per-subsystem

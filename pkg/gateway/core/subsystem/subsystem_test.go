@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 )
 
 // spec: §4.1 — Subsystem.Do gates fn through both breaker and

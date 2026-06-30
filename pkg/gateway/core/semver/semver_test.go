@@ -5,7 +5,7 @@ package semver_test
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/semver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/semver"
 )
 
 func TestCompare(t *testing.T) {

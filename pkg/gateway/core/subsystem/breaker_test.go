@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 )
 
 // fakeClock is a controllable clock used to drive the breaker

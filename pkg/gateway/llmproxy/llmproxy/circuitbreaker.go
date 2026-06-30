@@ -3,7 +3,7 @@
 package llmproxy
 
 import (
-	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 )
 
 // CircuitBreaker is the §4.9 LLM Proxy circuit breaker around an

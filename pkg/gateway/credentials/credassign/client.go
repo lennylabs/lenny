@@ -13,9 +13,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
