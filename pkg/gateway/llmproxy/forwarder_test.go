@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 )
 
 // spec: §4.9 — the LLM Proxy upstream forwarder, gating each upstream

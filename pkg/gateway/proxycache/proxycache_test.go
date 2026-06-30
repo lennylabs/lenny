@@ -8,8 +8,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy/proxycache"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy/semanticcache"
+	"github.com/lennylabs/lenny/pkg/gateway/proxycache"
+	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 )
 
 // spec: §4.9 lines 1542-1556 — the SemanticCache wiring on the LLM proxy

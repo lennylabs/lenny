@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 )
 
 func vertexTranslator() *llmproxy.VertexAITranslator {

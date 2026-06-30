@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy/semanticcache"
+	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 )
 
 // spec: §12.2 SemanticCache — the Redis-backed LLM query/response
