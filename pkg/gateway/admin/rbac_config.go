@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 

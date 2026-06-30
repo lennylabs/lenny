@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
 // spec: §5.1 lines 121-126, 197-198, 199, 208 — workspaceDefaults,

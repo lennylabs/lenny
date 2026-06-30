@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 

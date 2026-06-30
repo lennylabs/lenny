@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
 // TestCreateRuntimeSDKWarmBlockingPaths covers the §5.1 lines 16-24

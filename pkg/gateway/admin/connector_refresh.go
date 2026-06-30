@@ -8,11 +8,11 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 )
 
 // connectorRefreshRateLimit caps the §9.3 capability refresh at the same

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 )
 
 // captureHandler is a minimal slog.Handler that records every WARN-level

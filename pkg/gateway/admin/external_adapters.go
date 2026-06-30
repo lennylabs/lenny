@@ -9,9 +9,9 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/compliance"
-	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 

@@ -14,7 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/compliance"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 

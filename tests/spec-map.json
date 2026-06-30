@@ -404,7 +404,7 @@
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsManagedLabelMutation",
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go",
         "pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
-        "pkg/gateway/poolstore/poolstore_test.go::TestValidateConcurrentConfig",
+        "pkg/gateway/runtime/poolstore/poolstore_test.go::TestValidateConcurrentConfig",
         "pkg/sandbox/state/state_test.go::TestConcurrentOccupancyCollapsesToClaimed_spec_6_2",
         "tests/tier2_component/stores/poolstore_test.go",
         "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2",
@@ -437,7 +437,7 @@
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
         "pkg/sandbox/isolation/...",
-        "pkg/gateway/poolstore/...",
+        "pkg/gateway/runtime/poolstore/...",
         "pkg/gateway/admin/pools_test.go",
         "pkg/gateway/admin/pools_nonce_only_test.go",
         "pkg/admission/webhook/direct_mode_isolation_test.go",
@@ -1264,7 +1264,7 @@
       "title": "Timeouts and Cancellation",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
-        "pkg/gateway/watchdog/...",
+        "pkg/gateway/runtime/watchdog/...",
         "pkg/gateway/session/inputwait/...",
         "pkg/session/state/...",
         "tests/tier2_component/watchdog/idle_pause_table_test.go::TestWatchdogIdleSweepPauseTable_spec_6_2"

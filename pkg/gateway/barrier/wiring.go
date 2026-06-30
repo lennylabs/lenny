@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/coordlease"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
 // defaultTargetReadTimeout is the §10.1 line 165 deadline on the

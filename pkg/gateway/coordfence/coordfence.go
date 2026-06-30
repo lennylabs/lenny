@@ -43,7 +43,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
 // DefaultMaxAttempts is the §11.3 line 209 fence attempt budget before

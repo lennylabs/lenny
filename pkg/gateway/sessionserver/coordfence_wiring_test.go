@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
 // stubFencer records its invocation and returns a fixed disposition.

@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 )
 
 // EnvironmentResolver loads a §10.6 environment by (tenant, name) so the

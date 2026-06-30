@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantaffinity"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/tenantaffinity"
 )
 
 // TestMetricsSatisfiesStatelessSink asserts the §5.2 demand-signal seam:

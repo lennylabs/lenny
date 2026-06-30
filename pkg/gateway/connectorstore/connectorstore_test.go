@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 )
 
 // TestCapabilityMetadataRoundTrip_spec_9_3_136 verifies the §5.1

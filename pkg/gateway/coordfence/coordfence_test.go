@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
 // fakeFenceClient drives the CoordinatorFence outcomes per attempt.

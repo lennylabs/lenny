@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 )
 
 // Connector captures the §9.3 ConnectorDefinition. v1 supports the

@@ -16,9 +16,9 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
-	capoverridepg "github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
+	capoverridepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

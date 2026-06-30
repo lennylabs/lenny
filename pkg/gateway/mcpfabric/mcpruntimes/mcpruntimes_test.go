@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
 // stubDispatcher records each Dispatch invocation and returns the
