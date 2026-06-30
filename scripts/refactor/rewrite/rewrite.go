@@ -43,22 +43,39 @@ func RepoRel(importPath string) string {
 	return strings.TrimPrefix(importPath, modulePrefix)
 }
 
-// ImportLiterals rewrites every quote-delimited import literal
-// "<old>" -> "<new>" in a Go source file's content. The match is anchored on
-// both quotes ("<old>"), so a moved path that is a strict prefix of a sibling
-// import (for example pkg/gateway/mcp vs pkg/gateway/mcptools) never matches
-// inside the longer sibling literal: the closing quote of the short literal
-// cannot fall mid-token of the long one. Package names are unchanged, so no
-// identifier rewrite accompanies this.
+// ImportLiterals rewrites every quote-delimited import literal that names the
+// moved package OR a package nested under it:
+//
+//	"<old>"      -> "<new>"      the moved leaf package itself, and
+//	"<old>/sub"  -> "<new>/sub"  a package nested in the moved directory
+//	                             (for example "<old>/pgstore", which git mv
+//	                             relocates with the directory tree but whose
+//	                             importers still name the old path).
+//
+// Both forms are anchored on the opening quote and either the closing quote or
+// a trailing slash, so a moved path that is a strict prefix of a sibling import
+// (for example pkg/gateway/mcp vs pkg/gateway/mcptools) never matches inside the
+// longer sibling literal: the boundary after the short path is a '/' or '"', and
+// the longer sibling has a path-segment letter there instead. Package names are
+// unchanged, so no identifier rewrite accompanies this.
+//
+// The nested-package rewrite is necessary because the manifest lists only the
+// moved leaf package's import path, while git mv moves the whole subtree; without
+// it, an importer of "<old>/pgstore" would dangle after the move (proposal §2:
+// the rewrite is "limited to import paths and the path references that name
+// them" — a nested-package import is one such reference).
 //
 // The replacement is applied for every move; ordering does not matter because
-// each old literal is quote-bounded and the new literals never reintroduce an
+// each old literal is boundary-bounded and the new literals never reintroduce an
 // old token in a rewritable position.
 func ImportLiterals(content string, moves []Move) string {
 	for _, m := range moves {
-		oldLit := `"` + m.Old + `"`
-		newLit := `"` + m.New + `"`
-		content = strings.ReplaceAll(content, oldLit, newLit)
+		// Nested-package form first ("<old>/sub"), then the exact leaf form.
+		// Doing the slash form before the exact form is harmless because the
+		// exact form is quote-bounded and cannot match inside a "<new>/sub"
+		// result.
+		content = strings.ReplaceAll(content, `"`+m.Old+`/`, `"`+m.New+`/`)
+		content = strings.ReplaceAll(content, `"`+m.Old+`"`, `"`+m.New+`"`)
 	}
 	return content
 }
@@ -228,8 +245,13 @@ func ClassifyGo(content string, m Move) SurvivorClass {
 	// Driver-rewritable forms: a surviving one is an abort. The deeper-reference
 	// and exact-literal forms exclude an occurrence that is the rewritten new
 	// path, which a self-prefix move (policy -> policy/policy) leaves carrying the
-	// old token as a prefix; see hasSurvivingQuotedRef.
-	if hasSurvivingExactLiteral(content, oldImport, newImport) {
+	// old token as a prefix; see hasSurvivingQuotedRef. hasSurvivingQuotedRef is
+	// applied to both the fully-qualified import path (catching a surviving
+	// "<oldImport>" leaf import or "<oldImport>/sub" nested import, the form
+	// ImportLiterals rewrites) and the repo-relative runtime path (catching a
+	// surviving "<oldRel>" or "<oldRel>/..." runtime read, the form RuntimePaths
+	// rewrites).
+	if hasSurvivingQuotedRef(content, oldImport, newImport) {
 		return Abort
 	}
 	if hasSurvivingQuotedRef(content, oldRel, newRel) {
@@ -293,15 +315,6 @@ func hasSurvivingQuotedRef(content, oldRel, newRel string) bool {
 		}
 	}
 	return false
-}
-
-// hasSurvivingExactLiteral reports whether the exact import literal "<oldImport>"
-// survives, excluding the rewritten "<newImport>" occurrence a self-prefix move
-// leaves (oldImport is a prefix of newImport, so "<oldImport>" never matches the
-// quote-bounded longer literal; the exclusion is symmetric with
-// hasSurvivingQuotedRef and keeps the two abort checks consistent).
-func hasSurvivingExactLiteral(content, oldImport, newImport string) bool {
-	return survivingQuotedMatch(content, `"`+oldImport+`"`, `"`+newImport+`"`)
 }
 
 // survivingQuotedMatch reports whether needle occurs in content at a position

@@ -62,6 +62,63 @@ func TestImportLiterals_PrefixCollisionDoesNotCorruptSibling(t *testing.T) {
 	}
 }
 
+// nested-package import: a package nested under a moved directory (for example
+// "<old>/pgstore") is relocated by git mv with the directory tree, so its
+// importers must be rewritten to the new path. The manifest lists only the
+// moved leaf package, so ImportLiterals must rewrite the "<old>/sub" form too,
+// not only the exact "<old>" leaf. This is constructed to FAIL against the
+// pre-fix ImportLiterals, which rewrote only the exact quote-bounded "<old>"
+// literal and left "<old>/pgstore" dangling (the move's go build gate caught
+// this against the real tree: leasestore/pgstore and erasurejob/saltlockpg).
+func TestImportLiterals_RewritesNestedSubpackageImport(t *testing.T) {
+	moves := []Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/leasestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/erasurejob", New: "github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"},
+	}
+	src := `import (
+	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
+	leasepg "github.com/lennylabs/lenny/pkg/gateway/leasestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/erasurejob/saltlockpg"
+)`
+	got := ImportLiterals(src, moves)
+	for _, want := range []string{
+		`"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"`,
+		`"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"`,
+		`"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/saltlockpg"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nested-import rewrite missing %s; got:\n%s", want, got)
+		}
+	}
+	// The pre-fix dangling forms must be gone.
+	for _, gone := range []string{
+		`"github.com/lennylabs/lenny/pkg/gateway/leasestore/pgstore"`,
+		`"github.com/lennylabs/lenny/pkg/gateway/erasurejob/saltlockpg"`,
+	} {
+		if strings.Contains(got, gone) {
+			t.Errorf("stale nested import %s survived; got:\n%s", gone, got)
+		}
+	}
+}
+
+// A nested-package import that survives the rewrite must abort the move: the
+// audit's ClassifyGo flags a surviving "<oldImport>/sub" import literal as a
+// driver-rewritable token. This pins the audit to the same nested form
+// ImportLiterals now rewrites, so a future regression that drops the nested
+// rewrite is caught by the audit as well as the build gate.
+func TestClassifyGo_AbortsOnSurvivingNestedImport(t *testing.T) {
+	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/leasestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"}
+	stale := `import leasepg "github.com/lennylabs/lenny/pkg/gateway/leasestore/pgstore"`
+	if got := ClassifyGo(stale, m); got != Abort {
+		t.Fatalf("ClassifyGo on a surviving nested import = %v, want Abort", got)
+	}
+	// The correctly rewritten nested import must not abort.
+	rewritten := `import leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"`
+	if got := ClassifyGo(rewritten, m); got != None {
+		t.Fatalf("ClassifyGo on the rewritten nested import = %v, want None", got)
+	}
+}
+
 // The exact-literal rewrite must also leave a non-import occurrence of the same
 // token (a comment) alone, because ImportLiterals is quote-anchored.
 func TestImportLiterals_LeavesCommentTokenAlone(t *testing.T) {
