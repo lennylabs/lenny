@@ -15,9 +15,12 @@ import (
 // regained inline subsystem construction — it stopped being the ordered
 // build-step call sequence proposal 0020 §4 Part A R8 specifies and §6 Part A
 // accepts, and drifted back toward the ~494-line monolith the pre-fix code was.
-// The controllers registered against the manager, or the conditional gates that
-// guard the Postgres-only and leader-only runnables, may no longer match the
-// pinned wiring outcome.
+// This is the structural guard: it checks runController's statement-count bound
+// and that it carries no inline package-level constructor. It does NOT pin which
+// controllers/runnables register or under which flag gates; that wiring outcome
+// is pinned by TestControllerWiringOutcomePinsRegistrationGates in
+// wiring_test.go, which boots a real manager behind a recording Add seam and
+// asserts the registered set per spec-named gate combination.
 //
 // TestRunControllerIsAnOrderedBuildStepSequence pins proposal 0020 R8: the
 // composition root was a ~494-line, 186-statement func main that built the
@@ -48,7 +51,7 @@ func TestRunControllerIsAnOrderedBuildStepSequence(t *testing.T) {
 
 	fn := findFuncDecl(file, "runController")
 	if fn == nil || fn.Body == nil {
-		t.Fatal("runController not found in main.go")
+		t.Fatal("runController not found in wiring.go")
 	}
 
 	// (1) Statement-count bound. The composition root is an ordered call
