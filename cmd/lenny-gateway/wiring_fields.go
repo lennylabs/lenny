@@ -72,7 +72,9 @@ import (
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
@@ -82,10 +84,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/redistopology"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
@@ -132,6 +138,10 @@ type gatewayWiringFields struct {
 	replica             string
 	alertEvalPtr        *atomic.Pointer[evaluator.Evaluator]
 	watchdogCtx         context.Context
+	// watchdogCancel cancels watchdogCtx. buildControlServer records it; the
+	// composition root (runGateway) defers it so the §6.2 watchdog context
+	// lives for the process lifetime rather than only for the build step.
+	watchdogCancel context.CancelFunc
 
 	// Audit background loops the run loop starts after installing the
 	// signal handler (§11.7 item 2, §11.7 Wire Format, §12.3).
@@ -144,20 +154,39 @@ type gatewayWiringFields struct {
 	// Constructed subsystems and stores the §4.1 background-worker step
 	// (startBackgroundWorkers) reads to launch the periodic sweepers,
 	// samplers, reconcilers, and propagator subscribers.
-	adminRouter                 *admin.Router
-	auditAppender               policy.AuditAppender
-	auditPruner                 *auditretention.Pruner
-	billing                     billingstore.Store
-	billingEmitter              *billingfanout.Emitter
-	billingPipeline             *failover.Pipeline
-	breakerCache                *cachingstore.Store
-	breakers                    breakerRegistry
-	checkpointSvc               *checkpointer.Checkpointer
-	clusterClient               client.Client
-	coordinator                 *coordination.Sweeper
-	credDeny                    *denylist.DenyList
-	credRenewalProp             *credrenewalprop.Propagator
-	deadlockTracker             *deadlock.AwaitTracker
+	adminRouter     *admin.Router
+	auditAppender   policy.AuditAppender
+	auditPruner     *auditretention.Pruner
+	billing         billingstore.Store
+	billingEmitter  *billingfanout.Emitter
+	billingPipeline *failover.Pipeline
+	breakerCache    *cachingstore.Store
+	breakers        breakerRegistry
+	checkpointSvc   *checkpointer.Checkpointer
+	clusterClient   client.Client
+	coordinator     *coordination.Sweeper
+	credDeny        *denylist.DenyList
+	credRenewalProp *credrenewalprop.Propagator
+	deadlockTracker *deadlock.AwaitTracker
+	// §8.2 / §9.1 MCP fabric outputs. buildMCPSurface constructs the
+	// delegation service, the MCP server, and the delegation-policy,
+	// external-interceptor, and deployment-config stores; the admin router,
+	// the HTTP surface, and the control server read them back.
+	delegationSvc      *delegation.Service
+	mcpSrv             *mcp.Server
+	delegationPolicies delegationpolicystore.Store
+	interceptors       interceptorstore.Store
+	deploymentConfig   deploymentconfigstore.Store
+	// §4.8 policy interceptor chain outputs. buildPolicyChain constructs the
+	// chain, the §8.3 maxInputSize resolver holder, the policy audit sink,
+	// and the §11.2 quota counter and tenant-limits resolver; the session
+	// server, the MCP fabric, the admin router, the HTTP surface, and the
+	// LLM proxy read them back.
+	policyChain                 *interceptor.Chain
+	maxInputResolver            *maxInputSizeResolverHolder
+	policyAuditSink             *policy.AuditSink
+	quotaCounter                *quotastore.Counter
+	tenantLimits                *policy.TenantStoreLimits
 	delegationBudgetReconciler  *delegationbudget.Reconciler
 	driftMonitor                *driftmonitor.Monitor
 	effectiveAuditRetentionDays int

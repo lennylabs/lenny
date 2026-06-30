@@ -1222,5 +1222,4 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§12.8 single-region legal-hold escrow bucket name. Empty disables the force-delete override (it fails closed with LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE).")
 	f.legalHoldEscrowEndpoint = flag.String("legal-hold-escrow-endpoint", os.Getenv("LENNY_LEGAL_HOLD_ESCROW_ENDPOINT"),
 		"§12.8 legal-hold escrow bucket endpoint (S3-compatible).")
-	flag.Parse()
 }
