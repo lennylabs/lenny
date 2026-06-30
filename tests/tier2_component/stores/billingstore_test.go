@@ -14,8 +14,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	billingpg "github.com/lennylabs/lenny/pkg/gateway/billingstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	billingpg "github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/pgstore"
 )
 
 // spec: 11.2.1

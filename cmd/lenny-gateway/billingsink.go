@@ -7,7 +7,7 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/billingsink"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/billingsink"
 )
 
 // billingSinkDeadLetter logs a §11.2.1 dead-lettered billing-event

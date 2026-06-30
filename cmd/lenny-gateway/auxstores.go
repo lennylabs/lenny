@@ -7,6 +7,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	usagepg "github.com/lennylabs/lenny/pkg/gateway/billing/usagestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore/pgstore"
@@ -20,8 +22,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionusage/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
-	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )

@@ -13,8 +13,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
-	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	usagepg "github.com/lennylabs/lenny/pkg/gateway/billing/usagestore/pgstore"
 )
 
 // spec: 15.1
