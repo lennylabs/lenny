@@ -41851,7 +41851,7 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 ---
 
-### 25.1-H1 — Admin-API scope claims use `admin.<domain>.<action>` form, not the §25.1/§15.1 mandated `tools:<domain>:<action>` taxonomy
+### 25.1-H1 — Admin-API scope claims use `admin.<domain>.<action>` form, not the §25.1/§15.1 mandated `tools:<domain>:<action>` taxonomy — CLOSED
 
 **Spec:** §25.1 lines 77–83 require scopes in `tools:<domain>:<action>` form, listing the closed taxonomy (`pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`, `circuit_breaker`). §15.1 line 933 asserts a build-time check that every `x-lenny-scope` "conforms to `tools:<domain>:<action>` syntax". Each gateway endpoint in §15.1 (e.g., line 886 `tools:circuit_breaker:read`, line 888 `tools:circuit_breaker:write`) carries the `tools:` form.
 
@@ -41864,9 +41864,11 @@ The format mismatch breaks §25.1's CI contract on syntax and makes deployer-con
 
 **Severity:** High. The scope claim is the §25.1 narrowing primitive; mismatching the format on the gateway side makes the entire OAuth 2.0 scope mechanism on admin endpoints non-functional against any token issued per the §25.1 taxonomy.
 
+**Resolution (proposal 0019, ADM-1 prerequisite).** The served `pkg/gateway/openapi/openapi.json` `x-lenny-scope` values and the `pkg/gateway/admin/me.go` `adminToolCatalog()` `Scope` values are canonicalized to the `tools:<domain>:<action>` taxonomy, mapping each served domain to the exact form the §15.1:918 taxonomy and the `scopes.Domains` map carry (most plural and dash forms collapse to a singular underscore entry; `admin.sessions.*` maps to `tools:sessions:*` because the existing entry is the plural `sessions`). The §15.1:918 closed taxonomy and the `pkg/common/scopes` `Domains` map are expanded with the 23 (taxonomy) and 21 (map) missing admin domains so every renamed scope parses through `scopes.ParseScope` and clears the §15.1:933 CI syntax check. `TestAdminScopesFollowDocumentedSyntax_spec_15_1_933` (`pkg/gateway/openapi/openapi_test.go`) is tightened to drop the legacy `admin.<domain>.<verb>` branch and assert `scopes.ParseScope` membership for every served scope, so it doubles as the verification that the taxonomy covers every served domain. Landed by commits `2a0ab5f0` (scopes map), `cf72b7ac` (openapi.json + me.go canonicalization), `ac3350e2` (route-to-scope lookup), and `c4e80030` (enforcement). The §15.1:933 CI contract and the admin-API MCP extension CI contract pass.
+
 ---
 
-### 25.1-H2 — Gateway admin API does not enforce `scope` claim; only the lenny-ops MCP server does
+### 25.1-H2 — Gateway admin API does not enforce `scope` claim; only the lenny-ops MCP server does — CLOSED
 
 **Spec:** §25.1 lines 92–96 declare three enforcement points: (1) "Admin API middleware — every endpoint is mapped to a canonical scope via its `x-lenny-scope` OpenAPI extension. The middleware checks scopes before routing to the handler." (2) MCP `tools/call`. (3) `/v1/admin/me/authorized-tools` pre-filtering.
 
@@ -41877,6 +41879,8 @@ The format mismatch breaks §25.1's CI contract on syntax and makes deployer-con
 - Only `/Users/joan/projects/lenny/pkg/ops/mcpmgmt/server.go` lines 213–227 enforces scope (and only on `/mcp/management` `tools/call`).
 
 **Severity:** High. Two of the three §25.1 enforcement points (admin-API middleware, `authorized-tools` pre-filter) are absent. Operators issuing narrowed tokens cannot rely on the gateway to honour them on REST.
+
+**Resolution (proposal 0019, ADM-1).** `pkg/gateway/openapi` exposes a route-to-scope lookup that parses the served document's `x-lenny-scope` per `(method, path template)` (`ac3350e2`), and the admin `Router` wraps every route in a scope-enforcement step before any handler runs (`c4e80030`): it resolves the matched route's required scope, reads `Principal.Scopes`, and when the claim is present and does not `Match` the required scope returns `403 SCOPE_FORBIDDEN` with `details.requiredScope`/`details.activeScope` per the §15.1:1030 catalog row. An absent claim defers to the role ceiling per §25.1 line 90. The three destructive §25.9 audit routes (drop/retranslate/republish) carry the fine-grained scopes their handlers enforce so the central registry and the handlers require the same scope, and their now-redundant per-handler `HasScope` checks are dropped; `GET /v1/admin/audit-events/{seq}` keeps its conditional `HasScope(raw_canonical_read)` check (now returning `SCOPE_FORBIDDEN`) because the raw-canonical scope applies only to `?format=raw-canonical`. All four §25.9 audit-handler denials now return `SCOPE_FORBIDDEN`. The tier-9 regression `tests/tier9_security/admin_scope_enforce_test.go` asserts a scope-narrowed token (role permits, scope excludes) gets `403 SCOPE_FORBIDDEN` on a destructive admin endpoint while the matching-scope and absent-scope calls succeed, and that a `tools:audit:read` token still reads the ordinary OCSF event but is denied only on `?format=raw-canonical`.
 
 ---
 

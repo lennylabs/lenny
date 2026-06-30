@@ -1940,7 +1940,8 @@
         "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go",
         "tests/tier9_security/elicitation_integrity_gate_test.go",
         "tests/tier9_security/lease_extension_clear_test.go",
-        "tests/tier6_e2e_cloud/session_lifecycle_test.go"
+        "tests/tier6_e2e_cloud/session_lifecycle_test.go",
+        "tests/tier3_contract/admin_conflict_codes/admin_conflict_codes_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -2889,7 +2890,8 @@
       "tests": [
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/probe/probe_test.go",
-        "pkg/ops/conventions/conventions_test.go"
+        "pkg/ops/conventions/conventions_test.go",
+        "tests/tier8_chaos/escalation_retry_test.go"
       ],
       "packages": [
         "cmd/lenny-ops"
@@ -2972,7 +2974,8 @@
       "title": "Configuration Drift Detection",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/drift/drift_test.go"
+        "pkg/drift/drift_test.go",
+        "tests/tier3_contract/ops_endpoints/drift_against_target_test.go"
       ],
       "packages": [
         "pkg/operability/drift"
