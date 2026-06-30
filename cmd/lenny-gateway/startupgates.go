@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/devmode"
-	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/tlsprobe"
 	"github.com/lennylabs/lenny/pkg/observability/slo"

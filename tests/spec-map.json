@@ -326,8 +326,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/gateway/interceptor/...",
-        "pkg/gateway/delegationpolicystore/...",
-        "pkg/gateway/mcptools/predelegation_test.go"
+        "pkg/gateway/mcpfabric/delegationpolicystore/...",
+        "pkg/gateway/mcpfabric/mcptools/predelegation_test.go"
       ],
       "packages": [
         "pkg/gateway/interceptors",
@@ -693,7 +693,7 @@
       "title": "Approval Modes",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/gateway/delegationpolicystore/..."
+        "pkg/gateway/mcpfabric/delegationpolicystore/..."
       ],
       "packages": [
         "pkg/delegation/approval"
@@ -705,8 +705,8 @@
       "title": "Delegation Tools",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/gateway/mcptools/...",
-        "pkg/gateway/delegation/..."
+        "pkg/gateway/mcpfabric/mcptools/...",
+        "pkg/gateway/mcpfabric/delegation/..."
       ],
       "packages": [
         "pkg/delegation/tools"
@@ -753,7 +753,7 @@
       "title": "Task Tree",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/gateway/mcptools/mcptools_test.go",
+        "pkg/gateway/mcpfabric/mcptools/mcptools_test.go",
         "pkg/delegation/recovery/..."
       ],
       "packages": [
@@ -788,9 +788,9 @@
       "title": "Where MCP Is Used",
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
-        "pkg/gateway/mcp/...",
+        "pkg/gateway/mcpfabric/mcp/...",
         "pkg/adapter/mcp/...",
-        "pkg/gateway/mcptools/discover_agents_filtering_test.go"
+        "pkg/gateway/mcpfabric/mcptools/discover_agents_filtering_test.go"
       ],
       "packages": [
         "pkg/mcp"
@@ -842,7 +842,7 @@
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
         "pkg/gateway/session/memorystore/...",
-        "pkg/gateway/mcptools/memorytools_test.go",
+        "pkg/gateway/mcpfabric/mcptools/memorytools_test.go",
         "tests/tier2_component/stores/memorystore_test.go",
         "tests/tier2_component/stores/memorysemanticsearch_test.go",
         "tests/tier2_component/stores/semanticcache_test.go"
@@ -860,7 +860,7 @@
         "tests/tier7b_load_kind/scenarios/delegation_fanout_mcp"
       ],
       "packages": [
-        "pkg/gateway/mcptools",
+        "pkg/gateway/mcpfabric/mcptools",
         "pkg/delegation"
       ],
       "blocked_until_phase": "9.5",
@@ -1767,8 +1767,8 @@
       "title": "Delegation Chain Content Security",
       "spec_file": "spec/13_security-model.md",
       "tests": [
-        "pkg/gateway/delegationpolicystore/...",
-        "pkg/gateway/mcptools/...",
+        "pkg/gateway/mcpfabric/delegationpolicystore/...",
+        "pkg/gateway/mcpfabric/mcptools/...",
         "pkg/delegation/lease/...",
         "pkg/gateway/interceptor/..."
       ],
@@ -1886,7 +1886,7 @@
         "pkg/gateway/session/sessionstore/memstore",
         "pkg/gateway/sessionserver",
         "cmd/lenny-gateway",
-        "pkg/gateway/mcp",
+        "pkg/gateway/mcpfabric/mcp",
         "pkg/gateway/rest",
         "pkg/gateway/internal",
         "cmd/runtimes/echo",
@@ -1958,11 +1958,11 @@
       "title": "MCP API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "pkg/gateway/mcp/...",
+        "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier4_integration/gateway_full_e2e_test.go"
       ],
       "packages": [
-        "pkg/gateway/mcp"
+        "pkg/gateway/mcpfabric/mcp"
       ],
       "blocked_until_phase": "5"
     },
@@ -1970,7 +1970,7 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "pkg/gateway/mcp/...",
+        "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",
         "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
@@ -1978,7 +1978,7 @@
       ],
       "packages": [
         "pkg/gateway/rest",
-        "pkg/gateway/mcp"
+        "pkg/gateway/mcpfabric/mcp"
       ],
       "blocked_until_phase": "5"
     },
@@ -3162,12 +3162,12 @@
       "title": "Web Playground",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go",
-        "pkg/gateway/playground/sessionrecord_test.go",
+        "pkg/gateway/mcpfabric/playground/playground_test.go",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go",
         "tests/tier3_contract/playground/playground_test.go"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5"
     },
@@ -3175,12 +3175,12 @@
       "title": "Web Playground — Placement and Gating",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
-        "pkg/gateway/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
-        "pkg/gateway/playground/playground_test.go::TestConfigValidateDevTenantRules"
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds."
@@ -3189,19 +3189,19 @@
       "title": "Web Playground — Authentication",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestDevModeMintStampsOriginClaim",
-        "pkg/gateway/playground/playground_test.go::TestDevModeReadyGateRejectsUnseededTenant",
-        "pkg/gateway/playground/playground_test.go::TestAPIKeyModeRejectsNonUserBearer",
-        "pkg/gateway/playground/playground_test.go::TestAPIKeyModeScopeIsNarrowedToIntersection",
-        "pkg/gateway/playground/playground_test.go::TestOIDCModeRejectsBearerOnTokenEndpoint",
-        "pkg/gateway/playground/playground_test.go::TestOIDCLoginRedirectsAndSetsStateCookie",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeMintStampsOriginClaim",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeReadyGateRejectsUnseededTenant",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeRejectsNonUserBearer",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeScopeIsNarrowedToIntersection",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestOIDCModeRejectsBearerOnTokenEndpoint",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestOIDCLoginRedirectsAndSetsStateCookie",
         "tests/tier3_contract/playground/playground_test.go::TestDevModeMintReturnsBearer",
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints."
@@ -3214,7 +3214,7 @@
         "tests/tier3_contract/playground/playground_test.go::TestLoginEndpointIsOIDCModeOnly"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Playground-minted JWTs are honored by the public REST surface. Gatekeeper endpoints exist only in their applicable auth mode."
@@ -3223,15 +3223,15 @@
       "title": "Web Playground — Session Lifecycle and Cleanup",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestEffectiveIdleAndDurationCaps",
-        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
-        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStoreRevocationKeyIsolation",
-        "pkg/gateway/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
-        "pkg/gateway/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
-        "pkg/gateway/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers"
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestEffectiveIdleAndDurationCaps",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStoreRevocationKeyIsolation",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Per-origin idle-timeout override and duration cap. Session-store revocation, logout, and bearer-revocation propagation."
@@ -3240,13 +3240,13 @@
       "title": "Web Playground — Asset Serving and CSP",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestSecurityHeadersAndCSP",
-        "pkg/gateway/playground/playground_test.go::TestStaticAssetCacheHeaders",
-        "pkg/gateway/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestStaticAssetCacheHeaders",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint."
@@ -3258,7 +3258,7 @@
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161"
       ],
       "packages": [
-        "pkg/gateway/playground",
+        "pkg/gateway/mcpfabric/playground",
         "pkg/observability/metrics"
       ],
       "blocked_until_phase": "5",
@@ -3268,12 +3268,12 @@
       "title": "Web Playground — Security Considerations",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestSecurityHeadersAndCSP",
-        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
-        "pkg/gateway/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers"
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface."

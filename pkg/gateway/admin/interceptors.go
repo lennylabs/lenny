@@ -13,9 +13,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/observability/audit"

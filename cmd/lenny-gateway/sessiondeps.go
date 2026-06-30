@@ -9,12 +9,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol/denialpg"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"

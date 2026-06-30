@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 )
 
 // spec: §15.1 line 1140 — ?dryRun=true validates without persisting or

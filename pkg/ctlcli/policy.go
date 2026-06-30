@@ -8,7 +8,7 @@ import (
 	"io"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
 )
 
 // recordingAuditSink captures the §11.7 events routed to it. It

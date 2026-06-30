@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"

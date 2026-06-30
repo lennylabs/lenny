@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectorauthz"
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )

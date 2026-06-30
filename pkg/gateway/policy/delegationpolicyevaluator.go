@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 )
 
 // DelegationPolicyEvaluatorPriority is the §4.8 built-in priority for

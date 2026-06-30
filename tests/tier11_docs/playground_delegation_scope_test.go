@@ -50,7 +50,7 @@ func TestPlaygroundMintResponseEffectiveScopeSurfacesAgree(t *testing.T) {
 
 	spec27 := readRepoFile(t, root, "spec", "27_web-playground.md")
 	spec15 := readRepoFile(t, root, "spec", "15_external-api-surface.md")
-	tokenGo := readRepoFile(t, root, "pkg", "gateway", "playground", "token.go")
+	tokenGo := readRepoFile(t, root, "pkg", "gateway", "mcpfabric", "playground", "token.go")
 
 	// §27.3.1 mint-response body must carry the effectiveScope JSON field.
 	if !strings.Contains(spec27, `"effectiveScope"`) {
@@ -66,7 +66,7 @@ func TestPlaygroundMintResponseEffectiveScopeSurfacesAgree(t *testing.T) {
 	}
 	// The tokenResponse struct must carry the matching JSON tag.
 	if !strings.Contains(tokenGo, "`json:\"effectiveScope\"`") {
-		t.Error("pkg/gateway/playground/token.go tokenResponse struct does not carry the effectiveScope JSON tag; the wire field must match the §27.3.1 and §15.1 spec surfaces")
+		t.Error("pkg/gateway/mcpfabric/playground/token.go tokenResponse struct does not carry the effectiveScope JSON tag; the wire field must match the §27.3.1 and §15.1 spec surfaces")
 	}
 }
 

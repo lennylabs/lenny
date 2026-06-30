@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
-	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
+	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore/pgstore"
 )
 
 // policyName returns a fresh unique §8.3 policy name. The name pattern

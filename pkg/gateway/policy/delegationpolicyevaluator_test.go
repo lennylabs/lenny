@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 )
 
 // fakeMaxInputResolver is a MaxInputSizeResolver test double.
