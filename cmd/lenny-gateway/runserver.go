@@ -18,8 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/inproceval"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
-	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 

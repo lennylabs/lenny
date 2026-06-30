@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
-	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
-	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

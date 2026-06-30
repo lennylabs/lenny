@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
-	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
 )
 
 func newBreakerAdmin(t *testing.T) (*admin.Router, *breakerstore.Memory, *recordingAudit) {

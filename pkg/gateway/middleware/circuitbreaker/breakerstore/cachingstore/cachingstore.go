@@ -22,8 +22,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
-	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
 )
 
 // channel is the Redis pub/sub channel circuit-breaker changes are

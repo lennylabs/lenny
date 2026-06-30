@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
-	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
 )
 
 // fakeRegistry is an in-test cachingstore.Registry. Snapshot returns

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
-	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
 )
 
 func TestOpenAndGet(t *testing.T) {
