@@ -870,8 +870,8 @@ type admission struct {
 	// resolved DelegationPolicy, when one applies.
 	effectivePolicy     delegationpolicystore.DelegationPolicy
 	haveEffectivePolicy bool
-	// delegationPolicyRef is the §8.10 lease-scoped policy reference
-	// stamped on the child lease for tree recovery.
+	// delegationPolicyRef is the §8.10 lines 1044-1049 lease-scoped policy
+	// reference stamped on the child lease for tree recovery. F-8.10.5.
 	delegationPolicyRef string
 	// policyCeiling is the §8.2.bis layer-4 policy depth ceiling (zero in
 	// v1; reserved for the §8.3 ceiling extension).
@@ -1034,6 +1034,10 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 				return ErrTargetNotAgent
 			}
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
+			// spec: §8.10 lines 1044-1049 — the lease-scoped policy
+			// reference captured at approval time so tree recovery
+			// resumes the node against the persisted lease rather than
+			// re-evaluating live policy. F-8.10.5.
 			adm.delegationPolicyRef = rt.DelegationPolicyRef
 			if s.policies != nil && rt.DelegationPolicyRef != "" {
 				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
