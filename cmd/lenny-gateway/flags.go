@@ -38,10 +38,11 @@ import (
 
 // gatewayFlags holds every command-line flag and environment-derived
 // startup input the gateway binary parses. parseFlags populates it from
-// flag.CommandLine; the build helpers under main read it to wire each
-// subsystem. Carrying the parsed inputs on one value lets main stay a
-// short flag-parse-then-build sequence while the per-subsystem builders
-// reach the inputs they need.
+// flag.CommandLine; the per-subsystem build steps (buildStores,
+// buildLLMProxy, startBackgroundWorkers, runServers) read it off the
+// gatewayWiring accumulator to wire each subsystem. Carrying the parsed
+// inputs on one value lets runGateway stay a flag-parse-then-build call
+// sequence while each build step re-aliases the flags it needs.
 //
 // spec: §4.1 — the gateway is one component internally partitioned into
 // subsystem boundaries (Go interfaces within a single binary); the flag
