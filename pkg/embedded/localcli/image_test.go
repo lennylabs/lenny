@@ -114,6 +114,57 @@ func TestImageInUseReferenceExtraction(t *testing.T) {
 	}
 }
 
+// TestCmdImageImportRequiresEmbeddedStack pins the F-CTL-7 fix: a valid
+// `lenny image import` invocation against no running Embedded Mode stack
+// exits 3 EMBEDDED_MODE_REQUIRED, the same guard `lenny token print`
+// performs, rather than the 4 K3S_UNAVAILABLE that reaching
+// stack.CtrCommand would otherwise surface. The reference passes the OCI
+// validation, so without the embedded-stack probe execution would fall
+// through to CtrCommand and return exitK3sUnavailable (4); this asserts
+// the corrected exit 3 and would fail against the pre-fix code.
+//
+// spec: §24.19.1 line 282,291 (image import requires embedded mode, exit
+// 3 EMBEDDED_MODE_REQUIRED; same guard as lenny token print). (F-CTL-7)
+func TestCmdImageImportRequiresEmbeddedStack_spec_24_19_1(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := cmdImageImport([]string{"acme/chat:v1"}, &stdout, &stderr)
+	if code != exitEmbeddedModeRequired {
+		t.Fatalf("cmdImageImport against no embedded stack = %d, want %d (EMBEDDED_MODE_REQUIRED), not %d (K3S_UNAVAILABLE)",
+			code, exitEmbeddedModeRequired, exitK3sUnavailable)
+	}
+	if !strings.Contains(stderr.String(), "EMBEDDED_MODE_REQUIRED") {
+		t.Errorf("stderr = %q, want the EMBEDDED_MODE_REQUIRED marker", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "lenny up") {
+		t.Errorf("stderr = %q, want guidance to run lenny up", stderr.String())
+	}
+}
+
+// TestCmdImageImportReachesCtrWithEmbeddedStack confirms the guard does
+// not over-reject: once `lenny up` has written the persisted OIDC key,
+// the embedded-stack probe passes and import proceeds to the containerd
+// invocation. With a seeded key but no real k3s on disk, stack.CtrCommand
+// then reports K3S_UNAVAILABLE (4), demonstrating the guard fired only on
+// the missing-stack path and not on a present stack.
+//
+// spec: §24.19.1 line 282 (the guard passes once embedded mode is up;
+// K3S_UNAVAILABLE then surfaces when the containerd socket is unreachable).
+func TestCmdImageImportReachesCtrWithEmbeddedStack_spec_24_19_1(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LENNY_HOME", home)
+	seedOIDCKey(t, home)
+	var stdout, stderr bytes.Buffer
+	code := cmdImageImport([]string{"acme/chat:v1"}, &stdout, &stderr)
+	if code != exitK3sUnavailable {
+		t.Fatalf("cmdImageImport with a seeded embedded stack but no k3s = %d, want %d (K3S_UNAVAILABLE)",
+			code, exitK3sUnavailable)
+	}
+	if strings.Contains(stderr.String(), "EMBEDDED_MODE_REQUIRED") {
+		t.Errorf("stderr = %q, must not reject a present embedded stack as EMBEDDED_MODE_REQUIRED", stderr.String())
+	}
+}
+
 // TestCmdImageListUnavailableStack covers cmdImageList's early return: with
 // no running stack and no host k3s on disk, stack.CtrCommand reports
 // K3S_UNAVAILABLE and cmdImageList propagates that exit without attempting a
