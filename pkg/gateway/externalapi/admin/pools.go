@@ -1353,47 +1353,70 @@ func (r *Router) poolRuntimeMultiTurn(ctx context.Context, p poolstore.Pool) boo
 // 1140); the warm-count sub-route always passes dryRun=false because it
 // does not support the query-parameter dry run.
 func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest, dryRun bool) {
+	if !r.validatePoolUpdate(w, req, name, body) {
+		return
+	}
+	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or
+	// auditing. The dry-run branch runs after the full validation above
+	// (and, in handleUpdatePool, after the If-Match precondition) so a stale
+	// If-Match combined with dryRun=true still returns 412 before this point.
+	if dryRun {
+		r.previewPoolUpdate(w, req, name, body)
+		return
+	}
+	r.persistPoolUpdate(w, req, name, body)
+}
+
+// validatePoolUpdate runs the §15.1 enum validation and the §5.2/§6.1/§4.7
+// effective-state cross-checks for a pool update, resolving the post-update
+// runtimeRef, sessionPolicy, executionMode, and nonce-only acknowledgment
+// from the body when set or the stored pool otherwise. It writes the first
+// failure to w and returns false. A missing pool surfaces as 404 here only
+// when r.runtimes is wired (the cross-check path reads the row); the
+// dryRun/persist stages re-resolve the row so the not-found is enforced on
+// every path. spec: §5.2, §5.3, §6.1, §9.2, §13.2, §15.1.
+func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) bool {
 	if body.IsolationProfile != nil && *body.IsolationProfile != "" &&
 		!isolation.IsValid(isolation.Profile(*body.IsolationProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"isolationProfile is not a recognised §5.3 profile", nil)
-		return
+		return false
 	}
 	if body.ExecutionMode != nil && *body.ExecutionMode != "" &&
 		!runtimestore.ExecutionMode(*body.ExecutionMode).IsValid() {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"executionMode is not a recognised mode", nil)
-		return
+		return false
 	}
 	if body.EgressProfile != nil && *body.EgressProfile != "" &&
 		!egress.IsValid(egress.Profile(*body.EgressProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)", nil)
-		return
+		return false
 	}
 	if body.DNSPolicy != nil && *body.DNSPolicy != "" &&
 		*body.DNSPolicy != poolstore.DNSPolicyClusterDefault {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"dnsPolicy is not a recognised §13.2 value (only cluster-default opts out of the dedicated CoreDNS instance)", nil)
-		return
+		return false
 	}
 	if body.ClearSessionPolicy && body.SessionPolicy != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"clearSessionPolicy and sessionPolicy are mutually exclusive in one PUT", nil)
-		return
+		return false
 	}
 	if body.ElicitationDepthPolicy != nil && *body.ElicitationDepthPolicy != "" &&
 		!elicitation.DepthPolicy(*body.ElicitationDepthPolicy).IsValid() {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"elicitationDepthPolicy is not a recognised §9.2 policy (allow_all, suppress_at_depth, block_all)", nil)
-		return
+		return false
 	}
 	// runtimeRef cross-check.
 	if body.RuntimeRef != nil && *body.RuntimeRef != "" && r.runtimes != nil {
 		if _, err := r.runtimes.Get(req.Context(), *body.RuntimeRef); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"runtimeRef does not resolve to a registered runtime", nil)
-			return
+			return false
 		}
 	}
 	// spec: §5.2 line 396 — reject a PUT that would leave the pool with
@@ -1406,10 +1429,10 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 		current, gerr := r.pools.Get(req.Context(), name)
 		if errors.Is(gerr, poolstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
-			return
+			return false
 		} else if gerr != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
-			return
+			return false
 		}
 		// effSession is the post-update sessionPolicy: the body's block when
 		// set (or cleared), otherwise the stored block. The cross-tenant and
@@ -1433,14 +1456,14 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 				if rerr != nil {
 					writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 						"runtimeRef does not resolve to a registered runtime", nil)
-					return
+					return false
 				}
 				tier = rt.WorkspaceTier
 			}
 			if err := poolstore.ValidateCrossTenantReuseTier(effPool, tier); err != nil {
 				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 					map[string]any{"runtimeRef": effRef, "workspaceTier": string(tier)})
-				return
+				return false
 			}
 		}
 		// spec: §5.2 line 430, §6.1 lines 77-78 — reject a PUT that would
@@ -1461,14 +1484,14 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 			if rerr != nil {
 				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 					"runtimeRef does not resolve to a registered runtime", nil)
-				return
+				return false
 			}
 			if err := poolstore.ValidatePreConnectExecutionMode(
 				poolstore.RuntimePreConnect(rt), effMode, effSession,
 			); err != nil {
 				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 					map[string]any{"runtimeRef": effRef})
-				return
+				return false
 			}
 			// spec: §4.7, §5.3 — reject a PUT that would leave the pool bound
 			// to a nonce-only runtime (requireSoPeercred: false) without the
@@ -1485,43 +1508,51 @@ func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name 
 			); err != nil {
 				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 					map[string]any{"runtimeRef": effRef})
-				return
+				return false
 			}
 		}
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
-	// The dry-run branch runs after the full validation above (and, in
-	// handleUpdatePool, after the If-Match precondition) so a stale If-Match
-	// combined with dryRun=true still returns 412 before this point. The
-	// preview reflects applying the body onto the current pool with the
+	return true
+}
+
+// previewPoolUpdate renders the §15.1 dryRun preview: it merges the body
+// onto the stored pool, runs the same store-side validations a persisted
+// update would, and writes the preview with the bumped generation as the
+// §15.1 ETag without persisting or auditing. spec: §15.1 (dryRun), §4.6.2 (sync status).
+func (r *Router) previewPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) {
+	// The preview reflects applying the body onto the current pool with the
 	// generation a persisted update would stamp (the §15.1 line 1210 ETag).
-	if dryRun {
-		current, gerr := r.pools.Get(req.Context(), name)
-		if gerr != nil {
-			if errors.Is(gerr, poolstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+	current, gerr := r.pools.Get(req.Context(), name)
+	if gerr != nil {
+		if errors.Is(gerr, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
 			return
 		}
-		preview := current
-		applyPoolUpdateMerge(&preview, body)
-		// Run the same store-side validations a persisted update would, so
-		// the dry run rejects exactly what a real PUT would reject.
-		if perr := validatePoolForStore(preview); perr != nil {
-			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", perr.Error(), nil)
-			return
-		}
-		// A persisted update bumps pool_config_generation; the preview
-		// carries the bumped value so the ETag matches a real success.
-		preview.Generation = current.Generation + 1
-		w.Header().Set("ETag", formatETag(preview.Generation))
-		payload := fromPool(preview)
-		payload.SyncStatus = r.resolveSyncStatus(req.Context(), preview)
-		writeDryRun(w, http.StatusOK, payload)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
+	preview := current
+	applyPoolUpdateMerge(&preview, body)
+	// Run the same store-side validations a persisted update would, so
+	// the dry run rejects exactly what a real PUT would reject.
+	if perr := validatePoolForStore(preview); perr != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", perr.Error(), nil)
+		return
+	}
+	// A persisted update bumps pool_config_generation; the preview
+	// carries the bumped value so the ETag matches a real success.
+	preview.Generation = current.Generation + 1
+	w.Header().Set("ETag", formatETag(preview.Generation))
+	payload := fromPool(preview)
+	payload.SyncStatus = r.resolveSyncStatus(req.Context(), preview)
+	writeDryRun(w, http.StatusOK, payload)
+}
+
+// persistPoolUpdate applies the merge through the store, emits the §16.6
+// audit and the §5.2/§5.3/§6.1 advisory warnings, and renders the §15.1
+// response with the bumped ETag and the §4.6.2 sync status. It is the
+// execute-and-respond stage of applyPoolUpdate. spec: §15.1, §16.6, §4.6.2.
+func (r *Router) persistPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) {
 	updated, err := r.pools.Update(req.Context(), name, func(p *poolstore.Pool) error {
 		applyPoolUpdateMerge(p, body)
 		return nil

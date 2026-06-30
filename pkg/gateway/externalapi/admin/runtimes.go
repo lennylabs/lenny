@@ -1074,37 +1074,57 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
+	// Static field validation runs before any store read so a malformed
+	// body fails 400 ahead of the transaction. The agentInterface parse is
+	// threaded out because the merge below reuses the decoded descriptor.
+	agentInterfaceSet, newAgentInterface, ok := r.validateUpdateRuntimeBody(w, body)
+	if !ok {
+		return
+	}
+	if !r.validateRuntimeUpdateAgainstCurrent(w, req, name, body) {
+		return
+	}
+	r.mergeAndPersistRuntime(w, req, name, body, agentInterfaceSet, newAgentInterface)
+}
+
+// validateUpdateRuntimeBody runs the §5.1/§15.1 static field validation on
+// an UpdateRuntimeRequest, writing the first 400 it finds to w. It returns
+// the parsed agentInterface (an omitted key leaves the descriptor
+// unchanged; a present key is decoded here so malformed JSON fails 400
+// before the store transaction opens) and ok=false when it wrote an error.
+// spec: §5.1 (runtime descriptor), §15.1 (admin API).
+func (r *Router) validateUpdateRuntimeBody(w http.ResponseWriter, body UpdateRuntimeRequest) (agentInterfaceSet bool, newAgentInterface *runtimestore.AgentInterface, ok bool) {
 	// Validate enums when present.
 	if body.ExecutionMode != nil && *body.ExecutionMode != "" && !runtimestore.ExecutionMode(*body.ExecutionMode).IsValid() {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"executionMode is not a recognised mode", nil)
-		return
+		return false, nil, false
 	}
 	if body.IsolationProfile != nil && *body.IsolationProfile != "" && !isolation.IsValid(isolation.Profile(*body.IsolationProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"isolationProfile is not a recognised §5.3 profile", nil)
-		return
+		return false, nil, false
 	}
 	if body.CapabilityInferenceMode != nil && *body.CapabilityInferenceMode != "" &&
 		!capabilityinference.Mode(*body.CapabilityInferenceMode).IsValid() {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"capabilityInferenceMode must be strict or permissive", nil)
-		return
+		return false, nil, false
 	}
 	if body.IntegrationLevel != nil && *body.IntegrationLevel != "" && !runtimestore.IntegrationLevel(*body.IntegrationLevel).IsValid() {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"integrationLevel is not a recognised level", nil)
-		return
+		return false, nil, false
 	}
 	if body.WorkspaceTier != nil && *body.WorkspaceTier != "" && !runtimestore.WorkspaceTier(*body.WorkspaceTier).IsValid() {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"workspaceTier is not a recognised §12.9 tier (T3, T4)", nil)
-		return
+		return false, nil, false
 	}
 	if body.Image != nil && *body.Image != "" && !strings.Contains(*body.Image, "@sha256:") {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"image must be digest-pinned (contain @sha256:...)", nil)
-		return
+		return false, nil, false
 	}
 	// §5.1 line 51: labels are required from v1. A PUT may replace the label
 	// set wholesale, but an explicit empty map would strip the runtime of
@@ -1113,137 +1133,159 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"labels are required: a runtime must declare at least one label (§5.1)",
 			map[string]any{"field": "labels"})
-		return
+		return false, nil, false
 	}
 	// agentInterface: an omitted key leaves the descriptor unchanged; a
 	// present key (JSON null or an object) is parsed here so malformed
 	// JSON fails as 400 before the store transaction opens.
-	agentInterfaceSet := len(body.AgentInterface) > 0
-	var newAgentInterface *runtimestore.AgentInterface
+	agentInterfaceSet = len(body.AgentInterface) > 0
 	if agentInterfaceSet {
 		if err := json.Unmarshal(body.AgentInterface, &newAgentInterface); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"agentInterface is not valid JSON", nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.PublishedMetadata != nil {
 		if err := runtimestore.ValidatePublishedMetadata(*body.PublishedMetadata); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.ToolCapabilityOverrides != nil {
 		if err := capabilityinference.ValidateOverrides(*body.ToolCapabilityOverrides); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.SetupPolicy != nil {
 		if err := validateSetupPolicy(body.SetupPolicy, r.maxFinalizingTimeoutSeconds); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.Limits != nil {
 		if err := validateLimits(body.Limits); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.SetupCommandPolicy != nil {
 		if err := validateSetupCommandPolicy(body.SetupCommandPolicy); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.DefaultPoolConfig != nil {
 		if err := validateDefaultPoolConfig(body.DefaultPoolConfig); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.WorkspaceDefaults != nil {
 		if err := validateWorkspaceDefaults(body.WorkspaceDefaults); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.SharedAssets != nil {
 		if err := validateSharedAssets(*body.SharedAssets); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if len(body.RuntimeOptionsSchema) > 0 {
 		if err := validateRuntimeOptionsSchema(body.RuntimeOptionsSchema); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.Capabilities != nil {
 		if err := validateCapabilities(body.Capabilities); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.MinPlatformVersion != nil {
 		if err := r.validateMinPlatformVersion(*body.MinPlatformVersion); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
 	if body.SessionPolicy != nil {
 		if err := validateSessionPolicy(body.SessionPolicy); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
-			return
+			return false, nil, false
 		}
 	}
-	if current, err := r.runtimes.Get(req.Context(), name); err == nil {
-		// §5.1 line 36: integrationLevel is only valid on type:agent. Type
-		// is immutable via PUT, so the current row's type is authoritative.
-		if body.IntegrationLevel != nil && *body.IntegrationLevel != "" && current.Type == runtimestore.TypeMCP {
-			writeError(w, http.StatusBadRequest, "INVALID_RUNTIME",
-				"integrationLevel is only valid on type: agent runtimes", nil)
-			return
+	return agentInterfaceSet, newAgentInterface, true
+}
+
+// validateRuntimeUpdateAgainstCurrent runs the §5.1 invariants that depend
+// on the stored runtime row (immutable image, type-gated integrationLevel,
+// derived-runtime restrict-only rules, and base-mutation impact analysis),
+// writing the first failure to w. A missing runtime is not validated here;
+// the not-found 404 is enforced by the resolve in mergeAndPersistRuntime so
+// the precondition ordering matches the pre-decomposition handler. It
+// returns false when it wrote an error. spec: §5.1, §15.1.
+func (r *Router) validateRuntimeUpdateAgainstCurrent(w http.ResponseWriter, req *http.Request, name string, body UpdateRuntimeRequest) bool {
+	current, err := r.runtimes.Get(req.Context(), name)
+	if err != nil {
+		// A missing runtime (or a transient read error) is left to the
+		// resolve in mergeAndPersistRuntime, which 404s ahead of If-Match.
+		return true
+	}
+	// §5.1 line 36: integrationLevel is only valid on type:agent. Type
+	// is immutable via PUT, so the current row's type is authoritative.
+	if body.IntegrationLevel != nil && *body.IntegrationLevel != "" && current.Type == runtimestore.TypeMCP {
+		writeError(w, http.StatusBadRequest, "INVALID_RUNTIME",
+			"integrationLevel is only valid on type: agent runtimes", nil)
+		return false
+	}
+	// §5.1 line 174: a base runtime's image is immutable via the admin
+	// API — the §10.5 RuntimeUpgrade orchestration is the only
+	// legitimate writer. (A derived runtime's image is rejected
+	// separately by validateDerivedRuntimeUpdate as prohibited.)
+	if !current.IsDerived() && body.Image != nil && *body.Image != current.Image {
+		writeError(w, http.StatusBadRequest, "IMAGE_IMMUTABLE",
+			"base runtime image is immutable; use RuntimeUpgrade to change runtime image", nil)
+		return false
+	}
+	// §5.1 restrict-only invariants on supportedProviders /
+	// allowSelfRecursion are evaluated against the resolved base.
+	var base runtimestore.Runtime
+	if current.IsDerived() {
+		base, _ = r.runtimes.Get(req.Context(), current.BaseRuntime)
+	}
+	if derr := validateDerivedRuntimeUpdate(current, base, body); derr != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_DERIVED_RUNTIME", derr.Error(), nil)
+		return false
+	}
+	// §5.1 line 174: a base runtime is mutable with impact validation —
+	// a change that would invalidate an existing derived runtime is
+	// rejected with the list of affected runtimes.
+	if !current.IsDerived() {
+		affected, ierr := r.derivedRuntimesInvalidatedBy(req.Context(), name,
+			proposedBaseRuntime(current, body))
+		if ierr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", ierr.Error(), nil)
+			return false
 		}
-		// §5.1 line 174: a base runtime's image is immutable via the admin
-		// API — the §10.5 RuntimeUpgrade orchestration is the only
-		// legitimate writer. (A derived runtime's image is rejected
-		// separately by validateDerivedRuntimeUpdate as prohibited.)
-		if !current.IsDerived() && body.Image != nil && *body.Image != current.Image {
-			writeError(w, http.StatusBadRequest, "IMAGE_IMMUTABLE",
-				"base runtime image is immutable; use RuntimeUpgrade to change runtime image", nil)
-			return
-		}
-		// §5.1 restrict-only invariants on supportedProviders /
-		// allowSelfRecursion are evaluated against the resolved base.
-		var base runtimestore.Runtime
-		if current.IsDerived() {
-			base, _ = r.runtimes.Get(req.Context(), current.BaseRuntime)
-		}
-		if derr := validateDerivedRuntimeUpdate(current, base, body); derr != nil {
-			writeError(w, http.StatusBadRequest, "INVALID_DERIVED_RUNTIME", derr.Error(), nil)
-			return
-		}
-		// §5.1 line 174: a base runtime is mutable with impact validation —
-		// a change that would invalidate an existing derived runtime is
-		// rejected with the list of affected runtimes.
-		if !current.IsDerived() {
-			affected, ierr := r.derivedRuntimesInvalidatedBy(req.Context(), name,
-				proposedBaseRuntime(current, body))
-			if ierr != nil {
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", ierr.Error(), nil)
-				return
-			}
-			if len(affected) > 0 {
-				writeError(w, http.StatusBadRequest, "BASE_RUNTIME_MUTATION_INVALIDATES_DERIVED",
-					"change would invalidate derived runtimes",
-					map[string]any{"affectedRuntimes": affected})
-				return
-			}
+		if len(affected) > 0 {
+			writeError(w, http.StatusBadRequest, "BASE_RUNTIME_MUTATION_INVALIDATES_DERIVED",
+				"change would invalidate derived runtimes",
+				map[string]any{"affectedRuntimes": affected})
+			return false
 		}
 	}
+	return true
+}
+
+// mergeAndPersistRuntime resolves the runtime, enforces the §15.1 If-Match
+// precondition, then either renders the dryRun preview or persists the merge
+// and emits the §16.6 audit event. It is the execute-and-respond stage of
+// handleUpdateRuntime. spec: §15.1 (admin API, dryRun, If-Match), §16.6 (audit).
+func (r *Router) mergeAndPersistRuntime(w http.ResponseWriter, req *http.Request, name string, body UpdateRuntimeRequest, agentInterfaceSet bool, newAgentInterface *runtimestore.AgentInterface) {
 	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
 	// Resolve the current runtime so the entity tag (its version) is known
 	// before the dry-run branch and the persisted write; a missing runtime

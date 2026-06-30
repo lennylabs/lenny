@@ -1161,73 +1161,8 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
-	if body.MaxConcurrentSessions != nil && *body.MaxConcurrentSessions < 0 {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"maxConcurrentSessions must not be negative",
-			map[string]any{"field": "maxConcurrentSessions"})
+	if !validateUpdateTenantBody(w, body) {
 		return
-	}
-	if body.StorageQuotaBytes != nil && *body.StorageQuotaBytes < 0 {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"storageQuotaBytes must not be negative",
-			map[string]any{"field": "storageQuotaBytes"})
-		return
-	}
-	if body.TokenQuotaPerWindow != nil && *body.TokenQuotaPerWindow < 0 {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"tokenQuotaPerWindow must not be negative",
-			map[string]any{"field": "tokenQuotaPerWindow"})
-		return
-	}
-	if body.QuotaResetPeriod != nil && !validQuotaResetPeriod(*body.QuotaResetPeriod) {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"quotaResetPeriod must be hourly, daily, monthly, or rolling",
-			map[string]any{"field": "quotaResetPeriod"})
-		return
-	}
-	if body.GCPriority != nil && !tenantstore.ValidGCPriority(*body.GCPriority) {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"gcPriority must be normal or high",
-			map[string]any{"field": "gcPriority"})
-		return
-	}
-	if body.MinIsolationProfile != nil && *body.MinIsolationProfile != "" &&
-		!isolation.IsValid(isolation.Profile(*body.MinIsolationProfile)) {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"minIsolationProfile must be standard, sandboxed, or microvm",
-			map[string]any{"field": "minIsolationProfile"})
-		return
-	}
-	if body.BillingErasurePolicy != nil && !validBillingErasurePolicy(*body.BillingErasurePolicy) {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"billingErasurePolicy must be pseudonymize or exempt",
-			map[string]any{"field": "billingErasurePolicy"})
-		return
-	}
-	// spec: §12.9 line 1048; §15.1 line 816 — reject an out-of-enum
-	// workspaceTier before the ratchet check below, which only recognizes
-	// the closed T3/T4 ladder. Without this gate a value like "T2" slips
-	// past isWorkspaceTierDowngrade (off-ladder, so not a downgrade) and
-	// persists as a tier every downstream consumer reads as "not T4".
-	if body.WorkspaceTier != nil && !validWorkspaceTier(*body.WorkspaceTier) {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"workspaceTier must be T3 or T4",
-			map[string]any{"field": "workspaceTier"})
-		return
-	}
-	if body.ExperimentTargeting != nil {
-		if err := body.ExperimentTargeting.Validate(); err != nil {
-			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
-				map[string]any{"field": "experimentTargeting"})
-			return
-		}
-	}
-	if body.CredentialPolicy != nil {
-		if err := body.CredentialPolicy.Validate(); err != nil {
-			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
-				map[string]any{"field": "credentialPolicy"})
-			return
-		}
 	}
 	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
 	// Resolve the current tenant so the entity tag (its version) is known
@@ -1246,82 +1181,180 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 	if !enforceIfMatch(w, req, current.Version) {
 		return
 	}
+	if !r.authorizeTenantUpdate(w, req, id, current, body) {
+		return
+	}
+	r.persistTenantUpdate(w, req, id, body)
+}
+
+// validateUpdateTenantBody runs the §15.1 static field validation on an
+// UpdateTenantRequest, writing the first 400 it finds to w. It returns
+// false when it wrote an error. spec: §12.9 (workspace tier), §15.1 (admin API).
+func validateUpdateTenantBody(w http.ResponseWriter, body UpdateTenantRequest) bool {
+	if body.MaxConcurrentSessions != nil && *body.MaxConcurrentSessions < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"maxConcurrentSessions must not be negative",
+			map[string]any{"field": "maxConcurrentSessions"})
+		return false
+	}
+	if body.StorageQuotaBytes != nil && *body.StorageQuotaBytes < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"storageQuotaBytes must not be negative",
+			map[string]any{"field": "storageQuotaBytes"})
+		return false
+	}
+	if body.TokenQuotaPerWindow != nil && *body.TokenQuotaPerWindow < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"tokenQuotaPerWindow must not be negative",
+			map[string]any{"field": "tokenQuotaPerWindow"})
+		return false
+	}
+	if body.QuotaResetPeriod != nil && !validQuotaResetPeriod(*body.QuotaResetPeriod) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"quotaResetPeriod must be hourly, daily, monthly, or rolling",
+			map[string]any{"field": "quotaResetPeriod"})
+		return false
+	}
+	if body.GCPriority != nil && !tenantstore.ValidGCPriority(*body.GCPriority) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"gcPriority must be normal or high",
+			map[string]any{"field": "gcPriority"})
+		return false
+	}
+	if body.MinIsolationProfile != nil && *body.MinIsolationProfile != "" &&
+		!isolation.IsValid(isolation.Profile(*body.MinIsolationProfile)) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"minIsolationProfile must be standard, sandboxed, or microvm",
+			map[string]any{"field": "minIsolationProfile"})
+		return false
+	}
+	if body.BillingErasurePolicy != nil && !validBillingErasurePolicy(*body.BillingErasurePolicy) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"billingErasurePolicy must be pseudonymize or exempt",
+			map[string]any{"field": "billingErasurePolicy"})
+		return false
+	}
+	// spec: §12.9 line 1048; §15.1 line 816 — reject an out-of-enum
+	// workspaceTier before the ratchet check below, which only recognizes
+	// the closed T3/T4 ladder. Without this gate a value like "T2" slips
+	// past isWorkspaceTierDowngrade (off-ladder, so not a downgrade) and
+	// persists as a tier every downstream consumer reads as "not T4".
+	if body.WorkspaceTier != nil && !validWorkspaceTier(*body.WorkspaceTier) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"workspaceTier must be T3 or T4",
+			map[string]any{"field": "workspaceTier"})
+		return false
+	}
+	if body.ExperimentTargeting != nil {
+		if err := body.ExperimentTargeting.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "experimentTargeting"})
+			return false
+		}
+	}
+	if body.CredentialPolicy != nil {
+		if err := body.CredentialPolicy.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "credentialPolicy"})
+			return false
+		}
+	}
+	return true
+}
+
+// authorizeTenantUpdate runs the §11.7 compliance-profile and §12.9
+// workspaceTier ratchet checks (tighten in place, never lower through the
+// generic endpoint), the §11.7 SIEM and pgaudit prerequisites for a
+// regulated profile, and the §12.5 T4 KMS availability probe, against the
+// tenant's current row. It writes the first failure to w and returns false.
+// spec: §11.7 (compliance ratchet), §12.5 (T4 KMS), §12.9 (workspace tier), §15.1.
+func (r *Router) authorizeTenantUpdate(w http.ResponseWriter, req *http.Request, id string, current tenantstore.Tenant, body UpdateTenantRequest) bool {
 	// §11.7 / §12.9 ratchet checks: complianceProfile and workspaceTier
 	// may be tightened in place but never lowered through the generic
 	// update endpoint. Both compare against the tenant's current row.
-	if body.ComplianceProfile != nil || body.WorkspaceTier != nil {
-		if body.ComplianceProfile != nil &&
-			isComplianceDowngrade(current.ComplianceProfile, *body.ComplianceProfile) {
-			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED",
-				"complianceProfile may be tightened in place but not lowered through this endpoint; "+
-					"use POST /v1/admin/tenants/{id}/compliance-profile/decommission for a legitimate wind-down",
-				map[string]any{
-					"currentProfile":   current.ComplianceProfile,
-					"requestedProfile": *body.ComplianceProfile,
-				})
-			return
-		}
-		// spec: §11.7 line 446 — updating a tenant to a regulated
-		// complianceProfile when no audit.siem.endpoint is configured is
-		// rejected with COMPLIANCE_SIEM_REQUIRED, symmetric with create.
-		// The downgrade ratchet above runs first so a regulated→lower
-		// transition still routes through COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED.
-		if body.ComplianceProfile != nil && r.requireSIEMForProfile(*body.ComplianceProfile) {
-			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
-				complianceSIEMRequiredMessage(*body.ComplianceProfile),
-				map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
-			return
-		}
-		// spec: §11.7 line 377 — updating to a regulated complianceProfile
-		// with pgaudit not fully configured is rejected with
-		// COMPLIANCE_PGAUDIT_REQUIRED, symmetric with create.
-		if body.ComplianceProfile != nil && r.requirePgauditForProfile(*body.ComplianceProfile) {
-			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PGAUDIT_REQUIRED",
-				compliancePgauditRequiredMessage(*body.ComplianceProfile),
-				map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
-			return
-		}
-		// §12.9 workspaceTier ratchet. §15.1 names §12.9 as the authority
-		// for the stricter-only rule but the §15.1 error-code table
-		// defines no workspaceTier-specific code. The rejection therefore
-		// reuses CLASSIFICATION_CONTROL_VIOLATION — the §12.9-owned
-		// storage-classification control code, whose details.reason field
-		// the spec leaves open — with reason tier_downgrade_prohibited.
-		if body.WorkspaceTier != nil &&
-			tenantstore.IsWorkspaceTierDowngrade(current.WorkspaceTier, *body.WorkspaceTier) {
+	if body.ComplianceProfile == nil && body.WorkspaceTier == nil {
+		return true
+	}
+	if body.ComplianceProfile != nil &&
+		isComplianceDowngrade(current.ComplianceProfile, *body.ComplianceProfile) {
+		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED",
+			"complianceProfile may be tightened in place but not lowered through this endpoint; "+
+				"use POST /v1/admin/tenants/{id}/compliance-profile/decommission for a legitimate wind-down",
+			map[string]any{
+				"currentProfile":   current.ComplianceProfile,
+				"requestedProfile": *body.ComplianceProfile,
+			})
+		return false
+	}
+	// spec: §11.7 line 446 — updating a tenant to a regulated
+	// complianceProfile when no audit.siem.endpoint is configured is
+	// rejected with COMPLIANCE_SIEM_REQUIRED, symmetric with create.
+	// The downgrade ratchet above runs first so a regulated→lower
+	// transition still routes through COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED.
+	if body.ComplianceProfile != nil && r.requireSIEMForProfile(*body.ComplianceProfile) {
+		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_SIEM_REQUIRED",
+			complianceSIEMRequiredMessage(*body.ComplianceProfile),
+			map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
+		return false
+	}
+	// spec: §11.7 line 377 — updating to a regulated complianceProfile
+	// with pgaudit not fully configured is rejected with
+	// COMPLIANCE_PGAUDIT_REQUIRED, symmetric with create.
+	if body.ComplianceProfile != nil && r.requirePgauditForProfile(*body.ComplianceProfile) {
+		writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PGAUDIT_REQUIRED",
+			compliancePgauditRequiredMessage(*body.ComplianceProfile),
+			map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
+		return false
+	}
+	// §12.9 workspaceTier ratchet. §15.1 names §12.9 as the authority
+	// for the stricter-only rule but the §15.1 error-code table
+	// defines no workspaceTier-specific code. The rejection therefore
+	// reuses CLASSIFICATION_CONTROL_VIOLATION — the §12.9-owned
+	// storage-classification control code, whose details.reason field
+	// the spec leaves open — with reason tier_downgrade_prohibited.
+	if body.WorkspaceTier != nil &&
+		tenantstore.IsWorkspaceTierDowngrade(current.WorkspaceTier, *body.WorkspaceTier) {
+		writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
+			"workspaceTier may be tightened in place but not lowered; lowering a tenant's "+
+				"storage classification tier would weaken its data-classification controls",
+			map[string]any{
+				"tenantId": id,
+				"tier":     *body.WorkspaceTier,
+				"reason":   "tier_downgrade_prohibited",
+			})
+		return false
+	}
+	// §12.5 T4 KMS availability probe. A workspaceTier: T4
+	// transition (whether a new T3 → T4 promotion or an
+	// idempotent re-assert) runs a zero-byte encrypt/decrypt
+	// round-trip against the tenant-scoped KMS key before
+	// persisting. The pre-provisioning model is required: the
+	// operator must provision the key before this call. On
+	// probe failure the update is rejected with
+	// CLASSIFICATION_CONTROL_VIOLATION and the tenant remains at
+	// its prior tier — no row update has happened yet.
+	if body.WorkspaceTier != nil && *body.WorkspaceTier == "T4" && r.kmsProbe != nil {
+		if err := r.kmsProbe.ProbeAvailability(req.Context(), id, "T4"); err != nil {
 			writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
-				"workspaceTier may be tightened in place but not lowered; lowering a tenant's "+
-					"storage classification tier would weaken its data-classification controls",
+				"T4 KMS key availability probe failed; the tenant's per-tenant KMS key "+
+					"must be reachable before the tenant can be marked workspaceTier T4",
 				map[string]any{
 					"tenantId": id,
-					"tier":     *body.WorkspaceTier,
-					"reason":   "tier_downgrade_prohibited",
+					"tier":     "T4",
+					"reason":   "kms_probe_failed",
 				})
-			return
-		}
-		// §12.5 T4 KMS availability probe. A workspaceTier: T4
-		// transition (whether a new T3 → T4 promotion or an
-		// idempotent re-assert) runs a zero-byte encrypt/decrypt
-		// round-trip against the tenant-scoped KMS key before
-		// persisting. The pre-provisioning model is required: the
-		// operator must provision the key before this call. On
-		// probe failure the update is rejected with
-		// CLASSIFICATION_CONTROL_VIOLATION and the tenant remains at
-		// its prior tier — no row update has happened yet.
-		if body.WorkspaceTier != nil && *body.WorkspaceTier == "T4" && r.kmsProbe != nil {
-			if err := r.kmsProbe.ProbeAvailability(req.Context(), id, "T4"); err != nil {
-				writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
-					"T4 KMS key availability probe failed; the tenant's per-tenant KMS key "+
-						"must be reachable before the tenant can be marked workspaceTier T4",
-					map[string]any{
-						"tenantId": id,
-						"tier":     "T4",
-						"reason":   "kms_probe_failed",
-					})
-				return
-			}
+			return false
 		}
 	}
+	return true
+}
+
+// persistTenantUpdate merges the body onto the tenant row, emits the §16.6
+// audit events, and renders the §15.1 response with the bumped ETag. It is
+// the execute-and-respond stage of handleUpdateTenant, reached only after
+// validation, the If-Match precondition, and the ratchet authorization pass.
+// spec: §15.1 (admin API), §16.6 (audit).
+func (r *Router) persistTenantUpdate(w http.ResponseWriter, req *http.Request, id string, body UpdateTenantRequest) {
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
 		if body.DisplayName != nil {
 			t.DisplayName = *body.DisplayName
