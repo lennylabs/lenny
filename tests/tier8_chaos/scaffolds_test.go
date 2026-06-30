@@ -373,6 +373,22 @@ func TestGatewayClockDrift(t *testing.T) {
 	t.Logf("§12.8: pkg/clockinject harness shipped (b0d9371); live wiring into gateway time source on the ops backlog.")
 }
 
+// §25.4 Postgres-Redis clock skew — covered structurally by:
+//   - pkg/ops/coordination/clockskew.go (the sampler that reads
+//     Postgres now() against the Redis TIME command and feeds
+//     lenny_ops_clock_skew_seconds; unit tests in clockskew_test.go).
+//   - pkg/clockinject (the §12.8 clock-injection harness).
+//
+// Live skew exercise injects a divergent clock into one of the two
+// dependency stores and asserts the gauge breaches 10s and the
+// OpsClockSkewExceeded alert fires; ops follow-on, sharing the clock
+// harness with the gateway-clock-drift scenario.
+// spec: 25.4
+// diagnosis: §25.4 chaos scenario — Postgres-Redis skew monitoring is covered structurally by the pkg/ops/coordination clockskew sampler + pkg/clockinject harness; composite fault-injection exercise on the tier-8 ops backlog.
+func TestOpsClockSkewExceeded(t *testing.T) {
+	t.Logf("§25.4: pkg/ops/coordination clockskew sampler + pkg/clockinject harness; live Postgres-Redis skew injection on the ops backlog.")
+}
+
 // §10.3 certificate expiry — covered structurally by:
 //   - pkg/mtls/rotation.go (CA-rotation state machine; unit tests).
 //   - pkg/auth/jwt/jwks (rotating-verifier + JWKS publication).

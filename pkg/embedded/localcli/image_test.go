@@ -4,6 +4,8 @@ package localcli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,6 +21,57 @@ func TestCmdImageRejectsUnknownSubcommand(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := cmdImage([]string{"frobnicate"}, &out, &errb); code != 2 {
 		t.Errorf("unknown subcommand: exit = %d, want 2", code)
+	}
+}
+
+// TestCmdImageDispatchesSubcommands exercises the cmdImage switch so each
+// subcommand arm routes to its handler. With no embedded stack on disk,
+// import is rejected at the embedded-mode guard (exit 3) and list and rm
+// reach the CtrCommand probe and report K3S_UNAVAILABLE (exit 4); both are
+// the documented §24.19.1 exits for the dispatch, confirming cmdImage
+// routes each subcommand to the right handler rather than mis-dispatching.
+//
+// spec: §24.19.1 (image subcommands import, list, rm).
+func TestCmdImageDispatchesSubcommands(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"import routes to the embedded-mode guard", []string{"import", "acme/chat:v1"}, exitEmbeddedModeRequired},
+		{"list routes to the ctr probe", []string{"list"}, exitK3sUnavailable},
+		{"rm routes to the ctr probe", []string{"rm", "acme/chat:v1"}, exitK3sUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			if code := cmdImage(tc.args, &out, &errb); code != tc.want {
+				t.Errorf("cmdImage(%v) = %d, want %d", tc.args, code, tc.want)
+			}
+		})
+	}
+}
+
+// TestCmdImageImportParsesFlags drives the --file and --namespace flag
+// parsing in cmdImageImport. The flags are parsed before the embedded-mode
+// guard, so with no stack on disk the call still exits 3
+// EMBEDDED_MODE_REQUIRED; this exercises the flag-consumption branches
+// (the i++ advance past each flag's value) and confirms a flagged
+// invocation reaches the same guard as a bare one rather than mis-parsing
+// the reference.
+//
+// spec: §24.19.1 (image import --file and --namespace flags; embedded-mode
+// guard, exit 3).
+func TestCmdImageImportParsesFlags(t *testing.T) {
+	t.Setenv("LENNY_HOME", t.TempDir())
+	var out, errb bytes.Buffer
+	code := cmdImageImport([]string{"--namespace", "custom.io", "--file", "/tmp/img.tar", "acme/chat:v1"}, &out, &errb)
+	if code != exitEmbeddedModeRequired {
+		t.Fatalf("cmdImageImport with --file/--namespace = %d, want %d (flags parsed, then embedded-mode guard)", code, exitEmbeddedModeRequired)
+	}
+	if !strings.Contains(errb.String(), "EMBEDDED_MODE_REQUIRED") {
+		t.Errorf("stderr = %q, want EMBEDDED_MODE_REQUIRED", errb.String())
 	}
 }
 
@@ -138,6 +191,33 @@ func TestCmdImageImportRequiresEmbeddedStack_spec_24_19_1(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "lenny up") {
 		t.Errorf("stderr = %q, want guidance to run lenny up", stderr.String())
+	}
+}
+
+// TestRequireEmbeddedStackProbeError covers the requireEmbeddedStack
+// branch where stat-ing the OIDC key returns an error other than
+// ErrNotExist: the probe must surface that as exit 1 (a genuine probe
+// failure) rather than the EMBEDDED_MODE_REQUIRED skip, so a transient
+// filesystem fault is not mistaken for an absent stack. A regular file
+// planted at the `oidc` path makes the `oidc/signing.key` stat fail with
+// ENOTDIR, which is not ErrNotExist.
+//
+// spec: §24.19.1 line 282,291 (embedded-mode probe; a probe fault is exit
+// 1, distinct from the EMBEDDED_MODE_REQUIRED skip).
+func TestRequireEmbeddedStackProbeError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LENNY_HOME", home)
+	// Plant a regular file where the `oidc` directory would be, so that
+	// stat-ing oidc/signing.key returns ENOTDIR rather than ErrNotExist.
+	if err := os.WriteFile(filepath.Join(home, "oidc"), []byte("not a dir"), 0o600); err != nil {
+		t.Fatalf("plant oidc file: %v", err)
+	}
+	var errb bytes.Buffer
+	if code := requireEmbeddedStack(&errb); code != 1 {
+		t.Fatalf("requireEmbeddedStack with a non-ErrNotExist probe error = %d, want 1", code)
+	}
+	if strings.Contains(errb.String(), "EMBEDDED_MODE_REQUIRED") {
+		t.Errorf("stderr = %q, must not report EMBEDDED_MODE_REQUIRED on a probe fault", errb.String())
 	}
 }
 

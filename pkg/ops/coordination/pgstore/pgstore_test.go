@@ -4,6 +4,7 @@ package pgstore_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -268,5 +269,33 @@ func TestPgServerTime_spec_25_4(t *testing.T) {
 	lo, hi := before.Add(-2*time.Second), after.Add(2*time.Second)
 	if got.Before(lo) || got.After(hi) {
 		t.Errorf("ServerTime = %v, outside the expected window [%v, %v]", got, lo, hi)
+	}
+}
+
+// TestPgServerTimeStoreUnavailable_spec_25_4 covers the ServerTime
+// Postgres-outage branch: a pool pointed at an unreachable address fails
+// the now() read with a transport error, which the store must classify as
+// coordination.ErrStoreUnavailable rather than a generic error, so the
+// clock-skew sampler skips the sample during a Postgres outage instead of
+// reporting a spurious skew. It needs no Postgres bundle because the
+// connection never succeeds.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring; a Postgres
+// outage surfaces as ErrStoreUnavailable so the sampler skips the sample).
+func TestPgServerTimeStoreUnavailable_spec_25_4(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// 127.0.0.1:1 is the discard port: no Postgres listens there, so the
+	// first query fails with a connection-refused transport error.
+	pool, err := pgxpool.New(ctx, "postgres://lenny:lenny@127.0.0.1:1/lenny?sslmode=disable")
+	if err != nil {
+		t.Fatalf("pool New: %v", err)
+	}
+	defer pool.Close()
+	s := pgstore.New(pool)
+	if _, err := s.ServerTime(ctx); err == nil {
+		t.Fatal("ServerTime against an unreachable Postgres returned nil; want ErrStoreUnavailable")
+	} else if !errors.Is(err, coordination.ErrStoreUnavailable) {
+		t.Fatalf("ServerTime outage error = %v, want coordination.ErrStoreUnavailable", err)
 	}
 }

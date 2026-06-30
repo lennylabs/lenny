@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
@@ -232,4 +234,183 @@ func TestConfigMapValuesReaderMissingKey(t *testing.T) {
 	if _, ok, err := r.RenderedValues(ctx); err != nil || ok {
 		t.Fatalf("RenderedValues(missing key) = (ok=%v, err=%v), want (false, nil)", ok, err)
 	}
+}
+
+// spec: 25.10 line 3788 (write bootstrap_seed_snapshot_target from the
+// rendered Helm values)
+//
+// TestConfigMapValuesReaderParseError asserts RenderedValues surfaces a
+// YAML parse error rather than silently treating an unparseable values
+// document as an empty map. A malformed rendered-values document is a
+// real configuration fault the new pod must report, not skip: writing a
+// nil target snapshot from a values document that failed to parse would
+// mask the misconfiguration behind a DRIFT_NO_TARGET_SNAPSHOT 404.
+func TestConfigMapValuesReaderParseError(t *testing.T) {
+	ctx := context.Background()
+	// A YAML sequence cannot unmarshal into map[string]any, so yaml.Unmarshal
+	// returns a typed error the reader must propagate.
+	cs := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "vals", Namespace: "lenny-system"},
+		Data:       map[string]string{"values.yaml": "- not\n- a\n- map\n"},
+	})
+	r := configMapValuesReader{cms: cs.CoreV1(), namespace: "lenny-system", name: "vals", key: "values.yaml"}
+	if _, ok, err := r.RenderedValues(ctx); err == nil || ok {
+		t.Fatalf("RenderedValues(non-map YAML) = (ok=%v, err=%v), want (false, parse error)", ok, err)
+	}
+}
+
+// spec: 25.10 line 3788 (read rendered Helm values from the ConfigMap)
+//
+// TestConfigMapValuesReaderGetError asserts RenderedValues surfaces a
+// non-NotFound ConfigMap Get failure (a transient apiserver error) rather
+// than collapsing it into the ok=false skip path. A NotFound is the
+// designed skip; any other Get error is a real fault the hook must report
+// so a transient outage does not silently leave the target snapshot
+// unwritten under the guise of an absent ConfigMap.
+func TestConfigMapValuesReaderGetError(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("apiserver unavailable")
+	})
+	r := configMapValuesReader{cms: cs.CoreV1(), namespace: "lenny-system", name: "vals", key: "values.yaml"}
+	if _, ok, err := r.RenderedValues(ctx); err == nil || ok {
+		t.Fatalf("RenderedValues(Get error) = (ok=%v, err=%v), want (false, get error)", ok, err)
+	}
+}
+
+// stubHeartbeater is an opsRollHeartbeater whose three methods return
+// preset states and errors, so a unit test can drive the run error
+// branches the real upgradeservice.Service does not exercise on the
+// happy path (a Status read error, a heartbeat write error, and an
+// OpsRoll->CRDUpdate self-advance error).
+type stubHeartbeater struct {
+	status       upgradeservice.State
+	statusOK     bool
+	statusErr    error
+	heartbeatErr error
+	advanceErr   error
+
+	heartbeatCalled bool
+	advanceCalled   bool
+}
+
+func (s *stubHeartbeater) Status(context.Context) (upgradeservice.State, bool, error) {
+	return s.status, s.statusOK, s.statusErr
+}
+
+func (s *stubHeartbeater) RecordOpsHeartbeat(context.Context) (upgradeservice.State, error) {
+	s.heartbeatCalled = true
+	return s.status, s.heartbeatErr
+}
+
+func (s *stubHeartbeater) AdvanceOpsRoll(context.Context) (upgradeservice.State, error) {
+	s.advanceCalled = true
+	return s.status, s.advanceErr
+}
+
+// inOpsRoll returns a State the hook reads as an in-flight OpsRoll whose
+// target_version matches the binary, so run proceeds past both guards.
+func inOpsRoll(version string) upgradeservice.State {
+	return upgradeservice.State{Phase: upgrade.OpsRoll, TargetVersion: version, OperationID: "op-1"}
+}
+
+// spec: 25.8 line 3508 (read upgrade state on startup)
+//
+// TestOpsRollStartupHookStatusError asserts run wraps and returns a
+// Status read error rather than proceeding to mutate the upgrade against
+// an unread state. A transient store read failure at startup must abort
+// the hook so the operator's next proceed (and the watchdog) governs the
+// roll, not a half-run advance off a stale state.
+func TestOpsRollStartupHookStatusError(t *testing.T) {
+	ctx := context.Background()
+	h := opsRollStartupHook{upgrades: &stubHeartbeater{statusErr: errors.New("store read failed")}, version: "1.5.0"}
+	advanced, err := h.run(ctx)
+	if err == nil || advanced {
+		t.Fatalf("run(status error) = (advanced=%v, err=%v), want (false, error)", advanced, err)
+	}
+}
+
+// spec: 25.8 line 3511 (stamp the ops_healthy heartbeat)
+//
+// TestOpsRollStartupHookHeartbeatError asserts run aborts and does not
+// self-advance when the heartbeat write fails, so a self-advance never
+// runs ahead of a recorded heartbeat. The advance must not be reached
+// when the heartbeat could not be persisted.
+func TestOpsRollStartupHookHeartbeatError(t *testing.T) {
+	ctx := context.Background()
+	stub := &stubHeartbeater{status: inOpsRoll("1.5.0"), statusOK: true, heartbeatErr: errors.New("heartbeat write failed")}
+	h := opsRollStartupHook{upgrades: stub, version: "1.5.0"}
+	advanced, err := h.run(ctx)
+	if err == nil || advanced {
+		t.Fatalf("run(heartbeat error) = (advanced=%v, err=%v), want (false, error)", advanced, err)
+	}
+	if stub.advanceCalled {
+		t.Error("run self-advanced after a failed heartbeat write; the advance must not run")
+	}
+}
+
+// spec: 25.8 line 3508 (self-advance OpsRoll->CRDUpdate)
+//
+// TestOpsRollStartupHookAdvanceError asserts run wraps and returns a
+// self-advance error after the heartbeat succeeded, so a failed advance
+// surfaces to the caller rather than being reported as a successful
+// startup. The hook has no values source wired, so writeTarget is a no-op
+// and the advance is the only mutating step that can fail here.
+func TestOpsRollStartupHookAdvanceError(t *testing.T) {
+	ctx := context.Background()
+	stub := &stubHeartbeater{status: inOpsRoll("1.5.0"), statusOK: true, advanceErr: errors.New("advance failed")}
+	h := opsRollStartupHook{upgrades: stub, version: "1.5.0"}
+	advanced, err := h.run(ctx)
+	if err == nil || advanced {
+		t.Fatalf("run(advance error) = (advanced=%v, err=%v), want (false, error)", advanced, err)
+	}
+	if !stub.heartbeatCalled || !stub.advanceCalled {
+		t.Errorf("run did not reach both heartbeat and advance (heartbeat=%v advance=%v)", stub.heartbeatCalled, stub.advanceCalled)
+	}
+}
+
+// errValuesReader is a helmValuesReader that returns a read error, so a
+// unit test can drive the writeTarget RenderedValues-error branch.
+type errValuesReader struct{ err error }
+
+func (e errValuesReader) RenderedValues(context.Context) (map[string]any, bool, error) {
+	return nil, false, e.err
+}
+
+// spec: 25.10 line 3788 (write bootstrap_seed_snapshot_target from the
+// rendered Helm values)
+//
+// TestOpsRollStartupHookWriteTargetValuesError asserts run returns the
+// error from reading the rendered Helm values and does not self-advance:
+// a values-read fault must abort the hook before the OpsRoll->CRDUpdate
+// transition, so the upgrade is not advanced past a target write that
+// could not be computed.
+func TestOpsRollStartupHookWriteTargetValuesError(t *testing.T) {
+	ctx := context.Background()
+	stub := &stubHeartbeater{status: inOpsRoll("1.5.0"), statusOK: true}
+	h := opsRollStartupHook{
+		upgrades: stub,
+		snapshot: recordingSnapshotWriter{},
+		values:   errValuesReader{err: errors.New("values read failed")},
+		version:  "1.5.0",
+	}
+	advanced, err := h.run(ctx)
+	if err == nil || advanced {
+		t.Fatalf("run(values read error) = (advanced=%v, err=%v), want (false, error)", advanced, err)
+	}
+	if stub.advanceCalled {
+		t.Error("run self-advanced after a failed values read; the advance must not run")
+	}
+}
+
+// recordingSnapshotWriter is a targetSnapshotWriter that records its
+// calls, so a test can assert the write site is or is not reached.
+type recordingSnapshotWriter struct{ called *bool }
+
+func (w recordingSnapshotWriter) WriteTargetSnapshot(context.Context, string, string, map[string]any) error {
+	if w.called != nil {
+		*w.called = true
+	}
+	return nil
 }

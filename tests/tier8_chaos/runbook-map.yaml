@@ -218,6 +218,10 @@ runbooks:
     test: TestGatewayClockDrift
     severity: P1
     coverage: extended
+  ops-clock-skew:
+    test: TestOpsClockSkewExceeded
+    severity: P1
+    coverage: extended
   certificate-expiry:
     test: TestCertificateExpiryAdvance
     severity: P1

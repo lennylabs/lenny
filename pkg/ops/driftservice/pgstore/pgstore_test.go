@@ -159,3 +159,26 @@ func TestPgStoreRoundTrip_spec_25_10(t *testing.T) {
 		t.Error("Put with id=bogus succeeded; the id CHECK should reject it")
 	}
 }
+
+// TestPutRejectsUnmarshalableDesiredState covers the §25.10 Put
+// JSON-marshal error branch without a database: Put marshals the desired
+// state before it touches the pool, so a value the encoder cannot
+// serialize (a channel) surfaces the marshal error and the store never
+// issues a write. This pins the fail-closed behavior on a malformed
+// desired-state document rather than persisting a partial or empty row.
+//
+// spec: §25.10 lines 3811-3820 (desired-state snapshot persistence).
+func TestPutRejectsUnmarshalableDesiredState(t *testing.T) {
+	// A nil pool is never reached: the marshal error returns first.
+	s := pgstore.New(nil)
+	snap := driftservice.Snapshot{
+		ID:           driftservice.SnapshotLive,
+		DesiredState: map[string]any{"bad": make(chan int)},
+		Source:       driftservice.SourceHelmValues,
+		WrittenAt:    time.Now().UTC(),
+		WrittenBy:    "helm",
+	}
+	if err := s.Put(context.Background(), snap); err == nil {
+		t.Fatal("Put with an unmarshalable desired state returned nil; want a marshal error before any write")
+	}
+}

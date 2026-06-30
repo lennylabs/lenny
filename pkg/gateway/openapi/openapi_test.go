@@ -803,6 +803,13 @@ func TestRouteScopesUnmatchedRouteHasNoScope_spec_15_1_914(t *testing.T) {
 	if scope, ok := nilRS.RequiredScope(http.MethodPost, "/v1/admin/legal-hold"); ok {
 		t.Errorf("nil RouteScopes resolved scope %q, want none", scope)
 	}
+	// An un-buildable request (a method containing an HTTP-illegal space)
+	// makes http.NewRequest fail; the lookup must report no scope rather
+	// than panicking or matching, so a malformed method on a destructive
+	// route defers to the role ceiling instead of failing open.
+	if scope, ok := rs.RequiredScope("BAD METHOD", "/v1/admin/legal-hold"); ok {
+		t.Errorf("malformed method resolved scope %q, want none", scope)
+	}
 }
 
 // spec: §15.5 item 6 — the default tier is `stable` so an unannotated

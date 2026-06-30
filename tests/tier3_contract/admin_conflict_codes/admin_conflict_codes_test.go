@@ -30,11 +30,15 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
+	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
 // fixedClock pins the router clock so the wire output is deterministic.
@@ -105,6 +109,106 @@ func TestAdminDuplicateCreateReturnsResourceAlreadyExists(t *testing.T) {
 	}
 	if cat, retryable := errorclassify.ClassifyStatus(code, rr.Code); cat != errorclassify.CategoryPermanent || retryable {
 		t.Fatalf("errorclassify(%s, %d) = (%s, %v), want (PERMANENT, false)", code, rr.Code, cat, retryable)
+	}
+}
+
+// TestAdminDuplicateCreatePerResourceFamily extends the duplicate-identifier
+// contract to one representative of each admin resource family ADM-7 renamed:
+// connectors, external adapters, users, and pools each had a separate
+// `RESOURCE_CONFLICT` emit site in their create handler. The tenant case
+// above samples one family; this drives a duplicate create through the
+// production router for the remaining four so a code-string regression at
+// any one family's emit site surfaces here rather than passing on the
+// single-resource sample. Each family creates once (expecting 201/200) then
+// repeats the create (expecting 409 RESOURCE_ALREADY_EXISTS), and confirms
+// the §25.2 errorclassify verdict.
+//
+// diagnosis: a failure means one admin resource family's duplicate-create
+// 409 returns a code the §15.1 catalog does not enumerate (the pre-ADM-7
+// `RESOURCE_CONFLICT`) for that family specifically, so the catalog
+// conformance held on the sampled family but drifted on this one.
+// spec: 15.1 (RESOURCE_ALREADY_EXISTS line 983), 25.2 (errorclassify 409)
+func TestAdminDuplicateCreatePerResourceFamily(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		body       any
+		wantFirst  int
+		newHandler func() http.Handler
+	}{
+		{
+			name:      "connector",
+			path:      "/v1/admin/connectors",
+			wantFirst: http.StatusCreated,
+			body: admin.ConnectorPayload{
+				TenantID:     "acme",
+				ID:           "github",
+				DisplayName:  "GitHub",
+				MCPServerURL: "https://mcp.github.com",
+			},
+			newHandler: func() http.Handler {
+				return admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: fixedClock}).
+					WithConnectors(connectorstore.NewMemory()).Handler()
+			},
+		},
+		{
+			name:      "external adapter",
+			path:      "/v1/admin/external-adapters",
+			wantFirst: http.StatusCreated,
+			body: admin.ExternalAdapterPayload{
+				Name:       "acme-a2a",
+				Protocol:   "a2a",
+				PathPrefix: "/a2a",
+				BinaryPath: "/usr/local/bin/acme-a2a",
+				Level:      "standard",
+			},
+			newHandler: func() http.Handler {
+				return admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: fixedClock}).
+					WithExternalAdapters(externaladapterstore.NewMemory(), nil).Handler()
+			},
+		},
+		{
+			name:      "user",
+			path:      "/v1/admin/users",
+			wantFirst: http.StatusCreated,
+			body: admin.UserPayload{
+				Subject:  "alice@acme.com",
+				TenantID: "acme",
+				Roles:    []pkgauth.Role{pkgauth.RoleUser},
+			},
+			newHandler: func() http.Handler {
+				return admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: fixedClock}).
+					WithUsers(userstore.NewMemory()).Handler()
+			},
+		},
+		{
+			name:      "pool",
+			path:      "/v1/admin/pools",
+			wantFirst: http.StatusCreated,
+			body:      admin.PoolPayload{Name: "chat-pool"},
+			newHandler: func() http.Handler {
+				return admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: fixedClock}).
+					WithPools(poolstore.NewMemory()).Handler()
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := tc.newHandler()
+			if rr, _ := serve(t, h, http.MethodPost, tc.path, tc.body); rr.Code != tc.wantFirst {
+				t.Fatalf("first %s create: got %d, want %d; body=%s", tc.name, rr.Code, tc.wantFirst, rr.Body.String())
+			}
+			rr, code := serve(t, h, http.MethodPost, tc.path, tc.body)
+			if rr.Code != http.StatusConflict {
+				t.Fatalf("duplicate %s create: got %d, want 409; body=%s", tc.name, rr.Code, rr.Body.String())
+			}
+			if code != "RESOURCE_ALREADY_EXISTS" {
+				t.Fatalf("duplicate %s create code = %q, want RESOURCE_ALREADY_EXISTS; body=%s", tc.name, code, rr.Body.String())
+			}
+			if cat, retryable := errorclassify.ClassifyStatus(code, rr.Code); cat != errorclassify.CategoryPermanent || retryable {
+				t.Fatalf("errorclassify(%s, %d) = (%s, %v), want (PERMANENT, false)", code, rr.Code, cat, retryable)
+			}
+		})
 	}
 }
 
