@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // fixedAttempt builds an acquire[T] that returns the supplied error on the

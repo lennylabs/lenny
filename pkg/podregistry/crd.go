@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // CRDPodRegistry is the §12.6 v1 PodRegistry implementation: it

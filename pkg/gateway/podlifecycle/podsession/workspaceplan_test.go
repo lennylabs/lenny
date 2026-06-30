@@ -5,7 +5,7 @@ package podsession_test
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

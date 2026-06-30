@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"

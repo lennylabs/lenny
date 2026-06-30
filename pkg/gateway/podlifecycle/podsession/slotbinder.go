@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/upload"
 	"github.com/lennylabs/lenny/pkg/upload/archive"

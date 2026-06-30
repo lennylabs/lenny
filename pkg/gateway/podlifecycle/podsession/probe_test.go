@@ -10,7 +10,7 @@ import (
 
 	"k8s.io/client-go/rest"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
 // spec: §4.6.1 "Admission webhook reachability" — the probe returns nil

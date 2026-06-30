@@ -17,7 +17,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 const (

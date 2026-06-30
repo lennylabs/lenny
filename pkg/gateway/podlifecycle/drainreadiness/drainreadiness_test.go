@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness"
 )
 
 // spec: §12.5 — the GET /internal/drain-readiness endpoint runs a MinIO

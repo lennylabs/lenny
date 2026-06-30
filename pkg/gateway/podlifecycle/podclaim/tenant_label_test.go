@@ -15,7 +15,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // agentPod builds a minimal running agent pod backing the named Sandbox

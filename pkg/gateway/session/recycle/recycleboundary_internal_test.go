@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 

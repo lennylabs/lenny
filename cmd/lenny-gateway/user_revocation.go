@@ -11,8 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/admintoken"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 

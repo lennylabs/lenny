@@ -13,7 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/statelessproxy"

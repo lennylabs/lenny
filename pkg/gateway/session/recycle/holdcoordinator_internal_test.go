@@ -13,7 +13,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // testNS is the agent namespace the coordinator unit tests operate in.

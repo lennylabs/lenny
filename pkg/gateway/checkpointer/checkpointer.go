@@ -17,7 +17,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 

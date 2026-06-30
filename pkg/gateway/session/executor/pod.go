@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
 // ErrSlotIDRequired is the §7.2 SLOT_ID_REQUIRED fail-closed invariant. It is

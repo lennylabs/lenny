@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/agentpodstate/memstore"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"

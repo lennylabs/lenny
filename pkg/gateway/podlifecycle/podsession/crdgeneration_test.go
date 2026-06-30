@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
 // spec: §4.6.2 lines 558-560 — CRDGeneration reads the

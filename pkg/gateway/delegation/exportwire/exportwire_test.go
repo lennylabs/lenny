@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/exportwire"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
 // TestBlobSinkPersist_spec_8_2_4 asserts the §8.2-step-4 durable hand-off:

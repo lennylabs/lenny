@@ -29,7 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/sdkwarm"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // DefaultMaxQueueWaitSeconds is the §5.2 / §4.6.1 fallback queue-wait bound

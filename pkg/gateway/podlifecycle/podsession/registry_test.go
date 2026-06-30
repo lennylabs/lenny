@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
 func TestRegistryPutGet(t *testing.T) {

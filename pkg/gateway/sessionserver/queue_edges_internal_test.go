@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // TestNewPodClaimQueueDefaults pins the §4.6.1 queue construction defaults: a

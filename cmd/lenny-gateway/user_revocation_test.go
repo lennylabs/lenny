@@ -16,8 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 

@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 

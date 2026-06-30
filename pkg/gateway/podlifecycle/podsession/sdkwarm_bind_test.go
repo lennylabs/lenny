@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 

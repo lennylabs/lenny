@@ -16,7 +16,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )

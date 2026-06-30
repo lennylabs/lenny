@@ -21,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
 // DefaultExportTTL is the §4.5 TTL stamped on a durable exported-file

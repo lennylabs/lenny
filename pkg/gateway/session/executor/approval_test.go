@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 )
 
