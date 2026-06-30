@@ -360,6 +360,44 @@ func TestDriver_ProseAuditBoundaryAware(t *testing.T) {
 	}
 }
 
+// The rewrite and audit walks must skip the driver's own scripts/refactor
+// subtree, so a tree-wide move never corrupts the driver's manifest-path test
+// fixtures (which carry literal "...pkg/gateway/<pkg>" strings as test data) nor
+// flags them as stale references. This is constructed to FAIL against the
+// pre-fix walks, which descended into every directory and would have rewritten
+// the fixture's import literal and JSON token.
+func TestDriver_SkipsOwnRefactorSubtree(t *testing.T) {
+	root := initTempRepo(t)
+
+	// Lay down a driver-package fixture that names the moved leaf and its JSON
+	// token as test data, the way scripts/refactor/rewrite/rewrite_test.go does.
+	fixture := filepath.Join(root, "scripts", "refactor", "rewrite", "fixture_test.go")
+	fixtureSrc := "package rewrite\n\n" +
+		"// fixture exercising the move primitive\n" +
+		"const oldImport = \"github.com/lennylabs/lenny/pkg/gateway/playground\"\n" +
+		"const jsonToken = \"pkg/gateway/playground/...\"\n"
+	writeFile(t, fixture, fixtureSrc)
+	mustRun(t, root, "git", "add", "-A")
+	mustRun(t, root, "git", "commit", "-q", "-m", "driver fixture", "--no-verify")
+
+	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: true, skipAudit: false}}
+	if err := d.execute(); err != nil {
+		t.Fatalf("execute (must skip own subtree, not abort on its fixtures): %v", err)
+	}
+
+	// The driver fixture must be byte-for-byte unchanged: the move did not
+	// descend into scripts/refactor.
+	got := readFile(t, fixture)
+	if got != fixtureSrc {
+		t.Fatalf("driver fixture was rewritten; the walk did not skip scripts/refactor:\n%s", got)
+	}
+	// The real consumer outside scripts/refactor must still be rewritten.
+	consumer := readFile(t, filepath.Join(root, "pkg", "consumer", "consumer.go"))
+	if !strings.Contains(consumer, `"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"`) {
+		t.Fatalf("consumer outside scripts/refactor should still be rewritten:\n%s", consumer)
+	}
+}
+
 func TestDriver_DryRunTouchesNothing(t *testing.T) {
 	root := initTempRepo(t)
 	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{dryRun: true}}

@@ -357,7 +357,7 @@ func (d *driver) rewriteGoFiles() error {
 			return err
 		}
 		if dirEntry.IsDir() {
-			if skipDir(dirEntry.Name()) {
+			if d.skipWalkDir(path, dirEntry.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -511,7 +511,8 @@ func (d *driver) runIn(dir, name string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// skipDir reports whether a directory should be skipped during the *.go walk.
+// skipDir reports whether a directory should be skipped during the *.go walk by
+// its basename (the always-skipped infrastructure trees).
 func skipDir(name string) bool {
 	switch name {
 	case ".git", "vendor", "node_modules", ".beads":
@@ -519,6 +520,31 @@ func skipDir(name string) bool {
 	default:
 		return false
 	}
+}
+
+// skipWalkDir reports whether a directory should be skipped during the rewrite
+// and audit walks. It skips the always-skipped infrastructure trees by basename
+// and, critically, the driver's own scripts/refactor subtree by path. The driver
+// package carries manifest path strings as test fixtures (the rewrite and audit
+// unit tests assert against literal "github.com/lennylabs/lenny/pkg/gateway/<pkg>"
+// strings and JSON token fixtures). A tree-wide rewrite that descended into the
+// driver's own sources would corrupt those fixtures (turning an Old->New move
+// fixture into a no-op Old==New pair) and the audit would then flag the driver's
+// test data as a stale reference. The driver imports no moved gateway package, so
+// skipping its subtree changes no real import and keeps the tooling's tests
+// stable across every group move (proposal §2: the transform is auditable and
+// re-runnable).
+func (d *driver) skipWalkDir(path, name string) bool {
+	if skipDir(name) {
+		return true
+	}
+	return path == d.selfDir()
+}
+
+// selfDir returns the absolute path of the driver's own package directory
+// (scripts/refactor under the repo root), the subtree the walks skip.
+func (d *driver) selfDir() string {
+	return filepath.Join(d.root, "scripts", "refactor")
 }
 
 // resolveGoBin resolves a go-installed binary by PATH then GOPATH/bin,

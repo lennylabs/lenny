@@ -106,7 +106,7 @@ func (d *driver) auditGoFiles() (aborts, warns []string, err error) {
 			return walkErr
 		}
 		if dirEntry.IsDir() {
-			if skipDir(dirEntry.Name()) {
+			if d.skipWalkDir(path, dirEntry.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -147,7 +147,7 @@ func (d *driver) auditProseFiles() ([]string, error) {
 			return walkErr
 		}
 		if dirEntry.IsDir() {
-			if skipDir(dirEntry.Name()) || dirEntry.Name() == "spec" {
+			if d.skipWalkDir(path, dirEntry.Name()) || dirEntry.Name() == "spec" {
 				return filepath.SkipDir
 			}
 			return nil
