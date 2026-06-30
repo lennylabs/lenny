@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pdbwatcher"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/pdbwatcher"
 )
 
 type recordingSink struct {

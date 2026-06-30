@@ -10,7 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
-	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"

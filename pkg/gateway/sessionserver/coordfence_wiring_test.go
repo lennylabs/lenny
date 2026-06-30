@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 

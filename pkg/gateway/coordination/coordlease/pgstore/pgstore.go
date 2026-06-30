@@ -17,7 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordlease"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
 )
 
 // Store is the Postgres-backed §10.1 coordination_lease mirror store.
