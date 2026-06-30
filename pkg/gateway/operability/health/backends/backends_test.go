@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/health"
-	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
+	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
+	"github.com/lennylabs/lenny/pkg/gateway/operability/health/backends"
 )
 
 // spec: §11.7 / §25.3 — the gateway health service reports the

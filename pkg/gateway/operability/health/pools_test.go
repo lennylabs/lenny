@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
-	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 )
 
 // poolFixture builds a FuncPoolHealthResolver whose pool exists with the

@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 )
 
 // readinessResult is the HTTP status code and plain-text body the

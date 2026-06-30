@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 )
 
 // fakeAlertSource returns a fixed §25.3 alert-derived verdict per component.

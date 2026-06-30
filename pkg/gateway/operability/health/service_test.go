@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
