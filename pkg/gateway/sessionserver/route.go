@@ -8,9 +8,9 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 )
 
 // routeTaskSpec is the §4.8 PreRoute / PostRoute content payload: the

@@ -13,7 +13,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
 func attachTS() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }

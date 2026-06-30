@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
 // SessionEventsBridge adapts a *sessionevents.Bus to the EventEmitter

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
 // AttachToolName is the §15.2 line 1289 `attach_session` MCP tool. The

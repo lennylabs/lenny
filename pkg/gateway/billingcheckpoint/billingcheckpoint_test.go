@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingcheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 )
 
 type fakeLister struct{ sessions []billingcheckpoint.Session }

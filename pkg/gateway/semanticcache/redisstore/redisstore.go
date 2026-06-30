@@ -23,8 +23,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 )
 
 // Store is the Redis-backed §12.2 SemanticCache. Construct with New.

@@ -14,8 +14,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/proxycache"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 )
 

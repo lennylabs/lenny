@@ -10,7 +10,7 @@ import (
 
 	session "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
-	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 )
 
 type fakeMetrics struct {

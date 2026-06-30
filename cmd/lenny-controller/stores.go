@@ -16,7 +16,7 @@ import (
 	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
-	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
+	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 

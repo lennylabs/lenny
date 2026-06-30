@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 )
 
 // InMemory is the in-memory Store implementation — the test and

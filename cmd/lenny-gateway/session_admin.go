@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // sessionAdminAdapter backs the §24.11 platform-admin session

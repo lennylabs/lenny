@@ -8,9 +8,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
-	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // busEmitter adapts the §15.1 SSE event bus to sessioninbox.Emitter so

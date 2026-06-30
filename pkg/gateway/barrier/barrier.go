@@ -34,7 +34,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessioncheckpointmeta"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 )
 
 // Source labels the provenance of a target-set read or a resume-dedup

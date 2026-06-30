@@ -9,7 +9,7 @@ import (
 	"time"
 
 	session "github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 )
 
 // MetricsSink receives the §8.8 deadlock observability signals. The

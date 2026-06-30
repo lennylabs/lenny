@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // MemoryRequest is the §9.4 POST /v1/sessions/{id}/memory body. The

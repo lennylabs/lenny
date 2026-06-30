@@ -24,7 +24,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
 	interceptorpg "github.com/lennylabs/lenny/pkg/gateway/interceptorstore/pgstore"
@@ -34,9 +33,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 )
 

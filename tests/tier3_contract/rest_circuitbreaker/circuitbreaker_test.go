@@ -19,8 +19,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 func newTestServer(t *testing.T, reg cbmw.Registry) *httptest.Server {

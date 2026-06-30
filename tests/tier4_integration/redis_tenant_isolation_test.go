@@ -20,7 +20,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	scredis "github.com/lennylabs/lenny/pkg/gateway/semanticcache/redisstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"

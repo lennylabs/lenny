@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
-	"github.com/lennylabs/lenny/pkg/gateway/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/tlsprobe"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"

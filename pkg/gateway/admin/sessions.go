@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // eventSessionForceTerminated is the §24.11 force-terminate audit event

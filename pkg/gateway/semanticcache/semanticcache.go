@@ -29,7 +29,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 )
 
 // DefaultSimilarityThreshold is the §4.9 CachePolicy similarityThreshold

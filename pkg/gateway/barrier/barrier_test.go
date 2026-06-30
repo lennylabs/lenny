@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessioncheckpointmeta"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 )
 
 // fakeLister returns a fixed target set and source.

@@ -18,8 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 // spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
