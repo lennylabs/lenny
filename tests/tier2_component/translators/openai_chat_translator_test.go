@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 )
 
 // openAIChatCorpusDir returns tests/testdata/openai_chat resolved from

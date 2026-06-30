@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 )
 
 // spec: §4.9 — the LLM proxy SSE relay: stream the upstream

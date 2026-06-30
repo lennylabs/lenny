@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
-	scredis "github.com/lennylabs/lenny/pkg/gateway/semanticcache/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
+	scredis "github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache/redisstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

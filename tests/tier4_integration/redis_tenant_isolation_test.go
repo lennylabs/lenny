@@ -18,8 +18,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
-	scredis "github.com/lennylabs/lenny/pkg/gateway/semanticcache/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
+	scredis "github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
