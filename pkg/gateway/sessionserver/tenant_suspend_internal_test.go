@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
 // spec: §15.1 line 818 — a suspended tenant rejects new session creation

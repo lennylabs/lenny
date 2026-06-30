@@ -13,10 +13,10 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
 func newUserAdmin(t *testing.T) (*admin.Router, userstore.Store, *recordingAudit) {

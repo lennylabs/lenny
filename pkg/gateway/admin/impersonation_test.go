@@ -16,8 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 )
 
 // stubImpAppender is a minimal impersonation.AuditAppender for the admin

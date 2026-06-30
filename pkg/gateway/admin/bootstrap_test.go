@@ -14,9 +14,9 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
 // spec: §24.1 lenny-ctl bootstrap; §15.1 POST /v1/admin/bootstrap.

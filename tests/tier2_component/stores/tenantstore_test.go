@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
-	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
 )
 
 func tenantID(t *testing.T) string {

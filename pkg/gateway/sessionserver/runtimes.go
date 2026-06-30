@@ -8,12 +8,12 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
-	"github.com/lennylabs/lenny/pkg/gateway/translator"
 )
 
 // modelsAdapterCapabilities resolves the §9.1 line 35 "capabilities of

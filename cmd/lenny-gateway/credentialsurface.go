@@ -21,8 +21,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
 	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )

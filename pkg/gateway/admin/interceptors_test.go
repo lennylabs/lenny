@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // spec: §4.8 lines 1034-1040 / §8.3 lines 205-224 (SEC-013) — the admin

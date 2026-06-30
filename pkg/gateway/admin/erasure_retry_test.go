@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
-	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
 // spec: §24.12 lines 143-144 / §12.8 lines 764, 766 — operator retry of

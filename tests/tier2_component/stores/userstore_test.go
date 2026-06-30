@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/userstore"
-	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
 )
 
 // spec: 10.2

@@ -14,8 +14,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // fakeTester records the connector and bearer it was handed and replays

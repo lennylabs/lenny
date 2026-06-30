@@ -10,9 +10,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/elicitation"
-	"github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 

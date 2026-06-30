@@ -10,9 +10,9 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // ForceDeleteTenantRequest is the POST /v1/admin/tenants/{id}/force-delete

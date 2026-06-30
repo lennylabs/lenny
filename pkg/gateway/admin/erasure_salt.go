@@ -8,9 +8,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // ErasureSaltRotator rotates a tenant's §12.8 billing-pseudonymization

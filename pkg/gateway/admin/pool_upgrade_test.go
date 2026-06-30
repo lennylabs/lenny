@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 func newUpgradeAdmin(t *testing.T) *admin.Router {

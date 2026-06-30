@@ -8,11 +8,11 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
 	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	"github.com/lennylabs/lenny/pkg/quota"

@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/semver"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/agentcard"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

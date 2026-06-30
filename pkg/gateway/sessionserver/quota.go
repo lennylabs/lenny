@@ -6,9 +6,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // requireSessionQuota enforces the §11.2 per-tenant concurrent-session

@@ -40,8 +40,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/common/scopes"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // scopeFakeDropper is the §16.4 force-drop seam. It records whether the

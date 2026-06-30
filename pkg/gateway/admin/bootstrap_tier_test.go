@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
 func postBootstrap(t *testing.T, router *admin.Router, body admin.BootstrapRequest, query string) (*httptest.ResponseRecorder, admin.BootstrapResponse) {

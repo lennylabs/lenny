@@ -14,8 +14,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/compliance"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // fakeValidator is an injected AdapterValidator for the handler tests:

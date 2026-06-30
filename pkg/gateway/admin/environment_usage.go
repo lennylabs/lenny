@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 )
 
 // EnvironmentUsagePayload is the §15.1 line 840 GET

@@ -14,8 +14,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 

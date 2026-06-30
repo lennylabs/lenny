@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 )
 
 // requireActiveUser enforces §11.4 user invalidation and the §12.8

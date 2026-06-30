@@ -5,7 +5,7 @@ package policy
 import (
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
 // ClassificationError reports a §12.9 tenant data-classification
