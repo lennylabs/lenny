@@ -11,10 +11,13 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordlease"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
@@ -61,6 +64,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
+	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
+	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
@@ -70,6 +75,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
@@ -77,11 +83,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore"
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
@@ -94,18 +103,30 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/redistopology"
+	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/sqlitestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/usercreds"
+	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
+	"github.com/lennylabs/lenny/pkg/kms/rekey"
+	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -136,6 +157,10 @@ type gatewayWiringFields struct {
 	gwMetrics           *gatewaymetrics.Metrics
 	opsEmitter          events.EventEmitter
 	replica             string
+	// §10.6 resolved noEnvironmentPolicy, computed by buildStartupGates from
+	// the --no-environment-policy flag and dev mode; read by the session
+	// server, the MCP fabric, and the HTTP surface.
+	resolvedNoEnvPolicy string
 	alertEvalPtr        *atomic.Pointer[evaluator.Evaluator]
 	watchdogCtx         context.Context
 	// watchdogCancel cancels watchdogCtx. buildControlServer records it; the
@@ -150,6 +175,74 @@ type gatewayWiringFields struct {
 	ocsfTranslator             *ocsf.Translator
 	ocsfOutbox                 *siem.Outbox
 	auditBatchBuffer           *auditbatch.Buffer
+
+	// §11.7 audit-pipeline outputs. buildAuditPipeline constructs the
+	// per-tenant hash chain (durable or in-memory), the §11.7 write-scope
+	// validator, the admin and policy audit sinks, the admin-router audit
+	// wiring closure, the §16.4 retention pruner, the durable Store the §25.5
+	// ops-stream escalation hook attaches to, and the §11.7 SIEM health
+	// checker; the session server, the MCP fabric, the admin router, and the
+	// HTTP surface read them back.
+	auditSink         admin.AuditSink
+	wireAudit         func(*admin.Router) *admin.Router
+	auditValidator    *auditscope.Validator
+	auditOpsStore     *auditstore.Store
+	siemHealthChecker health.Checker
+
+	// §10.6 / §25.3 / §4.9 / §10.2 / §8.8 auxiliary-store outputs.
+	// buildAuxStores selects the in-memory or Postgres backend for the
+	// environment, tenant-access, credential-pool, custom-role, usage, and
+	// session-usage stores, constructs the §25.3/§25.5 operational-event
+	// emitter and its buffer, the §14 VCS credential resolver, and the §8.8
+	// shared usage Builder; the policy chain, the session server, the MCP
+	// fabric, the admin router, and the HTTP surface read them back.
+	environments     environmentstore.Store
+	tenantAccess     tenantaccessstore.Store
+	opsEventBuffer   *events.EventBuffer
+	vcsCreds         vcscred.Resolver
+	customRoles      customrolestore.Store
+	usage            usagestore.Store
+	taskUsageBuilder *resultrollup.Builder
+
+	// §4.1 / §4.2 session-server dependency outputs. buildSessionDeps
+	// constructs the §4.1 Upload Handler subsystem gate and metrics, the §8.5
+	// request_input registry, the §10.7 sticky-cache and OpenFeature provider
+	// cache, the §14 completion-webhook validator/seal/dispatcher, the §11.2
+	// mid-session budget enforcer, the §8.6 lease-extension budget source and
+	// registrars, the §6.2 activity stamper, and the §5.2/§6.2 slot-health
+	// tracker; buildSessionServer, the MCP fabric, the admin router, and the
+	// background workers read them back.
+	uploadMetrics         *sessionserver.PromUploadMetrics
+	sessionStickyCache    sessionserver.StickyCache
+	adminStickyFlusher    admin.StickyFlusher
+	erasureSticky         *experimentsticky.RedisCache
+	callbackValidator     *sessioncallback.Validator
+	callbackSeal          func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error)
+	callbackDispatcher    *sessioncallback.Dispatcher
+	budgetTerminator      *budgetSessionTerminator
+	sessionBudgetEnforcer *sessionbudget.Enforcer
+	leaseBudgets          *leasecontrol.MemoryBudgetSource
+	leaseExtDefaults      sessionserver.LeaseExtensionDefaults
+	sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar
+	childLeaseRegistrar   delegation.LeaseChildRegistrar
+	activityStamper       *sessionidle.Stamper
+	slotHealth            *slothealth.Tracker
+
+	// §4.9 / §9.3 credential-surface outputs. buildCredentialSurface
+	// constructs the OpenAI/Open Responses translators, the §4.9 end-user
+	// credential store and server, the §4.9 pre-authorized user-source
+	// materializer, the §9.3 connector-credential store, the §4.9.1
+	// KMS-rotation re-encryption job, and the §9.3 connector OAuth flow; the
+	// MCP fabric, the admin router, the HTTP surface, the LLM proxy, and the
+	// background workers read them back.
+	openaiHandler        *translator.OpenAIChatHandler
+	responsesHandler     *translator.OpenResponsesHandler
+	credentials          credentialstore.Store
+	userCredMaterializer *usercreds.Materializer
+	credServer           *credentialserver.Server
+	connectorCreds       connectorcredstore.Store
+	credentialRekeyJob   *rekey.Job
+	connectorOAuth       *admin.ConnectorOAuth
 
 	// Constructed subsystems and stores the §4.1 background-worker step
 	// (startBackgroundWorkers) reads to launch the periodic sweepers,
@@ -181,8 +274,11 @@ type gatewayWiringFields struct {
 	// chain, the §8.3 maxInputSize resolver holder, the policy audit sink,
 	// and the §11.2 quota counter and tenant-limits resolver; the session
 	// server, the MCP fabric, the admin router, the HTTP surface, and the
-	// LLM proxy read them back.
+	// LLM proxy read them back. buildInterceptorRegistration registers the
+	// §4.8 external interceptors and guardrails classifier onto the chain and
+	// records the §10.3 mTLS deny list the control server reads.
 	policyChain                 *interceptor.Chain
+	mtlsDeny                    *mtlsdenylist.DenyList
 	maxInputResolver            *maxInputSizeResolverHolder
 	policyAuditSink             *policy.AuditSink
 	quotaCounter                *quotastore.Counter

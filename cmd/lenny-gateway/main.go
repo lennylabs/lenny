@@ -60,130 +60,61 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
-	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/delegation/recovery"
-	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
-	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/billingcheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
-	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
-	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
-	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
-	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
-	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentialstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
-	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
-	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
-	"github.com/lennylabs/lenny/pkg/gateway/devmode"
-	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
-	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
-	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
-	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
-	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
-	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
-	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol/denialpg"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
-	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/pgnotify"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/prestop"
-	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint"
-	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/recycle"
-	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
-	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/sessionusage/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
-	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
-	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tlsprobe"
-	"github.com/lennylabs/lenny/pkg/gateway/translator"
-	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
-	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/idempotency"
-	"github.com/lennylabs/lenny/pkg/kms/envelope"
-	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
-	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
-	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/mtls/interceptordial"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
-	"github.com/lennylabs/lenny/pkg/observability/slo"
-	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
-	"github.com/lennylabs/lenny/pkg/quota"
-	"github.com/lennylabs/lenny/pkg/redisconn"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
@@ -218,899 +149,63 @@ func main() {
 
 // runGateway wires and starts every gateway subsystem from the parsed
 // flags, then blocks on the §17 run-and-shutdown loop. It is the gateway
-// composition root: a flat sequence of construct-and-wire steps grouped
-// by subsystem, terminating in the signal-driven graceful shutdown.
+// composition root: a flat ordered sequence of per-subsystem build-step
+// calls (each defined in a subsystem-named sibling file and documented
+// there), terminating in the signal-driven graceful shutdown. No subsystem
+// is constructed inline here; every build step records its outputs on the
+// gatewayWiring accumulator, and this root re-aliases a recorded output to a
+// local name only where it is read more than once, passing single-use outputs
+// directly from the accumulator at the call site.
+//
+// This is the ordered call sequence proposal 0020 §4 Part A R1 specifies. It
+// remains over the advisory long-funcs line threshold (the dispatcher proposal
+// 0020 §6/§7 "Realistic per-function targets" explicitly accepts): its
+// residual length is the cross-step value threading and the multi-argument
+// build-step calls, not un-extracted construction. Its statement count is a
+// fraction of the former monolith's, and the gatewayWiring accumulator carries
+// the threading rather than 20-to-30-value constructor returns (see wiring.go).
 //
 // spec: §4.1 — the gateway is one component internally partitioned into
 // subsystem boundaries (Go interfaces within a single binary); this
 // function constructs each in dependency order.
 func runGateway(f *gatewayFlags) {
 	w := &gatewayWiring{f: f}
-	// Re-bind the parsed flags to their original local names so the
-	// subsystem-wiring blocks below read them unchanged. Each name aliases
-	// the same flag pointer parseFlags produced.
-	oidcIssuerURL := f.oidcIssuerURL
-	oidcClientID := f.oidcClientID
-	devMode := f.devMode
-	tlsTerminatedUpstream := f.tlsTerminatedUpstream
-	sloValidated := f.sloValidated
-	scatterMaxConcurrency := f.scatterMaxConcurrency
-	scatterPerShardTimeoutSeconds := f.scatterPerShardTimeoutSeconds
-	scatterAggregateTimeoutSeconds := f.scatterAggregateTimeoutSeconds
-	startupProbeRedisAddr := f.startupProbeRedisAddr
-	startupProbePgBouncerAddr := f.startupProbePgBouncerAddr
-	startupProbeCA := f.startupProbeCA
-	startupProbeCert := f.startupProbeCert
-	startupProbeKey := f.startupProbeKey
-	dualStoreMaxSeconds := f.dualStoreMaxSeconds
-	claimHoldTTLSeconds := f.claimHoldTTLSeconds
-	auditLockAcquireTimeoutMs := f.auditLockAcquireTimeoutMs
-	auditLockMaxRetries := f.auditLockMaxRetries
-	auditLockRetryBaseMs := f.auditLockRetryBaseMs
-	externalInterceptorTLSCert := f.externalInterceptorTLSCert
-	externalInterceptorTLSKey := f.externalInterceptorTLSKey
-	externalInterceptorCA := f.externalInterceptorCA
-	guardrailsClassifier := f.guardrailsClassifier
-	opsNonceCheckpointPath := f.opsNonceCheckpointPath
-	gatewayQueueDepthThreshold := f.gatewayQueueDepthThreshold
-	gatewayLatencyThresholdSeconds := f.gatewayLatencyThresholdSeconds
-	credentialPoolLowThreshold := f.credentialPoolLowThreshold
-	sloBurnRateFastMultiplier := f.sloBurnRateFastMultiplier
-	sloBurnRateSlowMultiplier := f.sloBurnRateSlowMultiplier
-	postgresWriteCeilingIops := f.postgresWriteCeilingIops
-	auditStartupChainCheckEntries := f.auditStartupChainCheckEntries
-	auditScatterCacheEnabled := f.auditScatterCacheEnabled
-	auditSIEMEndpoint := f.auditSIEMEndpoint
-	auditSIEMSecret := f.auditSIEMSecret
-	auditSIEMFailureThresholdPercent := f.auditSIEMFailureThresholdPercent
-	auditSIEMMaxDeliveryLagSeconds := f.auditSIEMMaxDeliveryLagSeconds
-	auditSIEMPollIntervalSeconds := f.auditSIEMPollIntervalSeconds
-	auditOCSFRetryIntervalSeconds := f.auditOCSFRetryIntervalSeconds
-	auditOCSFMaxAttempts := f.auditOCSFMaxAttempts
-	auditOCSFBatchSize := f.auditOCSFBatchSize
-	auditBatchingEnabled := f.auditBatchingEnabled
-	auditFlushIntervalMs := f.auditFlushIntervalMs
-	auditFlushBatchSize := f.auditFlushBatchSize
-	callbackURLAllowedDomains := f.callbackURLAllowedDomains
-	elicitationFloor := f.elicitationFloor
-	grpcAddr := f.grpcAddr
-	leaseAutoMaxPerMin := f.leaseAutoMaxPerMin
-	leaseDefaultBudget := f.leaseDefaultBudget
-	leaseMaxBudget := f.leaseMaxBudget
-	leaseDefaultApproval := f.leaseDefaultApproval
-	leaseCoolOffSec := f.leaseCoolOffSec
-	leaseRejectionCoolOffSec := f.leaseRejectionCoolOffSec
-	spiffeTrustDomain := f.spiffeTrustDomain
-	interceptorNamespaces := f.interceptorNamespaces
-	llmProxyPublicURL := f.llmProxyPublicURL
-	maxSessionAgeSeconds := f.maxSessionAgeSeconds
-	delegationUsageQuiescenceTimeoutSeconds := f.delegationUsageQuiescenceTimeoutSeconds
-	delegationMaxLevelRecoverySeconds := f.delegationMaxLevelRecoverySeconds
-	delegationMaxTreeRecoverySeconds := f.delegationMaxTreeRecoverySeconds
-	delegationCascadeTimeoutSeconds := f.delegationCascadeTimeoutSeconds
-	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
-	credentialsExpiryWarningLeadSeconds := f.credentialsExpiryWarningLeadSeconds
-	noEnvPolicy := f.noEnvPolicy
-	connectorOAuthCallbackURL := f.connectorOAuthCallbackURL
-	connectorOAuthCA := f.connectorOAuthCA
-	connectorOAuthClientSecretKey := f.connectorOAuthClientSecretKey
-	billingCorrectionRateThreshold := f.billingCorrectionRateThreshold
-	gdprRetentionDays := f.gdprRetentionDays
-	auditRetentionPruneIntervalSeconds := f.auditRetentionPruneIntervalSeconds
-	eventBusRetryIntervalSeconds := f.eventBusRetryIntervalSeconds
-	eventBusMaxRetryAttempts := f.eventBusMaxRetryAttempts
-	eventBusDuplicateInjectionFactor := f.eventBusDuplicateInjectionFactor
-	eventBusDropAlertThreshold := f.eventBusDropAlertThreshold
-	maxSessionsPerReplica := f.maxSessionsPerReplica
-	minReplicas := f.minReplicas
-	streamCeiling := f.streamCeiling
-	sessionEventReplayBufferDepth := f.sessionEventReplayBufferDepth
-	poolerMode := f.poolerMode
-	externalInterceptors := f.externalInterceptors
 
-	// spec: §17.2 line 86 / §9.2 line 64 — the platform-wide elicitation
-	// content-integrity floor is seeded from the
-	// --elicitation-content-integrity-floor flag and then kept live by the
-	// phase-stamp ConfigMap reconcile started below (when a cluster client
-	// exists). Every floor read (the per-request effective-mode resolver,
-	// the admin below-floor guard, and the §16.5 weakened-mode gauge) goes
-	// through this provider so a `helm upgrade` floor change takes effect
-	// without a gateway restart. F-17.2.9.
-	elicitationFloorProvider := elicitationfloor.NewProvider(*elicitationFloor)
+	// Each step below constructs one subsystem, records its outputs on the
+	// accumulator (see wiring.go and wiring_fields.go), and is documented in
+	// its own sibling file. The composition root re-aliases the recorded
+	// outputs to local names where a later step takes them as an explicit
+	// argument. spec: §4.1.
 
-	// spec: §17.4 line 268 — dev-mode hard startup assertion. The
-	// gateway's own listener is plain HTTP; production terminates TLS at
-	// the ingress (the §17 line 7 Deployment+Service+Ingress topology)
-	// and acknowledges that posture with --tls-terminated-upstream. With
-	// neither dev mode nor that acknowledgment the gateway refuses to
-	// start so a misconfigured staging or production deployment cannot
-	// silently run without encryption. F-17.4.5.
-	if err := devmode.ResolveStartupGate(*devMode, *tlsTerminatedUpstream); err != nil {
-		log.Fatalf("lenny-gateway: LENNY_TLS_REQUIRED: %v", err)
-	}
+	// §10.3/§17.4/§16.3/§16.5 startup gates and process-wide providers.
+	w.buildStartupGates()
+	elicitationFloorProvider := w.elicitationFloorProvider
+	resolvedNoEnvPolicy := w.resolvedNoEnvPolicy
 
-	// spec: §5.3 line 677 — in dev mode the default isolation profile
-	// falls back to runc. Log the mandated warning once at startup so an
-	// accidental production dev-mode install is visible in the logs.
-	if *devMode {
-		log.Printf("lenny-gateway: %s", isolation.DevModeIsolationWarning)
-		// spec: §17.4 line 269 — when dev mode relaxes TLS, log the
-		// warning at startup and re-broadcast it every minute while the
-		// process runs. F-17.4.6.
-		devmode.StartWarnTicker(context.Background(), devmode.WarnInterval, func(msg string) {
-			log.Printf("lenny-gateway: %s", msg)
-		})
-	}
-
-	// spec: §16.3 line 359 — install the process-wide OpenTelemetry
-	// TracerProvider and W3C trace-context propagator so the §16.3 span
-	// catalog has a real exporter behind it instead of the global no-op
-	// provider. The gateway emits 100% (head) and an OTLP/HTTP exporter
-	// ships spans to OTEL_EXPORTER_OTLP_ENDPOINT; with no endpoint (or in
-	// dev mode) a stdout exporter covers `make run`. F-16.3.2 / F-16.3.8.
-	traceShutdown, err := tracing.InitProvider(context.Background(), tracing.ProviderConfig{
-		ServiceName:  "lenny-gateway",
-		OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		DevMode:      *devMode,
-	})
-	if err != nil {
-		log.Fatalf("lenny-gateway: tracing init: %v", err)
-	}
-
-	// spec: §16.5 lines 609, 623 — surface the provisional-SLO startup
-	// warning unless the Phase 14.5 benchmark gate has set slo.validated,
-	// so a deployment running the unvalidated defaults cannot silently
-	// treat them as customer SLA commitments.
-	if msg, emit := slo.StartupWarning(*sloValidated); emit {
-		log.Printf("lenny-gateway: %s", msg)
-	}
-
-	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
-	// once at startup so the gateway and every clock-using subsystem
-	// pick up a chaos-test offset. A non-integer value fails loudly
-	// here rather than silently behaving as production. Production
-	// installs run with the variable unset; the §17.6 preflight Job
-	// asserts that separately via AssertProductionDefault.
-	if err := clockinject.FromEnv(); err != nil {
-		log.Fatalf("lenny-gateway: %v", err)
-	}
-
-	// §10.6: the platform-wide noEnvironmentPolicy must be set
-	// explicitly. Dev mode derives allow-all for local convenience;
-	// outside dev mode an unset value is a fatal misconfiguration so a
-	// chart with the default stripped fails closed at startup. See
-	// resolveNoEnvironmentPolicy for the pure-function form the
-	// §11.1 TestGatewayConfigValidation regression test exercises.
-	resolvedNoEnvPolicy, err := resolveNoEnvironmentPolicy(*noEnvPolicy, *devMode)
-	if err != nil {
-		log.Fatalf("lenny-gateway: %v", err)
-	}
-
-	// spec: §10.3 lines 361-371 — startup configuration validation. Each
-	// missing required platform key emits a structured LENNY_CONFIG_MISSING
-	// log entry (config_key/scope/remediation fields) and the gateway
-	// refuses to become ready by exiting non-zero so Kubernetes surfaces
-	// CrashLoopBackOff rather than the replica silently serving with
-	// undefined semantics. noEnvironmentPolicy is gated just above;
-	// playground.devTenantId by playground.Config.Validate; this covers the
-	// OIDC and session-duration keys. The OIDC keys are exempt in dev mode
-	// (§10.3 line 373 / §17.4). F-10.3.14.
-	if missing := validatePlatformConfig(*devMode, *oidcIssuerURL, *oidcClientID, *maxSessionAgeSeconds); len(missing) > 0 {
-		for _, m := range missing {
-			slog.Error("LENNY_CONFIG_MISSING", "config_key", m.configKey, "scope", m.scope, "remediation", m.remediation)
-		}
-		log.Fatalf("lenny-gateway: %d required platform configuration key(s) missing or invalid (§10.3); see the LENNY_CONFIG_MISSING entries above", len(missing))
-	}
-
-	// spec: §10.3 line 359 — gateway startup TLS probe. Before the replica
-	// is marked ready, verify a TLS handshake to Redis and PgBouncer
-	// succeeds and that a plaintext connection is refused, so a
-	// misconfigured backend (wrong port, missing cert) fails startup
-	// rather than degrading silently at runtime. Dev mode is exempt (the
-	// line 373 dev-mode symmetry / §17.4) and an unset endpoint is skipped.
-	// F-10.3.15.
-	if !*devMode && (*startupProbeRedisAddr != "" || *startupProbePgBouncerAddr != "") {
-		probeTLS, perr := buildStartupProbeTLSConfig(*startupProbeCA, *startupProbeCert, *startupProbeKey)
-		if perr != nil {
-			log.Fatalf("lenny-gateway: §10.3 startup TLS probe configuration: %v", perr)
-		}
-		if err := tlsprobe.Probe(
-			context.Background(), tlsprobe.Config{TLSConfig: probeTLS},
-			tlsprobe.Target{Backend: tlsprobe.BackendRedis, Addr: *startupProbeRedisAddr},
-			tlsprobe.Target{Backend: tlsprobe.BackendPgBouncer, Addr: *startupProbePgBouncerAddr},
-		); err != nil {
-			log.Fatalf("lenny-gateway: §10.3 startup TLS probe failed: %v", err)
-		}
-		log.Printf("lenny-gateway: §10.3 startup TLS probe passed (redis=%q pgbouncer=%q)", *startupProbeRedisAddr, *startupProbePgBouncerAddr)
-	}
-
-	// spec: §4.2 line 165 — LENNY_POOLER_MODE must be one of the two
-	// documented values. The trigger-level guard runs regardless of
-	// this check; failing at startup keeps a misconfigured deploy
-	// from running silently with the wrong assumed posture.
-	switch *poolerMode {
-	case "transactional", "external":
-		log.Printf("lenny-gateway: pooler-mode=%s (§4.2 line 165)", *poolerMode)
-	default:
-		log.Fatalf("lenny-gateway: --pooler-mode must be `transactional` or `external`, got %q (§4.2 line 165)", *poolerMode)
-	}
-
-	// spec: §11.3 line 224 — surface the effective
-	// `delegation.usageQuiescenceTimeoutSeconds` at startup so operators
-	// see the value the §8.10 tree-recovery orchestrator will consume.
-	// The recovery package exposes the Config field; the gateway-side
-	// orchestrator threads `delegationQuiescenceCfg` to keep one source
-	// of truth. F-11.3.19.
-	//
-	// spec: §8.10 lines 1022-1023 / 1042 — extend the same Config to
-	// carry `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds` so the
-	// recovery package consumes the live operator overrides. F-8.10.6.
-	delegationQuiescenceCfg := recovery.Config{
-		LevelTimeout:           time.Duration(*delegationMaxLevelRecoverySeconds) * time.Second,
-		TreeTimeout:            time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
-		UsageQuiescenceTimeout: time.Duration(*delegationUsageQuiescenceTimeoutSeconds) * time.Second,
-	}
-	log.Printf("lenny-gateway: delegation.usageQuiescenceTimeoutSeconds=%ds (§11.3 line 224)",
-		int(delegationQuiescenceCfg.QuiescenceDeadline(time.Time{}).Sub(time.Time{}).Seconds()))
-	log.Printf("lenny-gateway: delegation.maxLevelRecoverySeconds=%ds delegation.maxTreeRecoverySeconds=%ds (§8.10 lines 1022-1023)",
-		*delegationMaxLevelRecoverySeconds, *delegationMaxTreeRecoverySeconds)
-	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10 lines 1078, 1103)",
-		*delegationCascadeTimeoutSeconds, *delegationMaxOrphanTasksPerTenant)
-	_ = delegationQuiescenceCfg
-
-	// §4.6.1: a high reserved-hold TTL holds a recycled pod out of its pinned
-	// tenant's claimable idle inventory (a reserved pod is counted as occupied
-	// for inventory and scaling, §4.6.2) and delays retirement-limit
-	// evaluation at the next disposition. Warn at startup when the operator
-	// sets it above the advisory ceiling so the inventory effect is visible in
-	// the logs; the value is honored regardless.
-	if *claimHoldTTLSeconds > recycle.HighClaimHoldTTLWarnSeconds {
-		log.Printf("lenny-gateway: WARNING: claimHoldTTLSeconds=%ds exceeds the advisory ceiling of %ds (§4.6.1); a long reserved hold depresses apparent idle inventory and delays retirement-limit evaluation",
-			*claimHoldTTLSeconds, recycle.HighClaimHoldTTLWarnSeconds)
-	}
-
-	// spec: §4.1 — build the §4.2/§4.4/§4.5 persistence and §4.3/§10.2/§10.3
-	// credential surfaces, then relocate the §17.4 SQLite flush-loop cancel
-	// and the §4.3 token-service connection close to the composition root so
-	// they run at process shutdown. The original defers lived inside the
-	// stores block; guarding on the accumulator field preserves their
-	// register-only-when-set semantics.
+	// §4.2/§4.4/§4.5 persistence and §4.3/§10.2/§10.3 credential surfaces. The
+	// §4.3 token-service connection close is relocated here from the stores
+	// block so it runs at process shutdown; the §17.4 SQLite flush-loop cancel
+	// stays a synchronous call in runServers (gated on sqliteDB, before
+	// sqliteDB.Close), matching the original timing exactly. F-17.4.2.
 	w.buildStores()
-	if w.sqliteFlushCancel != nil {
-		defer w.sqliteFlushCancel()
-	}
 	defer func() {
 		if w.tokenServiceConn != nil {
 			_ = w.tokenServiceConn.Close()
 		}
 	}()
-	gwMetrics, err := gatewaymetrics.New()
-	if err != nil {
-		log.Fatalf("lenny-gateway: metrics: %v", err)
-	}
-	// spec: §10.1 lines 33-37 / §11.3 line 209 — the gateway-side
-	// CoordinatorFence driver. On a resume re-bind the sessionserver
-	// announces the session's coordination_generation to the pod; a
-	// generation-stale rejection drives the retry/relinquish policy,
-	// releasing the coordination lease when the coordinator gives up.
-	// Wired only when the lease store exists (it needs Release for the
-	// relinquish path); the metrics are now built so the counters move.
-	if w.erasureLeaseStore != nil {
-		w.coordFencer = coordfence.New(
-			sessionGenerationReader{store: w.sessions},
-			w.erasureLeaseStore,
-			w.replica,
-			gwMetrics,
-			coordfence.Options{Logf: log.Printf},
-		)
-	}
-	// spec: §10.2 line 225 — back-fill the JWTSigner breaker observer
-	// with the freshly-built metrics so signing failures and circuit
-	// transitions land on `lenny_gateway_kms_signing_errors_total` and
-	// `lenny_gateway_kms_signing_circuit_state`. F-10.2.6.
-	w.kmsBreakerObs.SetMetrics(gwMetrics)
-	// spec: §12.6 line 560 — register the scatter-gather duration histogram
-	// and shard-count gauge and attach them to the store router so the §16
-	// ScatterGatherSlowQuery alert has a series. The router is built before
-	// the metrics registerer, so the collector is wired here. F-12.6.18.
-	if w.scatterRouter != nil {
-		scatterMetrics, err := storerouter.NewScatterMetrics(gwMetrics.Registerer())
-		if err != nil {
-			log.Fatalf("lenny-gateway: scatter-gather metrics: %v", err)
-		}
-		w.scatterRouter.SetScatterMetrics(scatterMetrics)
-	}
-	// spec: §13.3 line 595 — NTP drift self-monitor. The source returns
-	// the clockinject-injected offset for v1 (zero in production unless
-	// an operator wires a real adjtimex/chrony probe). /healthz and any
-	// downstream consumer (currently the embedded TokenService path,
-	// which lives in lenny-token-service) consult driftMonitor.Degraded.
-	// F-13.3.5.
-	driftMonitor := driftmonitor.New(func() time.Duration {
-		off, _ := clockinject.Offset()
-		return off
-	}, gwMetrics)
-	// spec: §10.1 — dual-store degraded-mode monitor. It is active only
-	// when both coordination stores are wired; an in-memory / single-store
-	// dev posture has no "both down" condition to detect. The monitor
-	// probes Postgres and Redis on a short cadence and, on detecting both
-	// unreachable, pins lenny_dual_store_unavailable=1, broadcasts a
-	// PLATFORM_DEGRADED SSE event to every active client stream, and gates
-	// session.create with 503 + Retry-After: 10 (via DualStore on the
-	// session-server Options). The per-replica dualStoreUnavailableMaxSeconds
-	// countdown is anchored at detection. F-10.1.3.
-	var dsMonitor *dualstore.Monitor
-	if w.pgPool != nil && w.redisClient != nil {
-		pgPoolRef := w.pgPool
-		redisRef := w.redisClient
-		dsMonitor = &dualstore.Monitor{
-			PostgresProbe: func(ctx context.Context) bool {
-				pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-				defer cancel()
-				return pgPoolRef.Ping(pctx) == nil
-			},
-			RedisProbe: func(context.Context) bool {
-				return redisconn.PingWithTimeout(redisRef, 2*time.Second) == nil
-			},
-			Gauge:          gwMetrics,
-			Streams:        w.eventBus,
-			MaxUnavailable: time.Duration(*dualStoreMaxSeconds) * time.Second,
-			Logf:           func(format string, args ...any) { log.Printf(format, args...) },
-		}
-	}
-	// §4.6.1: record fallback-claim skips on the gateway metrics registry.
-	// Wired after gatewaymetrics.New() because the binder is constructed
-	// earlier in the agent-namespace block.
-	if w.podBinder != nil {
-		w.podBinder.FallbackSkipped = gwMetrics.IncPodClaimFallbackSkipped
-		// §5.2 line 519: record concurrent-mode slot-contention conflicts
-		// on lenny_slot_assignment_conflict_total so operators can detect
-		// pool under-sizing.
-		w.podBinder.SlotConflict = gwMetrics.IncSlotAssignmentConflict
-		// §5.2 line 12: record concurrent-workspace slot bind failures on
-		// lenny_slot_failure_total (error_type, pool, k8s_pod_name).
-		w.podBinder.SlotFailure = gwMetrics.IncSlotFailure
-		// §5.2 line 521: record post-recovery slot-counter rehydration
-		// events on lenny_slot_rehydration_total (pod, pool).
-		w.podBinder.Rehydration = gwMetrics.IncSlotRehydration
-		// §6.3 line 352 / §16.1 line 122: emit lenny_warmpool_claims_total
-		// on each idle→claimed transition so deployers can read the
-		// denominator of the SDK-warm demotion-rate ratio.
-		w.podBinder.ClaimAccepted = gwMetrics.IncWarmpoolClaim
-		// §6.1 line 34 / §6.3 line 352 / §16.1 line 121: emit
-		// lenny_warmpool_sdk_demotions_total (the demotion-rate numerator)
-		// and lenny_warmpool_sdk_demotion_duration_seconds (the SDK
-		// teardown penalty) on each SDK-warm demotion.
-		w.podBinder.SDKDemotion = gwMetrics.RecordSDKDemotion
-	}
-	// §16.1 lines 51, 53, 55: emit credential-lease assignment, lease
-	// duration, and pool-utilization telemetry from the in-process
-	// assignment service. The Token Service client path emits its own
-	// §16.1 metrics on its registry.
-	if w.inProcessAssign != nil {
-		w.inProcessAssign.SetMetrics(gwMetrics)
-	}
-	// spec: §9.4 line 200 / §16.1 lines 151-154 — wire the MemoryStore
-	// Observer once gatewaymetrics is ready. The §16.1 `backend` label
-	// is the bound implementation tag (`postgres` for the pgvector
-	// backend, `memory` for the in-process test backend). F-9.4.1 /
-	// F-9.4.6.
-	if w.memories != nil {
-		obs := memoryStoreObserver{metrics: gwMetrics, backend: w.memoryBackendLabel}
-		switch s := w.memories.(type) {
-		case *memorystore.InMemory:
-			s.SetObserver(obs)
-		case *memorypg.Store:
-			s.SetObserver(obs)
-		}
-	}
-	// spec: §12.8 lines 743-758 — MemoryStore erasure preflight (stub
-	// detection, defense-in-depth layer 2). Before serving traffic, seed a
-	// probe memory under the reserved (__preflight__, __preflight_user__)
-	// scope, erase it, and assert it does not survive. A backend whose
-	// DeleteByUser / DeleteByTenant satisfies the interface but silently
-	// no-ops makes the gateway refuse to start, so a GDPR erasure can never
-	// report success while memories persist. Skipped when memory.enabled is
-	// false (no store wired). F-9.4.3 / F-12.1.4 / F-12.2.10 / F-12.8.9.
-	if w.memories != nil {
-		preflightCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		preflightErr := memorystore.ValidateMemoryStoreErasure(preflightCtx, w.memories)
-		cancel()
-		if preflightErr != nil {
-			log.Fatalf("FATAL: MemoryStore preflight failed — configured backend (%s) does not honor DeleteByUser; GDPR erasure would silently succeed while leaving memories in place (Section 12.8): %v", w.memoryBackendLabel, preflightErr)
-		}
-	}
-	// §4.1 / §16.1: emit the per-replica capacity ceiling as a startup-set
-	// gauge so the §16.5 GatewaySessionBudgetNearExhaustion alert can
-	// divide active sessions by it. The spec requires both delivery_mode
-	// values be reported per replica; until a separate
-	// maxSessionsPerReplicaProxyMode setting exists, both labels carry
-	// the same configured value so capacity-planning dashboards have a
-	// non-NaN value for either mode.
-	if *maxSessionsPerReplica <= 0 {
-		log.Fatalf("lenny-gateway: --max-sessions-per-replica must be > 0 (got %d) (§4.1)", *maxSessionsPerReplica)
-	}
-	gwMetrics.SetMaxSessionsPerReplica("direct", *maxSessionsPerReplica)
-	gwMetrics.SetMaxSessionsPerReplica("proxy", *maxSessionsPerReplica)
 
-	// spec: §8.10 line 1103 + §16.5 OrphanTasksPerTenantHigh — publish the
-	// configured maxOrphanTasksPerTenant cap so the alert's
-	// `scalar(lenny_max_orphan_tasks_per_tenant)` denominator resolves to
-	// the live ceiling. The Helm-driven flag is the source of truth; the
-	// sessionserver constructor also receives the same value via the
-	// Options.MaxOrphanTasksPerTenant field so the detach-cascade fallback
-	// path and the alert evaluate against one shared cap. F-8.10.10 /
-	// F-8.10.13.
-	gwMetrics.SetMaxOrphanTasksPerTenant(*delegationMaxOrphanTasksPerTenant)
+	// §16.1 metric registry plus the back-fill onto the stores built before it
+	// existed, and the §10.1/§13.3/§4.1 monitors.
+	w.buildMetricsBackfill()
+	gwMetrics := w.gwMetrics
+	dsMonitor := w.dsMonitor
 
-	// §4.4 line 254 — late-binding the checkpointer's duration
-	// histogram emitter to the freshly-constructed gateway metrics.
-	// The checkpointer is constructed before gwMetrics so the Sealer
-	// can flow into the session-server, so the Metrics field is wired
-	// here once the registry is live.
-	if w.checkpointSvc != nil {
-		w.checkpointSvc.Metrics = gwMetrics
-	}
-
-	// §12.5 ll. 282/303 — wire the artifact store's fail-closed T4
-	// KMS-unavailable callback and its retry-exhausted upload-error
-	// callback to the gateway metrics emitter, regardless of which
-	// §17.9.3 backend (MinIO, S3, GCS, Azure) serves the bucket. Every
-	// ErrClassificationControlViolation the store raises bumps
-	// `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}`
-	// so the CheckpointStorageUnavailable alert fires under the
-	// outage; every retry-exhausted upload bumps
-	// `lenny_artifact_upload_error_total` so the §16.5 MinIOUnavailable
-	// alert fires from one source of truth. The handler also logs the
-	// KMS rejection at INFO so operators see the tenant id without
-	// spelunking through the bucket-side access logs. F-17.5.1.
-	if sink, ok := w.objectStore.(artifactMetricsSink); ok {
-		sink.SetOnKMSUnavailable(func(tenantID string) {
-			gwMetrics.IncCheckpointKMSUnavailable()
-			log.Printf("lenny-gateway: §12.5 ll. 303 CLASSIFICATION_CONTROL_VIOLATION: tenant=%s KMS key unavailable", tenantID)
-		})
-		sink.SetOnArtifactUploadError(func(tenantID, errorType string) {
-			gwMetrics.IncArtifactUploadError(tenantID, errorType)
-		})
-	}
-	// §12.9 line 1048 — the in-memory / filesystem backends reject a T4
-	// tenant's write (they cannot envelope-encrypt at rest). Wire the
-	// rejection to the tier_store_mismatch reason of the same
-	// checkpoint-storage-failure counter so the misconfiguration is
-	// visible to operators.
-	if sink, ok := w.objectStore.(tierMismatchSink); ok {
-		sink.SetOnTierStoreMismatch(func(tenantID string) {
-			gwMetrics.IncCheckpointTierStoreMismatch()
-			log.Printf("lenny-gateway: §12.9 line 1048 CLASSIFICATION_CONTROL_VIOLATION: tenant=%s workspaceTier requires envelope encryption but the artifact store is not configured for it (tier_store_mismatch)", tenantID)
-		})
-	}
-
-	// §12.8 line 735 / §12.5 ll. 297 — the durable artifact_store
-	// catalog reader and the startup T4 KMS probe are MinIO-specific
-	// (the in-memory and cloud backends do not expose SetCatalog), so
-	// they stay gated on the concrete MinIO store.
-	if w.minioStore != nil {
-		// §12.8 line 735 — wire the durable artifact_store catalog as
-		// the legal-hold source of truth on DeleteBySession. The
-		// in-memory legalHolds sync.Map remains a v1 fallback for the
-		// catalog-less dev gateway; production reads the durable row.
-		if w.artifactCatalog != nil {
-			w.minioStore.SetCatalog(w.artifactCatalog)
-			log.Printf("lenny-gateway: §12.8 line 735 durable legal-hold reader wired into MinIO blob store")
-		}
-
-		// §12.5 ll. 297 startup KMS probe: when at least one T4 tenant
-		// is configured, probe a sample alias so a chronic
-		// misconfiguration surfaces in startup logs. The gateway does
-		// NOT fail startup — production may bring the gateway up before
-		// every KMS alias is provisioned; the warning is the operator
-		// signal.
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			rows, err := w.tenants.List(ctx, tenantstore.ListFilter{})
-			if err != nil {
-				log.Printf("lenny-gateway: §12.5 startup T4 KMS probe: list tenants: %v", err)
-				return
-			}
-			for _, t := range rows {
-				if t.WorkspaceTier != tenantkms.WorkspaceTierT4 {
-					continue
-				}
-				alias := tenantkms.AliasFor(t.ID)
-				if _, perr := w.kmsProvider.CurrentKEKVersion(ctx, alias); perr != nil {
-					log.Printf("lenny-gateway: §12.5 startup T4 KMS probe WARN: tenant=%s alias=%s unreachable: %v",
-						t.ID, alias, perr)
-				} else {
-					log.Printf("lenny-gateway: §12.5 startup T4 KMS probe OK: tenant=%s alias=%s",
-						t.ID, alias)
-				}
-				return // probe a single sample tenant only
-			}
-		}()
-	}
-
-	// §4.1 / §16.5: emit the configuration scalars the §16.5
-	// GatewayNoHealthyReplicas and GatewayActiveStreamsHigh alert
-	// expressions read via scalar(...). Each gauge is emitted per
-	// replica; for replicaCount the spec recording rule sum() over
-	// the fleet yields the fleet-wide ready-replica numerator.
-	if *minReplicas <= 0 {
-		log.Fatalf("lenny-gateway: --min-replicas must be > 0 (got %d) (§4.1 / §16.5)", *minReplicas)
-	}
-	if *streamCeiling <= 0 {
-		log.Fatalf("lenny-gateway: --stream-ceiling must be > 0 (got %d) (§4.1 / §16.5)", *streamCeiling)
-	}
-	// spec: §10.4 line 389 — accepted range 64..4096 events.
-	if *sessionEventReplayBufferDepth < 64 || *sessionEventReplayBufferDepth > 4096 {
-		log.Fatalf("lenny-gateway: --session-event-replay-buffer-depth must be in [64, 4096] (got %d) (§10.4 line 389)", *sessionEventReplayBufferDepth)
-	}
-	gwMetrics.SetMinReplicas(*minReplicas)
-	gwMetrics.SetStreamCeiling(*streamCeiling)
-	gwMetrics.SetReplicaCount(1)
-	// §16.4 / §16.5: emit the audit alert-support scalars so the
-	// AuditSIEMNotConfigured and AuditRetentionLow expressions resolve.
-	// siemConfigured is the suppression term (1 when audit.siem.endpoint
-	// is set), retentionDays is the resolved §16.4 window, and
-	// envProduction gates both alerts to production. F-16.4.9; F-16.4.10.
-	gwMetrics.SetAuditSIEMConfigured(*auditSIEMEndpoint != "")
-	gwMetrics.SetAuditRetentionDays(w.effectiveAuditRetentionDays)
-	gwMetrics.SetEnvProduction(os.Getenv("LENNY_ENV") == "production")
-	// spec: §12.3 line 99 — in production with T2 audit batching enabled
-	// but no SIEM endpoint, there is no external durable copy to recover
-	// buffered T2 events from on a crash. Warn at startup and emit the
-	// AuditBatchingNoSIEM counter. F-12.3.15.
-	if auditBatchingNoSIEM(os.Getenv("LENNY_ENV"), *auditBatchingEnabled, *auditSIEMEndpoint != "") {
-		log.Printf("lenny-gateway: WARNING: Audit batching is enabled for T2 events but no SIEM is configured — buffered T2 audit events will be lost on gateway crash")
-		gwMetrics.IncAuditBatchingNoSIEM()
-	}
-	// spec: §11.2.1 line 187 — emit the configured BillingCorrectionRateHigh
-	// threshold as a startup-set scalar gauge so the alert expression in
-	// pkg/alerting/rules can read it via scalar(lenny_billing_correction_rate_threshold).
-	if *billingCorrectionRateThreshold < 0 || *billingCorrectionRateThreshold > 1 {
-		log.Fatalf("lenny-gateway: --billing-correction-rate-threshold must be in [0, 1] (got %v) (§11.2.1 / §16.5)", *billingCorrectionRateThreshold)
-	}
-	gwMetrics.SetBillingCorrectionRateThreshold(*billingCorrectionRateThreshold)
-
-	// spec: §12.6 line 683 / §16.5 — publish the operator-configured
-	// EventBusPublishDropped per-minute threshold so the bundled alert's
-	// scalar(lenny_event_bus_drop_alert_threshold) resolves to the
-	// eventBus.dropAlertThreshold Helm value rather than a literal. A
-	// non-positive value would make the alert fire on any drop, so it is
-	// clamped to the spec default. F-12.6.23.
-	if *eventBusDropAlertThreshold <= 0 {
-		log.Fatalf("lenny-gateway: --eventbus-drop-alert-threshold must be a positive per-minute rate (got %d) (§12.6 line 683)", *eventBusDropAlertThreshold)
-	}
-	gwMetrics.SetEventBusDropAlertThreshold(float64(*eventBusDropAlertThreshold))
-
-	// §12.3 line 76 — wire the billing_flush_pressure callback now that
-	// the metric registry exists (the billing Pipeline was constructed
-	// earlier). F-12.3.13.
-	w.billingPipeline.SetFlushPressureHook(gwMetrics.IncBillingFlushPressure)
-	// §12.3 line 123 — emit the configured Postgres sustained write-IOPS
-	// ceiling so the §16.5 PostgresWriteSaturation alert resolves
-	// scalar(lenny_postgres_write_ceiling_iops). F-12.3.8.
-	if *postgresWriteCeilingIops <= 0 {
-		log.Fatalf("lenny-gateway: --postgres-write-ceiling-iops must be > 0 (got %v) (§12.3 line 123)", *postgresWriteCeilingIops)
-	}
-	gwMetrics.SetPostgresWriteCeilingIops(*postgresWriteCeilingIops)
-	// §12.3 line 101 — startup chain-continuity check. After Postgres is
-	// reachable the gateway re-verifies the most recent
-	// audit.startupChainCheckEntries rows of each tenant's hash chain,
-	// emits lenny_audit_chain_integrity_total per tenant, and logs a WARN
-	// per detected gap. It never refuses to start — a gap is a compliance
-	// signal. The check reads audit_log from the instance it lives on —
-	// the separate §12.3 billing/audit pool when configured. F-12.3.9 /
-	// F-12.3.5.
-	if w.pgPool != nil {
-		chainPool := w.pgPool
-		if w.billingAuditPool != nil {
-			chainPool = w.billingAuditPool
-		}
-		runStartupChainContinuityCheck(context.Background(), chainPool, *auditStartupChainCheckEntries, gwMetrics)
-	}
-
-	// spec: §25.13 line 4737 / §16.5 — emit the configured Tier preset
-	// for the §25.13 tier-dependent thresholds (gateway queue depth,
-	// gateway p95 latency, credential pool utilisation). The
-	// corresponding alert expressions read each value via scalar(...),
-	// so a tier preset tightening the threshold flows through to the
-	// bundled manifest without re-rendering the rule body. F-25.13.2.
-	if *gatewayQueueDepthThreshold < 0 {
-		log.Fatalf("lenny-gateway: --gateway-queue-depth-threshold must be >= 0 (got %v) (§25.13 line 4737)", *gatewayQueueDepthThreshold)
-	}
-	gwMetrics.SetGatewayQueueDepthThreshold(*gatewayQueueDepthThreshold)
-	if *gatewayLatencyThresholdSeconds < 0 {
-		log.Fatalf("lenny-gateway: --gateway-latency-threshold-seconds must be >= 0 (got %v) (§25.13 line 4737)", *gatewayLatencyThresholdSeconds)
-	}
-	gwMetrics.SetGatewayLatencyThresholdSeconds(*gatewayLatencyThresholdSeconds)
-	if *credentialPoolLowThreshold < 0 || *credentialPoolLowThreshold > 1 {
-		log.Fatalf("lenny-gateway: --credential-pool-low-threshold must be in [0, 1] (got %v) (§25.13 line 4737)", *credentialPoolLowThreshold)
-	}
-	gwMetrics.SetCredentialPoolLowThreshold(*credentialPoolLowThreshold)
-	// §16.5 line 640: mirror the operator-configured burn-rate window
-	// multipliers onto the lenny_slo_burn_rate_{fast,slow}_multiplier
-	// gauges every burn-rate alert reads via scalar(...). Both must be
-	// positive — a non-positive multiplier would make every burn-rate
-	// alert fire continuously (ratio > 0 always exceeds it). F-16.5.3.
-	if *sloBurnRateFastMultiplier <= 0 || *sloBurnRateSlowMultiplier <= 0 {
-		log.Fatalf("lenny-gateway: --slo-burn-rate-fast-multiplier and --slo-burn-rate-slow-multiplier must be > 0 (got %v / %v) (§16.5 line 640)", *sloBurnRateFastMultiplier, *sloBurnRateSlowMultiplier)
-	}
-	gwMetrics.SetSLOBurnRateMultipliers(*sloBurnRateFastMultiplier, *sloBurnRateSlowMultiplier)
-
-	// §4.1 extractionThresholds: read the configured per-subsystem
-	// thresholds from LENNY_EXTRACTION_THRESHOLD_* env vars (rendered
-	// by charts/lenny/templates/gateway-deployment.yaml from
-	// gateway.extractionThresholds Helm values) and emit each one
-	// on the lenny_gateway_extraction_threshold gauge so the values
-	// used for an extraction decision are auditable against /metrics.
-	extractionthreshold.FromEnv().Emit(gwMetrics)
-
-	// §4.1 per-subsystem metric family. Register the
-	// lenny_gateway_subsystem_{request_duration_seconds, queue_depth,
-	// circuit_state, errors_total} vectors against the gateway's
-	// shared private registry so a Subsystem with its DoObserved path
-	// wired surfaces samples on /metrics. The §4.1 alerts in §16.5
-	// (GatewaySubsystemCircuitOpen, GatewayQueueDepthHigh,
-	// GatewayLatencyHigh) read these vectors via the `subsystem` label.
-	subsystemMetrics, err := subsystem.NewMetrics(gwMetrics.Registerer())
-	if err != nil {
-		log.Fatalf("lenny-gateway: subsystem metrics: %v", err)
-	}
-
-	// The §11.7 per-tenant audit hash chain. With Postgres the chain is
-	// durable (auditstore); otherwise it is in-memory and lost on
-	// restart. Both the admin router and the §10.7 ExperimentRouter
-	// rejection reporter commit events to it.
-	var (
-		auditSink             admin.AuditSink
-		wireAudit             func(*admin.Router) *admin.Router
-		auditAppender         policy.AuditAppender
-		auditValidator        *auditscope.Validator
-		ocsfTranslationStore  ocsf.TranslationStore
-		siemDeliveryStore     siem.DeliveryStore
-		auditBatchBuffer      *auditbatch.Buffer
-		auditPruner           *auditretention.Pruner
-		eventBusRetranscriber *eventbus.Retranscriber
-		// auditOpsStore is the durable audit Store, hoisted so the §25.5
-		// operational-event emitter (built further down, once Redis is
-		// resolved) can be wired into the §16.7 ops-stream escalation path
-		// via SetOpsStreamEmitter. F-25.5.18.
-		auditOpsStore *auditstore.Store
-	)
-	if w.pgPool != nil {
-		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
-		// advisory-lock acquisition with the operator-tunable
-		// statement_timeout + jittered retry budget, and emit the
-		// lenny_audit_lock_acquire_seconds / _concurrency_timeout_total
-		// series the AuditLockContention alert reads.
-		auditLockMetrics, err := auditstore.NewLockMetrics(gwMetrics.Registerer())
-		if err != nil {
-			log.Fatalf("lenny-gateway: audit lock metrics: %v", err)
-		}
-		// §12.3 R-03: the audit chain routes through the same StoreRouter
-		// built above (non-nil whenever pgPool is). F-12.3.4 / F-12.6.1.
-		pgAudit := auditstore.New(w.storeRouter,
-			auditstore.WithLockConfig(auditstore.LockConfig{
-				AcquireTimeoutMs: *auditLockAcquireTimeoutMs,
-				MaxRetries:       *auditLockMaxRetries,
-				RetryBaseMs:      *auditLockRetryBaseMs,
-			}),
-			auditstore.WithLockMetrics(auditLockMetrics),
-			// §12.3 line 79: route synchronous audit writes onto the
-			// dedicated sync write pool when one was opened. F-12.3.14.
-			auditstore.WithSyncWritePool(w.auditSyncPool),
-			// spec: §11.7 lines 430-435 (CMP-058) — route a platform-tenant
-			// audit write that references a non-platform target_tenant_id to
-			// the target tenant's regional platform-Postgres, failing closed
-			// with PLATFORM_AUDIT_REGION_UNRESOLVABLE when the region cannot
-			// be resolved. The storage.regions.<region>.postgresEndpoint map
-			// is empty in the single-region default (Config.PlatformRegions),
-			// so a target tenant with a dataResidencyRegion set but no
-			// configured regional endpoint fails closed as the spec requires.
-			// F-11.7.9.
-			auditstore.WithPlatformAuditResidency(
-				jwtaudit.PlatformTenantID,
-				w.storeRouter,
-				tenantResidencyLookup{tenants: w.tenants},
-				gwMetrics,
-			),
-			// spec: §25.9 line 3710 — bound the cross-tenant audit
-			// scatter-gather fan-out by the shared storeRouter scatter
-			// config (max concurrency, per-shard + aggregate timeout). v1 is
-			// single-shard so the bounds are inert until a multi-shard router
-			// is deployed. F-25.9.11.
-			auditstore.WithScatterConfig(storerouter.ScatterConfig{
-				MaxConcurrency:   *scatterMaxConcurrency,
-				PerShardTimeout:  time.Duration(*scatterPerShardTimeoutSeconds) * time.Second,
-				AggregateTimeout: time.Duration(*scatterAggregateTimeoutSeconds) * time.Second,
-			}))
-		// §12.3 line 81: opt-in T2 audit-event batching. When enabled, the
-		// non-PII cross_tenant_read worker receipts are buffered and
-		// flushed in batches through the dedicated sync write pool instead
-		// of one synchronous write each; T3/T4 PII audit events stay
-		// synchronous. F-12.3.14.
-		if *auditBatchingEnabled {
-			auditBatchBuffer = auditbatch.New(pgAudit.AppendBatch, auditbatch.Config{
-				FlushInterval: time.Duration(*auditFlushIntervalMs) * time.Millisecond,
-				BatchSize:     *auditFlushBatchSize,
-			}, nil)
-			pgAudit.SetBatchBuffer(auditBatchBuffer)
-		}
-		// spec: §11.7 line 428 — guard the caller-driven audit-write
-		// boundaries (the admin sink and the §4.8 policy-rejection sink)
-		// with the write-time tenant-scope validator so a forged-tenant
-		// row cannot be injected. Reads stay on the raw chain.
-		auditValidator = auditscope.New(pgAudit, nil)
-		auditSink = admin.NewAuditLogSink(auditValidator, nil)
-		// spec: §25.9 lines 3668, 3709 — the Postgres-backed chain serves
-		// the platform-admin cross-tenant scatter-gather and its 5-minute
-		// result cache (opt-out via --audit-scatter-gather-cache-enabled).
-		// The in-memory dev chain (below) has no scatter reader, so its
-		// platform-admin no-tenantId query stays single-tenant. F-25.9.11.
-		auditScatterCache := admin.NewMemScatterGatherCache(nil)
-		wireAudit = func(rt *admin.Router) *admin.Router {
-			return rt.WithAuditLog(pgAudit).
-				WithAuditScatter(pgAudit).
-				WithScatterGatherCache(auditScatterCache, *auditScatterCacheEnabled)
-		}
-		// The §11.7 `interceptor.rejected` policy-rejection rows share
-		// the durable Postgres-backed per-tenant hash chain.
-		auditAppender = pgAudit
-		// Hoist the Store so the §25.5 operational-event escalation
-		// emitter can be wired once Redis is resolved. Every escalating
-		// §16.7 audit event funnels through Store.Append (the admin sink,
-		// the policy-rejection sink, and the §25.9 audit-maintenance API
-		// all reach this chain), so a single hook covers them. F-25.5.18.
-		auditOpsStore = pgAudit
-		// The auditstore drives the §11.7 OCSF translation state machine
-		// (ocsf_translation_state). Hoisted so the OCSF translator wired
-		// below reads pending rows from the durable chain. F-11.7.1.
-		ocsfTranslationStore = pgAudit
-		// The same durable chain backs the §12.3 SIEM outbox forwarder:
-		// it tails committed audit_log rows past the per-tenant delivery
-		// high-water mark in siem_delivery_state and checkpoints each
-		// SIEM-acknowledged row. F-12.3.6.
-		siemDeliveryStore = pgAudit
-		// §16.4 lines 378-382 audit-retention pruner: a leader-elected
-		// sweep deletes audit rows past audit.retentionDays, holding
-		// gdpr.* erasure receipts under the longer audit.gdprRetentionDays
-		// floor and any SIEM-undelivered row behind the delivery guard.
-		// The forced-drop override records audit.partition_drop_forced on
-		// the platform chain through pgAudit.Append. F-11.7.17.
-		auditPruner = auditretention.New(
-			pgAudit,
-			auditPruneTenants{w.tenants},
-			func(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) error {
-				_, err := pgAudit.Append(ctx, tenantID, eventType, payload, at)
-				return err
-			},
-			auditretention.Options{
-				RetentionDays:     w.effectiveAuditRetentionDays,
-				GDPRRetentionDays: *gdprRetentionDays,
-				SIEMConfigured:    *auditSIEMEndpoint != "",
-				Interval:          time.Duration(*auditRetentionPruneIntervalSeconds) * time.Second,
-				Clock:             clockinject.Now,
-				// spec: §16.4 line 378 — surface the
-				// lenny_audit_partition_drop_blocked gauge so the §16.5
-				// AuditPartitionDropBlocked alert evaluates when the SIEM
-				// delivery guard holds a partition past its retention TTL.
-				Metrics: auditRetentionMetrics{gwMetrics},
-			},
-		)
-		// spec: §12.6 lines 685-689 — the EventBus retranscribe worker, the
-		// durable correctness layer that re-publishes every audit row whose
-		// first EventBus publish failed (eventbus_publish_state IN
-		// ('failed','retry_pending')) even when the in-memory replay buffer
-		// was lost. It is constructed only when both a durable audit chain
-		// (pgPool) and a real pub/sub substrate (securityBus / Redis) exist:
-		// with no Redis there is no EventBus to re-publish to. The worker
-		// drives the §12.6 RedisEventBus as its publisher, reads the failed
-		// rows from the auditstore RetranscribeStore, and sweeps every
-		// eventBus.retryInterval. F-12.6.22 / F-12.6.23.
-		if w.securityBus != nil {
-			eventBusMetrics, err := eventbus.NewPromMetrics(gwMetrics.Registerer())
-			if err != nil {
-				log.Fatalf("lenny-gateway: §12.6 EventBus metrics: %v", err)
-			}
-			eventBusPublisher := eventbus.NewRedisEventBus(
-				w.securityBus, eventBusMetrics,
-				eventbus.WithDuplicateInjectionFactor(*eventBusDuplicateInjectionFactor),
-			)
-			eventBusRetranscriber = eventbus.NewRetranscriber(
-				pgAudit, eventBusPublisher,
-				eventbus.RetranscribeConfig{
-					RetryInterval:    time.Duration(*eventBusRetryIntervalSeconds) * time.Second,
-					MaxRetryAttempts: *eventBusMaxRetryAttempts,
-				},
-				eventBusMetrics,
-			)
-		}
-	} else {
-		auditChains := audit.NewChainSet()
-		auditValidator = auditscope.New(auditscope.NewChainSetChain(auditChains, nil), nil)
-		auditSink = admin.NewAuditLogSink(auditValidator, nil)
-		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
-		// In-memory chain — lost on restart, used by the minimal gateway.
-		auditAppender = policy.NewChainSetAppender(auditChains, nil)
-	}
-
-	// §10.3 JWT signing-key rotation audit. Each Rotate or
-	// RetireExpired call against the rotatingVerifier emits one
-	// `platform.jwt_signing_key_rotated` audit row through this
-	// observer; the observer shares the per-tenant chain backend
-	// chosen above and writes to the platform tenant.
-	w.rotatingVerifier.SetObserver(jwtaudit.NewObserver(auditAppender))
-
-	// spec: §11.7 item 4 + Wire Format — wire the OCSF translator and
-	// SIEM forwarder into the gateway binary. The translator drains the
-	// auditstore's ocsf_translation_state rows, serializes each to the
-	// canonical OCSF v1.1.0 wire form, and multicasts to its sink; the
-	// SIEM forwarder is that sink (it implements ocsf.Sink). When a SIEM
-	// endpoint is configured the gateway validates connectivity at startup
-	// and refuses to start until a test event is acknowledged; at runtime
-	// the §25.3 health API reports the `siem` component degraded once the
-	// delivery failure rate crosses the threshold. With no SIEM the
-	// translator still advances the per-row state machine so audit rows do
-	// not pin in `pending`. F-11.7.1 / F-11.7.11 / F-11.7.16.
-	var (
-		ocsfTranslator    *ocsf.Translator
-		ocsfOutbox        *siem.Outbox
-		siemHealthChecker health.Checker
-	)
-	ocsfCfg := ocsf.TranslationConfig{
-		RetryInterval: time.Duration(*auditOCSFRetryIntervalSeconds) * time.Second,
-		MaxAttempts:   *auditOCSFMaxAttempts,
-		BatchSize:     *auditOCSFBatchSize,
-	}
-	// §12.3 line 97: emit the configured SIEM delivery-lag threshold so
-	// AuditSIEMDeliveryLag compares lenny_audit_siem_delivery_lag_seconds
-	// against an operator-tunable scalar rather than a literal. F-12.3.17.
-	gwMetrics.SetSIEMMaxDeliveryLagSeconds(float64(*auditSIEMMaxDeliveryLagSeconds))
-	if *auditSIEMEndpoint != "" {
-		siemMetrics := siem.NewCountingMetrics()
-		forwarder := siem.NewForwarder(
-			siem.NewHTTPSink(siem.HTTPSinkOptions{
-				Endpoint: *auditSIEMEndpoint,
-				Secret:   *auditSIEMSecret,
-			}),
-			siem.ForwarderConfig{},
-			siemMetrics,
-		)
-		validateCtx, cancelValidate := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := forwarder.ValidateConnectivity(validateCtx); err != nil {
-			cancelValidate()
-			log.Fatalf("lenny-gateway: §11.7 SIEM startup connectivity validation failed (the gateway refuses to start until the SIEM endpoint acknowledges a test event): %v", err)
-		}
-		cancelValidate()
-		siemHealthChecker = backends.SIEM(forwarder, siemMetrics, *auditSIEMFailureThresholdPercent, "siem")
-		if siemDeliveryStore != nil {
-			// §12.3 line 97: durable Postgres chain → the SIEM egress is
-			// the outbox / CDC forwarder. It tails committed audit_log
-			// rows past the siem_delivery_state high-water mark and
-			// advances the mark only after the SIEM acknowledges each
-			// record, so a crash after a Postgres commit but before SIEM
-			// delivery replays the row instead of losing it. The OCSF
-			// translator no longer pushes to the SIEM (sink = nil) — it
-			// only advances ocsf_translation_state — so the two paths do
-			// not double-deliver. F-12.3.6.
-			ocsfOutbox = siem.NewOutbox(siemDeliveryStore, forwarder,
-				siem.OutboxConfig{PollInterval: time.Duration(*auditSIEMPollIntervalSeconds) * time.Second},
-				gwMetrics)
-			log.Printf("lenny-gateway: §12.3 SIEM outbox forwarder validated connectivity to %s; tailing committed audit rows (poll %ds)", *auditSIEMEndpoint, *auditSIEMPollIntervalSeconds)
-			if ocsfTranslationStore != nil {
-				ocsfTranslator = ocsf.NewTranslator(ocsfTranslationStore, nil, ocsfCfg, ocsfMetricsAdapter{metrics: gwMetrics})
-			}
-		} else if ocsfTranslationStore != nil {
-			// No durable chain (in-memory, minimal gateway): there is no
-			// audit_log table to tail, so fall back to the push-based
-			// translator → SIEM forwarder path. F-11.7.1.
-			log.Printf("lenny-gateway: §11.7 SIEM forwarder validated connectivity to %s; OCSF audit egress active (push mode, no durable chain)", *auditSIEMEndpoint)
-			ocsfTranslator = ocsf.NewTranslator(ocsfTranslationStore, forwarder, ocsfCfg, ocsfMetricsAdapter{metrics: gwMetrics})
-		}
-	} else if ocsfTranslationStore != nil {
-		ocsfTranslator = ocsf.NewTranslator(ocsfTranslationStore, nil, ocsfCfg, ocsfMetricsAdapter{metrics: gwMetrics})
-	}
+	// §11.7 audit pipeline (hash chain, sinks, §16.4 pruner, §12.6 EventBus
+	// retranscriber, §11.7 OCSF / §12.3 SIEM forwarders).
+	w.buildAuditPipeline()
+	auditSink := w.auditSink
+	auditAppender := w.auditAppender
+	auditValidator := w.auditValidator
 
 	// §12.8: re-surface any tenant that combines billingErasurePolicy
 	// exempt with a regulated compliance profile so the retention
@@ -1121,829 +216,121 @@ func runGateway(f *gatewayFlags) {
 		log.Printf("lenny-gateway: WARNING: billing-erasure-exempt startup scan: %v", err)
 	}
 
-	// environments backs the §10.6 admin environment CRUD, the
-	// transparent filtering on lenny/discover_agents, and the §9.1
-	// GET /v1/runtimes discovery surface.
-	var environments environmentstore.Store = environmentstore.NewMemory()
-	if w.pgPool != nil {
-		environments = environmentpg.New(w.pgPool)
-	}
-	// §4 runtime tenant-access registry, shared by the admin
-	// tenant-access endpoints and the §5.1 internal meta-fetch endpoint.
-	var tenantAccess tenantaccessstore.Store = tenantaccessstore.NewMemory()
-	if w.pgPool != nil {
-		tenantAccess = tenantaccesspg.New(w.pgPool)
-	}
+	// §10.6/§4.9/§10.2/§8.8 auxiliary registries, the §25.3/§25.5 ops-event
+	// emitter, the §14 VCS resolver, and the §8.8 usage Builder.
+	w.buildAuxStores()
+	environments := w.environments
+	tenantAccess := w.tenantAccess
+	opsEmitter := w.opsEmitter
+	credentialPools := w.credentialPools
+	vcsCreds := w.vcsCreds
+	customRoles := w.customRoles
+	usage := w.usage
+	taskUsageBuilder := w.taskUsageBuilder
 
-	// §25.3 / §25.5 operational-event emitter, shared by the gateway
-	// subsystems that emit and the admin event-buffer query endpoint.
-	// Always keep a local buffer — the §25.3 buffer endpoint reads it
-	// and the §25.5 fall-back path serves the same buffer when Redis is
-	// unreachable. When Redis is wired, every emit also lands on the
-	// §25.5 platform-scoped stream ops:events:stream so lenny-ops and
-	// the controllers share the same logical event source.
-	// §25.3 lines 705-710 / 766-772: the operational-event emission and
-	// buffer metrics, registered on the gateway's Prometheus registry.
-	opsEventsMetrics, err := events.NewMetrics(gwMetrics.Registerer())
-	if err != nil {
-		log.Fatalf("lenny-gateway: §25.3 ops-events metrics: %v", err)
-	}
-	// §25.3 line 748: the optional on-disk nonce checkpoint so the
-	// eventKey stays unique across a restart with a pinned replica id.
-	var nonceCheckpoint *events.NonceCheckpoint
-	if *opsNonceCheckpointPath != "" {
-		nonceCheckpoint = &events.NonceCheckpoint{Path: *opsNonceCheckpointPath}
-	}
-	opsEmitErrLogger := func(emitErr error) {
-		log.Printf("lenny-gateway: §25.3 ops-event emit: %v", emitErr)
-	}
-	opsEventBuffer := events.NewEventBuffer(0, events.WithBufferMetrics(opsEventsMetrics))
-	emitterOpts := []events.EmitterOption{
-		events.WithMetrics(opsEventsMetrics),
-		events.WithEmitErrorLogger(opsEmitErrLogger),
-	}
-	if nonceCheckpoint != nil {
-		emitterOpts = append(emitterOpts, events.WithNonceCheckpoint(*nonceCheckpoint))
-	}
-	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, w.replica, emitterOpts...)
-	if w.redisClient != nil {
-		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
-			// §12.4 Cache/Pub-Sub concern: ops event stream fan-out.
-			Client:          w.concernRedis.For(storerouter.RedisConcernCachePubSub),
-			Buffer:          opsEventBuffer,
-			Source:          "//lenny.dev/gateway/" + w.replica,
-			ReplicaID:       w.replica,
-			Metrics:         opsEventsMetrics,
-			NonceCheckpoint: nonceCheckpoint,
-			OnError:         opsEmitErrLogger,
-		})
-		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
-	}
-	// Wire the §16.7 / §25.5 operational-event escalation path: the
-	// durable audit Store routes the §16.7 ops-stream subset of audit
-	// events onto the operational event stream as audit-bearing
-	// CloudEvents (datacontenttype application/ocsf+json). F-25.5.18.
-	if auditOpsStore != nil {
-		auditOpsStore.SetOpsStreamEmitter(opsEmitter, w.replica)
-	}
-
-	// §4.9 credential-pool registry, shared by the admin credential-pool
-	// CRUD and the §14 gitClone auth host-to-pool binding check.
-	var credentialPools credentialpoolstore.Store = credentialpoolstore.NewMemory()
-	if w.pgPool != nil {
-		credentialPools = credentialpoolpg.New(w.pgPool)
-	}
-
-	// §14 line 95: the VCS credential resolver materializes a gitClone
-	// source's short-lived token on the gateway (binding the URL host to
-	// one of the tenant's VCS credential pools, then reading the token
-	// from the credential's Kubernetes Secret) so the ref-pinning
-	// ls-remote and the clone authenticate without the pod ever seeing
-	// the raw credential. It needs a cluster client to read Secrets; in a
-	// dev/in-memory posture (no cluster client) it stays nil and an
-	// authenticated gitClone fails with a clear "no resolver wired"
-	// error. The Secret key defaults to `token`, the §4.9 github
-	// materializedConfig field.
-	var vcsCreds vcscred.Resolver
-	if w.clusterClient != nil {
-		vcsCreds = &vcscred.StoreResolver{
-			Pools:   credentialPools,
-			Secrets: connectorsecret.NewKubeResolver(w.clusterClient, "token"),
-		}
-		if w.podBinder != nil {
-			w.podBinder.VCSCreds = vcsCreds
-		}
-	}
-
-	// §10.2 tenant custom-role registry, shared by the admin custom-role
-	// CRUD and the §10.2 session-endpoint authorization gate (so a
-	// custom role granting manage_own_sessions / read_own_sessions is
-	// honored on the session endpoints as well as the admin surface).
-	var customRoles customrolestore.Store = customrolestore.NewMemory()
-	if w.pgPool != nil {
-		customRoles = customrolepg.New(w.pgPool)
-	}
-
-	var usage usagestore.Store = usagestore.NewMemory()
-	if w.pgPool != nil {
-		usage = usagepg.New(w.pgPool, usagepg.WithReadPool(w.readPool))
-	}
-
-	// spec: §8.8 lines 897-917 — the per-session token accumulator the
-	// §4.9 proxy folds proxy-extracted counts into; the §8.8 TaskResult
-	// usage / treeUsage rollups read it at settle time.
-	var sessionUsage sessionusage.Store = sessionusage.NewMemory()
-	if w.pgPool != nil {
-		sessionUsage = sessionusagepg.New(w.pgPool, sessionusagepg.WithReadPool(w.readPool))
-	}
-	// spec: §8.8 lines 897-917 — the shared usage Builder both the
-	// sessionserver materialization path and the MCP lenny/await_children
-	// path use to stamp usage / treeUsage on every TaskResult.
-	taskUsageBuilder := resultrollup.New(w.sessions, sessionUsage, w.treeArchive, clockinject.Now)
-
-	// spec: §4.8 / §11.2 — build the §4.8 policy interceptor chain (the
-	// built-in Auth, DelegationPolicy, Retry, and Quota evaluators) and the
-	// §11.2 / §12.4 quota surfaces. The step records the chain, the §8.3
-	// maxInputSize resolver holder, the policy audit sink, and the quota
-	// counter, tenant-limits resolver, budget tracker, fail-open accumulator,
-	// and replica-count source on the accumulator; re-alias them so the
-	// build steps below read them unchanged.
+	// §4.8 policy interceptor chain and the §11.2/§12.4 quota surfaces.
 	w.buildPolicyChain(auditAppender, auditValidator)
 	policyChain := w.policyChain
-	maxInputResolver := w.maxInputResolver
 	policyAuditSink := w.policyAuditSink
 	quotaCounter := w.quotaCounter
-	tenantLimits := w.tenantLimits
-	quotaFailOpenAccum := w.quotaFailOpenAccum
-	failOpenReplicas := w.failOpenReplicas
 
-	// ----- §11.2 token-usage Postgres checkpoint + §24.6 reconcile -----
-	// The Service persists each active (tenant, user) window total and the
-	// per-tenant rollup to the token_usage_checkpoint table on the
-	// quotaSyncIntervalSeconds cadence (§11.2 line 44), writes a final
-	// checkpoint on session completion, and restores counters to
-	// MAX(redis_current, postgres_checkpoint) on Redis recovery (§11.2 line
-	// 48) and on the operator-driven §24.6 reconcile. Active only when the
-	// Redis quota counter, the Postgres pool, and the SessionStore are all
-	// wired; otherwise the §24.6 endpoint stays the 503 stub and the final
-	// write is a no-op. F-11.2.4 / F-24.6.1 / F-24.6.2 / F-24.6.3.
-	var quotaCheckpointSvc *quotacheckpoint.Service
-	if quotaCounter != nil && w.pgPool != nil && w.sessions != nil {
-		limitLookup := tenantLimits
-		quotaCheckpointSvc = &quotacheckpoint.Service{
-			Store:    quotacheckpointpg.New(w.pgPool),
-			Subjects: quotacheckpoint.SessionSubjectLister{Sessions: w.sessions, Tenants: (tenantsLister{w.tenants}).ListTenants},
-			Periods: quotacheckpoint.PeriodResolverFunc(func(ctx context.Context, tenantID string) (quota.ResetPeriod, error) {
-				lim, err := limitLookup.LookupLimits(ctx, tenantID)
-				if err != nil {
-					return "", err
-				}
-				return lim.Period, nil
-			}),
-			Reader:   quotaCounter,
-			Restorer: quotaCounter,
-			// §12.4 source (2): fold the in-memory fail-open accumulator into
-			// the MAX rule on the Redis-recovery edge. F-12.4.20.
-			FailOpen: quotaFailOpenAccum,
-			Tenants: quotacheckpoint.TenantExistsFunc(func(ctx context.Context, tenantID string) (bool, error) {
-				if _, err := w.tenants.Get(ctx, tenantID); err != nil {
-					if errors.Is(err, tenantstore.ErrNotFound) {
-						return false, nil
-					}
-					return false, err
-				}
-				return true, nil
-			}),
-			Metrics: gwMetrics,
-			Now:     clockinject.Now,
-			Logf:    log.Printf,
-		}
-	}
+	// §11.2 token-usage checkpoint / §24.6 reconcile, then the §4.8 external
+	// interceptor and guardrails registration (recording the §10.3 mTLS deny
+	// list for the control server).
+	w.buildQuotaCheckpoint()
+	quotaCheckpointSvc := w.quotaCheckpointSvc
+	w.buildInterceptorRegistration()
 
-	// §10.3 NET-063: the shared interceptor peer-validation context for
-	// every gateway→interceptor dial below. The deny list is the same
-	// per-replica set the propagator drives (F-10.3.7); the observer is
-	// the §16.1 handshake histogram. F-10.3.3.
-	mtlsDeny := mtlsdenylist.New()
-	interceptorID := interceptorIdentity{
-		trustDomain: *spiffeTrustDomain,
-		namespaces:  splitAndTrim(*interceptorNamespaces),
-		denyList:    mtlsDeny,
-		observe:     gwMetrics.ObserveInterceptorMTLSHandshake,
-	}
+	// §4.2 session-server dependencies (the §4.1 Upload Handler gate, the §8.5
+	// request_input registry, the §10.7 sticky/provider caches, the §14
+	// completion webhook, the §11.2 budget enforcer, the §8.6 lease budget and
+	// registrars, the §6.2 activity stamper, and the §5.2/§6.2 slot health).
+	w.buildSessionDeps()
+	inputWaits := w.inputWaits
+	sessionBudgetEnforcer := w.sessionBudgetEnforcer
+	leaseBudgets := w.leaseBudgets
+	activityStamper := w.activityStamper
+	slotHealth := w.slotHealth
 
-	// §4.8 line 1019: register each deployer-supplied external
-	// interceptor. The gateway dials the service's endpoint, builds the
-	// generated RequestInterceptor client, and registers an External on
-	// the named phase. Registration applies the reserved-priority
-	// ceiling and the PreAuth restriction, so a misconfigured priority or
-	// phase fails fast at startup rather than silently bypassing policy.
-	for _, raw := range externalInterceptors {
-		spec, err := interceptor.ParseExternalSpec(raw)
-		if err != nil {
-			log.Fatalf("lenny-gateway: --external-interceptor: %v", err)
-		}
-		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA, interceptorID)
-		if err != nil {
-			log.Fatalf("lenny-gateway: dial external interceptor %q at %s: %v", spec.Name, spec.Endpoint, err)
-		}
-		if _, err := policyChain.RegisterExternal(spec.Phase, interceptor.ExternalConfig{
-			Name:       spec.Name,
-			Endpoint:   spec.Endpoint,
-			Priority:   spec.Priority,
-			FailPolicy: spec.FailPolicy,
-			Timeout:    spec.Timeout,
-			Client:     interceptorv1.NewRequestInterceptorClient(conn),
-		}); err != nil {
-			log.Fatalf("lenny-gateway: register external interceptor %q on %s: %v", spec.Name, spec.Phase, err)
-		}
-		log.Printf("lenny-gateway: §4.8 external interceptor %q registered on %s (endpoint %s, priority %d)",
-			spec.Name, spec.Phase, spec.Endpoint, spec.Priority)
-	}
-
-	// §4.8 line 1070: the GuardrailsInterceptor is the built-in hook for
-	// a deployer-wired external content classifier, disabled by default.
-	// When --guardrails-classifier is set the gateway dials the
-	// classifier, wraps it at the fixed priority 400 across the guardrails
-	// phases, and registers it; the spec's phase/priority fields are
-	// ignored because §4.8 fixes them for this built-in.
-	if *guardrailsClassifier != "" {
-		spec, err := interceptor.ParseExternalSpec(*guardrailsClassifier + ",phase=" + string(interceptor.PhasePreLLMRequest))
-		if err != nil {
-			log.Fatalf("lenny-gateway: --guardrails-classifier: %v", err)
-		}
-		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA, interceptorID)
-		if err != nil {
-			log.Fatalf("lenny-gateway: dial guardrails classifier %q at %s: %v", spec.Name, spec.Endpoint, err)
-		}
-		classifier, err := interceptor.NewExternal(interceptor.ExternalConfig{
-			Name:       spec.Name,
-			Endpoint:   spec.Endpoint,
-			Priority:   policy.GuardrailsInterceptorPriority,
-			FailPolicy: spec.FailPolicy,
-			Timeout:    spec.Timeout,
-			Client:     interceptorv1.NewRequestInterceptorClient(conn),
-		})
-		if err != nil {
-			log.Fatalf("lenny-gateway: build guardrails classifier %q: %v", spec.Name, err)
-		}
-		if err := policy.RegisterGuardrails(policyChain, policy.NewGuardrailsInterceptor(classifier)); err != nil {
-			log.Fatalf("lenny-gateway: register GuardrailsInterceptor: %v", err)
-		}
-		log.Printf("lenny-gateway: §4.8 GuardrailsInterceptor enabled (classifier %q at %s, priority %d)",
-			spec.Name, spec.Endpoint, policy.GuardrailsInterceptorPriority)
-	}
-
-	// §4.1 Upload Handler subsystem boundary. The Subsystem gates the
-	// POST /v1/sessions/{id}/upload handler through a per-replica
-	// breaker and concurrency semaphore so a saturated upload queue
-	// cannot consume goroutines the Stream Proxy or MCP Fabric need.
-	// The configured maxConcurrent matches the §4.1 extraction-
-	// threshold default (uploadHandler.activeConcurrent: 200); the
-	// breaker's FailureThreshold uses the package default until an
-	// operator-tunable knob lands.
-	uploadSubsystem := &subsystem.Subsystem{
-		Name:    "upload_handler",
-		Breaker: &subsystem.Breaker{},
-		Limiter: &subsystem.Limiter{MaxConcurrent: int(extractionthreshold.FromEnv().UploadHandlerActiveConcurrent)},
-	}
-	// §16.1: the upload-handler-specific byte-count and queue-depth
-	// metrics (lenny_upload_bytes_total, lenny_upload_queue_depth) that
-	// the unified per-subsystem family does not carry under their
-	// catalogued names. F-13.4.12.
-	uploadMetrics, err := sessionserver.NewUploadMetrics(gwMetrics.Registerer())
-	if err != nil {
-		log.Fatalf("lenny-gateway: upload metrics: %v", err)
-	}
-	// §7.4 line 448 / §13.4 line 652 — archive extraction runs inside the
-	// gateway's §4.1 Upload Handler subsystem (never the pod). Share the
-	// same subsystem gate that bounds the upload HTTP path so a hostile
-	// archive's decompression cannot starve session attachment, and feed
-	// the §16.1 lenny_upload_extraction_aborted_total counter from the
-	// binder's extraction abort path. F-7.4.1, F-13.4.1, F-7.4.11.
-	if w.podBinder != nil {
-		w.podBinder.UploadGate = uploadSubsystem
-		w.podBinder.ExtractionAbort = uploadMetrics.AddExtractionAbort
-	}
-
-	// §8.5 lenny/request_input pending-call registry. Shared across the
-	// sessionserver REST surface and the MCP tools so a REST
-	// POST /v1/sessions/{id}/messages with `inReplyTo` resolves the
-	// blocked tool call the MCP `lenny/request_input` registered.
-	// spec: §7.2 line 317 (path 1); F-7.2.14.
-	inputWaits := inputwait.NewRegistry()
-
-	// spec: §10.7 lines 831, 1096 / §12.4 (`t:{tenant}:exp:{exp}:sticky:*`) —
-	// the `sticky: user` variant-assignment cache. Backed by the cache/pubsub
-	// Redis concern; nil without Redis, in which case the ExperimentRouter
-	// re-evaluates every experiment fresh (the §12.4 fail-open path) and the
-	// PATCH flush is a no-op. F-12.4.7 / F-10.7.6.
-	var (
-		sessionStickyCache sessionserver.StickyCache
-		adminStickyFlusher admin.StickyFlusher
-		// erasureSticky captures the concrete sticky cache for the §12.8
-		// step-4 experiment-sticky-assignment erasure wiring; nil without
-		// Redis (the cache itself is absent in that posture).
-		erasureSticky *experimentsticky.RedisCache
-	)
-	if w.redisClient != nil {
-		stickyCache := experimentsticky.NewRedis(
-			w.concernRedis.For(storerouter.RedisConcernCachePubSub),
-			experimentsticky.WithInvalidationRecorder(gwMetrics),
-		)
-		// Assign to the interface variables only when constructed so the
-		// nil-Redis posture leaves a genuine nil interface (not a typed-nil
-		// *RedisCache the consumers would call methods on).
-		sessionStickyCache = stickyCache
-		adminStickyFlusher = stickyCache
-		erasureSticky = stickyCache
-	}
-
-	// §10.7 lines 779-782: the built-in OpenFeature SDK providers
-	// (launchdarkly, statsig, unleash) linked into the gateway binary. The
-	// cache constructs one vendor OpenFeature client per distinct tenant
-	// targeting config and reuses it across sessions; OFREP-targeted
-	// experiments do not touch it. F-10.7.3.
-	experimentProviders := experimentprovider.NewCache()
-
-	// spec: §14 lines 108-150 — the session-completion webhook subsystem.
-	// The SSRF validator enforces the §14 callbackUrl rules at admission;
-	// the seal/open closures KMS-envelope-encrypt the callbackSecret under
-	// the same per-tenant KEK alias ("tenant:{id}") as credential pool
-	// secrets; the dispatcher delivers from an isolated worker pool with
-	// the §14 retry budget and clears the sealed secret when a delivery
-	// settles. F-14.1.11 / F-15.1.11.
-	callbackValidator := sessioncallback.NewValidator(splitCSV(*callbackURLAllowedDomains), nil)
-	callbackSeal := func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error) {
-		c, err := envelope.New(w.kmsProvider, "tenant:"+tenantID)
-		if err != nil {
-			return nil, err
-		}
-		sealed, err := c.Seal(ctx, plaintext)
-		if err != nil {
-			return nil, err
-		}
-		return envelope.Encode(sealed)
-	}
-	callbackOpener := func(ctx context.Context, tenantID string, sealed []byte) ([]byte, error) {
-		c, err := envelope.New(w.kmsProvider, "tenant:"+tenantID)
-		if err != nil {
-			return nil, err
-		}
-		s, err := envelope.Decode(sealed)
-		if err != nil {
-			return nil, err
-		}
-		return c.Open(ctx, s)
-	}
-	callbackFinalize := func(ctx context.Context, tenantID, sessionID string, undelivered *sessioncallback.DeliveryRecord) error {
-		_, err := w.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
-			// spec: §14 line 139 — clear the sealed secret once the
-			// session is terminal and the delivery has settled.
-			row.CallbackSecret = nil
-			if undelivered != nil {
-				row.WebhookEvents = append(row.WebhookEvents, sessionstore.WebhookEventRecord{
-					EventID:     undelivered.EventID,
-					EventType:   undelivered.EventType,
-					CallbackURL: undelivered.CallbackURL,
-					Body:        undelivered.Body,
-					Attempts:    undelivered.Attempts,
-					LastError:   undelivered.LastError,
-					LastStatus:  undelivered.LastStatus,
-					FailedAt:    undelivered.FailedAt,
-				})
-			}
-			return nil
-		})
-		return err
-	}
-	callbackDispatcher := sessioncallback.NewDispatcher(sessioncallback.Config{
-		GatewayID: w.replica,
-		Opener:    callbackOpener,
-		Finalizer: callbackFinalize,
-	})
-
-	// spec: §11.2 line 44 — the mid-session token-budget enforcer. The
-	// §4.9 LLM-proxy recorder feeds it each session's cumulative
-	// proxy-recorded tokens; on exhaustion the terminator transitions the
-	// session to `expired` (§7.1 line 175) and the pre-flight gate rejects
-	// further proxied requests with BUDGET_EXHAUSTED (§8.10 line 1108). The
-	// terminator's terminal hook is set after the session server exists
-	// (the same deferred wiring sessionAdminAdapter uses).
-	budgetTerminator := &budgetSessionTerminator{store: w.sessions}
-	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator,
-		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
-
-	// §8.6 GatewayControl lease-extension budget state. Created here, when
-	// the GatewayControl listener is enabled via --grpc-addr, so the same
-	// per-tree denial flags are shared between the ExtendLease handler and
-	// the §15.1 line 868 admin extension-denial clear endpoint — the admin
-	// handler must mutate the very state the handler reads. The session
-	// server registers each root tree (RegisterTree) and the delegation
-	// Service registers each child (AddSession/SetParentLease), so a later
-	// ExtendLease resolves the tree instead of failing ErrSessionNotFound.
-	// F-8.6.8 / F-15.3.5.
-	var leaseBudgets *leasecontrol.MemoryBudgetSource
-	if *grpcAddr != "" {
-		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
-		// §8.6 lines 730-733 durability: when Postgres is configured the
-		// extension-denied flag, cool-off expiry, and grant counters are
-		// persisted to delegation_tree_budget through the denialpg store,
-		// so a coordinator handoff or gateway restart cannot bypass a
-		// user's rejection. Without Postgres (the dev/Embedded path) the
-		// denial stays in-memory. F-8.6.5.
-		if w.pgPool != nil {
-			leaseBudgets = leaseBudgets.WithDenialStore(denialpg.New(w.pgPool))
-		}
-	}
-	// §8.6 lines 660-678: resolve the deployment-level lease-extension
-	// defaults the root tree's budget ceiling is registered with. nil
-	// leaseBudgets (no GatewayControl listener) leaves leaseRegistrar
-	// unset, so RegisterTree is never called. F-15.3.5.
-	leaseExtDefaults := sessionserver.LeaseExtensionDefaults{
-		DeploymentBudget:    *leaseDefaultBudget,
-		DeploymentMaxBudget: *leaseMaxBudget,
-		ApprovalMode:        leasecontrol.ApprovalMode(*leaseDefaultApproval),
-		SuccessCoolOff:      time.Duration(*leaseCoolOffSec) * time.Second,
-		RejectionCoolOff:    time.Duration(*leaseRejectionCoolOffSec) * time.Second,
-		AutoMaxPerMinute:    *leaseAutoMaxPerMin,
-	}
-	var sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar
-	var childLeaseRegistrar delegation.LeaseChildRegistrar
-	if leaseBudgets != nil {
-		sessionLeaseRegistrar = leaseBudgets
-		childLeaseRegistrar = leaseBudgets
-	}
-
-	// spec: §6.2 lines 273-300 / §11.3 line 199 — the activity stamper
-	// records qualifying agent activity (agent_output / tool_use events,
-	// await_children polls, proxied LLM responses) onto each session's
-	// last_agent_activity_at so the §11.3 idle watchdog (sweepIdle) does
-	// not reap an actively-working session. Coalesces durable writes to
-	// ≤1/s per session. F-11.3.7.
-	activityStamper := sessionidle.NewStamper(w.sessions, clockinject.Now)
-
-	// spec: §5.2 (combined failed+leaked unhealthy threshold), §6.2
-	// (leaked-slot semantics) — a single per-pod fail/leak rolling-window
-	// tracker shared by the slot-bind-failure path (the sessionserver slot
-	// retry policy) and the §4.7 scrub-report drain ledger (adapter-reported
-	// slot-scrub leaks). Both feed one window so a pod crossing
-	// ceil(maxConcurrentSessions/2) on the combined count drains regardless of
-	// which path observed the degradation; instantiating two disjoint trackers
-	// would let the counts never combine.
-	slotHealth := slothealth.New(slothealth.WithClock(clockinject.Now))
-
-	// spec: §4.2 / §15.1 — build the §4.2 session server (the §4.1 Stream
-	// Proxy and Upload Handler realized behind the sessionserver interfaces)
-	// with its full §11.1/§11.2/§7.x/§14/§16.1 Options set. The composition
-	// root threads the returned server to the MCP fabric, the admin router,
-	// the HTTP surface, and the watchdog.
+	// §4.2 session server (the §4.1 Stream Proxy and Upload Handler behind the
+	// sessionserver interfaces); the returned server threads to the MCP
+	// fabric, the admin router, the HTTP surface, and the watchdog.
 	sessionSrv := w.buildSessionServer(
 		gwMetrics, activityStamper, sessionBudgetEnforcer, dsMonitor,
 		environments, tenantAccess, opsEmitter, credentialPools, vcsCreds,
-		customRoles, resolvedNoEnvPolicy, auditSink, sessionStickyCache,
-		experimentProviders, usage, taskUsageBuilder, sessionLeaseRegistrar,
-		leaseExtDefaults, quotaCheckpointSvc, policyChain, policyAuditSink,
-		auditAppender, inputWaits, uploadSubsystem, uploadMetrics, slotHealth,
-		callbackValidator, callbackSeal, callbackDispatcher,
+		customRoles, resolvedNoEnvPolicy, auditSink, w.sessionStickyCache,
+		w.experimentProviders, usage, taskUsageBuilder, w.sessionLeaseRegistrar,
+		w.leaseExtDefaults, quotaCheckpointSvc, policyChain, policyAuditSink,
+		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, slotHealth,
+		w.callbackValidator, w.callbackSeal, w.callbackDispatcher,
 	)
 	// spec: §11.2 line 44 — the budget terminator runs the same terminal
 	// pipeline a watchdog or operator force-terminate runs, so an
 	// over-budget session releases its pod and emits its terminal audit /
 	// billing / SSE signals exactly once.
-	budgetTerminator.onTerminal = sessionSrv.OnSessionTerminal
+	w.budgetTerminator.onTerminal = sessionSrv.OnSessionTerminal
 
-	// ----- OpenAI Chat + Open Responses translators -----
-	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now})
-	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{Clock: clockinject.Now})
+	// §4.9 end-user credential surface (translators, credential store/server,
+	// the pre-authorized user-source materializer, the §4.9.1 KMS-rotation
+	// job) and the §9.3 connector OAuth flow.
+	w.buildCredentialSurface(sessionSrv)
 
-	// ----- §4.9 end-user credential registry -----
-	// The Postgres-backed store envelope-encrypts the §12.9 T4 secret
-	// column under per-tenant KMS KEKs; the in-memory store keeps the
-	// secret process-local and never persists it.
-	var credentials credentialstore.Store = credentialstore.NewMemory(nil)
-	// §4.9.1 re-encryption job: the envelope-backed stores re-key their
-	// rows under the current KEK version after a rotation. Only the
-	// Postgres stores have a KEK to rotate; the in-memory stores hold
-	// plaintext.
-	var credentialRekeyers []rekey.TenantRekeyer
-	if w.pgPool != nil {
-		pgCreds, perr := credentialpg.New(w.pgPool, w.kmsProvider)
-		if perr != nil {
-			log.Fatalf("lenny-gateway: credential store: %v", perr)
-		}
-		credentials = pgCreds
-		credentialRekeyers = append(credentialRekeyers, pgCreds)
-	}
-	// ----- §4.9 Pre-Authorized Credential Flow (user-source delivery) -----
-	// The user-source materializer resolves a user-registered credential
-	// into a proxy-mode lease at session creation and serves the §4.9 LLM
-	// proxy from it, sharing the lease store (llmLeases) and upstream-
-	// credential cache (credCache) the pool path uses. User credentials are
-	// delivered in proxy mode so the secret never reaches the pod and
-	// rotation/revocation are gateway-local. It is wired only when the
-	// public proxy URL is configured; otherwise Available reports every
-	// provider unavailable and sessions fall through to pool.
-	// spec: §4.9 lines 1340-1381.
-	var userCredMaterializer *usercreds.Materializer
-	if userLeaseStore, ok := w.llmLeases.(usercreds.LeaseStore); ok {
-		userCredMaterializer = usercreds.New(usercreds.Config{
-			Store:    credentials,
-			Leases:   userLeaseStore,
-			Creds:    w.credCache,
-			ProxyURL: *llmProxyPublicURL,
-		})
-	}
-	credServer := credentialserver.New(credentials).
-		WithAudit(credentialAuditor{sink: auditSink})
-	if userCredMaterializer != nil {
-		// spec: §4.9 lines 1350-1351 — the PUT (rotate) and revoke endpoints
-		// reach the active user leases through the materializer.
-		credServer = credServer.WithLeasePropagator(userCredMaterializer)
-		// spec: §4.9 lines 1347-1351 — the session-creation router resolves a
-		// user source only when the materializer reports the credential
-		// available and deliverable.
-		sessionSrv.SetUserCredChecker(userCredMaterializer.Available)
-		if w.podBinder != nil {
-			// spec: §4.9 lines 1246-1262 — the §4.7 binder materializes each
-			// user-source provider into a proxy-mode lease pushed to the pod.
-			w.podBinder.UserCredentials = userCredMaterializer
-		}
-	}
-
-	// ----- §9.3 connector OAuth 2.1 authorization-code flow -----
-	// The connector-credential store holds the access/refresh tokens a
-	// completed connector OAuth flow produces, keyed by the
-	// (tenant, connector, user) triple. The in-memory store keeps the
-	// tokens process-local; a Postgres-backed store envelope-encrypts
-	// them under the same per-tenant KMS KEKs the credential store
-	// uses. The flow is wired only when --connector-oauth-callback-url
-	// is set: the OAuth provider needs an absolute redirect URI.
-	// §4.3 line 200 / §13.3 connector OAuth tokens are T4 Restricted
-	// and must be envelope-encrypted at rest. The Postgres-backed store
-	// envelope-encrypts both access and refresh tokens under the
-	// per-tenant KMS KEK; the in-memory store is for tests and the
-	// minimal gateway. The §4.3 long-term trust-boundary tightening —
-	// routing connector credential reads/writes through a Token Service
-	// RPC so the gateway holds no KMS decrypt grant — is deferred (see
-	// F-4.3.1 resolution note); today the gateway holds the same KMS
-	// access for connector creds that it already holds for §4.9
-	// user-credential rows.
-	var connectorCreds connectorcredstore.Store = connectorcredstore.NewMemory(nil)
-	if w.pgPool != nil {
-		pgConnectorCreds, err := connectorcredpg.New(w.pgPool, w.kmsProvider, nil)
-		if err != nil {
-			log.Fatalf("lenny-gateway: connector-credential store: %v", err)
-		}
-		connectorCreds = pgConnectorCreds
-		credentialRekeyers = append(credentialRekeyers, pgConnectorCreds)
-		log.Printf("lenny-gateway: §4.3 connector credentials backed by Postgres (envelope-encrypted)")
-	}
-	// §4.9.1 KMS-key-rotation re-encryption job over every envelope-backed
-	// credential store. Wired to the admin router below; absent in the
-	// in-memory dev posture (no store to re-key).
-	var credentialRekeyJob *rekey.Job
-	if len(credentialRekeyers) > 0 {
-		credentialRekeyJob = rekey.NewJob(credentialRekeyers...)
-	}
-	var connectorOAuth *admin.ConnectorOAuth
-	var connectorStateStore *connectoroauth.MemoryStateStore
-	if *connectorOAuthCallbackURL != "" {
-		var stateSeed [32]byte
-		if _, err := rand.Read(stateSeed[:]); err != nil {
-			log.Fatalf("lenny-gateway: connector OAuth state signing key: %v", err)
-		}
-		stateSigner, err := connectoroauth.NewStateSigner(connectoroauth.SigningKey{
-			KeyID: "boot", Secret: stateSeed[:],
-		})
-		if err != nil {
-			log.Fatalf("lenny-gateway: connector OAuth state signer: %v", err)
-		}
-		// spec: §9.3 line 157 — pending state binds to (session, connector)
-		// with TTL=10min. Production binds it to Redis so the flow survives
-		// a gateway restart and a callback resolves on any replica
-		// (F-9.3.5); the in-memory store is the single-process fallback and
-		// alone needs the periodic Sweep scheduled below in the watchdog
-		// group (Redis relies on native key expiry). F-9.3.16.
-		var connectorStateBacking connectoroauth.StateStore
-		if w.redisClient != nil {
-			connectorStateBacking = connectoroauth.NewRedisStateStore(w.concernRedis.For(storerouter.RedisConcernCachePubSub))
-			log.Printf("lenny-gateway: §9.3 connector OAuth state backed by Redis (TTL=10m, cross-replica)")
-		} else {
-			connectorStateStore = connectoroauth.NewMemoryStateStore()
-			connectorStateBacking = connectorStateStore
-		}
-		connectorOAuth = &admin.ConnectorOAuth{
-			StateSigner: stateSigner,
-			StateStore:  connectorStateBacking,
-			Credentials: connectorCreds,
-			CallbackURL: *connectorOAuthCallbackURL,
-		}
-		// spec: §9.3 line 129 — resolve a confidential connector's client
-		// secret from its auth.clientSecretRef Kubernetes Secret at
-		// token-exchange time. Wired whenever the gateway holds a cluster
-		// client (the production --agent-namespace path); without it a
-		// confidential-client callback returns a clear "no client-secret
-		// resolver is wired" error instead of failing on exchange. F-9.3.4.
-		if w.clusterClient != nil {
-			connectorOAuth.ClientSecrets = connectorsecret.NewKubeResolver(w.clusterClient, *connectorOAuthClientSecretKey)
-		}
-		// §9.3: when the provider's token endpoint is behind a private
-		// CA, --connector-oauth-ca supplies the bundle that verifies it.
-		if *connectorOAuthCA != "" {
-			caPEM, err := os.ReadFile(*connectorOAuthCA)
-			if err != nil {
-				log.Fatalf("lenny-gateway: connector OAuth CA bundle: %v", err)
-			}
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caPEM) {
-				log.Fatalf("lenny-gateway: connector OAuth CA bundle %s contains no PEM certificates", *connectorOAuthCA)
-			}
-			connectorOAuth.HTTPClient = &http.Client{
-				Timeout: 15 * time.Second,
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-				},
-			}
-		}
-		log.Printf("lenny-gateway: §9.3 connector OAuth 2.1 flow enabled, callback %s", *connectorOAuthCallbackURL)
-	}
-
-	// spec: §9.1 / §8.2 — build the §9.1 MCP fabric: the delegation-policy,
-	// external-interceptor, and deployment-config stores, the §8.2
-	// delegation service, the §9.1 MCP server with every tool family
-	// registered, and the §15.2 SSE attach channel. The step records the
-	// delegation service, the MCP server, and the three admin-mutable stores
-	// on the accumulator; re-alias them to the original local names so the
-	// admin-router, HTTP-surface, and control-server build steps below read
-	// them unchanged.
+	// §9.1 MCP fabric (the delegation-policy/external-interceptor/
+	// deployment-config stores, the §8.2 delegation service, the §9.1 MCP
+	// server with every tool family, and the §15.2 SSE attach channel).
 	w.buildMCPSurface(gwMetrics, sessionSrv, policyChain, auditSink, auditAppender,
-		policyAuditSink, childLeaseRegistrar, maxInputResolver, environments,
+		policyAuditSink, w.childLeaseRegistrar, w.maxInputResolver, environments,
 		resolvedNoEnvPolicy, inputWaits, activityStamper, taskUsageBuilder,
 		vcsCreds, elicitationFloorProvider)
-	delegationPolicies := w.delegationPolicies
-	interceptors := w.interceptors
-	deploymentConfig := w.deploymentConfig
-	delegationSvc := w.delegationSvc
 	mcpSrv := w.mcpSrv
-	revCache := w.revCache
 
-	// §13.3 revocation cache: the auth middleware rejects a token
-	// whose jti is in this set. It is rehydrated from the Postgres
-	// issued-token index below. The propagator wraps the cache with
-	// Redis pub/sub fan-out so a revocation on any replica reaches every
-	// replica within pub/sub latency; with no Redis the propagator is a
-	// local-only pass-through. revCache stays the read primitive the
-	// auth middleware and the rehydration loop use directly. revCache is
-	// constructed above (shared with the §8.2 child-token minter).
-	revProp := revocationprop.New(revCache, w.securityBus, revocationprop.WithErrorHandler(func(err error) {
-		log.Printf("lenny-gateway: token-revocation pub/sub publish failed: %v", err)
-	}))
+	// §13.3 / §10.3 / §4.9 cross-replica revocation propagators and the §4.9
+	// proactive lease-renewal worker.
+	w.buildRevocationWiring()
+	revProp := w.revProp
 
-	// §10.3 mTLS certificate deny list: the per-replica SPIFFE-URI deny
-	// set checked on every mTLS handshake (declared earlier so the
-	// §10.3 NET-063 interceptor dials can consult it). Its propagator
-	// carries an Add or Remove across replicas over Redis pub/sub. The
-	// deny list is a single-replica primitive; the propagator owns the
-	// fan-out the package doc defers to a wrapping controller.
-	mtlsDenyProp := mtlsdenylistprop.New(mtlsDeny, w.securityBus, mtlsdenylistprop.WithErrorHandler(func(err error) {
-		log.Printf("lenny-gateway: mTLS deny-list pub/sub publish failed: %v", err)
-	}))
-
-	// §4.9 credential deny list: the per-replica set of revoked
-	// credential identities the LLM proxy checks before every upstream
-	// call. The §4.9 LLM proxy below reads it directly on the hot path;
-	// the credential-lease revocation propagator built next wraps it
-	// with cross-replica Redis pub/sub fan-out, so the admin router's
-	// §11.4 full_revoke fan-out and the emergency-revocation path revoke
-	// a credential onto every replica's deny list.
-	credDeny := denylist.New()
-
-	// ----- §4.9 Proactive Lease Renewal worker -----
-	// The credrenewal.Worker tracks each active credential lease by its
-	// renewBefore deadline and issues a replacement before the original
-	// expires, so a long-lived session never sees its LLM credential
-	// lapse. credRenewal binds the worker to the credential-assignment
-	// service that mints the replacement and to the warm-pod registry it
-	// pushes the rotated credential to via the §4.7 RotateCredentials
-	// RPC. credRenewal is nil when no credential pools are wired; a nil
-	// receiver leaves every renewal hook a no-op.
-	credRenewal := newCredRenewalWiring(w.credAssign, w.podRegistry, opsEmitter)
-	// credRenewalProp carries a §4.9 credential-lease revocation across
-	// replicas: a Revoke updates the local deny list, drops the renewal
-	// worker's tracked leases bound to the credential, and fans out over
-	// the same Redis pub/sub channel the §4.9 credential-deny-list
-	// propagator uses. The §11.4 full_revoke fan-out and the emergency-
-	// revocation path route through it so a revoked credential lease
-	// stops reaching the provider on every replica, and no replica
-	// proactively renews a credential that is no longer trustworthy.
-	// §4.9 line 1647: the credential deny-list revocation propagates via
-	// Redis pub/sub with Postgres LISTEN/NOTIFY as fallback. The Postgres
-	// half is wired only when Postgres is configured (the option is
-	// omitted otherwise so a no-Postgres dev gateway keeps a true-nil
-	// fallback); it carries a revocation when Redis is down or disabled
-	// and feeds the LISTEN subscribe loop so a peer's revocation still
-	// converges. F-13.3.8.
-	credDenyPropOpts := []credrenewalprop.Option{
-		credrenewalprop.WithErrorHandler(func(err error) {
-			log.Printf("lenny-gateway: credential-lease revocation pub/sub publish failed: %v", err)
-		}),
-	}
-	if w.pgPool != nil {
-		credDenyPropOpts = append(credDenyPropOpts, credrenewalprop.WithFallback(pgnotify.New(w.pgPool)))
-	}
-	// §4.9 line 1649 emergency-revocation step 5: when the gateway mints
-	// leases in-process, wire the direct-mode rotate as a revoke hook on
-	// the credential-lease propagator. A revoked pool credential then
-	// proactively rotates every direct-delivery pod off the materialized
-	// key on whichever replica holds the binding, minting the replacement
-	// from a different credential in the same pool. The deny list already
-	// terminates proxy-mode access fleet-wide; this adds the direct-mode
-	// proactive push the deny list cannot deliver. The token-service
-	// minting path (--token-service-grpc-addr) carries no per-credential
-	// revocation surface yet, so the rotate is wired only for the
-	// in-process path; the deny-list termination still applies in both.
-	if w.inProcessAssign != nil {
-		if ls, ok := w.llmLeases.(poolLeaseStore); ok {
-			directRotator := &directModeRevocationRotator{
-				leases:      ls,
-				markRevoked: w.inProcessAssign.RevokeCredential,
-				rotate:      proxyFallbackRotator{assign: w.credAssign, registry: w.podRegistry}.Rotate,
-			}
-			credDenyPropOpts = append(credDenyPropOpts,
-				credrenewalprop.WithRevokeHook(directRotator.onRevoke))
-		}
-	}
-	var credRenewalWorker *credrenewal.Worker
-	credRenewalProp := credrenewalprop.New(credDeny, nil, w.securityBus, credDenyPropOpts...)
-	if credRenewal != nil {
-		// spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds.
-		// 0 disables warnings; -1 keeps the package default; any other
-		// non-negative value is the explicit operator override.
-		expiryWarningLead := time.Duration(*credentialsExpiryWarningLeadSeconds) * time.Second
-		credRenewalWorker = credrenewal.New(credRenewal, credrenewal.Options{
-			// §4.9: a proactive renewal that rotates a lease onto a fresh
-			// credential pushes it to the lease's pod via RotateCredentials.
-			OnRenewed: credRenewal.onRenewed,
-			// §4.9: a lease whose renewal cannot proceed falls through to
-			// fault rotation. The worker drops it; onExhausted clears its
-			// pool binding.
-			OnExhausted: credRenewal.onExhausted,
-			Clock:       clockinject.Now,
-			// spec: §11.3 line 215 — operator-tunable expiry-warning lead.
-			// F-11.3.20.
-			ExpiryWarningLead: expiryWarningLead,
-			OnExpiryWarning:   logCredentialExpiryWarning,
-		})
-		log.Printf("lenny-gateway: §11.3 line 215 credentials.expiryWarningLeadSeconds=%ds", int(expiryWarningLead/time.Second))
-		// Every §4.9 credential lease the assignment service mints — at
-		// session start and at fault rotation — is tracked by the renewal
-		// worker so its renewBefore deadline drives a proactive renewal.
-		w.credAssign.OnAssigned(func(a credassign.LeaseAssignment) {
-			credRenewal.track(credRenewalWorker, a.PoolName, string(a.Lease.Provider), a.Lease)
-		})
-		// Rebuild the propagator over the live worker so a peer replica's
-		// credential-lease revocation also drops this replica's tracked
-		// leases for the credential, not just its deny-list entry.
-		credRenewalProp = credrenewalprop.New(credDeny, credRenewalWorker, w.securityBus, credDenyPropOpts...)
-	}
-	// spec: §4.9 lines 1640-1652 — wire the user-credential revocation onto
-	// the cross-replica deny-list propagator so a POST /v1/credentials/{ref}
-	// /revoke adds the user-shaped deny-list entry on every replica. Set
-	// after the propagator's final form (it is rebuilt above over the live
-	// renewal worker).
-	if userCredMaterializer != nil {
-		userCredMaterializer.SetRevoker(credRenewalProp)
-	}
-
-	// spec: §4.1 / §15.1 — build the admin REST subsystem. It records the
-	// router on w.adminRouter and returns the sibling-block locals the §8.6
-	// control server (the §9.1 connector tool bridge) and the §4.9 LLM proxy
-	// (the §12.8 erasure cache) and the mux (the §10.5 runtime-upgrade store)
-	// still consume.
+	// §15.1 admin REST subsystem. It records the router on w.adminRouter and
+	// returns the locals the control server, the LLM proxy, and the mux
+	// (the §10.5 runtime-upgrade store) still consume.
 	connectorAuthorizer, connectorInvoker, ruStore, erasureSemanticCache := w.buildAdminRouter(
-		gwMetrics, delegationSvc, environments, connectorCreds, connectorOAuth,
-		credentialRekeyJob, policyChain, auditSink, auditAppender,
-		wireAudit, adminStickyFlusher, erasureSticky, deploymentConfig,
-		credentialPools, customRoles, delegationPolicies, interceptors,
-		leaseBudgets, opsEmitter, opsEventBuffer, sessionSrv, tenantAccess,
-		auditOpsStore, auditPruner, auditValidator, credRenewalProp,
+		gwMetrics, w.delegationSvc, environments, w.connectorCreds, w.connectorOAuth,
+		w.credentialRekeyJob, policyChain, auditSink, auditAppender,
+		w.wireAudit, w.adminStickyFlusher, w.erasureSticky, w.deploymentConfig,
+		credentialPools, customRoles, w.delegationPolicies, w.interceptors,
+		leaseBudgets, opsEmitter, w.opsEventBuffer, sessionSrv, tenantAccess,
+		w.auditOpsStore, w.auditPruner, auditValidator, w.credRenewalProp,
 		elicitationFloorProvider, quotaCheckpointSvc, quotaCounter,
-		quotaFailOpenAccum, revProp,
+		w.quotaFailOpenAccum, revProp,
 	)
 
-	// ----- Compose the mux -----
-	// spec: §4.1 / §15.1 — compose the REST mux and HTTP server. Records
-	// w.mux and w.httpSrv on the accumulator.
+	// §15.1 REST mux and HTTP server. Records w.mux and w.httpSrv.
 	w.buildHTTPSurface(
-		gwMetrics, sessionSrv, openaiHandler, responsesHandler, credServer,
+		gwMetrics, sessionSrv, w.openaiHandler, w.responsesHandler, w.credServer,
 		mcpSrv, policyChain, auditSink, auditAppender, opsEmitter, environments,
-		driftMonitor, dsMonitor, failOpenReplicas, revCache, revProp, ruStore,
-		siemHealthChecker, resolvedNoEnvPolicy,
+		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
+		w.siemHealthChecker, resolvedNoEnvPolicy,
 	)
 
-	// spec: §4.9 — build the LLM Proxy subsystem (a named §4.1 extraction
-	// target) and record its server on the accumulator for the run loop.
+	// §4.9 LLM Proxy subsystem (a named §4.1 extraction target).
 	llmProxySrv := w.buildLLMProxy(policyChain,
 		sessionBudgetEnforcer, activityStamper, auditSink, erasureSemanticCache,
-		usage, quotaCounter, tenantLimits)
+		usage, quotaCounter, w.tenantLimits)
 
-	// spec: §8.6 / §6.2 — build the §8.6 GatewayControl gRPC server (the
-	// adapter→gateway control surface, the §9.1/§9.3 tool bridges, and the
-	// §4.7 scrub-report service) and the §6.2 / §11.3 session watchdog. The
-	// step records the server, its listener, the watchdog, and the watchdog
-	// context (and its cancel) on the accumulator.
-	w.buildControlServer(gwMetrics, mcpSrv, auditAppender, slotHealth, mtlsDeny,
+	// §8.6 GatewayControl gRPC server (the adapter→gateway control surface,
+	// the §9.1/§9.3 tool bridges, the §4.7 scrub-report service) and the §6.2 /
+	// §11.3 session watchdog.
+	w.buildControlServer(gwMetrics, mcpSrv, auditAppender, slotHealth, w.mtlsDeny,
 		connectorAuthorizer, connectorInvoker, leaseBudgets, sessionSrv)
-	// Cancel the §6.2 watchdog context at process shutdown rather than when
-	// buildControlServer returns.
-	defer w.watchdogCancel()
 	// The §3.2 reserved-hold coordinator and §3.4 recycle-boundary
 	// coordinator are stopped on shutdown so the in-process timers and
 	// re-warm polls do not run against a draining client. The original
 	// inline control-server block registered these Stop defers only inside
-	// the scrub-report branch; re-evaluate the same predicate here so the
-	// process-lifetime defers fire exactly when that branch did.
+	// the scrub-report branch, before the §6.2 watchdog-context cancel; these
+	// two defers are registered ahead of defer w.watchdogCancel() below to
+	// preserve that original LIFO teardown order (watchdogCancel runs first,
+	// then recycleBoundary.Stop, then holdCoordinator.Stop). Re-evaluate the
+	// same predicate the original scrub-report branch used so the
+	// process-lifetime defers fire under the same condition.
 	if w.scrubReportServiceWired() {
 		if w.holdCoordinator != nil {
 			defer w.holdCoordinator.Stop()
@@ -1952,45 +339,21 @@ func runGateway(f *gatewayFlags) {
 			defer w.recycleBoundary.Stop()
 		}
 	}
+	// Cancel the §6.2 watchdog context at process shutdown rather than when
+	// buildControlServer returns. Registered after the coordinator Stops so
+	// the LIFO shutdown cancels the watchdog context first, matching the
+	// original ordering.
+	defer w.watchdogCancel()
 
-	// spec: §4.1 — thread the constructed stores and subsystems onto the
-	// accumulator, then launch the background-worker step. Each field is
-	// the local an earlier build block produced; startBackgroundWorkers
-	// reads them to drive the periodic sweepers and propagators.
-	w.auditAppender = auditAppender
-	w.auditPruner = auditPruner
-	w.credDeny = credDeny
-	w.credRenewalProp = credRenewalProp
-	w.driftMonitor = driftMonitor
-	w.elicitationFloorProvider = elicitationFloorProvider
-	w.eventBusRetranscriber = eventBusRetranscriber
-	w.inputWaits = inputWaits
-	w.mtlsDenyProp = mtlsDenyProp
-	w.revProp = revProp
+	// §4.1 — record the built session server, then launch the §4.1
+	// background-worker step (it reads w.sessionSrv and the recorded
+	// propagators to drive the periodic sweepers).
 	w.sessionSrv = sessionSrv
-	w.subsystemMetrics = subsystemMetrics
-	w.uploadSubsystem = uploadSubsystem
-	w.connectorStateStore = connectorStateStore
-	w.dsMonitor = dsMonitor
-	w.quotaCheckpointSvc = quotaCheckpointSvc
-	w.sessionUsage = sessionUsage
-	w.credRenewalWorker = credRenewalWorker
-	w.credentialPools = credentialPools
 	w.startBackgroundWorkers()
 
-	// spec: §4.1 — thread the constructed subsystems and run-loop inputs
-	// onto the composition-root accumulator, then hand off to runServers,
-	// which installs the §25.13 alert tracker, the signal handler, and the
-	// §17 run-and-shutdown loop. Each field is the local the build steps
-	// above produced.
+	// §17 — record the LLM proxy server, then hand off to runServers (the
+	// §25.13 alert tracker, the signal handler, and the run-and-shutdown loop).
 	w.llmProxySrv = llmProxySrv
-	w.traceShutdown = traceShutdown
-	w.experimentProviders = experimentProviders
-	w.gwMetrics = gwMetrics
-	w.opsEmitter = opsEmitter
-	w.ocsfTranslator = ocsfTranslator
-	w.ocsfOutbox = ocsfOutbox
-	w.auditBatchBuffer = auditBatchBuffer
 	w.runServers()
 }
 

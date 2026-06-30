@@ -26,16 +26,22 @@ import (
 // reference is the assertion that survives package compilation rather than a
 // reflect MethodByName lookup, which only sees exported methods.
 //
-// The set is the named build steps R1 extracts: the §4.2/§4.4/§4.5 store and
-// §4.3/§10.2/§10.3 credential surfaces (buildStores), the §4.8 policy engine
-// (buildPolicyChain), the §4.2 session server (buildSessionServer), the §9.1
-// MCP fabric (buildMCPSurface), the §15.1 admin router (buildAdminRouter), the
-// REST HTTP surface (buildHTTPSurface), the §4.9 LLM reverse proxy
-// (buildLLMProxy), the §8.6/§6.2 control server and watchdog
-// (buildControlServer), the §4.1 background-worker launch
-// (startBackgroundWorkers), and the §17 run-and-shutdown loop (runServers).
-// runGateway must not carry any named subsystem inline; it is a short ordered
-// sequence over these build steps.
+// The set is the named build steps R1 extracts. Alongside the subsystem
+// builders (buildStores, buildPolicyChain, buildSessionServer, buildMCPSurface,
+// buildAdminRouter, buildHTTPSurface, buildLLMProxy, buildControlServer,
+// startBackgroundWorkers, runServers), it includes the steps that lift the
+// residual inline construct-and-wire blocks out of the composition root so it
+// is an ordered call sequence rather than a renamed monolith (the divergence
+// this step corrects): the §10.3/§17.4/§16.3 startup gates (buildStartupGates),
+// the §16.1 metric back-fill and §10.1/§13.3 monitors (buildMetricsBackfill),
+// the §11.7 audit pipeline (buildAuditPipeline), the §10.6/§25.3/§4.9/§8.8
+// auxiliary stores and ops-event emitter (buildAuxStores, buildOpsEvents), the
+// §11.2 quota checkpoint (buildQuotaCheckpoint), the §4.8 external-interceptor
+// registration (buildInterceptorRegistration), the §4.2 session-server
+// dependencies (buildSessionDeps), the §4.9 credential surface
+// (buildCredentialSurface), and the §13.3/§4.9 revocation wiring
+// (buildRevocationWiring). runGateway must not carry any named subsystem
+// inline; it is a short ordered sequence over these build steps.
 func TestGatewayWiringExposesPerSubsystemBuildSteps(t *testing.T) {
 	w := &gatewayWiring{}
 
@@ -43,16 +49,26 @@ func TestGatewayWiringExposesPerSubsystemBuildSteps(t *testing.T) {
 	// removed (the body re-inlined into runGateway), this file stops
 	// compiling, which the test tier reports as a failure of this test.
 	steps := map[string]any{
-		"buildStores":            w.buildStores,
-		"buildPolicyChain":       w.buildPolicyChain,
-		"buildSessionServer":     w.buildSessionServer,
-		"buildMCPSurface":        w.buildMCPSurface,
-		"buildAdminRouter":       w.buildAdminRouter,
-		"buildHTTPSurface":       w.buildHTTPSurface,
-		"buildLLMProxy":          w.buildLLMProxy,
-		"buildControlServer":     w.buildControlServer,
-		"startBackgroundWorkers": w.startBackgroundWorkers,
-		"runServers":             w.runServers,
+		"buildStartupGates":            w.buildStartupGates,
+		"buildStores":                  w.buildStores,
+		"buildMetricsBackfill":         w.buildMetricsBackfill,
+		"buildAuditPipeline":           w.buildAuditPipeline,
+		"buildAuxStores":               w.buildAuxStores,
+		"buildOpsEvents":               w.buildOpsEvents,
+		"buildPolicyChain":             w.buildPolicyChain,
+		"buildQuotaCheckpoint":         w.buildQuotaCheckpoint,
+		"buildInterceptorRegistration": w.buildInterceptorRegistration,
+		"buildSessionDeps":             w.buildSessionDeps,
+		"buildSessionServer":           w.buildSessionServer,
+		"buildCredentialSurface":       w.buildCredentialSurface,
+		"buildMCPSurface":              w.buildMCPSurface,
+		"buildRevocationWiring":        w.buildRevocationWiring,
+		"buildAdminRouter":             w.buildAdminRouter,
+		"buildHTTPSurface":             w.buildHTTPSurface,
+		"buildLLMProxy":                w.buildLLMProxy,
+		"buildControlServer":           w.buildControlServer,
+		"startBackgroundWorkers":       w.startBackgroundWorkers,
+		"runServers":                   w.runServers,
 	}
 	for name, fn := range steps {
 		if fn == nil {
