@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 )
 
 // fakePools serves a fixed pool set, ignoring the tenant filter.

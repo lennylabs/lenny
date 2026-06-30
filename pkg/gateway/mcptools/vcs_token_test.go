@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"

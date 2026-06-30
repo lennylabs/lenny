@@ -12,7 +12,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )

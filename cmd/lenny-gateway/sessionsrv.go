@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"

@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
-	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"

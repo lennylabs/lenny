@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credfallback"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 )
 
 // recordSpans installs an SDK span recorder over the global provider so

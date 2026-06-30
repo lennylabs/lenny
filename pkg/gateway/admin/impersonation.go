@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/impersonation"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"

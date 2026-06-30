@@ -22,7 +22,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

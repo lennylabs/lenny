@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 )

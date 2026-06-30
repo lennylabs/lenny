@@ -15,7 +15,7 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/impersonation"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )

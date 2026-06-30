@@ -38,7 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore"

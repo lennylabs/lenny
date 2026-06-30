@@ -12,8 +12,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 

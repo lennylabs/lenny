@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
-	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentialstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
+	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"

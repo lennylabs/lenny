@@ -356,7 +356,7 @@
       "packages": [
         "pkg/credential",
         "pkg/store/credentialpool",
-        "pkg/gateway/denylist/propagator"
+        "pkg/gateway/credentials/denylist/propagator"
       ],
       "blocked_until_phase": "5.5",
       "notes": "Phase 5.5 ships the §4.9 Provider, AssignmentStrategy, LeaseSource, and RotationTrigger enums plus the §4.7 ceiling-applicable rule and the §4.9 proactive-renewal budget-exclusion rule as Go-callable methods. The full Credential Leasing Service binary (Token Service binding, KMS rotation, materializedConfig schemas, the CredentialRenewalWorker) is deferred to the K8s-integration phase that ships the Token Service."
@@ -1732,7 +1732,7 @@
         "pkg/admission/credfsgroup",
         "pkg/tokenexchange",
         "pkg/gateway/storage/pubsub",
-        "pkg/gateway/revocation/propagator"
+        "pkg/gateway/credentials/revocation/propagator"
       ],
       "blocked_until_phase": "12a",
       "notes": "Phase 12a ships the §13.3 RFC 8693 token-exchange invariants as a pure Validate function: scope narrowing (subject ⊆), tenant-scope (issued.tenant_id == subject.tenant_id == caller.tenant_id), caller_type cannot elevate (agent < service < human), audience cannot broaden, typ rules (a2a_delegation only via actor_token), delegation_depth = parent+1 on child minting, exp = min(requested, subject.exp, actor.exp, perDialectCap) with the §13.3 ±1s skew and Unix-seconds truncation per RFC 7519. The Postgres-backed write-before-issue transaction, the KMS signing path, the cluster-wide revocation propagation via Redis EventBus, and the Token Service binary are deferred to the K8s-integration phase."

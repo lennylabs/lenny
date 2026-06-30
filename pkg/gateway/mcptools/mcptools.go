@@ -49,7 +49,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"

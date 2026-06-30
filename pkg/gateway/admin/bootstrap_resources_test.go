@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"

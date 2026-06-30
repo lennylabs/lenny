@@ -24,9 +24,9 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/credcache"
-	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 )

@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	credleasepg "github.com/lennylabs/lenny/pkg/gateway/credleasestore/pgstore"
+	credleasepg "github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"

@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
-	"github.com/lennylabs/lenny/pkg/gateway/impersonation"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"

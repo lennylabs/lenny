@@ -38,7 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/envblock"

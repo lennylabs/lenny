@@ -8,11 +8,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/credcache"
-	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 )
 
 // spec: §4.9 lines 1640-1652 — the gateway-side emergency-revocation

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
