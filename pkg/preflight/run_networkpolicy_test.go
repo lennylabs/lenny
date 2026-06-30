@@ -5,6 +5,7 @@ package preflight_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -166,6 +167,52 @@ func TestRunFailsOnNET064TrustDomainCollision(t *testing.T) {
 	}
 	if !preflight.Failed(report) {
 		t.Error("Run did not fail despite a NET-064 trust-domain collision")
+	}
+}
+
+// TestRunReportsGatewayIdentityListFailureFailClosed pins the fail-closed
+// posture of the §13.2 / §10.3 NET-064 deployment-identity uniqueness
+// audits: a failed lenny-gateway Deployment List surfaces as a failure on
+// both the spiffe-trust-domain and sa-token-audience uniqueness checks
+// rather than a silent pass. The R5 decomposition relocates this read and
+// its fail-closed translation into runDeploymentIdentityChecks; this test
+// guards that the relocated helper keeps failing closed on the gather error
+// (the original monolithic Run had no test pinning this branch).
+//
+// spec: §13.2 / §10.3 NET-064 (deployment-identity uniqueness). F-13.2.13.
+func TestRunReportsGatewayIdentityListFailureFailClosed(t *testing.T) {
+	c := fake.NewClientBuilder().
+		WithScheme(runScheme(t)).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				// The gateway-identity gather lists Deployments filtered by
+				// the canonical gateway component label; fail only that read
+				// so the rest of the report still populates and the two
+				// identity checks isolate the fail-closed branch.
+				if _, ok := list.(*appsv1.DeploymentList); ok {
+					return errors.New("api server unavailable")
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	report := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:         preflightNS,
+		SPIFFETrustDomain: "lenny-this-cluster",
+		SATokenAudience:   "lenny-gateway-this",
+	})
+	for _, name := range []string{"spiffe-trust-domain-uniqueness", "sa-token-audience-uniqueness"} {
+		d := resultByName(report, name)
+		if d.Passed {
+			t.Errorf("%s passed despite a failed lenny-gateway Deployment List", name)
+		}
+		if !strings.Contains(d.Reason, "list lenny-gateway Deployments") {
+			t.Errorf("%s did not surface the gather error fail-closed: %q", name, d.Reason)
+		}
+	}
+	if !preflight.Failed(report) {
+		t.Error("Run did not fail despite a gateway-identity cluster read error")
 	}
 }
 
