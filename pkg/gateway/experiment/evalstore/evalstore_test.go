@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 )
 
 // spec: §10.7 built-in eval-result registry.

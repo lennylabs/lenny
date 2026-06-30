@@ -27,7 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/orphancleanup"
-	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/gcpause"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
 	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"

@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
-	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
 )
 
 // validExperiment builds an experiment that passes the §10.7 admission

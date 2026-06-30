@@ -11,8 +11,8 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 )
 
 // WithEvalResults wires the §10.7 eval-result store onto the Router.

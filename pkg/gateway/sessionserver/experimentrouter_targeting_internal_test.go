@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/ofrep"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/ofrep"
 )
 
 // spec: §16.1 line 156 — the experiment-targeting `provider` metric label

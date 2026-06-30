@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/ofrep"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/ofrep"
 )
 
 func newClient(t *testing.T, baseURL string) *ofrep.Client {
