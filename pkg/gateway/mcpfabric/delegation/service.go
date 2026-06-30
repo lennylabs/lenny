@@ -797,7 +797,10 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// admission reserved from the §12.4 Redis counters once the gate
 	// passes. If any later step fails before the child row is committed
 	// the deferred release returns the reserved slice so a transient
-	// downstream error does not permanently consume tree budget.
+	// downstream error does not permanently consume tree budget. The
+	// pointer is set by insertChildSession (the §8.2 budget gate lives in
+	// the atomic-insert stage); the deferred release stays here on the
+	// named-return path so it fires on any error after the reserve.
 	// F-8.2.18 / F-8.2.12.
 	var budgetReservation *treebudget.Reservation
 	defer func() {
@@ -805,30 +808,114 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 			_ = s.treeBudget.Return(ctx, *budgetReservation)
 		}
 	}()
+
+	// Stage 1 (validation, §8.2/§8.3): approval mode, parent lookup and
+	// running-state, isolation/visibility monotonicity, lineage, and the
+	// parent's effective contentPolicy. Produces the validated admission
+	// context the cycle and insert stages read.
+	adm, err := s.validateDelegation(ctx, tenantID, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	// Stage 2 (§8.2 cycle detection): resolve the runtime/policy
+	// self-recursion layers and the child's effective contentPolicy, run
+	// the three-layer AND gate, and record the decision. A rejected
+	// decision returns the typed cycle error.
+	if err := s.detectCycle(ctx, tenantID, req, &adm); err != nil {
+		return Result{}, err
+	}
+
+	// Stage 3 (§8.2.bis depth check): resolve the maxDepth precedence
+	// chain and enforce the depth ceiling against the parent's lineage
+	// depth.
+	if err := s.checkDelegationDepth(req, adm); err != nil {
+		return Result{}, err
+	}
+
+	// Stage 4 (atomic child-session insert, §8.2): the lease-slice,
+	// per-user, and tree-budget gates, the export materialization and
+	// child-token mint, the child-row INSERT, and the §11.7 audit. The
+	// budget reservation it takes is threaded back here so the deferred
+	// release above can return it on a later error.
+	return s.insertChildSession(ctx, tenantID, req, adm, &budgetReservation)
+}
+
+// admission carries the validated and resolved state across the
+// Delegate stages (validate → cycle → depth → insert). It holds only
+// values one stage produces and a later stage reads, so each stage
+// helper takes a small, explicit input rather than a long parameter
+// list. The fields mirror the locals the monolithic Delegate threaded.
+type admission struct {
+	// parent is the running parent session resolved by validateDelegation.
+	parent sessionstore.Session
+	// childProfile is the §8.3 SEC-001 resolved child isolation profile.
+	childProfile isolation.Profile
+	// childVis is the §8.3 monotonically-resolved child tree visibility.
+	childVis session.TreeVisibility
+	// lineage and depth are the §8.2 parent-chain Identity tuples and the
+	// parent's depth, built by buildLineage for cycle and depth checks.
+	lineage cycle.Lineage
+	depth   int
+	// parentContentEff is the parent's effective (transitively-narrowest)
+	// §8.3 contentPolicy, resolved in stage 1 and consumed in stage 2.
+	parentContentEff effContentPolicy
+
+	// The following are resolved by detectCycle (stage 2) and consumed by
+	// the depth check and the child insert.
+
+	// decision is the §8.2 three-layer cycle-gate decision.
+	decision cycle.Decision
+	// effectivePolicy / haveEffectivePolicy is the target runtime's
+	// resolved DelegationPolicy, when one applies.
+	effectivePolicy     delegationpolicystore.DelegationPolicy
+	haveEffectivePolicy bool
+	// delegationPolicyRef is the §8.10 lease-scoped policy reference
+	// stamped on the child lease for tree recovery.
+	delegationPolicyRef string
+	// policyCeiling is the §8.2.bis layer-4 policy depth ceiling (zero in
+	// v1; reserved for the §8.3 ceiling extension).
+	policyCeiling int
+	// childContentEff is the child's resolved effective §8.3 contentPolicy
+	// stamped on the child lease.
+	childContentEff effContentPolicy
+}
+
+// validateDelegation runs the §8 stage-1 validation gates that reject a
+// delegation before any cycle or budget evaluation: the §8.4 approval
+// enum, the §8.2 parent lookup and running-state check, the §8.2 line 58
+// parent-user requirement, the §8.3 SEC-001 isolation monotonicity, the
+// §8.3 treeVisibility inheritance and messagingScope gate, the §8.2
+// lineage build, and the parent's effective §8.3 contentPolicy. It
+// returns the validated admission context the later stages read.
+//
+// spec: §8.4 lines 515-521; §8.2 lines 38-58; §8.3 lines 311-324.
+// F-8.4.1, F-8.4.2.
+func (s *Service) validateDelegation(ctx context.Context, tenantID string, req Request) (admission, error) {
 	// §8.4: validate the closed enum at the service boundary so a
 	// malformed value is rejected with *lease.InvalidApprovalModeError
 	// before any side effects (parent lookup, audit emission, store
 	// writes). The §8.5 lenny/delegate_task handler maps the typed
 	// error to INVALID_LEASE_FIELD. F-8.4.2.
 	if err := lease.ValidateApprovalMode(req.ApprovalMode); err != nil {
-		return Result{}, err
+		return admission{}, err
 	}
 	// §8.4 line 521: an `approvalMode: "deny"` lease short-circuits
 	// the delegation path before pod allocation and before the §4
 	// PreDelegation interceptor. The gateway maps ErrDelegationDenied
 	// to DELEGATION_DENIED at the §8.5 handler. F-8.4.1.
 	if req.ApprovalMode == lease.ApprovalModeDeny {
-		return Result{}, ErrDelegationDenied
+		return admission{}, ErrDelegationDenied
 	}
 	parent, err := s.store.Get(ctx, tenantID, req.ParentSessionID)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
-			return Result{}, ErrParentNotFound
+			return admission{}, ErrParentNotFound
 		}
-		return Result{}, err
+		return admission{}, err
 	}
 	if parent.State != session.StateRunning {
-		return Result{}, ErrParentNotRunning
+		return admission{}, ErrParentNotRunning
 	}
 
 	// §8.2 line 58: the gateway mints the child session's token via
@@ -842,7 +929,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// child's identity to the *authenticated* parent, not to a
 	// caller-supplied label.
 	if parent.UserID == "" {
-		return Result{}, ErrParentNoUser
+		return admission{}, ErrParentNoUser
 	}
 
 	// §8.3 SEC-001 isolation monotonicity. The child profile
@@ -852,10 +939,10 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		childProfile = parent.IsolationProfile
 	}
 	if !isolation.IsValid(childProfile) {
-		return Result{}, fmt.Errorf("delegation: child isolationProfile %q is not a recognised §5.3 profile", childProfile)
+		return admission{}, fmt.Errorf("delegation: child isolationProfile %q is not a recognised §5.3 profile", childProfile)
 	}
 	if parent.IsolationProfile != "" && !isolation.AtLeastAsRestrictive(childProfile, parent.IsolationProfile) {
-		return Result{}, &IsolationViolationError{
+		return admission{}, &IsolationViolationError{
 			ParentProfile: parent.IsolationProfile,
 			ChildProfile:  childProfile,
 		}
@@ -868,7 +955,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// below), mirroring the isolation-monotonicity rejection above.
 	childVis, err := resolveChildTreeVisibility(parent.TreeVisibility, req.TreeVisibility)
 	if err != nil {
-		return Result{}, err
+		return admission{}, err
 	}
 	// §8.3 lines 321-324: a resolved effective messagingScope of
 	// `siblings` requires treeVisibility `full` so children can discover
@@ -877,7 +964,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// defaults to `direct`, so this gate is inert until a `siblings`
 	// scope is configured for the child.
 	if req.EffectiveMessagingScope.OrDefault() == session.MessagingScopeSiblings && childVis != session.VisibilityFull {
-		return Result{}, &TreeVisibilityMessagingScopeError{
+		return admission{}, &TreeVisibilityMessagingScopeError{
 			EffectiveMessagingScope: session.MessagingScopeSiblings,
 			EffectiveTreeVisibility: childVis,
 		}
@@ -887,9 +974,37 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// run over (runtime, pool) Identity tuples.
 	lineage, depth, err := s.buildLineage(ctx, tenantID, parent)
 	if err != nil {
-		return Result{}, err
+		return admission{}, err
 	}
 
+	// §8.3 lines 157, 240: resolve the parent's effective
+	// (transitively-narrowest) contentPolicy here so stage 2 can apply
+	// the four-axis monotonicity check against the child's declared
+	// policy. F-13.5.10.
+	parentContentEff := s.effectiveParentContentPolicy(ctx, tenantID, parent)
+
+	return admission{
+		parent:           parent,
+		childProfile:     childProfile,
+		childVis:         childVis,
+		lineage:          lineage,
+		depth:            depth,
+		parentContentEff: parentContentEff,
+	}, nil
+}
+
+// detectCycle runs the §8.2 stage-2 cycle gate. It resolves the target
+// runtime (the §8.2 line 50 type gate, the §8.3 self-recursion runtime
+// and policy layers, and the interceptor weakening cooldowns), resolves
+// the child's effective §8.3 contentPolicy, runs the three-layer AND
+// gate, records the §8.2/§16.7 decision metrics and audit, and rejects a
+// cycle with the typed cycle error. It writes the resolved policy state
+// (effectivePolicy, delegationPolicyRef, policyCeiling, childContentEff,
+// decision) back onto adm for the depth and insert stages.
+//
+// spec: §8.2 lines 50, 66-79; §8.3 lines 100, 157-188, 181, 218.
+// F-8.7.12, F-13.5.7, F-4.8.17, F-13.5.10.
+func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request, adm *admission) error {
 	target := cycle.Identity{RuntimeName: req.RuntimeRef, PoolName: req.PoolRef}
 	// §8.2 three-layer AND gate (spec lines 66-79). Each layer defaults
 	// to the conservative false (rejects self-recursive hops). A layer
@@ -913,24 +1028,17 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		Mode:                 s.mode,
 		PlatformAllowSelfRec: s.platformAllowSelfRec,
 	}
-	var policyCeiling int
-	var effectivePolicy delegationpolicystore.DelegationPolicy
-	var haveEffectivePolicy bool
-	// §8.10 lines 1044-1049 — the lease-scoped policy reference captured
-	// at approval time so tree recovery resumes the node against the
-	// persisted lease rather than re-evaluating live policy. F-8.10.5.
-	var delegationPolicyRef string
 	if s.runtimes != nil {
 		if rt, err := runtimestore.Resolve(ctx, s.runtimes, req.RuntimeRef); err == nil {
 			if rt.Type == runtimestore.TypeMCP {
-				return Result{}, ErrTargetNotAgent
+				return ErrTargetNotAgent
 			}
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
-			delegationPolicyRef = rt.DelegationPolicyRef
+			adm.delegationPolicyRef = rt.DelegationPolicyRef
 			if s.policies != nil && rt.DelegationPolicyRef != "" {
 				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
-					effectivePolicy = pol
-					haveEffectivePolicy = true
+					adm.effectivePolicy = pol
+					adm.haveEffectivePolicy = true
 					// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) —
 					// reject every `delegate_task` whose effective
 					// DelegationPolicy is inside the cluster-scoped
@@ -941,7 +1049,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 					// it fires regardless of whether this particular
 					// call carries any exported files.
 					if cdErr := s.checkInterceptorWeakeningCooldown(pol); cdErr != nil {
-						return Result{}, cdErr
+						return cdErr
 					}
 					// spec: §4.8 line 1034 / §8.3 line 218 (SEC-013,
 					// F-4.8.17) — reject every `delegate_task` whose
@@ -952,7 +1060,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 					// failPolicy flip rather than the policy's
 					// scanExportedFiles flip.
 					if cdErr := s.InterceptorFailPolicyCooldown(ctx, pol.ContentPolicy.InterceptorRef); cdErr != nil {
-						return Result{}, cdErr
+						return cdErr
 					}
 					settings.PolicyAllowSelfRec = pol.AllowSelfRecursion
 					// §8.2.bis layer 4 ceiling. DelegationPolicy has no
@@ -960,7 +1068,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 					// slot remains zero (no policy-imposed ceiling) and
 					// the precedence chain falls through to the Helm
 					// fallback. Reserved for the §8.3 ceiling extension.
-					policyCeiling = 0
+					adm.policyCeiling = 0
 				}
 			}
 		}
@@ -977,23 +1085,33 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// next hop inherits the transitively-narrowest cap (§8.3 line 240).
 	// The check runs before pod allocation, alongside the SEC-001
 	// isolation and treeVisibility monotonicity gates above. F-13.5.10.
-	parentContentEff := s.effectiveParentContentPolicy(ctx, tenantID, parent)
 	var childContentInput delegationpolicystore.ContentPolicy
-	if haveEffectivePolicy {
-		childContentInput = effectivePolicy.ContentPolicy
+	if adm.haveEffectivePolicy {
+		childContentInput = adm.effectivePolicy.ContentPolicy
 	}
-	childContentEff, err := resolveChildContentPolicy(parentContentEff, childContentInput, haveEffectivePolicy)
+	childContentEff, err := resolveChildContentPolicy(adm.parentContentEff, childContentInput, adm.haveEffectivePolicy)
 	if err != nil {
-		return Result{}, err
+		return err
 	}
+	adm.childContentEff = childContentEff
 
-	decision := cycle.Decide(lineage, target, settings)
+	decision := cycle.Decide(adm.lineage, target, settings)
 	s.recordCycleDecision(req.PoolRef, tenantID, decision)
 	s.recordCycleAudit(ctx, tenantID, req, decision)
 	if decision.Outcome == cycle.OutcomeRejected {
-		return Result{}, cycle.ToError(decision, target)
+		return cycle.ToError(decision, target)
 	}
+	adm.decision = decision
+	return nil
+}
 
+// checkDelegationDepth runs the §8.2.bis stage-3 depth check. It resolves
+// the maxDepth precedence chain (explicit-client → policy-ceiling →
+// Helm-fallback) and enforces that the child's depth (the parent's
+// lineage depth + 1) does not exceed the resolved ceiling.
+//
+// spec: §8.2.bis lines 81-89.
+func (s *Service) checkDelegationDepth(req Request, adm admission) error {
 	// §8.2.bis depth check (lines 81-89). The precedence chain is
 	// explicit-client → preset → runtime-default → policy-ceiling →
 	// Helm-fallback. v1 wires layers 1, 4, 5 (caller, policy ceiling,
@@ -1004,17 +1122,88 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// not exceed maxDepth".
 	resolvedDepth, err := lease.ResolveMaxDepth(lease.MaxDepthInputs{
 		ExplicitClient: req.MaxDepth,
-		PolicyCeiling:  policyCeiling,
+		PolicyCeiling:  adm.policyCeiling,
 		HelmFallback:   s.defaultMaxDepth,
 	})
 	if err != nil {
-		return Result{}, err
+		return err
 	}
-	resolvedDepth = lease.EnforcePolicyCeiling(resolvedDepth, policyCeiling)
-	if err := lease.CheckDepth(depth, resolvedDepth); err != nil {
+	resolvedDepth = lease.EnforcePolicyCeiling(resolvedDepth, adm.policyCeiling)
+	return lease.CheckDepth(adm.depth, resolvedDepth)
+}
+
+// insertChildSession runs the §8.2 stage-4 atomic child-session insert.
+// It validates the lease slice against the parent's granted budget,
+// enforces the §11.1 per-user active-children cap, reserves the §8.2/§12.4
+// tree budget (threading the reservation back to Delegate's deferred
+// release through resvOut), materializes the §8.7 file export, mints the
+// §8.2 child token, builds and commits the child row, registers it with
+// the §8.6 lease budget source, observes the §16.1 depth metric, and
+// emits the §11.7 `delegation.spawned` audit. It returns the §8.5 Result.
+//
+// spec: §8.2 lines 38-48, 57-61, 127; §8.6 line 648; §8.9 line 1010;
+// §11.1 line 9; §11.7 line 62. F-8.2.2, F-8.2.18, F-11.1.4, F-15.3.5.
+func (s *Service) insertChildSession(ctx context.Context, tenantID string, req Request, adm admission, resvOut **treebudget.Reservation) (Result, error) {
+	parent := adm.parent
+	// spec: §8.9 line 1010 — every node in a delegation tree shares the
+	// same root_session_id (the apex session). The §12.4 budget counters
+	// are keyed by it.
+	rootSessionID := parent.RootSessionID
+	if rootSessionID == "" {
+		rootSessionID = parent.ID
+	}
+
+	// §8.2 / §11.1 / §12.4: the budget gates — static lease-slice ceiling,
+	// per-user active-children cap, and the Redis-backed tree-budget
+	// reservation. A successful reserve writes the reservation back through
+	// resvOut so Delegate's deferred release returns it on a later error.
+	if err := s.reserveTreeBudget(ctx, tenantID, req, parent, rootSessionID, resvOut); err != nil {
 		return Result{}, err
 	}
 
+	// Build the child session row (id mint, §8.7 export materialization,
+	// §8.2 child-token exchange, struct assembly, and §10.7 experiment
+	// routing). The token is returned alongside the row for the audit and
+	// the Result.
+	child, childToken, err := s.buildChildSession(ctx, tenantID, req, adm, rootSessionID)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := s.store.Create(ctx, child); err != nil {
+		return Result{}, err
+	}
+	// §8.6 line 648: register the committed child with the lease-extension
+	// budget source so an adapter ExtendLease from the child resolves its
+	// tree (AddSession) and is capped at the parent's own granted lease
+	// (SetParentLease). Done after the row commits so a registered child
+	// always has a persisted backing row. F-15.3.5.
+	if s.leaseRegistrar != nil {
+		s.leaseRegistrar.AddSession(child.ID, rootSessionID, tenantID)
+		s.leaseRegistrar.SetParentLease(child.ID, parentLeaseCeiling(parent))
+	}
+	// §8.2 / §16.1 line 27: observe the admitted child's depth onto
+	// the `lenny_delegation_depth` histogram. Depth is invariant once
+	// admitted, so sampling at admission and at session completion
+	// produces the same distribution.
+	childDepth := adm.depth + 1
+	if s.metrics != nil {
+		s.metrics.ObserveDelegationDepth(req.PoolRef, childDepth)
+	}
+	s.emitSpawnedAudit(ctx, req, parent, child, adm.decision, childToken, childDepth)
+	return Result{Child: child, Depth: childDepth, ChildToken: childToken}, nil
+}
+
+// reserveTreeBudget runs the §8.2 budget gates that precede the child-row
+// INSERT: the static §8.2 lease-slice ceiling against the parent's granted
+// slice, the §11.1 per-user active-children cap, and the §8.2/§12.4
+// Redis-backed tree-budget reservation. A successful reservation is written
+// back through resvOut so Delegate's deferred release returns it if any
+// later step before the commit fails. The gates run in this order so an
+// over-limit delegation consumes no §12.4 counter state.
+//
+// spec: §8.2 lines 38-48, 57, 127; §11.1 line 9; §12.4 line 213.
+// F-8.2.2, F-8.2.18, F-8.2.12, F-8.1.1, F-11.1.4.
+func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Request, parent sessionstore.Session, rootSessionID string, resvOut **treebudget.Reservation) error {
 	// §8.2 lines 38-48: validate the caller's requested lease_slice
 	// against the parent's granted slice. A child may only tighten the
 	// budget; a slice that exceeds the parent's remaining budget on any
@@ -1032,16 +1221,9 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		parentSlice, req.LeaseSlice,
 		parentSlice.MaxTokenBudget, parentSlice.MaxChildrenTotal, parentSlice.MaxTreeSize,
 	); err != nil {
-		return Result{}, err
+		return err
 	}
 
-	// spec: §8.9 line 1010 — every node in a delegation tree shares the
-	// same root_session_id (the apex session). The §12.4 budget counters
-	// are keyed by it.
-	rootSessionID := parent.RootSessionID
-	if rootSessionID == "" {
-		rootSessionID = parent.ID
-	}
 	// §11.1 line 9: the per-user active-delegated-children admission cap.
 	// The per-session breadth is bounded by the §8.2 lease/treebudget
 	// axes reserved below; this scope bounds the aggregate count of live
@@ -1057,10 +1239,10 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		}
 		active, err := s.store.CountActiveDelegatedChildrenByUser(ctx, tenantID, owner)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		if active >= s.maxActiveChildrenPerUser {
-			return Result{}, ErrUserChildrenExhausted
+			return ErrUserChildrenExhausted
 		}
 	}
 
@@ -1074,43 +1256,61 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// token pool. A cap breach rejects with *treebudget.BudgetExhaustedError
 	// (mapped to BUDGET_EXHAUSTED); a Redis outage fails closed with
 	// ErrBudgetUnavailable (mapped to the retryable
-	// DELEGATION_BUDGET_UNAVAILABLE per §12.4 line 213). F-8.2.18 /
+	// DELEGATION_BUDGET_UNAVAILABLE per §12.4 line 213). The reservation
+	// is threaded back to Delegate through resvOut so its deferred release
+	// returns the slice if any later step in the insert fails. F-8.2.18 /
 	// F-8.2.12 / F-8.1.1.
-	if s.treeBudget != nil {
-		memCap := parentSlice.MaxTreeMemoryBytes
-		if memCap == 0 {
-			// §8.2 line 127: the lease carries a maxTreeMemoryBytes
-			// default of 2 MB even when no explicit value was declared,
-			// so the tree's gateway footprint is always bounded.
-			memCap = treebudget.DefaultMaxTreeMemoryBytes
-		}
-		reservation := treebudget.Reservation{
-			RootSessionID:         rootSessionID,
-			ParentSessionID:       parent.ID,
-			TreeSizeCap:           int64(parentSlice.MaxTreeSize),
-			TreeSizeDelta:         1,
-			TreeMemoryCap:         memCap,
-			TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
-			ParallelChildrenCap:   int64(parentSlice.MaxParallelChildren),
-			ParallelChildrenDelta: 1,
-			ChildrenTotalCap:      int64(parentSlice.MaxChildrenTotal),
-			ChildrenTotalDelta:    1,
-			TokenCap:              parentSlice.MaxTokenBudget,
-			TokenDelta:            req.LeaseSlice.MaxTokenBudget,
-		}
-		if _, err := s.treeBudget.Reserve(ctx, reservation); err != nil {
-			var bx *treebudget.BudgetExhaustedError
-			if errors.As(err, &bx) {
-				return Result{}, &lease.BudgetExceededError{Violations: []string{bx.Error()}}
-			}
-			if errors.Is(err, treebudget.ErrBudgetUnavailable) {
-				return Result{}, ErrBudgetUnavailable
-			}
-			return Result{}, err
-		}
-		budgetReservation = &reservation
+	if s.treeBudget == nil {
+		return nil
 	}
+	memCap := parentSlice.MaxTreeMemoryBytes
+	if memCap == 0 {
+		// §8.2 line 127: the lease carries a maxTreeMemoryBytes
+		// default of 2 MB even when no explicit value was declared,
+		// so the tree's gateway footprint is always bounded.
+		memCap = treebudget.DefaultMaxTreeMemoryBytes
+	}
+	reservation := treebudget.Reservation{
+		RootSessionID:         rootSessionID,
+		ParentSessionID:       parent.ID,
+		TreeSizeCap:           int64(parentSlice.MaxTreeSize),
+		TreeSizeDelta:         1,
+		TreeMemoryCap:         memCap,
+		TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
+		ParallelChildrenCap:   int64(parentSlice.MaxParallelChildren),
+		ParallelChildrenDelta: 1,
+		ChildrenTotalCap:      int64(parentSlice.MaxChildrenTotal),
+		ChildrenTotalDelta:    1,
+		TokenCap:              parentSlice.MaxTokenBudget,
+		TokenDelta:            req.LeaseSlice.MaxTokenBudget,
+	}
+	if _, err := s.treeBudget.Reserve(ctx, reservation); err != nil {
+		var bx *treebudget.BudgetExhaustedError
+		if errors.As(err, &bx) {
+			return &lease.BudgetExceededError{Violations: []string{bx.Error()}}
+		}
+		if errors.Is(err, treebudget.ErrBudgetUnavailable) {
+			return ErrBudgetUnavailable
+		}
+		return err
+	}
+	*resvOut = &reservation
+	return nil
+}
 
+// buildChildSession assembles the §8.2 child session row after every
+// admission gate has passed. It mints the §12.6 child id, runs the §8.7
+// file-export materialization when the lease declares exports, runs the
+// §8.2 in-process child-token exchange when a minter and ParentToken are
+// present, builds the child Session row (stamping the resolved lease,
+// content policy, visibility, tracing, and experiment context), and runs
+// the §10.7 ExperimentRouter for an independent-propagation child. It
+// returns the constructed (uncommitted) row and the minted child token.
+//
+// spec: §8.2 lines 59-61, 90; §8.7; §8.9 line 1010; §10.7 lines 868, 905.
+// F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
+func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (sessionstore.Session, *ChildToken, error) {
+	parent := adm.parent
 	userID := req.UserID
 	if userID == "" {
 		userID = parent.UserID
@@ -1126,13 +1326,13 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// materialized child workspace. F-8.7.1 / F-8.7.5 / F-8.7.6.
 	childID, err := s.newChildID(rootSessionID)
 	if err != nil {
-		return Result{}, err
+		return sessionstore.Session{}, nil, err
 	}
 	var childPlan json.RawMessage
 	if len(req.FileExport) > 0 {
-		plan, err := s.materializeExport(ctx, tenantID, req, parent, childID, effectivePolicy, haveEffectivePolicy)
+		plan, err := s.materializeExport(ctx, tenantID, req, parent, childID, adm.effectivePolicy, adm.haveEffectivePolicy)
 		if err != nil {
-			return Result{}, err
+			return sessionstore.Session{}, nil, err
 		}
 		childPlan = plan
 	}
@@ -1160,7 +1360,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 			Now:                   now,
 		})
 		if err != nil {
-			return Result{}, err
+			return sessionstore.Session{}, nil, err
 		}
 		childToken = &minted
 	}
@@ -1176,7 +1376,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		RuntimeRef:       req.RuntimeRef,
 		PoolRef:          req.PoolRef,
 		State:            session.StateCreated,
-		IsolationProfile: childProfile,
+		IsolationProfile: adm.childProfile,
 		ParentSessionID:  parent.ID,
 		RootSessionID:    rootSessionID,
 		// §10.7 lines 868, 905 — the child's delegation depth is the
@@ -1184,7 +1384,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		// the built-in eval endpoint populate EvalResult.delegation_depth
 		// without re-walking the lineage on every submission. `depth` is
 		// the parent's depth resolved by buildLineage above. F-10.7.5.
-		DelegationDepth: uint32(depth + 1),
+		DelegationDepth: uint32(adm.depth + 1),
 		// §8.2 lines 38-48: stamp the granted lease_slice onto the child
 		// so the child's own descendants validate against this ceiling.
 		// Nil when the lease declared no slice (no budget binding at this
@@ -1197,13 +1397,13 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 		// F-8.2.2 / F-8.10.5.
 		DelegationLease: stampLeasePolicy(
 			storeLeaseFromSlice(req.LeaseSlice),
-			delegationPolicyRef, effectivePolicy, haveEffectivePolicy, childContentEff,
+			adm.delegationPolicyRef, adm.effectivePolicy, adm.haveEffectivePolicy, adm.childContentEff,
 		),
 		// §8.3 lines 311-319: the monotonically-resolved visibility
 		// boundary (inherited from the parent or narrowed by the lease)
 		// is stamped on the child so lenny/get_task_tree scopes the
 		// child's view from creation. F-8.5.2 / F-8.9.2.
-		TreeVisibility: childVis,
+		TreeVisibility: adm.childVis,
 		// §8.3: the gateway attaches the parent's registered
 		// tracingContext to every child it delegates.
 		TracingContext: copyTracingContext(parent.TracingContext),
@@ -1230,34 +1430,26 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	// rather than creating an unenrolled child.
 	if s.experimentRouter != nil && child.ExperimentContext == nil {
 		if err := s.experimentRouter.ApplyExperimentRouting(ctx, &child); err != nil {
-			return Result{}, err
+			return sessionstore.Session{}, nil, err
 		}
 	}
-	if err := s.store.Create(ctx, child); err != nil {
-		return Result{}, err
+	return child, childToken, nil
+}
+
+// emitSpawnedAudit emits the §11.7 / §16.7 `delegation.spawned` audit
+// record after the child row commits, so audit consumers (billing, SIEM,
+// compliance) observe the same record the store now reflects. The detail
+// carries the §11.7 lineage attribution tuple, the §8.4 declared and
+// effective approval modes, and (when the §8.2 child-token exchange ran)
+// the minted `act` chain and child `jti` for the §13.3 recursive-revocation
+// link. A nil auditor skips the emission.
+//
+// spec: §11.7 line 62; §16.7 catalog; §8.4 (F-8.4.3); §8.2 line 59.
+// F-8.5.8, F-8.1.2, F-8.2.7.
+func (s *Service) emitSpawnedAudit(ctx context.Context, req Request, parent, child sessionstore.Session, decision cycle.Decision, childToken *ChildToken, childDepth int) {
+	if s.auditor == nil {
+		return
 	}
-	// §8.6 line 648: register the committed child with the lease-extension
-	// budget source so an adapter ExtendLease from the child resolves its
-	// tree (AddSession) and is capped at the parent's own granted lease
-	// (SetParentLease). Done after the row commits so a registered child
-	// always has a persisted backing row. F-15.3.5.
-	if s.leaseRegistrar != nil {
-		s.leaseRegistrar.AddSession(child.ID, rootSessionID, tenantID)
-		s.leaseRegistrar.SetParentLease(child.ID, parentLeaseCeiling(parent))
-	}
-	// §8.2 / §16.1 line 27: observe the admitted child's depth onto
-	// the `lenny_delegation_depth` histogram. Depth is invariant once
-	// admitted, so sampling at admission and at session completion
-	// produces the same distribution.
-	childDepth := depth + 1
-	if s.metrics != nil {
-		s.metrics.ObserveDelegationDepth(req.PoolRef, childDepth)
-	}
-	// spec: §11.7 line 62 / §16.7 — emit `delegation.spawned` after the
-	// child row is committed so audit consumers (billing, SIEM, compliance)
-	// observe the same record the store now reflects. The detail carries
-	// the §11.7 lineage attribution tuple. F-8.5.8.
-	//
 	// §8.4 / F-8.4.3: the audit record names both `approval_mode`
 	// (the value declared by the lease, including the v1 `approval`
 	// alias) and `effective_approval_mode` (the value the gateway
@@ -1269,30 +1461,27 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	if declaredMode == "" {
 		declaredMode = lease.ApprovalModePolicy
 	}
-	if s.auditor != nil {
-		detail := map[string]any{
-			"parent_session_id":       parent.ID,
-			"child_session_id":        child.ID,
-			"delegation_depth":        childDepth,
-			"runtime_ref":             child.RuntimeRef,
-			"pool_ref":                child.PoolRef,
-			"isolation_profile":       string(child.IsolationProfile),
-			"is_self_recursive":       decision.IsSelfRecursive,
-			"approval_mode":           string(declaredMode),
-			"effective_approval_mode": string(lease.EffectiveApprovalMode(req.ApprovalMode)),
-		}
-		// §8.2 line 59 / §11.7: when the child-token exchange ran, the
-		// audit record carries the minted `act` chain and child `jti` so
-		// audit attribution and the §13.3 recursive-revocation path can
-		// follow the parent→child identity link. F-8.1.2 / F-8.2.7.
-		if childToken != nil {
-			detail["child_token_jti"] = childToken.JTI
-			detail["act_chain"] = childToken.Act
-			detail["delegation_token_scope"] = childToken.Scope
-		}
-		s.auditor.EmitDelegationEvent(ctx, "delegation.spawned", detail)
+	detail := map[string]any{
+		"parent_session_id":       parent.ID,
+		"child_session_id":        child.ID,
+		"delegation_depth":        childDepth,
+		"runtime_ref":             child.RuntimeRef,
+		"pool_ref":                child.PoolRef,
+		"isolation_profile":       string(child.IsolationProfile),
+		"is_self_recursive":       decision.IsSelfRecursive,
+		"approval_mode":           string(declaredMode),
+		"effective_approval_mode": string(lease.EffectiveApprovalMode(req.ApprovalMode)),
 	}
-	return Result{Child: child, Depth: childDepth, ChildToken: childToken}, nil
+	// §8.2 line 59 / §11.7: when the child-token exchange ran, the
+	// audit record carries the minted `act` chain and child `jti` so
+	// audit attribution and the §13.3 recursive-revocation path can
+	// follow the parent→child identity link. F-8.1.2 / F-8.2.7.
+	if childToken != nil {
+		detail["child_token_jti"] = childToken.JTI
+		detail["act_chain"] = childToken.Act
+		detail["delegation_token_scope"] = childToken.Scope
+	}
+	s.auditor.EmitDelegationEvent(ctx, "delegation.spawned", detail)
 }
 
 // ResolveMaxInputSize returns the effective §8.3
