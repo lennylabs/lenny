@@ -32,7 +32,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )

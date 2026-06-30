@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 )
 
 // matrixErrorClasses is the §15.2.1 lines 1408-1413 error-class list:

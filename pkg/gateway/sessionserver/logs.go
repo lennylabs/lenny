@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 

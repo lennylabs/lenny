@@ -13,7 +13,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
-	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
@@ -22,6 +21,7 @@ import (
 	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/storerouter"

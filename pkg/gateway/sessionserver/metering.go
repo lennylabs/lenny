@@ -10,7 +10,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 )
 
 // meteringSortField is the only sort key the §11.2.1 billing ledger

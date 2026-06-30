@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpschemagen"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 )
 
 // committedSchemas binds each overlap tool name to the committed generated

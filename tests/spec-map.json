@@ -438,8 +438,8 @@
       "tests": [
         "pkg/sandbox/isolation/...",
         "pkg/gateway/runtime/poolstore/...",
-        "pkg/gateway/admin/pools_test.go",
-        "pkg/gateway/admin/pools_nonce_only_test.go",
+        "pkg/gateway/externalapi/admin/pools_test.go",
+        "pkg/gateway/externalapi/admin/pools_nonce_only_test.go",
         "pkg/admission/webhook/direct_mode_isolation_test.go",
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
@@ -1278,7 +1278,7 @@
       "title": "User Invalidation",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
-        "pkg/gateway/admin/...",
+        "pkg/gateway/externalapi/admin/...",
         "pkg/gateway/sessionserver/..."
       ],
       "packages": [
@@ -1543,7 +1543,7 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
-        "pkg/gateway/admin/...",
+        "pkg/gateway/externalapi/admin/...",
         "pkg/gateway/storage/retentiongc/...",
         "pkg/gateway/storage/erasure/...",
         "pkg/gateway/storage/erasurejob/...",
@@ -2016,7 +2016,7 @@
         "cmd/runtimes/echo",
         "cmd/runtimes/streaming-echo",
         "cmd/lenny-compliance",
-        "pkg/gateway/outputpartfidelity"
+        "pkg/gateway/externalapi/outputpartfidelity"
       ],
       "schemas": [
         "schemas/lenny-adapter.proto",
@@ -2854,11 +2854,11 @@
       "tests": [
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
-        "pkg/gateway/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
-        "pkg/gateway/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
+        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
+        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
       ],
       "packages": [
-        "pkg/gateway/admin"
+        "pkg/gateway/externalapi/admin"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.1 Design Philosophy and Agent Model. The §25.1 enforcement-point-1 admin-API scope gate (proposal 0019 ADM-1) is pinned by the scope-enforcement tests; see TESTING.md §25 for the rest of the operability test plan."
@@ -2962,7 +2962,7 @@
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/gateway/admin/audit_query_test.go"
+        "pkg/gateway/externalapi/admin/audit_query_test.go"
       ],
       "packages": [
         "pkg/operability/audit"

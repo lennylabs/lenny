@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )

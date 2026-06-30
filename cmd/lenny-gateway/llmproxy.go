@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/proxycache"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"

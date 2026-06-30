@@ -36,7 +36,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/compliance"
-	"github.com/lennylabs/lenny/pkg/gateway/outputpartfidelity"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/outputpartfidelity"
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
 

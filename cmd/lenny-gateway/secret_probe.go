@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 

@@ -34,7 +34,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 )
 
