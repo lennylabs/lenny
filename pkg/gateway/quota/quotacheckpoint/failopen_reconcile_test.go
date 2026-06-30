@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/quotafailopen"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 

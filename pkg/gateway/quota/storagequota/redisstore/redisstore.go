@@ -15,7 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
 )
 
 // keyPrefix is the §11.2 storage-quota key namespace.

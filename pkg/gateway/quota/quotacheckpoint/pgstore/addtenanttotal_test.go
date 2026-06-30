@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	"github.com/lennylabs/lenny/pkg/gateway/quotabudget"
-	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotabudget"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )

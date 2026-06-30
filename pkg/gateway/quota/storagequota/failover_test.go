@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
 )
 
 // errRedisDown stands in for the infrastructure error a Redis-backed

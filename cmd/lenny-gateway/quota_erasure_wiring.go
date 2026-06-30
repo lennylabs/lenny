@@ -5,10 +5,10 @@ package main
 import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/quotaerasure"
-	"github.com/lennylabs/lenny/pkg/gateway/quotafailopen"
-	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
+	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotaerasure"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 )
 
 // buildQuotaEraser composes the §12.2 QuotaStore erasure ("Redis +
