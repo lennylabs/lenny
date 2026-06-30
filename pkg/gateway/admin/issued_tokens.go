@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // IssuedTokenRevoker revokes an issued token in the durable §13.3

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // Source supplies the revoked tokens for a tenant. *issuedtokenstore.Store

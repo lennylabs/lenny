@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
 // newLocalRevocationDenyList builds the §11.4 step-6 deny list the

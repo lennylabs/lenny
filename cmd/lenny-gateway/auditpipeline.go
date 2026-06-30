@@ -17,11 +17,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

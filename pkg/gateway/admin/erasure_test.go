@@ -17,11 +17,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/erasure"
-	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )

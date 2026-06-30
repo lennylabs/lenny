@@ -30,8 +30,8 @@ package propagator
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
 // Channel is the Redis pub/sub channel revoked jtis are published on.

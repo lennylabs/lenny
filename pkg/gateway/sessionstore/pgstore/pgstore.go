@@ -24,8 +24,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

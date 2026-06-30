@@ -25,7 +25,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
 // Store is the Postgres-backed connector registry. Construct with New.

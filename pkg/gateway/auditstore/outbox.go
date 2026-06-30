@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/audit/siem"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
 // PendingForward implements siem.DeliveryStore. It returns up to limit

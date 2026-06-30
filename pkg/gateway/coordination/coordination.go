@@ -23,8 +23,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/coordlease"
-	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
 // TenantLister enumerates the tenants whose sessions are swept.

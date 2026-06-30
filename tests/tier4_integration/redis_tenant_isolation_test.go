@@ -18,12 +18,12 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
-	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
-	"github.com/lennylabs/lenny/pkg/gateway/rediskeys"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	scredis "github.com/lennylabs/lenny/pkg/gateway/semanticcache/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 )
 
 // guardedRedis returns a miniredis-backed client with the §12.4 Guard

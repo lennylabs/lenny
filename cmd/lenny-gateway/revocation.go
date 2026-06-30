@@ -11,8 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/pgnotify"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgnotify"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 )
 

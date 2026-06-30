@@ -11,9 +11,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/admintoken"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // Compile-time assertion that the §4.9 credential-lease revocation

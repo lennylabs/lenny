@@ -18,7 +18,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"

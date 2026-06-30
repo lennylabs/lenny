@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
 // AppendBatch is the §12.3 line 81 batched-insert flush callback for the

@@ -24,7 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/gateway/delegationbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
 // Store is the Postgres-backed delegationbudget.Store. Construct with New.

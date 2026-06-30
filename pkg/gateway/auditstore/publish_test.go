@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
 // spec: §4.4 line 232 — audit-bearing EventBus first-publish path.

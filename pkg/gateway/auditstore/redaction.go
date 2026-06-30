@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
 // userMatchKeys are the top-level audit payload keys that carry the acting

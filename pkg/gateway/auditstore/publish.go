@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
 // PublishingAppender wraps a Store with the §4.4 line 232 / §12.3.7

@@ -25,7 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 )
 

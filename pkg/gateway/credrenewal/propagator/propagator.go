@@ -45,7 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	denylistprop "github.com/lennylabs/lenny/pkg/gateway/denylist/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
 // Channel is the Redis pub/sub channel revoked credential keys are

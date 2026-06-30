@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/erasure"
-	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 

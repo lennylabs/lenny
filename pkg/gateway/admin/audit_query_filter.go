@@ -11,7 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
 // auditQueryFilter is the parsed §25.9 list-endpoint query filter. The

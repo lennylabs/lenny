@@ -19,9 +19,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
-	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

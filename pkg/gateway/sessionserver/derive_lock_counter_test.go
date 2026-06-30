@@ -6,7 +6,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
 )
 
 // concurrentHoldCounter wraps a derivelock.Lock and records the maximum

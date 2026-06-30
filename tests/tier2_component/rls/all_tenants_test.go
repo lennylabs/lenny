@@ -29,7 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

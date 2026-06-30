@@ -18,8 +18,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
-	leasepg "github.com/lennylabs/lenny/pkg/gateway/leasestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

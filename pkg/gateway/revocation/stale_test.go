@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // staleSource is a revocation Source / TenantLister that returns a fixed

@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // fakeRotationStore satisfies IssuedTokenRotationStore so the handler's

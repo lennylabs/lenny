@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 	"github.com/lennylabs/lenny/pkg/webhooksig"
 )

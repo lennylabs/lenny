@@ -15,8 +15,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
 // translationTopic is the §12.3.7 EventTopic stamped on audit-bearing

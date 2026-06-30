@@ -31,7 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/sdkwarm"
-	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 type fakeSource map[string][]issuedtokenstore.IssuedToken

@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
