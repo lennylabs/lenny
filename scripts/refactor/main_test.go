@@ -445,6 +445,66 @@ func TestGitMoveOrder_SelfPrefixFirst(t *testing.T) {
 	}
 }
 
+// gitMoveOrder must run an ancestor-destination move before a descendant one, so
+// interceptor -> policy/interceptor (depth 3) precedes interceptorstore ->
+// policy/interceptor/interceptorstore (depth 4). If the deeper move ran first it
+// would create policy/interceptor as a bare parent and the ancestor move would
+// land inside it at policy/interceptor/interceptor.
+func TestGitMoveOrder_AncestorDestinationFirst(t *testing.T) {
+	moves := []rewrite.Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptorstore", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/ratelimit", New: "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptor", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"},
+	}
+	ordered := gitMoveOrder(moves)
+	var idxInterceptor, idxStore int
+	for i, m := range ordered {
+		switch m.Old {
+		case "github.com/lennylabs/lenny/pkg/gateway/interceptor":
+			idxInterceptor = i
+		case "github.com/lennylabs/lenny/pkg/gateway/interceptorstore":
+			idxStore = i
+		}
+	}
+	if idxInterceptor >= idxStore {
+		t.Fatalf("interceptor (ancestor dest) must precede interceptorstore; order %+v", ordered)
+	}
+}
+
+// End-to-end: the nested-destination policy shape must land each package at the
+// correct depth. interceptor -> policy/interceptor and interceptorstore ->
+// policy/interceptor/interceptorstore must land interceptor.go directly under
+// policy/interceptor, not under policy/interceptor/interceptor. This is
+// constructed to FAIL against the pre-fix order, which moved the deeper
+// interceptorstore first and nested interceptor one level too deep.
+func TestDriver_NestedDestinationDepth(t *testing.T) {
+	root := initTempRepo(t)
+	writeFile(t, filepath.Join(root, "pkg", "gateway", "interceptor", "interceptor.go"),
+		"package interceptor\n\nvar I = 1\n")
+	writeFile(t, filepath.Join(root, "pkg", "gateway", "interceptorstore", "store.go"),
+		"package interceptorstore\n\nvar S = 1\n")
+	mustRun(t, root, "git", "add", "-A")
+	mustRun(t, root, "git", "commit", "-q", "-m", "interceptor+store", "--no-verify")
+
+	moves := []rewrite.Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptorstore", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptor", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"},
+	}
+	d := &driver{root: root, moves: moves, cfg: config{skipGates: true, skipAudit: true}}
+	if err := d.execute(); err != nil {
+		t.Fatalf("execute nested-destination: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "policy", "interceptor", "interceptor.go")); err != nil {
+		t.Fatalf("interceptor.go should land directly under policy/interceptor: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "policy", "interceptor", "interceptorstore", "store.go")); err != nil {
+		t.Fatalf("store.go should land under policy/interceptor/interceptorstore: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "policy", "interceptor", "interceptor", "interceptor.go")); !os.IsNotExist(err) {
+		t.Fatalf("interceptor.go nested one level too deep; stat err=%v", err)
+	}
+}
+
 // End-to-end: a self-prefix move batched with siblings into the same group must
 // land each package at the correct depth. The llmproxy group nests llmproxy ->
 // llmproxy/llmproxy while credrouter -> llmproxy/credrouter; the self-prefix

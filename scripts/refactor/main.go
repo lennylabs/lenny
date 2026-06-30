@@ -312,28 +312,52 @@ func (d *driver) printPlan() {
 	}
 }
 
-// gitMoveOrder returns the moves ordered so every self-prefix move (oldRel is a
-// prefix of newRel, for example llmproxy -> llmproxy/llmproxy) runs its git mv
-// before any other move. A self-prefix move renames pkg/gateway/<old> to a temp
-// and back into pkg/gateway/<old>/<leaf>; if a sibling (credrouter ->
-// llmproxy/credrouter) had already created pkg/gateway/<old>/ by moving in
-// first, the self-prefix step-1 rename would sweep that sibling into the temp
-// directory and land it at the wrong depth (llmproxy/llmproxy/credrouter).
-// Running the self-prefix moves first means the group directory holds only the
-// self-prefix package's own files when it nests, and siblings then move into the
-// freshly created group dir at the correct depth. Order within each partition is
-// preserved (the manifest's longest-first order).
+// gitMoveOrder returns the moves ordered so the git mv sequence never lands a
+// package at the wrong depth. Two destination relationships force the order:
+//
+//   - Self-prefix move (oldRel is a prefix of newRel, for example
+//     llmproxy -> llmproxy/llmproxy): it renames pkg/gateway/<old> to a temp and
+//     back into pkg/gateway/<old>/<leaf>. If a sibling (credrouter ->
+//     llmproxy/credrouter) had already created pkg/gateway/<old>/ by moving in
+//     first, the step-1 rename would sweep the sibling into the temp directory and
+//     land it too deep. Self-prefix moves therefore run first.
+//   - Ancestor destination (one move's new path is a parent of another's, for
+//     example interceptor -> policy/interceptor and interceptorstore ->
+//     policy/interceptor/interceptorstore): if the deeper move runs first it
+//     creates pkg/gateway/policy/interceptor/ as a bare parent, and the ancestor
+//     move (git mv interceptor policy/interceptor) then lands inside that existing
+//     directory at policy/interceptor/interceptor. Ordering the non-self-prefix
+//     moves by ascending new-path depth makes each ancestor directory the product
+//     of its own package's move before any descendant nests under it.
+//
+// Self-prefix moves keep the manifest's incoming order among themselves; the rest
+// sort by ascending new-path segment count, ties broken by the new path so the
+// order is deterministic and re-runnable.
 func gitMoveOrder(moves []rewrite.Move) []rewrite.Move {
-	ordered := make([]rewrite.Move, 0, len(moves))
-	var rest []rewrite.Move
+	var selfPrefix, rest []rewrite.Move
 	for _, m := range moves {
 		if isSelfPrefixMove(rewrite.RepoRel(m.Old), rewrite.RepoRel(m.New)) {
-			ordered = append(ordered, m)
+			selfPrefix = append(selfPrefix, m)
 			continue
 		}
 		rest = append(rest, m)
 	}
-	return append(ordered, rest...)
+	sort.SliceStable(rest, func(i, j int) bool {
+		di := newPathDepth(rest[i].New)
+		dj := newPathDepth(rest[j].New)
+		if di != dj {
+			return di < dj
+		}
+		return rest[i].New < rest[j].New
+	})
+	return append(selfPrefix, rest...)
+}
+
+// newPathDepth returns the number of path segments in a move's repo-relative new
+// path, so a shallower destination (an ancestor directory) sorts before a deeper
+// one that nests under it.
+func newPathDepth(newImport string) int {
+	return strings.Count(rewrite.RepoRel(newImport), "/")
 }
 
 // gitMove moves the package directory from its old repo-relative location to
