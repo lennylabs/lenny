@@ -110,7 +110,7 @@ func TestSSRFCallbackValidation(t *testing.T) {
 			// is rejected even when the MCP URL itself is HTTPS.
 			name: "http-oauth-token-endpoint",
 			body: `{"id":"t9ssrf-http-oauth","mcpServerUrl":"https://ok.example.com/mcp",` +
-				`"auth":{"type":"oauth2","authorizationEndpoint":"https://ok.example.com/authz",` +
+				`"auth":{"type":"oauth2","clientId":"t9ssrf-client","authorizationEndpoint":"https://ok.example.com/authz",` +
 				`"tokenEndpoint":"http://internal.example.com/token"}}`,
 			wantReason: "https",
 		},
@@ -151,7 +151,7 @@ func TestSSRFCallbackValidation(t *testing.T) {
 	// HTTPS check firing.
 	t.Run("https-connector-accepted", func(t *testing.T) {
 		body := fmt.Sprintf(`{"id":%q,"mcpServerUrl":"https://ok.example.com/mcp",`+
-			`"auth":{"type":"oauth2","authorizationEndpoint":"https://ok.example.com/authz",`+
+			`"auth":{"type":"oauth2","clientId":"t9ssrf-client","authorizationEndpoint":"https://ok.example.com/authz",`+
 			`"tokenEndpoint":"https://ok.example.com/token","clientSecretRef":"lenny-system/conn-secret"}}`, httpsOKID)
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/connectors", admin, body)
 		if res.curlExit != 0 {
