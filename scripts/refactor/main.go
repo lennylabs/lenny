@@ -241,7 +241,7 @@ func (d *driver) execute() error {
 // back. It is a separate method so execute's rollback wrapper stays a single
 // error-handling site.
 func (d *driver) applyAndVerify() error {
-	for _, m := range d.moves {
+	for _, m := range gitMoveOrder(d.moves) {
 		if err := d.gitMove(m); err != nil {
 			return fmt.Errorf("git mv %s: %w", m.Old, err)
 		}
@@ -310,6 +310,30 @@ func (d *driver) printPlan() {
 	for _, m := range d.moves {
 		fmt.Printf("  %s -> %s\n", rewrite.RepoRel(m.Old), rewrite.RepoRel(m.New))
 	}
+}
+
+// gitMoveOrder returns the moves ordered so every self-prefix move (oldRel is a
+// prefix of newRel, for example llmproxy -> llmproxy/llmproxy) runs its git mv
+// before any other move. A self-prefix move renames pkg/gateway/<old> to a temp
+// and back into pkg/gateway/<old>/<leaf>; if a sibling (credrouter ->
+// llmproxy/credrouter) had already created pkg/gateway/<old>/ by moving in
+// first, the self-prefix step-1 rename would sweep that sibling into the temp
+// directory and land it at the wrong depth (llmproxy/llmproxy/credrouter).
+// Running the self-prefix moves first means the group directory holds only the
+// self-prefix package's own files when it nests, and siblings then move into the
+// freshly created group dir at the correct depth. Order within each partition is
+// preserved (the manifest's longest-first order).
+func gitMoveOrder(moves []rewrite.Move) []rewrite.Move {
+	ordered := make([]rewrite.Move, 0, len(moves))
+	var rest []rewrite.Move
+	for _, m := range moves {
+		if isSelfPrefixMove(rewrite.RepoRel(m.Old), rewrite.RepoRel(m.New)) {
+			ordered = append(ordered, m)
+			continue
+		}
+		rest = append(rest, m)
+	}
+	return append(ordered, rest...)
 }
 
 // gitMove moves the package directory from its old repo-relative location to

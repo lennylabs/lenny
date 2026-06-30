@@ -65,19 +65,113 @@ func RepoRel(importPath string) string {
 // the rewrite is "limited to import paths and the path references that name
 // them" — a nested-package import is one such reference).
 //
-// The replacement is applied for every move; ordering does not matter because
-// each old literal is boundary-bounded and the new literals never reintroduce an
-// old token in a rewritable position.
+// The replacement is a single pass over the content, classifying each
+// quote-delimited path literal against the ORIGINAL text and never re-scanning
+// rewritten output. A cumulative per-move ReplaceAll would corrupt a sibling
+// when a self-prefix move shares a batch with a move into the same group: for
+// example the policy group moves interceptor -> policy/interceptor and policy ->
+// policy/policy together, and a cumulative "<old>/ -> "<new>/ pass for the
+// policy move would rewrite the already-produced "...policy/interceptor" to
+// "...policy/policy/interceptor". The single-pass longest-old-match below
+// classifies "...policy/interceptor" as the interceptor move's output (already
+// final) and leaves it, so ordering and self-prefix collisions are safe.
 func ImportLiterals(content string, moves []Move) string {
-	for _, m := range moves {
-		// Nested-package form first ("<old>/sub"), then the exact leaf form.
-		// Doing the slash form before the exact form is harmless because the
-		// exact form is quote-bounded and cannot match inside a "<new>/sub"
-		// result.
-		content = strings.ReplaceAll(content, `"`+m.Old+`/`, `"`+m.New+`/`)
-		content = strings.ReplaceAll(content, `"`+m.Old+`"`, `"`+m.New+`"`)
+	return replaceQuotedPaths(content, importOldNew(moves))
+}
+
+// importOldNew projects the moves onto their fully-qualified import paths for
+// the quote-delimited literal rewrite.
+func importOldNew(moves []Move) []oldNew {
+	out := make([]oldNew, len(moves))
+	for i, m := range moves {
+		out[i] = oldNew{old: m.Old, new: m.New}
 	}
-	return content
+	return out
+}
+
+// oldNew is a single old->new path pair the single-pass rewriter matches.
+type oldNew struct {
+	old string
+	new string
+}
+
+// replaceQuotedPaths rewrites every quote-delimited path literal in content in a
+// single pass. For each "..." string literal it extracts the inner token and,
+// if the token equals one pair's old path or nests under it (old + "/" prefix),
+// replaces the matched old prefix with that pair's new path, keeping the
+// remainder (the nested subpackage tail). It matches the LONGEST old path that
+// applies, so a strict-prefix pair (policy vs policy/interceptor's interceptor
+// move) does not shadow a longer one, and because it scans the original content
+// and emits to a fresh builder, a rewritten token is never re-examined. This is
+// the property that makes a self-prefix move safe alongside sibling moves into
+// the same group (proposal §2: the rewrite changes only import paths and the
+// references that name them, without corrupting a sibling).
+func replaceQuotedPaths(content string, pairs []oldNew) string {
+	var b strings.Builder
+	b.Grow(len(content))
+	i := 0
+	for i < len(content) {
+		if content[i] != '"' {
+			b.WriteByte(content[i])
+			i++
+			continue
+		}
+		// Find the closing quote of this string literal, honoring backslash
+		// escapes so an escaped \" inside a JSON value does not close the
+		// literal early (the spec-map carries such values).
+		end := closingQuote(content, i+1)
+		if end < 0 {
+			// Unterminated; emit the rest verbatim.
+			b.WriteString(content[i:])
+			break
+		}
+		token := content[i+1 : end]
+		b.WriteByte('"')
+		b.WriteString(rewriteToken(token, pairs))
+		b.WriteByte('"')
+		i = end + 1
+	}
+	return b.String()
+}
+
+// closingQuote returns the index of the unescaped '"' that closes the string
+// literal whose body starts at start, or -1 when none exists. A '"' preceded by
+// an odd number of backslashes is escaped and does not close the literal.
+func closingQuote(content string, start int) int {
+	for j := start; j < len(content); j++ {
+		if content[j] != '"' {
+			continue
+		}
+		backslashes := 0
+		for k := j - 1; k >= start && content[k] == '\\'; k-- {
+			backslashes++
+		}
+		if backslashes%2 == 0 {
+			return j
+		}
+	}
+	return -1
+}
+
+// rewriteToken returns token with its longest matching old path prefix replaced
+// by the corresponding new path, or token unchanged when no pair matches. A pair
+// matches when token equals old (the exact leaf) or token starts with old + "/"
+// (a nested subpackage). The longest old match wins so a shorter sibling does
+// not shadow a longer one.
+func rewriteToken(token string, pairs []oldNew) string {
+	best := -1
+	for idx, p := range pairs {
+		if token == p.old || strings.HasPrefix(token, p.old+"/") {
+			if best < 0 || len(p.old) > len(pairs[best].old) {
+				best = idx
+			}
+		}
+	}
+	if best < 0 {
+		return token
+	}
+	p := pairs[best]
+	return p.new + token[len(p.old):]
 }
 
 // RuntimePaths rewrites the two runtime repo-relative path forms a Go source
@@ -194,19 +288,28 @@ func commonPrefixLen(a, b []string) int {
 // the replacement never matches inside "P-sibling" or "Plonger". The '/'
 // and "'..." forms collapse to a single "P/ -> Q/ rule because both start
 // with the path followed by a slash.
+//
+// Like ImportLiterals, the rewrite is a single pass that classifies each
+// quoted token against the original text, so a self-prefix move (policy ->
+// policy/policy) does not corrupt a sibling glob already moved into the group
+// (policy/interceptor's "pkg/gateway/policy/interceptor/..." entry stays final).
 func JSONTokens(content string, moves []Move) string {
+	return replaceQuotedPaths(content, jsonOldNew(moves))
+}
+
+// jsonOldNew projects the moves onto their repo-relative paths for the JSON-map
+// token rewrite, skipping no-op moves (oldRel == newRel).
+func jsonOldNew(moves []Move) []oldNew {
+	out := make([]oldNew, 0, len(moves))
 	for _, m := range moves {
 		oldRel := RepoRel(m.Old)
 		newRel := RepoRel(m.New)
 		if oldRel == newRel {
 			continue
 		}
-		// Deeper reference and glob: "P/ -> "Q/ (covers "P/..." and "P/file").
-		content = strings.ReplaceAll(content, `"`+oldRel+`/`, `"`+newRel+`/`)
-		// Exact path: "P" -> "Q" (a bare package key or reference).
-		content = strings.ReplaceAll(content, `"`+oldRel+`"`, `"`+newRel+`"`)
+		out = append(out, oldNew{old: oldRel, new: newRel})
 	}
-	return content
+	return out
 }
 
 // SurvivorClass classifies an occurrence of a pre-move path token by whether

@@ -428,6 +428,59 @@ func TestDriver_GitMoveSelfPrefix(t *testing.T) {
 	}
 }
 
+// gitMoveOrder puts self-prefix moves first so a sibling moving into the group
+// directory cannot be swept into the self-prefix temp directory.
+func TestGitMoveOrder_SelfPrefixFirst(t *testing.T) {
+	moves := []rewrite.Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/credrouter", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/llmproxy", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/proxycache", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/proxycache"},
+	}
+	ordered := gitMoveOrder(moves)
+	if ordered[0].Old != "github.com/lennylabs/lenny/pkg/gateway/llmproxy" {
+		t.Fatalf("self-prefix move must come first; got order %+v", ordered)
+	}
+	if len(ordered) != len(moves) {
+		t.Fatalf("gitMoveOrder dropped a move: %+v", ordered)
+	}
+}
+
+// End-to-end: a self-prefix move batched with siblings into the same group must
+// land each package at the correct depth. The llmproxy group nests llmproxy ->
+// llmproxy/llmproxy while credrouter -> llmproxy/credrouter; the self-prefix
+// package must not swallow the sibling. This is constructed to FAIL against the
+// pre-fix driver, which moved siblings first and landed credrouter under
+// llmproxy/llmproxy/credrouter.
+func TestDriver_SelfPrefixWithSiblings(t *testing.T) {
+	root := initTempRepo(t)
+	writeFile(t, filepath.Join(root, "pkg", "gateway", "llmproxy", "proxy.go"),
+		"package llmproxy\n\nvar Proxy = 1\n")
+	writeFile(t, filepath.Join(root, "pkg", "gateway", "credrouter", "router.go"),
+		"package credrouter\n\nvar Router = 1\n")
+	mustRun(t, root, "git", "add", "-A")
+	mustRun(t, root, "git", "commit", "-q", "-m", "llmproxy+credrouter", "--no-verify")
+
+	moves := []rewrite.Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/credrouter", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/llmproxy", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"},
+	}
+	d := &driver{root: root, moves: moves, cfg: config{skipGates: true, skipAudit: true}}
+	if err := d.execute(); err != nil {
+		t.Fatalf("execute self-prefix-with-siblings: %v", err)
+	}
+
+	// llmproxy's own file nests one level; credrouter sits beside it, NOT under it.
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "llmproxy", "llmproxy", "proxy.go")); err != nil {
+		t.Fatalf("self-prefix package did not nest correctly: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "llmproxy", "credrouter", "router.go")); err != nil {
+		t.Fatalf("sibling credrouter should sit at llmproxy/credrouter: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkg", "gateway", "llmproxy", "llmproxy", "credrouter")); !os.IsNotExist(err) {
+		t.Fatalf("sibling was swept under the self-prefix package; stat err=%v", err)
+	}
+}
+
 func TestDriver_DryRunTouchesNothing(t *testing.T) {
 	root := initTempRepo(t)
 	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{dryRun: true}}

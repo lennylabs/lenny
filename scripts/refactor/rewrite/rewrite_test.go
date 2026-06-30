@@ -62,6 +62,101 @@ func TestImportLiterals_PrefixCollisionDoesNotCorruptSibling(t *testing.T) {
 	}
 }
 
+// self-prefix collision: when a self-prefix move (policy -> policy/policy)
+// shares a batch with sibling moves into the same group (interceptor ->
+// policy/interceptor, ratelimit -> policy/ratelimit), the self-prefix move's
+// "<old>/ -> "<new>/ form must NOT rewrite a sibling already moved under the
+// group. The single-pass rewrite classifies each literal against the original
+// text, so "...policy/interceptor" stays the interceptor move's final output
+// rather than being doubled to "...policy/policy/interceptor". This is
+// constructed to FAIL against the pre-fix cumulative per-move ReplaceAll, which
+// produced the doubled path the policy group's go build gate rejected
+// (pkg/gateway/policy/policy/interceptor).
+func TestImportLiterals_SelfPrefixDoesNotCorruptGroupSibling(t *testing.T) {
+	moves := []Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptorstore", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptor", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/ratelimit", New: "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/policy", New: "github.com/lennylabs/lenny/pkg/gateway/policy/policy"},
+	}
+	src := `import (
+	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+)`
+	got := ImportLiterals(src, moves)
+
+	want := []string{
+		`"github.com/lennylabs/lenny/pkg/gateway/policy/policy"`,
+		`"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"`,
+		`"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/pgstore"`,
+		`"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"`,
+		`"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"`,
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing correctly-rewritten literal %s; got:\n%s", w, got)
+		}
+	}
+	// The doubled corruption the pre-fix produced must be absent.
+	if strings.Contains(got, "policy/policy/interceptor") {
+		t.Errorf("self-prefix move doubled the interceptor sibling; got:\n%s", got)
+	}
+	if strings.Contains(got, "policy/policy/ratelimit") {
+		t.Errorf("self-prefix move doubled the ratelimit sibling; got:\n%s", got)
+	}
+}
+
+// JSON self-prefix collision: the same single-pass safety holds for the JSON
+// map token rewrite, so the policy group's "pkg/gateway/policy/..." glob and the
+// "pkg/gateway/policy/interceptor/..." sibling glob stay distinct.
+func TestJSONTokens_SelfPrefixDoesNotCorruptGroupSibling(t *testing.T) {
+	moves := []Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptor", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/policy", New: "github.com/lennylabs/lenny/pkg/gateway/policy/policy"},
+	}
+	content := `{
+  "a": "pkg/gateway/policy/...",
+  "b": "pkg/gateway/interceptor/...",
+  "c": "pkg/gateway/interceptor/store_test.go::TestX"
+}`
+	got := JSONTokens(content, moves)
+	for _, w := range []string{
+		`"pkg/gateway/policy/policy/..."`,
+		`"pkg/gateway/policy/interceptor/..."`,
+		`"pkg/gateway/policy/interceptor/store_test.go::TestX"`,
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("JSON token rewrite missing %s; got:\n%s", w, got)
+		}
+	}
+	if strings.Contains(got, "policy/policy/interceptor") {
+		t.Errorf("JSON self-prefix doubled the interceptor glob; got:\n%s", got)
+	}
+}
+
+// closing-quote escape handling: a JSON value carrying an escaped quote must not
+// close the literal early, so a path token in a later value still rewrites and
+// the escaped value is preserved byte-for-byte.
+func TestReplaceQuotedPaths_HonorsEscapedQuote(t *testing.T) {
+	moves := []Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/leasestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"},
+	}
+	content := `{
+  "notes": "the value says \"hi\" and continues",
+  "pkg": "pkg/gateway/leasestore/..."
+}`
+	got := JSONTokens(content, moves)
+	if !strings.Contains(got, `"pkg/gateway/storage/leasestore/..."`) {
+		t.Errorf("path token after an escaped-quote value was not rewritten; got:\n%s", got)
+	}
+	if !strings.Contains(got, `\"hi\"`) {
+		t.Errorf("escaped-quote value was not preserved; got:\n%s", got)
+	}
+}
+
 // nested-package import: a package nested under a moved directory (for example
 // "<old>/pgstore") is relocated by git mv with the directory tree, so its
 // importers must be rewritten to the new path. The manifest lists only the
