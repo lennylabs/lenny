@@ -38,7 +38,10 @@
 //	  -manifest <path>   move manifest (default scripts/refactor/manifest)
 //	  -root <path>       repo root (default: the git toplevel)
 //	  -only <old-path>   apply only the move whose old import path equals this
-//	                     (the per-group landing the proposal partitions by)
+//	  -group <name>      apply only the moves whose destination group equals this
+//	                     (the per-group landing the proposal partitions by: the
+//	                     store cluster, the session cluster, and so on, each
+//	                     applied, gated green, and committed before the next)
 //	  -dry-run           parse, plan, and print the moves without touching the tree
 //	  -skip-gates        skip the go build/vet/validate-maps/go list gates
 //	                     (for fast local iteration; never in CI)
@@ -77,6 +80,7 @@ type config struct {
 	manifest  string
 	root      string
 	only      string
+	group     string
 	dryRun    bool
 	skipGates bool
 	skipAudit bool
@@ -87,6 +91,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.manifest, "manifest", "scripts/refactor/manifest", "move manifest path")
 	flag.StringVar(&cfg.root, "root", "", "repo root (default: git toplevel)")
 	flag.StringVar(&cfg.only, "only", "", "apply only the move whose old import path equals this")
+	flag.StringVar(&cfg.group, "group", "", "apply only the moves whose destination group equals this")
 	flag.BoolVar(&cfg.dryRun, "dry-run", false, "plan without touching the tree")
 	flag.BoolVar(&cfg.skipGates, "skip-gates", false, "skip the go build/vet/validate-maps/go list gates")
 	flag.BoolVar(&cfg.skipAudit, "skip-audit", false, "skip the post-move audit")
@@ -118,14 +123,19 @@ func run(cfg config) error {
 			return fmt.Errorf("no manifest move matches -only %q", cfg.only)
 		}
 	}
+	if cfg.group != "" {
+		moves = filterMovesByGroup(moves, cfg.group)
+		if len(moves) == 0 {
+			return fmt.Errorf("no manifest move targets -group %q", cfg.group)
+		}
+	}
 
 	d := &driver{root: root, moves: moves, cfg: cfg}
 	return d.execute()
 }
 
 // filterMoves returns the single move whose old import path equals only, so a
-// per-group landing applies one move at a time (the proposal partitions the
-// manifest so each group move is verified green and committed before the next).
+// single-package landing applies one move at a time.
 func filterMoves(moves []rewrite.Move, only string) []rewrite.Move {
 	for _, m := range moves {
 		if m.Old == only {
@@ -133,6 +143,39 @@ func filterMoves(moves []rewrite.Move, only string) []rewrite.Move {
 		}
 	}
 	return nil
+}
+
+// filterMovesByGroup returns the moves whose destination group equals group, so
+// a per-group landing applies one whole group at a time. The proposal partitions
+// the manifest so each group move (the store cluster, the session cluster, and so
+// on) is applied, gated green, and committed before the next (§2, §4 C3). The
+// group is the first path segment under pkg/gateway/ in the new import path.
+func filterMovesByGroup(moves []rewrite.Move, group string) []rewrite.Move {
+	var out []rewrite.Move
+	for _, m := range moves {
+		if groupOf(m.New) == group {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// groupOf returns the destination group of a move's new import path: the first
+// path segment after pkg/gateway/ (for example
+// .../pkg/gateway/storage/leasestore -> "storage", and
+// .../pkg/gateway/middleware/circuitbreaker/breakerstore -> "middleware"). A new
+// path that does not sit under pkg/gateway/ yields "".
+func groupOf(newImport string) string {
+	rel := rewrite.RepoRel(newImport)
+	const prefix = "pkg/gateway/"
+	if !strings.HasPrefix(rel, prefix) {
+		return ""
+	}
+	tail := rel[len(prefix):]
+	if i := strings.IndexByte(tail, '/'); i >= 0 {
+		return tail[:i]
+	}
+	return tail
 }
 
 // resolveRoot returns the repo root: the -root flag when set, else the git

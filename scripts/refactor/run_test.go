@@ -27,6 +27,51 @@ func TestFilterMoves(t *testing.T) {
 	}
 }
 
+// filterMovesByGroup selects exactly the moves whose destination group matches,
+// the per-group landing unit the proposal partitions the manifest by (§2, §4 C3:
+// "each group move is applied, verified green, and committed before the next").
+// A nested destination (breakerstore -> middleware/circuitbreaker/breakerstore)
+// groups under its first segment ("middleware"), not its leaf.
+func TestFilterMovesByGroupAndGroupOf(t *testing.T) {
+	moves := []rewrite.Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/leasestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/sqlitestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/sqlitestore"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/sessionstore", New: "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/breakerstore", New: "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"},
+	}
+
+	storage := filterMovesByGroup(moves, "storage")
+	if len(storage) != 2 {
+		t.Fatalf("storage group should have 2 moves, got %d: %+v", len(storage), storage)
+	}
+	for _, m := range storage {
+		if groupOf(m.New) != "storage" {
+			t.Errorf("move %s grouped as %q, want storage", m.Old, groupOf(m.New))
+		}
+	}
+
+	if got := filterMovesByGroup(moves, "session"); len(got) != 1 || got[0].Old != "github.com/lennylabs/lenny/pkg/gateway/sessionstore" {
+		t.Fatalf("session group filter returned %+v", got)
+	}
+
+	// A nested destination groups under its first segment, not its leaf.
+	if g := groupOf("github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"); g != "middleware" {
+		t.Fatalf("groupOf(breakerstore dest) = %q, want middleware", g)
+	}
+	if got := filterMovesByGroup(moves, "middleware"); len(got) != 1 {
+		t.Fatalf("middleware group filter returned %+v", got)
+	}
+
+	// An unknown group selects nothing, so run reports the no-match error.
+	if got := filterMovesByGroup(moves, "nope"); len(got) != 0 {
+		t.Fatalf("unknown group should select nothing, got %+v", got)
+	}
+	// A non-gateway destination yields the empty group.
+	if g := groupOf("github.com/lennylabs/lenny/pkg/events"); g != "" {
+		t.Fatalf("groupOf(non-gateway) = %q, want empty", g)
+	}
+}
+
 func TestResolveRoot_ExplicitFlag(t *testing.T) {
 	dir := t.TempDir()
 	got, err := resolveRoot(dir)
@@ -75,6 +120,17 @@ func TestRun_OnlyNoMatchErrors(t *testing.T) {
 	cfg := config{manifest: manifestPath, root: root, only: "github.com/lennylabs/lenny/pkg/gateway/nope", skipGates: true}
 	if err := run(cfg); err == nil || !strings.Contains(err.Error(), "no manifest move matches") {
 		t.Fatalf("expected -only no-match error, got %v", err)
+	}
+}
+
+func TestRun_GroupNoMatchErrors(t *testing.T) {
+	root := initTempRepo(t)
+	manifestPath := filepath.Join(root, "manifest")
+	writeFile(t, manifestPath,
+		"github.com/lennylabs/lenny/pkg/gateway/playground\tgithub.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground\n")
+	cfg := config{manifest: manifestPath, root: root, group: "nope", skipGates: true, skipAudit: true}
+	if err := run(cfg); err == nil || !strings.Contains(err.Error(), "no manifest move targets") {
+		t.Fatalf("expected -group no-match error, got %v", err)
 	}
 }
 
