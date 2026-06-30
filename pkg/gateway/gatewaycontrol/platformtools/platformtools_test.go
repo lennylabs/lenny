@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
