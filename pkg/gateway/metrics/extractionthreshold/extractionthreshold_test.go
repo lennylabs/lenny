@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/extractionthreshold"
 )
 
 // recordingEmitter captures every (subsystem, metric, value) tuple

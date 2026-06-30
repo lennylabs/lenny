@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
 // spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.

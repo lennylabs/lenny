@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
 // spec: §5.1 (injection fail-closed), §15.1 (SERVICE_UNAVAILABLE) —

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
 // spec: §4.6.1 (onPoolExhausted: queue); §16.1 (metric catalog) — the

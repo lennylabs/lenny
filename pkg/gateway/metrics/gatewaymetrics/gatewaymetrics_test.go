@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
 func TestMetricsHandlerExposesRegisteredMetrics(t *testing.T) {

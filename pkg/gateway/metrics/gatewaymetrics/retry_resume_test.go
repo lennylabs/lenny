@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
 // spec: §16.1 catalog — lenny_session_retry_total{failure_class} and

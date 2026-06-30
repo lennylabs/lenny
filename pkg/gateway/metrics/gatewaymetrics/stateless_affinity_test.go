@@ -5,7 +5,7 @@ package gatewaymetrics_test
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/tenantaffinity"
 )
 

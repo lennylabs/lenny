@@ -12,8 +12,8 @@ import (
 
 	"nhooyr.io/websocket"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"

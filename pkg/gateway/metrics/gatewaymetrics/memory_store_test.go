@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
 // TestMemoryStoreMetricsExposed_spec_9_4_F_9_4_1 pins the §9.4 / §16.1

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gcpause"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gcpause"
 )
 
 // fakeSource serves the GCStats values the test prepares.

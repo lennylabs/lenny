@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capacityplanning"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/capacityplanning"
 )
 
 // TestShouldWarnRedisClusterRecommended exercises the §17.8.2 line 1164
