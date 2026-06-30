@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingcheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"

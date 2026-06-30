@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
 // PartialChunkDeleter is the §4.4 line 236 MinIO surface the cleanup

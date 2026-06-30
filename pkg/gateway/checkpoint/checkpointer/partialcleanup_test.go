@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
 // stubChunkDeleter captures every DeleteByPrefix call.
