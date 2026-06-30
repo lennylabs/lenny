@@ -22,7 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	billingpg "github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"

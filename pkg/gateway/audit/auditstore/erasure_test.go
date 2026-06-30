@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 )
 
 // spec: §12.1 line 5 — the EventStore (audit) role interface exposes

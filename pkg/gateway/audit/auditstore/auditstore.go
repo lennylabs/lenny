@@ -35,7 +35,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore/auditbatch"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )

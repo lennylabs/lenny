@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 )
 
 // DefaultPruneInterval is how often the retention sweep runs when no
