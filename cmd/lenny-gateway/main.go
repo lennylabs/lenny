@@ -357,15 +357,6 @@ func runGateway(f *gatewayFlags) {
 	w.runServers()
 }
 
-// startBackgroundWorkers launches the §4.1 gateway's periodic
-// sweepers, samplers, reconcilers, leader-election loops, and
-// security-cache propagator subscribers under the watchdog context.
-// Every component it drives is constructed by an earlier build step and
-// threaded through the accumulator; the step launches goroutines and
-// returns, so the run loop (runServers) can install the signal handler
-// and the listeners. It produces no value the later steps consume.
-//
-// spec: §4.1 — gateway background subsystems; §10.1 / §11.2 / §12.5 sweeps.
 func (l sessionUserLookup) UserID(ctx context.Context, tenantID, sessionID string) (string, bool) {
 	sess, err := l.sessions.Get(ctx, tenantID, sessionID)
 	if err != nil || sess.UserID == "" {

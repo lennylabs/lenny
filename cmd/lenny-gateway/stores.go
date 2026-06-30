@@ -532,30 +532,52 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	w.expectedAuds = expectedAuds
 }
 
+// buildStores constructs the §4.2/§4.4/§4.5 persistence surfaces, the §12.3
+// store router, the §11.2.1 billing pipeline, the §7.1/§10.2/§10.3 signing
+// and verification surfaces, the §17.4 executor, the §4.9 credential
+// assignment service, the §15.1 pod-placement lifecycle, and the §7.2/§7.3
+// session-messaging and per-session shared stores, recording each on the
+// accumulator. It is the persistence-and-credential build step of the §4.1
+// composition root, decomposed into per-concern sub-steps that read and
+// record their cross-step state on the accumulator (proposal 0020 §4 Part A
+// R1; the buildBillingPipeline / buildTokenSigningStores precedent).
+//
+// spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 store
+// router; §4.9 credentials; §15.1 pod placement.
 func (w *gatewayWiring) buildStores() {
+	// checkpointRetention is the only persistence local without an
+	// accumulator field: it is constructed by the §4.4/§12.5 retention step
+	// and consumed only by the §15.1 pod-lifecycle checkpointer, so it is
+	// threaded through an explicit return rather than onto the accumulator.
+	checkpointRetention := w.buildPersistenceStores()
+	w.buildRedisAndQuota()
+	w.buildStoreRouterAndSecurityBus()
+	// spec: §4.1 / §11.2.1 — build the billing failover pipeline. Records
+	// the ledger, pipeline, fan-out emitter, and resolved audit-retention
+	// schedule on the accumulator.
+	w.buildBillingPipeline(w.billing, w.pgPool, w.redisClient, w.concernRedis, w.tenants, w.replica)
+	// spec: §4.1 / §7.1 — build the uploadToken, KMS, and signing/verification
+	// surfaces. Records them on the accumulator.
+	w.buildTokenSigningStores(w.tenants)
+	w.buildExecutorAndCredentials()
+	w.buildPodLifecycle(checkpointRetention)
+	w.buildSessionMessaging()
+}
+
+// buildPersistenceStores constructs the §4.2 session and metadata stores
+// (Postgres, §17.4 embedded SQLite, or in-memory), the §12.3 read-replica /
+// billing-audit / audit-sync pools, the §4.4 partial-manifest, session-log,
+// and §12.5 checkpoint-retention stores, the §4.5/§17.9.3 artifact store and
+// its §12.5 catalog, and the §5 pool store, recording each on the
+// accumulator. It returns the §12.5 checkpoint-retention store, which is
+// consumed only by the §15.1 pod-lifecycle checkpointer.
+//
+// spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 pools;
+// §12.5 catalog.
+func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	f := w.f
-	adapterCA := f.adapterCA
-	adapterKeepaliveTimeMs := f.adapterKeepaliveTimeMs
-	adapterKeepaliveTimeoutMs := f.adapterKeepaliveTimeoutMs
-	adapterTLSCert := f.adapterTLSCert
-	adapterTLSKey := f.adapterTLSKey
-	agentNamespace := f.agentNamespace
-	agentRuntime := f.agentRuntime
 	auditSyncWritePoolSize := f.auditSyncWritePoolSize
 	billingAuditDSN := f.billingAuditDSN
-	capacityTier := f.capacityTier
-	checkpointInterval := f.checkpointInterval
-	checkpointJitterFraction := f.checkpointJitterFraction
-	claimHoldTTLSeconds := f.claimHoldTTLSeconds
-	clusterBurst := f.clusterBurst
-	clusterQPS := f.clusterQPS
-	coordInterval := f.coordInterval
-	evalAggregationRefreshSeconds := f.evalAggregationRefreshSeconds
-	memoryEnabled := f.memoryEnabled
-	memoryMaxPerUser := f.memoryMaxPerUser
-	messagingDurableInbox := f.messagingDurableInbox
-	messagingMaxDLQSize := f.messagingMaxDLQSize
-	messagingMaxInboxSize := f.messagingMaxInboxSize
 	minioAccessKey := f.minioAccessKey
 	minioBucket := f.minioBucket
 	minioEndpoint := f.minioEndpoint
@@ -569,35 +591,7 @@ func (w *gatewayWiring) buildStores() {
 	poolerMode := f.poolerMode
 	postgresDSN := f.postgresDSN
 	readDSN := f.readDSN
-	redisAllowInsecure := f.redisAllowInsecure
-	redisCachePubSubURL := f.redisCachePubSubURL
-	redisClusterAddrs := f.redisClusterAddrs
-	redisCoordinationURL := f.redisCoordinationURL
-	redisDelegationURL := f.redisDelegationURL
-	redisPassword := f.redisPassword
-	redisQuotaURL := f.redisQuotaURL
-	redisSentinelAddrs := f.redisSentinelAddrs
-	redisSentinelMaster := f.redisSentinelMaster
-	redisSentinelPassword := f.redisSentinelPassword
-	redisSessionDataURL := f.redisSessionDataURL
-	redisTLS := f.redisTLS
-	redisURL := f.redisURL
-	runtimeBin := f.runtimeBin
-	saTokenAudience := f.saTokenAudience
-	scatterAggregateTimeoutSeconds := f.scatterAggregateTimeoutSeconds
-	scatterMaxConcurrency := f.scatterMaxConcurrency
-	scatterPerShardTimeoutSeconds := f.scatterPerShardTimeoutSeconds
-	sessionEventReplayBufferDepth := f.sessionEventReplayBufferDepth
-	singleTenantRedisTopology := f.singleTenantRedisTopology
-	slotCounterPostgresFallbackMaxSeconds := f.slotCounterPostgresFallbackMaxSeconds
 	sqlitePath := f.sqlitePath
-	tokenServiceAddr := f.tokenServiceAddr
-	tokenServiceCA := f.tokenServiceCA
-	tokenServiceCert := f.tokenServiceCert
-	tokenServiceKey := f.tokenServiceKey
-	tokenServiceTenant := f.tokenServiceTenant
-	toolApprovalTimeout := f.toolApprovalTimeout
-	treeArchiveCacheEntries := f.treeArchiveCacheEntries
 
 	// ----- Stores -----
 	// session, transcript, tenant, and runtime state is persisted to
@@ -904,6 +898,70 @@ func (w *gatewayWiring) buildStores() {
 		pools = poolpg.New(pgPool)
 	}
 
+	// spec: §4.1 — record the §4.2/§4.4/§4.5 persistence surfaces on the
+	// accumulator for the Redis, router, pod-lifecycle, and messaging steps.
+	w.sessions = sessions
+	w.tenants = tenants
+	w.runtimes = runtimes
+	w.capOverrides = capOverrides
+	w.transcripts = transcripts
+	w.users = users
+	w.connectors = connectors
+	w.billing = billing
+	w.pgPool = pgPool
+	w.readPool = readPool
+	w.billingAuditPool = billingAuditPool
+	w.auditSyncPool = auditSyncPool
+	w.sqliteDB = sqliteDB
+	w.sqliteFlushCancel = sqliteFlushCancel
+	w.partialManifests = partialManifests
+	w.sessionLogs = sessionLogs
+	w.objectStore = objectStore
+	w.minioStore = minioStore
+	w.blobs = blobs
+	w.blobProbe = blobProbe
+	w.artifactCatalog = artifactCatalog
+	w.blobsCataloged = blobsCataloged
+	w.pools = pools
+	return checkpointRetention
+}
+
+// buildRedisAndQuota constructs the §12.4 Redis client and per-concern split,
+// the §11.6 circuit-breaker registry, the §10.1 coordination-lease sweeper
+// and mirror, the §11.2 storage-quota counter and its §12.4 Postgres-fallback
+// recovery reconciler, and the §11.1 Redis-backed rate-limit counter,
+// recording each on the accumulator. Without Redis it records the in-memory
+// breaker registry and leaves the quota and coordination surfaces on their
+// in-memory defaults.
+//
+// spec: §4.1 gateway subsystem seams; §12.4 Redis topology; §11.6 breakers;
+// §10.1 coordination; §11.1/§11.2 quota.
+func (w *gatewayWiring) buildRedisAndQuota() {
+	f := w.f
+	capacityTier := f.capacityTier
+	coordInterval := f.coordInterval
+	redisAllowInsecure := f.redisAllowInsecure
+	redisCachePubSubURL := f.redisCachePubSubURL
+	redisClusterAddrs := f.redisClusterAddrs
+	redisCoordinationURL := f.redisCoordinationURL
+	redisDelegationURL := f.redisDelegationURL
+	redisPassword := f.redisPassword
+	redisQuotaURL := f.redisQuotaURL
+	redisSentinelAddrs := f.redisSentinelAddrs
+	redisSentinelMaster := f.redisSentinelMaster
+	redisSentinelPassword := f.redisSentinelPassword
+	redisSessionDataURL := f.redisSessionDataURL
+	redisTLS := f.redisTLS
+	redisURL := f.redisURL
+	singleTenantRedisTopology := f.singleTenantRedisTopology
+
+	// pgPool, the session/tenant stores, and the artifact catalog were
+	// constructed by buildPersistenceStores and recorded on the accumulator.
+	pgPool := w.pgPool
+	sessions := w.sessions
+	tenants := w.tenants
+	artifactCatalog := w.artifactCatalog
+
 	// Circuit-breaker state goes to Redis when --redis-url is set, so
 	// an operator-opened breaker survives a restart and stays
 	// consistent across replicas (§12.4). The §10.1 session-
@@ -1080,6 +1138,53 @@ func (w *gatewayWiring) buildStores() {
 		breakers = breakerstore.NewMemory()
 	}
 
+	// spec: §4.1 — record the §12.4 Redis surfaces, the §11.6 breaker
+	// registry, the §10.1 coordination sweeper/mirror, and the §11.1/§11.2
+	// quota counters on the accumulator for the router, billing,
+	// pod-lifecycle, and worker steps.
+	w.replica = replica
+	w.redisClient = redisClient
+	w.concernRedis = concernRedis
+	w.breakers = breakers
+	w.breakerCache = breakerCache
+	w.coordinator = coordinator
+	w.coordMirror = coordMirror
+	w.coordFencer = coordFencer
+	w.erasureLeaseStore = erasureLeaseStore
+	w.storageCounter = storageCounter
+	w.storageRecoveryReconciler = storageRecoveryReconciler
+	w.delegationBudgetReconciler = delegationBudgetReconciler
+	w.rateLimiter = rateLimiter
+}
+
+// buildStoreRouterAndSecurityBus constructs the §12.3 R-03 single-shard store
+// router (wrapping the billing ledger), runs the §11.2 storage-quota
+// rehydration from the §12.5 artifact catalog, and constructs the §4.9/§10.3
+// security-cache Redis pub/sub bus, recording each on the accumulator. The
+// router and the bus are built only on the Postgres / Redis paths
+// respectively; an in-memory deployment leaves them nil.
+//
+// spec: §4.1 gateway subsystem seams; §12.3 store router; §11.2 quota
+// rehydration; §4.9/§10.3 security pub/sub.
+func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
+	f := w.f
+	scatterAggregateTimeoutSeconds := f.scatterAggregateTimeoutSeconds
+	scatterMaxConcurrency := f.scatterMaxConcurrency
+	scatterPerShardTimeoutSeconds := f.scatterPerShardTimeoutSeconds
+
+	// The persistence, Redis, and quota surfaces were recorded on the
+	// accumulator by the earlier build steps.
+	pgPool := w.pgPool
+	readPool := w.readPool
+	billingAuditPool := w.billingAuditPool
+	redisClient := w.redisClient
+	concernRedis := w.concernRedis
+	tenants := w.tenants
+	artifactCatalog := w.artifactCatalog
+	blobsCataloged := w.blobsCataloged
+	storageCounter := w.storageCounter
+	billing := w.billing
+
 	// §12.3 R-03 line 144: billing and audit writes route through the
 	// StoreRouter so a future Tier-3 shard split is a router swap with no
 	// billing/audit call-site changes. v1 wires the single-shard router;
@@ -1173,13 +1278,36 @@ func (w *gatewayWiring) buildStores() {
 		log.Printf("lenny-gateway: security caches converge across replicas over Redis pub/sub")
 	}
 
-	// spec: §4.1 / §11.2.1 — build the billing failover pipeline. Records
-	// the ledger, pipeline, fan-out emitter, and resolved audit-retention
-	// schedule on the accumulator.
-	w.buildBillingPipeline(billing, pgPool, redisClient, concernRedis, tenants, replica)
-	// spec: §4.1 / §7.1 — build the uploadToken, KMS, and signing/verification
-	// surfaces. Records them on the accumulator.
-	w.buildTokenSigningStores(tenants)
+	// spec: §4.1 — record the §12.3 router and the §4.9 security bus on the
+	// accumulator. billing is now the router-wrapped ledger the billing
+	// pipeline step reads.
+	w.storeRouter = storeRouter
+	w.scatterRouter = scatterRouter
+	w.billing = billing
+	w.securityBus = securityBus
+}
+
+// buildExecutorAndCredentials constructs the §17.4 executor (echo, subprocess,
+// or pod), the §4.9 upstream-credential cache and lease store, and the §4.9
+// credential-assignment Assigner (the §4.3 Token Service client over mTLS or
+// the in-process Service), recording each on the accumulator.
+//
+// spec: §4.1 gateway subsystem seams; §17.4 executor; §4.9 credentials; §4.3
+// Token Service.
+func (w *gatewayWiring) buildExecutorAndCredentials() {
+	f := w.f
+	agentRuntime := f.agentRuntime
+	runtimeBin := f.runtimeBin
+	tokenServiceAddr := f.tokenServiceAddr
+	tokenServiceCA := f.tokenServiceCA
+	tokenServiceCert := f.tokenServiceCert
+	tokenServiceKey := f.tokenServiceKey
+	tokenServiceTenant := f.tokenServiceTenant
+
+	// pgPool and the §4 KMS provider (recorded by buildTokenSigningStores)
+	// are read back from the accumulator.
+	pgPool := w.pgPool
+
 	// ----- Session API + Executor -----
 	// §17.4 local-dev runtime selection: LENNY_AGENT_RUNTIME=echo forces
 	// the built-in echo executor (zero-credential mode), --runtime-bin /
@@ -1276,6 +1404,60 @@ func (w *gatewayWiring) buildStores() {
 		inProcessAssign = credassign.New(llmLeases, credCache)
 		credAssign = inProcessAssign
 	}
+
+	// spec: §4.1 — record the §17.4 executor and the §4.9 credential
+	// surfaces on the accumulator for the pod-lifecycle, messaging, and
+	// later subsystem steps.
+	w.exec = exec
+	w.credCache = credCache
+	w.llmLeases = llmLeases
+	w.credAssign = credAssign
+	w.inProcessAssign = inProcessAssign
+	w.tokenServiceConn = tokenServiceConn
+	w.secretProber = secretProber
+	w.tokenServiceSubsystem = tokenServiceSubsystem
+}
+
+// buildPodLifecycle constructs the §15.1 pod-placement surfaces when
+// --agent-namespace is set: the cluster client, the §25.3 apiserver health
+// probe, the §10.2 SA-token verifier, the §5.2 slot counter, the §3.2/§3.4
+// reserved-hold and recycle-boundary coordinators, the §4.7 pod binder, the
+// §4.6.1 Postgres-backed fallback claim, the §4.4/§12.5 checkpointer, and the
+// §7.1 seal-and-export sealer, recording each on the accumulator. Without
+// --agent-namespace every field stays nil and the in-process / subprocess
+// executor recorded by buildExecutorAndCredentials remains in force.
+//
+// checkpointRetention is threaded in by buildStores because it has no
+// accumulator field and is consumed only by the checkpointer built here.
+//
+// spec: §4.1 gateway subsystem seams; §15.1 pod placement; §4.7 binder;
+// §5.2 slot counter; §3.2/§3.4 recycle.
+func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretention.Store) {
+	f := w.f
+	adapterCA := f.adapterCA
+	adapterKeepaliveTimeMs := f.adapterKeepaliveTimeMs
+	adapterKeepaliveTimeoutMs := f.adapterKeepaliveTimeoutMs
+	adapterTLSCert := f.adapterTLSCert
+	adapterTLSKey := f.adapterTLSKey
+	agentNamespace := f.agentNamespace
+	checkpointInterval := f.checkpointInterval
+	checkpointJitterFraction := f.checkpointJitterFraction
+	claimHoldTTLSeconds := f.claimHoldTTLSeconds
+	clusterBurst := f.clusterBurst
+	clusterQPS := f.clusterQPS
+	saTokenAudience := f.saTokenAudience
+	slotCounterPostgresFallbackMaxSeconds := f.slotCounterPostgresFallbackMaxSeconds
+
+	// The stores, Redis client, executor, credential assigner, and pool
+	// store were recorded on the accumulator by the earlier build steps.
+	pgPool := w.pgPool
+	redisClient := w.redisClient
+	concernRedis := w.concernRedis
+	sessions := w.sessions
+	pools := w.pools
+	blobs := w.blobs
+	credAssign := w.credAssign
+	exec := w.exec
 
 	// §15.1 pod placement: with --agent-namespace the gateway claims a
 	// §5 warm pod for each started session and dispatches its messages
@@ -1519,6 +1701,51 @@ func (w *gatewayWiring) buildStores() {
 		sessionSealer = checkpointSvc
 	}
 
+	// spec: §4.1 — record the §15.1 pod-placement surfaces (and the
+	// pod-executor that replaced the dev executor) on the accumulator for
+	// the messaging step and the later subsystem and worker steps.
+	w.exec = exec
+	w.podBinder = podBinder
+	w.podRegistry = podRegistry
+	w.checkpointSvc = checkpointSvc
+	w.holdCoordinator = holdCoordinator
+	w.recycleBoundary = recycleBoundary
+	w.clusterClient = clusterClient
+	w.kubeHealthzProbe = kubeHealthzProbe
+	w.saTokenVerifier = saTokenVerifier
+	w.sessionSealer = sessionSealer
+}
+
+// buildSessionMessaging constructs the §7.3 session-event bus (with its
+// §12.3.7 cross-replica relay and §7.3 durable last_seq hooks), the §7.2
+// session inbox and DLQ coordinator, the §8.10 tree archive, the §8.2 tree
+// budget reserver, the §9.2 interaction store, the §7.2 tool-approval gate
+// registry, the §10.7 eval store, the §10.7 experiment store, and the §9.4
+// memory store, recording each on the accumulator.
+//
+// spec: §4.1 gateway subsystem seams; §7.2/§7.3 messaging; §8.10 tree
+// archive; §8.2 tree budget; §9.2 interactions; §9.4 memory; §10.7 evals.
+func (w *gatewayWiring) buildSessionMessaging() {
+	f := w.f
+	evalAggregationRefreshSeconds := f.evalAggregationRefreshSeconds
+	memoryEnabled := f.memoryEnabled
+	memoryMaxPerUser := f.memoryMaxPerUser
+	messagingDurableInbox := f.messagingDurableInbox
+	messagingMaxDLQSize := f.messagingMaxDLQSize
+	messagingMaxInboxSize := f.messagingMaxInboxSize
+	sessionEventReplayBufferDepth := f.sessionEventReplayBufferDepth
+	toolApprovalTimeout := f.toolApprovalTimeout
+	treeArchiveCacheEntries := f.treeArchiveCacheEntries
+
+	// The stores, Redis client, and executor were recorded on the
+	// accumulator by the earlier build steps.
+	pgPool := w.pgPool
+	readPool := w.readPool
+	redisClient := w.redisClient
+	concernRedis := w.concernRedis
+	sessions := w.sessions
+	exec := w.exec
+
 	// spec: §10.4 line 389 — replay buffer depth is operator-tunable
 	// via gateway.sessionEventReplayBufferDepth. F-10.4.5.
 	eventBus := sessionevents.NewBus(*sessionEventReplayBufferDepth)
@@ -1678,79 +1905,23 @@ func (w *gatewayWiring) buildStores() {
 		}
 	}
 
-	// ----- §16.1 Prometheus metrics -----
-
-	// spec: §4.1 — record the constructed stores, clients, and signing
-	// surfaces on the accumulator so the later build steps and the run
-	// loop read them. Each field is the local this step produced.
-	w.artifactCatalog = artifactCatalog
-	w.auditSyncPool = auditSyncPool
-	w.billingAuditPool = billingAuditPool
-	w.blobProbe = blobProbe
-	w.blobs = blobs
-	w.blobsCataloged = blobsCataloged
-	w.breakerCache = breakerCache
-	w.breakers = breakers
-	w.capOverrides = capOverrides
-	w.checkpointSvc = checkpointSvc
-	w.clusterClient = clusterClient
-	w.concernRedis = concernRedis
-	w.connectors = connectors
-	w.coordFencer = coordFencer
-	w.coordinator = coordinator
-	w.coordMirror = coordMirror
-	w.credAssign = credAssign
-	w.credCache = credCache
-	w.delegationBudgetReconciler = delegationBudgetReconciler
-	w.erasureLeaseStore = erasureLeaseStore
-	w.evalMatviewEnabled = evalMatviewEnabled
-	w.evals = evals
+	// spec: §4.1 — record the §7.2/§7.3 messaging surfaces and the §8.10 /
+	// §8.2 / §9.2 / §9.4 / §10.7 per-session shared stores on the
+	// accumulator for the §16.1 metrics step and the later subsystem,
+	// admin, and worker steps. Each field is the local this step produced.
 	w.eventBus = eventBus
-	w.exec = exec
-	w.experiments = experiments
-	w.holdCoordinator = holdCoordinator
+	w.messagingCoord = messagingCoord
+	w.treeArchive = treeArchive
+	w.treeBudgetReserver = treeBudgetReserver
 	w.hwmReader = hwmReader
-	w.inProcessAssign = inProcessAssign
+	w.treeBudgetConcrete = treeBudgetConcrete
 	w.interactions = interactions
-	w.kubeHealthzProbe = kubeHealthzProbe
-	w.llmLeases = llmLeases
+	w.toolApprovalWaits = toolApprovalWaits
+	w.evals = evals
+	w.evalMatviewEnabled = evalMatviewEnabled
+	w.experiments = experiments
 	w.memories = memories
 	w.memoryBackendLabel = memoryBackendLabel
-	w.messagingCoord = messagingCoord
-	w.minioStore = minioStore
-	w.objectStore = objectStore
-	w.partialManifests = partialManifests
-	w.pgPool = pgPool
-	w.podBinder = podBinder
-	w.podRegistry = podRegistry
-	w.pools = pools
-	w.rateLimiter = rateLimiter
-	w.readPool = readPool
-	w.recycleBoundary = recycleBoundary
-	w.redisClient = redisClient
-	w.replica = replica
-	w.runtimes = runtimes
-	w.saTokenVerifier = saTokenVerifier
-	w.scatterRouter = scatterRouter
-	w.secretProber = secretProber
-	w.securityBus = securityBus
-	w.sessionLogs = sessionLogs
-	w.sessions = sessions
-	w.sessionSealer = sessionSealer
-	w.sqliteDB = sqliteDB
-	w.sqliteFlushCancel = sqliteFlushCancel
-	w.storageCounter = storageCounter
-	w.storageRecoveryReconciler = storageRecoveryReconciler
-	w.storeRouter = storeRouter
-	w.tenants = tenants
-	w.tokenServiceConn = tokenServiceConn
-	w.tokenServiceSubsystem = tokenServiceSubsystem
-	w.toolApprovalWaits = toolApprovalWaits
-	w.transcripts = transcripts
-	w.treeArchive = treeArchive
-	w.treeBudgetConcrete = treeBudgetConcrete
-	w.treeBudgetReserver = treeBudgetReserver
-	w.users = users
 }
 
 // runServers registers the §25.13 in-process alert tracker, installs the

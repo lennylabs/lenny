@@ -53,6 +53,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
+// startBackgroundWorkers launches the §4.1 gateway's periodic
+// sweepers, samplers, reconcilers, leader-election loops, and
+// security-cache propagator subscribers under the watchdog context.
+// Every component it drives is constructed by an earlier build step and
+// threaded through the accumulator; the step launches goroutines and
+// returns, so the run loop (runServers) can install the signal handler
+// and the listeners. It produces no value the later steps consume.
+//
+// spec: §4.1 — gateway background subsystems; §10.1 / §11.2 / §12.5 sweeps.
 func (w *gatewayWiring) startBackgroundWorkers() {
 	f := w.f
 	agentNamespace := f.agentNamespace

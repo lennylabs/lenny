@@ -13,7 +13,9 @@ package main
 //
 //   - stores.go: the §4.2/§4.4/§4.5 persistence and §4.3/§10.2/§10.3
 //     credential/signing surfaces (buildStores and its per-concern sub-steps
-//     buildBillingPipeline and buildTokenSigningStores).
+//     buildPersistenceStores, buildRedisAndQuota, buildStoreRouterAndSecurityBus,
+//     buildBillingPipeline, buildTokenSigningStores, buildExecutorAndCredentials,
+//     buildPodLifecycle, and buildSessionMessaging).
 //   - policychain.go: the §4.8 policy interceptor chain and the §11.2/§12.4
 //     quota surfaces (buildPolicyChain).
 //   - sessionsrv.go: the §4.2 session server, which realizes the §4.1 Stream
