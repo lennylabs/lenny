@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 )
 
 func bedrockTranslator() *llmproxy.AWSBedrockTranslator {

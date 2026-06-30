@@ -19,7 +19,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy/semanticcache"
 )
 
 // PoolGetter resolves a pool by (tenant, name) for its §4.9 CachePolicy

@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 )
 
 // recordingRotator captures the §4.9 Fallback Flow replacement rotations
