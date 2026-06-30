@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )
@@ -496,5 +498,142 @@ func TestConfirmLegalHoldLedgerRequiresPlatformAdmin_spec_25_11_3897(t *testing.
 	srv.ServeHTTP(adminRec, adminReq)
 	if adminRec.Code != http.StatusAccepted {
 		t.Fatalf("platform-admin status = %d, want 202\nbody: %s", adminRec.Code, adminRec.Body.String())
+	}
+}
+
+// newAuditingBackupServer builds an opsserver whose BackupService routes
+// every audit event to the returned captured-events accessor, so a test
+// can assert the §25.1/§25.2 operationId field reaches the audit trail.
+func newAuditingBackupServer(t *testing.T) (*opsserver.Server, *backup.Service, *backup.MemStore, func() []backup.AuditEvent) {
+	t.Helper()
+	store := backup.NewMemStore()
+	var mu sync.Mutex
+	var events []backup.AuditEvent
+	svc, err := backup.NewService(backup.Config{
+		Store:           store,
+		Launcher:        backup.NewFakeLauncher(),
+		Locker:          backup.NewMemLocker(),
+		PlatformVersion: "1.5.0",
+		SchemaVersion:   42,
+		Now:             func() time.Time { return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC) },
+		Audit: func(ev backup.AuditEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, ev)
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	srv := opsserver.New(opsserver.Options{Backups: svc, Production: false})
+	captured := func() []backup.AuditEvent {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]backup.AuditEvent(nil), events...)
+	}
+	return srv, svc, store, captured
+}
+
+// auditEventOfType returns the first captured audit event of the given
+// type, or fails the test when none was emitted.
+func auditEventOfType(t *testing.T, events []backup.AuditEvent, eventType string) backup.AuditEvent {
+	t.Helper()
+	for _, ev := range events {
+		if ev.Type == eventType {
+			return ev
+		}
+	}
+	t.Fatalf("no %s audit event among %d captured events", eventType, len(events))
+	return backup.AuditEvent{}
+}
+
+// spec: §25.1 line 121 (operationId on every request audit event),
+// §25.2 line 350 (operationId propagated to audit events).
+// diagnosis: handleCreateBackup did not propagate the caller
+// X-Lenny-Operation-ID onto the BackupRequest, so the §25.17 watchdog
+// operation correlation never reached the backup row or the
+// backup.created audit event. A failure means the create handler drops
+// the caller operationId again.
+func TestCreateBackupPropagatesOperationID_spec_25_1_121(t *testing.T) {
+	srv, _, store, captured := newAuditingBackupServer(t)
+	const opID = "550e8400-e29b-41d4-a716-446655440000"
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/backups",
+		strings.NewReader(`{"type":"postgres"}`))
+	req.Header.Set("X-Lenny-Operation-ID", opID)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202\nbody: %s", rec.Code, rec.Body.String())
+	}
+
+	// The persisted backup row carries the caller operationId.
+	rows, err := store.ListBackups(context.Background(), backup.BackupFilter{})
+	if err != nil {
+		t.Fatalf("ListBackups: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("listed %d backups, want 1", len(rows))
+	}
+	if rows[0].OperationID != opID {
+		t.Errorf("backup row operationId = %q, want %q", rows[0].OperationID, opID)
+	}
+
+	// The backup.created audit event carries the caller operationId.
+	ev := auditEventOfType(t, captured(), string(audit.EventBackupCreated))
+	if got := ev.Fields["operationId"]; got != opID {
+		t.Errorf("backup.created audit operationId = %v, want %q", got, opID)
+	}
+}
+
+// spec: §25.1 line 121 (operationId on every request audit event),
+// §25.2 line 350 (operationId propagated to audit events).
+// diagnosis: handleRestoreExecute did not propagate the caller
+// X-Lenny-Operation-ID onto the RestoreRequest, so the §25.17 watchdog
+// operation correlation never reached the ops_restore_state row or the
+// restore.started audit event. A failure means the restore handler drops
+// the caller operationId again.
+func TestRestoreExecutePropagatesOperationID_spec_25_1_121(t *testing.T) {
+	srv, svc, store, captured := newAuditingBackupServer(t)
+	ctx := context.Background()
+	const opID = "550e8400-e29b-41d4-a716-446655440001"
+
+	b, err := svc.CreateBackup(ctx, backup.BackupRequest{Type: "full"})
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	completed := time.Date(2026, 5, 18, 11, 0, 0, 0, time.UTC)
+	b.Status = backup.StatusCompleted
+	b.CompletedAt = &completed
+	if err := store.UpdateBackup(ctx, *b); err != nil {
+		t.Fatalf("UpdateBackup: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/restore/execute",
+		strings.NewReader(`{"backupId":"`+b.ID+`","confirm":true,"acknowledgeDataLoss":true}`))
+	req.Header.Set("X-Lenny-Operation-ID", opID)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202\nbody: %s", rec.Code, rec.Body.String())
+	}
+	var result backup.RestoreResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// The persisted restore-state row carries the caller operationId.
+	state, err := store.GetRestore(ctx, result.RestoreID)
+	if err != nil {
+		t.Fatalf("GetRestore: %v", err)
+	}
+	if state.OperationID != opID {
+		t.Errorf("restore-state operationId = %q, want %q", state.OperationID, opID)
+	}
+
+	// The restore.started audit event carries the caller operationId.
+	ev := auditEventOfType(t, captured(), string(audit.EventRestoreStarted))
+	if got := ev.Fields["operationId"]; got != opID {
+		t.Errorf("restore.started audit operationId = %v, want %q", got, opID)
 	}
 }

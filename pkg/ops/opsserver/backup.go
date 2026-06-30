@@ -138,10 +138,11 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, err := s.backups.CreateBackup(r.Context(), backup.BackupRequest{
-		Type:       body.Type,
-		Confirm:    body.Confirm,
-		StartedBy:  callerIdentity(r),
-		Production: s.production,
+		Type:        body.Type,
+		Confirm:     body.Confirm,
+		StartedBy:   callerIdentity(r),
+		OperationID: callerOperationID(r),
+		Production:  s.production,
 	})
 	if err != nil {
 		writeBackupError(w, err)
@@ -353,6 +354,7 @@ func (s *Server) handleRestoreExecute(w http.ResponseWriter, r *http.Request) {
 		Confirm:             body.Confirm,
 		AcknowledgeDataLoss: body.AcknowledgeDataLoss,
 		StartedBy:           callerIdentity(r),
+		OperationID:         callerOperationID(r),
 	})
 	if err != nil {
 		writeBackupError(w, err)
