@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/carotationstore"
+	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
 	"github.com/lennylabs/lenny/pkg/mtls"
 )
 

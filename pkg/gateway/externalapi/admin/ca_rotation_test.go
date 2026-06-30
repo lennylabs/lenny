@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/carotation"
-	"github.com/lennylabs/lenny/pkg/gateway/carotationstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/pki/carotation"
+	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
 )
 
 // movableClock is a test clock the CA-rotation suite advances to

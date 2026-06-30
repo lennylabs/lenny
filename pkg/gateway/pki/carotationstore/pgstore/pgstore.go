@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/carotationstore"
+	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
 )
 
 // singletonID is the constant primary key for the lone ca_rotation row.

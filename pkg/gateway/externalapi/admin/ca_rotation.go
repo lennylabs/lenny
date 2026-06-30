@@ -8,8 +8,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/carotation"
-	"github.com/lennylabs/lenny/pkg/gateway/carotationstore"
+	"github.com/lennylabs/lenny/pkg/gateway/pki/carotation"
+	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
 	"github.com/lennylabs/lenny/pkg/mtls"
 )
 
