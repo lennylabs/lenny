@@ -245,6 +245,63 @@ func TestClassifyGo_InformationalStringWarns(t *testing.T) {
 	}
 }
 
+// warn-vs-abort: the §4 C4-named canonical informational-string form places the
+// path token immediately after the opening quote with a trailing space (the real
+// t.Log strings in tests/tier2_component/gateway_subsystems/scaffolds_test.go and
+// tests/tier4_integration/scaffolds_test.go). Pass 4 names these as the residual
+// drift the audit must record as a non-fatal Warn. The byte before the token is
+// the opening quote, so the abort forms ("<P>/ and "<P>") miss (a space, not / or
+// ", follows) and the classification must be Warn rather than None. These are the
+// real strings from the named files, pinned verbatim.
+func TestClassifyGo_QuoteThenSpaceInformationalStringWarns(t *testing.T) {
+	cases := []struct {
+		name    string
+		old     string
+		content string
+	}{
+		{
+			name:    "scaffolds mcptools",
+			old:     "github.com/lennylabs/lenny/pkg/gateway/mcptools",
+			content: `"pkg/gateway/mcptools unit suites."`,
+		},
+		{
+			name:    "scaffolds breakerstore",
+			old:     "github.com/lennylabs/lenny/pkg/gateway/breakerstore",
+			content: `"pkg/gateway/breakerstore Redis-backed contract suite."`,
+		},
+		{
+			name:    "scaffolds mcpruntimes",
+			old:     "github.com/lennylabs/lenny/pkg/gateway/mcpruntimes",
+			content: `"pkg/gateway/mcpruntimes and covered by its unit tests."`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := Move{Old: c.old, New: c.old + "/moved"}
+			if got := ClassifyGo(c.content, m); got != Warn {
+				t.Errorf("quote-then-space informational string %q must warn, got %v", c.content, got)
+			}
+		})
+	}
+}
+
+// warn-vs-abort: relaxing hasBoundedToken to "one side a comment boundary" must
+// still reject a new path that carries the old path as a prefix, so the
+// quote-then-space relaxation does not re-flag the moved package's own new path.
+// pkg/gateway/mcp is a prefix of pkg/gateway/mcpfabric/mcp; the byte after the
+// inner occurrence is a path-continuation letter, so it must not classify Warn.
+func TestClassifyGo_PrefixInNewPathNotWarned(t *testing.T) {
+	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcp", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"}
+	// An informational string naming ONLY the new path (post-rewrite). The old
+	// token pkg/gateway/mcp is a prefix substring of pkg/gateway/mcpfabric/mcp,
+	// but the trailing slash-delimited final segment is mcp under a continuation,
+	// so neither occurrence is a standalone old-path token.
+	content := `"the pkg/gateway/mcpfabric/mcp package handles schema."`
+	if got := ClassifyGo(content, m); got != None {
+		t.Errorf("new path carrying old path as prefix must classify None, got %v", got)
+	}
+}
+
 // warn-vs-abort: a file that, after rewrite, carries neither form returns None.
 func TestClassifyGo_NoneWhenAbsent(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/auditstore", New: "github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"}

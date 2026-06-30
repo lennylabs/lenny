@@ -51,6 +51,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/refactor/rewrite"
@@ -147,6 +148,13 @@ type driver struct {
 	root  string
 	moves []rewrite.Move
 	cfg   config
+
+	// touchedGo is the set of absolute *.go paths the rewrite actually modified.
+	// formatTree runs gofmt/goimports over exactly this set so the format pass is
+	// scoped to "the touched files" (proposal §2 step (4)) and does not reformat
+	// any untouched, non-canonical file under pkg/cmd/tests (§5 non-goal: no
+	// reformatting outside the change).
+	touchedGo map[string]struct{}
 }
 
 func (d *driver) execute() error {
@@ -264,7 +272,9 @@ func (d *driver) rewriteJSONMaps() error {
 }
 
 // rewriteFile reads path, applies fn, and writes the result back only when it
-// changed, preserving the file mode.
+// changed, preserving the file mode. A changed *.go file is recorded in
+// touchedGo so the format pass can be scoped to exactly the files the rewrite
+// modified (proposal §2 step (4)).
 func (d *driver) rewriteFile(path string, fn func(string) string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -278,16 +288,30 @@ func (d *driver) rewriteFile(path string, fn func(string) string) error {
 	if out == string(raw) {
 		return nil
 	}
+	if strings.HasSuffix(path, ".go") {
+		d.recordTouchedGo(path)
+	}
 	return os.WriteFile(path, []byte(out), info.Mode())
 }
 
-// formatTree runs gofmt -w then goimports -w over the touched Go trees to
-// regroup imports. goimports is resolved by PATH then GOPATH/bin and skipped
+// recordTouchedGo adds an absolute *.go path to the set the format pass scopes
+// to, lazily initializing the set.
+func (d *driver) recordTouchedGo(path string) {
+	if d.touchedGo == nil {
+		d.touchedGo = make(map[string]struct{})
+	}
+	d.touchedGo[path] = struct{}{}
+}
+
+// formatTree runs gofmt -w then goimports -w over exactly the *.go files the
+// rewrite modified, so the format pass regroups imports only in the files the
+// move already touched (proposal §2 step (4), §5 non-goal: no reformatting
+// outside the change). goimports is resolved by PATH then GOPATH/bin and skipped
 // with a warning when absent (matching the lenny-test tier-0 behavior), because
 // gofmt alone leaves correct, compilable code and the import regrouping is
 // cosmetic; the build gate still proves correctness.
 func (d *driver) formatTree() error {
-	targets := d.existingTargets("pkg", "cmd", "tests")
+	targets := d.touchedGoFiles()
 	if len(targets) == 0 {
 		return nil
 	}
@@ -306,16 +330,15 @@ func (d *driver) formatTree() error {
 	return nil
 }
 
-// existingTargets returns the repo-relative directory names from rels that exist
-// under the root, so the formatter skips a directory absent from a partial tree
-// (a test fixture, or a tree without cmd/).
-func (d *driver) existingTargets(rels ...string) []string {
-	var out []string
-	for _, rel := range rels {
-		if info, err := os.Stat(filepath.Join(d.root, rel)); err == nil && info.IsDir() {
-			out = append(out, rel)
-		}
+// touchedGoFiles returns the sorted absolute paths the rewrite modified, the set
+// the format pass is scoped to. Sorting makes the gofmt/goimports invocation
+// deterministic for an auditable, reproducible run.
+func (d *driver) touchedGoFiles() []string {
+	out := make([]string, 0, len(d.touchedGo))
+	for p := range d.touchedGo {
+		out = append(out, p)
 	}
+	sort.Strings(out)
 	return out
 }
 

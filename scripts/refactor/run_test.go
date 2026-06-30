@@ -100,13 +100,45 @@ func TestRunGoGates_PassAndFail(t *testing.T) {
 	}
 }
 
-func TestExistingTargets(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package x\n")
-	writeFile(t, filepath.Join(root, "tests", "y.go"), "package y\n")
-	d := &driver{root: root}
-	got := d.existingTargets("pkg", "cmd", "tests")
-	if len(got) != 2 || got[0] != "pkg" || got[1] != "tests" {
-		t.Fatalf("existingTargets = %v, want [pkg tests]", got)
+// The format pass is scoped to exactly the *.go files the rewrite modified
+// (proposal §2 step (4), §5 non-goal: no reformatting outside the change). Drive
+// the tree rewrite over a repo holding one importer of the moved package and one
+// untouched file that names no moved path, then assert touchedGoFiles lists only
+// the importer (and the moved package's own files when their content changed),
+// never the untouched file. This pins the corrected scope so a regression back to
+// formatting whole pkg/cmd/tests trees fails here.
+func TestTouchedGoFilesScopedToRewrittenFiles(t *testing.T) {
+	root := initTempRepo(t)
+	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: true, skipAudit: true}}
+
+	// An untouched Go file that names no moved path; it must never be formatted.
+	untouched := filepath.Join(root, "pkg", "untouched", "untouched.go")
+	writeFile(t, untouched, "package untouched\n\nvar Y = 2\n")
+	mustRun(t, root, "git", "add", "-A")
+	mustRun(t, root, "git", "commit", "-q", "-m", "untouched", "--no-verify")
+
+	if err := d.gitMove(testModuleMove()); err != nil {
+		t.Fatalf("gitMove: %v", err)
+	}
+	if err := d.rewriteTree(); err != nil {
+		t.Fatalf("rewriteTree: %v", err)
+	}
+
+	touched := d.touchedGoFiles()
+	consumer := filepath.Join(root, "pkg", "consumer", "consumer.go")
+	var sawConsumer, sawUntouched bool
+	for _, p := range touched {
+		if p == consumer {
+			sawConsumer = true
+		}
+		if p == untouched {
+			sawUntouched = true
+		}
+	}
+	if !sawConsumer {
+		t.Errorf("consumer.go (rewritten) should be in the touched set; got %v", touched)
+	}
+	if sawUntouched {
+		t.Errorf("untouched.go must not be in the format set; got %v", touched)
 	}
 }

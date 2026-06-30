@@ -283,11 +283,22 @@ func hasSplitSegmentRun(content, oldRel string) bool {
 	return false
 }
 
-// hasBoundedToken reports whether oldRel appears bounded by a non-quote,
-// non-slash delimiter — a space, start/end of content, or one of ( ) . ; , : —
-// which is the comment or informational-string form the driver cannot rewrite.
-// It deliberately excludes a leading '"' or a trailing '/' or '"' so it does not
-// re-flag a driver-rewritable occurrence as a warning.
+// hasBoundedToken reports whether oldRel appears as a standalone path token the
+// driver cannot rewrite — the comment or informational-string form (proposal §4
+// C4, Pass 4). A token qualifies when at least one side is a comment boundary (a
+// space, start/end of content, or one of ( ) . ; , :) and neither side is a
+// path-continuation character that would make this a longer path token. A '"' or
+// '/' on a side is accepted as a boundary only when the other side is a comment
+// boundary, because the driver-rewritable forms ("<oldRel>/ and "<oldRel>") are
+// already classified Abort by ClassifyGo before this runs, so the only surviving
+// quote-adjacent occurrences are informational strings such as the
+// scaffolds_test.go skip and error messages, where the token sits immediately
+// after the opening quote with a trailing space (for example
+// "pkg/gateway/mcptools unit suites."). Requiring a comment boundary on at least
+// one side rather than both sides catches those named cases while the
+// path-continuation rejection (an alphanumeric, '-', or '_' adjoining the token)
+// keeps a new path that carries the old path as a prefix (pkg/gateway/mcp inside
+// pkg/gateway/mcpfabric/mcp) from matching.
 func hasBoundedToken(content, oldRel string) bool {
 	idx := 0
 	for {
@@ -305,16 +316,48 @@ func hasBoundedToken(content, oldRel string) bool {
 		if afterPos < len(content) {
 			after = content[afterPos]
 		}
-		if isCommentBoundary(before) && isCommentBoundary(after) {
+		if isStandaloneToken(before, after) {
 			return true
 		}
 		idx = pos + len(oldRel)
 	}
 }
 
+// isStandaloneToken reports whether a token bounded on its left by before and on
+// its right by after is a standalone prose path token rather than a fragment of a
+// longer path. It requires a comment boundary on at least one side and that
+// neither side continues the path (an alphanumeric, '-', or '_'). The relaxation
+// from "both sides a comment boundary" to "at least one side" is what classifies
+// the §4 C4-named informational strings — the token right after an opening quote
+// with a trailing space — as the Warn case the proposal builds the audit to
+// record.
+func isStandaloneToken(before, after byte) bool {
+	if isPathContinuation(before) || isPathContinuation(after) {
+		return false
+	}
+	return isCommentBoundary(before) || isCommentBoundary(after)
+}
+
+// isPathContinuation reports whether b extends a path token, so an occurrence of
+// the old path immediately followed (or preceded) by such a byte is part of a
+// longer path (for example pkg/gateway/mcp inside pkg/gateway/mcpfabric/mcp) and
+// is not a standalone reference to the moved package.
+func isPathContinuation(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '-' || b == '_':
+		return true
+	default:
+		return false
+	}
+}
+
 // isCommentBoundary reports whether b delimits a path token in prose rather
-// than in a Go string literal or a slash-joined path. A '"' or '/' marks a
-// driver-rewritable form and is excluded.
+// than in a Go string literal or a slash-joined path. A '"' or '/' is not a
+// comment boundary: the driver-rewritable forms anchored on those bytes are
+// classified Abort before hasBoundedToken runs, so treating them as a boundary
+// here would re-flag a rewritable occurrence as a warning.
 func isCommentBoundary(b byte) bool {
 	switch b {
 	case '"', '/':
