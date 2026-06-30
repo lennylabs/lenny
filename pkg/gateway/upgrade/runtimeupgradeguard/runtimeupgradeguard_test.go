@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradeguard"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
 
 // spec: §10.5 line 508 — GET /internal/runtime-upgrade/active reports

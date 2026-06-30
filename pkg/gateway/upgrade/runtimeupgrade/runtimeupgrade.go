@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 	"github.com/lennylabs/lenny/pkg/runtime/upgrade/state"
 )
 

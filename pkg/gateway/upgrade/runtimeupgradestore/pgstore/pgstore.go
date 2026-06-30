@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
 
 // Store is the Postgres-backed RuntimeUpgrade registry. Construct with New.

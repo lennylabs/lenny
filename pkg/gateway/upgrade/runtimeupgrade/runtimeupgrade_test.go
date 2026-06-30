@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
 
 // fakePool is a runtimeupgrade.PoolReader whose pools and spec are fixed

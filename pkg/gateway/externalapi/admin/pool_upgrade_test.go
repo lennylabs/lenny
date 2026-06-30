@@ -13,8 +13,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
 
 func newUpgradeAdmin(t *testing.T) *admin.Router {

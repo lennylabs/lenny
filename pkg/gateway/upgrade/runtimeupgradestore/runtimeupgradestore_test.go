@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
 
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }

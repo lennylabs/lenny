@@ -37,8 +37,8 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
+	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
 
 // fixedClock pins the router clock so the wire output is deterministic.
