@@ -221,10 +221,10 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 - `pkg/api/v1/session` (the `State` enum and `IsTerminal`, the [§7.1](07_session-lifecycle.md#71-normal-flow) `FailureClass` enum, and the [§15.1](15_external-api-surface.md#151-rest-api) state-mutating endpoint precondition table as a Go-callable `Validate` function).
 - Pre-running state-lifetime watchdogs per [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation) and [§6.2](06_warm-pod-model.md#62-pod-state-machine): the four goroutines driven by `maxCreatedStateTimeoutSeconds`, `maxFinalizingTimeoutSeconds`, `maxReadyTimeoutSeconds`, and `maxStartingTimeoutSeconds` that force `created`, `finalizing`, `ready`, and `starting` to the `failed` state with explicit reasons (`CREATED_TIMEOUT`, `FINALIZE_TIMEOUT`, `READY_TIMEOUT`, `STARTING_TIMEOUT`) so abandoned setup flows cannot indefinitely pin a warm pod.
-- `pkg/gateway/sessionstore` (the [§4.2](04_system-components.md#42-session-manager) `SessionStore` interface with strict tenant isolation; cross-tenant reads return `ErrNotFound`).
-- `pkg/gateway/sessionstore/memstore` (in-memory implementation behind the same interface; the Postgres-backed implementation swaps in behind it in a later phase).
+- The gateway session store (the [§4.2](04_system-components.md#42-session-manager) `SessionStore` interface with strict tenant isolation; cross-tenant reads return `ErrNotFound`).
+- The in-memory session store implementation behind the same interface; the Postgres-backed implementation swaps in behind it in a later phase.
 - `StoreRouter` interface per [§12.6](12_storage-architecture.md#126-interface-design) build-phase table (request-scoped routing of every gateway call to a `tenant_id`-pinned store handle).
-- `pkg/gateway/sessionserver` ([§15.1](15_external-api-surface.md#151-rest-api) REST handler for `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET /v1/sessions`, `DELETE /v1/sessions/{id}`, and the five state-mutating endpoints `finalize`, `start`, `interrupt`, `terminate`, and `resume`).
+- The gateway session server ([§15.1](15_external-api-surface.md#151-rest-api) REST handler for `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET /v1/sessions`, `DELETE /v1/sessions/{id}`, and the five state-mutating endpoints `finalize`, `start`, `interrupt`, `terminate`, and `resume`).
 - `POST /v1/sessions/{id}/derive` endpoint per [§7.1](07_session-lifecycle.md#71-normal-flow): per-source advisory lock (`derive_lock:{source_session_id}`), workspace snapshot copy, `allowIsolationDowngrade` admin gate, monotonicity check, and the `persistDeriveFailureRows` audit-only `created → failed` write.
 - `GET /v1/sessions/{id}/workspace` workspace-snapshot tarball endpoint per [§15.1](15_external-api-surface.md#151-rest-api).
 - `GET /v1/blobs/{ref}` blob-dereference endpoint per [§15.1](15_external-api-surface.md#151-rest-api) (load-bearing for every MessagePart `ref` payload above the inline-size threshold).
@@ -578,10 +578,10 @@ _Backup and disaster recovery._
 
 _Gateway operability surface._
 
-- Platform Health API per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/health`, `GET /v1/admin/health/{component}`, and `GET /v1/admin/health/summary`. `pkg/gateway/health/service.go` with the `SuggestedAction` contract and `pkg/gateway/health/runbook_links.go` issue-to-runbook lookup.
+- Platform Health API per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/health`, `GET /v1/admin/health/{component}`, and `GET /v1/admin/health/summary`. The gateway health service with the `SuggestedAction` contract and the issue-to-runbook lookup.
 - Capacity Recommendations service per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/recommendations`, the per-replica ring-buffer aggregation, and the shared `pkg/recommendations/rules` catalog (the substrate shipped in Phase 2.5; the rule catalog is populated here).
 - Version and configuration introspection per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `GET /v1/admin/platform/version`, `GET /v1/admin/platform/version/full`, `GET /v1/admin/platform/config`, `GET /v1/admin/platform/config/diff`, and `GET /v1/admin/platform/registry`.
-- Gateway event emitter per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): `pkg/gateway/events/emitter.go`, the in-process 500-event ring buffer (`EventBuffer`), and `GET /v1/admin/events/buffer` plus the headless `lenny-gateway-pods` Service for fan-out.
+- Gateway event emitter per [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints): the shared `EventEmitter` interface and event-type vocabulary in the neutral events package, the gateway-side in-process 500-event ring buffer (`EventBuffer`), and `GET /v1/admin/events/buffer` plus the headless `lenny-gateway-pods` Service for fan-out.
 - `GET /v1/admin/me`, `GET /v1/admin/me/authorized-tools`, `GET /v1/admin/me/operations`, and the unified `GET /v1/admin/operations` Operations Inventory per [§25.4](25_agent-operability.md#254-the-lenny-ops-service).
 
 _`lenny-ops` runtime surfaces._

@@ -10,9 +10,10 @@
 
 - `pkg/alerting/rules` — shared bundled alerting rules, compiled into both the gateway and `lenny-ops`.
 - `pkg/recommendations/rules` — shared capacity recommendation rules (same pattern).
-- `pkg/gateway/events/{emitter,buffer}.go` — `EventEmitter` interface and in-memory ring buffer. Every subsystem that emits operational events depends on this package.
-- `pkg/gateway/health/{service,runbook_links}.go` — the gateway health service and its runbook link table.
-- `pkg/gateway/recommendations/service.go` — gateway-side capacity recommendations; defines the `MetricReader` interface.
+- `pkg/events/{emitter,types}.go` — `EventEmitter` interface and the shared event-type vocabulary. Every subsystem that emits operational events depends on this neutral package.
+- `pkg/gateway/eventbuffer/buffer.go` — the gateway-side in-memory ring buffer.
+- `pkg/gateway/operability/health/{service,runbook_links}.go` — the gateway health service and its runbook link table.
+- `pkg/gateway/operability/recommendations/service.go` — gateway-side capacity recommendations; defines the `MetricReader` interface.
 - `pkg/ops/gateway/{client,discovery}.go` — `GatewayClient` plus headless-Service replica discovery.
 - `pkg/ops/metrics/source.go` — Prometheus-with-fan-out-fallback `MetricSource` implementation and a Prometheus-backed `MetricReader`.
 - `pkg/ops/events/service.go` — event stream service (SSE, polling, webhooks).
