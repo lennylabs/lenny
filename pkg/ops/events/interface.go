@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	gwevents "github.com/lennylabs/lenny/pkg/gateway/events"
+	gwevents "github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 )

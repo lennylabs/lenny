@@ -10,7 +10,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -24,7 +25,7 @@ import (
 
 type targetingResult struct {
 	reporter *recordingRejectionReporter
-	emitter  *events.Emitter
+	emitter  *eventbuffer.Emitter
 	store    *memstore.Store
 	ofrepURL string
 }
@@ -39,7 +40,7 @@ func targetingHarness(t *testing.T, ofrepHandler http.HandlerFunc) targetingResu
 	exps := experimentstore.NewMemory()
 	externalExperiment(t, exps, "exp_ext", "claude-code-v2")
 	reporter := &recordingRejectionReporter{}
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "targeting-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "targeting-test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		Experiments:          exps,

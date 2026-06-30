@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	gwevents "github.com/lennylabs/lenny/pkg/gateway/events"
+	gwevents "github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )

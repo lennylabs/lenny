@@ -20,35 +20,6 @@ import (
 // unique replicaID it makes the key globally unique across replicas and
 // emission paths. spec: §25.3 line 748.
 
-// Default nonce-checkpoint cadence and safe-skip window. The window is
-// the §25.3 safe_skip_window: on restart the counter resumes from
-// last_checkpointed + window so it cannot replay a nonce that was used
-// after the last checkpoint but before the crash. window must exceed
-// every (the max number of unpersisted increments) for that guarantee to
-// hold. spec: §25.3 line 748.
-const (
-	defaultCheckpointEvery  uint64 = 128
-	defaultCheckpointWindow uint64 = 1024
-)
-
-// NonceCheckpoint configures the §25.3 on-disk nonce checkpoint. When a
-// non-empty Path is wired, the per-replica nonce counter survives a
-// restart so the eventKey stays unique even when the replicaID is stable
-// across restarts (e.g. LENNY_REPLICA_ID pinned to the pod name). Every
-// and Window fall back to the package defaults when zero.
-// spec: §25.3 line 748.
-type NonceCheckpoint struct {
-	// Path is the local-disk file the high-water mark is persisted to.
-	Path string
-	// Every persists the counter once it has advanced this many ticks
-	// past the last persisted value. Zero uses defaultCheckpointEvery.
-	Every uint64
-	// Window is the safe_skip_window added to the persisted value on
-	// restart. Zero (or any value below Every) uses
-	// defaultCheckpointWindow. spec: §25.3 line 748.
-	Window uint64
-}
-
 // nonceCheckpoint persists the per-replica nonce high-water mark to local
 // disk. spec: §25.3 line 748.
 type nonceCheckpoint struct {
@@ -117,32 +88,35 @@ func (c *nonceCheckpoint) write(n uint64) error {
 	return os.Rename(tmp, c.path)
 }
 
-// keyer mints §25.3 stable event keys and owns the per-replica nonce
-// counter (and its optional disk checkpoint). The Emitter and
+// Keyer mints §25.3 stable event keys and owns the per-replica nonce
+// counter (and its optional disk checkpoint). The eventbuffer Emitter and
 // StreamEmitter share this so the buffer and the Redis stream stamp the
-// same eventKey format. spec: §25.3 line 748.
-type keyer struct {
+// same eventKey format. It is exported so the concrete emitters in
+// pkg/gateway/eventbuffer, which produce the events this package's
+// vocabulary describes, can build and use it. spec: §25.3 line 748.
+type Keyer struct {
 	replicaID  string
 	nonce      atomic.Uint64
 	checkpoint *nonceCheckpoint
 	onError    func(error)
 }
 
-// newKeyer builds a keyer starting from `start` (0 for a fresh in-process
-// counter, last_checkpointed + window when resuming from disk). An empty
+// NewKeyer builds a Keyer starting from `start` (0 for a fresh in-process
+// counter, last_checkpointed + window when resuming from disk). cp is the
+// live checkpoint ResolveCheckpoint returned alongside start. An empty
 // replicaID falls back to "gateway".
-func newKeyer(replicaID string, cp *nonceCheckpoint, start uint64, onError func(error)) *keyer {
+func NewKeyer(replicaID string, cp *nonceCheckpoint, start uint64, onError func(error)) *Keyer {
 	if replicaID == "" {
 		replicaID = "gateway"
 	}
-	k := &keyer{replicaID: replicaID, checkpoint: cp, onError: onError}
+	k := &Keyer{replicaID: replicaID, checkpoint: cp, onError: onError}
 	k.nonce.Store(start)
 	return k
 }
 
-// eventKey composes the §25.3 stable identifier {replicaID}:{at}:{nonce}
+// EventKey composes the §25.3 stable identifier {replicaID}:{at}:{nonce}
 // and, when a disk checkpoint is wired, advances it. spec: §25.3 line 748.
-func (k *keyer) eventKey(at time.Time) string {
+func (k *Keyer) EventKey(at time.Time) string {
 	n := k.nonce.Add(1)
 	if k.checkpoint != nil {
 		if err := k.checkpoint.record(n); err != nil && k.onError != nil {
@@ -152,12 +126,14 @@ func (k *keyer) eventKey(at time.Time) string {
 	return fmt.Sprintf("%s:%d:%d", k.replicaID, at.UnixNano(), n)
 }
 
-// resolveCheckpoint turns an optional NonceCheckpoint spec into a live
+// ResolveCheckpoint turns an optional NonceCheckpoint spec into a live
 // checkpoint and a starting nonce. A nil spec (the common in-process
 // case) yields no checkpoint and a counter starting at 0. A load error is
 // reported through onError and the keyer falls back to in-process only so
-// a missing or unreadable checkpoint never blocks startup.
-func resolveCheckpoint(spec *NonceCheckpoint, onError func(error)) (*nonceCheckpoint, uint64) {
+// a missing or unreadable checkpoint never blocks startup. The returned
+// checkpoint flows straight into NewKeyer; the concrete emitters pass it
+// through without naming its unexported type.
+func ResolveCheckpoint(spec *NonceCheckpoint, onError func(error)) (*nonceCheckpoint, uint64) {
 	if spec == nil || spec.Path == "" {
 		return nil, 0
 	}

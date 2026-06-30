@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"

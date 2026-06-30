@@ -15,7 +15,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
@@ -79,7 +80,7 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	local := opsstream.New(opsstream.Options{})
 
-	em := newRedisFanOutEmitter(client, local, "ops-replica-1", events.DefaultStreamMaxLen)
+	em := newRedisFanOutEmitter(client, local, "ops-replica-1", eventbuffer.DefaultStreamMaxLen)
 	if err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.escalation_created", Severity: "critical",
 	}); err != nil {
@@ -100,7 +101,7 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	}
 
 	// The Redis stream carries the same event.
-	entries, err := client.XRange(context.Background(), events.DefaultStreamKey, "-", "+").Result()
+	entries, err := client.XRange(context.Background(), eventbuffer.DefaultStreamKey, "-", "+").Result()
 	if err != nil {
 		t.Fatalf("XRange: %v", err)
 	}
@@ -132,16 +133,16 @@ func TestStreamProducerConsumerRoundTrip_spec_25_5(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	source := opsservice.NewRedisEventSource(client, events.DefaultStreamKey)
+	source := opsservice.NewRedisEventSource(client, eventbuffer.DefaultStreamKey)
 	// First Poll primes the cursor to the (empty) tail and yields nothing.
 	if got, err := source.Poll(context.Background()); err != nil || len(got) != 0 {
 		t.Fatalf("prime Poll = %v, %v; want no events, nil", got, err)
 	}
 
 	// Producer side: a gateway/controller StreamEmitter writes the event.
-	emitter := events.NewStreamEmitter(events.StreamEmitterOptions{
+	emitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client:    client,
-		Buffer:    events.NewEventBuffer(0),
+		Buffer:    eventbuffer.NewEventBuffer(0),
 		Source:    "//lenny.dev/gateway/replica-1",
 		ReplicaID: "replica-1",
 	})

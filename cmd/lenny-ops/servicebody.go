@@ -11,7 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 

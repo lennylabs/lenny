@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore/pgstore"
@@ -13,7 +14,7 @@ import (
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/sessionusage/pgstore"
@@ -148,17 +149,17 @@ func (w *gatewayWiring) buildOpsEvents() {
 	opsEmitErrLogger := func(emitErr error) {
 		log.Printf("lenny-gateway: §25.3 ops-event emit: %v", emitErr)
 	}
-	opsEventBuffer := events.NewEventBuffer(0, events.WithBufferMetrics(opsEventsMetrics))
-	emitterOpts := []events.EmitterOption{
-		events.WithMetrics(opsEventsMetrics),
-		events.WithEmitErrorLogger(opsEmitErrLogger),
+	opsEventBuffer := eventbuffer.NewEventBuffer(0, eventbuffer.WithBufferMetrics(opsEventsMetrics))
+	emitterOpts := []eventbuffer.EmitterOption{
+		eventbuffer.WithMetrics(opsEventsMetrics),
+		eventbuffer.WithEmitErrorLogger(opsEmitErrLogger),
 	}
 	if nonceCheckpoint != nil {
-		emitterOpts = append(emitterOpts, events.WithNonceCheckpoint(*nonceCheckpoint))
+		emitterOpts = append(emitterOpts, eventbuffer.WithNonceCheckpoint(*nonceCheckpoint))
 	}
-	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, w.replica, emitterOpts...)
+	var opsEmitter events.EventEmitter = eventbuffer.NewEmitter(opsEventBuffer, w.replica, emitterOpts...)
 	if w.redisClient != nil {
-		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
+		opsEmitter = eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 			// §12.4 Cache/Pub-Sub concern: ops event stream fan-out.
 			Client:          w.concernRedis.For(storerouter.RedisConcernCachePubSub),
 			Buffer:          opsEventBuffer,
@@ -168,7 +169,7 @@ func (w *gatewayWiring) buildOpsEvents() {
 			NonceCheckpoint: nonceCheckpoint,
 			OnError:         opsEmitErrLogger,
 		})
-		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", eventbuffer.DefaultStreamKey)
 	}
 	// Wire the §16.7 / §25.5 operational-event escalation path: the
 	// durable audit Store routes the §16.7 ops-stream subset of audit

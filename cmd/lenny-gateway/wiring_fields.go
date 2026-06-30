@@ -62,6 +62,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/auditscope"
@@ -84,8 +85,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/failopen"
@@ -198,7 +199,7 @@ type gatewayWiringFields struct {
 	// fabric, the admin router, and the HTTP surface read them back.
 	environments     environmentstore.Store
 	tenantAccess     tenantaccessstore.Store
-	opsEventBuffer   *events.EventBuffer
+	opsEventBuffer   *eventbuffer.EventBuffer
 	vcsCreds         vcscred.Resolver
 	customRoles      customrolestore.Store
 	usage            usagestore.Store

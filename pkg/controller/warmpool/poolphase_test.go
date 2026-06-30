@@ -8,7 +8,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 )
 
 // spec §4.0: the pool state manager derives one of {warming, draining,
@@ -73,8 +74,8 @@ func TestDerivePoolPhase(t *testing.T) {
 func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 10))
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
 
 	reconcileWith(t, r) // baseline: warming
@@ -121,8 +122,8 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 10),
 		idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
 
 	reconcileWith(t, r) // baseline: ready
@@ -140,8 +141,8 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 0))
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
 
 	// Two reconciles: baseline records exhausted; second is a no-op

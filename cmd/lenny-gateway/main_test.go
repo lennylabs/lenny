@@ -14,10 +14,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
@@ -91,7 +92,7 @@ func TestNewLLMProxyServerRejectsNonPost(t *testing.T) {
 // operational event.
 
 func TestExperimentRejectionReporterEmitsOperationalEvent(t *testing.T) {
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "replica-test")
 	reporter := experimentRejectionReporter{emitter: emitter}
 
 	reporter.ReportExperimentIsolationRejection(context.Background(), sessionserver.ExperimentIsolationRejection{

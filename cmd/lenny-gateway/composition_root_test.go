@@ -33,11 +33,11 @@ import (
 // top-level statement count is far below the pre-fix monolith and (2) every
 // constructor-shaped call (a New*/build*/start* call) in the body is a method
 // call on the gatewayWiring accumulator (w.buildX/w.startX), never an inline
-// package-level constructor such as auditstore.New, events.NewEmitter, or
+// package-level constructor such as auditstore.New, eventbuffer.NewEmitter, or
 // quotacheckpoint.Service literal construction. Against the pre-fix monolith the
 // statement-count bound fails immediately (754 >> the bound), and the inline
 // construction the residual blocks performed (auditstore.New, ocsf.NewTranslator,
-// events.NewEmitter, and the if w.pgPool != nil store-selection branches) trips
+// eventbuffer.NewEmitter, and the if w.pgPool != nil store-selection branches) trips
 // the no-inline-constructor assertion.
 func TestRunGatewayIsAnOrderedBuildStepSequence(t *testing.T) {
 	fset := token.NewFileSet()
@@ -64,7 +64,7 @@ func TestRunGatewayIsAnOrderedBuildStepSequence(t *testing.T) {
 	// (2) No inline subsystem construction. Every constructor-shaped call in the
 	// body (a selector call whose function name starts with New, build, or
 	// start) must be a method call on the accumulator receiver `w`. An inline
-	// package-level constructor (auditstore.New, events.NewEmitter,
+	// package-level constructor (auditstore.New, eventbuffer.NewEmitter,
 	// ocsf.NewTranslator, quotacheckpoint... etc.) is exactly the residual
 	// construction findings 1 and 2 require to live in a build step.
 	ast.Inspect(fn.Body, func(n ast.Node) bool {

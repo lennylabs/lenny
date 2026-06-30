@@ -24,7 +24,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
@@ -71,7 +72,7 @@ import (
 // emissions even when the consumer end of the stream has not been
 // wired yet (§25.5 cold-start guarantee).
 type redisFanOutEmitter struct {
-	stream *events.StreamEmitter
+	stream *eventbuffer.StreamEmitter
 	local  *opsstream.Service
 }
 
@@ -82,7 +83,7 @@ type redisFanOutEmitter struct {
 // ops.events.streamMaxLen cap on the XADD MAXLEN-approximated stream; a
 // non-positive value uses the StreamEmitter Tier 1 default.
 func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Service, replicaID string, streamMaxLen int64) *redisFanOutEmitter {
-	stream := events.NewStreamEmitter(events.StreamEmitterOptions{
+	stream := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: client,
 		// The local buffer the StreamEmitter writes through is the same
 		// data structure the opsstream.Service maintains; using a separate
@@ -91,7 +92,7 @@ func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Servic
 		// here only needs a private buffer to satisfy its non-nil
 		// requirement — the Publish below is the canonical local
 		// delivery.
-		Buffer: events.NewEventBuffer(0),
+		Buffer: eventbuffer.NewEventBuffer(0),
 		// spec: §25.5 — ops.events.streamMaxLen sizes the platform-scoped
 		// ops:events:stream so a Tier 3 install holds the larger catch-up
 		// window the spec mandates.

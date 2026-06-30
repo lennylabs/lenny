@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
 )
 
 // EventEmitOptions wires the evaluator's firing-edge callbacks to a

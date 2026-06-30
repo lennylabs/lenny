@@ -8,14 +8,15 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 // eventTypeInBuffer reports whether the buffer holds an event of the
 // given CloudEvents type.
-func eventTypeInBuffer(buf *events.EventBuffer, fullType string) bool {
+func eventTypeInBuffer(buf *eventbuffer.EventBuffer, fullType string) bool {
 	for _, e := range buf.Query(0, events.EventFilter{}, 100).Events {
 		if e.Event.Type == fullType {
 			return true
@@ -26,13 +27,13 @@ func eventTypeInBuffer(buf *events.EventBuffer, fullType string) bool {
 
 // hasSessionFailed reports whether the buffer holds a session_failed
 // operational event.
-func hasSessionFailed(buf *events.EventBuffer) bool {
+func hasSessionFailed(buf *eventbuffer.EventBuffer) bool {
 	return eventTypeInBuffer(buf, "dev.lenny.session_failed")
 }
 
 func TestRecordSessionCompletedEmitsSessionFailed(t *testing.T) {
 	// §16.6: a session reaching the failed state emits session_failed.
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	srv := New(memstore.New(), Options{OpsEmitter: emitter})
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
@@ -67,7 +68,7 @@ func TestRecordSessionCompletedEmitsTerminalLifecycleEvents(t *testing.T) {
 		{session.StateExpired, "dev.lenny.session_expired"},
 	}
 	for _, tc := range cases {
-		emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
+		emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 		srv := New(memstore.New(), Options{OpsEmitter: emitter})
 		srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
@@ -85,7 +86,7 @@ func TestRecordSessionCompletedEmitsTerminalLifecycleEvents(t *testing.T) {
 func TestRecordSessionCompletedNoEmitForNonTerminal(t *testing.T) {
 	// A non-terminal state reaching recordSessionCompleted emits no
 	// lifecycle event.
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	srv := New(memstore.New(), Options{OpsEmitter: emitter})
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{

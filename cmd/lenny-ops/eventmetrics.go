@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
@@ -112,7 +112,7 @@ type subscriberCounter interface{ SubscriberCount() int }
 func sampleEventStreamGauges(ctx context.Context, client redis.UniversalClient, subs subscriberCounter) {
 	if eventsStreamLength != nil && client != nil {
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		if n, err := client.XLen(cctx, events.DefaultStreamKey).Result(); err == nil {
+		if n, err := client.XLen(cctx, eventbuffer.DefaultStreamKey).Result(); err == nil {
 			eventsStreamLength.WithLabelValues().Set(float64(n))
 		}
 		cancel()

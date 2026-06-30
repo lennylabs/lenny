@@ -37,7 +37,7 @@ import (
 // statement count is far below the pre-fix monolith and (2) every
 // constructor-shaped call (a New*/build*/register* call) in the body is a method
 // call on the controllerWiring accumulator (w.buildX/w.registerX), never an
-// inline package-level constructor such as ctrl.NewManager, events.NewEmitter,
+// inline package-level constructor such as ctrl.NewManager, eventbuffer.NewEmitter,
 // or pgxpool.New. Against the pre-fix monolith (the ~186-statement func main the
 // proposal R8 targets) the statement-count bound fails immediately, and the
 // inline construction the residual blocks performed trips the
@@ -67,7 +67,7 @@ func TestRunControllerIsAnOrderedBuildStepSequence(t *testing.T) {
 	// (2) No inline subsystem construction. Every constructor-shaped call in the
 	// body (a selector call whose function name starts with New, build, or
 	// register) must be a method call on the accumulator receiver `w`. An inline
-	// package-level constructor (ctrl.NewManager, pgxpool.New, events.NewEmitter,
+	// package-level constructor (ctrl.NewManager, pgxpool.New, eventbuffer.NewEmitter,
 	// controllermetrics.NewQueueFactory, ...) is exactly the residual
 	// construction R8 requires to live in a build step.
 	ast.Inspect(fn.Body, func(n ast.Node) bool {

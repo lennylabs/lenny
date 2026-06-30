@@ -11,14 +11,15 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 )
 
 // spec §4.0, §16.6: a rule that fires emits alert_fired through the
 // shared EventEmitter; a firing rule that clears emits alert_resolved.
 func TestEmitCallbacksFireAndResolve(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "replica-1")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "replica-1")
 	expr := "metric > 0"
 	fake := &fakeExpr{active: map[string]bool{expr: true}}
 	rule := rules.Rule{
@@ -98,8 +99,8 @@ func TestWarmPoolExhaustedPayloadCarriesRunbookAndSuggestedAction_spec_25_17(t *
 	if rule.Name == "" {
 		t.Fatal("WarmPoolExhausted not in catalog")
 	}
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "replica-1")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "replica-1")
 	fake := &fakeExpr{active: map[string]bool{rule.Expr: true}}
 	onFired, onResolved := evaluator.EmitCallbacks(evaluator.EventEmitOptions{Emitter: em})
 	// For:60s — fire after the sustain window elapses across two ticks.
@@ -139,8 +140,8 @@ func TestWarmPoolExhaustedPayloadCarriesRunbookAndSuggestedAction_spec_25_17(t *
 
 // spec §16.6: a rule that never fires emits no operational events.
 func TestEmitCallbacksNoEventsWhileInactive(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "replica-1")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "replica-1")
 	expr := "metric > 0"
 	fake := &fakeExpr{active: map[string]bool{expr: false}}
 	onFired, onResolved := evaluator.EmitCallbacks(evaluator.EventEmitOptions{Emitter: em})
@@ -184,8 +185,8 @@ func TestNoopExprEvaluator(t *testing.T) {
 // spec §25.13: with NoopExprEvaluator the evaluator runs its sweep
 // without firing or resolving anything.
 func TestEvaluatorWithNoopExprFiresNothing(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "replica-1")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "replica-1")
 	ev := evaluator.NewWithEmitter(
 		[]rules.Rule{{Name: "Quiet", Expr: "metric > 0", Severity: rules.SeverityWarning, Summary: "quiet"}},
 		evaluator.NoopExprEvaluator{},
@@ -202,8 +203,8 @@ func TestEvaluatorWithNoopExprFiresNothing(t *testing.T) {
 // spec §4.0: NewWithEmitter defaults the catalog to rules.Catalog() and
 // builds an evaluator that drains the §16.5 default set.
 func TestNewWithEmitterDefaultsToCatalog(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "replica-1")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "replica-1")
 	ev := evaluator.NewWithEmitter(nil, evaluator.NoopExprEvaluator{},
 		evaluator.EventEmitOptions{Emitter: em})
 	for _, r := range rules.Catalog() {

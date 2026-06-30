@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
 )
 
 // captureEmitter records the events it is asked to emit and can be told

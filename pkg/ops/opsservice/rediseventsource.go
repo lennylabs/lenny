@@ -35,7 +35,7 @@ type StreamReader interface {
 // platform-scoped Redis stream that every replica (gateway, controllers,
 // peer lenny-ops) writes operational events to, and yields each new
 // event to the webhook delivery worker. It pairs with the producer side
-// (pkg/gateway/events.StreamEmitter): the StreamEmitter XADDs each event
+// (pkg/gateway/eventbuffer.StreamEmitter): the StreamEmitter XADDs each event
 // as a single "event" field carrying the marshalled CloudEvents record,
 // and this source reads that field back out.
 //

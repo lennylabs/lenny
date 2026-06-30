@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package events_test
+package eventbuffer_test
 
 import (
 	"context"
@@ -12,7 +12,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 )
 
 // newMiniRedisClient returns a miniredis-backed *redis.Client. The
@@ -31,8 +32,8 @@ func newMiniRedisClient(t *testing.T) *redis.Client {
 // in-memory buffer carrying a tee'd copy.
 func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := events.NewEventBuffer(0)
-	em := events.NewStreamEmitter(events.StreamEmitterOptions{
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: client, Buffer: buf, ReplicaID: "replica-1",
 	})
 
@@ -53,9 +54,9 @@ func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 	}
 
 	// And to the Redis stream under the §25.5 default key.
-	entries, err := client.XRange(context.Background(), events.DefaultStreamKey, "-", "+").Result()
+	entries, err := client.XRange(context.Background(), eventbuffer.DefaultStreamKey, "-", "+").Result()
 	if err != nil {
-		t.Fatalf("XRange %s: %v", events.DefaultStreamKey, err)
+		t.Fatalf("XRange %s: %v", eventbuffer.DefaultStreamKey, err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("stream holds %d entries, want 1", len(entries))
@@ -87,8 +88,8 @@ func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 // write.
 func TestStreamEmitterCapsMaxLen(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := events.NewEventBuffer(0)
-	em := events.NewStreamEmitter(events.StreamEmitterOptions{
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: client, Buffer: buf, MaxLen: 5,
 	})
 
@@ -99,7 +100,7 @@ func TestStreamEmitterCapsMaxLen(t *testing.T) {
 			t.Fatalf("Emit %d: %v", i, err)
 		}
 	}
-	length, err := client.XLen(context.Background(), events.DefaultStreamKey).Result()
+	length, err := client.XLen(context.Background(), eventbuffer.DefaultStreamKey).Result()
 	if err != nil {
 		t.Fatalf("XLen: %v", err)
 	}
@@ -126,8 +127,8 @@ func (failingRedis) XAdd(ctx context.Context, args *redis.XAddArgs) *redis.Strin
 // operators see the regression. The event is preserved on the local
 // path so a watchdog reading the gateway buffer continues to function.
 func TestStreamEmitterFallsBackToLocalBufferOnRedisFailure(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewStreamEmitter(events.StreamEmitterOptions{
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: failingRedis{}, Buffer: buf,
 	})
 	if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired"}); err == nil {
@@ -146,8 +147,8 @@ func TestStreamEmitterFallsBackToLocalBufferOnRedisFailure(t *testing.T) {
 // shutdown does not pin on a hung XADD.
 func TestStreamEmitterRespectsContextCancellation(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := events.NewEventBuffer(0)
-	em := events.NewStreamEmitter(events.StreamEmitterOptions{
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: client, Buffer: buf,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -161,8 +162,8 @@ func TestStreamEmitterRespectsContextCancellation(t *testing.T) {
 // the caller did not stamp one. A caller-set Source is preserved.
 func TestStreamEmitterStampsSource(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := events.NewEventBuffer(0)
-	em := events.NewStreamEmitter(events.StreamEmitterOptions{
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: client, Buffer: buf, Source: "//lenny.dev/gateway/test",
 	})
 	if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.x"}); err != nil {
@@ -193,7 +194,7 @@ func TestNewStreamEmitterRequiresClientAndBuffer(t *testing.T) {
 			t.Error("NewStreamEmitter(nil Client) did not panic")
 		}
 	}()
-	events.NewStreamEmitter(events.StreamEmitterOptions{Buffer: events.NewEventBuffer(0)})
+	eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{Buffer: eventbuffer.NewEventBuffer(0)})
 }
 
 func TestNewStreamEmitterRequiresBuffer(t *testing.T) {
@@ -203,7 +204,7 @@ func TestNewStreamEmitterRequiresBuffer(t *testing.T) {
 			t.Error("NewStreamEmitter(nil Buffer) did not panic")
 		}
 	}()
-	events.NewStreamEmitter(events.StreamEmitterOptions{Client: client})
+	eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{Client: client})
 }
 
 // spec §4.0 / §25.5: multiple processes (gateway, controller,
@@ -215,13 +216,13 @@ func TestNewStreamEmitterRequiresBuffer(t *testing.T) {
 // in order.
 func TestStreamEmitterMultiProcessReplay(t *testing.T) {
 	client := newMiniRedisClient(t)
-	gatewayBuf := events.NewEventBuffer(0)
-	controllerBuf := events.NewEventBuffer(0)
-	gatewayEmitter := events.NewStreamEmitter(events.StreamEmitterOptions{
+	gatewayBuf := eventbuffer.NewEventBuffer(0)
+	controllerBuf := eventbuffer.NewEventBuffer(0)
+	gatewayEmitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: client, Buffer: gatewayBuf,
 		Source: "//lenny.dev/gateway/replica-1", ReplicaID: "gateway-replica-1",
 	})
-	controllerEmitter := events.NewStreamEmitter(events.StreamEmitterOptions{
+	controllerEmitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 		Client: client, Buffer: controllerBuf,
 		Source: "//lenny.dev/controller/replica-1", ReplicaID: "controller-replica-1",
 	})
@@ -237,7 +238,7 @@ func TestStreamEmitterMultiProcessReplay(t *testing.T) {
 		t.Fatalf("controller Emit: %v", err)
 	}
 
-	entries, err := client.XRange(context.Background(), events.DefaultStreamKey, "-", "+").Result()
+	entries, err := client.XRange(context.Background(), eventbuffer.DefaultStreamKey, "-", "+").Result()
 	if err != nil {
 		t.Fatalf("XRange: %v", err)
 	}

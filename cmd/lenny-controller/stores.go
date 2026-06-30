@@ -11,7 +11,8 @@ import (
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
@@ -95,8 +96,8 @@ func (w *controllerWiring) buildOpsEmitter() events.EventEmitter {
 	if controllerReplicaID == "" {
 		controllerReplicaID = "controller"
 	}
-	opsEventBuffer := events.NewEventBuffer(0)
-	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, controllerReplicaID)
+	opsEventBuffer := eventbuffer.NewEventBuffer(0)
+	var opsEmitter events.EventEmitter = eventbuffer.NewEmitter(opsEventBuffer, controllerReplicaID)
 	if f.redisURL != "" {
 		redisClient, err := redisconn.NewClient(redisconn.Config{URL: f.redisURL, Password: f.redisPassword})
 		if err != nil {
@@ -107,13 +108,13 @@ func (w *controllerWiring) buildOpsEmitter() events.EventEmitter {
 		// runController can defer its close at process shutdown, preserving the
 		// close the former monolithic main deferred inline.
 		w.redisClient = redisClient
-		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
+		opsEmitter = eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 			Client:    redisClient,
 			Buffer:    opsEventBuffer,
 			Source:    "//lenny.dev/controller/" + controllerReplicaID,
 			ReplicaID: controllerReplicaID,
 		})
-		log.Printf("lenny-controller: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+		log.Printf("lenny-controller: §25.5 operational events streaming to Redis %s", eventbuffer.DefaultStreamKey)
 	}
 	return opsEmitter
 }

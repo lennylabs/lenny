@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package events
+package eventbuffer
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/events"
 )
 
 func TestEmitFillsEnvelope(t *testing.T) {
@@ -15,10 +17,10 @@ func TestEmitFillsEnvelope(t *testing.T) {
 	at := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	em.now = func() time.Time { return at }
 
-	if err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"}); err != nil {
+	if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	page := em.Buffer().Query(0, EventFilter{}, 100)
+	page := em.Buffer().Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("buffer holds %d events, want 1", len(page.Events))
 	}
@@ -28,8 +30,8 @@ func TestEmitFillsEnvelope(t *testing.T) {
 		t.Errorf("first emit id = %d, want 1", page.Events[0].ID)
 	}
 	got := page.Events[0].Event
-	if got.SpecVersion != CloudEventsSpecVersion {
-		t.Errorf("specversion = %q, want %q", got.SpecVersion, CloudEventsSpecVersion)
+	if got.SpecVersion != events.CloudEventsSpecVersion {
+		t.Errorf("specversion = %q, want %q", got.SpecVersion, events.CloudEventsSpecVersion)
 	}
 	if !got.Time.Equal(at) {
 		t.Errorf("time = %v, want %v", got.Time, at)
@@ -42,12 +44,12 @@ func TestEmitFillsEnvelope(t *testing.T) {
 func TestEmitPreservesCallerSetFields(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "replica-1")
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := em.Emit(context.Background(), OperationalEvent{
+	if err := em.Emit(context.Background(), events.OperationalEvent{
 		ID: "explicit-key", SpecVersion: "1.0.2", Type: "dev.lenny.x", Time: at,
 	}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	got := em.Buffer().Query(0, EventFilter{}, 100).Events[0].Event
+	got := em.Buffer().Query(0, events.EventFilter{}, 100).Events[0].Event
 	if got.ID != "explicit-key" {
 		t.Errorf("caller-set ID overwritten: %q", got.ID)
 	}
@@ -60,11 +62,11 @@ func TestEmitEventKeysAreUniqueAndMonotonic(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(64), "replica-1")
 	keys := map[string]bool{}
 	for i := 0; i < 50; i++ {
-		if err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+		if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.x"}); err != nil {
 			t.Fatalf("Emit: %v", err)
 		}
 	}
-	page := em.Buffer().Query(0, EventFilter{}, 100)
+	page := em.Buffer().Query(0, events.EventFilter{}, 100)
 	for _, e := range page.Events {
 		if keys[e.Event.ID] {
 			t.Errorf("duplicate eventKey: %q", e.Event.ID)
@@ -78,10 +80,10 @@ func TestEmitEventKeysAreUniqueAndMonotonic(t *testing.T) {
 
 func TestNewEmitterDefaultsReplicaID(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "")
-	if err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+	if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.x"}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	got := em.Buffer().Query(0, EventFilter{}, 100).Events[0].Event
+	got := em.Buffer().Query(0, events.EventFilter{}, 100).Events[0].Event
 	if !strings.HasPrefix(got.ID, "gateway:") {
 		t.Errorf("empty replicaID must fall back to gateway: %q", got.ID)
 	}
@@ -93,10 +95,10 @@ func TestEmitRespectsContextCancellation(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "replica-1")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := em.Emit(ctx, OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
+	if err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Emit on cancelled ctx returned %v, want context.Canceled", err)
 	}
-	page := em.Buffer().Query(0, EventFilter{}, 100)
+	page := em.Buffer().Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 0 {
 		t.Errorf("Emit on cancelled ctx wrote %d events, want 0", len(page.Events))
 	}

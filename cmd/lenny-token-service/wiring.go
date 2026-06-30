@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"

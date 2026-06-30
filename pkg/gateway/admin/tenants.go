@@ -31,6 +31,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
@@ -45,7 +46,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"

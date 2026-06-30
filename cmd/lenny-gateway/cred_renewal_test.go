@@ -15,12 +15,13 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -209,8 +210,8 @@ func TestRenewalWiringNilReceiverHooksAreNoops(t *testing.T) {
 // spec §4.0, §16.6: credential pool manager emits credential_rotated on
 // lease rotation and credential_pool_exhausted on pool exhaustion.
 func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 
 	assign := credassign.New(credleasestore.New(), credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
@@ -266,8 +267,8 @@ func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
 // spec §4.0, §16.6: an exhausted lease — the §4.9 fall-through —
 // emits credential_pool_exhausted with the lease's pool binding.
 func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 
 	assign := credassign.New(credleasestore.New(), credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))

@@ -4,15 +4,13 @@ package events
 
 import "strings"
 
-// EventType is a §16.6 operational-event short name. The CloudEvents
-// `type` attribute of an emitted event is "dev.lenny." + EventType.
-type EventType string
+// EventType is defined in types.go alongside the other shared §25.3
+// value types; this file carries the §16.6 catalogue of EventType values
+// and the membership predicates over it.
 
-// CloudEventsType returns the full CloudEvents `type` for the short
-// name — the value the OperationalEvent.Type field carries.
-func (t EventType) CloudEventsType() string { return cloudEventsPrefix + string(t) }
-
-// cloudEventsPrefix is the §16.6 CloudEvents type prefix.
+// cloudEventsPrefix is the §16.6 CloudEvents type prefix. EventType's
+// CloudEventsType method (types.go) and the metric short-name stripper
+// (metrics.go) both reference it, so it lives with the catalogue.
 const cloudEventsPrefix = "dev.lenny."
 
 // The §16.6 gateway-emitted operational-event short names.

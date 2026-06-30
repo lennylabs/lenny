@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package events
+package eventbuffer
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/events"
 )
 
 // nonceFromID extracts the nonce suffix from a §25.3 eventKey of the form
@@ -30,10 +32,10 @@ func nonceFromID(t *testing.T, id string) uint64 {
 // generated eventKey (the newest event in the buffer).
 func emitAndNonce(t *testing.T, em *Emitter) uint64 {
 	t.Helper()
-	if err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.alert_fired"}); err != nil {
+	if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired"}); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	page := em.buffer.Query(0, EventFilter{}, DefaultBufferCapacity)
+	page := em.buffer.Query(0, events.EventFilter{}, DefaultBufferCapacity)
 	if len(page.Events) == 0 {
 		t.Fatal("no event recorded")
 	}
@@ -46,7 +48,7 @@ func emitAndNonce(t *testing.T, em *Emitter) uint64 {
 // nonce that was used before the restart.
 func TestNonceCheckpointSurvivesRestart_spec_25_3_748(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nonce")
-	spec := NonceCheckpoint{Path: path, Every: 4, Window: 16}
+	spec := events.NonceCheckpoint{Path: path, Every: 4, Window: 16}
 
 	em := NewEmitter(NewEventBuffer(0), "replica-1", WithNonceCheckpoint(spec))
 	var maxBefore uint64
@@ -85,7 +87,7 @@ func TestNonceCheckpointSurvivesRestart_spec_25_3_748(t *testing.T) {
 // persisted value (the §25.3 periodic checkpoint, not a per-event write).
 func TestNonceCheckpointPersistsEveryN_spec_25_3_748(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nonce")
-	em := NewEmitter(NewEventBuffer(0), "r", WithNonceCheckpoint(NonceCheckpoint{Path: path, Every: 5, Window: 20}))
+	em := NewEmitter(NewEventBuffer(0), "r", WithNonceCheckpoint(events.NonceCheckpoint{Path: path, Every: 5, Window: 20}))
 
 	for i := 1; i <= 4; i++ {
 		emitAndNonce(t, em)
@@ -96,41 +98,6 @@ func TestNonceCheckpointPersistsEveryN_spec_25_3_748(t *testing.T) {
 	emitAndNonce(t, em) // 5th emit reaches Every
 	if got := readCheckpoint(t, path); got != 5 {
 		t.Fatalf("checkpoint after 5 emits = %d, want 5", got)
-	}
-}
-
-// TestNonceCheckpointWindowBelowEveryUsesDefault_spec_25_3_748 asserts a
-// Window smaller than Every is widened to the package default so the
-// safe-skip window always exceeds the unpersisted-tick gap.
-func TestNonceCheckpointWindowBelowEveryUsesDefault_spec_25_3_748(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nonce")
-	if err := os.WriteFile(path, []byte("100"), 0o600); err != nil {
-		t.Fatalf("seed checkpoint: %v", err)
-	}
-	// Window (2) < Every (10): loadNonceCheckpoint must widen Window to
-	// defaultCheckpointWindow.
-	_, start, err := loadNonceCheckpoint(NonceCheckpoint{Path: path, Every: 10, Window: 2})
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if want := uint64(100) + defaultCheckpointWindow; start != want {
-		t.Fatalf("resume start = %d, want %d (default window applied)", start, want)
-	}
-}
-
-// TestNonceCheckpointMissingFileStartsFresh_spec_25_3_748 asserts an
-// absent checkpoint resumes from nonce 1 (no error, in-process start).
-func TestNonceCheckpointMissingFileStartsFresh_spec_25_3_748(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "absent")
-	cp, start, err := loadNonceCheckpoint(NonceCheckpoint{Path: path})
-	if err != nil {
-		t.Fatalf("missing file should not error: %v", err)
-	}
-	if start != 0 {
-		t.Fatalf("missing-file start = %d, want 0", start)
-	}
-	if cp == nil {
-		t.Fatal("checkpoint should be non-nil so subsequent records persist")
 	}
 }
 
@@ -145,7 +112,7 @@ func TestNonceCheckpointCorruptFileFallsBack_spec_25_3_748(t *testing.T) {
 	var loggedErr error
 	em := NewEmitter(
 		NewEventBuffer(0), "r",
-		WithNonceCheckpoint(NonceCheckpoint{Path: path}),
+		WithNonceCheckpoint(events.NonceCheckpoint{Path: path}),
 		WithEmitErrorLogger(func(e error) { loggedErr = e }),
 	)
 	if loggedErr == nil {

@@ -10,14 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
-func newEventBufferAdmin(t *testing.T, buf *events.EventBuffer) *admin.Router {
+func newEventBufferAdmin(t *testing.T, buf *eventbuffer.EventBuffer) *admin.Router {
 	t.Helper()
 	return admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -32,7 +33,7 @@ func opsEvent(typ, severity string) events.OperationalEvent {
 }
 
 func TestEventBufferEndpointReturnsEvents(t *testing.T) {
-	buf := events.NewEventBuffer(0)
+	buf := eventbuffer.NewEventBuffer(0)
 	buf.Append(opsEvent("alert_fired", "critical"))
 	buf.Append(opsEvent("pool_state_changed", "info"))
 	router := newEventBufferAdmin(t, buf)
@@ -53,7 +54,7 @@ func TestEventBufferEndpointReturnsEvents(t *testing.T) {
 }
 
 func TestEventBufferEndpointFiltersAndCursor(t *testing.T) {
-	buf := events.NewEventBuffer(0)
+	buf := eventbuffer.NewEventBuffer(0)
 	buf.Append(opsEvent("alert_fired", "critical"))
 	buf.Append(opsEvent("pool_state_changed", "info"))
 	buf.Append(opsEvent("alert_fired", "warning"))
@@ -84,8 +85,8 @@ func TestEventBufferEndpointFiltersAndCursor(t *testing.T) {
 func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
 	// §25.3: opening a circuit breaker via the admin API emits an
 	// operational event into the buffer the endpoint then surfaces.
-	buf := events.NewEventBuffer(0)
-	emitter := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	emitter := eventbuffer.NewEmitter(buf, "test")
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	}).WithBreakers(breakerstore.NewMemory()).
@@ -125,8 +126,8 @@ func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
 // CloudEvents extension attributes. Opening a circuit breaker under a
 // correlated request emits an event carrying both. F-15.1.10.
 func TestOpsEventCarriesCorrelationExtensions_spec_15_1_937(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	emitter := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	emitter := eventbuffer.NewEmitter(buf, "test")
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	}).WithBreakers(breakerstore.NewMemory()).
@@ -169,7 +170,7 @@ func TestEventBufferEndpointCSVFilter_spec_25_3_15(t *testing.T) {
 	// spec: §25.2 lines 210-211 — ?severity= and ?eventType= accept the
 	// canonical CSV form; the endpoint returns the union of the tokens
 	// rather than the empty page the literal-match path produced.
-	buf := events.NewEventBuffer(0)
+	buf := eventbuffer.NewEventBuffer(0)
 	buf.Append(opsEvent("alert_fired", "critical"))
 	buf.Append(opsEvent("pool_state_changed", "info"))
 	buf.Append(opsEvent("session_failed", "warning"))
@@ -196,7 +197,7 @@ func TestEventBufferEndpointCSVFilter_spec_25_3_15(t *testing.T) {
 }
 
 func TestEventBufferEndpointRequiresAdmin(t *testing.T) {
-	router := newEventBufferAdmin(t, events.NewEventBuffer(0))
+	router := newEventBufferAdmin(t, eventbuffer.NewEventBuffer(0))
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/buffer", nil)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)

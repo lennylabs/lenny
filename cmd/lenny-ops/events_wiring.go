@@ -12,7 +12,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
@@ -49,7 +50,7 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 	var opsEmitter events.EventEmitter = w.eventStream
 	if w.redisClient != nil {
 		opsEmitter = newRedisFanOutEmitter(w.redisClient, w.eventStream, w.replicaID, *w.f.eventsStreamMaxLen)
-		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s (maxlen=%d)", events.DefaultStreamKey, *w.f.eventsStreamMaxLen)
+		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s (maxlen=%d)", eventbuffer.DefaultStreamKey, *w.f.eventsStreamMaxLen)
 	}
 	w.opsEmitter = opsEmitter
 
@@ -60,8 +61,8 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 	// delivers nothing, the correct cold-start behavior.
 	var eventSource opsservice.EventSource = emptyEventSource{}
 	if w.redisClient != nil {
-		eventSource = opsservice.NewRedisEventSource(w.redisClient, events.DefaultStreamKey)
-		log.Printf("lenny-ops: §25.5 webhook worker consuming Redis stream %s", events.DefaultStreamKey)
+		eventSource = opsservice.NewRedisEventSource(w.redisClient, eventbuffer.DefaultStreamKey)
+		log.Printf("lenny-ops: §25.5 webhook worker consuming Redis stream %s", eventbuffer.DefaultStreamKey)
 	}
 	w.eventSource = eventSource
 

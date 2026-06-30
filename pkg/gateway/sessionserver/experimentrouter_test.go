@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -203,7 +204,7 @@ func TestExperimentRouterOFREPFailureEmitsTargetingFailed(t *testing.T) {
 
 	exps := experimentstore.NewMemory()
 	externalExperiment(t, exps, "exp_ext", "claude-code-v2")
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		Experiments: exps,
@@ -237,7 +238,7 @@ func TestExperimentRouterEmitsMultiEligibleSkipped(t *testing.T) {
 	seedRoutableExperiment(t, exps, "exp_first", createdAt)
 	seedRoutableExperiment(t, exps, "exp_second", createdAt.Add(time.Hour))
 
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "replica-test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		Experiments: exps,
@@ -290,7 +291,7 @@ func TestExperimentRouterNoSkipEmitsNothing(t *testing.T) {
 	exps := experimentstore.NewMemory()
 	seedRoutableExperiment(t, exps, "exp_only", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "replica-test")
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		Experiments: exps,
 		OpsEmitter:  emitter,

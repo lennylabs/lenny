@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
@@ -72,8 +72,8 @@ func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 	if w.replicaID == "" {
 		w.replicaID = "token-service"
 	}
-	opsEventBuffer := events.NewEventBuffer(0)
-	w.opsEmitter = events.NewEmitter(opsEventBuffer, w.replicaID)
+	opsEventBuffer := eventbuffer.NewEventBuffer(0)
+	w.opsEmitter = eventbuffer.NewEmitter(opsEventBuffer, w.replicaID)
 	// §4.3 line 201 Redis-backed encrypted access-token cache. Wired
 	// only when --redis-url is set; the cache short-circuits Postgres
 	// revocation lookups on the validation hot path. With no Redis,
@@ -84,13 +84,13 @@ func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 			fatalf("redis client: %v", err)
 		}
 		w.redisCleanup = func() { _ = redisClient.Close() }
-		w.opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
+		w.opsEmitter = eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 			Client:    redisClient,
 			Buffer:    opsEventBuffer,
 			Source:    "//lenny.dev/token-service/" + w.replicaID,
 			ReplicaID: w.replicaID,
 		})
-		log.Printf("lenny-token-service: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+		log.Printf("lenny-token-service: §25.5 operational events streaming to Redis %s", eventbuffer.DefaultStreamKey)
 		accessCache, err := tokencache.New(redisClient, w.kmsProvider)
 		if err != nil {
 			fatalf("access-token cache: %v", err)

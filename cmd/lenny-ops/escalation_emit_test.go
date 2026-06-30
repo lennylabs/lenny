@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 )
 

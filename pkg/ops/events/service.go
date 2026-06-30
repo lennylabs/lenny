@@ -14,7 +14,7 @@
 //
 // The Service is the single owner of the operational-event buffer on
 // the lenny-ops side. The gateway emits its events through the §25.3
-// pkg/gateway/gwevents.Emitter; the lenny-ops side has its own buffer
+// pkg/gateway/eventbuffer.Emitter; the lenny-ops side has its own buffer
 // for events that originate in lenny-ops (escalations, drift,
 // platform-upgrade lifecycle, ops self-health). Both feed the same
 // Redis stream (§25.5 "Both write to the same Redis stream"); the
@@ -37,7 +37,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	gwevents "github.com/lennylabs/lenny/pkg/gateway/events"
+	gwevents "github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
@@ -45,7 +46,7 @@ import (
 // own ring buffer. Matches the gateway-side default so the polling
 // envelope behaves identically regardless of which buffer the caller
 // landed on.
-const DefaultBufferCapacity = gwevents.DefaultBufferCapacity
+const DefaultBufferCapacity = eventbuffer.DefaultBufferCapacity
 
 // DefaultPollLimit and MaxPollLimit are the §25.2 canonical pagination
 // bounds for GET /v1/admin/events. spec: §25.2 line 240 (default 100,
@@ -68,7 +69,7 @@ type WebhookFanOut func(context.Context, gwevents.OperationalEvent)
 
 // Service is the §25.5 event-stream service.
 type Service struct {
-	buffer    *gwevents.EventBuffer
+	buffer    *eventbuffer.EventBuffer
 	now       func() time.Time
 	replicaID string
 	nonce     atomic.Uint64
@@ -127,7 +128,7 @@ func New(opts Options) *Service {
 		replicaID = "ops"
 	}
 	return &Service{
-		buffer:    gwevents.NewEventBuffer(opts.Capacity),
+		buffer:    eventbuffer.NewEventBuffer(opts.Capacity),
 		now:       now,
 		replicaID: replicaID,
 		webhook:   opts.Webhook,

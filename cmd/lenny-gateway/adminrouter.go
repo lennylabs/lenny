@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/admintoken/k8ssecret"
@@ -41,7 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob/saltlockpg"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
@@ -97,7 +98,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	interceptors interceptorstore.Store,
 	leaseBudgets *leasecontrol.MemoryBudgetSource,
 	opsEmitter events.EventEmitter,
-	opsEventBuffer *events.EventBuffer,
+	opsEventBuffer *eventbuffer.EventBuffer,
 	sessionSrv *sessionserver.Server,
 	tenantAccess tenantaccessstore.Store,
 	auditOpsStore *auditstore.Store,

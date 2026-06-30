@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -52,7 +53,7 @@ func (r fakeResolver) For(context.Context, experiment.TargetingConfig) (external
 // sdkRoutingServer builds a minimal Server whose tenant `default`
 // targets a launchdarkly SDK provider and that carries one active
 // mode:external experiment on the claude-code runtime.
-func sdkRoutingServer(t *testing.T, resolver ExternalProviderResolver, emitter *events.Emitter) *Server {
+func sdkRoutingServer(t *testing.T, resolver ExternalProviderResolver, emitter *eventbuffer.Emitter) *Server {
 	t.Helper()
 	ctx := context.Background()
 	exps := experimentstore.NewMemory()
@@ -89,7 +90,7 @@ func sdkRoutingServer(t *testing.T, resolver ExternalProviderResolver, emitter *
 	return s
 }
 
-func targetingFailedCount(emitter *events.Emitter) int {
+func targetingFailedCount(emitter *eventbuffer.Emitter) int {
 	page := emitter.Buffer().Query(0, events.EventFilter{
 		EventType: string(events.EventExperimentTargetingFailed),
 	}, 0)
@@ -101,7 +102,7 @@ func targetingFailedCount(emitter *events.Emitter) int {
 // mode:external experiments and enrolls the session, instead of the
 // prior silent route-to-control. F-10.7.3.
 func TestApplyExperimentRoutingEnrollsViaSDKProvider_spec_10_7(t *testing.T) {
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "sdk-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "sdk-test")
 	resolver := fakeResolver{client: &fakeExternalClient{variant: "treatment"}}
 	s := sdkRoutingServer(t, resolver, emitter)
 	row := &sessionstore.Session{ID: "sess1", TenantID: "default", UserID: "alice", RuntimeRef: "claude-code"}
@@ -124,7 +125,7 @@ func TestApplyExperimentRoutingEnrollsViaSDKProvider_spec_10_7(t *testing.T) {
 // experiment.targeting_failed event is emitted. The prior code never
 // reached this path for launchdarkly/statsig/unleash (F-10.7.3 gap).
 func TestApplyExperimentRoutingSDKProviderErrorEmitsTargetingFailed_spec_10_7_833(t *testing.T) {
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "sdk-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "sdk-test")
 	resolver := fakeResolver{client: &fakeExternalClient{err: &experimentprovider.EvalError{FlagKey: "exp_ext", Code: "PROVIDER_NOT_READY", Detail: "not ready"}}}
 	s := sdkRoutingServer(t, resolver, emitter)
 	row := &sessionstore.Session{ID: "sess1", TenantID: "default", UserID: "alice", RuntimeRef: "claude-code"}
@@ -144,7 +145,7 @@ func TestApplyExperimentRoutingSDKProviderErrorEmitsTargetingFailed_spec_10_7_83
 // as a silent skip. This is the exact gap F-10.7.3 named: a misconfigured
 // vendor SDK no longer routes every experiment to control without signal.
 func TestApplyExperimentRoutingSDKConstructionFailureEmitsTargetingFailed_spec_10_7_833(t *testing.T) {
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "sdk-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "sdk-test")
 	resolver := fakeResolver{err: errors.New("provider construction failed")}
 	s := sdkRoutingServer(t, resolver, emitter)
 	row := &sessionstore.Session{ID: "sess1", TenantID: "default", UserID: "alice", RuntimeRef: "claude-code"}
@@ -163,7 +164,7 @@ func TestApplyExperimentRoutingSDKConstructionFailureEmitsTargetingFailed_spec_1
 // experiment is skipped (no enrollment) exactly as a tenant with no
 // targeting, and no spurious targeting_failed is emitted.
 func TestApplyExperimentRoutingNilResolverSkips(t *testing.T) {
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "sdk-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "sdk-test")
 	s := sdkRoutingServer(t, nil, emitter)
 	row := &sessionstore.Session{ID: "sess1", TenantID: "default", UserID: "alice", RuntimeRef: "claude-code"}
 	if err := s.ApplyExperimentRouting(context.Background(), row); err != nil {

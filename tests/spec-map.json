@@ -1057,7 +1057,8 @@
       "title": "Gateway Reliability",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
-        "pkg/gateway/events/...",
+        "pkg/events/...",
+        "pkg/gateway/eventbuffer/...",
         "pkg/gateway/sessionserver/events_test.go",
         "tests/tier2_component/coordination/sweep_test.go"
       ],
@@ -2125,8 +2126,8 @@
         "pkg/alerting/rules/render_test.go::TestRenderPrometheusRuleRendersFullCatalog",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogHasNoUnspecifiedMetrics",
-        "pkg/gateway/opsevents/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
-        "pkg/gateway/opsevents/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166",
+        "pkg/events/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
+        "pkg/events/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166",
         "pkg/observability/audit/catalog_test.go::TestCatalogIsCompleteAgainstSpec167",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleMatchesAlertCatalog",
@@ -2142,7 +2143,7 @@
         "pkg/observability/logging",
         "pkg/alerting/rules",
         "pkg/observability/audit",
-        "pkg/gateway/opsevents",
+        "pkg/events",
         "cmd/gen-alerting-rules"
       ],
       "chart_templates": [
@@ -2251,16 +2252,15 @@
       "title": "Operational Events Catalog",
       "spec_file": "spec/16_observability.md",
       "tests": [
-        "pkg/gateway/opsevents/...",
-        "pkg/gateway/opsevents/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
-        "pkg/gateway/opsevents/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166"
+        "pkg/events/...",
+        "pkg/events/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
+        "pkg/events/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166"
       ],
       "packages": [
-        "pkg/observability/events",
-        "pkg/gateway/opsevents"
+        "pkg/events"
       ],
       "blocked_until_phase": "14",
-      "notes": "Operational event catalog: every event type, its payload schema, when it fires. pkg/gateway/opsevents/catalog.go is the typed §16.6 catalog (gateway-emitted and lenny-ops-emitted short names) cross-checked for completeness against the §16.6 lists. Phase 14 ships the emitter and the event-store consumer."
+      "notes": "Operational event catalog: every event type, its payload schema, when it fires. pkg/events/catalog.go is the typed §16.6 catalog (gateway-emitted and lenny-ops-emitted short names) cross-checked for completeness against the §16.6 lists. The neutral pkg/events package holds the shared event vocabulary; the §25.3 gateway-side ring buffer and emitters live in pkg/gateway/eventbuffer. Phase 14 ships the emitter and the event-store consumer."
     },
     "16.7": {
       "title": "Section 25 Audit Events",

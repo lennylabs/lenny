@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
@@ -226,7 +226,7 @@ func (f *opsFlags) registerBackupFlags() {
 func (f *opsFlags) registerEventFlags() {
 	f.selfHealthInterval = flag.Duration("self-health-interval", 10*time.Second,
 		"§25.4 ops.selfHealth.checkIntervalSeconds — how often the self-monitor runs")
-	f.eventsStreamMaxLen = flag.Int64("events-stream-max-len", envInt64("LENNY_OPS_EVENTS_STREAM_MAX_LEN", events.DefaultStreamMaxLen),
+	f.eventsStreamMaxLen = flag.Int64("events-stream-max-len", envInt64("LENNY_OPS_EVENTS_STREAM_MAX_LEN", eventbuffer.DefaultStreamMaxLen),
 		"§25.5 ops.events.streamMaxLen — MAXLEN of the platform-scoped ops:events:stream Redis stream. Tier 1 default 10,000; tier presets raise it (50,000 at Tier 2, 100,000 at Tier 3). Override via LENNY_OPS_EVENTS_STREAM_MAX_LEN. F-17.8.1.")
 	f.webhookTrackingMode = flag.String("webhook-tracking-mode", envOr("LENNY_OPS_WEBHOOK_TRACKING_MODE", string(webhookdelivery.TrackingFull)),
 		"§25.5 ops.webhooks.deliveryTrackingMode — full, failures-only, or metric-only. Override via LENNY_OPS_WEBHOOK_TRACKING_MODE.")

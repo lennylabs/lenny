@@ -35,7 +35,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
@@ -141,7 +141,7 @@ const (
 
 // EventEmitter is the §4.0 events sink the WarmPoolController publishes
 // pool_state_changed events through. Aliased to events.EventEmitter
-// so the spec's single interface is reused; *events.Emitter and the
+// so the spec's single interface is reused; *eventbuffer.Emitter and the
 // §25.5 Redis-stream emitter both satisfy it. A nil EventEmitter on
 // Reconciler disables emission.
 type EventEmitter = events.EventEmitter

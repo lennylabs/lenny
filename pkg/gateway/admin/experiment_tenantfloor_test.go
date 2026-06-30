@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -23,7 +24,7 @@ import (
 // newExperimentTenantFloorAdmin builds an experiment admin router with
 // tenant `acme` carrying the given minIsolationProfile floor, a
 // `sandboxed` base runtime, and pools at `sandboxed` and `microvm`.
-func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Router, *recordingAudit, *events.Emitter) {
+func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Router, *recordingAudit, *eventbuffer.Emitter) {
 	t.Helper()
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{
@@ -49,7 +50,7 @@ func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Rou
 		t.Fatalf("seed microvm pool: %v", err)
 	}
 	audit := &recordingAudit{}
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "replica-test")
 	router := admin.NewRouter(tenants, admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
 		Audit: audit,

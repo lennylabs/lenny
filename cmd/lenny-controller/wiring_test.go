@@ -23,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
@@ -131,7 +131,7 @@ func newWiringForTest(f *controllerFlags, mgr manager.Manager) *controllerWiring
 	w := &controllerWiring{f: f}
 	w.mgr = mgr
 	w.queueFactory = controllermetrics.NewQueueFactory(f.workqueueMaxDepth)
-	w.opsEmitter = events.NewEmitter(events.NewEventBuffer(0), "controller-test")
+	w.opsEmitter = eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "controller-test")
 	w.runtimeClassOverrides = map[isolation.Profile]string{}
 	return w
 }

@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
@@ -87,8 +88,8 @@ func (r *Router) handleEventBuffer(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	// §25.3: the buffer endpoint caps limit at 500.
-	if limit > events.DefaultBufferCapacity {
-		limit = events.DefaultBufferCapacity
+	if limit > eventbuffer.DefaultBufferCapacity {
+		limit = eventbuffer.DefaultBufferCapacity
 	}
 	page := r.eventBuffer.Query(since, events.EventFilter{
 		EventType: q.Get("eventType"),

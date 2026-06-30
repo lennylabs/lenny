@@ -1,38 +1,19 @@
 // SPDX-License-Identifier: MIT
 
-package events
+package eventbuffer
 
 import (
 	"context"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/events"
 )
-
-// CloudEventsSpecVersion is the §25.3 / §12.6 CloudEvents envelope
-// version every operational event carries.
-const CloudEventsSpecVersion = "1.0.2"
-
-// EventEmitter is the §4.0 / §25.3 operational-event sink every
-// subsystem depends on. Subsystems take an EventEmitter and call Emit at
-// the documented §16.6 state-change points. The local *Emitter
-// satisfies it; the §25.5 Redis-stream emitter satisfies it; tests
-// substitute fakes through the same interface. ctx threads cancellation
-// through the emit path so a slow Redis write does not pin a shutdown.
-// spec: §25.3 lines 660-663 — `Emit(ctx context.Context, event
-// OperationalEvent) error`.
-type EventEmitter interface {
-	// Emit records an operational event. An emitter that wraps a remote
-	// stream returns a non-nil error when the remote write failed; the
-	// in-process buffer write always succeeds first so the event is
-	// never lost, and the caller may log the error. The local-only
-	// emitter always returns nil.
-	Emit(ctx context.Context, event OperationalEvent) error
-}
 
 // emitterConfig is the resolved set of EmitterOption choices.
 type emitterConfig struct {
 	now        func() time.Time
-	checkpoint *NonceCheckpoint
-	metrics    *Metrics
+	checkpoint *events.NonceCheckpoint
+	metrics    *events.Metrics
 	onError    func(error)
 }
 
@@ -50,13 +31,13 @@ func WithClock(now func() time.Time) EmitterOption {
 
 // WithNonceCheckpoint enables the §25.3 on-disk nonce checkpoint so the
 // eventKey nonce survives a restart. spec: §25.3 line 748.
-func WithNonceCheckpoint(spec NonceCheckpoint) EmitterOption {
+func WithNonceCheckpoint(spec events.NonceCheckpoint) EmitterOption {
 	return func(c *emitterConfig) { c.checkpoint = &spec }
 }
 
 // WithMetrics wires the §25.3 event-emission metrics. spec: §25.3
 // lines 705-710.
-func WithMetrics(m *Metrics) EmitterOption {
+func WithMetrics(m *events.Metrics) EmitterOption {
 	return func(c *emitterConfig) { c.metrics = m }
 }
 
@@ -73,13 +54,13 @@ func WithEmitErrorLogger(fn func(error)) EmitterOption {
 // StreamEmitter, which composes this Emitter with an XADD writer.
 type Emitter struct {
 	buffer  *EventBuffer
-	keyer   *keyer
+	keyer   *events.Keyer
 	now     func() time.Time
-	metrics *Metrics
+	metrics *events.Metrics
 }
 
-// Compile-time guard that *Emitter satisfies EventEmitter.
-var _ EventEmitter = (*Emitter)(nil)
+// Compile-time guard that *Emitter satisfies events.EventEmitter.
+var _ events.EventEmitter = (*Emitter)(nil)
 
 // NewEmitter returns an Emitter that records events into buffer.
 // replicaID is the per-replica identifier baked into each event's
@@ -89,10 +70,10 @@ func NewEmitter(buffer *EventBuffer, replicaID string, opts ...EmitterOption) *E
 	for _, o := range opts {
 		o(&cfg)
 	}
-	cp, start := resolveCheckpoint(cfg.checkpoint, cfg.onError)
+	cp, start := events.ResolveCheckpoint(cfg.checkpoint, cfg.onError)
 	return &Emitter{
 		buffer:  buffer,
-		keyer:   newKeyer(replicaID, cp, start, cfg.onError),
+		keyer:   events.NewKeyer(replicaID, cp, start, cfg.onError),
 		now:     cfg.now,
 		metrics: cfg.metrics,
 	}
@@ -105,18 +86,18 @@ func NewEmitter(buffer *EventBuffer, replicaID string, opts ...EmitterOption) *E
 // honored for cancellation but the write itself is in-process and
 // non-blocking. The assigned buffer id is read back via the buffer
 // (Buffer().Query); the §25.3 EventEmitter contract is error-only.
-func (e *Emitter) Emit(ctx context.Context, event OperationalEvent) error {
+func (e *Emitter) Emit(ctx context.Context, event events.OperationalEvent) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if event.SpecVersion == "" {
-		event.SpecVersion = CloudEventsSpecVersion
+		event.SpecVersion = events.CloudEventsSpecVersion
 	}
 	if event.Time.IsZero() {
 		event.Time = e.now().UTC()
 	}
 	if event.ID == "" {
-		event.ID = e.keyer.eventKey(event.Time)
+		event.ID = e.keyer.EventKey(event.Time)
 	}
 	e.buffer.Append(event)
 	e.metrics.IncEmitted(event.Type)

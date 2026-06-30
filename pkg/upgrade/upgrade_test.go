@@ -7,7 +7,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/upgrade"
 )
 
@@ -75,8 +76,8 @@ func TestIsTerminal(t *testing.T) {
 // on each phase transition carrying pool, oldPhase, newPhase, and
 // imageDigest.
 func TestAdvanceEmitsUpgradeProgressedOnEveryTransition(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	phase := upgrade.Preflight
 	digest := "sha256:abc123"
 	want := []struct {
@@ -141,8 +142,8 @@ func TestAdvanceWithNilEmitterStillTransitions(t *testing.T) {
 // spec §25.8: Advance reports the Next error and emits nothing past the
 // terminal phase.
 func TestAdvanceRejectsTerminalPhases(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	for _, p := range []upgrade.Phase{upgrade.Complete, upgrade.RolledBack, "Bogus"} {
 		if _, err := upgrade.Advance(context.Background(), em, "default", p, "sha256:x"); err == nil {
 			t.Errorf("Advance(%s) = nil error, want a rejection", p)
@@ -156,8 +157,8 @@ func TestAdvanceRejectsTerminalPhases(t *testing.T) {
 // spec §25.8: a rollbackable phase rolls back to RolledBack and the
 // emit carries newPhase=RolledBack with severity=warning.
 func TestAdvanceRollbackEmitsRolledBackPhase(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	next, err := upgrade.AdvanceRollback(context.Background(), em, "default", upgrade.OpsRoll, "sha256:abc")
 	if err != nil || next != upgrade.RolledBack {
 		t.Fatalf("AdvanceRollback(OpsRoll) = %s, %v; want RolledBack, nil", next, err)
@@ -174,8 +175,8 @@ func TestAdvanceRollbackEmitsRolledBackPhase(t *testing.T) {
 // spec §25.8: AdvanceRollback rejects a phase past the point of no
 // return and emits nothing.
 func TestAdvanceRollbackRejectsLatePhases(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	if _, err := upgrade.AdvanceRollback(context.Background(), em, "default", upgrade.SchemaMigration, "sha256:x"); err == nil {
 		t.Error("AdvanceRollback(SchemaMigration) = nil error, want a rejection past the point of no return")
 	}
