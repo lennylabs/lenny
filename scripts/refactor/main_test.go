@@ -261,6 +261,57 @@ func TestDriver_AuditAbortsOnSurvivingJSONToken(t *testing.T) {
 	}
 }
 
+// The JSON audit must record an informational-string occurrence of a moved path
+// inside a "notes" value as a warning (not abort, not silently drop it), the
+// same way the *.go and prose surfaces are handled (proposal 0020 §4 C4). The
+// driver's JSONTokens rewrites only quote/slash-bounded tokens, so a path inside
+// a "notes" sentence (bounded by a space or '.') survives by design and must be
+// surfaced for the manual sweep. This is constructed to FAIL against the pre-fix
+// auditJSONMaps, which collected only Abort results and dropped the warning.
+func TestDriver_AuditJSONMapsWarnsOnInformationalNote(t *testing.T) {
+	root := initTempRepo(t)
+	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: true, skipAudit: true}}
+
+	// Rewrite the maps cleanly first so the quote/slash-bounded tokens are gone
+	// and only an informational "notes" reference remains stale. Append the note
+	// after the move+rewrite, then assert auditJSONMaps warns and does not abort.
+	if err := d.gitMove(testModuleMove()); err != nil {
+		t.Fatalf("gitMove: %v", err)
+	}
+	if err := d.rewriteTree(); err != nil {
+		t.Fatalf("rewriteTree: %v", err)
+	}
+
+	// Inject a stale informational reference into spec-map.json's content. The
+	// token sits inside a sentence bounded by a space and a period, the form the
+	// driver provably cannot rewrite.
+	specMapPath := filepath.Join(root, "tests", "spec-map.json")
+	note := "{\n  \"notes\": \"the writer pkg/gateway/playground persists the row.\"\n}\n"
+	writeFile(t, specMapPath, note)
+
+	aborts, warns, err := d.auditJSONMaps()
+	if err != nil {
+		t.Fatalf("auditJSONMaps: %v", err)
+	}
+	if len(aborts) != 0 {
+		t.Fatalf("informational JSON note must not abort; aborts=%v", aborts)
+	}
+	var sawWarn bool
+	for _, w := range warns {
+		if strings.HasPrefix(w, "tests/spec-map.json") && strings.Contains(w, "pkg/gateway/playground") {
+			sawWarn = true
+		}
+	}
+	if !sawWarn {
+		t.Fatalf("auditJSONMaps must warn on the stale informational note; warns=%v", warns)
+	}
+
+	// The full audit must surface the warning and still pass (no abort).
+	if err := d.audit(); err != nil {
+		t.Fatalf("audit must pass with only an informational JSON warning; got %v", err)
+	}
+}
+
 // The audit must NOT abort on a comment-form occurrence, and must record it as a
 // warning. A clean post-rewrite tree with a stale comment passes the audit.
 func TestDriver_AuditWarnsButDoesNotAbortOnComment(t *testing.T) {

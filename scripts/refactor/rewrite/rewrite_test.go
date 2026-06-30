@@ -322,6 +322,85 @@ func TestClassifyJSON_SurvivorAborts(t *testing.T) {
 	}
 }
 
+// warn-vs-abort (JSON informational string): an in-manifest old path that
+// survives only inside a larger informational JSON string value (a "notes"
+// sentence, where the token is bounded by a space, '(', '.', or ';' rather than
+// by a quote or a slash) must classify Warn, not None and not Abort. The
+// driver's JSONTokens rewrites only quote/slash-bounded tokens, so it leaves
+// such a reference untouched by design; the §4 C4 audit must still record it for
+// the manual sweep, the same way it records the equivalent *.go and prose
+// informational strings. tests/spec-map.json carries exactly these references in
+// its "notes" values (for example pkg/gateway/podclaim.SlotClaimer,
+// pkg/gateway/jwtaudit, pkg/gateway/auditstore, pkg/gateway/eventbus), bounded
+// by '.', a space, or '('. This test is constructed to FAIL against the pre-fix
+// ClassifyJSON, which returned None for every non-quote/slash occurrence.
+func TestClassifyJSON_InformationalStringWarns(t *testing.T) {
+	cases := []struct {
+		name    string
+		old     string
+		content string
+	}{
+		{
+			name:    "notes dotted method reference",
+			old:     "github.com/lennylabs/lenny/pkg/gateway/podclaim",
+			content: `"notes": "Phase 12c adds pkg/gateway/podclaim.SlotClaimer as the per-pod slot claim path."`,
+		},
+		{
+			name:    "notes parenthesized package reference",
+			old:     "github.com/lennylabs/lenny/pkg/gateway/jwtaudit",
+			content: `"notes": "the audit observer (pkg/gateway/jwtaudit), and the rotation state machine."`,
+		},
+		{
+			name:    "notes space-bounded package reference",
+			old:     "github.com/lennylabs/lenny/pkg/gateway/auditstore",
+			content: `"notes": "the audit-log row writer pkg/gateway/auditstore with the advisory lock."`,
+		},
+		{
+			name:    "notes colon-bounded package reference",
+			old:     "github.com/lennylabs/lenny/pkg/gateway/eventbus",
+			content: `"notes": "The EventBus is implemented by pkg/gateway/eventbus: the RedisEventBus."`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// A real move re-anchors the package under a group, so the old token is
+			// genuinely stale post-move (its new path differs).
+			m := Move{Old: c.old, New: strings.Replace(c.old, "pkg/gateway/", "pkg/gateway/group/", 1)}
+			if got := ClassifyJSON(c.content, m); got != Warn {
+				t.Errorf("informational JSON string %q must classify Warn, got %v", c.content, got)
+			}
+		})
+	}
+}
+
+// warn-vs-abort (JSON): a quote/slash-bounded driver-rewritable token still
+// aborts, taking precedence over the informational-string warn path, so the
+// new Warn branch does not weaken the abort guarantee for tokens the driver was
+// supposed to rewrite.
+func TestClassifyJSON_QuotedSurvivorStillAbortsOverWarn(t *testing.T) {
+	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/eventbus", New: "github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"}
+	// Same file carries both a stale quoted glob (Abort) and an informational
+	// "notes" reference (Warn); the quoted form must win and abort.
+	content := `{
+  "key": "pkg/gateway/eventbus/...",
+  "notes": "implemented by pkg/gateway/eventbus: the RedisEventBus."
+}`
+	if got := ClassifyJSON(content, m); got != Abort {
+		t.Errorf("a surviving quoted JSON token must abort even alongside an informational reference; got %v", got)
+	}
+}
+
+// warn-vs-abort (JSON): the informational warn path must not false-positive on
+// the new path, which carries the old path as a prefix substring. After a clean
+// rewrite the JSON names only the new path; ClassifyJSON must return None.
+func TestClassifyJSON_NewPathInformationalIsNone(t *testing.T) {
+	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcp", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"}
+	content := `"notes": "the pkg/gateway/mcpfabric/mcp package handles schema validation."`
+	if got := ClassifyJSON(content, m); got != None {
+		t.Errorf("a new path carrying the old path as a prefix must classify None; got %v", got)
+	}
+}
+
 // self-prefix abort: a self-prefix move (policy -> policy/policy,
 // llmproxy -> llmproxy/llmproxy, coordination -> coordination/coordination from
 // the committed manifest) makes the correct new token carry the old path as a

@@ -46,11 +46,12 @@ func (d *driver) audit() error {
 // maps, the *.go sources, and the non-Go prose files into the abort and warn
 // buckets.
 func (d *driver) collectSurvivors() (aborts, warns []string, err error) {
-	jsonAborts, err := d.auditJSONMaps()
+	jsonAborts, jsonWarns, err := d.auditJSONMaps()
 	if err != nil {
 		return nil, nil, err
 	}
 	aborts = append(aborts, jsonAborts...)
+	warns = append(warns, jsonWarns...)
 
 	goAborts, goWarns, err := d.auditGoFiles()
 	if err != nil {
@@ -67,25 +68,33 @@ func (d *driver) collectSurvivors() (aborts, warns []string, err error) {
 	return aborts, warns, nil
 }
 
-// auditJSONMaps classifies surviving tokens in the two JSON maps. Every path
-// reference in the maps is a driver-rewritable JSON string, so a survivor is an
-// abort.
-func (d *driver) auditJSONMaps() ([]string, error) {
-	var aborts []string
+// auditJSONMaps classifies surviving tokens in the two JSON maps. A
+// driver-rewritable quote/slash-bounded JSON string aborts; an in-manifest old
+// path that survives only inside a larger informational string value (a "notes"
+// sentence, where the token is bounded by a space or by '(', '.', and so on)
+// warns, because the driver's JSONTokens never rewrites that form and aborting
+// on it would make a group move unsatisfiable. The warn path mirrors the *.go
+// and prose surfaces so the §4 C4 audit records the residual stale drift on the
+// JSON surface for the optional manual sweep (proposal 0020 §4 C4).
+func (d *driver) auditJSONMaps() (aborts, warns []string, err error) {
 	for _, rel := range []string{"tests/spec-map.json", "tests/change-graph.json"} {
 		path := filepath.Join(d.root, filepath.FromSlash(rel))
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil, nil, readErr
 		}
 		text := string(content)
 		for _, m := range d.moves {
-			if rewrite.ClassifyJSON(text, m) == rewrite.Abort {
+			switch rewrite.ClassifyJSON(text, m) {
+			case rewrite.Abort:
 				aborts = append(aborts, fmt.Sprintf("%s: %s", rel, rewrite.RepoRel(m.Old)))
+			case rewrite.Warn:
+				warns = append(warns, fmt.Sprintf("%s: %s", rel, rewrite.RepoRel(m.Old)))
+			case rewrite.None:
 			}
 		}
 	}
-	return aborts, nil
+	return aborts, warns, nil
 }
 
 // auditGoFiles walks every *.go file and classifies surviving tokens. A

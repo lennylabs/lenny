@@ -247,14 +247,26 @@ func ClassifyGo(content string, m Move) SurvivorClass {
 }
 
 // ClassifyJSON returns the survivor class for the old path of a move in a JSON
-// map file's content. Every path reference in the maps is a JSON string in a
-// driver-rewritable boundary form ("P", "P/..., "P/file), so a survivor is an
-// abort. There is no comment form in JSON, so this never returns Warn.
+// map file's content. A driver-rewritable boundary form ("P", "P/..., "P/file)
+// aborts, because the driver provably could and should have rewritten it. An
+// in-manifest old path that survives only inside a larger informational JSON
+// string value (a "notes" sentence, where the token is bounded by a space or by
+// '(', ')', '.', ';', ',', ':' rather than by a quote or a slash) warns: the
+// driver's JSONTokens rewrites only quote/slash-bounded tokens, so it never
+// touches such an occurrence, and aborting on it would make a group move
+// unsatisfiable. The Warn path mirrors ClassifyGo's treatment of informational
+// strings so the §4 C4 audit records the residual stale drift on the JSON
+// surface for an optional manual sweep, matching the other two audited surfaces
+// (*.go and prose). spec: §4.1 (proposal 0020 §4 C4 — the post-move audit
+// surfaces informational-string occurrences across all three audited surfaces).
 func ClassifyJSON(content string, m Move) SurvivorClass {
 	oldRel := RepoRel(m.Old)
 	newRel := RepoRel(m.New)
 	if hasSurvivingQuotedRef(content, oldRel, newRel) {
 		return Abort
+	}
+	if hasBoundedToken(content, oldRel) {
+		return Warn
 	}
 	return None
 }
