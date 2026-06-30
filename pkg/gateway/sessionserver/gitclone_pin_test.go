@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

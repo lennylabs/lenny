@@ -20,9 +20,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionusage/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

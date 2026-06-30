@@ -33,11 +33,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	interceptorpg "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/vcscred"
 )
 
 // buildMCPSurface is the §4.1 composition-root build step (R1) for the §9.1
