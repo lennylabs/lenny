@@ -332,32 +332,34 @@ const (
 	Warn
 )
 
-// ClassifyGo returns the strongest survivor class for the old path of a move in
-// a Go source file's content. It is Abort when a driver-rewritable form
-// survives (an import literal "P", a slash-joined runtime literal "P/ or "P",
-// or the split path-segment run under "pkg", "gateway"), Warn when only a
-// comment or informational-string occurrence survives, and None when the token
-// is absent. The driver applies its rewrites before the audit, so an Abort
-// here means a rewrite the driver was supposed to perform did not land.
-func ClassifyGo(content string, m Move) SurvivorClass {
-	oldImport := m.Old
-	newImport := m.New
+// ClassifyGo returns the strongest survivor class for the old path of move m in
+// a Go source file's content, evaluated against the whole batch allMoves. It is
+// Abort when a driver-rewritable form survives (an import literal "P" or "P/sub",
+// a slash-joined runtime literal "P/ or "P", or the split path-segment run under
+// "pkg", "gateway"), Warn when only a comment or informational-string occurrence
+// survives, and None when the token is absent. The driver applies its rewrites
+// before the audit, so an Abort here means a rewrite the driver was supposed to
+// perform did not land.
+//
+// The quoted-form check is set-aware: a quoted token is a survivor of m only
+// when its longest matching OLD path is m.Old (or m's repo-relative path) AND no
+// move's NEW path explains it at least as specifically. This is what keeps a
+// sibling correctly moved into a self-prefix group (credrouter ->
+// llmproxy/credrouter, which carries the "...llmproxy/" prefix of the
+// llmproxy -> llmproxy/llmproxy self-prefix move) from being mis-flagged as a
+// surviving llmproxy token: "...llmproxy/credrouter" is credrouter's final new
+// path, longer than the llmproxy old match, so it is not a survivor.
+func ClassifyGo(content string, m Move, allMoves []Move) SurvivorClass {
 	oldRel := RepoRel(m.Old)
 	newRel := RepoRel(m.New)
 
-	// Driver-rewritable forms: a surviving one is an abort. The deeper-reference
-	// and exact-literal forms exclude an occurrence that is the rewritten new
-	// path, which a self-prefix move (policy -> policy/policy) leaves carrying the
-	// old token as a prefix; see hasSurvivingQuotedRef. hasSurvivingQuotedRef is
-	// applied to both the fully-qualified import path (catching a surviving
-	// "<oldImport>" leaf import or "<oldImport>/sub" nested import, the form
-	// ImportLiterals rewrites) and the repo-relative runtime path (catching a
-	// surviving "<oldRel>" or "<oldRel>/..." runtime read, the form RuntimePaths
-	// rewrites).
-	if hasSurvivingQuotedRef(content, oldImport, newImport) {
+	// Driver-rewritable quoted forms (import literal and runtime slash-joined
+	// literal), checked against both the fully-qualified import paths and the
+	// repo-relative paths, set-aware so a longer new path covers the token.
+	if survivesAsQuoted(content, m.Old, importOldNew(allMoves)) {
 		return Abort
 	}
-	if hasSurvivingQuotedRef(content, oldRel, newRel) {
+	if survivesAsQuoted(content, oldRel, jsonOldNew(allMoves)) {
 		return Abort
 	}
 	if hasSplitSegmentRun(content, oldRel, newRel) {
@@ -371,23 +373,22 @@ func ClassifyGo(content string, m Move) SurvivorClass {
 	return None
 }
 
-// ClassifyJSON returns the survivor class for the old path of a move in a JSON
-// map file's content. A driver-rewritable boundary form ("P", "P/..., "P/file)
-// aborts, because the driver provably could and should have rewritten it. An
-// in-manifest old path that survives only inside a larger informational JSON
-// string value (a "notes" sentence, where the token is bounded by a space or by
-// '(', ')', '.', ';', ',', ':' rather than by a quote or a slash) warns: the
-// driver's JSONTokens rewrites only quote/slash-bounded tokens, so it never
-// touches such an occurrence, and aborting on it would make a group move
-// unsatisfiable. The Warn path mirrors ClassifyGo's treatment of informational
-// strings so the §4 C4 audit records the residual stale drift on the JSON
-// surface for an optional manual sweep, matching the other two audited surfaces
-// (*.go and prose). spec: §4.1 (proposal 0020 §4 C4 — the post-move audit
-// surfaces informational-string occurrences across all three audited surfaces).
-func ClassifyJSON(content string, m Move) SurvivorClass {
+// ClassifyJSON returns the survivor class for the old path of move m in a JSON
+// map file's content, evaluated against the whole batch allMoves. A
+// driver-rewritable boundary form ("P", "P/..., "P/file) aborts, because the
+// driver provably could and should have rewritten it. An in-manifest old path
+// that survives only inside a larger informational JSON string value (a "notes"
+// sentence, where the token is bounded by a space or by '(', ')', '.', ';', ',',
+// ':' rather than by a quote or a slash) warns: the driver's JSONTokens rewrites
+// only quote/slash-bounded tokens, so it never touches such an occurrence, and
+// aborting on it would make a group move unsatisfiable. The abort check is the
+// same set-aware quoted-token survivor test ClassifyGo uses, so a sibling moved
+// into a self-prefix group is not mis-flagged. spec: §4.1 (proposal 0020 §4 C4 —
+// the post-move audit surfaces informational-string occurrences across all three
+// audited surfaces).
+func ClassifyJSON(content string, m Move, allMoves []Move) SurvivorClass {
 	oldRel := RepoRel(m.Old)
-	newRel := RepoRel(m.New)
-	if hasSurvivingQuotedRef(content, oldRel, newRel) {
+	if survivesAsQuoted(content, oldRel, jsonOldNew(allMoves)) {
 		return Abort
 	}
 	if hasBoundedToken(content, oldRel) {
@@ -396,48 +397,68 @@ func ClassifyJSON(content string, m Move) SurvivorClass {
 	return None
 }
 
-// hasSurvivingQuotedRef reports whether a driver-rewritable quoted path
-// reference for oldRel ("<oldRel>" exact, or "<oldRel>/ deeper) survives in
-// content that has already been rewritten. It excludes any occurrence that is
-// the rewritten new path: a self-prefix move (for example
-// pkg/gateway/policy -> pkg/gateway/policy/policy) makes the correct new token
-// "pkg/gateway/policy/policy/..." contain the substring "pkg/gateway/policy/,
-// which a naive strings.Contains would flag as a surviving deeper reference even
-// though the driver produced it. The fix scans each "<oldRel>/ and "<oldRel>"
-// match and skips the one that coincides with the start of the new path token
-// "<newRel> at the same position. spec: §4.1 (proposal 0020 §4 C4 — the abort
-// condition flags only a token the driver provably could and should have
-// rewritten, so a correctly-rewritten self-prefix move never aborts).
-func hasSurvivingQuotedRef(content, oldRel, newRel string) bool {
-	for _, suffix := range []string{`/`, `"`} {
-		needle := `"` + oldRel + suffix
-		// newToken carries the leading quote so the prefix comparison aligns with
-		// the quote-delimited needle position.
-		if survivingQuotedMatch(content, needle, `"`+newRel) {
+// survivesAsQuoted reports whether a quoted path token whose longest-matching
+// OLD path is targetOld survives in content as a driver-rewritable token that no
+// move's NEW path explains. It scans every quoted "..." literal, extracts the
+// inner token, and for a token that is a gateway path:
+//
+//   - finds the longest OLD path (from pairs) that the token equals or nests
+//     under, and the longest NEW path likewise;
+//   - treats the token as a survivor of its longest OLD path only when that OLD
+//     match is strictly longer than any NEW match (so a correctly-produced new
+//     token, including a sibling under a self-prefix group, is not a survivor);
+//   - reports true when such a survivor's longest OLD path equals targetOld.
+//
+// This is the audit counterpart to replaceQuotedPaths: after a correct rewrite,
+// no token's longest OLD match beats its longest NEW match, so the audit is
+// clean; a token the driver missed still reads as old and trips the abort.
+func survivesAsQuoted(content, targetOld string, pairs []oldNew) bool {
+	i := 0
+	for i < len(content) {
+		if content[i] != '"' {
+			i++
+			continue
+		}
+		end := closingQuote(content, i+1)
+		if end < 0 {
+			return false
+		}
+		token := content[i+1 : end]
+		if longestMatch(token, pairs, true) == targetOld && tokenSurvives(token, pairs) {
 			return true
 		}
+		i = end + 1
 	}
 	return false
 }
 
-// survivingQuotedMatch reports whether needle occurs in content at a position
-// that is NOT the start of the rewritten newToken. A match where newToken also
-// begins at that position is the driver's own rewrite output (the self-prefix
-// case), so it is not a survivor. Every other match is a genuine surviving
-// pre-move token the driver should have rewritten.
-func survivingQuotedMatch(content, needle, newToken string) bool {
-	idx := 0
-	for {
-		i := strings.Index(content[idx:], needle)
-		if i < 0 {
-			return false
+// tokenSurvives reports whether token's longest OLD-path match is strictly
+// longer than its longest NEW-path match, the condition that marks it as an
+// unrewritten pre-move token rather than a correctly-produced new token.
+func tokenSurvives(token string, pairs []oldNew) bool {
+	oldLen := len(longestMatch(token, pairs, true))
+	newLen := len(longestMatch(token, pairs, false))
+	return oldLen > 0 && oldLen > newLen
+}
+
+// longestMatch returns the longest old (useOld) or new path from pairs that
+// token equals or nests under (path, or path + "/" prefix), or "" when none
+// matches. The longest match wins so a shorter sibling does not shadow a longer
+// one.
+func longestMatch(token string, pairs []oldNew, useOld bool) string {
+	best := ""
+	for _, p := range pairs {
+		candidate := p.new
+		if useOld {
+			candidate = p.old
 		}
-		pos := idx + i
-		if !strings.HasPrefix(content[pos:], newToken) {
-			return true
+		if token == candidate || strings.HasPrefix(token, candidate+"/") {
+			if len(candidate) > len(best) {
+				best = candidate
+			}
 		}
-		idx = pos + len(needle)
 	}
+	return best
 }
 
 // HasProseToken reports whether the old path of a move survives as a standalone

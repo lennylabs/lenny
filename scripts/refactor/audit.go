@@ -85,7 +85,7 @@ func (d *driver) auditJSONMaps() (aborts, warns []string, err error) {
 		}
 		text := string(content)
 		for _, m := range d.moves {
-			switch rewrite.ClassifyJSON(text, m) {
+			switch rewrite.ClassifyJSON(text, m, d.moves) {
 			case rewrite.Abort:
 				aborts = append(aborts, fmt.Sprintf("%s: %s", rel, rewrite.RepoRel(m.Old)))
 			case rewrite.Warn:
@@ -121,7 +121,7 @@ func (d *driver) auditGoFiles() (aborts, warns []string, err error) {
 		text := string(content)
 		rel := d.relPath(path)
 		for _, m := range d.moves {
-			switch rewrite.ClassifyGo(text, m) {
+			switch rewrite.ClassifyGo(text, m, d.moves) {
 			case rewrite.Abort:
 				aborts = append(aborts, fmt.Sprintf("%s: %s", rel, rewrite.RepoRel(m.Old)))
 			case rewrite.Warn:

@@ -204,12 +204,12 @@ func TestImportLiterals_RewritesNestedSubpackageImport(t *testing.T) {
 func TestClassifyGo_AbortsOnSurvivingNestedImport(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/leasestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"}
 	stale := `import leasepg "github.com/lennylabs/lenny/pkg/gateway/leasestore/pgstore"`
-	if got := ClassifyGo(stale, m); got != Abort {
+	if got := ClassifyGo(stale, m, []Move{m}); got != Abort {
 		t.Fatalf("ClassifyGo on a surviving nested import = %v, want Abort", got)
 	}
 	// The correctly rewritten nested import must not abort.
 	rewritten := `import leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"`
-	if got := ClassifyGo(rewritten, m); got != None {
+	if got := ClassifyGo(rewritten, m, []Move{m}); got != None {
 		t.Fatalf("ClassifyGo on the rewritten nested import = %v, want None", got)
 	}
 }
@@ -353,7 +353,7 @@ func TestJSONTokens_PrefixGlobSafe(t *testing.T) {
 func TestClassifyGo_SurvivingImportLiteralAborts(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/auditstore", New: "github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"}
 	content := `import "github.com/lennylabs/lenny/pkg/gateway/auditstore"`
-	if got := ClassifyGo(content, m); got != Abort {
+	if got := ClassifyGo(content, m, []Move{m}); got != Abort {
 		t.Errorf("surviving import literal must abort; got %v", got)
 	}
 }
@@ -362,7 +362,7 @@ func TestClassifyGo_SurvivingImportLiteralAborts(t *testing.T) {
 func TestClassifyGo_SurvivingRuntimeLiteralAborts(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/playground", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"}
 	content := `p := "pkg/gateway/playground/token.go"`
-	if got := ClassifyGo(content, m); got != Abort {
+	if got := ClassifyGo(content, m, []Move{m}); got != Abort {
 		t.Errorf("surviving runtime literal must abort; got %v", got)
 	}
 }
@@ -371,7 +371,7 @@ func TestClassifyGo_SurvivingRuntimeLiteralAborts(t *testing.T) {
 func TestClassifyGo_SurvivingSplitSegmentAborts(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/playground", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"}
 	content := `readRepoFile(t, root, "pkg", "gateway", "playground", "token.go")`
-	if got := ClassifyGo(content, m); got != Abort {
+	if got := ClassifyGo(content, m, []Move{m}); got != Abort {
 		t.Errorf("surviving split-segment run must abort; got %v", got)
 	}
 }
@@ -382,7 +382,7 @@ func TestClassifyGo_SurvivingSplitSegmentAborts(t *testing.T) {
 func TestClassifyGo_DiagnosisCommentWarns(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/auditstore", New: "github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"}
 	content := "// diagnosis: a failure here means pkg/gateway/auditstore lost a row.\n"
-	if got := ClassifyGo(content, m); got != Warn {
+	if got := ClassifyGo(content, m, []Move{m}); got != Warn {
 		t.Errorf("// diagnosis: comment token must warn, not abort; got %v", got)
 	}
 }
@@ -392,7 +392,7 @@ func TestClassifyGo_DiagnosisCommentWarns(t *testing.T) {
 func TestClassifyGo_InformationalStringWarns(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/leasestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"}
 	content := `t.Logf("scaffold missing for pkg/gateway/leasestore; skipping")`
-	if got := ClassifyGo(content, m); got != Warn {
+	if got := ClassifyGo(content, m, []Move{m}); got != Warn {
 		t.Errorf("informational-string token (space-bounded) must warn; got %v", got)
 	}
 }
@@ -430,7 +430,7 @@ func TestClassifyGo_QuoteThenSpaceInformationalStringWarns(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := Move{Old: c.old, New: c.old + "/moved"}
-			if got := ClassifyGo(c.content, m); got != Warn {
+			if got := ClassifyGo(c.content, m, []Move{m}); got != Warn {
 				t.Errorf("quote-then-space informational string %q must warn, got %v", c.content, got)
 			}
 		})
@@ -449,7 +449,7 @@ func TestClassifyGo_PrefixInNewPathNotWarned(t *testing.T) {
 	// but the trailing slash-delimited final segment is mcp under a continuation,
 	// so neither occurrence is a standalone old-path token.
 	content := `"the pkg/gateway/mcpfabric/mcp package handles schema."`
-	if got := ClassifyGo(content, m); got != None {
+	if got := ClassifyGo(content, m, []Move{m}); got != None {
 		t.Errorf("new path carrying old path as prefix must classify None, got %v", got)
 	}
 }
@@ -458,7 +458,7 @@ func TestClassifyGo_PrefixInNewPathNotWarned(t *testing.T) {
 func TestClassifyGo_NoneWhenAbsent(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/auditstore", New: "github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"}
 	content := `import "github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"`
-	if got := ClassifyGo(content, m); got != None {
+	if got := ClassifyGo(content, m, []Move{m}); got != None {
 		t.Errorf("rewritten content must classify None; got %v", got)
 	}
 }
@@ -466,10 +466,10 @@ func TestClassifyGo_NoneWhenAbsent(t *testing.T) {
 // warn-vs-abort: a surviving JSON token always aborts (no comment form in JSON).
 func TestClassifyJSON_SurvivorAborts(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcptools", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"}
-	if got := ClassifyJSON(`"pkg/gateway/mcptools/mcptools_test.go"`, m); got != Abort {
+	if got := ClassifyJSON(`"pkg/gateway/mcptools/mcptools_test.go"`, m, []Move{m}); got != Abort {
 		t.Errorf("surviving JSON token must abort; got %v", got)
 	}
-	if got := ClassifyJSON(`"pkg/gateway/mcpfabric/mcptools/mcptools_test.go"`, m); got != None {
+	if got := ClassifyJSON(`"pkg/gateway/mcpfabric/mcptools/mcptools_test.go"`, m, []Move{m}); got != None {
 		t.Errorf("rewritten JSON token must classify None; got %v", got)
 	}
 }
@@ -518,7 +518,7 @@ func TestClassifyJSON_InformationalStringWarns(t *testing.T) {
 			// A real move re-anchors the package under a group, so the old token is
 			// genuinely stale post-move (its new path differs).
 			m := Move{Old: c.old, New: strings.Replace(c.old, "pkg/gateway/", "pkg/gateway/group/", 1)}
-			if got := ClassifyJSON(c.content, m); got != Warn {
+			if got := ClassifyJSON(c.content, m, []Move{m}); got != Warn {
 				t.Errorf("informational JSON string %q must classify Warn, got %v", c.content, got)
 			}
 		})
@@ -537,7 +537,7 @@ func TestClassifyJSON_QuotedSurvivorStillAbortsOverWarn(t *testing.T) {
   "key": "pkg/gateway/eventbus/...",
   "notes": "implemented by pkg/gateway/eventbus: the RedisEventBus."
 }`
-	if got := ClassifyJSON(content, m); got != Abort {
+	if got := ClassifyJSON(content, m, []Move{m}); got != Abort {
 		t.Errorf("a surviving quoted JSON token must abort even alongside an informational reference; got %v", got)
 	}
 }
@@ -548,7 +548,7 @@ func TestClassifyJSON_QuotedSurvivorStillAbortsOverWarn(t *testing.T) {
 func TestClassifyJSON_NewPathInformationalIsNone(t *testing.T) {
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcp", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"}
 	content := `"notes": "the pkg/gateway/mcpfabric/mcp package handles schema validation."`
-	if got := ClassifyJSON(content, m); got != None {
+	if got := ClassifyJSON(content, m, []Move{m}); got != None {
 		t.Errorf("a new path carrying the old path as a prefix must classify None; got %v", got)
 	}
 }
@@ -576,11 +576,11 @@ func TestClassifyJSON_SelfPrefixRewrittenIsNone(t *testing.T) {
 		if rewritten == oldGlob {
 			t.Fatalf("JSONTokens did not rewrite self-prefix glob %q", oldGlob)
 		}
-		if got := ClassifyJSON(rewritten, m); got != None {
+		if got := ClassifyJSON(rewritten, m, []Move{m}); got != None {
 			t.Errorf("ClassifyJSON on rewritten self-prefix %s = %v, want None (rewritten=%q)", RepoRel(m.Old), got, rewritten)
 		}
 		// A genuine surviving pre-move token (the un-rewritten old glob) must abort.
-		if got := ClassifyJSON(oldGlob, m); got != Abort {
+		if got := ClassifyJSON(oldGlob, m, []Move{m}); got != Abort {
 			t.Errorf("ClassifyJSON on surviving self-prefix token %s = %v, want Abort", RepoRel(m.Old), got)
 		}
 	}
@@ -596,19 +596,19 @@ func TestClassifyGo_SelfPrefixRewrittenIsNone(t *testing.T) {
 
 	// Runtime slash-joined literal: rewritten -> None, surviving -> Abort.
 	survRuntime := `p := "pkg/gateway/policy/engine.go"`
-	if got := ClassifyGo(RuntimePaths(survRuntime, []Move{m}), m); got != None {
+	if got := ClassifyGo(RuntimePaths(survRuntime, []Move{m}), m, []Move{m}); got != None {
 		t.Errorf("ClassifyGo on rewritten self-prefix runtime literal = %v, want None", got)
 	}
-	if got := ClassifyGo(survRuntime, m); got != Abort {
+	if got := ClassifyGo(survRuntime, m, []Move{m}); got != Abort {
 		t.Errorf("ClassifyGo on surviving self-prefix runtime literal = %v, want Abort", got)
 	}
 
 	// Import literal: rewritten -> None, surviving -> Abort.
 	survImport := `import "github.com/lennylabs/lenny/pkg/gateway/policy"`
-	if got := ClassifyGo(ImportLiterals(survImport, []Move{m}), m); got != None {
+	if got := ClassifyGo(ImportLiterals(survImport, []Move{m}), m, []Move{m}); got != None {
 		t.Errorf("ClassifyGo on rewritten self-prefix import literal = %v, want None", got)
 	}
-	if got := ClassifyGo(survImport, m); got != Abort {
+	if got := ClassifyGo(survImport, m, []Move{m}); got != Abort {
 		t.Errorf("ClassifyGo on surviving self-prefix import literal = %v, want Abort", got)
 	}
 
@@ -616,7 +616,7 @@ func TestClassifyGo_SelfPrefixRewrittenIsNone(t *testing.T) {
 	// form (commonPrefixLen consumes all of oldSegs), so a surviving split form
 	// must NOT abort the move.
 	split := `readRepoFile(t, root, "pkg", "gateway", "policy", "engine.go")`
-	if got := ClassifyGo(split, m); got != Warn && got != None {
+	if got := ClassifyGo(split, m, []Move{m}); got != Warn && got != None {
 		t.Errorf("ClassifyGo on self-prefix split-segment form = %v, want None or Warn (never Abort)", got)
 	}
 }
@@ -629,8 +629,38 @@ func TestClassifyGo_SiblingNotFlagged(t *testing.T) {
 	// mcp moved and was rewritten; mcptools is present as a (rewritten) import.
 	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcp", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"}
 	content := `import "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"`
-	if got := ClassifyGo(content, m); got != None {
+	if got := ClassifyGo(content, m, []Move{m}); got != None {
 		t.Errorf("mcp audit must not flag the mcptools sibling; got %v", got)
+	}
+}
+
+// set-aware audit: a sibling correctly moved INTO a self-prefix group dir
+// (credrouter -> llmproxy/credrouter, which carries the "...llmproxy/" prefix of
+// the llmproxy -> llmproxy/llmproxy self-prefix move) must NOT be flagged as a
+// surviving llmproxy token. The audit classifies the token against the whole
+// batch: "...llmproxy/credrouter" is credrouter's final new path (a longer match
+// than the llmproxy old path), so it is not a survivor. This is constructed to
+// FAIL against the pre-fix per-move audit, which flagged every "...llmproxy/X"
+// token as a surviving llmproxy reference and aborted the whole group move.
+func TestClassifyGo_SelfPrefixSiblingNotFlagged(t *testing.T) {
+	llmproxy := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/llmproxy", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"}
+	credrouter := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/credrouter", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"}
+	batch := []Move{credrouter, llmproxy}
+
+	// A file importing the rewritten sibling (credrouter's final new path).
+	content := `import _ "github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"`
+	if got := ClassifyGo(content, llmproxy, batch); got != None {
+		t.Errorf("llmproxy audit must not flag the credrouter sibling under llmproxy/; got %v", got)
+	}
+	// The self-prefix package's own rewritten import must not be flagged either.
+	self := `import _ "github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"`
+	if got := ClassifyGo(self, llmproxy, batch); got != None {
+		t.Errorf("llmproxy audit must not flag its own rewritten nested import; got %v", got)
+	}
+	// A genuinely unrewritten llmproxy import (the old leaf) must still abort.
+	stale := `import _ "github.com/lennylabs/lenny/pkg/gateway/llmproxy"`
+	if got := ClassifyGo(stale, llmproxy, batch); got != Abort {
+		t.Errorf("a surviving unrewritten llmproxy import must abort; got %v", got)
 	}
 }
 
