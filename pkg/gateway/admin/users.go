@@ -236,7 +236,8 @@ func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 	u.UpdatedAt = u.CreatedAt
 	if err := r.users.Create(req.Context(), u); err != nil {
 		if errors.Is(err, userstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"user with this subject already exists in tenant", nil)
 			return
 		}

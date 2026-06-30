@@ -106,6 +106,22 @@ func (s *Service) emitAudit(ev AuditEvent) {
 	s.audit(ev)
 }
 
+// auditFieldsWithOperationID returns fields with the caller operationId
+// merged in under the "operationId" key when operationID is non-empty,
+// so the §25.17 watchdog operation correlation resolves from the audit
+// event. An empty operationID leaves fields unchanged, so a call with no
+// X-Lenny-Operation-ID header records no spurious empty field.
+//
+// spec: §25.1 line 121 (operationId on every request audit event),
+// §25.2 line 350 (operationId propagated to audit events).
+func auditFieldsWithOperationID(operationID string, fields map[string]any) map[string]any {
+	if operationID == "" {
+		return fields
+	}
+	fields["operationId"] = operationID
+	return fields
+}
+
 // auditEventTypes returns the §25.11 backup/restore audit event types
 // the Service emits, used by the package test to assert every emitted
 // type is catalogued in §16.7.

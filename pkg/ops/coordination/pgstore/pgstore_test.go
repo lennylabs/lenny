@@ -4,6 +4,7 @@ package pgstore_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -239,5 +240,62 @@ func TestPgReconcileSplitBrainRedisWins_spec_25_4(t *testing.T) {
 	all, _ := s.List(ctx)
 	if len(all) != 1 || all[0].AcquiredBy != "bob" || all[0].Epoch != 9 {
 		t.Errorf("after reconcile = %+v, want bob/epoch9 (Redis wins)", all)
+	}
+}
+
+// TestPgServerTime_spec_25_4 asserts the exported ServerTime reads the
+// Postgres now() at time zone 'UTC' clock the Postgres-Redis clock-skew
+// sampler compares against the Redis TIME clock. The embedded Postgres
+// and the test process share a host clock, so the read sits within a
+// small window of the local wall clock; the assertion proves the read
+// returns a live UTC server time rather than a zero value.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring); the Tier 1
+// clock is Postgres now() at time zone 'UTC'.
+func TestPgServerTime_spec_25_4(t *testing.T) {
+	s, _, ctx := setup(t)
+	before := time.Now().UTC()
+	got, err := s.ServerTime(ctx)
+	if err != nil {
+		t.Fatalf("ServerTime: %v", err)
+	}
+	after := time.Now().UTC()
+	if got.IsZero() {
+		t.Fatal("ServerTime returned the zero time; expected a live server clock read")
+	}
+	// The server clock shares the host clock with the test, so it must sit
+	// inside the [before-2s, after+2s] window. A wider tolerance absorbs
+	// the round-trip and the per-second granularity without flaking.
+	lo, hi := before.Add(-2*time.Second), after.Add(2*time.Second)
+	if got.Before(lo) || got.After(hi) {
+		t.Errorf("ServerTime = %v, outside the expected window [%v, %v]", got, lo, hi)
+	}
+}
+
+// TestPgServerTimeStoreUnavailable_spec_25_4 covers the ServerTime
+// Postgres-outage branch: a pool pointed at an unreachable address fails
+// the now() read with a transport error, which the store must classify as
+// coordination.ErrStoreUnavailable rather than a generic error, so the
+// clock-skew sampler skips the sample during a Postgres outage instead of
+// reporting a spurious skew. It needs no Postgres bundle because the
+// connection never succeeds.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring; a Postgres
+// outage surfaces as ErrStoreUnavailable so the sampler skips the sample).
+func TestPgServerTimeStoreUnavailable_spec_25_4(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// 127.0.0.1:1 is the discard port: no Postgres listens there, so the
+	// first query fails with a connection-refused transport error.
+	pool, err := pgxpool.New(ctx, "postgres://lenny:lenny@127.0.0.1:1/lenny?sslmode=disable")
+	if err != nil {
+		t.Fatalf("pool New: %v", err)
+	}
+	defer pool.Close()
+	s := pgstore.New(pool)
+	if _, err := s.ServerTime(ctx); err == nil {
+		t.Fatal("ServerTime against an unreachable Postgres returned nil; want ErrStoreUnavailable")
+	} else if !errors.Is(err, coordination.ErrStoreUnavailable) {
+		t.Fatalf("ServerTime outage error = %v, want coordination.ErrStoreUnavailable", err)
 	}
 }

@@ -4,8 +4,10 @@ package localcli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 
@@ -79,6 +81,18 @@ func cmdImageImport(args []string, stdout, stderr io.Writer) int {
 		return exitInvalidImageRef
 	}
 
+	// Image import operates only against a running Embedded Mode stack; a
+	// clustered invocation is rejected with 3 EMBEDDED_MODE_REQUIRED, the
+	// same guard `lenny token print` performs (token.go), rather than the
+	// 4 K3S_UNAVAILABLE that CtrCommand would otherwise surface when it
+	// fails to reach the embedded containerd socket. The persisted OIDC
+	// signing key exists only after `lenny up`, so its absence is the
+	// "outside Embedded Mode" condition. spec: §24.19.1 (image import
+	// requires embedded mode, exit 3 EMBEDDED_MODE_REQUIRED, line 282,291).
+	if code := requireEmbeddedStack(stderr); code != 0 {
+		return code
+	}
+
 	ctr, code := stack.CtrCommand(stderr)
 	if code != 0 {
 		return code
@@ -88,6 +102,34 @@ func cmdImageImport(args []string, stdout, stderr io.Writer) int {
 		return stack.ImportFromFile(ctr, namespace, reference, file, stdout, stderr)
 	}
 	return stack.ImportFromHostDaemon(ctr, namespace, reference, stdout, stderr)
+}
+
+// requireEmbeddedStack probes for a running Embedded Mode stack by the
+// presence of the persisted OIDC signing key (written only by `lenny
+// up`). It returns 0 when the stack is present, exitEmbeddedModeRequired
+// (3) when the key is absent (the "outside Embedded Mode" condition), or
+// 1 on any other probe error. It mirrors the guard `cmdToken` performs
+// (token.go) so `lenny image import` rejects a clustered invocation with
+// 3 EMBEDDED_MODE_REQUIRED rather than 4 K3S_UNAVAILABLE.
+//
+// spec: §24.19.1 (image import requires embedded mode, exit 3
+// EMBEDDED_MODE_REQUIRED, line 282,291; same guard as lenny token print).
+func requireEmbeddedStack(stderr io.Writer) int {
+	root, err := stack.DefaultRoot()
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny image import: %v\n", err)
+		return 1
+	}
+	keyFile := stack.NewPaths(root).OIDCKeyFile()
+	if _, err := os.Stat(keyFile); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(stderr, "lenny image import: no embedded stack found; run 'lenny up' first (EMBEDDED_MODE_REQUIRED)")
+			return exitEmbeddedModeRequired
+		}
+		fmt.Fprintf(stderr, "lenny image import: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // cmdImageList implements `lenny image list`.

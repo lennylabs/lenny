@@ -84,6 +84,10 @@ var (
 	ErrNotRollbackable = errors.New("upgradeservice: upgrade can no longer roll back")
 	// ErrNotVerifiable is returned by Verify outside the Verification phase.
 	ErrNotVerifiable = errors.New("upgradeservice: upgrade is not at the Verification phase")
+	// ErrNotOpsRoll is returned by AdvanceOpsRoll outside the OpsRoll phase:
+	// the new-pod self-advance is defined only when the upgrade is at OpsRoll
+	// (§25.8 line 3508).
+	ErrNotOpsRoll = errors.New("upgradeservice: upgrade is not at the OpsRoll phase")
 )
 
 // State is the §25.8 platform_upgrade_state singleton: the live record
@@ -242,14 +246,22 @@ type AuditEvent struct {
 // matching pkg/ops/backup and pkg/ops/driftservice.
 type AuditSink func(AuditEvent)
 
-// DriftCleaner deletes the §25.10 target snapshot when a §25.8 upgrade
-// rolls back (spec line 3551). The driftservice.Service satisfies it.
-// A nil cleaner skips the cleanup, the cold-start posture for a
-// deployment whose drift service is not wired.
-type DriftCleaner interface {
+// DriftManager is the §25.10 target-snapshot seam the upgrade
+// orchestrator drives across an upgrade's lifecycle: it deletes the
+// target snapshot on rollback (spec line 3551) and promotes the target
+// snapshot into the live snapshot at Verification-phase completion (spec
+// line 3789). The driftservice.Service satisfies it. A nil manager skips
+// both, the cold-start posture for a deployment whose drift service is
+// not wired (the OpsRoll target-snapshot write itself is driven by the
+// new-pod startup hook in cmd/lenny-ops, not by this orchestrator,
+// because only the new binary can compute the snapshot — spec line 3788).
+type DriftManager interface {
 	// DeleteTargetSnapshot removes the target snapshot written for the
 	// given upgrade id. It returns whether a row was deleted.
 	DeleteTargetSnapshot(ctx context.Context, upgradeID string) (bool, error)
+	// PromoteTargetToLive atomically promotes the target snapshot into the
+	// live snapshot for the given upgrade id at Verification completion.
+	PromoteTargetToLive(ctx context.Context, upgradeID string) error
 }
 
 // Service is the §25.8 platform-upgrade orchestrator.
@@ -257,7 +269,7 @@ type Service struct {
 	store   Store
 	emitter upgrade.Emitter // §16.6 upgrade_progressed operational events; nil is a no-op
 	audit   AuditSink       // §16.7 audit events; nil drops
-	drift   DriftCleaner    // §25.10 target-snapshot cleanup on rollback; nil skips
+	drift   DriftManager    // §25.10 target-snapshot promote/cleanup; nil skips
 	now     func() time.Time
 	newID   func() string
 	// baselines folds a completed upgrade's wall-clock duration into the
@@ -288,9 +300,10 @@ type Options struct {
 	Emitter upgrade.Emitter
 	// Audit receives §16.7 platform-upgrade audit events. A nil sink drops.
 	Audit AuditSink
-	// DriftCleaner deletes the §25.10 target snapshot on rollback (§25.8
-	// line 3551). A nil cleaner skips the cleanup.
-	DriftCleaner DriftCleaner
+	// DriftManager promotes the §25.10 target snapshot into live at
+	// Verification completion (§25.8 line 3789) and deletes it on rollback
+	// (§25.8 line 3551). A nil manager skips both.
+	DriftManager DriftManager
 	// Now supplies the current time; nil defaults to time.Now.
 	Now func() time.Time
 	// NewID mints the operation id; nil defaults to `upgrade-<uuid>`.
@@ -314,7 +327,7 @@ func New(opts Options) *Service {
 	if newID == nil {
 		newID = func() string { return "upgrade-" + uuid.NewString() }
 	}
-	return &Service{store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, drift: opts.DriftCleaner, now: now, newID: newID, baselines: opts.Baselines}
+	return &Service{store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, drift: opts.DriftManager, now: now, newID: newID, baselines: opts.Baselines}
 }
 
 // StartRequest is the POST /v1/admin/platform/upgrade/start body.
@@ -414,6 +427,20 @@ func (s *Service) Proceed(ctx context.Context) (State, error) {
 		if err != nil {
 			return err
 		}
+		// §25.10 line 3789: the Verification→Complete proceed promotes the
+		// in-flight target snapshot into the live snapshot atomically, so
+		// from Complete onward GET /v1/admin/drift compares against the new
+		// desired state by default. The promote runs before the phase is
+		// marked Complete so a promote failure aborts the transition and the
+		// upgrade stays at Verification rather than completing with a stale
+		// live snapshot (fail closed). The new lenny-ops binary serves this
+		// transition, so it can compute over the target row the OpsRoll
+		// startup hook wrote.
+		if s.drift != nil && exiting == upgrade.Verification && next == upgrade.Complete {
+			if err := s.drift.PromoteTargetToLive(ctx, st.OperationID); err != nil {
+				return fmt.Errorf("promote target snapshot to live: %w", err)
+			}
+		}
 		s.emitAudit(AuditEvent{
 			Type:          string(phaseExitAudit[exiting]),
 			OperationID:   st.OperationID,
@@ -425,6 +452,43 @@ func (s *Service) Proceed(ctx context.Context) (State, error) {
 		st.Phase = next
 		// A non-terminal phase pauses again, awaiting the next proceed;
 		// the terminal Complete is not paused.
+		st.Paused = !upgrade.IsTerminal(next)
+		return nil
+	})
+}
+
+// AdvanceOpsRoll is the §25.8 line 3508 new-pod self-advance: when the new
+// lenny-ops pod becomes Ready during OpsRoll, it advances the upgrade from
+// OpsRoll to CRDUpdate itself, without an operator proceed. Unlike Proceed,
+// which advances whatever phase is active, AdvanceOpsRoll advances only
+// from OpsRoll and rejects any other phase with ErrNotOpsRoll, so a startup
+// hook that fires outside an in-flight OpsRoll cannot drive an unrelated
+// transition. It emits the same platform.upgrade_ops_rolled audit event
+// the operator path emits when leaving OpsRoll, and pauses at CRDUpdate
+// awaiting the operator's next proceed.
+//
+// spec: §25.8 line 3508 (new pod self-advances OpsRoll→CRDUpdate on
+// startup).
+func (s *Service) AdvanceOpsRoll(ctx context.Context) (State, error) {
+	return s.transition(ctx, func(st *State) error {
+		if st.Phase != upgrade.OpsRoll {
+			return ErrNotOpsRoll
+		}
+		next, err := upgrade.Advance(ctx, s.emitter, PlatformScope, st.Phase, st.ImageDigest)
+		if err != nil {
+			return err
+		}
+		s.emitAudit(AuditEvent{
+			Type:          string(phaseExitAudit[upgrade.OpsRoll]),
+			OperationID:   st.OperationID,
+			Actor:         "new-ops-pod",
+			OldPhase:      string(upgrade.OpsRoll),
+			NewPhase:      string(next),
+			TargetVersion: st.TargetVersion,
+		})
+		st.Phase = next
+		// CRDUpdate is non-terminal: it pauses again awaiting the operator's
+		// next proceed.
 		st.Paused = !upgrade.IsTerminal(next)
 		return nil
 	})

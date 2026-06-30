@@ -261,11 +261,14 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*Backup,
 		return nil, codedError(ErrCodeStorageUnreachable, "record backup job: %v", err)
 	}
 	// spec: §25.11 line 4343 — every backup creation is audited.
+	// spec: §25.1 line 121, §25.2 line 350 — the caller operationId is
+	// propagated onto the audit event so the §25.17 watchdog operation
+	// correlation resolves on the backup-create record.
 	s.emitAudit(AuditEvent{
 		Type:     string(audit.EventBackupCreated),
 		BackupID: b.ID,
 		Actor:    startedBy,
-		Fields:   map[string]any{"type": b.Type, "jobId": b.JobID},
+		Fields:   auditFieldsWithOperationID(b.OperationID, map[string]any{"type": b.Type, "jobId": b.JobID}),
 	})
 	return &b, nil
 }
@@ -340,11 +343,13 @@ func (s *Service) createPerRegionBackup(ctx context.Context, b Backup) (*Backup,
 		regionJobs[c.Region] = c.JobID
 	}
 	// spec: §25.11 line 4343 — every backup creation is audited.
+	// spec: §25.1 line 121, §25.2 line 350 — the caller operationId is
+	// propagated onto the per-region backup-create audit event.
 	s.emitAudit(AuditEvent{
 		Type:     string(audit.EventBackupCreated),
 		BackupID: b.ID,
 		Actor:    b.StartedBy,
-		Fields:   map[string]any{"type": b.Type, "regions": regions, "regionJobs": regionJobs},
+		Fields:   auditFieldsWithOperationID(b.OperationID, map[string]any{"type": b.Type, "regions": regions, "regionJobs": regionJobs}),
 	})
 	return &b, nil
 }
@@ -810,12 +815,15 @@ func (s *Service) ExecuteRestore(ctx context.Context, req RestoreRequest) (*Rest
 	restore.JobID = launched.JobID
 	_ = s.store.UpdateRestore(ctx, restore)
 	// spec: §25.11 line 4343 — a started restore is audited.
+	// spec: §25.1 line 121, §25.2 line 350 — the caller operationId is
+	// propagated onto the audit event so the §25.17 watchdog operation
+	// correlation resolves on the restore-start record.
 	s.emitAudit(AuditEvent{
 		Type:      string(audit.EventRestoreStarted),
 		RestoreID: restore.ID,
 		BackupID:  req.BackupID,
 		Actor:     owner,
-		Fields:    map[string]any{"jobId": launched.JobID, "preRestoreBackupId": preRestore.ID},
+		Fields:    auditFieldsWithOperationID(restore.OperationID, map[string]any{"jobId": launched.JobID, "preRestoreBackupId": preRestore.ID}),
 	})
 	return &RestoreResult{
 		RestoreID:          restore.ID,

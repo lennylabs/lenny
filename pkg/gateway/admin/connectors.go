@@ -150,7 +150,8 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 	}
 	if err := r.connectors.Create(req.Context(), c); err != nil {
 		if errors.Is(err, connectorstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"connector with this id already exists", nil)
 			return
 		}

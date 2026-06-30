@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 )
 
@@ -144,27 +145,29 @@ func TestAdminEndpointsCarryMCPExtensions_spec_15_1_933(t *testing.T) {
 
 // TestAdminScopesFollowDocumentedSyntax_spec_15_1_933 asserts the
 // §15.1 line 933 "additional check" that every `x-lenny-scope` value
-// conforms to a documented syntax. The spec mandates
-// `tools:<domain>:<action>`; the in-tree openapi.json uses a
-// transitional `admin.<domain>.<verb>` form for some entries — both
-// are accepted by the test so the CI guard catches malformed scopes
-// (typos, missing separators) without forcing the entire OpenAPI
-// document into the canonical form in a single commit.
-//
-// Once every scope is migrated to `tools:<domain>:<action>`, drop the
-// legacy regex branch.
-// spec: §15.1 line 933.
+// conforms to the canonical `tools:<domain>:<action>` syntax and names
+// a domain in the closed §15.1 line 919 taxonomy. The served document
+// carries the canonical form for every admin endpoint; the legacy
+// `admin.<domain>.<verb>` form is rejected outright. Membership is
+// asserted through scopes.ParseScope, which both validates the
+// `tools:<domain>:<action>` syntax and rejects any domain absent from
+// the closed scopes.Domains taxonomy, so the test doubles as the
+// verification that the taxonomy enumerates every served domain.
+// spec: §15.1 line 919 (closed scope taxonomy), line 933 (CI syntax contract).
 func TestAdminScopesFollowDocumentedSyntax_spec_15_1_933(t *testing.T) {
 	doc := openapi.Document()
 	var parsed map[string]any
 	_ = json.Unmarshal(doc, &parsed)
 	paths, _ := parsed["paths"].(map[string]any)
 
-	// `tools:<domain>:<action>` (spec) or `admin.<domain>.<verb>`
-	// (legacy). Allowed characters are lowercase letters, digits, dot,
-	// dash, underscore, colon, and `*` (per §15.1 line 922 wildcard).
+	// The canonical syntax is `tools:<domain>:<action>` with lowercase
+	// letters, digits, and underscore in the domain and action, and `*`
+	// permitted in the action position (per §15.1 line 922 wildcard).
+	// scopes.ParseScope enforces the same grammar plus taxonomy
+	// membership; the regex pins the exact admitted character set so a
+	// malformed value reports a precise syntax error before the
+	// taxonomy check.
 	specScope := regexp.MustCompile(`^tools:[a-z0-9_]+:[a-z0-9_*]+$`)
-	legacyScope := regexp.MustCompile(`^admin\.[a-z0-9_-]+\.[a-z0-9_-]+$`)
 
 	for path, op := range paths {
 		if !strings.HasPrefix(path, "/v1/admin/") {
@@ -184,9 +187,19 @@ func TestAdminScopesFollowDocumentedSyntax_spec_15_1_933(t *testing.T) {
 					method, path, raw)
 				continue
 			}
-			if !specScope.MatchString(scope) && !legacyScope.MatchString(scope) {
-				t.Errorf("%s %s x-lenny-scope %q does not match `tools:<domain>:<action>` or `admin.<domain>.<verb>`",
+			if !specScope.MatchString(scope) {
+				t.Errorf("%s %s x-lenny-scope %q does not match canonical `tools:<domain>:<action>`",
 					method, path, scope)
+				continue
+			}
+			// The wildcard form `tools:*` is not a route-level scope; a
+			// served admin endpoint declares a concrete domain and
+			// action. ParseScope rejects every domain absent from the
+			// closed taxonomy, so a served scope that parses proves its
+			// domain is enumerated.
+			if _, err := scopes.ParseScope(scope); err != nil {
+				t.Errorf("%s %s x-lenny-scope %q is not in the closed §15.1 taxonomy: %v",
+					method, path, scope, err)
 			}
 		}
 	}
@@ -685,6 +698,118 @@ func equalStringSet(a, b map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+// TestRouteScopesResolvesCanonicalScope_spec_15_1_914 asserts the
+// route-to-scope lookup the §25.1 scope-enforcement middleware consumes
+// resolves the canonical `tools:<domain>:<action>` scope a matched admin
+// route requires, including a newly added admin domain (`legal_hold`), so
+// the taxonomy expansion (S1/S2) is exercised end to end through the
+// document-derived registry. The matcher reuses http.ServeMux pattern
+// routing, the same engine the admin router routes on, so a templated route
+// (`/v1/admin/connectors/{name}`) resolves through a concrete request path.
+//
+// spec: §15.1 (scope enforcement before routing, line 914,920),
+// §25.1 (middleware checks scopes before routing, line 94).
+func TestRouteScopesResolvesCanonicalScope_spec_15_1_914(t *testing.T) {
+	rs := openapi.NewRouteScopes()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		want   string
+	}{
+		{
+			// A newly added admin domain: legal_hold was absent from the
+			// scopes.Domains map and the §15.1 taxonomy before this change,
+			// so resolving it proves the expansion reached the registry.
+			name:   "newly added legal_hold domain",
+			method: http.MethodPost,
+			path:   "/v1/admin/legal-hold",
+			want:   "tools:legal_hold:write",
+		},
+		{
+			// A static route on a pre-existing domain.
+			name:   "static circuit_breaker read",
+			method: http.MethodGet,
+			path:   "/v1/admin/circuit-breakers",
+			want:   "tools:circuit_breaker:read",
+		},
+		{
+			// A templated route resolves through a concrete request path,
+			// proving the {param} template matches the same way the live
+			// admin mux would route the request.
+			name:   "templated connector route",
+			method: http.MethodGet,
+			path:   "/v1/admin/connectors/acme-connector",
+			want:   "tools:connector:read",
+		},
+		{
+			// The destructive audit sub-route carries the fine-grained
+			// scope the handler enforces, reconciled in S2.
+			name:   "fine-grained audit partition drop",
+			method: http.MethodPost,
+			path:   "/v1/admin/audit-partitions/p-2026-06/drop",
+			want:   "tools:audit:partition_drop",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := rs.RequiredScope(tc.method, tc.path)
+			if !ok {
+				t.Fatalf("RequiredScope(%s, %s): no scope resolved, want %q",
+					tc.method, tc.path, tc.want)
+			}
+			if got != tc.want {
+				t.Errorf("RequiredScope(%s, %s) = %q, want %q",
+					tc.method, tc.path, got, tc.want)
+			}
+			// Every resolved route-level scope must parse through the
+			// canonical matcher; a value the matcher rejects could never
+			// be compared against a caller's claim and would silently fail
+			// open.
+			if _, err := scopes.ParseScope(got); err != nil {
+				t.Errorf("resolved scope %q does not parse through scopes.ParseScope: %v", got, err)
+			}
+		})
+	}
+}
+
+// TestRouteScopesUnmatchedRouteHasNoScope_spec_15_1_914 asserts the lookup
+// reports no required scope for a path the document does not declare and for
+// a declared path under a method it does not carry, so the middleware defers
+// to the role ceiling rather than matching against an empty scope. This pins
+// the §25.1 absent-route-scope behavior the enforcement step relies on.
+//
+// spec: §15.1 (x-lenny-scope per operation, line 920),
+// §25.1 (absent claim defers to the role ceiling, line 90).
+func TestRouteScopesUnmatchedRouteHasNoScope_spec_15_1_914(t *testing.T) {
+	rs := openapi.NewRouteScopes()
+
+	if scope, ok := rs.RequiredScope(http.MethodGet, "/v1/admin/does-not-exist"); ok {
+		t.Errorf("unmatched route resolved scope %q, want none", scope)
+	}
+	// DELETE is not registered for /v1/admin/legal-hold (only POST), so a
+	// method miss on an otherwise-known path resolves no scope.
+	if scope, ok := rs.RequiredScope(http.MethodDelete, "/v1/admin/legal-hold"); ok {
+		t.Errorf("method miss resolved scope %q, want none", scope)
+	}
+	// A nil receiver fails closed by reporting no scope rather than
+	// panicking, so a caller that never built the matcher cannot match a
+	// destructive route against an empty scope.
+	var nilRS *openapi.RouteScopes
+	if scope, ok := nilRS.RequiredScope(http.MethodPost, "/v1/admin/legal-hold"); ok {
+		t.Errorf("nil RouteScopes resolved scope %q, want none", scope)
+	}
+	// An un-buildable request (a method containing an HTTP-illegal space)
+	// makes http.NewRequest fail; the lookup must report no scope rather
+	// than panicking or matching, so a malformed method on a destructive
+	// route defers to the role ceiling instead of failing open.
+	if scope, ok := rs.RequiredScope("BAD METHOD", "/v1/admin/legal-hold"); ok {
+		t.Errorf("malformed method resolved scope %q, want none", scope)
+	}
 }
 
 // spec: §15.5 item 6 — the default tier is `stable` so an unannotated

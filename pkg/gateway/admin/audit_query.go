@@ -22,28 +22,25 @@ import (
 	auditcat "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// scopeRawCanonical and scopeRetranslate are the §25.9 scope strings
-// gating the audit-recovery surface, in the §15.2 canonical
-// `tools:<domain>:<action>` taxonomy form (the spec's shorthand
-// `audit:raw-canonical:read` / `audit:retranslate` map onto the
-// `audit` domain, matching the `audit:republish` aka
-// `tools:audit:republish` convention §25.9 names). HasScope returns
-// true when the JWT carries no scope claim, so the surrounding
+// scopeRawCanonical is the §25.9 scope string gating the
+// ?format=raw-canonical branch of GET /v1/admin/audit-events/{seq}, in
+// the §15.2 canonical `tools:<domain>:<action>` taxonomy form (the
+// spec's shorthand `audit:raw-canonical:read` maps onto the `audit`
+// domain). The raw-canonical scope is query-parameter-conditional, so
+// it stays a per-handler check rather than a route-level pre-routing
+// gate: the served route scope remains the coarse tools:audit:read so a
+// tools:audit:read token still reads the ordinary OCSF event. HasScope
+// returns true when the JWT carries no scope claim, so the surrounding
 // requireAuditReader role gate still applies in that case.
 //
-// spec: §25.9 line 3653, line 3662, line 3663, line 3664; §15.2 scope
-// taxonomy.
-const (
-	scopeRawCanonical = "tools:audit:raw_canonical_read"
-	scopeRetranslate  = "tools:audit:retranslate"
-	// scopeRepublish gates POST /v1/admin/audit-events/{seq}/republish
-	// (spec shorthand `audit:republish`, §25.9 line 3663).
-	scopeRepublish = "tools:audit:republish"
-	// scopeDropPartition gates
-	// POST /v1/admin/audit-partitions/{partition}/drop (spec shorthand
-	// `audit:partition:drop`, §25.9 line 3664).
-	scopeDropPartition = "tools:audit:partition_drop"
-)
+// The three destructive audit sub-routes (drop, retranslate, republish)
+// carry their fine-grained scopes (tools:audit:partition_drop,
+// tools:audit:retranslate, tools:audit:republish) in the served
+// openapi.json, so the central §25.1 scope gate in Router.Handler
+// enforces them before routing and no per-handler constant is needed.
+//
+// spec: §25.9 line 3653; §15.2 scope taxonomy.
+const scopeRawCanonical = "tools:audit:raw_canonical_read"
 
 // auditTranslationLog is the optional §25.9 OCSF-translation-state
 // surface. The Postgres-backed auditstore implements it; the in-memory
@@ -285,14 +282,12 @@ func (r *Router) handleForceDropAuditPartition(w http.ResponseWriter, req *http.
 			"audit force-drop requires a durable audit store", nil)
 		return
 	}
-	// §25.9 line 3664 — the destructive drop is gated on a dedicated
-	// scope. An absent scope claim defers to the requireAdmin role
-	// ceiling (HasScope returns true).
-	if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeDropPartition) {
-		writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"force-drop requires the audit:partition:drop scope", nil)
-		return
-	}
+	// §25.9 line 3664 — the destructive drop is gated on the dedicated
+	// tools:audit:partition_drop scope. The central §25.1 scope gate in
+	// Router.Handler resolves the route's x-lenny-scope (now the
+	// fine-grained partition_drop form) and rejects a scope-narrowed
+	// token with SCOPE_FORBIDDEN before this handler runs, so no
+	// per-handler scope check is needed here. spec: §25.1 line 94.
 	partition := strings.TrimSpace(req.PathValue("partition"))
 	if partition == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "partition is required", nil)
@@ -568,9 +563,17 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	// Scope-restricted to audit:raw-canonical:read.
 	rawCanonical := req.URL.Query().Get("format") == "raw-canonical"
 	if rawCanonical {
+		// The raw-canonical scope is query-parameter-conditional, so it
+		// cannot be expressed as the route-level pre-routing gate: the
+		// served route scope stays at the coarse tools:audit:read so the
+		// ordinary OCSF read is not regressed for a tools:audit:read
+		// token. This per-handler check covers only the
+		// ?format=raw-canonical branch and now returns the cataloged
+		// SCOPE_FORBIDDEN. An absent scope claim defers to the role
+		// ceiling (HasScope returns true). spec: §25.9 line 3653; §15.1
+		// line 1030.
 		if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeRawCanonical) {
-			writeError(w, http.StatusForbidden, "FORBIDDEN",
-				"raw-canonical format requires the audit:raw-canonical:read scope", nil)
+			writeScopeForbidden(w, scopeRawCanonical, p.Scopes.Raw)
 			return
 		}
 	}
@@ -896,11 +899,11 @@ func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Re
 	if !ok {
 		return
 	}
-	if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeRetranslate) {
-		writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"retranslate requires the audit:retranslate scope", nil)
-		return
-	}
+	// §25.9 line 3662 — retranslate is gated on tools:audit:retranslate.
+	// The central §25.1 scope gate in Router.Handler resolves the route's
+	// x-lenny-scope (the fine-grained retranslate form) and rejects a
+	// scope-narrowed token with SCOPE_FORBIDDEN before this handler runs,
+	// so no per-handler scope check is needed here. spec: §25.1 line 94.
 	seq, err := strconv.ParseUint(req.PathValue("seq"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
@@ -1038,11 +1041,11 @@ func (r *Router) handleRepublishAuditEvent(w http.ResponseWriter, req *http.Requ
 	if !ok {
 		return
 	}
-	if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeRepublish) {
-		writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"republish requires the audit:republish scope", nil)
-		return
-	}
+	// §25.9 line 3663 — republish is gated on tools:audit:republish. The
+	// central §25.1 scope gate in Router.Handler resolves the route's
+	// x-lenny-scope (the fine-grained republish form) and rejects a
+	// scope-narrowed token with SCOPE_FORBIDDEN before this handler runs,
+	// so no per-handler scope check is needed here. spec: §25.1 line 94.
 	seq, err := strconv.ParseUint(req.PathValue("seq"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)

@@ -173,3 +173,100 @@ const (
 	StabilityBeta   Stability = "beta"
 	StabilityAlpha  Stability = "alpha"
 )
+
+// RouteScopes resolves the §15.1 `x-lenny-scope` a request route requires
+// before the admin REST surface dispatches a handler. It is built once from
+// the served OpenAPI document and answers `(method, request path)` lookups
+// for the scope-enforcement middleware (§25.1 enforcement point 1).
+//
+// The matcher reuses Go's http.ServeMux pattern routing, the same engine the
+// admin router registers its handlers on, so a request path resolves to the
+// same `{param}` template the live mux would match and the completeness walk
+// enumerates. A registered scope template and the live admin route therefore
+// match a request identically; the document is the single source of the
+// route-to-scope mapping.
+//
+// spec: §15.1 (scope enforcement before routing, line 914,920),
+// §25.1 (middleware checks scopes before routing, line 94).
+type RouteScopes struct {
+	mux *http.ServeMux
+}
+
+// scopeForPattern carries the required scope for one registered
+// `(method, path-template)` pattern. The ServeMux handler stores it so a
+// matched request recovers the scope without re-parsing the document.
+type scopeForPattern struct {
+	scope string
+}
+
+func (h scopeForPattern) ServeHTTP(http.ResponseWriter, *http.Request) {}
+
+// NewRouteScopes builds the route-to-scope lookup from the served document.
+// It registers every operation that carries a non-empty `x-lenny-scope` as a
+// `METHOD /path-template` pattern on an http.ServeMux whose handler holds the
+// scope, so RequiredScope can recover the scope a matched route requires. A
+// malformed document yields an empty matcher that reports no required scope
+// for every route; the caller fails closed on its own (an unresolved scope on
+// a destructive admin route defers to the role ceiling per §25.1, line 90).
+//
+// spec: §15.1 (x-lenny-scope per operation, line 920),
+// §25.1 (scope enforcement point 1).
+func NewRouteScopes() *RouteScopes {
+	rs := &RouteScopes{mux: http.NewServeMux()}
+	var doc map[string]any
+	if err := json.Unmarshal(Document(), &doc); err != nil {
+		return rs
+	}
+	paths, _ := doc["paths"].(map[string]any)
+	for path, raw := range paths {
+		methods, _ := raw.(map[string]any)
+		for method, m := range methods {
+			body, _ := m.(map[string]any)
+			if body == nil {
+				continue
+			}
+			scope, _ := body["x-lenny-scope"].(string)
+			if scope == "" {
+				continue
+			}
+			// The OpenAPI `{param}` template is syntactically the same
+			// single-segment wildcard http.ServeMux matches, so the
+			// pattern registers verbatim. The verb is upper-cased to the
+			// canonical HTTP method ServeMux keys on.
+			pattern := strings.ToUpper(method) + " " + path
+			rs.mux.Handle(pattern, scopeForPattern{scope: scope})
+		}
+	}
+	return rs
+}
+
+// RequiredScope returns the §15.1 scope the `(method, path)` route requires
+// and whether the document declares one. An unmatched route, or a matched
+// route with no `x-lenny-scope`, returns ("", false): the route declares no
+// route-level scope and the caller defers to the role ceiling. The path is
+// the request path (e.g. `/v1/admin/legal-hold`), matched against the
+// document's templates through the same http.ServeMux engine the admin
+// router routes on.
+//
+// spec: §15.1 (scope enforcement before routing, line 914,920),
+// §25.1 (middleware checks scopes before routing, line 94).
+func (rs *RouteScopes) RequiredScope(method, path string) (string, bool) {
+	if rs == nil || rs.mux == nil {
+		return "", false
+	}
+	req, err := http.NewRequest(strings.ToUpper(method), path, nil)
+	if err != nil {
+		return "", false
+	}
+	h, pattern := rs.mux.Handler(req)
+	if pattern == "" {
+		// No registered template matched the request.
+		return "", false
+	}
+	sp, ok := h.(scopeForPattern)
+	if !ok {
+		// A non-scope handler (the ServeMux 404/405 default) matched.
+		return "", false
+	}
+	return sp.scope, true
+}

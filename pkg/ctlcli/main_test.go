@@ -190,6 +190,23 @@ func runAgainstGateway(t *testing.T, status int, response string, args ...string
 	return code, got
 }
 
+// runAgainstGatewayCapturing is runAgainstGateway plus the captured stdout
+// and stderr, for assertions on where the CLI routes advisory lines and on a
+// strict `--output json` stdout (F-CTL-4).
+func runAgainstGatewayCapturing(t *testing.T, status int, response string, args ...string) (int, string, string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(response))
+	}))
+	defer srv.Close()
+
+	full := append([]string{"--api-url", srv.URL}, args...)
+	var stdout, stderr bytes.Buffer
+	code := run(full, &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
 func TestAdminCircuitBreakersList(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"breakers":[]}`,
 		"admin", "circuit-breakers", "list")
@@ -385,6 +402,82 @@ func TestAdminTenantsUnknownSubcommand(t *testing.T) {
 	code := run([]string{"--api-url", "http://127.0.0.1:0", "admin", "tenants", "frobnicate"}, &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("unknown tenants subcommand: exit %d, want 2", code)
+	}
+}
+
+// TestAdminTenantsDeleteAdvisoryStdoutClean_spec_24_16_205 pins the F-CTL-4
+// fix: the §24.10 delete advisory line is informational, so under
+// `--output json` it must not pollute stdout (the body-less DELETE leaves
+// stdout empty for a strict `| jq` pipeline), it must instead route to
+// stderr, and `--quiet` must suppress it entirely. Fails against pre-fix
+// code, which wrote the advisory to stdout and ignored --quiet.
+// spec: §24.16 line 205 (--output json strict stdout; --quiet suppresses
+// informational messages).
+func TestAdminTenantsDeleteAdvisoryStdoutClean_spec_24_16_205(t *testing.T) {
+	const advisory = "deletion initiated"
+
+	// --output json: stdout carries the result document only. A body-less
+	// 204 DELETE leaves stdout empty; the advisory is on stderr.
+	code, stdout, stderr := runAgainstGatewayCapturing(t, http.StatusNoContent, ``,
+		"--output", "json", "admin", "tenants", "delete", "acme")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0; stderr=%q", code, stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("--output json stdout = %q, want empty (advisory must not pollute the JSON pipeline)", stdout)
+	}
+	if !strings.Contains(stderr, advisory) {
+		t.Errorf("advisory missing from stderr = %q, want it routed there", stderr)
+	}
+
+	// --quiet suppresses the advisory entirely, on every stream.
+	code, stdout, stderr = runAgainstGatewayCapturing(t, http.StatusNoContent, ``,
+		"--quiet", "admin", "tenants", "delete", "acme")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0; stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, advisory) || strings.Contains(stderr, advisory) {
+		t.Errorf("--quiet did not suppress the advisory: stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+// TestAdminTenantsForceDeleteAdvisoryStdoutClean_spec_24_16_205 pins the
+// F-CTL-4 fix for force-delete, which prints the JSON result envelope on
+// stdout and an advisory line after it. Under `--output json` stdout must
+// parse as a single JSON document (the envelope) with no trailing advisory,
+// the advisory routes to stderr, and `--quiet` suppresses it. Fails against
+// pre-fix code, which appended the advisory to stdout after the JSON.
+// spec: §24.16 line 205 (--output json strict stdout; --quiet suppresses
+// informational messages).
+func TestAdminTenantsForceDeleteAdvisoryStdoutClean_spec_24_16_205(t *testing.T) {
+	const advisory = "force-delete initiated"
+
+	code, stdout, stderr := runAgainstGatewayCapturing(t, http.StatusAccepted,
+		`{"id":"acme","state":"disabling"}`,
+		"--output", "json", "admin", "tenants", "force-delete", "acme")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0; stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, advisory) {
+		t.Errorf("--output json stdout = %q, want the JSON envelope only (no trailing advisory)", stdout)
+	}
+	// stdout must be a single parseable JSON document for a strict pipeline.
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Errorf("stdout is not a single JSON document: %v; stdout=%q", err, stdout)
+	}
+	if !strings.Contains(stderr, advisory) {
+		t.Errorf("advisory missing from stderr = %q, want it routed there", stderr)
+	}
+
+	code, stdout, stderr = runAgainstGatewayCapturing(t, http.StatusAccepted,
+		`{"id":"acme","state":"disabling"}`,
+		"--quiet", "admin", "tenants", "force-delete", "acme")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0; stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, advisory) || strings.Contains(stderr, advisory) {
+		t.Errorf("--quiet did not suppress the advisory: stdout=%q stderr=%q", stdout, stderr)
 	}
 }
 

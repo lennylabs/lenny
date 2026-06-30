@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -98,6 +99,39 @@ func TestExternalAdaptersDelete(t *testing.T) {
 	}
 	if got.method != http.MethodDelete || got.path != "/v1/admin/external-adapters/acme-a2a" {
 		t.Errorf("request = %s %s", got.method, got.path)
+	}
+}
+
+// TestExternalAdaptersDeleteAdvisoryStdoutClean_spec_24_16_205 pins the
+// F-CTL-4 fix for `external-adapters delete`. The deletion advisory line is
+// informational, so under `--output json` it must not write to stdout (the
+// body-less DELETE leaves stdout empty for a strict `| jq` pipeline), it must
+// route to stderr instead, and `--quiet` must suppress it. Fails against
+// pre-fix code, which wrote the advisory to stdout and ignored --quiet.
+// spec: §24.16 line 205 (--output json strict stdout; --quiet suppresses
+// informational messages).
+func TestExternalAdaptersDeleteAdvisoryStdoutClean_spec_24_16_205(t *testing.T) {
+	const advisory = "external adapter"
+
+	code, stdout, stderr := runAgainstGatewayCapturing(t, http.StatusNoContent, ``,
+		"--output", "json", "admin", "external-adapters", "delete", "acme-a2a")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0; stderr=%q", code, stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("--output json stdout = %q, want empty (advisory must not pollute the JSON pipeline)", stdout)
+	}
+	if !strings.Contains(stderr, advisory) {
+		t.Errorf("advisory missing from stderr = %q, want it routed there", stderr)
+	}
+
+	code, stdout, stderr = runAgainstGatewayCapturing(t, http.StatusNoContent, ``,
+		"--quiet", "admin", "external-adapters", "delete", "acme-a2a")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0; stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, advisory) || strings.Contains(stderr, advisory) {
+		t.Errorf("--quiet did not suppress the advisory: stdout=%q stderr=%q", stdout, stderr)
 	}
 }
 

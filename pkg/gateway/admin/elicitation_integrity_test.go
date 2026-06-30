@@ -241,16 +241,46 @@ func TestPutElicitationIntegrityRejectsInvalidMode(t *testing.T) {
 	}
 }
 
-func TestElicitationIntegrityRequiresPlatformAdmin(t *testing.T) {
+// spec: §15.1 line 823,824 (tenant-admin gate). ADM-3.
+// diagnosis: the elicitation-content-integrity GET/PUT admit
+// platform-admin OR tenant-admin, with a tenant-admin confined to its
+// own {id}. A tenant-admin GET on its own tenant must succeed (not 403),
+// while a tenant-admin GET on a FOREIGN tenant must be rejected 403.
+// Pre-fix the gate was platform-admin-only, so the own-tenant
+// tenant-admin GET returned 403 — this test fails against pre-fix code.
+func TestElicitationIntegrityTenantAdminOwnTenant_spec_15_1_823(t *testing.T) {
 	router, store := newAdminServer(t)
 	seedAdminTenant(t, store, "acme")
+	seedAdminTenant(t, store, "globex")
 
-	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodGet,
+	// Own-tenant tenant-admin GET: now admitted (200).
+	own := withTenantAdminPrincipal(httptest.NewRequest(http.MethodGet,
 		"/v1/admin/tenants/acme/elicitation-content-integrity", nil))
-	rr := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("tenant-admin GET: got %d, want 403", rr.Code)
+	rrOwn := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rrOwn, own)
+	if rrOwn.Code != http.StatusOK {
+		t.Errorf("own-tenant tenant-admin GET: got %d, want 200; body %s",
+			rrOwn.Code, rrOwn.Body.String())
+	}
+
+	// Foreign-tenant tenant-admin GET: still rejected (403), confined to
+	// the caller's own tenant.
+	foreign := withForeignTenantAdminPrincipal(httptest.NewRequest(http.MethodGet,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", nil))
+	rrForeign := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rrForeign, foreign)
+	if rrForeign.Code != http.StatusForbidden {
+		t.Errorf("foreign-tenant tenant-admin GET on acme: got %d, want 403", rrForeign.Code)
+	}
+
+	// A plain user holds no admin-surface role and is rejected by the
+	// role gate.
+	plain := withUserPrincipal(httptest.NewRequest(http.MethodGet,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", nil))
+	rrPlain := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rrPlain, plain)
+	if rrPlain.Code != http.StatusForbidden {
+		t.Errorf("plain user GET: got %d, want 403", rrPlain.Code)
 	}
 }
 
@@ -424,5 +454,127 @@ func TestElicitationFloorProviderObservedLive_spec_17_2_9(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &errResp)
 	if errResp.Error.Code != "ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR" {
 		t.Fatalf("error code = %q, want ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR", errResp.Error.Code)
+	}
+}
+
+// integrityFullResp mirrors the §15.1 line 824 GET/PUT body so a test
+// can assert every provenance field is persisted and returned.
+type integrityFullResp struct {
+	TenantID      string `json:"tenantId"`
+	Mode          string `json:"mode"`
+	StoredMode    string `json:"storedMode"`
+	EffectiveMode string `json:"effectiveMode"`
+	PlatformFloor string `json:"platformFloor"`
+	Justification string `json:"justification"`
+	ChangedAt     string `json:"changedAt"`
+	ChangedBy     string `json:"changedBy"`
+}
+
+// spec: §15.1 line 823,824 (tenant-admin gate; full GET body), §9.2
+// (elicitation content integrity). ADM-3.
+// diagnosis: a tenant-admin PUTting a relaxed mode with a justification
+// on its OWN tenant must (a) succeed under the widened gate, (b) persist
+// mode, justification, changedAt, and changedBy on the tenant row, and
+// (c) have the subsequent GET return platformFloor, justification,
+// changedAt, and changedBy. A foreign-tenant tenant-admin PUT must be
+// rejected 403 and leave the row untouched. Pre-fix this fails because
+// the gate rejected the own-tenant tenant-admin (platform-admin-only)
+// and the GET omitted the provenance fields entirely.
+func TestPutGetElicitationIntegrityTenantAdminPersistsProvenance_spec_15_1_824(t *testing.T) {
+	store := tenantstore.NewMemory()
+	auditSink := &recordingAudit{}
+	router := admin.NewRouter(store, admin.Options{
+		Audit: auditSink,
+		Clock: func() time.Time { return time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC) },
+	}).WithElicitationFloor("off")
+	seedAdminTenant(t, store, "acme")
+
+	// A foreign-tenant tenant-admin PUT must be rejected and leave the
+	// row untouched (cross-tenant write confined).
+	relaxed, _ := json.Marshal(map[string]string{
+		"mode": "detect-only", "justification": "staging tenant, integrity tooling offline",
+	})
+	foreign := withForeignTenantAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(relaxed)))
+	injectAdminIfMatch(t, router.Handler(), foreign)
+	rrForeign := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rrForeign, foreign)
+	if rrForeign.Code != http.StatusForbidden {
+		t.Fatalf("foreign-tenant PUT on acme: got %d, want 403; body %s",
+			rrForeign.Code, rrForeign.Body.String())
+	}
+	if row, _ := store.Get(context.Background(), "acme"); row.ElicitationContentIntegrity != "" {
+		t.Fatalf("foreign-tenant PUT mutated the row: stored mode = %q, want unchanged",
+			row.ElicitationContentIntegrity)
+	}
+
+	// The own-tenant tenant-admin PUT relaxes the mode with a
+	// justification and succeeds under the widened gate.
+	own := withTenantAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(relaxed)))
+	injectAdminIfMatch(t, router.Handler(), own)
+	rrPut := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rrPut, own)
+	if rrPut.Code != http.StatusOK {
+		t.Fatalf("own-tenant PUT: got %d, want 200; body %s", rrPut.Code, rrPut.Body.String())
+	}
+
+	// The PUT response itself carries the persisted provenance.
+	var putResp integrityFullResp
+	_ = json.Unmarshal(rrPut.Body.Bytes(), &putResp)
+	if putResp.StoredMode != "detect-only" {
+		t.Errorf("PUT storedMode = %q, want detect-only", putResp.StoredMode)
+	}
+	if putResp.Justification != "staging tenant, integrity tooling offline" {
+		t.Errorf("PUT justification = %q, want the supplied reason", putResp.Justification)
+	}
+	if putResp.ChangedBy != "user@acme.com" {
+		t.Errorf("PUT changedBy = %q, want the operator's sub user@acme.com", putResp.ChangedBy)
+	}
+	if putResp.ChangedAt == "" {
+		t.Error("PUT changedAt is empty; the write must stamp the change instant")
+	}
+
+	// The provenance is persisted on the tenant row, not only in the
+	// audit event.
+	row, _ := store.Get(context.Background(), "acme")
+	if row.ElicitationContentIntegrityJustification != "staging tenant, integrity tooling offline" {
+		t.Errorf("persisted justification = %q, want the supplied reason",
+			row.ElicitationContentIntegrityJustification)
+	}
+	if row.ElicitationContentIntegrityChangedBy != "user@acme.com" {
+		t.Errorf("persisted changedBy = %q, want user@acme.com",
+			row.ElicitationContentIntegrityChangedBy)
+	}
+	if row.ElicitationContentIntegrityChangedAt.IsZero() {
+		t.Error("persisted changedAt is zero; the write must stamp the change instant on the row")
+	}
+
+	// The own-tenant tenant-admin GET returns the full §15.1 line 824
+	// body, including the provenance the pre-fix handler omitted.
+	get := withTenantAdminPrincipal(httptest.NewRequest(http.MethodGet,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", nil))
+	rrGet := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rrGet, get)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("own-tenant GET: got %d, want 200; body %s", rrGet.Code, rrGet.Body.String())
+	}
+	var getResp integrityFullResp
+	_ = json.Unmarshal(rrGet.Body.Bytes(), &getResp)
+	if getResp.StoredMode != "detect-only" {
+		t.Errorf("GET storedMode = %q, want detect-only", getResp.StoredMode)
+	}
+	if getResp.PlatformFloor != "off" {
+		t.Errorf("GET platformFloor = %q, want off — the §15.1 GET body carries the floor", getResp.PlatformFloor)
+	}
+	if getResp.Justification != "staging tenant, integrity tooling offline" {
+		t.Errorf("GET justification = %q, want the supplied reason — the GET body omitted it pre-fix", getResp.Justification)
+	}
+	if getResp.ChangedBy != "user@acme.com" {
+		t.Errorf("GET changedBy = %q, want user@acme.com — the GET body omitted it pre-fix", getResp.ChangedBy)
+	}
+	if getResp.ChangedAt != putResp.ChangedAt {
+		t.Errorf("GET changedAt = %q, want the PUT's %q — provenance must round-trip",
+			getResp.ChangedAt, putResp.ChangedAt)
 	}
 }

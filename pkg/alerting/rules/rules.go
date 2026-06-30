@@ -1708,6 +1708,15 @@ func warningAlerts() []Rule {
 			Description: "One or more in-flight operations exceeded their expected inter-step cadence (stalledForSeconds > 0) per the §25.2 Progress Envelope. The gauge clears when every operation advances within its cadence. Investigate via GET /v1/admin/operations/{id}.",
 			SpecRef:     "§16.5",
 		},
+		{
+			Name:        "OpsClockSkewExceeded",
+			Expr:        `lenny_ops_clock_skew_seconds{pair="postgres-redis"} > 10`,
+			Severity:    SeverityWarning,
+			Summary:     "Postgres-Redis clock skew exceeds the 10s tolerance",
+			Description: "The measured clock skew between the Postgres and Redis dependency clocks exceeds the 10s tolerance NTP is expected to hold. Lease expiresAt computation and outage-epoch reconciliation assume bounded skew, so a sustained breach risks premature or delayed lease expiry. Investigate NTP on the nodes running Postgres and Redis.",
+			RunbookURL:  runbook("ops-clock-skew"),
+			SpecRef:     "§16.5",
+		},
 	}
 }
 

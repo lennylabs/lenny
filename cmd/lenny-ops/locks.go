@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/redisstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsaudit"
+	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
 // buildLockService constructs the §25.4 tiered remediation-lock service:
@@ -32,10 +33,11 @@ import (
 func buildLockService(pgPool *pgxpool.Pool, redisClient redis.UniversalClient,
 	gate *coordination.CoordinationGate, reg prometheus.Registerer,
 	emitter events.EventEmitter, recorder *opsaudit.Recorder, replicaID string,
-) *coordination.Service {
+) (*coordination.Service, *lockMetrics) {
+	lm := newLockMetrics(reg)
 	opts := coordination.ServiceOptions{
 		Gate:    gate,
-		Metrics: newLockMetrics(reg),
+		Metrics: lm,
 		Audit:   lockAuditEmitter{emitter: emitter, recorder: recorder, source: "//lenny.dev/ops/" + replicaID},
 	}
 	if pgPool != nil {
@@ -54,7 +56,42 @@ func buildLockService(pgPool *pgxpool.Pool, redisClient redis.UniversalClient,
 	default:
 		log.Printf("lenny-ops: §25.4 remediation locks: in-memory (Tier 3) only — single-process degraded mode")
 	}
-	return coordination.NewService(opts)
+	return coordination.NewService(opts), lm
+}
+
+// buildClockSkewSampler constructs the §25.4 Postgres-Redis clock-skew
+// sampler over the Postgres now() clock and the Redis TIME clock, reusing
+// the same lockMetrics adapter that publishes the other §25.4 lock gauges
+// so the lenny_ops_clock_skew_seconds gauge lands on the process
+// registry. It returns nil when either dependency is absent (a
+// single-process degraded deployment), so the reconciler loop is not
+// registered and the gauge stays unproduced rather than reporting a
+// spurious skew against a missing clock.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring and >10s alert).
+func buildClockSkewSampler(pgPool *pgxpool.Pool, redisClient redis.UniversalClient, lm *lockMetrics) *coordination.ClockSkewSampler {
+	if pgPool == nil || redisClient == nil {
+		return nil
+	}
+	return coordination.NewClockSkewSampler(pgstore.New(pgPool), redisstore.New(redisClient), lm)
+}
+
+// clockSkewSampleReconciler adapts the clock-skew sampler to the
+// leader-only Reconciler tick. A nil sampler yields a nil Reconciler so
+// the loop is not registered (the single-process degraded case). The tick
+// returns the sampler's error so a sustained dependency-clock read
+// failure surfaces in the reconciler-error logging; a transient read
+// error leaves the last good gauge in place.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring).
+func clockSkewSampleReconciler(sampler *coordination.ClockSkewSampler) opsservice.Reconciler {
+	if sampler == nil {
+		return nil
+	}
+	return func(ctx context.Context) error {
+		_, err := sampler.Sample(ctx)
+		return err
+	}
 }
 
 // lockMetrics is the Prometheus-backed coordination.Metrics for the §25.4

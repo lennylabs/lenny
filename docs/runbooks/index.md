@@ -103,6 +103,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `AuditSIEMNotConfigured` | [audit-pipeline-degraded](audit-pipeline-degraded.html) | `audit` |
 | `GatewayRateLimitStorm` | [gateway-rate-limit-storm](gateway-rate-limit-storm.html) | `gateway` |
 | `GatewayClockDrift` | [gateway-clock-drift](gateway-clock-drift.html) | `gateway` |
+| `OpsClockSkewExceeded` | [ops-clock-skew](ops-clock-skew.html) | `ops`, `postgres`, `redis` |
 | `FinalizerStuck` | [stuck-finalizer](stuck-finalizer.html) | `controllers` |
 | `EphemeralContainerCredGuardUnavailable` | [ephemeral-container-cred-guard-unavailable](ephemeral-container-cred-guard-unavailable.html) | `admission` |
 | `AdmissionPlaneFeatureFlagDowngrade` | [admission-plane-feature-flag-downgrade](admission-plane-feature-flag-downgrade.html) | `admission` |
@@ -284,6 +285,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [etcd-key-rotation](etcd-key-rotation.html)
 - [etcd-operations](etcd-operations.html)
 - [minio-failure](minio-failure.html)
+- [ops-clock-skew](ops-clock-skew.html)
 - [pgbouncer-saturation](pgbouncer-saturation.html)
 - [postgres-failover](postgres-failover.html)
 - [redis-failure](redis-failure.html)

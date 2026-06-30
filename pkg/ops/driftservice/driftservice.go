@@ -120,6 +120,15 @@ type SnapshotStore interface {
 	// does not exist is not an error (it returns nil), so the §25.8
 	// rollback-during-Preflight no-op (no target was written) is harmless.
 	Delete(ctx context.Context, id string) error
+	// PromoteTargetToLive atomically replaces the live snapshot row with the
+	// target row, then removes the target row, so the in-flight desired
+	// state becomes the desired state in effect at §25.10 Verification-phase
+	// completion (spec line 3789). The swap is a single atomic step: a
+	// concurrent reader observes either the old live row or the new one,
+	// never an intermediate state. When no target row exists (a defensive
+	// call with nothing to promote), the live row is left unchanged and the
+	// call is a no-op. spec: §25.10 line 3789.
+	PromoteTargetToLive(ctx context.Context, upgradeID string) error
 }
 
 // MemSnapshotStore is the §25.10 in-memory desired-state snapshot store.
@@ -156,6 +165,27 @@ func (s *MemSnapshotStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.byID, id)
+	return nil
+}
+
+// PromoteTargetToLive atomically copies the target row into the live row
+// and removes the target row under the store lock, so a concurrent Get
+// observes either the old or the new live row, never a torn one. A
+// missing target row leaves the live row untouched (a no-op promote).
+// The promoted live row carries the SourceHelmValues provenance and the
+// target row's written-at, matching the §25.10 "target → live promotion"
+// behavior. spec: §25.10 line 3789.
+func (s *MemSnapshotStore) PromoteTargetToLive(_ context.Context, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	target, ok := s.byID[SnapshotTarget]
+	if !ok {
+		return nil
+	}
+	live := target
+	live.ID = SnapshotLive
+	s.byID[SnapshotLive] = live
+	delete(s.byID, SnapshotTarget)
 	return nil
 }
 
@@ -598,6 +628,45 @@ func (s *Service) DeleteTargetSnapshot(ctx context.Context, upgradeID string) (b
 		return false, err
 	}
 	return true, nil
+}
+
+// WriteTargetSnapshot writes the §25.10 bootstrap_seed_snapshot_target
+// row from the rendered Helm values. The new lenny-ops binary calls it
+// early in OpsRoll, after the new pod becomes Ready and before CRDUpdate,
+// because the old binary cannot compute the snapshot against the new
+// version's type definitions (spec line 3788). The desired-state map is
+// the rendered chart values; the upgrade id ties the target row to the
+// in-flight upgrade so DeleteTargetSnapshot clears only this upgrade's
+// row on rollback. After this write, GET /v1/admin/drift?against=target
+// and ?against=both resolve instead of returning DRIFT_NO_TARGET_SNAPSHOT.
+//
+// spec: §25.10 line 3788 (write bootstrap_seed_snapshot_target early in
+// OpsRoll).
+func (s *Service) WriteTargetSnapshot(ctx context.Context, upgradeID, writtenBy string, desired map[string]any) error {
+	if desired == nil {
+		return &Error{Code: ErrCodeInvalid, Message: "a desired-state (rendered Helm values) body is required to write the target snapshot"}
+	}
+	return s.snapshots.Put(ctx, Snapshot{
+		ID:           SnapshotTarget,
+		DesiredState: desired,
+		Source:       SourceHelmValues,
+		UpgradeID:    upgradeID,
+		WrittenAt:    s.now(),
+		WrittenBy:    writtenBy,
+	})
+}
+
+// PromoteTargetToLive atomically promotes the §25.10 target snapshot into
+// the live snapshot at Verification-phase completion (spec line 3789), so
+// from that point GET /v1/admin/drift compares against the new desired
+// state by default. The store performs the swap atomically; a missing
+// target row is a no-op (nothing to promote). The upgrade id is passed
+// through for store implementations that scope the promotion to a single
+// upgrade.
+//
+// spec: §25.10 line 3789 (promote target → live at Verification completion).
+func (s *Service) PromoteTargetToLive(ctx context.Context, upgradeID string) error {
+	return s.snapshots.PromoteTargetToLive(ctx, upgradeID)
 }
 
 // applyStaleness fills the §25.10 snapshot-staleness fields on the

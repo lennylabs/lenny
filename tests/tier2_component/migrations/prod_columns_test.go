@@ -503,6 +503,15 @@ var prodMigrationSchema = []struct {
 	// keeps the dedicated lenny-system CoreDNS; 'cluster-default' reverts a
 	// runc pool to the kube-system resolver. spec: §13.2.
 	{migration: "0171", table: "sandbox_warm_pools", columns: []string{"dns_policy"}},
+	// 0172 adds the §15.1 elicitation-content-integrity provenance columns
+	// to the tenants row, alongside the mode column (migration 0024). The
+	// PUT records mode, justification, changedAt, and changedBy; the GET
+	// returns justification, changedAt, and changedBy. spec: §15.1.
+	{migration: "0172", table: "tenants", columns: []string{
+		"elicitation_content_integrity_justification",
+		"elicitation_content_integrity_changed_at",
+		"elicitation_content_integrity_changed_by",
+	}},
 }
 
 // spec: 12.2, 18.5

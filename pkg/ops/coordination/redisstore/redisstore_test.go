@@ -168,3 +168,28 @@ func TestRedisActiveLocks_spec_25_4(t *testing.T) {
 		t.Fatalf("active locks = %v (%v), want 1", locks, err)
 	}
 }
+
+// TestRedisServerTime_spec_25_4 asserts the exported ServerTime reads the
+// Redis TIME clock the Postgres-Redis clock-skew sampler compares against
+// Postgres now(). It is the same source acquiredAt/expiresAt are authored
+// from, so the monitored skew is the skew the lease path is exposed to.
+//
+// spec: §25.4 line 2202 (Redis TIME clock source), line 2280 (skew
+// monitoring).
+func TestRedisServerTime_spec_25_4(t *testing.T) {
+	s, mr := newStore(t)
+	want := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	mr.SetTime(want)
+	got, err := s.ServerTime(context.Background())
+	if err != nil {
+		t.Fatalf("ServerTime: %v", err)
+	}
+	// miniredis TIME has second granularity; assert the read reflects the
+	// injected clock to the second.
+	if got.Unix() != want.Unix() {
+		t.Errorf("ServerTime = %v (unix %d), want %v (unix %d)", got, got.Unix(), want, want.Unix())
+	}
+	if got.Location() != time.UTC {
+		t.Errorf("ServerTime location = %v, want UTC", got.Location())
+	}
+}

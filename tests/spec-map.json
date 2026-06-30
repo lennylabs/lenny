@@ -815,7 +815,8 @@
         "pkg/elicitation/elicitation_test.go::TestProvenanceValidateRejectsConnectorWithoutID",
         "tests/tier2_component/stores/interactionstore_test.go",
         "tests/tier4_integration/elicitation_test.go",
-        "tests/tier9_security/elicitation_tamper_test.go"
+        "tests/tier9_security/elicitation_tamper_test.go",
+        "tests/tier9_security/elicitation_integrity_gate_test.go"
       ],
       "packages": [
         "pkg/elicitation"
@@ -1937,7 +1938,10 @@
         "tests/tier2_component/translators/openai_chat_translator_test.go",
         "tests/tier2_component/translators/openai_responses_translator_test.go",
         "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go",
-        "tests/tier6_e2e_cloud/session_lifecycle_test.go"
+        "tests/tier9_security/elicitation_integrity_gate_test.go",
+        "tests/tier9_security/lease_extension_clear_test.go",
+        "tests/tier6_e2e_cloud/session_lifecycle_test.go",
+        "tests/tier3_contract/admin_conflict_codes/admin_conflict_codes_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -2847,10 +2851,17 @@
     "25.1": {
       "title": "Design Philosophy and Agent Model",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
-      "packages": [],
+      "tests": [
+        "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
+        "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
+        "pkg/gateway/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
+        "pkg/gateway/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
+      ],
+      "packages": [
+        "pkg/gateway/admin"
+      ],
       "blocked_until_phase": "14",
-      "notes": "§25.1 Design Philosophy and Agent Model. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.1 Design Philosophy and Agent Model. The §25.1 enforcement-point-1 admin-API scope gate (proposal 0019 ADM-1) is pinned by the scope-enforcement tests; see TESTING.md §25 for the rest of the operability test plan."
     },
     "25.2": {
       "title": "Architecture Overview",
@@ -2879,7 +2890,8 @@
       "tests": [
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/probe/probe_test.go",
-        "pkg/ops/conventions/conventions_test.go"
+        "pkg/ops/conventions/conventions_test.go",
+        "tests/tier8_chaos/escalation_retry_test.go"
       ],
       "packages": [
         "cmd/lenny-ops"
@@ -2962,7 +2974,8 @@
       "title": "Configuration Drift Detection",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/drift/drift_test.go"
+        "pkg/drift/drift_test.go",
+        "tests/tier3_contract/ops_endpoints/drift_against_target_test.go"
       ],
       "packages": [
         "pkg/operability/drift"

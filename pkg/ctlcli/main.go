@@ -192,7 +192,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// and ignores it for the local subcommands.
 		return cmdRuntime(ctx, client, rest[1:], stdout, stderr)
 	case "admin":
-		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
+		return cmdAdmin(ctx, client, rest[1:], stdout, stderr, flags.quiet)
 	case "migrate":
 		return cmdMigrate(ctx, client, rest[1:], stdout, stderr)
 	case "policy":
@@ -203,13 +203,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPolicy(ctx, client, rest[1:], stdout, stderr)
 	case "operations":
 		// §24.15 operations group: list active long-running operations and
-		// fetch one by id. Targets the gateway admin API (the Operations
-		// Inventory), not lenny-ops. spec: §24.15 line 181.
-		return cmdOperations(ctx, client, rest[1:], stdout, stderr)
+		// fetch one by id. The operations inventory is hosted by lenny-ops
+		// (§15.1 line 909), so the group resolves the ops endpoint via the
+		// §24.16 --ops-server auto-discovery. spec: §24.15 line 181.
+		return cmdOperations(ctx, flags, client, rest[1:], stdout, stderr)
 	case "me":
-		// §24.15 me group: caller identity, authorized tools, and
-		// in-flight operations. Gateway admin API. spec: §24.15 line 180.
-		return cmdMe(ctx, client, rest[1:], stdout, stderr)
+		// §24.15 me group: caller identity and authorized tools target the
+		// gateway admin API, while `me operations` targets the lenny-ops
+		// inventory (§15.1 line 909). cmdMe routes each. spec: §24.15
+		// line 180.
+		return cmdMe(ctx, flags, client, rest[1:], stdout, stderr)
 	case "audit":
 		// §24.15 audit group: query/summary and the OCSF/EventBus/
 		// partition remediation verbs. Gateway admin API. spec: §24.15
@@ -593,15 +596,18 @@ func cmdVersion(stdout io.Writer) int {
 	return 0
 }
 
-// cmdAdmin dispatches the §24 `admin` resource-management group.
-func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+// cmdAdmin dispatches the §24 `admin` resource-management group. The quiet
+// flag carries the parsed --quiet so the mutating tenants and
+// external-adapters groups can suppress their informational advisory lines
+// (§24.16 line 205, F-CTL-4).
+func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|credential-pools|sessions|users|quota|circuit-breakers|ca-rotation|erasure-jobs|external-adapters)")
 		return 2
 	}
 	switch args[0] {
 	case "tenants":
-		return cmdTenants(ctx, c, args[1:], stdout, stderr)
+		return cmdTenants(ctx, c, args[1:], stdout, stderr, quiet)
 	case "users":
 		return cmdUsers(ctx, c, args[1:], stdout, stderr)
 	case "runtimes":
@@ -621,7 +627,7 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	case "erasure-jobs":
 		return cmdErasureJobs(ctx, c, args[1:], stdout, stderr)
 	case "external-adapters":
-		return cmdExternalAdapters(ctx, c, args[1:], stdout, stderr)
+		return cmdExternalAdapters(ctx, c, args[1:], stdout, stderr, quiet)
 	case "deployment":
 		return cmdDeployment(ctx, c, args[1:], stdout, stderr)
 	default:
@@ -872,9 +878,12 @@ func cmdSessions(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 // `operations list [--status|--kind|--actor|--tenant|--operation-id|--limit]`
 // (GET /v1/admin/operations, the §25.4 Inventory scatter-gather with a
 // Progress Envelope per record) and `operations get <id>` (GET
-// /v1/admin/operations/{id}). Both target the gateway admin API and
-// require platform-admin. spec: §24.15 line 181.
-func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+// /v1/admin/operations/{id}). The operations inventory is hosted by
+// lenny-ops (§15.1 line 909), so both subcommands resolve the ops
+// endpoint via the §24.16 --ops-server auto-discovery (rules 1-3) and
+// target lenny-ops rather than the gateway. spec: §24.15 line 181;
+// §15.1 line 909 (operations inventory assigned to lenny-ops).
+func cmdOperations(ctx context.Context, flags globalFlags, gateway *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: operations requires a subcommand (list|get)")
 		return 2
@@ -908,31 +917,25 @@ func cmdOperations(ctx context.Context, c *ctl.Client, args []string, stdout, st
 		if enc := q.Encode(); enc != "" {
 			path += "?" + enc
 		}
-		var out map[string]any
-		if err := c.Do(ctx, "GET", path, nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return withOps(ctx, flags, gateway, stderr, func(ops *ctl.Client) int {
+			return opsGet(ctx, ops, path, stdout, stderr)
+		})
 	case "get":
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: operations get requires <id>")
 			return 2
 		}
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/operations/"+args[1], nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		path := "/v1/admin/operations/" + url.PathEscape(args[1])
+		return withOps(ctx, flags, gateway, stderr, func(ops *ctl.Client) int {
+			return opsGet(ctx, ops, path, stdout, stderr)
+		})
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown operations subcommand %q\n", args[0])
 		return 2
 	}
-	return 0
 }
 
-func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create|delete|force-delete|rotate-erasure-salt)")
 		return 2
@@ -980,7 +983,14 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "tenant %q deletion initiated; monitor with: lenny-ctl admin tenants get %s\n", args[1], args[1])
+		// spec: §24.16 line 205 — --output json keeps stdout to the result
+		// document, and --quiet suppresses informational messages. This
+		// advisory is informational, so it goes to stderr and is gated on
+		// --quiet, leaving the DELETE body-less stdout empty for a strict
+		// `| jq` pipeline (F-CTL-4).
+		if !quiet {
+			fmt.Fprintf(stderr, "tenant %q deletion initiated; monitor with: lenny-ctl admin tenants get %s\n", args[1], args[1])
+		}
 	case "force-delete":
 		// spec: §24.10 row 4 — POST /v1/admin/tenants/{id}/force-delete
 		// proceeds with the §12.8 deletion lifecycle despite active legal
@@ -989,7 +999,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		// escrow); --justification <text> is required with the override.
 		// Without --acknowledge-hold-override a held tenant is rejected with
 		// TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD.
-		return cmdTenantsForceDelete(ctx, c, args[1:], stdout, stderr)
+		return cmdTenantsForceDelete(ctx, c, args[1:], stdout, stderr, quiet)
 	case "rotate-erasure-salt":
 		// spec: §12.8 line 857 — POST /v1/admin/tenants/{id}/rotate-erasure-salt
 		// rotates a compromised per-tenant billing-pseudonymization salt: the
@@ -1013,7 +1023,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 
 // cmdTenantsForceDelete implements `admin tenants force-delete <id>
 // [--acknowledge-hold-override --justification <text>]` (§24.10 row 4).
-func cmdTenantsForceDelete(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+func cmdTenantsForceDelete(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: tenants force-delete requires <id>")
 		return 2
@@ -1053,7 +1063,12 @@ func cmdTenantsForceDelete(ctx context.Context, c *ctl.Client, args []string, st
 		return 1
 	}
 	printJSON(stdout, out)
-	fmt.Fprintf(stdout, "tenant %q force-delete initiated; monitor with: lenny-ctl admin tenants get %s\n", id, id)
+	// spec: §24.16 line 205 — keep stdout to the JSON result document under
+	// --output json, and suppress this informational advisory under --quiet,
+	// so a strict `| jq` pipeline parses stdout as one document (F-CTL-4).
+	if !quiet {
+		fmt.Fprintf(stderr, "tenant %q force-delete initiated; monitor with: lenny-ctl admin tenants get %s\n", id, id)
+	}
 	return 0
 }
 
@@ -1727,7 +1742,7 @@ func cmdCARotation(ctx context.Context, c *ctl.Client, args []string, stdout, st
 // §15.1 lines 850-855 CRUD subcommands. `validate` exits non-zero when
 // the adapter fails the conformance suite (status validation_failed) so
 // CI gates can branch on it.
-func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: external-adapters requires a subcommand (validate|list|get|register|update|delete)")
 		return 2
@@ -1803,7 +1818,12 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "external adapter %q deleted\n", args[1])
+		// spec: §24.16 line 205 — informational advisory goes to stderr and
+		// is suppressed under --quiet, leaving the body-less DELETE stdout
+		// empty for a strict `| jq` pipeline (F-CTL-4).
+		if !quiet {
+			fmt.Fprintf(stderr, "external adapter %q deleted\n", args[1])
+		}
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown external-adapters subcommand %q\n", args[0])
 		return 2

@@ -128,7 +128,7 @@ func TestUpgradeAPI_startErrors_spec_10_5(t *testing.T) {
 
 // An out-of-order proceed (past Complete) maps to 409
 // INVALID_STATE_TRANSITION; a second start while active is 409
-// RESOURCE_CONFLICT.
+// INVALID_STATE_TRANSITION (the ErrUpgradeActive state conflict; spec: §15.1 line 981).
 func TestUpgradeAPI_conflictMapping_spec_10_5(t *testing.T) {
 	h := newUpgradeAdmin(t).Handler()
 	base := "/v1/admin/pools/claude-worker/upgrade"
@@ -136,7 +136,7 @@ func TestUpgradeAPI_conflictMapping_spec_10_5(t *testing.T) {
 		t.Fatalf("start: %d", rr.Code)
 	}
 	rr := upgReq(t, h, http.MethodPost, base+"/start", admin.StartUpgradeRequest{NewImage: "v2"})
-	if rr.Code != http.StatusConflict || upgErrCode(t, rr) != "RESOURCE_CONFLICT" {
+	if rr.Code != http.StatusConflict || upgErrCode(t, rr) != "INVALID_STATE_TRANSITION" {
 		t.Fatalf("second start: %d code=%s", rr.Code, upgErrCode(t, rr))
 	}
 	for i := 0; i < 4; i++ {

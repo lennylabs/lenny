@@ -67,7 +67,7 @@ import (
 // pool name is the PRIMARY KEY of the Postgres `sandbox_warm_pools` table
 // (migrations/0033) and a soft-deleted row keeps the name occupied: a
 // re-create with the same name fails with a unique violation (409
-// RESOURCE_CONFLICT). A fixed name therefore lets the test run only once
+// RESOURCE_ALREADY_EXISTS). A fixed name therefore lets the test run only once
 // per cluster lifetime; a unique name per run makes it repeatable and
 // keeps a leftover pool from a prior run (one F-13.2.24 leaves stuck) from
 // colliding with this run. The pool name doubles as the SandboxTemplate +
@@ -162,7 +162,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// PRIMARY KEY of the Postgres sandbox_warm_pools table and a soft-deleted
 	// row keeps the name occupied, so a fixed name lets the scenario run only
 	// once per cluster lifetime (the second create returns 409
-	// RESOURCE_CONFLICT). A per-run suffix makes the test repeatable and keeps
+	// RESOURCE_ALREADY_EXISTS). A per-run suffix makes the test repeatable and keeps
 	// a leftover pool a prior run left stuck (when the F-13.2.24 deletion-guard
 	// block prevents teardown) from colliding with this run.
 	pool := uniqueNonceOnlyName(t, nonceOnlyPoolPrefix)
@@ -356,7 +356,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 // run uses a fresh pool / Runtime name. The pool name is the PRIMARY KEY of
 // the Postgres sandbox_warm_pools table and a soft-deleted row keeps the
 // name occupied (migrations/0033), so reusing a fixed name makes the second
-// run fail with 409 RESOURCE_CONFLICT. The suffix is 8 lowercase-hex
+// run fail with 409 RESOURCE_ALREADY_EXISTS. The suffix is 8 lowercase-hex
 // characters, which keeps the name within the §5.2 pool-name pattern
 // (^[a-z0-9][a-z0-9_-]{0,127}$) and well under the Kubernetes object-name
 // length limit the name carries through as the SandboxTemplate /

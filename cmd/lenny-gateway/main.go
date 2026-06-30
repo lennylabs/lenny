@@ -320,7 +320,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
-	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
 	"github.com/lennylabs/lenny/pkg/preflight"
@@ -4966,8 +4965,7 @@ func main() {
 		).WithMetrics(recommendationsMetrics))
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEventBuffer).
-		WithEventEmitter(opsEmitter).
-		WithOperationsInventory(operations.New())
+		WithEventEmitter(opsEmitter)
 	if caRotationMgr != nil {
 		adminRouter = adminRouter.WithCARotation(caRotationMgr)
 	}
@@ -4985,6 +4983,10 @@ func main() {
 		// §15.1 line 868: expose DELETE …/extension-denial backed by the
 		// same leasecontrol budget source the GatewayControl handler reads.
 		adminRouter = adminRouter.WithLeaseDenials(leaseBudgets)
+		// §10.2 line 261: the same budget source resolves a tree's owning
+		// tenant (TenantOf), so a non-platform-admin caller is confined to
+		// its own tenant before the durable clear runs (ADM-4).
+		adminRouter = adminRouter.WithTenantResolver(leaseBudgets)
 	}
 	// §5.2 line 629: surface live poolCondition / idlePodCount on the
 	// admin pool GET when the gateway has a Kubernetes client (an

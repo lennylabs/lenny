@@ -342,7 +342,8 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 	}
 	if err := r.experiments.Create(req.Context(), exp); err != nil {
 		if errors.Is(err, experimentstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"experiment with this id already exists in tenant", nil)
 			return
 		}

@@ -318,6 +318,17 @@ func (s *Store) serverTime(ctx context.Context) (time.Time, error) {
 	return t.UTC(), nil
 }
 
+// ServerTime exposes the §25.4 line 2202 Redis TIME read so the
+// Postgres-Redis clock-skew sampler can compare the Redis dependency
+// clock against Postgres now() without duplicating the TIME read. It
+// reuses the same source acquiredAt/expiresAt are authored from, so the
+// monitored skew is the skew that affects lease expiry computation.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring).
+func (s *Store) ServerTime(ctx context.Context) (time.Time, error) {
+	return s.serverTime(ctx)
+}
+
 // persist re-writes lock's hash + index with a fresh PTTL. Used by Extend
 // and Steal, which operate on an already-identified lock.
 func (s *Store) persist(ctx context.Context, lock coordination.Lock, ttl int) error {

@@ -51,6 +51,23 @@ const columns = `id, scope, operation, acquired_by, operation_id, acquired_at, e
 // Tier reports the postgres lockStore label.
 func (s *Store) Tier() string { return coordination.StorePostgres }
 
+// ServerTime reads the Postgres Tier 1 clock (now() at time zone 'UTC'),
+// the same clock the §25.4 lease expiresAt computation is authored from,
+// so the Postgres-Redis clock-skew sampler compares the two dependency
+// clocks the lease path actually uses. A connection failure surfaces as
+// coordination.ErrStoreUnavailable so the sampler skips the sample
+// rather than reporting a spurious skew during a Postgres outage.
+//
+// spec: §25.4 line 2280 (Postgres-Redis skew monitoring); the Tier 1
+// clock is Postgres now() at time zone 'UTC'.
+func (s *Store) ServerTime(ctx context.Context) (time.Time, error) {
+	var t time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT now() AT TIME ZONE 'UTC'`).Scan(&t); err != nil {
+		return time.Time{}, classifyErr(err)
+	}
+	return t.UTC(), nil
+}
+
 // classifyErr maps a pgx connection/transport failure to
 // coordination.ErrStoreUnavailable (the §25.4 Postgres-outage case),
 // leaving a server-side query error (PgError — the database responded)

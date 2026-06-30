@@ -2465,7 +2465,7 @@ The `created_at` column is **not** defaulted to `now()` — the application supp
 
 ### Self-Monitoring
 
-`lenny-ops` monitors its own operational health and emits structured events when it degrades. This closes the "who watches the watcher" gap — the external watchdog agent receives health signals about `lenny-ops` itself through the same event stream it uses for platform events.
+`lenny-ops` monitors its own operational health and emits structured events when it degrades. This closes the "who watches the watcher" gap — the external watchdog agent receives health signals about `lenny-ops` itself through the same event stream it uses for platform events. `lenny-ops` also monitors the Postgres ↔ Redis dependency clock skew; the `>10s` skew condition fires the `OpsClockSkewExceeded` warning alert (see [Section 16.5](16_observability.md#165-alerting-rules-and-slos)).
 
 #### Self-Health Checks
 

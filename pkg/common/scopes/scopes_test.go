@@ -41,6 +41,102 @@ func TestParseScope_Canonical(t *testing.T) {
 	}
 }
 
+// taxonomyDomains is the closed §15.1 "Scope taxonomy" domain set
+// (spec/15_external-api-surface.md §15.1, "Domains" bullet). The map in
+// scopes.Domains MUST contain every one of these, so a renamed admin
+// scope in tools:<domain>:<action> form parses through ParseScope and is
+// not mis-denied by Set.Matches.
+//
+// spec:§15.1 closed scope taxonomy.
+var taxonomyDomains = []string{
+	"pool", "health", "diagnostics", "recommendations", "runbooks",
+	"events", "audit", "drift", "backup", "restore", "upgrade", "locks",
+	"escalation", "logs", "me", "operations", "tenant", "credential_pool",
+	"credential", "runtime", "quota", "config", "circuit_breaker",
+	"artifact_replication", "billing_correction", "bootstrap", "ca_rotation",
+	"connector", "credential_rekey", "delegation_policy", "deployment",
+	"environment", "erasure_job", "experiment", "external_adapter",
+	"impersonation", "interceptor", "issued_token", "legal_hold", "platform",
+	"preflight", "rbac", "schema", "sessions", "tree", "user",
+}
+
+// playgroundCeilingDomains are the §10.2 / §25.1 playground_allowed_scope
+// ceiling domains that live in scopes.Domains but outside the §15.1 admin
+// taxonomy bullet (pkg/gateway/playground/token.go uses tools:runtimes:read
+// and tools:pools:read). They are the only legitimate map entries absent
+// from taxonomyDomains.
+//
+// spec:§10.2 playground_allowed_scope ceiling.
+var playgroundCeilingDomains = []string{"runtimes", "pools"}
+
+// TestNewAdminDomains_Parse asserts every admin domain added by proposal
+// 0019 C1 (finding 25.1-H1) parses through ParseScope in the canonical
+// tools:<domain>:<action> form. Before the Domains-map expansion these
+// 21 domains were absent, so ParseScope returned ErrInvalidScope and
+// Set.Matches mis-denied every call to the matching admin endpoint
+// family. This test fails against the pre-fix map.
+//
+// spec:§15.1 closed scope taxonomy; spec:§25.1 scope value syntax.
+func TestNewAdminDomains_Parse(t *testing.T) {
+	newDomains := []string{
+		"artifact_replication", "billing_correction", "bootstrap",
+		"ca_rotation", "connector", "credential_rekey", "delegation_policy",
+		"deployment", "environment", "erasure_job", "external_adapter",
+		"impersonation", "interceptor", "issued_token", "legal_hold",
+		"platform", "preflight", "rbac", "schema", "tree", "user",
+	}
+	for _, d := range newDomains {
+		t.Run(d, func(t *testing.T) {
+			in := "tools:" + d + ":read"
+			got, err := scopes.ParseScope(in)
+			if err != nil {
+				t.Fatalf("ParseScope(%q) returned %v, want the renamed admin scope to parse", in, err)
+			}
+			if got.Domain != d || got.Action != "read" {
+				t.Errorf("ParseScope(%q) = %+v, want domain %q action read", in, got, d)
+			}
+			// The per-domain wildcard must parse too: x-lenny-scope values
+			// use the * action for "all actions in the domain".
+			if _, err := scopes.ParseScope("tools:" + d + ":*"); err != nil {
+				t.Errorf("ParseScope(tools:%s:*) returned %v, want wildcard action to parse", d, err)
+			}
+		})
+	}
+}
+
+// TestDomainsEqualsTaxonomyUnion asserts scopes.Domains equals the union
+// of the §15.1 admin taxonomy and the §10.2 playground ceiling domains:
+// every taxonomy domain is present, and the only entries outside the
+// taxonomy are the two documented playground plurals. A taxonomy domain
+// missing from the map would mis-deny that endpoint family; a stray map
+// entry outside both sets would accept a scope the taxonomy never granted.
+//
+// spec:§15.1 closed scope taxonomy; spec:§10.2 playground ceiling.
+func TestDomainsEqualsTaxonomyUnion(t *testing.T) {
+	want := make(map[string]struct{}, len(taxonomyDomains)+len(playgroundCeilingDomains))
+	for _, d := range taxonomyDomains {
+		want[d] = struct{}{}
+	}
+	for _, d := range playgroundCeilingDomains {
+		want[d] = struct{}{}
+	}
+	got := scopes.Domains
+
+	for d := range want {
+		if _, ok := got[d]; !ok {
+			t.Errorf("scopes.Domains is missing taxonomy/ceiling domain %q", d)
+		}
+	}
+	for d := range got {
+		if _, ok := want[d]; !ok {
+			t.Errorf("scopes.Domains carries %q, which is in neither the §15.1 taxonomy nor the §10.2 playground ceiling", d)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("len(scopes.Domains)=%d, want %d (taxonomy union with playground ceiling)", len(got), len(want))
+	}
+}
+
 // TestParseScope_Malformed enumerates the §25.1 malformed-value
 // rejections: empty, missing prefix, wrong prefix, unknown domain,
 // wildcard in the domain slot without wildcard action, surrounding

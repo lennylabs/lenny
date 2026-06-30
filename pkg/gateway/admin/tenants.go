@@ -50,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -238,10 +239,9 @@ type Router struct {
 	platformConfig map[string]string
 	platformWired  bool
 
-	recommendations     RecommendationService
-	eventBuffer         EventBufferQuerier
-	eventEmitter        events.EventEmitter
-	operationsInventory OperationsInventory
+	recommendations RecommendationService
+	eventBuffer     EventBufferQuerier
+	eventEmitter    events.EventEmitter
 
 	kmsProbe KMSProbe
 	// elicitationFloor returns the current §9.2 / §17.2 platform-wide
@@ -314,6 +314,14 @@ type Router struct {
 	// §15.1 line 868 DELETE …/extension-denial admin endpoint. Nil leaves
 	// the endpoint unregistered.
 	leaseDenials LeaseDenialClearer
+
+	// tenantResolver maps a delegation tree's root session id to its
+	// owning tenant. handleClearExtensionDenial uses it to confine a
+	// non-platform-admin caller to its own tenant before the clear, so a
+	// tenant-admin cannot clear another tenant's extension-denial row
+	// given an opaque session UUID (§10.2 line 261). Nil fails closed: a
+	// non-platform-admin caller is rejected.
+	tenantResolver leasecontrol.TenantResolver
 
 	// quotaReconciler backs the §15.1 line 879 POST
 	// /v1/admin/quota/reconcile endpoint. The route is always registered
@@ -590,10 +598,14 @@ func (r *Router) Handler() http.Handler {
 			mux.Handle("POST /v1/admin/tenants/{id}/rotate-erasure-salt",
 				r.requireAdmin(http.HandlerFunc(r.handleRotateErasureSalt)))
 		}
+		// §15.1 line 823,824: GET/PUT elicitation-content-integrity admit
+		// platform-admin or tenant-admin. The role gate widens to
+		// requireTenantResourceAdmin; each handler confines a non-platform
+		// caller to its own {id} via authorizeTenantPath. ADM-3.
 		mux.Handle("GET /v1/admin/tenants/{id}/elicitation-content-integrity",
-			r.requireAdmin(http.HandlerFunc(r.handleGetElicitationIntegrity)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetElicitationIntegrity)))
 		mux.Handle("PUT /v1/admin/tenants/{id}/elicitation-content-integrity",
-			r.requireAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
 		mux.Handle("POST /v1/admin/tenants/{id}/compliance-profile/decommission",
 			r.requireAdmin(http.HandlerFunc(r.handleDecommissionCompliance)))
 		if r.deploymentConfig != nil {
@@ -671,17 +683,6 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/events/buffer",
 			r.requireAdmin(http.HandlerFunc(r.handleEventBuffer)))
 	}
-	if r.operationsInventory != nil {
-		// §4.0 / §25.4 unified Operations Inventory.
-		mux.Handle("GET /v1/admin/operations",
-			r.requireAdmin(http.HandlerFunc(r.handleListOperations)))
-		mux.Handle("GET /v1/admin/operations/{id}",
-			r.requireAdmin(http.HandlerFunc(r.handleGetOperation)))
-		// §25 line 4903 — caller's in-flight operations. Every
-		// authenticated caller may read their own slice of the
-		// inventory, so this route is not admin-gated.
-		mux.HandleFunc("GET /v1/admin/me/operations", r.handleMeOperations)
-	}
 	if r.sessionAdmin != nil {
 		// §24.11 platform-admin session investigation: read-through and
 		// the operator-driven forced terminal transition. Both resolve a
@@ -748,10 +749,11 @@ func (r *Router) Handler() http.Handler {
 		}
 	}
 	if r.sessions != nil {
-		// §12.8 legal hold set / clear (platform-admin only — a hold is a
-		// spoliation control).
+		// §15.1 line 865 / §10.2 line 280 — legal hold set / clear is
+		// platform-admin or tenant-admin; a tenant-admin is confined to its
+		// own tenant by the body-tenant binding in handleSetLegalHold.
 		mux.Handle("POST /v1/admin/legal-hold",
-			r.requireAdmin(http.HandlerFunc(r.handleSetLegalHold)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleSetLegalHold)))
 		// §15.1 line 865 active-hold listing. platform-admin or
 		// tenant-admin; a tenant-admin is auto-scoped to its own tenant.
 		mux.Handle("GET /v1/admin/legal-holds",
@@ -1122,7 +1124,13 @@ func (r *Router) Handler() http.Handler {
 	// what operations it is permitted to invoke.
 	mux.HandleFunc("GET /v1/admin/me", r.handleMe)
 	mux.HandleFunc("GET /v1/admin/me/authorized-tools", r.handleAuthorizedTools)
-	return mux
+	// §25.1 enforcement point 1: the per-route scope gate runs before
+	// the mux dispatches any handler, so a scope-narrowed token is
+	// rejected with 403 SCOPE_FORBIDDEN before it reaches a destructive
+	// admin handler at its full role ceiling. An absent scope claim, or
+	// a route the document declares no scope for, defers to the role
+	// gate on the matched handler. spec: §15.1 line 914,920; §25.1 line 94.
+	return r.enforceScopes(mux)
 }
 
 // requireAuditReader gates the §25.9 audit-query endpoints on
@@ -1588,7 +1596,8 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	t.UpdatedAt = t.CreatedAt
 	if err := r.tenants.Create(req.Context(), t); err != nil {
 		if errors.Is(err, tenantstore.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"tenant with this id already exists",
 				map[string]any{"id": body.ID})
 			return
@@ -2035,7 +2044,8 @@ func (r *Router) handleDecommissionCompliance(w http.ResponseWriter, req *http.R
 	}
 	// Concurrency guard: previousProfile must match the live value.
 	if body.PreviousProfile != current.ComplianceProfile {
-		writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+		// spec: §15.1 line 981 — a state conflict is INVALID_STATE_TRANSITION.
+		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
 			"previousProfile does not match the tenant's current complianceProfile",
 			map[string]any{
 				"currentProfile":  current.ComplianceProfile,

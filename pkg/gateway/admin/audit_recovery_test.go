@@ -94,10 +94,14 @@ func TestGetAuditEventRawCanonical_spec_25_9_3653(t *testing.T) {
 		t.Fatalf("create tenant: %d", rr.Code)
 	}
 
+	// A raw-canonical reader carries both the route-level read scope the
+	// central §25.1 gate enforces on GET /v1/admin/audit-events/{seq}
+	// (tools:audit:read) and the handler-conditional raw-canonical scope
+	// the ?format=raw-canonical branch requires. spec: §25.9 line 3653.
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAuditScopePrincipal(t,
 		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/1?tenantId=platform&format=raw-canonical", nil),
-		"tools:audit:raw_canonical_read"))
+		"tools:audit:read tools:audit:raw_canonical_read"))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}

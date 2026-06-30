@@ -126,7 +126,9 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	experiment_targeting, credential_policy, rbac_config,
 	token_quota_per_window, quota_reset_period, state, gc_priority,
 	erasure_salt, suspended, suspended_reason, suspended_at, suspended_by, version,
-	force_delete_hold_override, force_delete_justification, force_delete_by, force_delete_at`
+	force_delete_hold_override, force_delete_justification, force_delete_by, force_delete_at,
+	elicitation_content_integrity_justification, elicitation_content_integrity_changed_at,
+	elicitation_content_integrity_changed_by`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -239,8 +241,10 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 		experiment_targeting, credential_policy, rbac_config,
 		token_quota_per_window, quota_reset_period, state, gc_priority, erasure_salt,
 		suspended, suspended_reason, suspended_at, suspended_by, version,
-		force_delete_hold_override, force_delete_justification, force_delete_by, force_delete_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)`,
+		force_delete_hold_override, force_delete_justification, force_delete_by, force_delete_at,
+		elicitation_content_integrity_justification, elicitation_content_integrity_changed_at,
+		elicitation_content_integrity_changed_by
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
@@ -248,7 +252,9 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 		targeting, credPolicy, rbacConfig,
 		t.TokenQuotaPerWindow, t.QuotaResetPeriod, state, gcPriorityOrDefault(t.GCPriority), saltBlob,
 		t.Suspended, t.SuspendedReason, pgtenant.NullTime(t.SuspendedAt), t.SuspendedBy, version,
-		t.ForceDeleteHoldOverride, t.ForceDeleteJustification, t.ForceDeleteBy, pgtenant.NullTime(t.ForceDeleteAt))
+		t.ForceDeleteHoldOverride, t.ForceDeleteJustification, t.ForceDeleteBy, pgtenant.NullTime(t.ForceDeleteAt),
+		t.ElicitationContentIntegrityJustification, pgtenant.NullTime(t.ElicitationContentIntegrityChangedAt),
+		t.ElicitationContentIntegrityChangedBy)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -333,7 +339,10 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		state = $19, gc_priority = $20, erasure_salt = $21,
 		suspended = $22, suspended_reason = $23, suspended_at = $24, suspended_by = $25,
 		version = $26, force_delete_hold_override = $27, force_delete_justification = $28,
-		force_delete_by = $29, force_delete_at = $30 WHERE id = $1`,
+		force_delete_by = $29, force_delete_at = $30,
+		elicitation_content_integrity_justification = $31,
+		elicitation_content_integrity_changed_at = $32,
+		elicitation_content_integrity_changed_by = $33 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
@@ -343,7 +352,10 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		gcPriorityOrDefault(t.GCPriority), newSaltBlob,
 		t.Suspended, t.SuspendedReason, pgtenant.NullTime(t.SuspendedAt), t.SuspendedBy,
 		t.Version, t.ForceDeleteHoldOverride, t.ForceDeleteJustification,
-		t.ForceDeleteBy, pgtenant.NullTime(t.ForceDeleteAt)); err != nil {
+		t.ForceDeleteBy, pgtenant.NullTime(t.ForceDeleteAt),
+		t.ElicitationContentIntegrityJustification,
+		pgtenant.NullTime(t.ElicitationContentIntegrityChangedAt),
+		t.ElicitationContentIntegrityChangedBy); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -430,14 +442,15 @@ func (s *Store) IsRegistered(tenantID string) (bool, error) {
 // the returned Tenant is left nil. F-12.8.5.
 func scanTenant(row pgx.Row) (tenantstore.Tenant, []byte, error) {
 	var (
-		t             tenantstore.Tenant
-		deletedAt     *time.Time
-		targeting     []byte
-		credPolicy    []byte
-		rbacConfig    []byte
-		saltBlob      []byte
-		suspendedAt   *time.Time
-		forceDeleteAt *time.Time
+		t                    tenantstore.Tenant
+		deletedAt            *time.Time
+		targeting            []byte
+		credPolicy           []byte
+		rbacConfig           []byte
+		saltBlob             []byte
+		suspendedAt          *time.Time
+		forceDeleteAt        *time.Time
+		elicitationChangedAt *time.Time
 	)
 	if err := row.Scan(
 		&t.ID, &t.DisplayName, &t.ComplianceProfile, &t.DataResidencyRegion,
@@ -449,11 +462,16 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, []byte, error) {
 		&t.Suspended, &t.SuspendedReason, &suspendedAt, &t.SuspendedBy,
 		&t.Version,
 		&t.ForceDeleteHoldOverride, &t.ForceDeleteJustification, &t.ForceDeleteBy, &forceDeleteAt,
+		&t.ElicitationContentIntegrityJustification, &elicitationChangedAt,
+		&t.ElicitationContentIntegrityChangedBy,
 	); err != nil {
 		return tenantstore.Tenant{}, nil, err
 	}
 	if forceDeleteAt != nil {
 		t.ForceDeleteAt = *forceDeleteAt
+	}
+	if elicitationChangedAt != nil {
+		t.ElicitationContentIntegrityChangedAt = *elicitationChangedAt
 	}
 	if deletedAt != nil {
 		t.DeletedAt = *deletedAt
