@@ -67,13 +67,13 @@ func TestFileFabric(t *testing.T) {
 // TestMCPFabricPlatformTools — platform MCP tools (lenny/output,
 // lenny/request_elicitation, lenny/memory_write, lenny/memory_query,
 // lenny/send_message, lenny/request_input) against real stores.
-// pkg/gateway/mcptools implements all six tools and the unit suites
-// cover dispatch against memstore; the backing Postgres stores are
+// pkg/gateway/mcpfabric/mcptools implements all six tools and the unit
+// suites cover dispatch against memstore; the backing Postgres stores are
 // covered by the tier-2 stores contract tests, so a duplicated
 // MCP-on-Postgres component test adds no production-code coverage.
 //
 // spec: 12.2.3
-// diagnosis: the pkg/gateway/mcptools unit suites cover dispatch and
+// diagnosis: the pkg/gateway/mcpfabric/mcptools unit suites cover dispatch and
 // the Postgres-backed stores are covered by the stores contract
 // tests; a tier-2 MCP-on-Postgres wiring adds no new code path.
 func TestMCPFabricPlatformTools(t *testing.T) {
@@ -82,7 +82,7 @@ func TestMCPFabricPlatformTools(t *testing.T) {
 		"lenny/request_elicitation, lenny/memory_write, " +
 		"lenny/memory_query, lenny/send_message, lenny/request_input, " +
 		"lenny/delegate_task, lenny/await_children): " +
-		"pkg/gateway/mcptools unit suites.")
+		"pkg/gateway/mcpfabric/mcptools unit suites.")
 	t.Log("- backing-store contracts for the stores those tools mutate " +
 		"(memorystore, sessionstore, interactionstore): the suites " +
 		"under tests/tier2_component/stores/.")
@@ -97,7 +97,7 @@ func TestMCPFabricPlatformTools(t *testing.T) {
 // idempotency-key handling.
 //
 // spec: 12.2.3
-// diagnosis: pkg/gateway/admin has handlers for every documented
+// diagnosis: pkg/gateway/externalapi/admin has handlers for every documented
 // /v1/admin/* surface, but the OIDC verifier wiring to a stub IdP and
 // the role-ceiling middleware compose are not assembled as a
 // component-tier harness. Each handler is unit-tested with its store
@@ -106,7 +106,7 @@ func TestMCPFabricPlatformTools(t *testing.T) {
 // not in tests/testinfra today.
 func TestAdminPlane(t *testing.T) {
 	t.Log("§12.2.3 Admin Plane coverage map:")
-	t.Log("- handler unit coverage: pkg/gateway/admin per-resource suites " +
+	t.Log("- handler unit coverage: pkg/gateway/externalapi/admin per-resource suites " +
 		"(tenants, users, runtimes, pools, breakers, connectors, " +
 		"delegation-policies, credential-pools, custom-roles, " +
 		"tenant-access, billing, evals, environments, experiments, " +
@@ -127,7 +127,7 @@ func TestAdminPlane(t *testing.T) {
 // enforcement, per-subsystem isolation, circuit-breaker behavior.
 // Validated against the mock LLM provider. The proxy, four
 // translators, circuit breaker, and lease-token verifier ship in
-// pkg/gateway/llmproxy and are unit-covered there; the missing piece
+// pkg/gateway/llmproxy/llmproxy and are unit-covered there; the missing piece
 // for a component-tier wiring is the mock LLM provider recorder,
 // which is not in tests/testinfra.
 //
@@ -139,11 +139,11 @@ func TestLLMProxy(t *testing.T) {
 	t.Log("§12.2.3 LLM Proxy coverage map:")
 	t.Log("- proxy, translators (openai_direct, openai_responses, " +
 		"anthropic_direct, azure_openai, bedrock, vertex), and " +
-		"lease-token verifier: pkg/gateway/llmproxy unit suites.")
+		"lease-token verifier: pkg/gateway/llmproxy/llmproxy unit suites.")
 	t.Log("- credleasestore contract: " +
 		"tests/tier2_component/stores/credleasestore_test.go.")
 	t.Log("- circuit breaker: pkg/circuitbreaker unit suite plus " +
-		"pkg/gateway/breakerstore Redis-backed contract suite.")
+		"pkg/gateway/middleware/circuitbreaker/breakerstore Redis-backed contract suite.")
 	t.Log("The mock LLM provider recorder fixture for a composite " +
 		"component-tier run is on the v1 follow-on backlog; the " +
 		"per-translator and per-handler unit suites cover the " +

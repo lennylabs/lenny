@@ -36,7 +36,7 @@ func readRepoFile(t *testing.T, root string, parts ...string) string {
 // surfaces that independently enumerate the POST /v1/playground/token success
 // body and the tokenResponse struct to all carry effectiveScope. §27.3.1 is the
 // authoritative mint-response body, §15.1 line 903 is the endpoint-table
-// duplicate, and pkg/gateway/playground/token.go is the code struct; the
+// duplicate, and pkg/gateway/mcpfabric/playground/token.go is the code struct; the
 // proposal added effectiveScope to all three so they cannot drift.
 //
 // diagnosis: a failure means one of the three effectiveScope carrier surfaces

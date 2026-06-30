@@ -43,7 +43,7 @@ import "testing"
 // §13.9 — admin API + bootstrap.
 //
 // The gateway-side bootstrap surface is covered by per-handler unit
-// tests under pkg/gateway/admin (bootstrap_test.go) plus the
+// tests under pkg/gateway/externalapi/admin (bootstrap_test.go) plus the
 // lenny-ctl bootstrap path under cmd/lenny-ctl. The §17.6
 // lenny-bootstrap Helm Job's rendering is asserted by the
 // charts/lenny helm-unittest suite (charts/lenny/tests/bootstrap-job_test.yaml).
@@ -52,7 +52,7 @@ import "testing"
 // spec: 13
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + tier-3 contract tests; this scaffold documents the composition.
 func TestAdminBootstrap(t *testing.T) {
-	t.Logf("§10.2 / §17.6: bootstrap path covered by pkg/gateway/admin unit tests, " +
+	t.Logf("§10.2 / §17.6: bootstrap path covered by pkg/gateway/externalapi/admin unit tests, " +
 		"cmd/lenny-ctl tests, charts/lenny/tests bootstrap-job helm-unittest, and tier-5 " +
 		"end-to-end exercise. No tier-4 surface to add.")
 }
@@ -67,7 +67,7 @@ func TestAdminBootstrap(t *testing.T) {
 // §4.4 / §7.1 checkpoint + resume — built and covered by:
 //   - pkg/checkpoint (checkpoint pipeline + property tests)
 //   - pkg/gateway/sessionserver Resume handler in handleResume
-//   - pkg/gateway/retentiongc (retention sweep)
+//   - pkg/gateway/storage/retentiongc (retention sweep)
 //   - tier-2 miniostore_test.go (MinIO ArtifactStore round-trip)
 //   - tier-5 e2e checkpoint_test.go (live Kind exercise)
 //
@@ -83,7 +83,7 @@ func TestCheckpointResume(t *testing.T) {
 
 // §13.16 — interactive sessions / streaming.
 // §10.4 / §7.2 stream reconnect — built and covered by:
-//   - pkg/gateway/events (SessionEvent ring buffer + ring_test.go)
+//   - pkg/gateway/eventbuffer (SessionEvent ring buffer + buffer_test.go)
 //   - pkg/gateway/sessionserver/events.go (SSE handler with
 //     Last-Event-ID resume; events_test.go)
 //   - tier-7 streaming_throughput k6 scenario (baseline)
@@ -95,21 +95,21 @@ func TestCheckpointResume(t *testing.T) {
 // spec: 13
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + tier-3 contract tests; this scaffold documents the composition.
 func TestStreamingReconnect(t *testing.T) {
-	t.Logf("§10.4 / §7.2: stream reconnect covered by pkg/gateway/events ring_test.go, " +
+	t.Logf("§10.4 / §7.2: stream reconnect covered by pkg/gateway/eventbuffer buffer_test.go, " +
 		"sessionserver/events_test.go, tier-7 streaming_throughput baseline, and the " +
 		"streaming-echo Full-level reference runtime.")
 }
 
 // §13.15 — LLM Proxy.
 // §4.9 LLM Proxy + native Anthropic translator — built and covered by:
-//   - pkg/gateway/llmproxy.AnthropicDirectTranslator (translator.go,
+//   - pkg/gateway/llmproxy/llmproxy.AnthropicDirectTranslator (translator.go,
 //     translator_test.go)
 //   - tier-2 component test against the anthropic corpus
 //     (tests/tier2_component/translators/anthropic_translator_test.go)
 //   - tier-3 contract test
 //     (tests/tier3_contract/rest_openai_completions/... and the
 //     Anthropic-shaped sibling)
-//   - pkg/gateway/llmproxy/handler_test.go covers the live SSE relay
+//   - pkg/gateway/llmproxy/llmproxy/handler_test.go covers the live SSE relay
 //     against a mock Anthropic backend.
 //
 // Live calls against api.anthropic.com are a release-pipeline smoke
@@ -118,7 +118,7 @@ func TestStreamingReconnect(t *testing.T) {
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + tier-3 contract tests; this scaffold documents the composition.
 func TestLLMProxyAnthropic(t *testing.T) {
 	t.Logf("§4.9: anthropic_direct translator covered by tier-2 corpus, tier-3 envelope, " +
-		"and pkg/gateway/llmproxy handler_test mock relay. Live api.anthropic.com calls " +
+		"and pkg/gateway/llmproxy/llmproxy handler_test mock relay. Live api.anthropic.com calls " +
 		"are a release smoke test.")
 }
 
@@ -163,19 +163,19 @@ func TestMigrationUpgrade(t *testing.T) {
 // §13.33 — experiments.
 // §10.7 ExperimentRouter — built and covered by:
 //   - pkg/experiment (Router, HMAC bucketing, status-transition rules)
-//   - pkg/gateway/experimentstore (admin CRUD)
+//   - pkg/gateway/experiment/experimentstore (admin CRUD)
 //   - pkg/gateway/sessionserver/start.go (variant-pool routing on
 //     session create) with start_test.go
 //   - pkg/controller/poolscaling/variants.go (PoolScalingController
 //     variant-pool sizing path) and variants_test.go.
 //
 // The §10.7 admission-time isolation monotonicity is exercised by
-// the admin handler tests in pkg/gateway/admin/experiment_test.go.
+// the admin handler tests in pkg/gateway/externalapi/admin/experiment_test.go.
 // spec: 13
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + tier-3 contract tests; this scaffold documents the composition.
 func TestExperimentRouting(t *testing.T) {
 	t.Logf("§10.7: ExperimentRouter + variant-pool sizing covered by pkg/experiment, " +
-		"pkg/gateway/experimentstore, sessionserver/start_test.go, and " +
+		"pkg/gateway/experiment/experimentstore, sessionserver/start_test.go, and " +
 		"pkg/controller/poolscaling/variants_test.go.")
 }
 
@@ -198,9 +198,9 @@ func TestExperimentRouting(t *testing.T) {
 //     12b notes).
 //
 // The §4.1 dedicated /mcp/runtimes/{name} surface is implemented in
-// pkg/gateway/mcpruntimes (Handler) and mounted on the gateway mux
+// pkg/gateway/mcpfabric/mcpruntimes (Handler) and mounted on the gateway mux
 // in cmd/lenny-gateway/main.go. Unit coverage in
-// pkg/gateway/mcpruntimes/mcpruntimes_test.go verifies the four
+// pkg/gateway/mcpfabric/mcpruntimes/mcpruntimes_test.go verifies the four
 // error patterns the spec calls out (404 for unknown runtime,
 // 400 INVALID_RUNTIME_TYPE for type:agent runtimes, 503
 // RUNTIME_UNAVAILABLE when no live MCP client is wired, and OK
@@ -211,5 +211,5 @@ func TestMCPRuntimeEndpoints(t *testing.T) {
 	t.Logf("§15.2 / §15.1: type:mcp runtime covered by pkg/adapter/mcpruntime, " +
 		"pkg/adapter/mcp client, mcp_runtime_lifecycle_test.go, and the cmd/runtimes/mcp-reference " +
 		"reference runtime. The §4.1 dedicated /mcp/runtimes/{name} surface is implemented in " +
-		"pkg/gateway/mcpruntimes and covered by its unit tests.")
+		"pkg/gateway/mcpfabric/mcpruntimes and covered by its unit tests.")
 }
