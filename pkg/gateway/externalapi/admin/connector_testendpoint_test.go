@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"

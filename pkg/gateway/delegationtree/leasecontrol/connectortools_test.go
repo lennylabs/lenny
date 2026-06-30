@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )

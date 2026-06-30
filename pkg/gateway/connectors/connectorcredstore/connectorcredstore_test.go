@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 )
 
 func fixedClock(t time.Time) func() time.Time {

@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 )
 
 // StageStatus is the per-stage outcome of a §15.1 connector live test.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 )
 
 // seedCred stores one credential and fails the test on error.

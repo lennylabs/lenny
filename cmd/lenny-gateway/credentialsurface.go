@@ -13,9 +13,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
-	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
+	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
 	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore/pgstore"

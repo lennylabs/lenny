@@ -11,9 +11,9 @@ import (
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorauthz"
-	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
-	"github.com/lennylabs/lenny/pkg/gateway/connectortools"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorauthz"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"

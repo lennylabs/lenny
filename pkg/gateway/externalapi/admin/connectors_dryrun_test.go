@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
