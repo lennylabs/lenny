@@ -69,6 +69,29 @@ func TestSSRFCallbackValidation(t *testing.T) {
 	gatewayIP := startGatewayProbe(t, c, probe)
 	admin := platformAdmin()
 
+	// A persisted connector row carries a tenant_id FK to tenants(id)
+	// (migrations/0053). The dev-header `platform` identity platformAdmin()
+	// presents is the §11.7 platform pseudo-tenant, which has no tenants
+	// row by design (migrations/0001 records that platform-admin actions
+	// land on the platform chain, a pseudo-tenant that is not a registered
+	// tenant), so a connector written under it fails the connectors_tenant_id_fkey
+	// FK. The reject cases never reach the FK, because their HTTPS validation
+	// fails before the row is written, but the positive control persists a row,
+	// so it must bind to a registered tenant. Bootstrap a synthetic tenant
+	// (the same POST /v1/admin/bootstrap upsert audit_integrity_test.go uses)
+	// and create the positive-control connector under it via the body
+	// tenantId, which resolveTargetTenant honours for a platform-admin
+	// caller. The cleanup deletes the connector under the synthetic tenant
+	// and then the tenant row.
+	ssrfTenant := "t9-ssrf-tenant"
+	bootstrapBody := fmt.Sprintf(`{"tenants":[{"id":%q}]}`, ssrfTenant)
+	boot := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/bootstrap", admin, bootstrapBody)
+	if boot.curlExit != 0 || (boot.statusCode != 200 && boot.statusCode != 207) {
+		t.Skipf("precondition not met: could not bootstrap the synthetic tenant %q for the positive control "+
+			"(curl exit %d, status %d, body %q); a persisted connector needs a registered tenants row",
+			ssrfTenant, boot.curlExit, boot.statusCode, boot.body)
+	}
+
 	// Connector IDs created (or attempted) by this test, removed in the
 	// cleanup. The reject cases never persist a connector (the validator
 	// fails before the row is written), but the cleanup deletes them
@@ -82,12 +105,19 @@ func TestSSRFCallbackValidation(t *testing.T) {
 	// persist.
 	httpsOKID := fmt.Sprintf("t9ssrf-https-ok-%d", time.Now().UnixNano())
 	createdIDs := []string{
-		"t9ssrf-http-mcp", "t9ssrf-ftp-scheme", "t9ssrf-http-oauth", httpsOKID,
+		"t9ssrf-http-mcp", "t9ssrf-ftp-scheme", "t9ssrf-http-oauth",
 	}
 	t.Cleanup(func() {
 		for _, id := range createdIDs {
 			_ = gatewayRequest(t, c, probe, gatewayIP, "DELETE", "/v1/admin/connectors/"+id, admin, "")
 		}
+		// The positive-control connector persists under the synthetic
+		// tenant, so its delete must scope to that tenant (the platform-admin
+		// DELETE reads ?tenant_id=). The tenant row is removed last so its
+		// FK dependents are gone first.
+		_ = gatewayRequest(t, c, probe, gatewayIP, "DELETE",
+			"/v1/admin/connectors/"+httpsOKID+"?tenant_id="+ssrfTenant, admin, "")
+		_ = gatewayRequest(t, c, probe, gatewayIP, "DELETE", "/v1/admin/tenants/"+ssrfTenant, admin, "")
 	})
 
 	rejectCases := []ssrfRejectCase{
@@ -150,9 +180,12 @@ func TestSSRFCallbackValidation(t *testing.T) {
 	// could be a blanket connector-create failure rather than the §9.3
 	// HTTPS check firing.
 	t.Run("https-connector-accepted", func(t *testing.T) {
-		body := fmt.Sprintf(`{"id":%q,"mcpServerUrl":"https://ok.example.com/mcp",`+
+		// tenantId binds the persisted row to the synthetic tenant bootstrapped
+		// above so the connectors_tenant_id_fkey FK resolves; resolveTargetTenant
+		// honours the body tenantId for the platform-admin caller.
+		body := fmt.Sprintf(`{"id":%q,"tenantId":%q,"mcpServerUrl":"https://ok.example.com/mcp",`+
 			`"auth":{"type":"oauth2","clientId":"t9ssrf-client","authorizationEndpoint":"https://ok.example.com/authz",`+
-			`"tokenEndpoint":"https://ok.example.com/token","clientSecretRef":"lenny-system/conn-secret"}}`, httpsOKID)
+			`"tokenEndpoint":"https://ok.example.com/token","clientSecretRef":"lenny-system/conn-secret"}}`, httpsOKID, ssrfTenant)
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/connectors", admin, body)
 		if res.curlExit != 0 {
 			t.Fatalf("connector-create request did not complete (curl exit %d, body %q)",
