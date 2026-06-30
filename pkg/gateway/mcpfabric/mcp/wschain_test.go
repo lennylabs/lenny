@@ -17,7 +17,7 @@ import (
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
 // spec: §27.5 / §27.3.1 line 142 — the MCP WebSocket transport at

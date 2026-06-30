@@ -22,7 +22,7 @@ import (
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop"
-	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"

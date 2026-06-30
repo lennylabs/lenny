@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
 // spec: §4.8 lines 1055-1056, 1075, §15.1 lines 1012-1013 — the

@@ -8,11 +8,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/proxycache"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
-	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"

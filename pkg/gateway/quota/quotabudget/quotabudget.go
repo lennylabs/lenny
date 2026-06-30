@@ -51,7 +51,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/quota"
 )

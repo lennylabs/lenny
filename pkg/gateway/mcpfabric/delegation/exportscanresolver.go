@@ -5,7 +5,7 @@ package delegation
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
 // ChainExportScanResolver resolves a §8.3 contentPolicy.interceptorRef to

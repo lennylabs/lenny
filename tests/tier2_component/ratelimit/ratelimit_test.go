@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

@@ -36,7 +36,7 @@ import (
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 
-	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/leaseextension"
 )
 

@@ -325,7 +325,7 @@
       "title": "Gateway Policy Engine",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "pkg/gateway/interceptor/...",
+        "pkg/gateway/policy/interceptor/...",
         "pkg/gateway/mcpfabric/delegationpolicystore/...",
         "pkg/gateway/mcpfabric/mcptools/predelegation_test.go"
       ],
@@ -1770,7 +1770,7 @@
         "pkg/gateway/mcpfabric/delegationpolicystore/...",
         "pkg/gateway/mcpfabric/mcptools/...",
         "pkg/delegation/lease/...",
-        "pkg/gateway/interceptor/..."
+        "pkg/gateway/policy/interceptor/..."
       ],
       "packages": [
         "pkg/delegation/security"

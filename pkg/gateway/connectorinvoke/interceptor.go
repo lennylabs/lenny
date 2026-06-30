@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
 // §4.8 lines 1057-1058, 1077, §15.1 lines 1014-1015. A deliberate REJECT

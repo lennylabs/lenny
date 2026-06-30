@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/interceptorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 

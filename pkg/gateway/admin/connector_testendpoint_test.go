@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 

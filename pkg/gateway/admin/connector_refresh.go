@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
 // connectorRefreshRateLimit caps the §9.3 capability refresh at the same

@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
 // spec: §4.8 lines 1057-1058, 1077, §15.1 lines 1014-1015 — the

@@ -17,7 +17,7 @@ import (
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
 // recordingMetrics is a test double that captures every Metrics call.

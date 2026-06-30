@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
 // failClosedInterceptor errors on every call and is fail-closed, so the

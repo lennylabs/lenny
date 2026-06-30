@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
 // stubPreAuth is a built-in interceptor test double for the PreAuth

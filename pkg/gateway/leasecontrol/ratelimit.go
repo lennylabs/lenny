@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
 // autoExtensionLimiter enforces the §8.6 line 712 auto-mode rate limit.

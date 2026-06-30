@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 )
 
 // spec: §8.3 line 157 / §4.8 line 974 — a `lenny/delegate_task` whose

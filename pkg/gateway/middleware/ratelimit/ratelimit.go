@@ -44,7 +44,7 @@ import (
 	"time"
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 )
 
