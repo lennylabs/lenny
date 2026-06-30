@@ -221,16 +221,21 @@ const (
 // here means a rewrite the driver was supposed to perform did not land.
 func ClassifyGo(content string, m Move) SurvivorClass {
 	oldImport := m.Old
+	newImport := m.New
 	oldRel := RepoRel(m.Old)
+	newRel := RepoRel(m.New)
 
-	// Driver-rewritable forms: a surviving one is an abort.
-	if strings.Contains(content, `"`+oldImport+`"`) {
+	// Driver-rewritable forms: a surviving one is an abort. The deeper-reference
+	// and exact-literal forms exclude an occurrence that is the rewritten new
+	// path, which a self-prefix move (policy -> policy/policy) leaves carrying the
+	// old token as a prefix; see hasSurvivingQuotedRef.
+	if hasSurvivingExactLiteral(content, oldImport, newImport) {
 		return Abort
 	}
-	if strings.Contains(content, `"`+oldRel+`/`) || strings.Contains(content, `"`+oldRel+`"`) {
+	if hasSurvivingQuotedRef(content, oldRel, newRel) {
 		return Abort
 	}
-	if hasSplitSegmentRun(content, oldRel) {
+	if hasSplitSegmentRun(content, oldRel, newRel) {
 		return Abort
 	}
 
@@ -247,10 +252,64 @@ func ClassifyGo(content string, m Move) SurvivorClass {
 // abort. There is no comment form in JSON, so this never returns Warn.
 func ClassifyJSON(content string, m Move) SurvivorClass {
 	oldRel := RepoRel(m.Old)
-	if strings.Contains(content, `"`+oldRel+`"`) || strings.Contains(content, `"`+oldRel+`/`) {
+	newRel := RepoRel(m.New)
+	if hasSurvivingQuotedRef(content, oldRel, newRel) {
 		return Abort
 	}
 	return None
+}
+
+// hasSurvivingQuotedRef reports whether a driver-rewritable quoted path
+// reference for oldRel ("<oldRel>" exact, or "<oldRel>/ deeper) survives in
+// content that has already been rewritten. It excludes any occurrence that is
+// the rewritten new path: a self-prefix move (for example
+// pkg/gateway/policy -> pkg/gateway/policy/policy) makes the correct new token
+// "pkg/gateway/policy/policy/..." contain the substring "pkg/gateway/policy/,
+// which a naive strings.Contains would flag as a surviving deeper reference even
+// though the driver produced it. The fix scans each "<oldRel>/ and "<oldRel>"
+// match and skips the one that coincides with the start of the new path token
+// "<newRel> at the same position. spec: §4.1 (proposal 0020 §4 C4 — the abort
+// condition flags only a token the driver provably could and should have
+// rewritten, so a correctly-rewritten self-prefix move never aborts).
+func hasSurvivingQuotedRef(content, oldRel, newRel string) bool {
+	for _, suffix := range []string{`/`, `"`} {
+		needle := `"` + oldRel + suffix
+		// newToken carries the leading quote so the prefix comparison aligns with
+		// the quote-delimited needle position.
+		if survivingQuotedMatch(content, needle, `"`+newRel) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSurvivingExactLiteral reports whether the exact import literal "<oldImport>"
+// survives, excluding the rewritten "<newImport>" occurrence a self-prefix move
+// leaves (oldImport is a prefix of newImport, so "<oldImport>" never matches the
+// quote-bounded longer literal; the exclusion is symmetric with
+// hasSurvivingQuotedRef and keeps the two abort checks consistent).
+func hasSurvivingExactLiteral(content, oldImport, newImport string) bool {
+	return survivingQuotedMatch(content, `"`+oldImport+`"`, `"`+newImport+`"`)
+}
+
+// survivingQuotedMatch reports whether needle occurs in content at a position
+// that is NOT the start of the rewritten newToken. A match where newToken also
+// begins at that position is the driver's own rewrite output (the self-prefix
+// case), so it is not a survivor. Every other match is a genuine surviving
+// pre-move token the driver should have rewritten.
+func survivingQuotedMatch(content, needle, newToken string) bool {
+	idx := 0
+	for {
+		i := strings.Index(content[idx:], needle)
+		if i < 0 {
+			return false
+		}
+		pos := idx + i
+		if !strings.HasPrefix(content[pos:], newToken) {
+			return true
+		}
+		idx = pos + len(needle)
+	}
 }
 
 // HasProseToken reports whether the old path of a move survives as a standalone
@@ -267,13 +326,25 @@ func HasProseToken(content string, m Move) bool {
 
 // hasSplitSegmentRun reports whether the split path-segment runtime form for
 // oldRel survives in content, anchored under the "pkg", "gateway" head so a
-// bare leaf token elsewhere does not trip the audit.
-func hasSplitSegmentRun(content, oldRel string) bool {
-	segs := strings.Split(oldRel, "/")
-	if len(segs) < 3 || segs[0] != "pkg" || segs[1] != "gateway" {
+// bare leaf token elsewhere does not trip the audit. It returns false when the
+// driver's splitSegmentForm provably could not rewrite this move: a self-prefix
+// move (policy -> policy/policy) appends a tail segment rather than inserting a
+// group segment before the leaf, so commonPrefixLen consumes all of oldSegs and
+// splitSegmentForm returns the content unchanged. Aborting the move on a form
+// the driver cannot reach would violate the §4 C4 invariant that the abort
+// condition matches the driver's rewrite granularity (proposal 0020 §4 C4).
+func hasSplitSegmentRun(content, oldRel, newRel string) bool {
+	oldSegs := strings.Split(oldRel, "/")
+	if len(oldSegs) < 3 || oldSegs[0] != "pkg" || oldSegs[1] != "gateway" {
 		return false
 	}
-	leaf := segs[len(segs)-1]
+	// Self-prefix / appended-tail move: splitSegmentForm cannot rewrite it, so
+	// the audit must not abort on its split form either.
+	newSegs := strings.Split(newRel, "/")
+	if commonPrefixLen(oldSegs, newSegs) >= len(oldSegs) {
+		return false
+	}
+	leaf := oldSegs[len(oldSegs)-1]
 	for _, sep := range []string{", ", ",", ",\n", ",\n\t", ",\n\t\t", ", \n"} {
 		anchor := `"gateway"` + sep + `"` + leaf + `"`
 		if strings.Contains(content, anchor) {

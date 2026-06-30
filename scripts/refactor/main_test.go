@@ -141,6 +141,112 @@ func TestDriver_AuditAbortsOnSurvivingGoLiteral(t *testing.T) {
 	}
 }
 
+// rollback: a gate failure must roll the move back, restoring the working tree
+// to the pre-move (committed) state, rather than leaving the staged git mv and
+// the *.go/JSON rewrites in place for the operator to undo by hand (proposal §2:
+// a failed gate "aborts and rolls back that one move"; §6: "A move that fails any
+// check is rolled back"). The temp repo has no go.mod, so the go build gate fails
+// deterministically; after execute returns the error, the moved directory must
+// be gone, the original directory must be back, and git status must be clean.
+// This is constructed to FAIL against the pre-fix driver, which only returned the
+// error and left the tree dirty.
+func TestDriver_GateFailureRollsBackTheMove(t *testing.T) {
+	root := initTempRepo(t)
+	// Gates ON: the temp tree is not a Go module, so go build ./... fails.
+	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: false, skipAudit: true}}
+
+	err := d.execute()
+	if err == nil {
+		t.Fatal("execute must fail when the go build gate fails")
+	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("error must report the rollback; got %v", err)
+	}
+
+	// The move was reverted: the new directory is gone, the original is back.
+	if _, statErr := os.Stat(filepath.Join(root, "pkg", "gateway", "mcpfabric", "playground")); !os.IsNotExist(statErr) {
+		t.Fatalf("rollback should have removed the moved directory; stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "pkg", "gateway", "playground", "token.go")); statErr != nil {
+		t.Fatalf("rollback should have restored the original directory: %v", statErr)
+	}
+	// The consumer's import literal must be back to the pre-move path.
+	consumer := readFile(t, filepath.Join(root, "pkg", "consumer", "consumer.go"))
+	if !strings.Contains(consumer, `"github.com/lennylabs/lenny/pkg/gateway/playground"`) {
+		t.Fatalf("rollback should have restored the original import literal; got:\n%s", consumer)
+	}
+	// The working tree must be clean again.
+	out, statusErr := d.git("status", "--porcelain")
+	if statusErr != nil {
+		t.Fatalf("git status: %v (%s)", statusErr, out)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("working tree must be clean after rollback; git status:\n%s", out)
+	}
+}
+
+// rollback: an audit abort must restore the tree as a gate failure does. The
+// move and its rewrite are applied, then a surviving driver-rewritable import
+// literal is injected so the audit aborts; rollback must restore the original
+// directory, the rewritten consumer, and remove the injected untracked file via
+// git clean, leaving a clean tree (proposal §2, §6).
+func TestDriver_AuditFailureRollsBackTheMove(t *testing.T) {
+	root := initTempRepo(t)
+	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: true, skipAudit: false}}
+
+	if err := d.gitMove(testModuleMove()); err != nil {
+		t.Fatalf("gitMove: %v", err)
+	}
+	if err := d.rewriteTree(); err != nil {
+		t.Fatalf("rewriteTree: %v", err)
+	}
+	// Inject a surviving Abort token the rewrite already ran past, forcing the
+	// audit to abort.
+	survivor := filepath.Join(root, "pkg", "survivor", "v.go")
+	writeFile(t, survivor,
+		"package survivor\n\nimport _ \"github.com/lennylabs/lenny/pkg/gateway/playground\"\n")
+	if err := d.audit(); err == nil {
+		t.Fatal("audit must abort on the surviving literal")
+	}
+
+	if err := d.rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "pkg", "gateway", "playground", "token.go")); statErr != nil {
+		t.Fatalf("rollback should restore the original directory: %v", statErr)
+	}
+	if _, statErr := os.Stat(survivor); !os.IsNotExist(statErr) {
+		t.Fatalf("rollback (git clean) should remove the injected untracked survivor; stat err=%v", statErr)
+	}
+	out, statusErr := d.git("status", "--porcelain")
+	if statusErr != nil {
+		t.Fatalf("git status: %v (%s)", statusErr, out)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("tree must be clean after rollback; git status:\n%s", out)
+	}
+}
+
+// requireCleanTree fails closed: execute refuses to start on a dirty working
+// tree, so the automatic rollback can revert exactly the driver's own changes.
+func TestDriver_RefusesDirtyTree(t *testing.T) {
+	root := initTempRepo(t)
+	// Leave an untracked file so the tree is dirty.
+	writeFile(t, filepath.Join(root, "dirty.txt"), "uncommitted\n")
+	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: true, skipAudit: true}}
+	err := d.execute()
+	if err == nil {
+		t.Fatal("execute must refuse to start on a dirty working tree")
+	}
+	if !strings.Contains(err.Error(), "not clean") {
+		t.Fatalf("error must name the dirty tree; got %v", err)
+	}
+	// The move must NOT have been applied.
+	if _, statErr := os.Stat(filepath.Join(root, "pkg", "gateway", "mcpfabric", "playground")); !os.IsNotExist(statErr) {
+		t.Fatalf("execute must not move the directory when the tree is dirty; stat err=%v", statErr)
+	}
+}
+
 // The audit must abort when a JSON map still names a moved path.
 func TestDriver_AuditAbortsOnSurvivingJSONToken(t *testing.T) {
 	root := initTempRepo(t)

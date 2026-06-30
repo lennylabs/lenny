@@ -322,6 +322,74 @@ func TestClassifyJSON_SurvivorAborts(t *testing.T) {
 	}
 }
 
+// self-prefix abort: a self-prefix move (policy -> policy/policy,
+// llmproxy -> llmproxy/llmproxy, coordination -> coordination/coordination from
+// the committed manifest) makes the correct new token carry the old path as a
+// prefix: "pkg/gateway/policy/policy/..." contains the substring
+// "pkg/gateway/policy/. A naive deeper-reference check would re-flag the token
+// the driver already correctly rewrote and abort the move, violating the §4 C4
+// invariant that the abort condition matches the driver's rewrite granularity.
+// ClassifyJSON and ClassifyGo must therefore return None on the correctly
+// rewritten content, and Abort only on a genuine surviving pre-move token.
+func TestClassifyJSON_SelfPrefixRewrittenIsNone(t *testing.T) {
+	moves := []Move{
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/policy", New: "github.com/lennylabs/lenny/pkg/gateway/policy/policy"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/llmproxy", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"},
+		{Old: "github.com/lennylabs/lenny/pkg/gateway/coordination", New: "github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"},
+	}
+	for _, m := range moves {
+		// The recursive-glob form the maps carry for every package, after a clean
+		// rewrite by JSONTokens.
+		oldGlob := `"` + RepoRel(m.Old) + `/..."`
+		rewritten := JSONTokens(oldGlob, []Move{m})
+		if rewritten == oldGlob {
+			t.Fatalf("JSONTokens did not rewrite self-prefix glob %q", oldGlob)
+		}
+		if got := ClassifyJSON(rewritten, m); got != None {
+			t.Errorf("ClassifyJSON on rewritten self-prefix %s = %v, want None (rewritten=%q)", RepoRel(m.Old), got, rewritten)
+		}
+		// A genuine surviving pre-move token (the un-rewritten old glob) must abort.
+		if got := ClassifyJSON(oldGlob, m); got != Abort {
+			t.Errorf("ClassifyJSON on surviving self-prefix token %s = %v, want Abort", RepoRel(m.Old), got)
+		}
+	}
+}
+
+// self-prefix abort (Go): the runtime slash-joined literal, the import literal,
+// and the split path-segment form of a self-prefix move must classify None after
+// a clean rewrite, and Abort on a genuine survivor. The split-segment form is the
+// case the driver's splitSegmentForm provably cannot rewrite (it appends a tail
+// segment), so the audit must not abort on it either.
+func TestClassifyGo_SelfPrefixRewrittenIsNone(t *testing.T) {
+	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/policy", New: "github.com/lennylabs/lenny/pkg/gateway/policy/policy"}
+
+	// Runtime slash-joined literal: rewritten -> None, surviving -> Abort.
+	survRuntime := `p := "pkg/gateway/policy/engine.go"`
+	if got := ClassifyGo(RuntimePaths(survRuntime, []Move{m}), m); got != None {
+		t.Errorf("ClassifyGo on rewritten self-prefix runtime literal = %v, want None", got)
+	}
+	if got := ClassifyGo(survRuntime, m); got != Abort {
+		t.Errorf("ClassifyGo on surviving self-prefix runtime literal = %v, want Abort", got)
+	}
+
+	// Import literal: rewritten -> None, surviving -> Abort.
+	survImport := `import "github.com/lennylabs/lenny/pkg/gateway/policy"`
+	if got := ClassifyGo(ImportLiterals(survImport, []Move{m}), m); got != None {
+		t.Errorf("ClassifyGo on rewritten self-prefix import literal = %v, want None", got)
+	}
+	if got := ClassifyGo(survImport, m); got != Abort {
+		t.Errorf("ClassifyGo on surviving self-prefix import literal = %v, want Abort", got)
+	}
+
+	// Split path-segment form: the driver cannot rewrite a self-prefix split
+	// form (commonPrefixLen consumes all of oldSegs), so a surviving split form
+	// must NOT abort the move.
+	split := `readRepoFile(t, root, "pkg", "gateway", "policy", "engine.go")`
+	if got := ClassifyGo(split, m); got != Warn && got != None {
+		t.Errorf("ClassifyGo on self-prefix split-segment form = %v, want None or Warn (never Abort)", got)
+	}
+}
+
 // The driver must never rewrite a sibling whose prefix the audit would
 // otherwise flag: classify the longer sibling as None when only the shorter
 // path moved and was rewritten. Guards against the audit's hasBoundedToken

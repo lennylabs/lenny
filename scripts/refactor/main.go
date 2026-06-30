@@ -24,6 +24,14 @@
 //     comment and informational-string occurrences and non-Go prose files as a
 //     NON-FATAL warning.
 //
+// Rollback is part of the gated move (proposal §2: a failed gate "aborts and
+// rolls back that one move"; §6: "A move that fails any check is rolled back").
+// The driver requires a clean working tree before it starts, so on a gate or
+// audit failure it restores the tree itself (git reset --hard HEAD plus git
+// clean of the created group directories) rather than leaving the staged git mv
+// and rewrites for the operator to undo. reset --hard targets HEAD on the
+// current branch and does not switch branches.
+//
 // Usage:
 //
 //	refactor [flags]
@@ -157,11 +165,39 @@ type driver struct {
 	touchedGo map[string]struct{}
 }
 
+// execute applies the move batch as one atomic, gated unit: it requires a clean
+// working tree to start, applies every move's git mv and reference rewrite,
+// formats the touched files, then gates and audits. The proposal makes rollback
+// part of the gated move (§2: a failed gate "aborts and rolls back that one
+// move"; §6: "A move that fails any check is rolled back"). So a gate or audit
+// failure does not leave the tree dirty: the driver restores the index and
+// working tree to the pre-move state itself before returning the error. The
+// pre-run clean-tree requirement makes that automatic rollback unambiguous,
+// because git reset --hard plus git clean of the created group directories then
+// reverts exactly the driver's own changes and nothing pre-existing.
 func (d *driver) execute() error {
 	if d.cfg.dryRun {
 		d.printPlan()
 		return nil
 	}
+	if err := d.requireCleanTree(); err != nil {
+		return err
+	}
+	if err := d.applyAndVerify(); err != nil {
+		if rbErr := d.rollback(); rbErr != nil {
+			return fmt.Errorf("%w; ALSO rollback failed (tree may be dirty, inspect with git status): %v", err, rbErr)
+		}
+		return fmt.Errorf("%w; rolled back the move (tree restored to pre-move state)", err)
+	}
+	fmt.Printf("refactor: applied %d move(s); gates and audit clean\n", len(d.moves))
+	return nil
+}
+
+// applyAndVerify performs the move's mutations (git mv, rewrite, format) and the
+// gates and audit. A non-nil return is the trigger for execute to roll the move
+// back. It is a separate method so execute's rollback wrapper stays a single
+// error-handling site.
+func (d *driver) applyAndVerify() error {
 	for _, m := range d.moves {
 		if err := d.gitMove(m); err != nil {
 			return fmt.Errorf("git mv %s: %w", m.Old, err)
@@ -175,15 +211,54 @@ func (d *driver) execute() error {
 	}
 	if !d.cfg.skipGates {
 		if err := d.runGates(); err != nil {
-			return fmt.Errorf("gate failed (move not safe; revert with git): %w", err)
+			return fmt.Errorf("gate failed (move not safe): %w", err)
 		}
 	}
 	if !d.cfg.skipAudit {
 		if err := d.audit(); err != nil {
-			return fmt.Errorf("post-move audit aborted (move not safe; revert with git): %w", err)
+			return fmt.Errorf("post-move audit aborted (move not safe): %w", err)
 		}
 	}
-	fmt.Printf("refactor: applied %d move(s); gates and audit clean\n", len(d.moves))
+	return nil
+}
+
+// requireCleanTree fails closed when the working tree or index carries
+// uncommitted changes before the move starts. The per-group landing model the
+// proposal relies on (each move "applied, verified green, and committed before
+// the next") depends on a clean starting point: it lets the automatic rollback
+// restore exactly the driver's own changes with git reset --hard plus a clean of
+// the created group directories, rather than entangling them with pre-existing
+// edits. A failed move on a dirty tree could not distinguish the driver's
+// changes from the operator's, so the driver refuses to start.
+func (d *driver) requireCleanTree() error {
+	out, err := d.git("status", "--porcelain")
+	if err != nil {
+		return fmt.Errorf("check working tree cleanliness: %w (%s)", err, out)
+	}
+	if strings.TrimSpace(out) != "" {
+		return fmt.Errorf("working tree is not clean; commit or stash before running the move:\n%s", out)
+	}
+	return nil
+}
+
+// rollback restores the index and working tree to the pre-move state after a
+// failed gate or audit, so the failed move is reverted as the proposal specifies
+// (§2, §6) rather than left for the operator to undo by hand. Because execute
+// required a clean tree before starting, git reset --hard reverts the staged
+// git mv and the *.go/JSON rewrites to HEAD, and git clean removes the empty
+// group directories the move created (git mv left them in place after the reset
+// re-materialized the original directory). reset --hard targets HEAD, which is
+// the current commit on the current branch; it does not switch branches.
+func (d *driver) rollback() error {
+	if out, err := d.git("reset", "--hard", "HEAD"); err != nil {
+		return fmt.Errorf("git reset --hard HEAD: %w (%s)", err, out)
+	}
+	// Remove any now-untracked files and the empty group directories the git mv
+	// created. -d removes directories, -f forces, -q quiets; the reset already
+	// restored the tracked files, so this clears only the move's residue.
+	if out, err := d.git("clean", "-fdq"); err != nil {
+		return fmt.Errorf("git clean -fdq: %w (%s)", err, out)
+	}
 	return nil
 }
 

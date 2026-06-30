@@ -47,6 +47,11 @@ func TestRun_OnlyFilterAndExecute(t *testing.T) {
 	writeFile(t, manifestPath,
 		"# test manifest\n"+
 			"github.com/lennylabs/lenny/pkg/gateway/playground\tgithub.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground\n")
+	// Commit the manifest so the working tree is clean when execute runs; the
+	// driver refuses to start on a dirty tree (requireCleanTree) so the
+	// automatic rollback can revert exactly its own changes.
+	mustRun(t, root, "git", "add", "-A")
+	mustRun(t, root, "git", "commit", "-q", "-m", "manifest", "--no-verify")
 
 	cfg := config{
 		manifest:  manifestPath,
