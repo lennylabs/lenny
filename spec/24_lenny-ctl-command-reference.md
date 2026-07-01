@@ -2,7 +2,7 @@
 
 `lenny-ctl` is the official CLI for Lenny platform operators. It is a thin client over two complementary external surfaces ([§15](15_external-api-surface.md)) and carries near-zero business logic of its own:
 
-- **Admin / operator commands** (`lenny-ctl admin *`, `lenny-ctl tenants *`, `lenny-ctl runtimes *`, `lenny-ctl pools *`, `lenny-ctl credentials *`, every `/v1/admin/*` call, and the agent-operability commands in [§24.15](#2415-agent-operability-commands)) map 1:1 to the **REST** Admin API ([§15.1](15_external-api-surface.md#151-rest-api)).
+- **Admin / operator commands** (`lenny-ctl admin <resource> *`, where `<resource>` is `tenants`, `runtimes`, `pools`, `credential-pools`, `users`, and the other `/v1/admin/*` resources; plus the agent-operability commands in [§24.15](#2415-agent-operability-commands)) map 1:1 to the **REST** Admin API ([§15.1](15_external-api-surface.md#151-rest-api)).
 - **Session commands** (`lenny session *` — or equivalently `lenny-ctl session *`; see [§24.17](#2417-session-operations)) map to the **MCP** API ([§15.2](15_external-api-surface.md#152-mcp-api)). They use the Lenny Go client SDK under the hood so that the interactive streaming, elicitation, and delegation flows work through the same MCP path as any other client. The short form (`lenny session`) is preferred in developer-facing examples; the long form (`lenny-ctl session`) is preferred in operator runbooks.
 
 Every command requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin token (`LENNY_API_TOKEN` or `--token` flag), with the exceptions below. Minimum required role is noted per command group.
@@ -50,6 +50,7 @@ Both forms read `LENNY_API_URL` / `--api-url` to locate the Lenny gateway. `kube
 
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
+| `lenny-ctl admin runtimes register --manifest <f>` | Register a runtime definition from a manifest file `<f>`. Creates a global runtime record not yet visible to any tenant. This is the register step wrapped by `lenny runtime publish` ([§24.18](#2418-runtime-scaffolding)). | `POST /v1/admin/runtimes` | `platform-admin` |
 | `lenny-ctl admin runtimes grant-access --runtime <name> --tenant <id>` | Grant a tenant access to a runtime | `POST /v1/admin/runtimes/{name}/tenant-access` | `platform-admin` |
 | `lenny-ctl admin runtimes list-access --runtime <name>` | List tenants with access to a runtime | `GET /v1/admin/runtimes/{name}/tenant-access` | `platform-admin` |
 | `lenny-ctl admin runtimes revoke-access --runtime <name> --tenant <id>` | Revoke a tenant's access to a runtime | `DELETE /v1/admin/runtimes/{name}/tenant-access/{tenantId}` | `platform-admin` |
@@ -116,7 +117,7 @@ Both forms read `LENNY_API_URL` / `--api-url` to locate the Lenny gateway. `kube
 
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
-| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token and patch Kubernetes Secret. Internally calls the canonical OAuth token endpoint with an RFC 8693 token-exchange grant (`subject_token=<current>`, `requested_token_type=<same>`), then writes the returned token to the `lenny-admin-token` Kubernetes Secret. | `POST /v1/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` | `platform-admin` |
+| `lenny-ctl admin users rotate-token --user <name>` | Rotate the bootstrap `lenny-admin` token. Calls the dedicated admin rotate-token route, which the gateway serves in process: the gateway mints the replacement token directly, patches it into the `lenny-admin-token` Kubernetes Secret server-side, then immediately invalidates the superseded token (no grace period; see [§17.6](17_deployment-topology.md#176-packaging-and-installation)). The CLI does not call `/v1/oauth/token` for this rotation. The route serves only the managed `lenny-admin` user and rejects any other user, so it cannot mint a general token. | `POST /v1/admin/users/{user}/rotate-token` | `platform-admin` |
 | `lenny token print` | **Embedded Mode only.** Print a short-lived dev bearer token minted locally from a persisted dev key, which the in-cluster gateway trusts in dev mode through its `--bearer-trust-hmac-key-file` bearer-trust hook ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev), audience `dev.local`). Intended for local shell use such as `curl -H "Authorization: Bearer $(lenny token print)" https://localhost:8443/...` in the primary-path custom-runtime walkthrough ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)). The token is scoped to the local embedded gateway and rejected by any clustered deployment (the dev key is not trusted in clustered installs). No network call — the binary mints the token locally from the persisted dev key. Exits 0 on success; exits `3 EMBEDDED_MODE_REQUIRED` when invoked outside Embedded Mode (e.g., when `lenny up` is not running or the binary is invoked as `lenny-ctl` against a remote `--api-url`). | Local (Embedded Mode); no remote call | none (local, Embedded Mode only) |
 
 ### 24.10 Tenant Management
@@ -183,7 +184,7 @@ The `phase` field reflects the last migration Job that completed successfully; i
 | `lenny-ctl diagnose` | Run the diagnostic endpoints for sessions, pools, credential pools, and platform connectivity. | `/v1/admin/diagnostics/*` |
 | `lenny-ctl runbooks` | List and fetch structured (agent-parseable) runbook steps. | `/v1/admin/runbooks`, `/v1/admin/runbooks/{name}/steps` |
 | `lenny-ctl upgrade` | Drive the platform-upgrade state machine: check, start, pause, rollback, complete, verify. | `/v1/admin/platform/upgrade/*`, `/v1/admin/platform/upgrade-check` |
-| `lenny-ctl audit` | Query audit events with scatter-gather across shards; summarize by caller kind / operation ID; retry OCSF translation on failed rows; re-queue terminally-failed EventBus publishes; force-drop blocked audit partitions. | `/v1/admin/audit-events`, `/v1/admin/audit-events/summary`, `/v1/admin/audit-events/{id}/retranslate`, `/v1/admin/audit-events/{id}/republish`, `/v1/admin/audit-partitions/{partition}/drop` |
+| `lenny-ctl audit` | Query audit events with scatter-gather across shards; summarize by caller kind / operation ID; retry OCSF translation on failed rows; re-queue terminally-failed EventBus publishes; force-drop blocked audit partitions. The whole `lenny-ctl audit` family targets the gateway admin audit surface (the audit data plane is gateway-resident), so it is exempt from the §24.16 ops-routing rule and always routes to `--api-url`. | `/v1/admin/audit-events`, `/v1/admin/audit-events/summary`, `/v1/admin/audit-events/{id}/retranslate`, `/v1/admin/audit-events/{id}/republish`, `/v1/admin/audit-partitions/{partition}/drop` |
 | `lenny-ctl drift` | Fetch the drift report, trigger reconciliation, validate or refresh the desired-state snapshot. | `/v1/admin/drift`, `/v1/admin/drift/validate`, `/v1/admin/drift/snapshot/refresh` |
 | `lenny-ctl backup` | List backups, verify, manage schedule and retention policy. | `/v1/admin/backups`, `/v1/admin/backups/{id}/verify`, `/v1/admin/backups/schedule`, `/v1/admin/backups/policy` |
 | `lenny-ctl restore` | Preview, safety-check, execute, monitor, and resume restore operations. | `/v1/admin/restore/*` |
@@ -196,7 +197,7 @@ The `phase` field reflects the last migration Job that completed successfully; i
 
 In addition to the existing `--api-url` (or `LENNY_API_URL`) flag that targets the gateway, `lenny-ctl` now understands a separate `--ops-server` (or `LENNY_OPS_URL`) flag that targets the `lenny-ops` Ingress. The routing rule is:
 
-1. If `--ops-server` (or `LENNY_OPS_URL`) is set, use it for every Section 25 ops-hosted endpoint.
+1. If `--ops-server` (or `LENNY_OPS_URL`) is set, use it for every Section 25 ops-hosted endpoint. The `lenny-ctl audit` family ([§24.15](#2415-agent-operability-commands)) is exempt: its audit-events surface is gateway-resident, so it always routes to `--api-url` (the gateway) regardless of `--ops-server`.
 2. Otherwise, call `GET /v1/admin/platform/version` on the gateway. Its response includes an `opsServiceURL` field; `lenny-ctl` caches this for the duration of the command invocation and routes ops calls there.
 3. If auto-discovery fails (gateway unreachable, `opsServiceURL` absent because the cluster is mid-upgrade), `lenny-ctl` falls back to the gateway host under the assumption that gateway-hosted operability endpoints (§25.3) still work, and surfaces a warning for any ops-exclusive command.
 

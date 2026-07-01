@@ -11,7 +11,7 @@ Lenny is designed to be natively operable by AI agents. DevOps agents — runnin
 The operability surface defined in this section is implemented by two components:
 
 - **The gateway** — hosts the in-process operability endpoints (Section 25.3): health, capacity recommendations, version, config, and the event buffer. These all read in-process state that cannot be obtained externally.
-- **`lenny-ops`** — hosts the rest of the operability surface (Section 25.4 and the feature sections that follow): event stream, diagnostics, runbooks, platform lifecycle, audit, drift detection, backup/restore, MCP management, bundled alerting rules.
+- **`lenny-ops`** — hosts the rest of the operability surface (Section 25.4 and the feature sections that follow): event stream, diagnostics, runbooks, platform lifecycle, drift detection, backup/restore, MCP management, bundled alerting rules. The gateway serves the audit log query API (Section 25.9), which is coupled to the gateway-resident audit data plane.
 
 **`lenny-ops` is mandatory in every Lenny installation regardless of tier.** There is no supported topology without it — the features it hosts have no alternative path. Section 25.2 details the split between the two components.
 
@@ -144,6 +144,7 @@ These headers are advisory — omitting them does not affect request processing.
 │    GET  /v1/admin/platform/version    Compiled-in version info      │
 │    GET  /v1/admin/platform/config     Effective running config      │
 │    GET  /v1/admin/events/buffer       In-memory event ring buffer   │
+│    GET  /v1/admin/audit-events        Audit Log Query (25.9)        │
 │                                                                     │
 │  /metrics (Prometheus scrape target)                                │
 │                                                                     │
@@ -161,7 +162,6 @@ These headers are advisory — omitting them does not affect request processing.
 │                                           Prometheus, gateway API   │
 │  Runbook Index                 (25.7)   — read-only, bundled markdown│
 │  Platform Upgrade Orchestration(25.8)   — K8s API, Postgres         │
-│  Audit Log Query               (25.9)   — Postgres                  │
 │  Configuration Drift Detection (25.10)  — Postgres, gateway API     │
 │  Backup and Restore            (25.11)  — K8s Jobs, Postgres, MinIO │
 │  MCP Management Server         (25.12)  — translates MCP → REST     │
@@ -183,6 +183,7 @@ The split criterion is simple: **does the feature read in-process state that can
 | Event buffer (`/events/buffer`) | Yes — in-memory ring buffer of recent events. Fallback source when Redis is unavailable. | Gateway |
 | Version introspection | Yes — `ldflags`-compiled build metadata. | Gateway |
 | Running config | Yes — effective merged config lives in the running process. | Gateway |
+| Audit Log Query (25.9) | Yes — coupled to the gateway-resident audit data plane (per-tenant Postgres audit chains, RLS tenant-scoping, chain-integrity, redaction receipts, and cross-tenant scatter-gather). | Gateway |
 | Everything else | No — reads from Postgres, Redis, K8s API, Prometheus, or calls the gateway's admin API. | `lenny-ops` |
 
 ### API Conventions
@@ -769,11 +770,11 @@ None. In-process ring buffer only.
 
 ### Purpose
 
-A **mandatory** standalone service that hosts all operability features not implemented in-process by the gateway (Section 25.3). It provides the diagnostic, remediation, and lifecycle management surface for DevOps agents and operators. Every Lenny installation includes a `lenny-ops` deployment regardless of tier — there is no supported topology without it. The features it hosts (audit, backup, upgrade orchestration, drift detection, event stream, MCP management) have no alternative path.
+A **mandatory** standalone service that hosts all operability features not implemented in-process by the gateway (Section 25.3). It provides the diagnostic, remediation, and lifecycle management surface for DevOps agents and operators. Every Lenny installation includes a `lenny-ops` deployment regardless of tier — there is no supported topology without it. The features it hosts (backup, upgrade orchestration, drift detection, event stream, MCP management) have no alternative path.
 
 ### Deployment
 
-A separate Kubernetes Deployment: `lenny-ops`. Always deployed by the Helm chart. Single replica by default (leader-elected for singleton behaviors like webhook delivery and backup scheduling), scalable to multiple replicas for read-heavy workloads (audit queries, diagnostics).
+A separate Kubernetes Deployment: `lenny-ops`. Always deployed by the Helm chart. Single replica by default (leader-elected for singleton behaviors like webhook delivery and backup scheduling), scalable to multiple replicas for read-heavy workloads (diagnostics).
 
 #### Helm Values Hierarchy
 
@@ -1330,7 +1331,7 @@ Singleton behaviors gated by leader election:
 - `platform_upgrade_check` cron.
 - `bundleRules` reconciler.
 
-Non-leader replicas serve **read-heavy** API traffic (audit queries, diagnostics, runbooks) and proxy mutating endpoints to the leader if needed (or accept them locally if the operation is replica-independent — most are).
+Non-leader replicas serve **read-heavy** API traffic (diagnostics, runbooks) and proxy mutating endpoints to the leader if needed (or accept them locally if the operation is replica-independent — most are).
 
 `kubectl get leases -n lenny-system lenny-ops-leader` shows the current leader's pod identity (`spec.holderIdentity`) for operator visibility.
 
@@ -1413,7 +1414,7 @@ For clusters without internet access:
 
 | Dependency | Required | Used by |
 |---|---|---|
-| Postgres | No (degraded) | Audit queries, backup jobs, upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. |
+| Postgres | No (degraded) | Backup jobs and upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. |
 | Redis | No (degraded) | Event stream falls back to gateway in-memory buffer. Remediation locks fall back to in-memory. Escalation creation falls back to in-memory. |
 | K8s API | Yes | Diagnostics (pod events, pod state fallback), upgrade orchestration, backup jobs, version introspection |
 | Gateway admin API | Yes | Drift reconciliation, diagnostics (pool config, connectors), version aggregation, event buffer fallback |
@@ -1483,7 +1484,6 @@ The "transient" column is acceptable for short outages (minutes to a few hours).
 |------|-------------------|-----------|
 | Ops-specific tables (`ops_remediation_locks`, `ops_lock_epoch`, `ops_lock_conflicts`, `ops_idempotency_keys`, `ops_escalations`, `ops_backups`, `ops_backup_schedule`, `ops_retention_policy`, `ops_restore_state`, `ops_event_subscriptions`, `ops_event_deliveries`, `platform_upgrade_state`, `platform_upgrade_check_cache`, `bootstrap_seed_snapshot`, `audit_log_deferred_writes`) | `PlatformPostgres()` | Platform-scoped, not per-tenant or per-session. Low volume. Must be reachable without a tenant or session ID. |
 | Session diagnostics | `SessionShard(sessionID)` | Reads `sessions` and `agent_pod_state` from the shard that owns the session. |
-| Audit queries | `AuditShard(tenantID)` | Per-tenant for filtered queries. Platform-admin cross-tenant queries use `AllAuditShards()` for scatter-gather. |
 | Platform-tenant audit events referencing a non-platform `target_tenant_id` (`security.audit_write_rejected`, `admin.impersonation_*`, `gdpr.legal_hold_overridden_tenant`, `legal_hold.escrow_region_resolved`, `legal_hold.escrowed`, `legal_hold.escrow_released`, `compliance.profile_decommissioned`, `DataResidencyViolationAttempt` with `operation: "platform_audit_write"`) | `PlatformPostgres(region)` when the target tenant's `dataResidencyRegion` is set; falls back to `PlatformPostgres()` when unset | CMP-058, fail-closed. The *fact* of a platform-tenant event referencing a regulated target tenant is itself personal data describing that tenant; it must reside in the target's jurisdiction. Unresolvable region (target `dataResidencyRegion` set but `storage.regions.<region>.postgresEndpoint` missing or unreachable) raises `PLATFORM_AUDIT_REGION_UNRESOLVABLE` (HTTP 422, `PERMANENT`) — a mirror of `BACKUP_REGION_UNRESOLVABLE` and `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE`. See [§11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency". |
 | Backup (`pg_dump`) | All shards via `AllSessionShards()` + `PlatformPostgres()` (single-region) or `PlatformPostgres(region)` per region (multi-region; see Backup pipeline residency in [§12.8](12_storage-architecture.md#128-compliance-interfaces)) | Full backups dump every shard. |
 
@@ -1510,7 +1510,7 @@ All ops Redis keys use the `ops:` prefix to avoid collisions with tenant-scoped 
 
 Scale `lenny-ops` to multiple replicas when:
 
-- **Read query load is high.** Audit queries, diagnostics, drift reports, and event-stream connections from many concurrent agents create CPU/memory pressure on a single replica. Indicator: sustained CPU > 70% on the `lenny-ops` pod, or `lenny_ops_rate_limited_total` consistently incrementing for read endpoints.
+- **Read query load is high.** Diagnostics, drift reports, and event-stream connections from many concurrent agents create CPU/memory pressure on a single replica. Indicator: sustained CPU > 70% on the `lenny-ops` pod, or `lenny_ops_rate_limited_total` consistently incrementing for read endpoints.
 - **Many concurrent SSE connections.** Each SSE connection is a long-lived goroutine. With > ~500 concurrent connections, a single replica can become memory-pressured. Indicator: `lenny_ops_events_sse_active_connections` > 500.
 - **High webhook subscription count.** Each subscription spawns a delivery goroutine on the leader. With > ~200 subscriptions and high event throughput, the leader's webhook delivery pipeline can become a bottleneck. Indicator: `lenny_ops_webhook_backlog` > 100 sustained.
 
@@ -1630,9 +1630,9 @@ An agent arriving with a valid token has no built-in way to know what it can do 
   "links": {
     "authorizedTools": "/v1/admin/me/authorized-tools",
     "myOperations": "/v1/admin/me/operations",
-    "myRecentAudit": "/v1/admin/audit-events?actorId=sa-prod-watchdog-01&limit=50",
-    "platformHealth": "/v1/admin/health/summary",
-    "openApi": "/v1/openapi.json"
+    "myRecentAudit": "https://lenny-gateway:8443/v1/admin/audit-events?actorId=sa-prod-watchdog-01&limit=50",
+    "platformHealth": "https://lenny-gateway:8443/v1/admin/health/summary",
+    "openApi": "https://lenny-gateway:8443/v1/openapi.json"
   }
 }
 ```
@@ -1655,7 +1655,7 @@ Any authenticated caller may call `/v1/admin/me` and its sub-endpoints — they 
 
 #### Degradation
 
-If Postgres is unreachable, `/v1/admin/me` still returns — `identity`, `authorization`, `rateLimits`, `token`, `platform`, `capabilities` are all derivable from the authenticated request alone or from `lenny-ops` process state. Only `links.myRecentAudit` is degraded (audit is Postgres-backed); the canonical `degradation` envelope (Section 25.2) is populated accordingly.
+If Postgres is unreachable, `/v1/admin/me` still returns — `identity`, `authorization`, `rateLimits`, `token`, `platform`, `capabilities` are all derivable from the authenticated request alone or from `lenny-ops` process state. The `links` are unaffected by a `lenny-ops` Postgres outage: `links.myRecentAudit` targets the gateway-resident audit query API (Section 25.9), so following it succeeds whenever the gateway and its Postgres are up regardless of whether `lenny-ops`'s Postgres is reachable. The canonical `degradation` envelope (Section 25.2) is populated accordingly.
 
 If the MCP Management Server is unreachable, `/v1/admin/me/authorized-tools` returns `503 AUTHORIZED_TOOLS_UNAVAILABLE` with a suggestion to use the OpenAPI spec at `/v1/openapi.json` plus the caller's `authorization` block to derive the tool surface locally.
 
@@ -1735,7 +1735,7 @@ Read-only. Mutations still go to the owning subsystem (`POST /v1/admin/platform/
         "proceed":  "POST /v1/admin/platform/upgrade/proceed",
         "pause":    "POST /v1/admin/platform/upgrade/pause",
         "rollback": "POST /v1/admin/platform/upgrade/rollback",
-        "audit":    "GET /v1/admin/audit-events?operationId=upgrade-550e8400-e29b-41d4-a716-446655440000"
+        "audit":    "GET https://lenny-gateway:8443/v1/admin/audit-events?operationId=upgrade-550e8400-e29b-41d4-a716-446655440000"
       },
       "cancellable": true,
       "metadata": { "targetVersion": "1.6.0", "previousVersion": "1.5.0" }
@@ -4498,13 +4498,12 @@ Each tool is defined with a JSON Schema `inputSchema`. Example for `lenny_pool_s
 
 ### OpenAPI Schema Discovery
 
-The canonical API contract is exposed as an OpenAPI 3.1 document served by `lenny-ops`:
+The canonical API contract is exposed as an OpenAPI 3.1 document served by the gateway:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/openapi.json` | Full OpenAPI 3.1 document (JSON) for the entire operability surface — both gateway admin-API endpoints that `lenny-ops` proxies/aggregates and `lenny-ops`'s own endpoints. |
+| `GET` | `/v1/openapi.json` | Full OpenAPI 3.1 document (JSON) for the entire operability surface — both the gateway admin-API endpoints and `lenny-ops`'s own endpoints. |
 | `GET` | `/v1/openapi.yaml` | Same content, YAML. |
-| `GET` | `/v1/openapi/{endpoint-id}` | Schema fragment for a single endpoint (useful for tool generation). |
 
 The OpenAPI document is generated at build time from the same Go type definitions used by the server, ensuring it can't drift from the implementation. The MCP tool schemas referenced below are derived from this OpenAPI document — a single build-time `openapi-to-mcp` step produces the tool inventory from the OpenAPI.
 
@@ -4849,8 +4848,8 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 
 | Commands | Target | How `lenny-ctl` knows |
 |---|---|---|
-| `health`, `recommendations` | Gateway admin API | Direct to gateway URL (`--server` flag) |
-| `events`, `diagnose`, `runbooks`, `upgrade`, `audit`, `drift`, `backup`, `locks`, `escalations`, `logs`, `mcp-management` | `lenny-ops` | `--ops-server` flag, or auto-discovered via `GET /v1/admin/platform/version` (gateway response includes `opsServiceURL`) |
+| `health`, `recommendations`, `audit` | Gateway admin API | Direct to gateway URL (`--server` flag). The `audit` family targets the gateway-resident audit query API (Section 25.9). |
+| `events`, `diagnose`, `runbooks`, `upgrade`, `drift`, `backup`, `locks`, `escalations`, `logs`, `mcp-management` | `lenny-ops` | `--ops-server` flag, or auto-discovered via `GET /v1/admin/platform/version` (gateway response includes `opsServiceURL`) |
 
 ### Runbook Commands
 
@@ -4978,13 +4977,13 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 
 | Failure | Impact |
 |---|---|
-| **Gateway crash-loop** | `lenny-ops` stays up. Watchdog calls diagnostics, fetches runbooks, queries audit trail. Remediation steps that call the gateway admin API will fail — the agent sees this and escalates or waits for gateway recovery. Gateway appears as unreachable in connectivity check. Event stream loses the gateway buffer fallback — if Redis is also down, events are unavailable. |
+| **Gateway crash-loop** | `lenny-ops` stays up. Watchdog calls diagnostics and fetches runbooks. Remediation steps that call the gateway admin API will fail, as will audit queries (the audit query API is gateway-resident, Section 25.9) — the agent sees this and escalates or waits for gateway recovery. Gateway appears as unreachable in connectivity check. Event stream loses the gateway buffer fallback — if Redis is also down, events are unavailable. |
 | **Gateway overloaded** | `lenny-ops` has an independent resource budget. Zero contention with client traffic. Health and recommendations on the gateway remain lightweight (in-process reads). |
-| **Postgres down** | Audit queries, backup management, and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). |
+| **Postgres down** | Backup management and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). |
 | **Redis down** | Event stream falls back to gateway in-memory event buffer — degraded but functional. Webhook delivery continues from buffer with cached subscriptions. Remediation locks fall back to in-memory (if Postgres also down). Health endpoint still works (in-process circuit breaker cache fallback). |
-| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: audit queries, backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). |
+| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). |
 | **`lenny-ops` degraded** | Self-monitoring detects internal degradation (Postgres pool, Redis lag, memory pressure) and emits `ops_health_status_changed` to the event stream (Redis or gateway buffer). Watchdog receives this event and can poll `GET /v1/admin/ops/health` for details. |
-| **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, audit, drift, backup, and upgrade APIs are unavailable. Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
+| **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, drift, backup, and upgrade APIs are unavailable. The audit query API stays available because it is gateway-resident (Section 25.9). Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
 | **`lenny-ops` + gateway both down** | Total platform outage. Watchdog detects both unreachable. |
 | **Prometheus transiently down** | Gateway health and recommendations endpoints still work per-replica (in-process metrics). `lenny-ops` aggregation falls back to per-replica fan-out via headless Service: health uses worst-of merge, recommendations use highest-confidence merge. Pool diagnostics fall back to scraping individual replicas' `/metrics` — point-in-time values only. See Section 25.13 for fallback behavior of bundled vs. operator-customized alerting rules. |
 | **Prometheus permanently absent** | Acceptable at Tier 1; **strongly discouraged at Tier 2/3** (preflight emits a WARN). Beyond the transient-down behavior above, the long-term degradations described in Section 25.4, Prometheus Requirement, apply: capacity recommendations return `confidence: 0.0` after every restart; alert rules with `for: "15m"` clauses misfire because no historical data exists; humans receive no Alertmanager pages because bundled rules are never loaded; agents cannot investigate sessions/pools from past time windows. |
