@@ -10,17 +10,28 @@ import (
 	"testing"
 )
 
+// TestCmdImageRequiresSubcommand pins the F-CTL-6 disambiguation: a missing
+// subcommand is a usage error (6 MISSING_REQUIRED_FLAG, §24.18), not
+// 2 INVALID_IMAGE_REFERENCE. The §24.19.1 exit-code table binds 2 to an
+// invalid OCI reference alone, so a scripted caller keying on 2 must not see
+// it for a missing subcommand.
+//
+// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
 func TestCmdImageRequiresSubcommand(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := cmdImage(nil, &out, &errb); code != 2 {
-		t.Errorf("no subcommand: exit = %d, want 2", code)
+	if code := cmdImage(nil, &out, &errb); code != exitMissingRequiredArg {
+		t.Errorf("no subcommand: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
 	}
 }
 
+// TestCmdImageRejectsUnknownSubcommand pins the F-CTL-6 disambiguation for an
+// unknown subcommand: a usage error (6), not 2 INVALID_IMAGE_REFERENCE.
+//
+// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
 func TestCmdImageRejectsUnknownSubcommand(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := cmdImage([]string{"frobnicate"}, &out, &errb); code != 2 {
-		t.Errorf("unknown subcommand: exit = %d, want 2", code)
+	if code := cmdImage([]string{"frobnicate"}, &out, &errb); code != exitMissingRequiredArg {
+		t.Errorf("unknown subcommand: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
 	}
 }
 
@@ -75,17 +86,34 @@ func TestCmdImageImportParsesFlags(t *testing.T) {
 	}
 }
 
+// TestCmdImageImportRequiresReference pins the F-CTL-6 disambiguation: a
+// missing <reference> argument is a usage error (6 MISSING_REQUIRED_FLAG),
+// distinct from 2 INVALID_IMAGE_REFERENCE (a reference that is present but
+// unparseable). Before the fix both returned 2, so a caller could not tell
+// "no reference given" from "reference invalid".
+//
+// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
 func TestCmdImageImportRequiresReference(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := cmdImageImport(nil, &out, &errb); code != 2 {
-		t.Errorf("missing reference: exit = %d, want 2", code)
+	if code := cmdImageImport(nil, &out, &errb); code != exitMissingRequiredArg {
+		t.Errorf("missing reference: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
 	}
 }
 
+// TestCmdImageImportRejectsInvalidReference asserts an actually-invalid OCI
+// reference still returns 2 INVALID_IMAGE_REFERENCE, the code the §24.19.1
+// table reserves for exactly this condition — and, paired with
+// TestCmdImageImportRequiresReference, that 2 and the missing-argument code 6
+// are now distinct (F-CTL-6).
+//
+// spec: §24.19.1 (INVALID_IMAGE_REFERENCE = 2).
 func TestCmdImageImportRejectsInvalidReference(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := cmdImageImport([]string{"not a ref"}, &out, &errb); code != exitInvalidImageRef {
 		t.Errorf("invalid reference: exit = %d, want %d", code, exitInvalidImageRef)
+	}
+	if exitInvalidImageRef == exitMissingRequiredArg {
+		t.Fatal("INVALID_IMAGE_REFERENCE and MISSING_REQUIRED_FLAG must be distinct codes (F-CTL-6)")
 	}
 }
 
@@ -93,6 +121,18 @@ func TestCmdImageRmRejectsInvalidReference(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := cmdImageRm([]string{"bad ref"}, &out, &errb); code != exitInvalidImageRef {
 		t.Errorf("invalid reference: exit = %d, want %d", code, exitInvalidImageRef)
+	}
+}
+
+// TestCmdImageRmRequiresReference pins the F-CTL-6 disambiguation for rm: a
+// missing <reference> argument returns 6 (usage), not 2
+// (INVALID_IMAGE_REFERENCE).
+//
+// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
+func TestCmdImageRmRequiresReference(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := cmdImageRm(nil, &out, &errb); code != exitMissingRequiredArg {
+		t.Errorf("missing reference: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
 	}
 }
 

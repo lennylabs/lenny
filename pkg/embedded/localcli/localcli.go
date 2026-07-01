@@ -26,16 +26,28 @@ import (
 // §24.19.1 and §24.9 tables make these values normative so scripted
 // callers can distinguish failure modes by exit code.
 const (
-	// exitInvalidImageRef is §24.19.1 line 282 INVALID_IMAGE_REFERENCE.
+	// exitInvalidImageRef is §24.19.1 INVALID_IMAGE_REFERENCE. The
+	// §24.19.1 exit-code table binds 2 to this condition alone: a
+	// <reference> argument that does not parse as a valid OCI reference.
+	// A missing subcommand, an unknown subcommand, or a missing required
+	// argument is a distinct usage error and must not reuse this code
+	// (F-CTL-6), so those return exitMissingRequiredArg instead.
 	exitInvalidImageRef = 2
-	// exitEmbeddedModeRequired is the §24.9 line 120 / §24.19.1 line 282
-	// EMBEDDED_MODE_REQUIRED code: a local command that requires a
-	// running Embedded Mode stack was invoked without one.
+	// exitEmbeddedModeRequired is the §24.9 / §24.19.1 EMBEDDED_MODE_REQUIRED
+	// code: a local command that requires a running Embedded Mode stack was
+	// invoked without one.
 	exitEmbeddedModeRequired = 3
-	// exitK3sUnavailable is §24.19.1 line 282 K3S_UNAVAILABLE. The image
-	// bridge that returns this code now lives in pkg/embedded/stack; this
-	// alias keeps a single normative value the CLI dispatch compares against.
+	// exitK3sUnavailable is §24.19.1 K3S_UNAVAILABLE. The image bridge that
+	// returns this code now lives in pkg/embedded/stack; this alias keeps a
+	// single normative value the CLI dispatch compares against.
 	exitK3sUnavailable = stack.ExitK3sUnavailable
+	// exitMissingRequiredArg is the §24.18 MISSING_REQUIRED_FLAG code (6):
+	// a required subcommand or positional argument was omitted. The §24.19.1
+	// image commands share the §24.18 usage-error semantics rather than
+	// overloading 2 INVALID_IMAGE_REFERENCE for a missing argument, so a
+	// scripted caller keying on 2 sees an invalid OCI reference and only that
+	// (F-CTL-6). spec: §24.18 (MISSING_REQUIRED_FLAG = 6), §24.19.1.
+	exitMissingRequiredArg = 6
 )
 
 // Local reports whether name is one of the §24.19 / §24.9 Embedded Mode

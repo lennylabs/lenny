@@ -354,8 +354,8 @@ Gateway commands:
   admin sessions get <id>               Investigate a session's state, metadata, and assigned pod (§24.11)
   admin sessions force-terminate <id> [--reason <text>]
                                         Force a stuck session to failed and release its pod (§24.11)
-  admin users rotate-token --user <name> [--namespace <ns>]
-                                        Rotate the admin token (RFC 8693 token-exchange) and patch the lenny-admin-token Secret (§24.9)
+  admin users rotate-token --user <name>
+                                        Rotate the bootstrap admin token: the gateway mints in process, patches the lenny-admin-token Secret server-side, and revokes the prior token (§24.9)
   admin quota reconcile (--all-tenants | --tenant <id>)
                                         Re-aggregate quota counters from Postgres into Redis after a Redis recovery (§24.6)
   admin circuit-breakers list           List circuit breakers

@@ -13,10 +13,11 @@ type Registry struct {
 }
 
 // NewRegistry returns the §25.12 v1 management-tool registry: the
-// operability tool inventory built by buildToolset.
+// operability tool inventory the build-time openapi-to-mcp generator derives
+// from the served OpenAPI document (generatedToolset, generated_tools.go).
 func NewRegistry() *Registry {
 	reg := &Registry{byName: make(map[string]Tool)}
-	for _, t := range buildToolset() {
+	for _, t := range generatedToolset() {
 		reg.byName[t.Name] = t
 		reg.order = append(reg.order, t.Name)
 	}

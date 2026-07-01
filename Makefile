@@ -78,6 +78,8 @@ generate: ## Regenerate DeepCopy + CRD manifests + bundled alerting rules + embe
 	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1alpha1/... output:crd:dir=charts/lenny/crds
 	@echo "  gen-alerting-rules → charts/lenny/files/alerting-rules.yaml"
 	@go run ./cmd/gen-alerting-rules
+	@echo "  openapi-to-mcp → pkg/ops/mcp/generated_tools.go"
+	@go run ./cmd/openapi-to-mcp
 	@echo "  helm template --no-hooks → $(EMBEDDED_MANIFESTS)"
 	@mkdir -p $(dir $(EMBEDDED_MANIFESTS))
 	@{ printf '%s\n' "$$EMBEDDED_MANIFEST_HEADER"; \
