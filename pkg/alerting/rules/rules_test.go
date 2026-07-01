@@ -246,7 +246,7 @@ var spec165CriticalAlerts = []string{
 // first-column alert name. The table mixes a few Critical-severity
 // rows in among the warnings (AuditRedactionReceiptMissing,
 // LLMUpstreamEgressAnomaly, TokenStoreUnavailable, BackupReconcileBlocked,
-// MinIOArtifactReplicationLagCritical, LenniOpsLockSplitBrainDetected);
+// MinIOArtifactReplicationLagCritical, OpsLockSplitBrainDetected);
 // the catalog files those under criticalAlerts() but the name still
 // belongs to the §16.5 surface this test enumerates.
 var spec165WarningAlerts = []string{
@@ -287,7 +287,7 @@ var spec165WarningAlerts = []string{
 	"PlatformUpgradeStuck", "PlatformVersionDrift", "BackupOverdue", "BackupFailed",
 	"BackupStorageHigh", "BackupReconcileBlocked", "MinIOArtifactReplicationLagHigh",
 	"MinIOArtifactReplicationLagCritical", "MinIOArtifactReplicationFailed", "CircuitBreakerOpen",
-	"LenniOpsSelfHealthDegraded", "LenniOpsLockSplitBrainDetected", "OperationStalled",
+	"OpsSelfHealthDegraded", "OpsLockSplitBrainDetected", "OperationStalled",
 	"OpsClockSkewExceeded",
 }
 

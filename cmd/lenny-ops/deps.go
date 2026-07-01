@@ -941,7 +941,7 @@ func sampleRestoreTestMetrics(ctx context.Context, store restoretest.Store) erro
 // opsSelfHealthStatus is the §16.8 / §25.4 line 2507
 // lenny_ops_self_health_status{check} gauge: each self-health check's
 // status encoded as 0=healthy, 1=degraded, 2=unhealthy. The
-// LenniOpsSelfHealthDegraded alert (§16.5) reads it. Registered on the
+// OpsSelfHealthDegraded alert (§16.5) reads it. Registered on the
 // default registry the §16.9 /metrics exposition serves.
 var opsSelfHealthStatus = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{

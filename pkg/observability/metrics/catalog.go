@@ -405,7 +405,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_dev_flag_compliance_enabled", TypeGauge, "1 when the compliance dev override is enabled"},
 	{"lenny_dev_flag_drain_readiness_enabled", TypeGauge, "1 when the drain-readiness dev override is enabled"},
 	{"lenny_dev_flag_llm_proxy_enabled", TypeGauge, "1 when the LLM-proxy dev override is enabled"},
-	{"lenny_ops_self_health_status", TypeGauge, "lenny-ops self-health status (1 healthy), read by LenniOpsSelfHealthDegraded"},
+	{"lenny_ops_self_health_status", TypeGauge, "lenny-ops self-health status (1 healthy), read by OpsSelfHealthDegraded"},
 	{"lenny_audit_partition_drop_blocked", TypeGauge, "1 when an audit-partition drop is blocked by SIEM lag, read by AuditPartitionDropBlocked"},
 	{"lenny_pool_security_degraded", TypeGauge, "1 while a pool renders §4.7 nonce-only pods (degraded SO_PEERCRED adapter-agent boundary), read by PoolSecurityDegraded"},
 
@@ -447,7 +447,7 @@ var alertSupportCatalog = []MetricSpec{
 	// the §16.1 / §16.8 canonical enumeration.
 	{"lenny_audit_ocsf_retry_pending_rows", TypeGauge, "OCSF-translation rows pending retry, read by OCSFTranslationBacklog"},
 	{"lenny_pgaudit_sink_delivery_failed_total", TypeCounter, "pgaudit sink delivery failures, read by PgAuditSinkDeliveryFailed"},
-	{"lenny_ops_lock_split_brain_detected_total", TypeCounter, "lenny-ops remediation-lock split-brain detections, read by LenniOpsLockSplitBrainDetected"},
+	{"lenny_ops_lock_split_brain_detected_total", TypeCounter, "lenny-ops remediation-lock split-brain detections, read by OpsLockSplitBrainDetected"},
 	{"lenny_ops_clock_skew_seconds", TypeGauge, "Measured clock skew in seconds between dependency clocks (labeled by pair), read by OpsClockSkewExceeded"},
 	{"lenny_ops_operations_stalled", TypeGauge, "Count of in-flight operations whose progress exceeded their expected cadence (stalledForSeconds > 0), read by OperationStalled"},
 	{"lenny_backup_total", TypeCounter, "Backup Job outcomes by status, read by BackupFailed"},

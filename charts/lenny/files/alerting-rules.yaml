@@ -322,7 +322,7 @@ groups:
             description: ArtifactStore replication lag exceeds 4x the configured RPO. The replication is severely degraded and a full-site disaster at this point would lose a materially larger artifact window than the deployment contract allows.
             runbook_url: https://docs.lenny.dev/runbooks/minio-replication-lag
             summary: ArtifactStore replication lag exceeds 4x RPO
-        - alert: LenniOpsLockSplitBrainDetected
+        - alert: OpsLockSplitBrainDetected
           expr: lenny_ops_lock_split_brain_detected_total > 0
           labels:
             severity: critical
@@ -1284,7 +1284,7 @@ groups:
           annotations:
             description: Any operator-managed circuit breaker reports state open. Agent-oriented counterpart of CircuitBreakerActive with a lower firing threshold for AI triage.
             summary: An operator-managed circuit breaker is open
-        - alert: LenniOpsSelfHealthDegraded
+        - alert: OpsSelfHealthDegraded
           expr: lenny_ops_self_health_status != 1
           labels:
             severity: warning
