@@ -38,6 +38,12 @@
 #   policy           -> policy/policy (§4.8 engine stays embedded in the gateway).
 #   environmentstore -> environment/environmentstore (§10.6, gateway-internal).
 #   experiment*      -> experiment/* (§10.7, gateway-internal).
+#
+# §2 subsystem-seam decision encoded below: §4.1 assigns delegation to the MCP
+# Fabric subsystem, so the delegation-tree lifecycle packages (deadlock,
+# leasecontrol, orphancleanup, resultrollup, treearchive, treebudget,
+# treerecovery) nest under mcpfabric/delegationtree/ rather than a separate
+# top-level group, keeping the whole MCP Fabric subsystem one extractable subtree.
 github.com/lennylabs/lenny/pkg/gateway/adapter	github.com/lennylabs/lenny/pkg/gateway/runtime/adapter
 github.com/lennylabs/lenny/pkg/gateway/adapterclient	github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient
 github.com/lennylabs/lenny/pkg/gateway/adapterregistry	github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry
@@ -82,7 +88,7 @@ github.com/lennylabs/lenny/pkg/gateway/credrenewal	github.com/lennylabs/lenny/pk
 github.com/lennylabs/lenny/pkg/gateway/credrouter	github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter
 github.com/lennylabs/lenny/pkg/gateway/customrolestore	github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore
 github.com/lennylabs/lenny/pkg/gateway/deadletterredaction	github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction
-github.com/lennylabs/lenny/pkg/gateway/deadlock	github.com/lennylabs/lenny/pkg/gateway/delegationtree/deadlock
+github.com/lennylabs/lenny/pkg/gateway/deadlock	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock
 github.com/lennylabs/lenny/pkg/gateway/delegation	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation
 github.com/lennylabs/lenny/pkg/gateway/delegationbudget	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget
 github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore
@@ -122,7 +128,7 @@ github.com/lennylabs/lenny/pkg/gateway/interceptor	github.com/lennylabs/lenny/pk
 github.com/lennylabs/lenny/pkg/gateway/interceptorstore	github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore
 github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore	github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore
 github.com/lennylabs/lenny/pkg/gateway/jwtaudit	github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit
-github.com/lennylabs/lenny/pkg/gateway/leasecontrol	github.com/lennylabs/lenny/pkg/gateway/delegationtree/leasecontrol
+github.com/lennylabs/lenny/pkg/gateway/leasecontrol	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol
 github.com/lennylabs/lenny/pkg/gateway/leasestore	github.com/lennylabs/lenny/pkg/gateway/storage/leasestore
 github.com/lennylabs/lenny/pkg/gateway/legalholdreconciler	github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler
 github.com/lennylabs/lenny/pkg/gateway/llmproxy	github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy
@@ -134,7 +140,7 @@ github.com/lennylabs/lenny/pkg/gateway/memorystore	github.com/lennylabs/lenny/pk
 github.com/lennylabs/lenny/pkg/gateway/messagerouting	github.com/lennylabs/lenny/pkg/gateway/session/messagerouting
 github.com/lennylabs/lenny/pkg/gateway/ofrep	github.com/lennylabs/lenny/pkg/gateway/experiment/ofrep
 github.com/lennylabs/lenny/pkg/gateway/openapi	github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi
-github.com/lennylabs/lenny/pkg/gateway/orphancleanup	github.com/lennylabs/lenny/pkg/gateway/delegationtree/orphancleanup
+github.com/lennylabs/lenny/pkg/gateway/orphancleanup	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup
 github.com/lennylabs/lenny/pkg/gateway/orphansession	github.com/lennylabs/lenny/pkg/gateway/session/orphansession
 github.com/lennylabs/lenny/pkg/gateway/outputpartfidelity	github.com/lennylabs/lenny/pkg/gateway/externalapi/outputpartfidelity
 github.com/lennylabs/lenny/pkg/gateway/pagination	github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination
@@ -163,7 +169,7 @@ github.com/lennylabs/lenny/pkg/gateway/recommendations	github.com/lennylabs/lenn
 github.com/lennylabs/lenny/pkg/gateway/recycle	github.com/lennylabs/lenny/pkg/gateway/session/recycle
 github.com/lennylabs/lenny/pkg/gateway/rediskeys	github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys
 github.com/lennylabs/lenny/pkg/gateway/redistopology	github.com/lennylabs/lenny/pkg/gateway/storage/redistopology
-github.com/lennylabs/lenny/pkg/gateway/resultrollup	github.com/lennylabs/lenny/pkg/gateway/delegationtree/resultrollup
+github.com/lennylabs/lenny/pkg/gateway/resultrollup	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup
 github.com/lennylabs/lenny/pkg/gateway/retentiongc	github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc
 github.com/lennylabs/lenny/pkg/gateway/revocation	github.com/lennylabs/lenny/pkg/gateway/credentials/revocation
 github.com/lennylabs/lenny/pkg/gateway/routingcache	github.com/lennylabs/lenny/pkg/gateway/session/routingcache
@@ -199,9 +205,9 @@ github.com/lennylabs/lenny/pkg/gateway/tlsprobe	github.com/lennylabs/lenny/pkg/g
 github.com/lennylabs/lenny/pkg/gateway/toolapproval	github.com/lennylabs/lenny/pkg/gateway/session/toolapproval
 github.com/lennylabs/lenny/pkg/gateway/transcriptstore	github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore
 github.com/lennylabs/lenny/pkg/gateway/translator	github.com/lennylabs/lenny/pkg/gateway/environment/translator
-github.com/lennylabs/lenny/pkg/gateway/treearchive	github.com/lennylabs/lenny/pkg/gateway/delegationtree/treearchive
-github.com/lennylabs/lenny/pkg/gateway/treebudget	github.com/lennylabs/lenny/pkg/gateway/delegationtree/treebudget
-github.com/lennylabs/lenny/pkg/gateway/treerecovery	github.com/lennylabs/lenny/pkg/gateway/delegationtree/treerecovery
+github.com/lennylabs/lenny/pkg/gateway/treearchive	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive
+github.com/lennylabs/lenny/pkg/gateway/treebudget	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget
+github.com/lennylabs/lenny/pkg/gateway/treerecovery	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treerecovery
 github.com/lennylabs/lenny/pkg/gateway/usagestore	github.com/lennylabs/lenny/pkg/gateway/billing/usagestore
 github.com/lennylabs/lenny/pkg/gateway/usercreds	github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds
 github.com/lennylabs/lenny/pkg/gateway/userstore	github.com/lennylabs/lenny/pkg/gateway/environment/userstore

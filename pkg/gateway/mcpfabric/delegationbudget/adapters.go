@@ -7,7 +7,7 @@ import (
 	"errors"
 
 	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 

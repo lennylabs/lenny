@@ -54,6 +54,22 @@ orchestration packages group here rather than in a separate top-level group.
 `delegation`, `delegationbudget`, `delegationpolicystore`, `elicitationfloor`,
 `mcp`, `mcpruntimes`, `mcpschemagen`, `mcptools`, `playground`.
 
+The delegation-tree lifecycle packages nest one level deeper under
+`mcpfabric/delegationtree/`, because §4.1 assigns the deep-delegation-tree
+concern (its extraction trigger is `lenny_mcp_fabric_active_delegations`) to the
+MCP Fabric subsystem. Keeping them inside the `mcpfabric/` subtree keeps the
+whole subsystem one extractable subtree rather than splitting it across two
+top-level groups.
+
+`delegationtree/deadlock`, `delegationtree/leasecontrol`,
+`delegationtree/orphancleanup`, `delegationtree/resultrollup`,
+`delegationtree/treearchive`, `delegationtree/treebudget`,
+`delegationtree/treerecovery`.
+
+The §8 delegation-tree lifecycle concerns these packages implement: the §8.8
+result rollup and per-session usage accumulation, §8.10 orphan cleanup, tree
+archive and recovery, tree budget, and the §8.6 lease control.
+
 ### `llmproxy/` — §4.1 LLM Proxy subsystem
 
 The credential-injecting reverse proxy for LLM provider traffic (§4.1, §4.9),
@@ -121,15 +137,6 @@ Pod claim and session placement, termination, the PreStop path, and the
 drain-readiness endpoint.
 
 `drainreadiness`, `podclaim`, `podsession`, `podterminate`, `prestop`.
-
-### `delegationtree/` — §8 delegation tree lifecycle
-
-The §8.8 result rollup and per-session usage accumulation, §8.10 orphan cleanup,
-tree archive and recovery, tree budget, and the §8.6 lease control. These are the
-delegation-tree lifecycle concerns the MCP Fabric subsystem orchestrates.
-
-`deadlock`, `leasecontrol`, `orphancleanup`, `resultrollup`, `treearchive`,
-`treebudget`, `treerecovery`.
 
 ### `checkpoint/` — §4.4 Event / Checkpoint Store
 
