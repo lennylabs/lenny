@@ -3917,7 +3917,7 @@ type BackupService interface {
 type Backup struct {
     ID            string          `json:"id"`
     Type          string          `json:"type"`            // "full", "postgres", "config"
-    Status        string          `json:"status"`          // "running", "completed", "failed", "verifying", "verified"
+    Status        string          `json:"status"`          // "pending", "running", "completed", "failed", "verifying", "verified", "verification_failed", "expired"
     StartedAt     time.Time       `json:"startedAt"`
     CompletedAt   *time.Time      `json:"completedAt,omitempty"`
     SizeBytes     int64           `json:"sizeBytes,omitempty"`
@@ -4117,7 +4117,7 @@ The retention enforcement Job runs after each successful backup AND on a daily c
 
 ### Backup Verification
 
-`POST /v1/admin/backups/{id}/verify` creates a K8s Job that:
+`POST /v1/admin/backups/{id}/verify` sets the `ops_backups` row to `status: "verifying"` and creates a K8s Job that:
 1. Downloads the backup archive from MinIO.
 2. Validates the SHA-256 checksum.
 3. For Postgres backups: runs `pg_restore --list` to verify the dump is readable (no actual data restoration).
@@ -4251,7 +4251,7 @@ The verification recommendation is stronger at higher tiers because backups that
 CREATE TABLE ops_backups (
     id              TEXT PRIMARY KEY,
     type            TEXT NOT NULL,            -- 'full', 'postgres', 'config'
-    status          TEXT NOT NULL,            -- 'running', 'completed', 'failed', 'verified', 'verification_failed'
+    status          TEXT NOT NULL,            -- 'pending', 'running', 'completed', 'failed', 'verifying', 'verified', 'verification_failed', 'expired'
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     size_bytes      BIGINT,
