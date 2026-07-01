@@ -1433,6 +1433,11 @@ type doctorDeps struct {
 	// and prometheusRuleMissing fixes compare against and re-apply. A nil
 	// source leaves both findings undetected (reported not_detected).
 	Helm doctor.HelmRenderSource
+	// PoolDiagnosis is the §25.6.1 pool-diagnosis service the
+	// warmPoolStuckReplenish detection reads its DEMAND_EXCEEDS_SUPPLY
+	// bottleneck classification and pod-state breakdown from. A nil source
+	// leaves that finding undetected (reported not_detected).
+	PoolDiagnosis poolDiagnosisSource
 	// AllowedFixes is admin.doctor.allowedFixes; empty means the full set.
 	AllowedFixes []string
 	// FixTimeout is admin.doctor.fixTimeoutSeconds; zero applies the 120s
@@ -1458,6 +1463,7 @@ func buildDoctorService(deps doctorDeps) doctor.Service {
 		dyn:       deps.Dynamic,
 		releaseNS: deps.ReleaseNS,
 		helm:      deps.Helm,
+		poolDx:    deps.PoolDiagnosis,
 	}
 	o := doctor.New(rem, doctor.Config{
 		AllowedFixes:    deps.AllowedFixes,
