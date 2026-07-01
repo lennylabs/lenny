@@ -45,6 +45,15 @@ type Metrics interface {
 	// (token_store_unavailable, server_error, kms_signing_unavailable,
 	// token_validation_unavailable). spec: §13.3 line 591 / §16.1.
 	Inc5xx(errorType string)
+
+	// ObserveRevocationPropagation observes one revoked-token propagation
+	// latency into the §16.1 lenny_token_revocation_propagation_seconds
+	// histogram, keyed by the §16.7 propagation_mode outcome
+	// (`eventbus` when the EventBus publish succeeded, `postgres_only`
+	// when it fell back to the authoritative Postgres check). The §16.5
+	// TokenRevocationPropagationLag alert reads the `eventbus` bucket.
+	// spec: §16.5, §16.7.
+	ObserveRevocationPropagation(outcome string, d time.Duration)
 }
 
 // NoMetrics is a no-op Metrics. It is the default when Options.Metrics
@@ -65,6 +74,9 @@ func (NoMetrics) IncRateLimitedSampled(string) {}
 
 // Inc5xx implements Metrics.
 func (NoMetrics) Inc5xx(string) {}
+
+// ObserveRevocationPropagation implements Metrics.
+func (NoMetrics) ObserveRevocationPropagation(string, time.Duration) {}
 
 // Ensure NoMetrics satisfies Metrics at compile time.
 var _ Metrics = NoMetrics{}

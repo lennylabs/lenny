@@ -26,14 +26,15 @@ import (
 // Emitter holds the registered §16.1 Token Service metric vectors and
 // implements tokenservice.Metrics.
 type Emitter struct {
-	reg                *prometheus.Registry
-	requestDuration    *prometheus.HistogramVec
-	errors             *prometheus.CounterVec
-	secretReloads      *prometheus.CounterVec
-	rateLimited        *prometheus.CounterVec
-	rateLimitedSampled *prometheus.CounterVec
-	fivexx             *prometheus.CounterVec
-	timeDrift          prometheus.Gauge
+	reg                   *prometheus.Registry
+	requestDuration       *prometheus.HistogramVec
+	errors                *prometheus.CounterVec
+	secretReloads         *prometheus.CounterVec
+	rateLimited           *prometheus.CounterVec
+	rateLimitedSampled    *prometheus.CounterVec
+	fivexx                *prometheus.CounterVec
+	timeDrift             prometheus.Gauge
+	revocationPropagation *prometheus.HistogramVec
 }
 
 // New constructs and registers the Token Service metric set against a
@@ -100,17 +101,33 @@ func New() (*Emitter, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §16.5 — token-revocation propagation latency by outcome.
+	// The §16.5 TokenRevocationPropagationLag alert keys on the
+	// `outcome="eventbus"` bucket of
+	// lenny_token_revocation_propagation_seconds; the histogram must
+	// therefore exist and observe the propagation latency keyed by the
+	// §16.7 propagation_mode (`eventbus` | `postgres_only`) so the alert
+	// is fireable. SEC-TS-1.
+	revocationPropagation, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_token_revocation_propagation_seconds",
+		Help:    "§16.1 token-revocation propagation latency by §16.7 propagation_mode outcome.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"outcome"})
+	if err != nil {
+		return nil, err
+	}
 
-	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled, fivexx, timeDriftGauge)
+	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled, fivexx, timeDriftGauge, revocationPropagation)
 	return &Emitter{
-		reg:                reg,
-		requestDuration:    requestDuration,
-		errors:             errs,
-		secretReloads:      secretReloads,
-		rateLimited:        rateLimited,
-		rateLimitedSampled: rateLimitedSampled,
-		fivexx:             fivexx,
-		timeDrift:          timeDriftGauge.WithLabelValues(),
+		reg:                   reg,
+		requestDuration:       requestDuration,
+		errors:                errs,
+		secretReloads:         secretReloads,
+		rateLimited:           rateLimited,
+		rateLimitedSampled:    rateLimitedSampled,
+		fivexx:                fivexx,
+		timeDrift:             timeDriftGauge.WithLabelValues(),
+		revocationPropagation: revocationPropagation,
 	}, nil
 }
 
@@ -137,6 +154,14 @@ func (e *Emitter) IncRateLimitedSampled(limitTier string) {
 // Inc5xx implements tokenservice.Metrics.
 func (e *Emitter) Inc5xx(errorType string) {
 	e.fivexx.WithLabelValues(errorType).Inc()
+}
+
+// ObserveRevocationPropagation implements tokenservice.Metrics. The
+// outcome label is the §16.7 propagation_mode (`eventbus` |
+// `postgres_only`); the §16.5 TokenRevocationPropagationLag alert reads
+// the `eventbus` bucket. SEC-TS-1.
+func (e *Emitter) ObserveRevocationPropagation(outcome string, d time.Duration) {
+	e.revocationPropagation.WithLabelValues(outcome).Observe(d.Seconds())
 }
 
 // IncSecretReload records one signing-secret reload outcome. The
