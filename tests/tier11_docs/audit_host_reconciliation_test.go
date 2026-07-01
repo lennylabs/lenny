@@ -255,6 +255,61 @@ func TestLennyCtlAuditExceptionAnchorResolves(t *testing.T) {
 	}
 }
 
+// spec: 25.9 (gateway-resident audit), 25.12 (MCP management catalog),
+// 15.1 (audit-events host). F-COV-2, proposal C2.
+//
+// The `/mcp/management` catalog table has no host column and lists every
+// gateway-resident admin tool the same way it lists the `lenny_audit_query`
+// tool (compare `lenny_tenant_list` -> GET /v1/admin/tenants and
+// `lenny_pool_list` -> GET /v1/admin/pools, both gateway-resident routes),
+// so removing or singling out the audit row would break parity with the
+// other gateway-resident tool rows. C2 named this row (`:189`) as an
+// F-COV-2 reconciliation site: rather than edit the row, the catalog intro
+// must state that a tool's REST backend resolves to its mapped path
+// (gateway or lenny-ops) rather than always residing on `lenny-ops`, so the
+// `lenny_audit_query` row is not read as a lenny-ops-served-surface claim.
+// This asserts (a) the `lenny_audit_query` row still maps to the
+// gateway-resident /v1/admin/audit-events route (parity preserved) and
+// (b) the catalog intro carries the plane-resolution note that reconciles
+// the row. Fails against the pre-fix page, whose catalog intro had no such
+// note, leaving the row read as a lenny-ops host claim.
+func TestAgentOperabilityMCPCatalogAuditRowResolvesToGateway(t *testing.T) {
+	root := repoRoot(t)
+	body := readDoc(t, agentOperabilityPath(root))
+	sec := section(body, "MCP management catalog")
+	if sec == "" {
+		t.Fatal("agent-operability.md: could not find the MCP management catalog section")
+	}
+	// (a) The audit tool row is preserved and still maps to the
+	// gateway-resident audit route, in parity with the other tool rows.
+	if !strings.Contains(sec, "`lenny_audit_query`") ||
+		!strings.Contains(sec, "GET /v1/admin/audit-events") {
+		t.Errorf("agent-operability.md: the MCP catalog no longer carries the " +
+			"`lenny_audit_query` -> GET /v1/admin/audit-events row; the row must be kept " +
+			"in parity with the other gateway-resident tool rows (F-COV-2 C2)")
+	}
+	// (b) The catalog intro must reconcile the row by stating that a tool's
+	// backend resolves to its mapped plane rather than always to lenny-ops,
+	// and must name the audit tool's gateway backend explicitly. Assert on
+	// the prose above the first tool table so the framing note, not a table
+	// cell, carries the reconciliation.
+	intro := sec
+	if tbl := strings.Index(sec, "### Observation tools"); tbl >= 0 {
+		intro = sec[:tbl]
+	}
+	low := strings.ToLower(intro)
+	if !strings.Contains(low, "gateway-resident") {
+		t.Errorf("agent-operability.md: the MCP catalog intro does not note that the " +
+			"catalog includes gateway-resident tools, so the `lenny_audit_query` row " +
+			"is still read as a lenny-ops host claim (F-COV-2 C2)")
+	}
+	if !strings.Contains(intro, "`lenny_audit_query`") || !strings.Contains(low, "gateway") {
+		t.Errorf("agent-operability.md: the MCP catalog intro does not name " +
+			"`lenny_audit_query` as gateway-backed, so the named C2 edit site (:189) " +
+			"is not reconciled (F-COV-2 C2)")
+	}
+}
+
 // degradationRow returns the "Failure modes in brief" table row whose first
 // cell contains key, or "" if none matches.
 func degradationRow(body, key string) string {

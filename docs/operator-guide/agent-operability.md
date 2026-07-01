@@ -169,6 +169,8 @@ Lenny exposes its full admin and operability surface as an MCP tool server at `/
 
 Tool schemas are auto-generated at build time from the canonical OpenAPI document (served by the gateway at `/v1/openapi.yaml` and `/v1/openapi.json`), so the MCP inventory tracks the REST contract.
 
+The `/mcp/management` server runs on `lenny-ops`, but each tool's REST backend is the path in its **Maps to** column, and that path resolves to whichever plane hosts it rather than always to `lenny-ops`. The catalog includes gateway-resident admin tools alongside the `lenny-ops` operability tools. For example, `lenny_audit_query` maps to `GET /v1/admin/audit-events`, a gateway-resident route, so its backend is the gateway even though the tool is discovered and invoked through the `lenny-ops` MCP server.
+
 ### Observation tools (read-only)
 
 | Tool | Maps to | Purpose |
