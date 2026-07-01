@@ -197,6 +197,16 @@ func buildExporters(ctx context.Context, in depsInput) (
 		slog.WarnContext(ctx, "lenny-backup: config export disabled: build kubernetes client", "error", err)
 		return nil, crdExport, closeExport
 	}
+	// The config export reads runtimes and pools from the lenny.dev Runtime
+	// and SandboxWarmPool custom resources through the K8s API (§25.11 C4:
+	// the K8s API for the runtime and pool CRDs), using the lenny-backup-sa
+	// get/list-on-CRDs grant. A failed CRD-reader build disables the config
+	// export rather than silently omitting runtimes/pools.
+	crdReader, err := runner.NewCRDReader(restCfg)
+	if err != nil {
+		slog.WarnContext(ctx, "lenny-backup: config export disabled: build lenny.dev CRD reader", "error", err)
+		return nil, crdExport, closeExport
+	}
 	if in.configDSN == "" {
 		// Only a retention or verify run legitimately lacks a shard, and so
 		// a Postgres config source; those modes export no config. A full,
@@ -211,7 +221,7 @@ func buildExporters(ctx context.Context, in depsInput) (
 		slog.WarnContext(ctx, "lenny-backup: config export disabled: connect to the shard Postgres", "error", err)
 		return nil, crdExport, closeExport
 	}
-	configExport = runner.NewConfigExporter(cfgPool, coreCS, in.namespace)
+	configExport = runner.NewConfigExporter(cfgPool, crdReader, coreCS, in.namespace)
 	closeExport = cfgPool.Close
 	return configExport, crdExport, closeExport
 }
