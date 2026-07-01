@@ -87,27 +87,33 @@ func TestCRDExporterEmptyClusterYieldsEmptyArray(t *testing.T) {
 	}
 }
 
-// TestConfigExporterDumpsTenantsQuotasRuntimesAndBootstrap is the
+// TestConfigExporterDumpsRuntimesPoolsTenantsQuotasAndBootstrap is the
 // SEC-BACKUP-1 regression for the config export: the wired export collects
-// the tenants (with their quota columns), the runtime registry, and the
+// all four §25.11 step-2 categories — the runtime registry, the §5.2
+// warm-pool registry, the tenants (with their quota columns) — plus the
 // §17.6 bootstrap ConfigMap, rather than the pre-fix literal "{}". It
-// asserts the corrected outcome — a populated platform config — which
-// fails against the nil-ConfigExport code that returned "{}".
+// asserts the corrected outcome — a populated platform config with every
+// category — which fails against the nil-ConfigExport code that returned
+// "{}", and against the pools-omitting export the design review flagged.
 //
 // spec: §25.11 (Exports platform configuration (runtimes, pools, tenants,
 // quotas) as JSON, line 3988; the lenny-backup-sa get on ConfigMaps, line
 // 3982).
 //
-// diagnosis: the config/full backup archive's config component is empty or
-// literal "{}"; the SEC-BACKUP-1 config export is unwired or reads the
-// wrong tables.
-func TestConfigExporterDumpsTenantsQuotasRuntimesAndBootstrap(t *testing.T) {
+// diagnosis: the config/full backup archive's config component is empty,
+// literal "{}", or omits a category (a restore cannot re-seed the missing
+// runtimes/pools/tenants); the SEC-BACKUP-1 config export is unwired or
+// reads the wrong tables.
+func TestConfigExporterDumpsRuntimesPoolsTenantsQuotasAndBootstrap(t *testing.T) {
 	db := &fakeQuerier{
 		tenants: [][]any{
 			{"acme", "Acme Corp", "soc2", "us-east-1", "premium", int64(50), int64(1 << 30), int64(1_000_000), "monthly"},
 		},
 		runtimes: [][]any{
 			{"python-agent", "agent", "reg/python:1", "session", "sandboxed", "standard", "Python runtime"},
+		},
+		pools: [][]any{
+			{"default-gvisor", "python-agent", "sandboxed", "session", "standard", int64(5), int64(3600), false},
 		},
 	}
 	k8s := k8sfake.NewSimpleClientset(&corev1.ConfigMap{
@@ -135,6 +141,13 @@ func TestConfigExporterDumpsTenantsQuotasRuntimesAndBootstrap(t *testing.T) {
 		Runtimes []struct {
 			Name string `json:"name"`
 		} `json:"runtimes"`
+		Pools []struct {
+			Name                 string `json:"name"`
+			RuntimeRef           string `json:"runtimeRef"`
+			ExecutionMode        string `json:"executionMode"`
+			WarmCount            int64  `json:"warmCount"`
+			MaxSessionAgeSeconds int64  `json:"maxSessionAgeSeconds"`
+		} `json:"pools"`
 		BootstrapValues map[string]string `json:"bootstrapValues"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
@@ -152,8 +165,34 @@ func TestConfigExporterDumpsTenantsQuotasRuntimesAndBootstrap(t *testing.T) {
 	if len(cfg.Runtimes) != 1 || cfg.Runtimes[0].Name != "python-agent" {
 		t.Fatalf("runtimes = %+v, want one python-agent runtime", cfg.Runtimes)
 	}
+	// The §5.2 warm-pool registry is the fourth §25.11 category. Without it
+	// a restore cannot re-seed operator-configured warm-pool sizing.
+	if len(cfg.Pools) != 1 {
+		t.Fatalf("pools = %+v, want one default-gvisor pool", cfg.Pools)
+	}
+	p := cfg.Pools[0]
+	if p.Name != "default-gvisor" || p.RuntimeRef != "python-agent" ||
+		p.ExecutionMode != "session" || p.WarmCount != 5 || p.MaxSessionAgeSeconds != 3600 {
+		t.Errorf("pool config not exported faithfully: %+v", p)
+	}
 	if cfg.BootstrapValues["seed.yaml"] != "adminUser: alice@acme.com" {
 		t.Errorf("bootstrap values not exported: %+v", cfg.BootstrapValues)
+	}
+}
+
+// TestConfigExporterPoolQueryErrorSurfaces asserts the sandbox_warm_pools
+// read error is wrapped and returned (the tenants and runtime reads succeed
+// first) rather than silently producing a config export that omits pools.
+//
+// spec: §25.11 (Exports platform configuration (runtimes, pools, tenants,
+// quotas) as JSON, line 3988).
+func TestConfigExporterPoolQueryErrorSurfaces(t *testing.T) {
+	sentinel := errors.New("pool read failed")
+	db := &fakeQuerier{poolErr: sentinel}
+	k8s := k8sfake.NewSimpleClientset()
+	export := runner.NewConfigExporter(db, k8s, "lenny-system")
+	if _, err := export(context.Background()); !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want wrapped %v", err, sentinel)
 	}
 }
 
@@ -259,14 +298,17 @@ func names(crds []apiextensionsv1.CustomResourceDefinition) []string {
 	return out
 }
 
-// fakeQuerier is a runner.Querier that returns fixed tenant and runtime
-// rows keyed by the SELECT'd table. It routes on whether the SQL mentions
-// "tenants" or "runtime_definitions" so one fake serves both reads.
+// fakeQuerier is a runner.Querier that returns fixed tenant, runtime, and
+// pool rows keyed by the SELECT'd table. It routes on whether the SQL
+// mentions "runtime_definitions", "sandbox_warm_pools", or "tenants" so one
+// fake serves all three reads.
 type fakeQuerier struct {
 	tenants       [][]any
 	runtimes      [][]any
+	pools         [][]any
 	queryErr      error // fails every Query
 	runtimeErr    error // fails only the runtime_definitions Query
+	poolErr       error // fails only the sandbox_warm_pools Query
 	tenantScanErr bool  // returns a scan-error row for tenants
 }
 
@@ -279,6 +321,12 @@ func (q *fakeQuerier) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, 
 			return nil, q.runtimeErr
 		}
 		return &fakeRows{data: q.runtimes}, nil
+	}
+	if strings.Contains(sql, "sandbox_warm_pools") {
+		if q.poolErr != nil {
+			return nil, q.poolErr
+		}
+		return &fakeRows{data: q.pools}, nil
 	}
 	if q.tenantScanErr {
 		return &fakeRows{data: [][]any{{"bad"}}}, nil // column-count mismatch on Scan
@@ -312,6 +360,8 @@ func (r *fakeRows) Scan(dest ...any) error {
 			*d = row[i].(string)
 		case *int64:
 			*d = row[i].(int64)
+		case *bool:
+			*d = row[i].(bool)
 		default:
 			return errors.New("fakeRows: unsupported dest type")
 		}

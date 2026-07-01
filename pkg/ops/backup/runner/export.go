@@ -98,12 +98,16 @@ func (e *CRDExporter) Export(ctx context.Context) ([]byte, error) {
 }
 
 // platformConfig is the §25.11 step-2 platform-configuration snapshot: the
-// runtime registry and the per-tenant records (which carry the quota
-// columns) read from the shard Postgres, plus the §17.6 bootstrap seed
-// ConfigMap. A restore re-seeds the platform from this snapshot.
+// runtime registry, the §5.2 warm-pool registry, and the per-tenant records
+// (which carry the quota columns) read from the shard Postgres, plus the
+// §17.6 bootstrap seed ConfigMap. A restore re-seeds the platform from this
+// snapshot. The four platform-configuration categories §25.11 names —
+// runtimes, pools, tenants, and quotas — all travel here: runtimes in
+// Runtimes, pools in Pools, and tenants with their quota columns in Tenants.
 type platformConfig struct {
 	Tenants         []tenantConfig    `json:"tenants"`
 	Runtimes        []runtimeConfig   `json:"runtimes"`
+	Pools           []poolConfig      `json:"pools"`
 	BootstrapValues map[string]string `json:"bootstrapValues,omitempty"`
 }
 
@@ -134,11 +138,33 @@ type runtimeConfig struct {
 	Description      string `json:"description"`
 }
 
+// poolConfig is one sandbox_warm_pools row in the config export. Pools are
+// the §5.2 SandboxWarmPool registry: platform-global records keyed by name
+// (no tenant_id), stored in Postgres exactly like runtime_definitions
+// (§5.1), and one of the four platform-configuration categories §25.11
+// step-2 names (runtimes, pools, tenants, quotas). Exporting them lets a
+// restore re-seed the warm pools from the config archive rather than
+// leaving operator-configured pool sizes unrecoverable.
+type poolConfig struct {
+	Name                   string `json:"name"`
+	RuntimeRef             string `json:"runtimeRef"`
+	IsolationProfile       string `json:"isolationProfile"`
+	ExecutionMode          string `json:"executionMode"`
+	ResourceClass          string `json:"resourceClass"`
+	WarmCount              int64  `json:"warmCount"`
+	MaxSessionAgeSeconds   int64  `json:"maxSessionAgeSeconds"`
+	AllowStandardIsolation bool   `json:"allowStandardIsolation"`
+}
+
 // ConfigExporter implements the §25.11 step-2 platform-configuration
 // export. It reads only from sources the backup Job can reach: the shard
-// Postgres via the read-only lenny-backup role for tenants and quotas, and
-// the K8s API for the runtime/pool CRDs (through CRDExporter) and the
-// bootstrap ConfigMap. The Job has no egress to the gateway (its
+// Postgres via the read-only lenny-backup role for the runtime_definitions
+// registry (runtimes), the sandbox_warm_pools registry (pools, §5.2), and
+// the tenants table with its quota columns (tenants and quotas), plus the
+// K8s API for the §17.6 bootstrap ConfigMap. The runtime and pool registries
+// are platform-global Postgres tables, so they are read from Postgres here
+// rather than from the K8s API; CRDExporter serializes the CRD schema
+// objects, not these config rows. The Job has no egress to the gateway (its
 // NetworkPolicy permits egress to Postgres, MinIO, and the K8s API only,
 // §25.11 line 3984), so the gateway admin API is not a source.
 type ConfigExporter struct {
@@ -158,7 +184,9 @@ func NewConfigExporter(db Querier, cs kubernetes.Interface, namespace string) fu
 	return e.Export
 }
 
-// Export reads the platform configuration and returns it as JSON.
+// Export reads the platform configuration and returns it as JSON. It covers
+// all four §25.11 step-2 categories: runtimes (runtime_definitions), pools
+// (sandbox_warm_pools), tenants, and the quota columns on the tenants rows.
 //
 // spec: §25.11 (Exports platform configuration (runtimes, pools, tenants,
 // quotas) as JSON, line 3988; the lenny-backup-sa get on ConfigMaps in
@@ -173,11 +201,15 @@ func (e *ConfigExporter) Export(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	pools, err := e.exportPools(ctx)
+	if err != nil {
+		return nil, err
+	}
 	bootstrap, err := e.exportBootstrapValues(ctx)
 	if err != nil {
 		return nil, err
 	}
-	cfg := platformConfig{Tenants: tenants, Runtimes: runtimes, BootstrapValues: bootstrap}
+	cfg := platformConfig{Tenants: tenants, Runtimes: runtimes, Pools: pools, BootstrapValues: bootstrap}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal platform config: %w", err)
@@ -242,6 +274,41 @@ func (e *ConfigExporter) exportRuntimes(ctx context.Context) ([]runtimeConfig, e
 		return nil, fmt.Errorf("iterate runtime_definitions: %w", err)
 	}
 	return runtimes, nil
+}
+
+// exportPools reads the §5.2 sandbox_warm_pools registry ordered by name.
+// Pools are platform-global (no tenant_id, §5.1) and read through the same
+// read-only lenny-backup role as runtimes and tenants. Soft-deleted pools
+// (deleted_at set) are excluded so a restore re-seeds only live pools.
+//
+// spec: §25.11 (Exports platform configuration (runtimes, pools, tenants,
+// quotas) as JSON, line 3988).
+func (e *ConfigExporter) exportPools(ctx context.Context) ([]poolConfig, error) {
+	rows, err := e.DB.Query(ctx, `
+		SELECT name, runtime_ref, isolation_profile, execution_mode,
+		       resource_class, warm_count, max_session_age_seconds,
+		       allow_standard_isolation
+		  FROM sandbox_warm_pools
+		 WHERE deleted_at IS NULL
+		 ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("query sandbox_warm_pools: %w", err)
+	}
+	defer rows.Close()
+	var pools []poolConfig
+	for rows.Next() {
+		var p poolConfig
+		if err := rows.Scan(&p.Name, &p.RuntimeRef, &p.IsolationProfile,
+			&p.ExecutionMode, &p.ResourceClass, &p.WarmCount,
+			&p.MaxSessionAgeSeconds, &p.AllowStandardIsolation); err != nil {
+			return nil, fmt.Errorf("scan pool row: %w", err)
+		}
+		pools = append(pools, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sandbox_warm_pools: %w", err)
+	}
+	return pools, nil
 }
 
 // exportBootstrapValues reads the §17.6 lenny-bootstrap-values ConfigMap.
