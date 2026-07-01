@@ -10,28 +10,42 @@ import (
 	"testing"
 )
 
-// TestCmdImageRequiresSubcommand pins the F-CTL-6 disambiguation: a missing
-// subcommand is a usage error (6 MISSING_REQUIRED_FLAG, §24.18), not
-// 2 INVALID_IMAGE_REFERENCE. The §24.19.1 exit-code table binds 2 to an
-// invalid OCI reference alone, so a scripted caller keying on 2 must not see
-// it for a missing subcommand.
+// TestCmdImageRequiresSubcommand pins the F-CTL-6 disambiguation against the
+// §24.19.1 exit-code table: a missing subcommand is a usage error, distinct
+// from 2 INVALID_IMAGE_REFERENCE. The §24.19.1 table binds 2 to an invalid
+// OCI reference alone and defines only 0/2/3/4, so a usage error returns the
+// general-error code 1 (not the §24.18 code 6, which the §24.19.1 table does
+// not list) and a scripted caller keying on 2 never sees it for a missing
+// subcommand. This asserts the corrected code and would fail against the
+// pre-fix code that returned 2 (and against the interim code 6).
 //
-// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
+// spec: §24.19.1 (image-command exit codes; 2 is INVALID_IMAGE_REFERENCE
+// alone; table enumerates only 0, 2, 3, 4).
 func TestCmdImageRequiresSubcommand(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := cmdImage(nil, &out, &errb); code != exitMissingRequiredArg {
-		t.Errorf("no subcommand: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
+	code := cmdImage(nil, &out, &errb)
+	if code != exitImageUsageError {
+		t.Errorf("no subcommand: exit = %d, want %d (general usage error, §24.19.1)", code, exitImageUsageError)
+	}
+	if code == exitInvalidImageRef {
+		t.Error("a missing subcommand must not return 2 INVALID_IMAGE_REFERENCE (F-CTL-6)")
 	}
 }
 
 // TestCmdImageRejectsUnknownSubcommand pins the F-CTL-6 disambiguation for an
-// unknown subcommand: a usage error (6), not 2 INVALID_IMAGE_REFERENCE.
+// unknown subcommand: a usage error (general-error 1), distinct from
+// 2 INVALID_IMAGE_REFERENCE, against the §24.19.1 table.
 //
-// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
+// spec: §24.19.1 (image-command exit codes; 2 is INVALID_IMAGE_REFERENCE
+// alone).
 func TestCmdImageRejectsUnknownSubcommand(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := cmdImage([]string{"frobnicate"}, &out, &errb); code != exitMissingRequiredArg {
-		t.Errorf("unknown subcommand: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
+	code := cmdImage([]string{"frobnicate"}, &out, &errb)
+	if code != exitImageUsageError {
+		t.Errorf("unknown subcommand: exit = %d, want %d (general usage error, §24.19.1)", code, exitImageUsageError)
+	}
+	if code == exitInvalidImageRef {
+		t.Error("an unknown subcommand must not return 2 INVALID_IMAGE_REFERENCE (F-CTL-6)")
 	}
 }
 
@@ -87,24 +101,30 @@ func TestCmdImageImportParsesFlags(t *testing.T) {
 }
 
 // TestCmdImageImportRequiresReference pins the F-CTL-6 disambiguation: a
-// missing <reference> argument is a usage error (6 MISSING_REQUIRED_FLAG),
-// distinct from 2 INVALID_IMAGE_REFERENCE (a reference that is present but
+// missing <reference> argument is a usage error (general-error 1), distinct
+// from 2 INVALID_IMAGE_REFERENCE (a reference that is present but
 // unparseable). Before the fix both returned 2, so a caller could not tell
-// "no reference given" from "reference invalid".
+// "no reference given" from "reference invalid"; the returned code is one the
+// §24.19.1 table lists (it does not add an undocumented code).
 //
-// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
+// spec: §24.19.1 (image-command exit codes; 2 is INVALID_IMAGE_REFERENCE
+// alone).
 func TestCmdImageImportRequiresReference(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := cmdImageImport(nil, &out, &errb); code != exitMissingRequiredArg {
-		t.Errorf("missing reference: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
+	code := cmdImageImport(nil, &out, &errb)
+	if code != exitImageUsageError {
+		t.Errorf("missing reference: exit = %d, want %d (general usage error, §24.19.1)", code, exitImageUsageError)
+	}
+	if code == exitInvalidImageRef {
+		t.Error("a missing reference must not return 2 INVALID_IMAGE_REFERENCE (F-CTL-6)")
 	}
 }
 
 // TestCmdImageImportRejectsInvalidReference asserts an actually-invalid OCI
 // reference still returns 2 INVALID_IMAGE_REFERENCE, the code the §24.19.1
 // table reserves for exactly this condition — and, paired with
-// TestCmdImageImportRequiresReference, that 2 and the missing-argument code 6
-// are now distinct (F-CTL-6).
+// TestCmdImageImportRequiresReference, that 2 and the usage-error code are
+// distinct (F-CTL-6).
 //
 // spec: §24.19.1 (INVALID_IMAGE_REFERENCE = 2).
 func TestCmdImageImportRejectsInvalidReference(t *testing.T) {
@@ -112,8 +132,8 @@ func TestCmdImageImportRejectsInvalidReference(t *testing.T) {
 	if code := cmdImageImport([]string{"not a ref"}, &out, &errb); code != exitInvalidImageRef {
 		t.Errorf("invalid reference: exit = %d, want %d", code, exitInvalidImageRef)
 	}
-	if exitInvalidImageRef == exitMissingRequiredArg {
-		t.Fatal("INVALID_IMAGE_REFERENCE and MISSING_REQUIRED_FLAG must be distinct codes (F-CTL-6)")
+	if exitInvalidImageRef == exitImageUsageError {
+		t.Fatal("INVALID_IMAGE_REFERENCE and the image usage-error code must be distinct (F-CTL-6)")
 	}
 }
 
@@ -125,14 +145,19 @@ func TestCmdImageRmRejectsInvalidReference(t *testing.T) {
 }
 
 // TestCmdImageRmRequiresReference pins the F-CTL-6 disambiguation for rm: a
-// missing <reference> argument returns 6 (usage), not 2
-// (INVALID_IMAGE_REFERENCE).
+// missing <reference> argument returns the general usage-error code, not 2
+// INVALID_IMAGE_REFERENCE, against the §24.19.1 table.
 //
-// spec: §24.19.1 (exit-code table), §24.18 (MISSING_REQUIRED_FLAG = 6).
+// spec: §24.19.1 (image-command exit codes; 2 is INVALID_IMAGE_REFERENCE
+// alone).
 func TestCmdImageRmRequiresReference(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := cmdImageRm(nil, &out, &errb); code != exitMissingRequiredArg {
-		t.Errorf("missing reference: exit = %d, want %d (MISSING_REQUIRED_FLAG, not INVALID_IMAGE_REFERENCE)", code, exitMissingRequiredArg)
+	code := cmdImageRm(nil, &out, &errb)
+	if code != exitImageUsageError {
+		t.Errorf("missing reference: exit = %d, want %d (general usage error, §24.19.1)", code, exitImageUsageError)
+	}
+	if code == exitInvalidImageRef {
+		t.Error("a missing reference must not return 2 INVALID_IMAGE_REFERENCE (F-CTL-6)")
 	}
 }
 

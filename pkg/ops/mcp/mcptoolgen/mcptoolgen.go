@@ -7,29 +7,39 @@
 // "a single build-time `openapi-to-mcp` step produces the tool inventory
 // from the OpenAPI" and "every admin-API endpoint with documented RBAC
 // becomes an MCP tool automatically via the build-time OpenAPI → MCP
-// generation". This package is the transform behind the `openapi-to-mcp`
-// command: it reads `openapi.Document()`, emits one tool per documented
-// operability endpoint that carries a non-null `x-lenny-mcp-tool`, and
-// resolves each tool's wire fields (name, method, path, scope, required
-// role) from the document plus its input schema from the operation's path
-// parameters and request body (via the shared mcpschemagen machinery the
-// §15.2 gateway generator reuses).
+// generation". §25.12 further requires the inventory to cover the whole
+// admin surface: "Every admin-API endpoint with documented RBAC is exposed
+// as an MCP tool -- not only the operability endpoints." This package is the
+// transform behind the `openapi-to-mcp` command: it reads
+// `openapi.Document()`, emits one tool per documented endpoint that carries
+// a non-null `x-lenny-mcp-tool` (every admin-API and lenny-ops operability
+// route, not the operability subset alone), and resolves each tool's wire
+// fields (name, method, path, scope, required role) from the document plus
+// its input schema from the operation's path parameters and request body
+// (via the shared mcpschemagen machinery the §15.2 gateway generator
+// reuses).
 //
-// The tool-taxonomy classification (§25.12 `x-lenny-category`:
+// The §25.12 tool-taxonomy classification (`x-lenny-category`:
 // observation | coordination | mutation | destructive, and
 // `x-lenny-dry-run-support`: confirm-bool | none) is not carried on the
-// endpoint document — that document's `x-lenny-category` is the endpoint
-// domain (`operability`) rather than the tool taxonomy the MCP descriptor
-// reports. The classification lives in this generator as an explicit table
-// keyed by tool name, so a destructive tool is classified deterministically
-// rather than guessed from the HTTP method (a POST is coordination for a
-// lock but destructive for a restore). An operability tool the document
-// gains without a classification entry fails generation, so a new tool
-// cannot silently ship misclassified.
+// served endpoint document in a form the generator can read directly: that
+// document's `x-lenny-category` records the endpoint *domain*
+// (`operability`, `tenant-management`, `security`, …) rather than the tool
+// taxonomy the §25.12 MCP descriptor reports. The classification therefore
+// lives in this generator as an explicit table keyed by tool name, so a
+// destructive tool is classified deterministically rather than guessed from
+// the HTTP method (a POST is coordination for a lock but destructive for a
+// restore, and a DELETE is destructive for a tenant but coordination for a
+// lock release). The table is complete for the whole documented tool
+// inventory: a tool the document gains without a classification entry fails
+// generation (fail-closed), so a new admin-API tool cannot silently ship
+// misclassified or, worse, default into a non-destructive category the
+// capability filter would expose to a nonDestructive-scoped agent.
 //
-// spec: §25.12 (build-time openapi-to-mcp generation, tool taxonomy),
-// §15.1 (OpenAPI x-lenny-* extension contract), §18 (Phase 13
-// openapi-to-mcp generator over the complete document).
+// spec: §25.12 (build-time openapi-to-mcp generation over every admin-API
+// endpoint, tool taxonomy), §15.1 (OpenAPI x-lenny-* extension contract,
+// every admin-API endpoint MUST be an MCP tool on /mcp/management), §18
+// (Phase 13 openapi-to-mcp generator over the complete document).
 package mcptoolgen
 
 import (
@@ -40,11 +50,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpschemagen"
 )
-
-// operabilityCategory is the §15.1 endpoint-domain `x-lenny-category` the
-// §25.12 management server exposes as tools. It is the endpoint domain, not
-// the tool taxonomy; see the package comment.
-const operabilityCategory = "operability"
 
 // GeneratedTool is the wire-and-metadata descriptor the generator emits for
 // one §25.12 management tool. It mirrors the fields the mcp.Tool the runtime
@@ -83,19 +88,28 @@ const (
 	dryRunNone        = "none"
 )
 
-// classifications maps each operability tool name to its §25.12 tool
-// taxonomy. It is the explicit, reviewed classification the endpoint
-// document cannot carry (its `x-lenny-category` is the endpoint domain).
-// Generation fails when the document names an operability tool absent from
-// this table, so a newly documented tool must be classified before it ships.
+// classifications maps every documented tool name to its §25.12 tool
+// taxonomy. It is the explicit, reviewed classification the served endpoint
+// document cannot carry directly (its `x-lenny-category` is the endpoint
+// domain, not the taxonomy). The table covers the whole documented tool
+// inventory (§25.12 "Every admin-API endpoint with documented RBAC is
+// exposed as an MCP tool -- not only the operability endpoints"): every
+// gateway admin-API tool and every lenny-ops operability tool. Generation
+// fails when the document names a tool absent from this table, so a newly
+// documented tool must be classified before it ships, and a new destructive
+// tool cannot silently default into a non-destructive category the §25.12
+// nonDestructive capability filter would expose.
 //
-// Categories: observation (read-only), coordination (locks/escalations —
-// mutating but low-risk), mutation (state changes), destructive (backup,
-// restore, upgrade, config apply, quota/migration/preflight actions that
-// change platform state irreversibly or with wide blast radius).
-// Dry-run: confirm-bool for the §25.2 confirm-preview tools, none otherwise.
+// Categories: observation (read-only, every GET), coordination
+// (locks/escalations — mutating but low-risk), mutation (state changes),
+// destructive (backup, restore, upgrade, config/registry apply, deletes,
+// force-*, erase, credential/token/CA revocation, migration/partition and
+// pool-upgrade actions that change platform state irreversibly or with wide
+// blast radius). Dry-run: confirm-bool for the §25.2 confirm-preview tools,
+// none otherwise.
 //
-// spec: §25.12 (x-lenny-category tool taxonomy, x-lenny-dry-run-support).
+// spec: §25.12 (x-lenny-category tool taxonomy, x-lenny-dry-run-support,
+// every admin-API endpoint exposed as a tool), §15.1 (x-lenny-* contract).
 var classifications = map[string]classification{
 	// Identity + caller-self discovery (read-only).
 	"admin.me":                  {categoryObservation, dryRunNone},
@@ -198,30 +212,211 @@ var classifications = map[string]classification{
 	"admin.migration_down":                 {categoryDestructive, dryRunNone},
 	"admin.reconcile_quota":                {categoryMutation, dryRunNone},
 	"admin.run_preflight":                  {categoryMutation, dryRunNone},
+
+	// Tenant management (§25.12 admin-API): tenants, custom roles, RBAC,
+	// compliance, environments, experiments.
+	"admin.create_custom_role":                 {categoryMutation, dryRunNone},
+	"admin.create_tenant":                      {categoryMutation, dryRunNone},
+	"admin.decommission_compliance_profile":    {categoryDestructive, dryRunNone},
+	"admin.delete_custom_role":                 {categoryDestructive, dryRunNone},
+	"admin.delete_runtime_capability_override": {categoryDestructive, dryRunNone},
+	"admin.environment_usage":                  {categoryObservation, dryRunNone},
+	"admin.force_delete_tenant":                {categoryDestructive, dryRunConfirmBool},
+	"admin.get_custom_role":                    {categoryObservation, dryRunNone},
+	"admin.get_elicitation_content_integrity":  {categoryObservation, dryRunNone},
+	"admin.get_rbac_config":                    {categoryObservation, dryRunNone},
+	"admin.get_runtime_capability_override":    {categoryObservation, dryRunNone},
+	"admin.get_tenant":                         {categoryObservation, dryRunNone},
+	"admin.list_custom_roles":                  {categoryObservation, dryRunNone},
+	"admin.list_runtime_capability_overrides":  {categoryObservation, dryRunNone},
+	"admin.list_tenants":                       {categoryObservation, dryRunNone},
+	"admin.resume_tenant":                      {categoryMutation, dryRunNone},
+	"admin.set_elicitation_content_integrity":  {categoryMutation, dryRunNone},
+	"admin.set_runtime_capability_override":    {categoryMutation, dryRunNone},
+	"admin.soft_delete_tenant":                 {categoryDestructive, dryRunConfirmBool},
+	"admin.suspend_tenant":                     {categoryMutation, dryRunNone},
+	"admin.tenant_access_report":               {categoryObservation, dryRunNone},
+	"admin.update_custom_role":                 {categoryMutation, dryRunNone},
+	"admin.update_rbac_config":                 {categoryMutation, dryRunNone},
+	"admin.update_tenant":                      {categoryMutation, dryRunNone},
+
+	// User management (§25.12 admin-API): users, erasure jobs, admin-token
+	// rotation.
+	"admin.assign_tenant_user_role": {categoryMutation, dryRunNone},
+	"admin.create_user":             {categoryMutation, dryRunNone},
+	"admin.erase_user":              {categoryDestructive, dryRunConfirmBool},
+	"admin.get_erasure_job":         {categoryObservation, dryRunNone},
+	"admin.get_user":                {categoryObservation, dryRunNone},
+	"admin.invalidate_user":         {categoryMutation, dryRunNone},
+	"admin.list_tenant_users":       {categoryObservation, dryRunNone},
+	"admin.list_users":              {categoryObservation, dryRunNone},
+	"admin.remove_tenant_user_role": {categoryDestructive, dryRunNone},
+	"admin.soft_delete_user":        {categoryDestructive, dryRunConfirmBool},
+	"admin.update_user":             {categoryMutation, dryRunNone},
+
+	// Runtime management (§25.12 admin-API): runtimes, environments,
+	// experiments, card regeneration.
+	"admin.create_environment":           {categoryMutation, dryRunNone},
+	"admin.create_experiment":            {categoryMutation, dryRunNone},
+	"admin.create_runtime":               {categoryMutation, dryRunNone},
+	"admin.delete_environment":           {categoryDestructive, dryRunNone},
+	"admin.delete_experiment":            {categoryDestructive, dryRunNone},
+	"admin.environment_runtime_exposure": {categoryObservation, dryRunNone},
+	"admin.get_environment":              {categoryObservation, dryRunNone},
+	"admin.get_experiment":               {categoryObservation, dryRunNone},
+	"admin.get_experiment_results":       {categoryObservation, dryRunNone},
+	"admin.get_runtime":                  {categoryObservation, dryRunNone},
+	"admin.grant_runtime_access":         {categoryMutation, dryRunNone},
+	"admin.list_environments":            {categoryObservation, dryRunNone},
+	"admin.list_experiments":             {categoryObservation, dryRunNone},
+	"admin.list_runtime_access":          {categoryObservation, dryRunNone},
+	"admin.list_runtimes":                {categoryObservation, dryRunNone},
+	"admin.patch_experiment":             {categoryMutation, dryRunNone},
+	"admin.regenerate_runtime_cards":     {categoryMutation, dryRunNone},
+	"admin.revoke_runtime_access":        {categoryDestructive, dryRunNone},
+	"admin.soft_delete_runtime":          {categoryDestructive, dryRunConfirmBool},
+	"admin.update_environment":           {categoryMutation, dryRunNone},
+	"admin.update_experiment":            {categoryMutation, dryRunNone},
+	"admin.update_runtime":               {categoryMutation, dryRunNone},
+
+	// Warm-pool and credential-pool management (§25.12 admin-API).
+	"admin.clear_pool_bootstrap_override": {categoryDestructive, dryRunNone},
+	"admin.create_pool":                   {categoryMutation, dryRunNone},
+	"admin.drain_pool":                    {categoryDestructive, dryRunNone},
+	"admin.get_pool":                      {categoryObservation, dryRunNone},
+	"admin.get_pool_sync_status":          {categoryObservation, dryRunNone},
+	"admin.get_pool_upgrade_status":       {categoryObservation, dryRunNone},
+	"admin.grant_pool_access":             {categoryMutation, dryRunNone},
+	"admin.list_pool_access":              {categoryObservation, dryRunNone},
+	"admin.list_pools":                    {categoryObservation, dryRunNone},
+	"admin.pause_pool_upgrade":            {categoryDestructive, dryRunNone},
+	"admin.proceed_pool_upgrade":          {categoryDestructive, dryRunNone},
+	"admin.resume_pool_reconciliation":    {categoryMutation, dryRunNone},
+	"admin.resume_pool_upgrade":           {categoryDestructive, dryRunNone},
+	"admin.revoke_pool_access":            {categoryDestructive, dryRunNone},
+	"admin.rollback_pool_upgrade":         {categoryDestructive, dryRunNone},
+	"admin.set_pool_warm_count":           {categoryMutation, dryRunNone},
+	"admin.soft_delete_pool":              {categoryDestructive, dryRunConfirmBool},
+	"admin.start_pool_upgrade":            {categoryDestructive, dryRunNone},
+	"admin.update_pool":                   {categoryMutation, dryRunNone},
+	"admin.update_pool_circuit_breaker":   {categoryMutation, dryRunNone},
+
+	// Policy, interceptor, delegation, circuit-breaker, and credential-pool
+	// policy management (§25.12 admin-API).
+	"admin.add_credential_to_pool":    {categoryMutation, dryRunNone},
+	"admin.close_circuit_breaker":     {categoryMutation, dryRunNone},
+	"admin.create_credential_pool":    {categoryMutation, dryRunNone},
+	"admin.create_delegation_policy":  {categoryMutation, dryRunNone},
+	"admin.create_interceptor":        {categoryMutation, dryRunNone},
+	"admin.delete_credential_pool":    {categoryDestructive, dryRunConfirmBool},
+	"admin.delete_delegation_policy":  {categoryDestructive, dryRunNone},
+	"admin.delete_interceptor":        {categoryDestructive, dryRunNone},
+	"admin.get_circuit_breaker":       {categoryObservation, dryRunNone},
+	"admin.get_credential_pool":       {categoryObservation, dryRunNone},
+	"admin.get_delegation_policy":     {categoryObservation, dryRunNone},
+	"admin.get_interceptor":           {categoryObservation, dryRunNone},
+	"admin.list_circuit_breakers":     {categoryObservation, dryRunNone},
+	"admin.list_credential_pools":     {categoryObservation, dryRunNone},
+	"admin.list_delegation_policies":  {categoryObservation, dryRunNone},
+	"admin.list_interceptors":         {categoryObservation, dryRunNone},
+	"admin.open_circuit_breaker":      {categoryDestructive, dryRunNone},
+	"admin.re_enable_pool_credential": {categoryMutation, dryRunNone},
+	"admin.remove_pool_credential":    {categoryDestructive, dryRunNone},
+	"admin.revoke_credential_pool":    {categoryDestructive, dryRunNone},
+	"admin.revoke_pool_credential":    {categoryDestructive, dryRunNone},
+	"admin.update_credential_pool":    {categoryMutation, dryRunNone},
+	"admin.update_delegation_policy":  {categoryMutation, dryRunNone},
+	"admin.update_interceptor":        {categoryMutation, dryRunNone},
+	"admin.update_pool_credential":    {categoryMutation, dryRunNone},
+
+	// Security-critical admin-API (§25.12): impersonation, CA rotation,
+	// credential rekey, legal hold, token/credential revocation, billing
+	// corrections, erasure, artifact replication.
+	"admin.approve_billing_correction":           {categoryMutation, dryRunNone},
+	"admin.begin_ca_rotation":                    {categoryDestructive, dryRunNone},
+	"admin.clear_erasure_processing_restriction": {categoryMutation, dryRunNone},
+	"admin.clear_extension_denial":               {categoryDestructive, dryRunNone},
+	"admin.create_billing_correction":            {categoryMutation, dryRunNone},
+	"admin.credential_rekey":                     {categoryDestructive, dryRunNone},
+	"admin.end_impersonation":                    {categoryDestructive, dryRunNone},
+	"admin.force_terminate_session":              {categoryDestructive, dryRunNone},
+	"admin.get_artifact_replication_status":      {categoryObservation, dryRunNone},
+	"admin.get_billing_correction":               {categoryObservation, dryRunNone},
+	"admin.get_ca_rotation":                      {categoryObservation, dryRunNone},
+	"admin.get_credential_rekey":                 {categoryObservation, dryRunNone},
+	"admin.get_session":                          {categoryObservation, dryRunNone},
+	"admin.list_billing_corrections":             {categoryObservation, dryRunNone},
+	"admin.list_impersonation":                   {categoryObservation, dryRunNone},
+	"admin.list_legal_holds":                     {categoryObservation, dryRunNone},
+	"admin.promote_ca_rotation":                  {categoryDestructive, dryRunNone},
+	"admin.reject_billing_correction":            {categoryMutation, dryRunNone},
+	"admin.resume_artifact_replication":          {categoryMutation, dryRunNone},
+	"admin.retire_ca_rotation":                   {categoryDestructive, dryRunNone},
+	"admin.retry_erasure_job":                    {categoryMutation, dryRunNone},
+	"admin.revoke_token":                         {categoryDestructive, dryRunNone},
+	"admin.rotate_erasure_salt":                  {categoryDestructive, dryRunNone},
+	"admin.rotate_token":                         {categoryMutation, dryRunNone},
+	"admin.set_legal_hold":                       {categoryDestructive, dryRunNone},
+	"admin.start_impersonation":                  {categoryMutation, dryRunNone},
+
+	// Connector management (§25.12 admin-API).
+	"admin.authorize_connector_oauth": {categoryMutation, dryRunNone},
+	"admin.connector_oauth_callback":  {categoryObservation, dryRunNone},
+	"admin.create_connector":          {categoryMutation, dryRunNone},
+	"admin.get_connector":             {categoryObservation, dryRunNone},
+	"admin.list_connectors":           {categoryObservation, dryRunNone},
+	"admin.refresh_connector":         {categoryMutation, dryRunNone},
+	"admin.soft_delete_connector":     {categoryDestructive, dryRunConfirmBool},
+	"admin.test_connector":            {categoryMutation, dryRunNone},
+	"admin.update_connector":          {categoryMutation, dryRunNone},
+
+	// External adapter management (§25.12 admin-API).
+	"admin.delete_external_adapter":   {categoryDestructive, dryRunNone},
+	"admin.get_external_adapter":      {categoryObservation, dryRunNone},
+	"admin.list_external_adapters":    {categoryObservation, dryRunNone},
+	"admin.register_external_adapter": {categoryMutation, dryRunNone},
+	"admin.update_external_adapter":   {categoryMutation, dryRunNone},
+	"admin.validate_external_adapter": {categoryMutation, dryRunNone},
+
+	// Audit administration (§25.12 admin-API): event lookup, republish,
+	// retranslate, partition drop.
+	"admin.drop_audit_partition":    {categoryDestructive, dryRunNone},
+	"admin.get_audit_event":         {categoryObservation, dryRunNone},
+	"admin.list_audit_events":       {categoryObservation, dryRunNone},
+	"admin.republish_audit_event":   {categoryMutation, dryRunNone},
+	"admin.retranslate_audit_event": {categoryMutation, dryRunNone},
+	"admin.summarize_audit_events":  {categoryObservation, dryRunNone},
+
+	// Platform bootstrap (§25.12 admin-API).
+	"admin.bootstrap": {categoryMutation, dryRunNone},
 }
 
 // docOperation is the slice of one OpenAPI operation the generator reads.
+// x-lenny-category is deliberately not read: the served document records the
+// endpoint domain there, not the §25.12 tool taxonomy the descriptor needs,
+// so the taxonomy comes from the classifications table keyed by tool name.
 type docOperation struct {
 	OperationID  string  `json:"operationId"`
 	Summary      string  `json:"summary"`
 	MCPTool      *string `json:"x-lenny-mcp-tool"`
 	Scope        string  `json:"x-lenny-scope"`
 	RequiredRole string  `json:"x-lenny-required-role"`
-	Category     string  `json:"x-lenny-category"`
 }
 
 var httpMethods = map[string]bool{
 	"get": true, "post": true, "put": true, "delete": true, "patch": true,
 }
 
-// Generate derives the §25.12 operability tool inventory from the OpenAPI
+// Generate derives the §25.12 management tool inventory from the OpenAPI
 // document bytes, sorted by tool name for a deterministic output. It emits
-// one tool per operability endpoint (`x-lenny-category: operability`) that
+// one tool per documented endpoint (every admin-API endpoint and every
+// lenny-ops operability route, not the operability subset alone) that
 // carries a non-null `x-lenny-mcp-tool`, resolving each tool's input schema
 // from the operation's path parameters and request body.
 //
-// spec: §25.12 (one MCP tool per operability endpoint from the OpenAPI
-// document), §15.1 (x-lenny-* contract).
+// spec: §25.12 (one MCP tool per admin-API endpoint from the OpenAPI
+// document, "not only the operability endpoints"), §15.1 (x-lenny-*
+// contract; every admin-API endpoint MUST be an MCP tool on /mcp/management).
 func Generate(docBytes []byte) ([]GeneratedTool, error) {
 	var doc struct {
 		Paths map[string]map[string]json.RawMessage `json:"paths"`
@@ -240,10 +435,13 @@ func Generate(docBytes []byte) ([]GeneratedTool, error) {
 			if err := json.Unmarshal(raw, &op); err != nil {
 				return nil, fmt.Errorf("decode %s %s: %w", method, path, err)
 			}
-			// §25.12: only operability endpoints with a non-null
-			// x-lenny-mcp-tool become management tools. A null tool marks an
+			// §25.12/§15.1: every documented admin-API endpoint with a
+			// non-null x-lenny-mcp-tool becomes a management tool, not only
+			// the operability endpoints ("Every admin-API endpoint with
+			// documented RBAC is exposed as an MCP tool -- not only the
+			// operability endpoints", spec/25 §25.12). A null tool marks an
 			// endpoint the spec deliberately does not expose as a tool.
-			if op.Category != operabilityCategory || op.MCPTool == nil || *op.MCPTool == "" {
+			if op.MCPTool == nil || *op.MCPTool == "" {
 				continue
 			}
 			tool, err := buildTool(docBytes, op, strings.ToUpper(method), path)
@@ -264,7 +462,7 @@ func buildTool(docBytes []byte, op docOperation, method, path string) (Generated
 	cls, ok := classifications[name]
 	if !ok {
 		return GeneratedTool{}, fmt.Errorf(
-			"operability tool %q (%s %s) has no §25.12 taxonomy classification; add it to mcptoolgen.classifications",
+			"admin-API tool %q (%s %s) has no §25.12 taxonomy classification; add it to mcptoolgen.classifications",
 			name, method, path,
 		)
 	}

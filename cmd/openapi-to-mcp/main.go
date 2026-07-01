@@ -10,8 +10,9 @@
 // tool automatically via the build-time OpenAPI → MCP generation". This
 // binary is that step. It mirrors the §15.2 `genmcpschemas` generator for the
 // gateway MCP surface: it reads `openapi.Document()`, emits one tool per
-// documented operability endpoint carrying `x-lenny-mcp-tool`, and writes the
-// committed `pkg/ops/mcp/generated_tools.go`. The tier-0/3 drift guard
+// documented admin-API endpoint carrying `x-lenny-mcp-tool` (every admin-API
+// and lenny-ops operability route, "not only the operability endpoints"), and
+// writes the committed `pkg/ops/mcp/generated_tools.go`. The tier-0/3 drift guard
 // (TestGeneratedToolsMatchOpenAPI) fails the build when the committed output
 // diverges from a fresh generation, so any openapi.json edit without a regen
 // fails the build.

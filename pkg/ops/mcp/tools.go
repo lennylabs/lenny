@@ -14,12 +14,16 @@
 // This file carries the tool descriptor type and the §25.12 taxonomy
 // vocabulary. The tool inventory itself is generated: §25.12 mandates a
 // build-time openapi-to-mcp step that derives one tool per documented
-// operability endpoint from the served OpenAPI document, so the inventory
+// admin-API endpoint from the served OpenAPI document, so the inventory
 // lives in the generated generated_tools.go (via generatedToolset) rather
 // than a hand-maintained literal, and cannot drift from the REST surface it
-// mirrors. The JSON-RPC surface is in server.go and the registry in
-// registry.go. v1 exposes the operability tools — health, diagnostics,
-// runbooks, drift, locks, escalations, backup/restore, upgrade, events.
+// mirrors. §25.12 requires the whole admin surface: "Every admin-API endpoint
+// with documented RBAC is exposed as an MCP tool -- not only the operability
+// endpoints", so the inventory spans the gateway admin-API tools (tenant,
+// user, runtime, pool, policy, security, connector, adapter, audit) and the
+// lenny-ops operability tools (health, diagnostics, runbooks, drift, locks,
+// escalations, backup/restore, upgrade, events). The JSON-RPC surface is in
+// server.go and the registry in registry.go.
 //
 //go:generate go run ../../../cmd/openapi-to-mcp
 package mcp

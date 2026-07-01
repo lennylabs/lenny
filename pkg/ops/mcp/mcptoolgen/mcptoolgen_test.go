@@ -8,15 +8,23 @@ import (
 	"testing"
 )
 
-// TestGenerateEmitsOneToolPerOperabilityEndpoint asserts the generator emits
-// exactly one tool per documented operability endpoint that carries a
-// non-null x-lenny-mcp-tool, skipping non-operability endpoints and null-tool
-// endpoints. spec: 25.12 (one MCP tool per operability endpoint).
-func TestGenerateEmitsOneToolPerOperabilityEndpoint(t *testing.T) {
+// TestGenerateEmitsToolPerAdminEndpointNotOnlyOperability asserts the
+// generator emits one tool per documented endpoint carrying a non-null
+// x-lenny-mcp-tool -- every admin-API endpoint AND every operability
+// endpoint, not the operability subset alone -- skipping only null-tool
+// endpoints. This pins the §25.12 invariant "Every admin-API endpoint with
+// documented RBAC is exposed as an MCP tool -- not only the operability
+// endpoints": the tenant-management endpoint below MUST become a tool, and a
+// generator that filters to x-lenny-category=="operability" (the pre-fix
+// behavior) fails this test because it drops admin.create_tenant.
+// spec: 25.12 (one MCP tool per admin-API endpoint, not only operability),
+// 15.1 (every admin-API endpoint MUST be an MCP tool on /mcp/management).
+func TestGenerateEmitsToolPerAdminEndpointNotOnlyOperability(t *testing.T) {
 	doc := []byte(`{
       "paths": {
         "/v1/admin/runbooks": {"get": {"operationId":"getRunbooks","summary":"List runbooks","x-lenny-mcp-tool":"lenny_runbooks_list","x-lenny-scope":"tools:runbooks:read","x-lenny-required-role":"platform-admin","x-lenny-category":"operability"}},
         "/v1/admin/tenants": {"post": {"operationId":"postTenants","summary":"Create tenant","x-lenny-mcp-tool":"admin.create_tenant","x-lenny-scope":"tools:tenant:write","x-lenny-required-role":"platform-admin","x-lenny-category":"tenant-management"}},
+        "/v1/admin/tenants/{id}": {"delete": {"operationId":"deleteTenant","summary":"Delete tenant","x-lenny-mcp-tool":"admin.soft_delete_tenant","x-lenny-scope":"tools:tenant:write","x-lenny-required-role":"platform-admin","x-lenny-category":"tenant-management"}},
         "/v1/admin/events/stream": {"get": {"operationId":"getStream","summary":"Event stream","x-lenny-mcp-tool":null,"x-lenny-scope":"tools:events:read","x-lenny-required-role":"platform-admin","x-lenny-category":"operability"}}
       }
     }`)
@@ -24,14 +32,35 @@ func TestGenerateEmitsOneToolPerOperabilityEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if len(tools) != 1 {
-		t.Fatalf("emitted %d tools, want 1 (operability + non-null only)", len(tools))
+	byName := map[string]GeneratedTool{}
+	for _, tl := range tools {
+		byName[tl.Name] = tl
 	}
-	if tools[0].Name != "lenny_runbooks_list" {
-		t.Errorf("tool name = %q, want lenny_runbooks_list", tools[0].Name)
+	// The null-tool stream endpoint is skipped; the other three become tools.
+	if len(tools) != 3 {
+		t.Fatalf("emitted %d tools, want 3 (operability + admin-API, null skipped): %v", len(tools), byName)
 	}
-	if tools[0].Category != categoryObservation || !tools[0].ReadOnly {
-		t.Errorf("classification = %q readonly=%v, want observation read-only", tools[0].Category, tools[0].ReadOnly)
+	// The admin-API tenant endpoints MUST be present: the pre-fix
+	// operability-only filter dropped exactly these.
+	if _, ok := byName["admin.create_tenant"]; !ok {
+		t.Error("admin.create_tenant (tenant-management admin-API endpoint) was not emitted; §25.12 requires every admin-API endpoint to become a tool, not only operability")
+	}
+	// The operability endpoint is still an observation read-only tool.
+	rb, ok := byName["lenny_runbooks_list"]
+	if !ok {
+		t.Fatal("lenny_runbooks_list operability tool was not emitted")
+	}
+	if rb.Category != categoryObservation || !rb.ReadOnly {
+		t.Errorf("lenny_runbooks_list = %q readonly=%v, want observation read-only", rb.Category, rb.ReadOnly)
+	}
+	// A DELETE admin-API endpoint classifies destructive (fail-closed), so
+	// the §25.12 nonDestructive capability filter excludes it.
+	del, ok := byName["admin.soft_delete_tenant"]
+	if !ok {
+		t.Fatal("admin.soft_delete_tenant admin-API tool was not emitted")
+	}
+	if del.Category != categoryDestructive {
+		t.Errorf("admin.soft_delete_tenant category = %q, want destructive (a tenant delete must be nonDestructive-filterable)", del.Category)
 	}
 }
 
@@ -81,17 +110,20 @@ func TestGenerateAddsPathParametersAsRequired(t *testing.T) {
 
 // TestGenerateFailsOnUnclassifiedTool asserts the generator refuses to emit a
 // tool the classification table does not cover, so a newly documented
-// operability tool cannot silently ship without a §25.12 taxonomy. spec:
-// 25.12 (tool taxonomy classification).
+// admin-API tool cannot silently ship without a §25.12 taxonomy (fail-closed:
+// a new destructive tool must be classified before it can reach the tool
+// surface, rather than defaulting into a non-destructive category the
+// nonDestructive capability filter would expose). spec: 25.12 (tool taxonomy
+// classification).
 func TestGenerateFailsOnUnclassifiedTool(t *testing.T) {
 	doc := []byte(`{
       "paths": {
-        "/v1/admin/frobnicate": {"post": {"operationId":"postFrob","summary":"Frobnicate","x-lenny-mcp-tool":"lenny_frobnicate","x-lenny-scope":"tools:frob:write","x-lenny-required-role":"platform-admin","x-lenny-category":"operability"}}
+        "/v1/admin/frobnicate": {"post": {"operationId":"postFrob","summary":"Frobnicate","x-lenny-mcp-tool":"lenny_frobnicate","x-lenny-scope":"tools:frob:write","x-lenny-required-role":"platform-admin","x-lenny-category":"tenant-management"}}
       }
     }`)
 	_, err := Generate(doc)
 	if err == nil {
-		t.Fatal("expected an error for an unclassified operability tool, got nil")
+		t.Fatal("expected an error for an unclassified admin-API tool, got nil")
 	}
 	if !strings.Contains(err.Error(), "classification") {
 		t.Errorf("error = %v, want a classification-missing error", err)
