@@ -52,7 +52,7 @@ func TestLockSourceProjectsHeldLock(t *testing.T) {
 		AcquiredBy: "sa-watchdog",
 		AcquiredAt: now,
 		ExpiresAt:  now.Add(5 * time.Minute),
-	}}})
+	}}}, "")
 	ops, err := src.List(context.Background(), operations.Filter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -78,11 +78,66 @@ func TestLockSourceProjectsHeldLock(t *testing.T) {
 	}
 }
 
+// spec: §25.4 (Operations Inventory `resources.audit`) — F-COV-1. When a
+// gateway URL is configured, the gateway-resident §25.9 audit-events link
+// is emitted absolute-to-gateway so an agent following it reaches the
+// gateway rather than 404ing against lenny-ops's own origin; the sibling
+// lenny-ops-resident lock links (get/extend/release/steal) stay relative.
+// This asserts the corrected output and fails against the pre-fix code,
+// which emitted a relative `/v1/admin/audit-events` link that resolved to
+// lenny-ops's origin where the route does not exist.
+func TestLockSourceAuditLinkAbsoluteToGateway(t *testing.T) {
+	now := time.Now()
+	src := opsinventory.NewLockSource(fakeLockService{locks: []coordination.Lock{{
+		ID:         "lock-abc123",
+		AcquiredBy: "sa-watchdog",
+		AcquiredAt: now,
+		ExpiresAt:  now.Add(5 * time.Minute),
+	}}}, "https://lenny-gateway:8443")
+	ops, err := src.List(context.Background(), operations.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ops) != 1 {
+		t.Fatalf("len(ops) = %d, want 1", len(ops))
+	}
+	audit := ops[0].Resources["audit"]
+	const want = "GET https://lenny-gateway:8443/v1/admin/audit-events?operationId=lock-abc123"
+	if audit != want {
+		t.Errorf("audit resource = %q, want %q", audit, want)
+	}
+	// The lenny-ops-resident lock links resolve against lenny-ops's own
+	// origin, so they stay relative.
+	if got := ops[0].Resources["release"]; strings.HasPrefix(got, "http") {
+		t.Errorf("release resource %q must stay relative (lenny-ops-resident)", got)
+	}
+}
+
+// spec: §25.4 (Operations Inventory `resources.audit`) — F-COV-1. On the
+// dev / embedded path (no gateway URL) the audit link falls back to the
+// relative form rather than emitting a bare host with no path.
+func TestLockSourceAuditLinkRelativeFallback(t *testing.T) {
+	now := time.Now()
+	src := opsinventory.NewLockSource(fakeLockService{locks: []coordination.Lock{{
+		ID:         "lock-abc123",
+		AcquiredBy: "sa-watchdog",
+		AcquiredAt: now,
+		ExpiresAt:  now.Add(5 * time.Minute),
+	}}}, "")
+	ops, err := src.List(context.Background(), operations.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got := ops[0].Resources["audit"]; got != "GET /v1/admin/audit-events?operationId=lock-abc123" {
+		t.Errorf("audit resource = %q, want relative fallback", got)
+	}
+}
+
 // spec §25.4 line 1750: a source whose backing store is unreachable
 // propagates the error so the Inventory turns it into a degradation
 // warning rather than failing the request.
 func TestLockSourcePropagatesError(t *testing.T) {
-	src := opsinventory.NewLockSource(fakeLockService{err: errors.New("postgres unreachable")})
+	src := opsinventory.NewLockSource(fakeLockService{err: errors.New("postgres unreachable")}, "")
 	_, err := src.List(context.Background(), operations.Filter{})
 	if err == nil {
 		t.Fatal("want error, got nil")
@@ -93,9 +148,9 @@ func TestLockSourcePropagatesError(t *testing.T) {
 // where a subsystem is unwired).
 func TestSourcesNilServiceEmpty(t *testing.T) {
 	for _, src := range []operations.Source{
-		opsinventory.NewLockSource(nil),
-		opsinventory.NewEscalationSource(nil),
-		opsinventory.NewUpgradeSource(nil),
+		opsinventory.NewLockSource(nil, ""),
+		opsinventory.NewEscalationSource(nil, ""),
+		opsinventory.NewUpgradeSource(nil, ""),
 	} {
 		ops, err := src.List(context.Background(), operations.Filter{})
 		if err != nil || len(ops) != 0 {
@@ -113,7 +168,7 @@ func TestEscalationSourceProjectsBuffered(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	src := opsinventory.NewEscalationSource(svc)
+	src := opsinventory.NewEscalationSource(svc, "")
 	ops, err := src.List(context.Background(), operations.Filter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -139,7 +194,7 @@ func TestEscalationSourceProjectsBuffered(t *testing.T) {
 // yields an empty slice.
 func TestUpgradeSourceProjectsStartedUpgrade(t *testing.T) {
 	svc := upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()})
-	src := opsinventory.NewUpgradeSource(svc)
+	src := opsinventory.NewUpgradeSource(svc, "")
 
 	ops, err := src.List(context.Background(), operations.Filter{})
 	if err != nil {

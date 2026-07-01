@@ -168,7 +168,7 @@ This replaces any earlier ad-hoc "mint a narrowed token" mechanism.
 
 Lenny exposes its full admin and operability surface as an MCP tool server at `/mcp/management` on `lenny-ops`. Any MCP-capable agent can discover every tool, inspect its schema, and invoke it without REST-specific knowledge.
 
-Tool schemas are auto-generated at build time from the canonical OpenAPI document (served at `/v1/openapi.yaml` on `lenny-ops`), ensuring the MCP inventory never drifts from the REST contract.
+Tool schemas are auto-generated at build time from the canonical OpenAPI document (served by the gateway at `/v1/openapi.yaml` and `/v1/openapi.json`), so the MCP inventory tracks the REST contract.
 
 ### Observation tools (read-only)
 

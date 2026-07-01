@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 // Package openapi serves the §15.1 OpenAPI 3.x specification at
-// GET /openapi.yaml, GET /openapi.json, and GET /v1/openapi.json.
+// GET /openapi.yaml, GET /openapi.json, GET /v1/openapi.json, and
+// GET /v1/openapi.yaml.
 //
 // The canonical document is embedded as JSON from openapi.json at
 // build time. YAML 1.2 is a strict superset of JSON, so the same
@@ -9,9 +10,11 @@
 // generators that prefer YAML input.
 //
 // §15.1 line 589 names `/openapi.yaml` and `/openapi.json` as the
-// canonical gateway-side endpoints; the `/v1/openapi.json` mount is
-// kept so the §18 build-sequence reference and the §25.4 lenny-ops
-// listing remain aligned. F-15.1.17.
+// canonical gateway-side endpoints; the `/v1/openapi.json` and
+// `/v1/openapi.yaml` mounts are the admin-API paths §15.1 (OpenAPI
+// generation and discovery) lists so the §25.12 schema-discovery block
+// and the §25.4 `/me` `links.openApi` hop resolve against the gateway.
+// F-15.1.17 / F-COV-1.
 //
 // The spec is the canonical source for community SDK generators and
 // for the §13 MCP Management Server's `openapi-to-mcp` tool generator
@@ -39,8 +42,8 @@ var openapiDoc []byte
 //
 //	GET /openapi.yaml — YAML form (JSON is valid YAML 1.2)
 //	GET /openapi.json — JSON form (§15.1 line 589 canonical mount)
-//	GET /v1/openapi.json — JSON form (legacy alias retained for §18
-//	    build-sequence references and §25.4 lenny-ops parity)
+//	GET /v1/openapi.json — JSON form (§15.1 admin-API discovery path)
+//	GET /v1/openapi.yaml — YAML form (§15.1 admin-API discovery path)
 //
 // Every endpoint is unauthenticated per §15.1: the spec must be
 // discoverable so SDK generators and the MCP Management Server can
@@ -56,24 +59,27 @@ func Handler() http.Handler { return HandlerWithVersion("") }
 // the gateway's release version.
 func HandlerWithVersion(buildVersion string) http.Handler {
 	body := versionedDocument(buildVersion)
+	serve := func(contentType string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Cache-Control", "public, max-age=60")
+			_, _ = w.Write(body)
+		}
+	}
+	yaml := serve("application/yaml")
+	jsonDoc := serve("application/json")
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/yaml")
-		w.Header().Set("Cache-Control", "public, max-age=60")
-		_, _ = w.Write(body)
-	})
-	// spec: §15.1 line 589 — gateway serves the JSON form at
-	// `/openapi.json`. F-15.1.17.
-	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "public, max-age=60")
-		_, _ = w.Write(body)
-	})
-	mux.HandleFunc("GET /v1/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "public, max-age=60")
-		_, _ = w.Write(body)
-	})
+	// spec: §15.1 line 589 — gateway serves the JSON and YAML forms at
+	// the root `/openapi.*` paths. F-15.1.17.
+	mux.HandleFunc("GET /openapi.yaml", yaml)
+	mux.HandleFunc("GET /openapi.json", jsonDoc)
+	// spec: §15.1 (OpenAPI generation and discovery) — the admin-API
+	// discovery paths §15.1 lists as `/v1/openapi.json` and
+	// `/v1/openapi.yaml`. §25.12 (schema discovery) and the §25.4 `/me`
+	// `links.openApi` hop resolve against these gateway-served paths, so
+	// both forms are mounted here rather than only JSON. F-COV-1.
+	mux.HandleFunc("GET /v1/openapi.json", jsonDoc)
+	mux.HandleFunc("GET /v1/openapi.yaml", yaml)
 	return mux
 }
 

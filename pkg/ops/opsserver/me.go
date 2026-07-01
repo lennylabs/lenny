@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -300,17 +301,42 @@ func (s *Server) meIssuer() string {
 }
 
 // meLinks returns the §25.4 line 1616-1623 discovery hop-off block.
+//
+// spec: §25.4 (`/me` example, links.openApi/platformHealth/myRecentAudit)
+// — `authorizedTools` and `myOperations` are `lenny-ops`'s own routes and
+// stay relative (they resolve against lenny-ops's own origin). The other
+// three target gateway-hosted resources: the §25.9 audit-events query and
+// the §15.1 platform-health summary and OpenAPI document all live on the
+// gateway, so a relative link 404s against lenny-ops's origin. They are
+// joined to the gateway base URL the agent already receives in
+// `platform.gatewayURL`, so the discovery hop resolves. When `GatewayURL`
+// is unset (the dev / embedded path with no separate gateway), the join
+// falls back to the relative path rather than emitting a bare host. F-COV-1.
 func (s *Server) meLinks(p authmw.Principal) map[string]string {
 	links := map[string]string{
 		"authorizedTools": "/v1/admin/me/authorized-tools",
 		"myOperations":    "/v1/admin/me/operations",
-		"platformHealth":  "/v1/admin/health/summary",
-		"openApi":         "/v1/openapi.json",
+		"platformHealth":  s.gatewayLink("/v1/admin/health/summary"),
+		"openApi":         s.gatewayLink("/v1/openapi.json"),
 	}
 	if p.Subject != "" {
-		links["myRecentAudit"] = "/v1/admin/audit-events?actorId=" + p.Subject + "&limit=50"
+		links["myRecentAudit"] = s.gatewayLink("/v1/admin/audit-events?actorId=" + p.Subject + "&limit=50")
 	}
 	return links
+}
+
+// gatewayLink joins a gateway-resident relative path to the configured
+// gateway base URL so a `/me` discovery hop resolves against the gateway
+// rather than 404ing against lenny-ops's own origin. It falls back to the
+// relative path when no gateway URL is configured (the dev / embedded
+// path), so the link is never a bare host with no path.
+//
+// spec: §25.4 (`/me` links resolve to the gateway-hosted resource).
+func (s *Server) gatewayLink(path string) string {
+	if s.me == nil || s.me.GatewayURL == "" {
+		return path
+	}
+	return strings.TrimRight(s.me.GatewayURL, "/") + path
 }
 
 // authorizedToolEntry is one §25.4 /v1/admin/me/authorized-tools row.
@@ -333,9 +359,14 @@ func (s *Server) handleAuthorizedTools(w http.ResponseWriter, r *http.Request) {
 	p, hasPrincipal := callerPrincipal(r)
 	meRequestsTotal.WithLabelValues(callerTypeLabel(p, hasPrincipal)).Inc()
 	if s.mcp == nil {
+		// spec: §25.4 line 1668 — the fallback hint points at the
+		// gateway-hosted OpenAPI document; join the gateway base URL so an
+		// agent that reads the hint reaches the gateway rather than a route
+		// lenny-ops does not serve. F-COV-1.
 		conventions.WriteError(w, http.StatusServiceUnavailable, "AUTHORIZED_TOOLS_UNAVAILABLE",
 			conventions.CategoryTransient,
-			"MCP Management Server unreachable; derive the tool surface from the OpenAPI document at /v1/openapi.json plus the authorization block from /v1/admin/me")
+			"MCP Management Server unreachable; derive the tool surface from the OpenAPI document at "+
+				s.gatewayLink("/v1/openapi.json")+" plus the authorization block from /v1/admin/me")
 		return
 	}
 	tools := make([]authorizedToolEntry, 0)
