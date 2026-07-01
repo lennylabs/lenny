@@ -19,6 +19,7 @@ package tier9_security_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -42,8 +43,14 @@ func TestSessionCrossTenantLookupRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	tenantA := "t9-livesess-acme"
-	tenantB := "t9-livesess-globex"
+	// Suffix the tenant IDs with a per-run value. These tests run against a
+	// persistent e2e cluster; a tenant terminated by a prior run's cleanup
+	// lingers in the deleted state, and re-bootstrapping a fixed-name tenant
+	// then fails create-and-start with 403 TENANT_NOT_ACTIVE. A fresh name
+	// per run sidesteps that leftover state.
+	suffix := fmt.Sprintf("-%d", time.Now().UnixNano())
+	tenantA := "t9-livesess-acme" + suffix
+	tenantB := "t9-livesess-globex" + suffix
 	if err := d.BootstrapTenant(ctx, tenantA); err != nil {
 		t.Fatalf("bootstrap tenant A: %v", err)
 	}
@@ -130,7 +137,9 @@ func TestSessionViewerRoleCannotMutate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	tenant := "t9-livesess-rbac"
+	// Per-run tenant ID so a leftover deleted tenant from a prior run on the
+	// persistent e2e cluster does not fail bootstrap with TENANT_NOT_ACTIVE.
+	tenant := "t9-livesess-rbac" + fmt.Sprintf("-%d", time.Now().UnixNano())
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
