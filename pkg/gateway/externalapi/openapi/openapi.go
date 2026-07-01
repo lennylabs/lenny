@@ -30,6 +30,13 @@ import (
 	"strings"
 )
 
+// The lenny-ops operability route schemas are merged into openapi.json by
+// the genopsschemas generator so the single served document covers the
+// entire operability surface (F-COV-3, §25.12). Run it after adding or
+// removing a lenny-ops route; the completeness test guards the committed
+// document against the opsserver.RouteSchemas registry.
+//
+//go:generate go run ./internal/genopsschemas
 //go:embed openapi.json
 var openapiDoc []byte
 

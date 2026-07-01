@@ -3239,7 +3239,25 @@
         "x-lenny-scope": "tools:platform:read",
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "operability",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putV1AdminPlatformConfig",
+        "summary": "Apply a platform configuration change",
         "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_config_apply",
+        "x-lenny-scope": "tools:config:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       }
     },
@@ -3547,6 +3565,728 @@
         "summary": "Revoke a credential and invalidate all active leases backed by it",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "credentialRef", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/backup-jobs/{id}": {
+      "get": {
+        "operationId": "getV1AdminBackupJobsId",
+        "summary": "Get an async backup job's status",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_job_get",
+        "x-lenny-scope": "tools:backup:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/backups": {
+      "get": {
+        "operationId": "getV1AdminBackups",
+        "summary": "List platform backups",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backups_list",
+        "x-lenny-scope": "tools:backup:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "operationId": "postV1AdminBackups",
+        "summary": "Create a platform backup",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_create",
+        "x-lenny-scope": "tools:backup:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/backups/policy": {
+      "get": {
+        "operationId": "getV1AdminBackupsPolicy",
+        "summary": "Get the backup retention policy",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_policy_get",
+        "x-lenny-scope": "tools:backup:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "operationId": "putV1AdminBackupsPolicy",
+        "summary": "Update the backup retention policy",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_policy_set",
+        "x-lenny-scope": "tools:backup:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/backups/schedule": {
+      "get": {
+        "operationId": "getV1AdminBackupsSchedule",
+        "summary": "Get the backup schedule",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_schedule_get",
+        "x-lenny-scope": "tools:backup:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "operationId": "putV1AdminBackupsSchedule",
+        "summary": "Update the backup schedule",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_schedule_set",
+        "x-lenny-scope": "tools:backup:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/backups/{id}": {
+      "get": {
+        "operationId": "getV1AdminBackupsId",
+        "summary": "Get a backup's metadata",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_get",
+        "x-lenny-scope": "tools:backup:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/backups/{id}/verify": {
+      "post": {
+        "operationId": "postV1AdminBackupsIdVerify",
+        "summary": "Verify a backup's integrity",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_backup_verify",
+        "x-lenny-scope": "tools:backup:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/diagnostics/connectivity": {
+      "get": {
+        "operationId": "getV1AdminDiagnosticsConnectivity",
+        "summary": "Check dependency connectivity",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_diagnostics_connectivity",
+        "x-lenny-scope": "tools:diagnostics:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/diagnostics/credential-pools/{name}": {
+      "get": {
+        "operationId": "getV1AdminDiagnosticsCredentialPoolsName",
+        "summary": "Diagnose a credential pool's health",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_diagnostics_credential_pool",
+        "x-lenny-scope": "tools:diagnostics:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/diagnostics/pools/{name}": {
+      "get": {
+        "operationId": "getV1AdminDiagnosticsPoolsName",
+        "summary": "Diagnose a warm pool: bottleneck analysis",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_diagnostics_pool",
+        "x-lenny-scope": "tools:diagnostics:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/diagnostics/run": {
+      "post": {
+        "operationId": "postV1AdminDiagnosticsRun",
+        "summary": "Run the doctor auto-remediation battery",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_doctor_run",
+        "x-lenny-scope": "tools:diagnostics:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/diagnostics/sessions/{id}": {
+      "get": {
+        "operationId": "getV1AdminDiagnosticsSessionsId",
+        "summary": "Diagnose a session: structured cause chain",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_diagnostics_session",
+        "x-lenny-scope": "tools:diagnostics:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/drift": {
+      "get": {
+        "operationId": "getV1AdminDrift",
+        "summary": "Get the configuration drift report",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_drift_report",
+        "x-lenny-scope": "tools:drift:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/drift/reconcile": {
+      "post": {
+        "operationId": "postV1AdminDriftReconcile",
+        "summary": "Reconcile drifted resources toward the snapshot",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_drift_reconcile",
+        "x-lenny-scope": "tools:drift:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/drift/snapshot/refresh": {
+      "post": {
+        "operationId": "postV1AdminDriftSnapshotRefresh",
+        "summary": "Replace the stored desired-state snapshot",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_drift_snapshot_refresh",
+        "x-lenny-scope": "tools:drift:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/drift/validate": {
+      "post": {
+        "operationId": "postV1AdminDriftValidate",
+        "summary": "Validate a desired state against the snapshot",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_drift_validate",
+        "x-lenny-scope": "tools:drift:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/escalations": {
+      "get": {
+        "operationId": "getV1AdminEscalations",
+        "summary": "List escalations",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_escalations_list",
+        "x-lenny-scope": "tools:escalation:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "operationId": "postV1AdminEscalations",
+        "summary": "Open an escalation",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_escalation_create",
+        "x-lenny-scope": "tools:escalation:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/v1/admin/escalations/{id}": {
+      "put": {
+        "operationId": "putV1AdminEscalationsId",
+        "summary": "Update an escalation's state",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_escalation_update",
+        "x-lenny-scope": "tools:escalation:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/event-subscriptions": {
+      "get": {
+        "operationId": "getV1AdminEventSubscriptions",
+        "summary": "List webhook event subscriptions",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_event_subscriptions_list",
+        "x-lenny-scope": "tools:events:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "operationId": "postV1AdminEventSubscriptions",
+        "summary": "Create a webhook event subscription",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_event_subscription_create",
+        "x-lenny-scope": "tools:events:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/v1/admin/event-subscriptions/{id}": {
+      "get": {
+        "operationId": "getV1AdminEventSubscriptionsId",
+        "summary": "Get a webhook event subscription",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_event_subscription_get",
+        "x-lenny-scope": "tools:events:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "operationId": "putV1AdminEventSubscriptionsId",
+        "summary": "Update a webhook event subscription",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_event_subscription_update",
+        "x-lenny-scope": "tools:events:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "operationId": "deleteV1AdminEventSubscriptionsId",
+        "summary": "Delete a webhook event subscription",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_event_subscription_delete",
+        "x-lenny-scope": "tools:events:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
+    "/v1/admin/event-subscriptions/{id}/deliveries": {
+      "get": {
+        "operationId": "getV1AdminEventSubscriptionsIdDeliveries",
+        "summary": "List a subscription's webhook deliveries",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": null,
+        "x-lenny-scope": "tools:events:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/event-subscriptions/{id}/rotate-secret": {
+      "post": {
+        "operationId": "postV1AdminEventSubscriptionsIdRotateSecret",
+        "summary": "Rotate a subscription's signing secret",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": null,
+        "x-lenny-scope": "tools:events:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/events": {
+      "get": {
+        "operationId": "getV1AdminEvents",
+        "summary": "Poll the operational event stream",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": null,
+        "x-lenny-scope": "tools:events:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/events/stream": {
+      "get": {
+        "operationId": "getV1AdminEventsStream",
+        "summary": "Server-sent operational event stream",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": null,
+        "x-lenny-scope": "tools:events:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/logs/pods/{namespace}/{name}": {
+      "get": {
+        "operationId": "getV1AdminLogsPodsNamespaceName",
+        "summary": "Proxy a pod's logs from the Kubernetes API",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_logs_pod",
+        "x-lenny-scope": "tools:logs:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/me/operations": {
+      "get": {
+        "operationId": "getV1AdminMeOperations",
+        "summary": "The caller's in-flight operations",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": null,
+        "x-lenny-scope": "tools:me:read",
+        "x-lenny-required-role": "user",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/operations": {
+      "get": {
+        "operationId": "getV1AdminOperations",
+        "summary": "List in-flight operations across subsystems",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_operations_list",
+        "x-lenny-scope": "tools:operations:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/operations/{id}": {
+      "get": {
+        "operationId": "getV1AdminOperationsId",
+        "summary": "Get a single operation by canonical id",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_operation_get",
+        "x-lenny-scope": "tools:operations:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/ops/health": {
+      "get": {
+        "operationId": "getV1AdminOpsHealth",
+        "summary": "lenny-ops self-health report",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_ops_health_get",
+        "x-lenny-scope": "tools:health:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/config/diff": {
+      "get": {
+        "operationId": "getV1AdminPlatformConfigDiff",
+        "summary": "Diff the running config against the desired config",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_config_diff",
+        "x-lenny-scope": "tools:config:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/registry": {
+      "get": {
+        "operationId": "getV1AdminPlatformRegistry",
+        "summary": "Get the runtime registry",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_registry_get",
+        "x-lenny-scope": "tools:config:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "operationId": "putV1AdminPlatformRegistry",
+        "summary": "Update the runtime registry",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_registry_set",
+        "x-lenny-scope": "tools:config:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/upgrade-check": {
+      "get": {
+        "operationId": "getV1AdminPlatformUpgradeCheck",
+        "summary": "Check the release channel for an available upgrade",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_check",
+        "x-lenny-scope": "tools:upgrade:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/upgrade/pause": {
+      "post": {
+        "operationId": "postV1AdminPlatformUpgradePause",
+        "summary": "Pause an in-progress upgrade",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_pause",
+        "x-lenny-scope": "tools:upgrade:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/platform/upgrade/preflight": {
+      "post": {
+        "operationId": "postV1AdminPlatformUpgradePreflight",
+        "summary": "Run upgrade preflight and return the plan",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_preflight",
+        "x-lenny-scope": "tools:upgrade:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/upgrade/proceed": {
+      "post": {
+        "operationId": "postV1AdminPlatformUpgradeProceed",
+        "summary": "Proceed a paused upgrade to the next phase",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_proceed",
+        "x-lenny-scope": "tools:upgrade:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/platform/upgrade/rollback": {
+      "post": {
+        "operationId": "postV1AdminPlatformUpgradeRollback",
+        "summary": "Roll back an upgrade",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_rollback",
+        "x-lenny-scope": "tools:upgrade:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/platform/upgrade/start": {
+      "post": {
+        "operationId": "postV1AdminPlatformUpgradeStart",
+        "summary": "Start a platform upgrade",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_start",
+        "x-lenny-scope": "tools:upgrade:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/platform/upgrade/status": {
+      "get": {
+        "operationId": "getV1AdminPlatformUpgradeStatus",
+        "summary": "Get the current upgrade status",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_status",
+        "x-lenny-scope": "tools:upgrade:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/upgrade/verify": {
+      "post": {
+        "operationId": "postV1AdminPlatformUpgradeVerify",
+        "summary": "Verify a completed upgrade phase",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_upgrade_verify",
+        "x-lenny-scope": "tools:upgrade:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/platform/version/full": {
+      "get": {
+        "operationId": "getV1AdminPlatformVersionFull",
+        "summary": "Report full component versions and drift",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_platform_version_full",
+        "x-lenny-scope": "tools:upgrade:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/remediation-locks": {
+      "get": {
+        "operationId": "getV1AdminRemediationLocks",
+        "summary": "List active remediation locks",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_locks_list",
+        "x-lenny-scope": "tools:locks:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "operationId": "postV1AdminRemediationLocks",
+        "summary": "Acquire a remediation lock",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_lock_acquire",
+        "x-lenny-scope": "tools:locks:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/v1/admin/remediation-locks/{id}": {
+      "get": {
+        "operationId": "getV1AdminRemediationLocksId",
+        "summary": "Get a single remediation lock's state",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_lock_get",
+        "x-lenny-scope": "tools:locks:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "patch": {
+        "operationId": "patchV1AdminRemediationLocksId",
+        "summary": "Extend a held remediation lock",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_lock_extend",
+        "x-lenny-scope": "tools:locks:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "operationId": "deleteV1AdminRemediationLocksId",
+        "summary": "Release a remediation lock",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_lock_release",
+        "x-lenny-scope": "tools:locks:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
+    "/v1/admin/remediation-locks/{id}/steal": {
+      "post": {
+        "operationId": "postV1AdminRemediationLocksIdSteal",
+        "summary": "Steal an expired remediation lock",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_lock_steal",
+        "x-lenny-scope": "tools:locks:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/restore/execute": {
+      "post": {
+        "operationId": "postV1AdminRestoreExecute",
+        "summary": "Execute a restore",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_restore_execute",
+        "x-lenny-scope": "tools:restore:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/restore/preview": {
+      "post": {
+        "operationId": "postV1AdminRestorePreview",
+        "summary": "Preview a restore plan (dry-run)",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_restore_preview",
+        "x-lenny-scope": "tools:restore:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/restore/resume": {
+      "post": {
+        "operationId": "postV1AdminRestoreResume",
+        "summary": "Resume a paused restore",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_restore_resume",
+        "x-lenny-scope": "tools:restore:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "202": { "description": "Accepted" } }
+      }
+    },
+    "/v1/admin/restore/safety-check": {
+      "get": {
+        "operationId": "getV1AdminRestoreSafetyCheck",
+        "summary": "Run the pre-restore safety check",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_restore_safety_check",
+        "x-lenny-scope": "tools:restore:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/restore/{id}/confirm-legal-hold-ledger": {
+      "post": {
+        "operationId": "postV1AdminRestoreIdConfirmLegalHoldLedger",
+        "summary": "Confirm the legal-hold ledger before restore",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_restore_confirm_legal_hold",
+        "x-lenny-scope": "tools:restore:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/restore/{id}/status": {
+      "get": {
+        "operationId": "getV1AdminRestoreIdStatus",
+        "summary": "Get a restore operation's status",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_restore_status",
+        "x-lenny-scope": "tools:restore:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/runbooks": {
+      "get": {
+        "operationId": "getV1AdminRunbooks",
+        "summary": "List operational runbooks",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_runbooks_list",
+        "x-lenny-scope": "tools:runbooks:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/runbooks/{name}": {
+      "get": {
+        "operationId": "getV1AdminRunbooksName",
+        "summary": "Get a runbook's full markdown content",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_runbooks_get",
+        "x-lenny-scope": "tools:runbooks:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/runbooks/{name}/steps": {
+      "get": {
+        "operationId": "getV1AdminRunbooksNameSteps",
+        "summary": "Get a runbook's structured steps",
+        "security": [{ "BearerAuth": [] }],
+        "x-lenny-mcp-tool": "lenny_runbook_steps",
+        "x-lenny-scope": "tools:runbooks:read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       }
     }

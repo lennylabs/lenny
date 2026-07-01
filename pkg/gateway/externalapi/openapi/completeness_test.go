@@ -40,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )
 
 // TestDocumentMatchesRegisteredEndpoints enforces the §15.1 OpenAPI
@@ -95,6 +96,51 @@ func TestDocumentMatchesRegisteredEndpoints(t *testing.T) {
 	for _, route := range mainMuxRoutes {
 		if !documented[stripWildcard(route)] {
 			t.Errorf("main-mux route %q is absent from openapi.json (check path-parameter casing)", route)
+		}
+	}
+}
+
+// TestGatewayDocumentCoversLennyOpsRoutes enforces the F-COV-3 completeness
+// guarantee for the lenny-ops half of the operability surface: every route
+// the opsserver serves (opsserver.RouteSchemas, itself pinned to the live
+// opsserver mux by TestRouteSchemasMatchLiveMux) MUST be documented in the
+// served openapi.json under the same path and verb. This is the parallel of
+// the gateway-mux completeness assertion above (mux ⊆ doc), extended to the
+// separately-served lenny-ops routes the §25.12 single document must cover.
+//
+// Without it, the F-COV-3 merge could silently omit a lenny-ops route, so a
+// DevOps agent discovering the operability surface through the gateway
+// OpenAPI (the §25.4 /me links.openApi hop) would find runbooks, drift,
+// backups, restore, or diagnostics missing, and the §25.12 openapi-to-mcp
+// generator would emit no tool for it.
+//
+// spec: §25.12 (entire operability surface — gateway admin-API endpoints and
+// lenny-ops's own endpoints), §15.1 (OpenAPI completeness).
+// diagnosis: A lenny-ops route the opsserver serves is absent from the served
+// openapi.json (or documented under a different verb/casing). The F-COV-3
+// document merge is stale: run `go generate
+// ./pkg/gateway/externalapi/openapi/...` after updating
+// opsserver.RouteSchemas so the served document regains the named route.
+func TestGatewayDocumentCoversLennyOpsRoutes(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	paths, _ := parsed["paths"].(map[string]any)
+
+	schemas := opsserver.RouteSchemas()
+	if len(schemas) == 0 {
+		t.Fatal("opsserver.RouteSchemas() returned nothing — the lenny-ops schema-emission surface is empty")
+	}
+	for _, r := range schemas {
+		item, ok := paths[r.Path].(map[string]any)
+		if !ok {
+			t.Errorf("lenny-ops route %s %s: path %q absent from openapi.json (regenerate the merge)", r.Method, r.Path, r.Path)
+			continue
+		}
+		if _, ok := item[strings.ToLower(r.Method)]; !ok {
+			t.Errorf("lenny-ops route %s %s: verb absent from openapi.json (regenerate the merge)", r.Method, r.Path)
 		}
 	}
 }
