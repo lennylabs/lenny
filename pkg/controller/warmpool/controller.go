@@ -77,6 +77,23 @@ func retryOnConflictSSA(ctx context.Context, apply func(attempt int) error) erro
 // WarmPoolController maintains on SandboxTemplate.status.
 const conditionPoolWarmingUp = "PoolWarmingUp"
 
+// conditionPoolDrained is the §25.6 zero-in-flight condition the
+// WarmPoolController maintains on SandboxTemplate.status. It is True while a
+// pool with a positive minWarm has no idle pods and no pods warming (the
+// "zero in-flight warm-up claims" state §25.6 names as the stuck signal), and
+// False otherwise. Unlike the PoolWarmingUp condition, whose Available and
+// Drained states share a False status, this condition's Status flips on entry
+// into and exit from the drained state, so its lastTransitionTime durably
+// tracks entry into the zero-in-flight state. The doctor's
+// warmPoolStuckReplenish detection reads that transition time for its >5m dwell
+// gate, because meta.SetStatusCondition refreshes lastTransitionTime only on a
+// Status change and the PoolWarmingUp Available→Drained transition keeps Status
+// False.
+//
+// spec: §25.6 line 2956 (warmPoolStuckReplenish detection: zero in-flight
+// warm-up claims for > 5m).
+const conditionPoolDrained = "PoolDrained"
+
 // Label keys the controller stamps on every Sandbox it creates. The
 // pool label scopes the per-pool List; the managed label marks the
 // resource as controller-owned for §17.2 admission targeting.
@@ -798,6 +815,12 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 	warmingCond := poolWarmingUpCondition(int(pool.Spec.MinWarm), warm, ready)
 	setPoolWarmingUp(pool.Name, warmingCond.Status == metav1.ConditionTrue)
 
+	// The PoolDrained condition tracks entry into the §25.6 zero-in-flight
+	// state through a genuine Status change, so the doctor's
+	// warmPoolStuckReplenish >5m dwell reads a fresh lastTransitionTime on
+	// entry rather than the stale PoolWarmingUp False timestamp.
+	drainedCond := poolDrainedCondition(int(pool.Spec.MinWarm), warm, ready)
+
 	// The gauge reflects the live nonce-only state and is published every
 	// reconcile, even for a clean pool that gets no condition write, so the
 	// bundled rule has a 0 series after a controller restart.
@@ -818,7 +841,7 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 		// recovery False is written only for a pool that was previously
 		// degraded; a clean pool that was never degraded gets no condition.
 		securityPresent := meta.FindStatusCondition(live.Status.Conditions, conditionSecurityDegradedMode) != nil
-		conds := []*metav1.Condition{&warmingCond, securityDegradedCondition(nonceOnly, securityPresent)}
+		conds := []*metav1.Condition{&warmingCond, &drainedCond, securityDegradedCondition(nonceOnly, securityPresent)}
 		for _, cond := range conds {
 			if cond == nil {
 				continue
@@ -877,6 +900,34 @@ func poolWarmingUpCondition(minWarm, warm, ready int) metav1.Condition {
 			Reason:  "Available",
 			Message: fmt.Sprintf("Pool has %d idle pods.", ready),
 		}
+	}
+}
+
+// poolDrainedCondition derives the §25.6 PoolDrained condition from the
+// pool's minWarm and its current warm and ready pod counts. It is True in
+// exactly the state the doctor's warmPoolStuckReplenish detection keys off —
+// a pool with a positive minWarm, no idle pods, and no pods warming — and
+// False otherwise, so the condition's lastTransitionTime tracks entry into the
+// zero-in-flight drained state through a genuine Status change. Provisioning
+// (warming > 0) and Available (idle pods present) are both False, matching the
+// PoolWarmingUp reasons that are not the stuck signal.
+//
+// spec: §25.6 line 2956 (zero in-flight warm-up claims).
+func poolDrainedCondition(minWarm, warm, ready int) metav1.Condition {
+	warming := warm - ready
+	if minWarm > 0 && ready == 0 && warming == 0 {
+		return metav1.Condition{
+			Type:    conditionPoolDrained,
+			Status:  metav1.ConditionTrue,
+			Reason:  "Drained",
+			Message: "Pool has no idle or warming pods.",
+		}
+	}
+	return metav1.Condition{
+		Type:    conditionPoolDrained,
+		Status:  metav1.ConditionFalse,
+		Reason:  "NotDrained",
+		Message: fmt.Sprintf("Pool has %d idle and %d warming pods.", ready, warming),
 	}
 }
 
