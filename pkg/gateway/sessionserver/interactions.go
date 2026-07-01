@@ -7,8 +7,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 )
 
 // handleToolUseApprove implements

@@ -15,9 +15,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore/memorystoretest"
-	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore/memorystoretest"
+	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
 )
 
 // spec: §12.8 lines 743-758 — the startup erasure preflight passes against

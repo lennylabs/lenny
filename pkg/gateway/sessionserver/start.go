@@ -20,18 +20,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/coordfence"
-	"github.com/lennylabs/lenny/pkg/gateway/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
@@ -407,40 +407,91 @@ type CreateAndStartResponse = CreateSessionResponse
 // extra work here is just to advance the row through the §15.1
 // precondition table to running before returning.
 func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
-	if !s.requireActiveUser(w, r) {
+	tenantID := s.resolveTenant(r)
+	if !s.createAndStartGates(w, r, tenantID) {
 		return
 	}
-	tenantID := s.resolveTenant(r)
+
+	row, build, ok := s.buildCreateAndStartRow(w, r, tenantID)
+	if !ok {
+		return
+	}
+
+	level, uploadToken, ok := s.mintClaimStartPersist(w, r, &row, build)
+	if !ok {
+		return
+	}
+
+	// spec: §7.2 line 137 — the create-and-start path lands the session
+	// directly in running, so emit status_change(running) for SSE
+	// subscribers (e.g. a parent watching a delegated child) on parity
+	// with the explicit POST /start transition.
+	s.emitStatusChange(row.TenantID, row.ID, row.State)
+	s.writeCreateSessionResponse(w, row, level, uploadToken, build.planWarnings)
+}
+
+// createAndStartGates runs the §15.1 admission gates that precede any row
+// construction on the combined create-and-start path: the active-user
+// gate, the §12.8 tenant-state gate, the §12.9 tenant data-classification
+// gate, the §11 session-quota gate, and the §4.8 policy chain. Each writes
+// its own §15.1 error envelope and returns false; true means the request
+// may proceed to row construction. spec: §15.1, §12.8, §12.9, §11, §4.8.
+func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	if !s.requireActiveUser(w, r) {
+		return false
+	}
 	// spec: §12.8 lines 865-873 — a tenant that has left the `active`
 	// TenantState (disabling/deleting/deleted) rejects new session
 	// creation before any other admission work.
 	if !s.requireTenantState(w, r, tenantID) {
-		return
+		return false
 	}
 	// spec: §12.9 line 1048 — the gateway policy engine validates tenant
 	// data classification before any pool/credential work, so a
 	// misconfigured workspaceTier fails the create up front.
 	if !s.requireTenantClassification(w, r, tenantID) {
-		return
+		return false
 	}
 	if !s.requireSessionQuota(w, r, tenantID) {
-		return
+		return false
 	}
-	if !s.requirePolicyChain(w, r, tenantID) {
-		return
-	}
+	return s.requirePolicyChain(w, r, tenantID)
+}
 
+// createAndStartBuild carries the per-create resolution
+// buildCreateAndStartRow produced that mintClaimStartPersist and the
+// response render consume: the pool-derived isolation level, the parsed
+// workspace plan the same-call claim/start materialize, and the §14
+// plan-parse warnings the response echoes and the parse-warning publish
+// emits.
+type createAndStartBuild struct {
+	level        SessionIsolationLevel
+	parsedPlan   workspaceplan.Plan
+	planWarnings []workspaceplan.Warning
+}
+
+// buildCreateAndStartRow decodes the CreateAndStartRequest and runs the
+// §27.4 playground-visibility, §5.3 isolation-profile, §7.1/§14.1
+// pool-selectable, §14 workspace-plan, §7.5 setup-command, and §4.8
+// PreRoute/PostRoute validation, resolving the §7.1 isolation level and
+// assembling the StateRunning session row (the client-pinned pool, the
+// §15.1 callback, retention/resume deadlines, §27.6 playground caps, the
+// §10.7 experiment variant, and the runtime-hint route rewrites). It
+// returns the built row and the createAndStartBuild the persist and
+// response stages consume, writing the §15.1 error envelope and returning
+// ok=false on any rejection. spec: §27.4, §5.3, §7.1, §14, §7.5, §4.8, §10.7.
+func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, tenantID string) (sessionstore.Session, createAndStartBuild, bool) {
 	var req CreateAndStartRequest
 	body := jsonReader(w, r)
 	defer body.Close()
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	if req.RuntimeRef == "" {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "runtimeRef is required",
 			map[string]any{"field": "runtimeRef"})
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 
 	// spec: §27.5 line 190 / §27.9 line 250 — parity with handleCreate: an
@@ -448,7 +499,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// runtime, so the create-and-start ingress enforces the same §27.4
 	// allowedRuntimes boundary. F-27.4.1.
 	if !s.requirePlaygroundRuntimeVisible(w, r, req.RuntimeRef) {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 
 	isoProf := req.IsolationProfile
@@ -459,7 +510,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"isolationProfile is not a recognised §5.3 profile",
 			map[string]any{"fields": []map[string]string{{"field": "isolationProfile"}}})
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 
 	// spec: §7.1 step 1, §7.1 step 4, §14.1 — honor or reject the
@@ -475,18 +526,18 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// inconsistent profile is rejected. See validateRequestEnvelope for the
 	// matching two-step-path rationale. F-CS2 (0018).
 	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool) {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 
 	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
 	if !planOK {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	// spec: §7.5 line 477 / §5.1 line 76 — runtime setupCommandPolicy.maxCommands
 	// cap, enforced at the create-and-start ingress for parity with the
 	// two-step create path. F-7.5.5.
 	if !s.enforceSetupCommandPolicy(w, r, req.RuntimeRef, parsedPlan) {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 
 	// §4.8 PreRoute (below the ExperimentRouter pivot): run the PreRoute
@@ -503,7 +554,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		RequestedRuntime: req.RuntimeRef,
 	}, math.MinInt32, ExperimentRouterPriority)
 	if !ok {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	runtimeRef := req.RuntimeRef
 	if preRoute.RequestedRuntime != "" {
@@ -547,7 +598,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// completion-notification callbackUrl against the SSRF mitigations and
 	// seal the callbackSecret before any pod side effects. F-15.1.11.
 	if !s.validateCallback(w, r, req.CallbackURL, req.CallbackSecret, tenantID, &row) {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	// spec: §7.1 line 77 / §12.9 line 1043 — stamp the tier-keyed default
 	// artifact-retention deadline at create (mirrors the plain create path)
@@ -568,7 +619,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// the creation closed when the variant pool is less isolated than
 	// the session's profile.
 	if !s.routeExperiment(w, r, &row) {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	// §4.8 PreRoute (at or above the ExperimentRouter pivot): run the
 	// PreRoute interceptors with priority ≥ 300 after experiment routing,
@@ -584,7 +635,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		RequestedRuntime: row.RuntimeRef,
 	}, ExperimentRouterPriority, math.MaxInt32)
 	if !ok {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
 		row.RuntimeRef = afterRoute.RequestedRuntime
@@ -605,8 +656,22 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		UserID:              req.UserID,
 		ResolvedRuntimeName: row.RuntimeRef,
 	}); !ok {
-		return
+		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
+
+	return row, createAndStartBuild{level: level, parsedPlan: parsedPlan, planWarnings: planWarnings}, true
+}
+
+// mintClaimStartPersist runs the §7.1 line 28 atomic create-and-start
+// unit: the §7.1 step 8 uploadToken mint, the same-call §7.1
+// Claim → Prepare → Launch sequence on the pod binder, the store INSERT,
+// and the post-persist registration (lease tree, binding, parse-warning
+// publish). A mint, claim, prepare, launch, or persist failure leaves no
+// row behind and reclaims the pod and any credential lease, and it returns
+// the resolved isolation level and minted uploadToken the response echoes.
+// spec: §7.1 (atomicity, lines 28/58/75), §6.2, §8.6, §14.
+func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, row *sessionstore.Session, build createAndStartBuild) (SessionIsolationLevel, string, bool) {
+	level := build.level
 
 	// spec: §7.1 line 28 — atomicity. Mint the §7.1 step 8 uploadToken
 	// and run the pod claim BEFORE the row is persisted: a failure in any
@@ -621,7 +686,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
 			"upload token issuance failed: "+err.Error())
-		return
+		return level, "", false
 	}
 	row.UploadTokenDigest = parsed.Digest
 	row.UploadTokenExpiry = parsed.Expiry
@@ -643,11 +708,11 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		createClaim *podsession.ClaimResult
 	)
 	if s.podBinder != nil {
-		outcome, err := s.claimAtCreate(r.Context(), row, parsedPlan)
+		outcome, err := s.claimAtCreate(r.Context(), *row, build.parsedPlan)
 		if err != nil {
 			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
 				"could not place the session on a warm pod")
-			return
+			return level, "", false
 		}
 		level = outcome.Level
 		row.ExecutionMode = level.ExecutionMode
@@ -668,7 +733,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 			row.PoolRef = createClaim.Pool
 			startCtx.PodClaim = createClaim.PodClaim
 		}
-		result, err := s.startOnPod(r.Context(), row, parsedPlan, startCtx)
+		result, err := s.startOnPod(r.Context(), *row, build.parsedPlan, startCtx)
 		if err != nil {
 			// spec: §7.1 line 28 — a create-step failure rolls back without
 			// persisting the row, releasing the create-time claim. The
@@ -681,7 +746,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 			}
 			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
 				"could not place the session on a warm pod")
-			return
+			return level, "", false
 		}
 		bound = result
 		if bound != nil {
@@ -690,47 +755,27 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.store.Create(r.Context(), row); err != nil {
+	if err := s.store.Create(r.Context(), *row); err != nil {
 		// spec: §7.1 line 28 — persistence failure after the bind must
 		// roll back the claimed pod so the gateway does not leak a pod
 		// or its credential lease past a "no session_id returned"
 		// failure.
 		s.rollbackBinding(r.Context(), bound)
 		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
-		return
+		return level, "", false
 	}
-	s.recordSessionCreated(r.Context(), row)
+	s.recordSessionCreated(r.Context(), *row)
 	// §8.6: register the root tree's lease-extension budget so a later
 	// adapter ExtendLease resolves it instead of ErrSessionNotFound. F-15.3.5.
-	s.registerLeaseTree(row)
+	s.registerLeaseTree(*row)
 	s.registerBinding(r.Context(), bound)
 	// spec: §14 lines 100, 334, 338 — publish parse-time
 	// `workspace_plan_unknown_source_type` / `workspace_plan_path_collision`
 	// warnings on the per-session SSE bus so Ops/audit subscribers see
 	// them asynchronously, parity with the two-step create path.
 	// F-14.1.17.
-	s.publishParsePlanWarnings(row.TenantID, row.ID, planWarnings)
-
-	// spec: §7.2 line 137 — the create-and-start path lands the session
-	// directly in running, so emit status_change(running) for SSE
-	// subscribers (e.g. a parent watching a delegated child) on parity
-	// with the explicit POST /start transition.
-	s.emitStatusChange(row.TenantID, row.ID, row.State)
-
-	base := toResponse(row)
-	// spec: §7.1 line 75 — the pool-resolved level was stamped onto the
-	// row before persist; persistedIsolationLevel inside toResponse
-	// already returns it. Override with the local copy for parity with
-	// the two-step create path (covers the no-pool-resolved fallback).
-	base.SessionIsolationLevel = level
-	resp := CreateSessionResponse{
-		SessionResponse:       base,
-		UploadToken:           tok,
-		WorkspacePlanWarnings: planWarnings,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(resp)
+	s.publishParsePlanWarnings(row.TenantID, row.ID, build.planWarnings)
+	return level, tok, true
 }
 
 // handleStart implements POST /v1/sessions/{id}/start per §15.1: the

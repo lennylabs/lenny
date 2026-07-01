@@ -11,15 +11,17 @@ import (
 	"strconv"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/messagerouting"
-	"github.com/lennylabs/lenny/pkg/gateway/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/messagerouting"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
@@ -270,28 +272,53 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(ctx)
 
 	tenantID := s.resolveTenant(r)
+	row, ok := s.loadMessageTarget(w, r, tenantID)
+	if !ok {
+		return
+	}
+
+	req, msgs, deliverIdx, ok := s.parseMessageBatch(w, r, row)
+	if !ok {
+		return
+	}
+
+	outcome, ok := s.deliverMessageBatch(w, r, span, row, tenantID, req, msgs, deliverIdx)
+	if !ok {
+		return
+	}
+
+	s.writeDeliveryReceipt(w, req, outcome)
+}
+
+// loadMessageTarget runs the §15.1 message-injection precondition gates:
+// the session lookup in the active tenant, the §15.1 line 818
+// tenant-suspend gate, the §15.1 precondition-table check, the §7.2 line
+// 339 pre-running TARGET_NOT_READY guard, and the §5.1 fail-closed
+// mid-session injection-support gate. It writes the §15.1 error envelope
+// and returns ok=false on any rejection. spec: §15.1, §7.2 line 339, §5.1.
+func (s *Server) loadMessageTarget(w http.ResponseWriter, r *http.Request, tenantID string) (sessionstore.Session, bool) {
 	id := r.PathValue("id")
 	row, err := s.store.Get(r.Context(), tenantID, id)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return
+			return sessionstore.Session{}, false
 		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
+		return sessionstore.Session{}, false
 	}
 	// spec: §15.1 line 818 — message injection against a suspended tenant
 	// is rejected with TENANT_SUSPENDED. The session exists (checked
 	// above) before the suspension state leaks via this endpoint.
 	if !s.requireTenantNotSuspended(w, r, tenantID) {
-		return
+		return sessionstore.Session{}, false
 	}
 	if err := session.Validate(session.PreconditionRequest{
 		Endpoint:     session.EndpointMessages,
 		CurrentState: row.State,
 	}); err != nil {
 		s.writePreconditionError(w, err)
-		return
+		return sessionstore.Session{}, false
 	}
 
 	// spec: §7.2 line 339 (Pre-running row) — external-client REST
@@ -304,9 +331,24 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
 			"session has not yet entered running state; retry after start",
 			map[string]any{"currentState": string(row.State)})
-		return
+		return sessionstore.Session{}, false
 	}
 
+	if !s.requireInjectionSupported(w, r, row) {
+		return sessionstore.Session{}, false
+	}
+	return row, true
+}
+
+// requireInjectionSupported runs the §5.1 / §15.1 mid-session
+// injection-support gate. It rejects with INJECTION_REJECTED when the
+// resolved runtime declares capabilities.injection.supported: false, and
+// fails closed with a retryable SERVICE_UNAVAILABLE on a transient
+// runtime- or override-store read error. The gate degrades open only on a
+// definite "no record" answer (unwired registry, empty RuntimeRef, or a
+// not-found from either backing store). spec: §5.1 (injection fail-closed),
+// §15.1 (SERVICE_UNAVAILABLE).
+func (s *Server) requireInjectionSupported(w http.ResponseWriter, r *http.Request, row sessionstore.Session) bool {
 	// §5.1 / §15.1: reject mid-session injection when the session's
 	// runtime declares capabilities.injection.supported: false. Per
 	// §5.1 injection support defaults to false. The runtime is resolved
@@ -323,61 +365,73 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// the policy denial (POLICY/non-retryable); a transient infra blip
 	// would mislabel a retryable condition as a permanent policy block.
 	// spec: §5.1 (injection fail-closed).
-	if s.runtimes != nil && row.RuntimeRef != "" {
-		// §5.1 line 49: overlay the session tenant's capability override so
-		// a tenant that disabled injection.supported on this runtime has
-		// the injection gate enforce its narrowed value. The override-store
-		// read error now propagates from ResolveForTenant, so a transient
-		// override-store blip on the F-5.1.20 tenant-narrowing path fails
-		// closed here instead of admitting injection. F-5.1.20.
-		rt, err := runtimecapoverride.ResolveForTenant(r.Context(), s.runtimes, s.capOverrides, row.TenantID, row.RuntimeRef)
-		switch {
-		case err == nil:
-			if !rt.InjectionSupported() {
-				s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
-					"runtime does not support mid-session message injection", nil)
-				return
-			}
-		case errors.Is(err, runtimestore.ErrNotFound):
-			// No runtime record from either store: degrade open so a
-			// gateway whose registry has no entry for the ref does not
-			// block injection.
-		default:
-			// A transient read error from either backing store: fail
-			// closed. The granular "runtime-store read failed" versus
-			// "override-store read failed" cause is recorded in both the
-			// gateway log and the lenny_injection_gate_failclosed_total
-			// metric rather than as a distinct client code, keeping the
-			// client surface coarse (the cause is not an authorization or
-			// existence oracle). The metric label lets an operator see the
-			// runtime-store-versus-override-store distinction the coarse
-			// SERVICE_UNAVAILABLE code hides. spec: §5.1 (injection
-			// fail-closed), §15.1 (SERVICE_UNAVAILABLE).
-			cause := injectionFailClosedCause(err)
-			log.Printf("sessionserver: §5.1 injection gate failed closed for session %s runtime %s (cause=%s): resolve error: %v",
-				row.ID, row.RuntimeRef, cause, err)
-			if s.incInjectionGateFailClosed != nil {
-				s.incInjectionGateFailClosed(cause)
-			}
-			w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
-			s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
-				"runtime capability lookup is transiently unavailable; retry", nil)
-			return
-		}
+	if s.runtimes == nil || row.RuntimeRef == "" {
+		return true
 	}
+	// §5.1 line 49: overlay the session tenant's capability override so
+	// a tenant that disabled injection.supported on this runtime has
+	// the injection gate enforce its narrowed value. The override-store
+	// read error now propagates from ResolveForTenant, so a transient
+	// override-store blip on the F-5.1.20 tenant-narrowing path fails
+	// closed here instead of admitting injection. F-5.1.20.
+	rt, err := runtimecapoverride.ResolveForTenant(r.Context(), s.runtimes, s.capOverrides, row.TenantID, row.RuntimeRef)
+	switch {
+	case err == nil:
+		if !rt.InjectionSupported() {
+			s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
+				"runtime does not support mid-session message injection", nil)
+			return false
+		}
+		return true
+	case errors.Is(err, runtimestore.ErrNotFound):
+		// No runtime record from either store: degrade open so a
+		// gateway whose registry has no entry for the ref does not
+		// block injection.
+		return true
+	default:
+		// A transient read error from either backing store: fail
+		// closed. The granular "runtime-store read failed" versus
+		// "override-store read failed" cause is recorded in both the
+		// gateway log and the lenny_injection_gate_failclosed_total
+		// metric rather than as a distinct client code, keeping the
+		// client surface coarse (the cause is not an authorization or
+		// existence oracle). The metric label lets an operator see the
+		// runtime-store-versus-override-store distinction the coarse
+		// SERVICE_UNAVAILABLE code hides. spec: §5.1 (injection
+		// fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+		cause := injectionFailClosedCause(err)
+		log.Printf("sessionserver: §5.1 injection gate failed closed for session %s runtime %s (cause=%s): resolve error: %v",
+			row.ID, row.RuntimeRef, cause, err)
+		if s.incInjectionGateFailClosed != nil {
+			s.incInjectionGateFailClosed(cause)
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+			"runtime capability lookup is transiently unavailable; retry", nil)
+		return false
+	}
+}
 
+// parseMessageBatch decodes the §15.4 MessageRequest, rejects an empty
+// batch and an unknown `delivery` enum value, resolves the §7.2 path-1
+// inReplyTo replies directly against the inputwait registry, and projects
+// the remaining payloads to the executor.Message text form. It returns the
+// decoded request, the projected messages, and the indexes of the payloads
+// still to deliver, writing the §15.1 error envelope and returning ok=false
+// on a malformed body or invalid enum. spec: §15.4, §7.2 paths 1/7. F-7.2.14.
+func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row sessionstore.Session) (MessageRequest, []executor.Message, []int, bool) {
 	var req MessageRequest
 	body := jsonReader(w, r)
 	defer body.Close()
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
-		return
+		return MessageRequest{}, nil, nil, false
 	}
 	if len(req.Messages) == 0 {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"messages must contain at least one entry",
 			map[string]any{"field": "messages"})
-		return
+		return MessageRequest{}, nil, nil, false
 	}
 
 	// spec: §15.4 lines 1715-1723 — `delivery` is a closed enum;
@@ -389,7 +443,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, http.StatusBadRequest, "INVALID_DELIVERY_VALUE",
 				"message delivery envelope contains an unrecognized `delivery` field value",
 				map[string]any{"messageIndex": i, "delivery": m.Delivery})
-			return
+			return MessageRequest{}, nil, nil, false
 		}
 	}
 
@@ -399,11 +453,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// delivery for that payload. Path 1 wins over every other path
 	// per §7.2 line 313 "the first matching path wins". F-7.2.14.
 	deliverIdx := make([]int, 0, len(req.Messages))
-	resolvedReplies := 0
 	for i, m := range req.Messages {
 		if m.InReplyTo != "" && s.inputWaits != nil {
 			if err := s.inputWaits.Resolve(row.ID, m.InReplyTo, m.Content.Text()); err == nil {
-				resolvedReplies++
 				continue
 			}
 			// A non-matching inReplyTo falls through to normal
@@ -430,7 +482,28 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			Content: m.Content.Text(),
 		})
 	}
+	return req, msgs, deliverIdx, true
+}
 
+// deliveryOutcome carries the §7.2 delivery-path result the receipt render
+// consumes: the §15.4 delivery status and reason, the queue depth on a
+// buffered path, and the executor response parts on the delivered path.
+type deliveryOutcome struct {
+	status     session.DeliveryStatus
+	reason     session.DeliveryReason
+	queueDepth int
+	out        []executor.MessagePart
+}
+
+// deliverMessageBatch selects and runs the §7.2 paths-1-7 delivery path for
+// the non-reply messages: the messagerouting classifier picks direct
+// delivery (executor.Send plus the §4.8 PostAgentOutput chain, transcript
+// write, and §15.1 event publish), inbox/DLQ buffering, or a terminal /
+// not-ready rejection. It writes the §15.1 error envelope and returns
+// ok=false on an executor failure or a classifier rejection that ends the
+// request; otherwise it returns the deliveryOutcome the receipt echoes.
+// spec: §7.2 paths 1-7, §4.8, §15.1, §15.2.1, §15.4.1. F-7.2.5, F-MS4.
+func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, span trace.Span, row sessionstore.Session, tenantID string, req MessageRequest, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
 	// spec: §7.2 paths 1-7 (lines 313-331) — select the delivery path
 	// for the non-reply messages. Path 1 (inReplyTo) was resolved
 	// above; "the first matching path wins". A synchronous in-process
@@ -445,164 +518,172 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// readiness model and §5.2 concurrent-workspace build-out; a
 	// coordinating replica that cannot drive them buffers and returns
 	// `queued`, which §7.2 sanctions. F-7.2.5.
-	deliveryStatus := session.DeliveryStatusDelivered
-	var deliveryReason session.DeliveryReason
-	queueDepth := 0
-	var out []executor.MessagePart
-	// respAnnotations carries the §15.4.1 envelope-level degradation
-	// annotations (schema_version_ahead, blob_ref_unresolvable) the
-	// executor, as a live consumer, surfaced while ingesting the runtime's
-	// response. They are published on the session event stream so an SSE
-	// subscriber is informed of potential response incompleteness.
-	var respAnnotations map[string]any
+	outcome := deliveryOutcome{status: session.DeliveryStatusDelivered}
+	if len(msgs) == 0 {
+		return outcome, true
+	}
 
-	if len(msgs) > 0 {
-		inputRequired := row.State == session.StateInputRequired ||
-			(s.inputWaits != nil && len(s.inputWaits.PendingForSession(row.ID)) > 0)
-		immediate := false
-		for _, i := range deliverIdx {
-			if req.Messages[i].Delivery == "immediate" {
-				immediate = true
-				break
-			}
+	inputRequired := row.State == session.StateInputRequired ||
+		(s.inputWaits != nil && len(s.inputWaits.PendingForSession(row.ID)) > 0)
+	immediate := false
+	for _, i := range deliverIdx {
+		if req.Messages[i].Delivery == "immediate" {
+			immediate = true
+			break
 		}
-		decision := messagerouting.Classify(row.State, inputRequired, immediate, messagerouting.SourceExternal)
-		switch decision.Action {
-		case messagerouting.ActionDeliver:
-			o, err := s.executor.Send(r.Context(), row.ID, msgs)
-			if err != nil {
-				// spec: §16.3 line 342 / §16 error taxonomy — the executor
-				// (the pod) rejected the prompt; UPSTREAM marks it a
-				// downstream dependency failure on the `session.prompt`
-				// span.
-				tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
-				s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
-					"executor rejected the message batch",
-					map[string]any{"reason": err.Error()})
-				return
-			}
-			out = o.Parts
-			respAnnotations = o.Annotations
+	}
+	decision := messagerouting.Classify(row.State, inputRequired, immediate, messagerouting.SourceExternal)
+	switch decision.Action {
+	case messagerouting.ActionDeliver:
+		o, err := s.executor.Send(r.Context(), row.ID, msgs)
+		if err != nil {
+			// spec: §16.3 line 342 / §16 error taxonomy — the executor
+			// (the pod) rejected the prompt; UPSTREAM marks it a
+			// downstream dependency failure on the `session.prompt`
+			// span.
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
+			s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
+				"executor rejected the message batch",
+				map[string]any{"reason": err.Error()})
+			return deliveryOutcome{}, false
+		}
+		out := o.Parts
+		// respAnnotations carries the §15.4.1 envelope-level degradation
+		// annotations (schema_version_ahead, blob_ref_unresolvable) the
+		// executor, as a live consumer, surfaced while ingesting the
+		// runtime's response. They are published on the session event stream
+		// so an SSE subscriber is informed of potential response
+		// incompleteness.
+		respAnnotations := o.Annotations
 
-			// §4.8 PostAgentOutput: run the chain over the agent's output
-			// parts before delivering the response to the client. A
-			// REJECT blocks delivery (and writes the §16.7 audit row); a
-			// MODIFY rewrites the parts that are transcribed, published,
-			// and returned. spec: §4.8 line 1054.
-			if s.interceptors != nil && len(out) > 0 {
-				modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
-				if rejected {
-					return
-				}
-				out = modified
+		// §4.8 PostAgentOutput: run the chain over the agent's output
+		// parts before delivering the response to the client. A
+		// REJECT blocks delivery (and writes the §16.7 audit row); a
+		// MODIFY rewrites the parts that are transcribed, published,
+		// and returned. spec: §4.8 line 1054.
+		if s.interceptors != nil && len(out) > 0 {
+			modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
+			if rejected {
+				return deliveryOutcome{}, false
 			}
+			out = modified
+		}
 
-			// Record the §15.1 transcript: inbound messages followed by
-			// the runtime's text response parts. Best-effort — a
-			// transcript write failure does not fail the message delivery.
-			if s.transcripts != nil {
-				entries := make([]transcriptstore.Entry, 0, len(msgs)+len(out))
-				now := s.clock()
-				for _, m := range msgs {
-					entries = append(entries, transcriptstore.Entry{
-						Role: m.Role, Content: m.Content, Timestamp: now,
-					})
-				}
-				for _, p := range out {
-					if p.Type == "text" {
-						entries = append(entries, transcriptstore.Entry{
-							Role: "assistant", Content: p.Text, Timestamp: now,
-						})
-					}
-				}
-				_ = s.transcripts.Append(r.Context(), tenantID, row.ID, entries...)
-			}
-
-			// Publish the §15.1 session events so SSE subscribers observe
-			// the message + response live.
+		// Record the §15.1 transcript: inbound messages followed by
+		// the runtime's text response parts. Best-effort — a
+		// transcript write failure does not fail the message delivery.
+		if s.transcripts != nil {
+			entries := make([]transcriptstore.Entry, 0, len(msgs)+len(out))
+			now := s.clock()
 			for _, m := range msgs {
-				s.publishEvent(row.TenantID, row.ID, "message_delivered", map[string]any{
-					"role": m.Role, "content": m.Content,
+				entries = append(entries, transcriptstore.Entry{
+					Role: m.Role, Content: m.Content, Timestamp: now,
 				})
 			}
 			for _, p := range out {
-				s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
-					"type": p.Type, "text": p.Text, "ref": p.Ref,
-				})
-				// spec: §6.3 line 356, §16.1 line 15 — the first
-				// agent-streamed `response` event observed on this session
-				// is the §6.3 TTFT signal. recordTTFTOnce LoadOrStores so
-				// only the first event per session triggers the histogram.
-				s.recordTTFTOnce(row, "response")
+				if p.Type == "text" {
+					entries = append(entries, transcriptstore.Entry{
+						Role: "assistant", Content: p.Text, Timestamp: now,
+					})
+				}
 			}
-			// spec: §15.4.1 lines 1501, 1577 — when the gateway forward-read
-			// a response part it did not fully understand (a schemaVersion
-			// ahead of its known max, or an unresolvable ref), it surfaces
-			// the degradation annotation so the subscriber is informed the
-			// response may be incomplete rather than silently dropping it.
-			if len(respAnnotations) > 0 {
-				s.publishEvent(row.TenantID, row.ID, "response_degraded", respAnnotations)
-			}
-			deliveryStatus = session.DeliveryStatusDelivered
-
-		case messagerouting.ActionBufferInbox:
-			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
-			if berr != nil {
-				// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
-				// receipt) — an inbox-enqueue failure surfaces as a 200
-				// `delivery_receipt` with `status:"error"`/`reason:
-				// "inbox_unavailable"`, matching the MCP send_message receipt
-				// form (mcptools.buildSendMessageReceiptStatusReason). §15.4
-				// defines `inbox_unavailable` strictly as a receipt status/
-				// reason, and `INBOX_UNAVAILABLE` is in neither the §15.1
-				// catalog nor openapi.json, so the prior 503 envelope was the
-				// non-conforming side. F-MS4.
-				deliveryStatus = session.DeliveryStatusError
-				deliveryReason = session.DeliveryReasonInboxUnavailable
-				break
-			}
-			deliveryStatus = session.DeliveryStatusQueued
-			queueDepth = depth
-			if dropped {
-				deliveryStatus = session.DeliveryStatusDropped
-				deliveryReason = session.DeliveryReasonInboxOverflow
-			}
-
-		case messagerouting.ActionBufferDLQ:
-			dropped, _, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetDLQ, 0)
-			if berr != nil {
-				// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
-				// receipt) — a DLQ-enqueue failure surfaces as the same 200
-				// error/inbox_unavailable receipt as the inbox path above,
-				// keeping the REST and MCP contracts in lockstep. F-MS4.
-				deliveryStatus = session.DeliveryStatusError
-				deliveryReason = session.DeliveryReasonInboxUnavailable
-				break
-			}
-			deliveryStatus = session.DeliveryStatusQueued
-			if dropped {
-				deliveryStatus = session.DeliveryStatusDropped
-				deliveryReason = session.DeliveryReasonDLQOverflow
-			}
-
-		case messagerouting.ActionRejectTerminal:
-			// spec: §7.2 dead-letter table terminal row.
-			s.writeError(w, http.StatusConflict, "TARGET_TERMINAL",
-				"target session is in terminal state "+string(row.State),
-				map[string]any{"targetState": string(row.State)})
-			return
-
-		case messagerouting.ActionRejectNotReady:
-			// spec: §7.2 line 339 pre-running external-client row. (The
-			// early pre-running guard above already covers this for REST;
-			// retained so the classifier's contract holds on every path.)
-			s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
-				"session has not yet entered running state; retry after start",
-				map[string]any{"currentState": string(row.State)})
-			return
+			_ = s.transcripts.Append(r.Context(), tenantID, row.ID, entries...)
 		}
-	}
 
+		// Publish the §15.1 session events so SSE subscribers observe
+		// the message + response live.
+		for _, m := range msgs {
+			s.publishEvent(row.TenantID, row.ID, "message_delivered", map[string]any{
+				"role": m.Role, "content": m.Content,
+			})
+		}
+		for _, p := range out {
+			s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
+				"type": p.Type, "text": p.Text, "ref": p.Ref,
+			})
+			// spec: §6.3 line 356, §16.1 line 15 — the first
+			// agent-streamed `response` event observed on this session
+			// is the §6.3 TTFT signal. recordTTFTOnce LoadOrStores so
+			// only the first event per session triggers the histogram.
+			s.recordTTFTOnce(row, "response")
+		}
+		// spec: §15.4.1 lines 1501, 1577 — when the gateway forward-read
+		// a response part it did not fully understand (a schemaVersion
+		// ahead of its known max, or an unresolvable ref), it surfaces
+		// the degradation annotation so the subscriber is informed the
+		// response may be incomplete rather than silently dropping it.
+		if len(respAnnotations) > 0 {
+			s.publishEvent(row.TenantID, row.ID, "response_degraded", respAnnotations)
+		}
+		outcome.out = out
+		outcome.status = session.DeliveryStatusDelivered
+
+	case messagerouting.ActionBufferInbox:
+		dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
+		if berr != nil {
+			// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
+			// receipt) — an inbox-enqueue failure surfaces as a 200
+			// `delivery_receipt` with `status:"error"`/`reason:
+			// "inbox_unavailable"`, matching the MCP send_message receipt
+			// form (mcptools.buildSendMessageReceiptStatusReason). §15.4
+			// defines `inbox_unavailable` strictly as a receipt status/
+			// reason, and `INBOX_UNAVAILABLE` is in neither the §15.1
+			// catalog nor openapi.json, so the prior 503 envelope was the
+			// non-conforming side. F-MS4.
+			outcome.status = session.DeliveryStatusError
+			outcome.reason = session.DeliveryReasonInboxUnavailable
+			break
+		}
+		outcome.status = session.DeliveryStatusQueued
+		outcome.queueDepth = depth
+		if dropped {
+			outcome.status = session.DeliveryStatusDropped
+			outcome.reason = session.DeliveryReasonInboxOverflow
+		}
+
+	case messagerouting.ActionBufferDLQ:
+		dropped, _, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetDLQ, 0)
+		if berr != nil {
+			// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
+			// receipt) — a DLQ-enqueue failure surfaces as the same 200
+			// error/inbox_unavailable receipt as the inbox path above,
+			// keeping the REST and MCP contracts in lockstep. F-MS4.
+			outcome.status = session.DeliveryStatusError
+			outcome.reason = session.DeliveryReasonInboxUnavailable
+			break
+		}
+		outcome.status = session.DeliveryStatusQueued
+		if dropped {
+			outcome.status = session.DeliveryStatusDropped
+			outcome.reason = session.DeliveryReasonDLQOverflow
+		}
+
+	case messagerouting.ActionRejectTerminal:
+		// spec: §7.2 dead-letter table terminal row.
+		s.writeError(w, http.StatusConflict, "TARGET_TERMINAL",
+			"target session is in terminal state "+string(row.State),
+			map[string]any{"targetState": string(row.State)})
+		return deliveryOutcome{}, false
+
+	case messagerouting.ActionRejectNotReady:
+		// spec: §7.2 line 339 pre-running external-client row. (The
+		// early pre-running guard above already covers this for REST;
+		// retained so the classifier's contract holds on every path.)
+		s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
+			"session has not yet entered running state; retry after start",
+			map[string]any{"currentState": string(row.State)})
+		return deliveryOutcome{}, false
+	}
+	return outcome, true
+}
+
+// writeDeliveryReceipt renders the §15.4 synchronous delivery_receipt:
+// `messageId` defaults to the first inbound message's sender-supplied id
+// (gateway-assigned ids carry the `msg_` prefix), the status is the §7.2
+// path outcome, and the timestamp/queueDepth are stamped per status. The
+// executor response parts ride alongside on the delivered path. spec: §15.4
+// lines 1725-1737/1784. F-7.2.5, F-7.2.10, F-MS4.
+func (s *Server) writeDeliveryReceipt(w http.ResponseWriter, req MessageRequest, outcome deliveryOutcome) {
 	// spec: §15.4 lines 1725-1737 — every send_message call returns a
 	// synchronous `delivery_receipt`. `messageId` defaults to the
 	// first inbound message's sender-supplied id; gateway-assigned
@@ -621,20 +702,20 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt := session.DeliveryReceipt{
 		MessageID: messageID,
-		Status:    deliveryStatus,
-		Reason:    deliveryReason,
+		Status:    outcome.status,
+		Reason:    outcome.reason,
 	}
-	if deliveryStatus == session.DeliveryStatusDelivered {
+	if outcome.status == session.DeliveryStatusDelivered {
 		receipt.DeliveredAt = s.clock()
 	}
-	if deliveryStatus == session.DeliveryStatusQueued {
-		receipt.QueueDepth = queueDepth
+	if outcome.status == session.DeliveryStatusQueued {
+		receipt.QueueDepth = outcome.queueDepth
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(MessageResponse{
 		DeliveryReceipt: receipt,
-		Output:          out,
+		Output:          outcome.out,
 	})
 }
 

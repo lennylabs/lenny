@@ -14,18 +14,19 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/credcache"
-	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
@@ -91,7 +92,7 @@ func TestNewLLMProxyServerRejectsNonPost(t *testing.T) {
 // operational event.
 
 func TestExperimentRejectionReporterEmitsOperationalEvent(t *testing.T) {
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "replica-test")
 	reporter := experimentRejectionReporter{emitter: emitter}
 
 	reporter.ReportExperimentIsolationRejection(context.Background(), sessionserver.ExperimentIsolationRejection{

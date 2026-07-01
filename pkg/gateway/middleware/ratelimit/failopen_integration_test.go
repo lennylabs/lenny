@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/failopen"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 )
 
 // togglingCounter fails (forcing fail-open) while fail is true and returns

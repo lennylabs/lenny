@@ -5,8 +5,8 @@ package sessionserver
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
 // TestNewHonorsInjectedSlotHealth verifies New wires the §5.2 fail/leak

@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // expiryTerminalHook is the minimal TerminalHook that satisfies the watchdog's

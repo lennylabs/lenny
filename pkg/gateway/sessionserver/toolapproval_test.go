@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
 )
 
 func fixedNow() time.Time { return time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC) }

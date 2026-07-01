@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
-	"github.com/lennylabs/lenny/pkg/gateway/evictionfallback"
-	"github.com/lennylabs/lenny/pkg/gateway/evictionstatestore"
-	evictionpg "github.com/lennylabs/lenny/pkg/gateway/evictionstatestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionfallback"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
+	evictionpg "github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore/pgstore"
 )
 
 type collectingUploader struct {

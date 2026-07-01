@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/upgrade"
@@ -17,11 +18,11 @@ import (
 
 // newService wires a Service over a MemoryStore with a deterministic
 // clock and id, capturing every audit event and operational event.
-func newService(t *testing.T) (*upgradeservice.Service, *[]upgradeservice.AuditEvent, *events.EventBuffer) {
+func newService(t *testing.T) (*upgradeservice.Service, *[]upgradeservice.AuditEvent, *eventbuffer.EventBuffer) {
 	t.Helper()
 	var audits []upgradeservice.AuditEvent
-	buf := events.NewEventBuffer(0)
-	em := events.NewEmitter(buf, "test")
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "test")
 	n := 0
 	svc := upgradeservice.New(upgradeservice.Options{
 		Store:   upgradeservice.NewMemoryStore(),

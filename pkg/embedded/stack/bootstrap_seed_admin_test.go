@@ -12,11 +12,11 @@ import (
 	"time"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
 // TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2 is a

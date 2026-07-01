@@ -29,7 +29,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // TreeCycleObserver is invoked when a §8.9 tree walker hits a cycle

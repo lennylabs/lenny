@@ -9,9 +9,9 @@ import (
 
 	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	sessionmem "github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	sessionmem "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
 // spec: §12.8 line 865, lines 872-889 — the gateway-hosted §12.8

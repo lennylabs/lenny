@@ -6,7 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
@@ -23,11 +24,11 @@ func staticChannel(version string) releasechannel.Source {
 func TestCheckDetectsNewerVersion(t *testing.T) {
 	var gauge []bool
 	var audits []upgradeservice.AuditEvent
-	buf := events.NewEventBuffer(0)
+	buf := eventbuffer.NewEventBuffer(0)
 	chk := upgradeservice.NewChecker(upgradeservice.CheckerOptions{
 		Source:         staticChannel("1.6.0"),
 		CurrentVersion: "1.5.0",
-		Emitter:        events.NewEmitter(buf, "test"),
+		Emitter:        eventbuffer.NewEmitter(buf, "test"),
 		Audit:          func(ev upgradeservice.AuditEvent) { audits = append(audits, ev) },
 		Gauge:          func(a bool) { gauge = append(gauge, a) },
 	})
@@ -54,11 +55,11 @@ func TestCheckDetectsNewerVersion(t *testing.T) {
 // emits no availability event, but still records version_checked.
 func TestCheckUpToDate(t *testing.T) {
 	var gauge []bool
-	buf := events.NewEventBuffer(0)
+	buf := eventbuffer.NewEventBuffer(0)
 	chk := upgradeservice.NewChecker(upgradeservice.CheckerOptions{
 		Source:         staticChannel("1.5.0"),
 		CurrentVersion: "1.5.0",
-		Emitter:        events.NewEmitter(buf, "test"),
+		Emitter:        eventbuffer.NewEmitter(buf, "test"),
 		Gauge:          func(a bool) { gauge = append(gauge, a) },
 	})
 	res, err := chk.Check(context.Background())

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
 // poolListSortFields / poolListDefaultSort pin the §15.1 line 1228 sort

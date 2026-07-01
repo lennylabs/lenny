@@ -13,12 +13,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentprovider"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/ofrep"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/ofrep"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

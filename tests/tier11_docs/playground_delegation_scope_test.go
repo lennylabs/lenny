@@ -36,7 +36,7 @@ func readRepoFile(t *testing.T, root string, parts ...string) string {
 // surfaces that independently enumerate the POST /v1/playground/token success
 // body and the tokenResponse struct to all carry effectiveScope. §27.3.1 is the
 // authoritative mint-response body, §15.1 line 903 is the endpoint-table
-// duplicate, and pkg/gateway/playground/token.go is the code struct; the
+// duplicate, and pkg/gateway/mcpfabric/playground/token.go is the code struct; the
 // proposal added effectiveScope to all three so they cannot drift.
 //
 // diagnosis: a failure means one of the three effectiveScope carrier surfaces
@@ -50,7 +50,7 @@ func TestPlaygroundMintResponseEffectiveScopeSurfacesAgree(t *testing.T) {
 
 	spec27 := readRepoFile(t, root, "spec", "27_web-playground.md")
 	spec15 := readRepoFile(t, root, "spec", "15_external-api-surface.md")
-	tokenGo := readRepoFile(t, root, "pkg", "gateway", "playground", "token.go")
+	tokenGo := readRepoFile(t, root, "pkg", "gateway", "mcpfabric", "playground", "token.go")
 
 	// §27.3.1 mint-response body must carry the effectiveScope JSON field.
 	if !strings.Contains(spec27, `"effectiveScope"`) {
@@ -66,7 +66,7 @@ func TestPlaygroundMintResponseEffectiveScopeSurfacesAgree(t *testing.T) {
 	}
 	// The tokenResponse struct must carry the matching JSON tag.
 	if !strings.Contains(tokenGo, "`json:\"effectiveScope\"`") {
-		t.Error("pkg/gateway/playground/token.go tokenResponse struct does not carry the effectiveScope JSON tag; the wire field must match the §27.3.1 and §15.1 spec surfaces")
+		t.Error("pkg/gateway/mcpfabric/playground/token.go tokenResponse struct does not carry the effectiveScope JSON tag; the wire field must match the §27.3.1 and §15.1 spec surfaces")
 	}
 }
 

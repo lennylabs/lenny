@@ -41,9 +41,9 @@ import (
 	"time"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // elicitGateBody mirrors the §15.1 line 824 GET/PUT response body.

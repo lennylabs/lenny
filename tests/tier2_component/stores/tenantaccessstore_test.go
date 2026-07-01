@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
-	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
+	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

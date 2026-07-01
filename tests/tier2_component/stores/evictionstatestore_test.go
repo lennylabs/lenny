@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/evictionstatestore"
-	evictionpg "github.com/lennylabs/lenny/pkg/gateway/evictionstatestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
+	evictionpg "github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore/pgstore"
 )
 
 // spec: 12.2.1

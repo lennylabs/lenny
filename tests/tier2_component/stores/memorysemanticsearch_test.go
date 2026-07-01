@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
-	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

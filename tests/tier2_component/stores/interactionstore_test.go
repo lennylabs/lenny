@@ -17,8 +17,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
-	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
 )
 
 // interactionSeed records a pending interaction directed at userID and

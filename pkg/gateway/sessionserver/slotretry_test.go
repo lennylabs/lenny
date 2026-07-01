@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 )
 

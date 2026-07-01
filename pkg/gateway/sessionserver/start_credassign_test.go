@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 )
 
 // TestWriteTokenServiceUnavailableShape exercises the §4.3 line 214

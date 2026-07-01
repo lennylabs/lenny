@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
 // tenantResidencyLookup adapts the tenant store to the §11.7 CMP-058

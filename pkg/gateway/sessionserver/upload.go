@@ -14,11 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -181,37 +183,9 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		}()
 	}
 	tenantID := s.resolveTenant(r)
-	id := r.PathValue("id")
 
-	row, err := s.store.Get(r.Context(), tenantID, id)
-	if err != nil {
-		// spec: §16.3 line 338 — record the lookup failure on the
-		// `session.upload` span. A missing session is a caller error
-		// (PERMANENT); any other store error is left uncategorized.
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return
-		}
-		tracing.RecordError(span, err)
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-
-	// §7.1 uploadToken: validate before any body is read.
-	if err := s.verifyUploadToken(r, row.ID); err != nil {
-		s.writeUploadTokenError(w, err)
-		return
-	}
-
-	// §15.1 precondition: upload admitted only in created (and
-	// running, when capabilities.midSessionUpload is true; the
-	// minimal gateway leaves the capability flag off).
-	if err := session.Validate(session.PreconditionRequest{
-		Endpoint:     session.EndpointUpload,
-		CurrentState: row.State,
-	}); err != nil {
-		s.writePreconditionError(w, err)
+	row, ok := s.admitUpload(w, r, span, tenantID)
+	if !ok {
 		return
 	}
 
@@ -278,11 +252,87 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 	abortSig, releaseAbort := s.uploadAborts.register(row.ID)
 	defer releaseAbort()
 
+	commit, ok := s.commitUploadBlob(w, r, span, tenantID, row, mimeType, reservation, body, abortSig, &breakerErr)
+	if !ok {
+		return
+	}
+
+	if !s.finalizeUpload(w, r, tenantID, row, reservation, commit) {
+		return
+	}
+
+	s.writeUploadResponse(w, r, row, mimeType, kind, commit)
+}
+
+// uploadCommit carries the result of a committed staged-blob Put that the
+// post-commit quota reconcile, hash check, finalize-race recheck, and
+// response render consume: the §4.5 `lenny-blob://` URI, the storage URI
+// the soft-delete unwind keys on, and the counting reader whose byte count
+// and content hash the size and integrity checks read.
+type uploadCommit struct {
+	ref       string
+	uri       blobstore.URI
+	bytesRead *countingReader
+}
+
+// admitUpload runs the §15.1 / §7.1 upload precondition gates that precede
+// the concurrent-upload slot: the session lookup in the active tenant, the
+// §7.1 uploadToken verification, and the §15.1 precondition-table check. It
+// records the lookup failure on the §16.3 upload span, writes the §15.1
+// error envelope, and returns ok=false on any rejection. spec: §15.1, §7.1,
+// §16.3 line 338.
+func (s *Server) admitUpload(w http.ResponseWriter, r *http.Request, span trace.Span, tenantID string) (sessionstore.Session, bool) {
+	id := r.PathValue("id")
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		// spec: §16.3 line 338 — record the lookup failure on the
+		// `session.upload` span. A missing session is a caller error
+		// (PERMANENT); any other store error is left uncategorized.
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return sessionstore.Session{}, false
+		}
+		tracing.RecordError(span, err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return sessionstore.Session{}, false
+	}
+
+	// §7.1 uploadToken: validate before any body is read.
+	if err := s.verifyUploadToken(r, row.ID); err != nil {
+		s.writeUploadTokenError(w, err)
+		return sessionstore.Session{}, false
+	}
+
+	// §15.1 precondition: upload admitted only in created (and
+	// running, when capabilities.midSessionUpload is true; the
+	// minimal gateway leaves the capability flag off).
+	if err := session.Validate(session.PreconditionRequest{
+		Endpoint:     session.EndpointUpload,
+		CurrentState: row.State,
+	}); err != nil {
+		s.writePreconditionError(w, err)
+		return sessionstore.Session{}, false
+	}
+	return row, true
+}
+
+// commitUploadBlob streams the request body into the §12.5 tenant-scoped
+// blob store under a new part_id, applying the §13.4 body cap, the §7.4
+// abort signal, and the §11.2 hard stream cap one byte past the
+// reservation headroom. It maps every Put failure to its §15.1 error
+// envelope (UPLOAD_CHANNEL_CLOSED, PAYLOAD_TOO_LARGE, RESOURCE_CONFLICT,
+// FORBIDDEN, CLASSIFICATION_CONTROL_VIOLATION, or the breaker-feeding
+// INTERNAL_ERROR), releasing the whole reservation on failure and writing
+// the breaker error back through breakerErr so the deferred §4.1 release
+// trips the subsystem breaker only on a downstream outage. spec: §12.5,
+// §13.4, §7.4, §11.2, §16.3 line 338.
+func (s *Server) commitUploadBlob(w http.ResponseWriter, r *http.Request, span trace.Span, tenantID string, row sessionstore.Session, mimeType string, reservation *quotaReservation, body io.ReadCloser, abortSig <-chan struct{}, breakerErr *error) (uploadCommit, bool) {
 	// §11.2 hard stream cap: when a quota reservation is held, cap the
 	// inbound stream one byte past the headroom so a client that
 	// under-declared Content-Length cannot stream past its quota. The
 	// extra byte makes an over-stream detectable after the read.
-	var src io.Reader = newAbortableReader(body, abortSig)
+	src := io.Reader(newAbortableReader(body, abortSig))
 	if reservation != nil {
 		src = &io.LimitedReader{R: src, N: reservation.headroom + 1}
 	}
@@ -319,7 +369,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		if errors.Is(err, errUploadAborted) {
 			s.writeError(w, http.StatusGone, "UPLOAD_CHANNEL_CLOSED",
 				"upload channel closed by finalize", nil)
-			return
+			return uploadCommit{}, false
 		}
 		// http.MaxBytesReader surfaces oversize as *http.MaxBytesError.
 		// We cannot import that type directly without bringing in
@@ -332,14 +382,14 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			s.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE",
 				"upload exceeds the per-blob size cap",
 				map[string]any{"maxBytes": UploadMaxBodyBytes})
-			return
+			return uploadCommit{}, false
 		}
 		if errors.Is(err, blobstore.ErrConflict) {
 			// part_id collision — exceptionally rare, but treated as
 			// retryable. Client-retriable, not a breaker failure.
 			s.writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
 				"blob already exists; retry the upload", nil)
-			return
+			return uploadCommit{}, false
 		}
 		if errors.Is(err, blobstore.ErrCrossTenant) {
 			// §12.5 ll. 295 interface-boundary rejection: the URI tenant
@@ -347,7 +397,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			// failure.
 			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
 				"caller cannot write to this tenant's blob namespace", nil)
-			return
+			return uploadCommit{}, false
 		}
 		if errors.Is(err, blobstore.ErrClassificationControlViolation) {
 			// §12.9 line 1048 / §15.1 line 1078 — the storage boundary
@@ -364,7 +414,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			s.writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
 				"the workspace data-classification tier is not satisfiable by the configured artifact store",
 				map[string]any{"reason": reason})
-			return
+			return uploadCommit{}, false
 		}
 		// Downstream blob store failure — feed the §4.1 Upload Handler
 		// subsystem breaker so repeated MinIO outages trip it open and
@@ -372,11 +422,22 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		// spec: §16.3 line 338 / §16 error taxonomy — a blob-store outage is
 		// a downstream dependency failure (UPSTREAM) on the upload span.
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
-		breakerErr = err
+		*breakerErr = err
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
+		return uploadCommit{}, false
 	}
+	return uploadCommit{ref: ref, uri: uri, bytesRead: bytesRead}, true
+}
 
+// finalizeUpload runs the post-commit verification on a staged blob: the
+// §11.2 storage-quota reconcile against the bytes actually written, the
+// §7.4 optional client-supplied SHA-256 check, the §7.4 line 463
+// finalize-race re-validation, and the §11.1 authoritative cumulative-size
+// commit. Every rejection unwinds the committed blob (storage-quota release
+// plus soft delete) and writes the §15.1 error envelope, returning false.
+// spec: §11.2, §7.4 lines 444-463, §11.1 line 11. F-7.4.10, F-7.4.14, F-7.4.16, F-11.1.6.
+func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session, reservation *quotaReservation, commit uploadCommit) bool {
+	uri, ref, bytesRead := commit.uri, commit.ref, commit.bytesRead
 	if reservation != nil {
 		if bytesRead.n > reservation.headroom {
 			// The client streamed past the quota headroom: abort,
@@ -390,7 +451,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			s.emitUploadRejected(r, row, uploadRejectStorageQuota)
 			s.writeError(w, http.StatusTooManyRequests, "STORAGE_QUOTA_EXCEEDED",
 				"the upload exceeded the tenant's storage quota", nil)
-			return
+			return false
 		}
 		// Reconcile the reservation to the bytes actually written.
 		_ = s.storageQuota.Adjust(r.Context(), tenantID, bytesRead.n-reservation.reserved)
@@ -417,7 +478,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 					"expected": strings.ToLower(want),
 					"actual":   got,
 				})
-			return
+			return false
 		}
 	}
 
@@ -441,7 +502,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			s.softDeleteStagedBlob(uri, ref)
 			s.writeError(w, http.StatusGone, "UPLOAD_CHANNEL_CLOSED",
 				"upload channel closed by finalize", nil)
-			return
+			return false
 		}
 	}
 
@@ -466,20 +527,29 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 				"limitBytes":    limit,
 				"incomingBytes": bytesRead.n,
 			})
-		return
+		return false
 	}
+	return true
+}
 
+// writeUploadResponse renders the §15.1 201 UploadResponse (the §4.5
+// `lenny-blob://` ref, the stored mime type, the committed byte count, the
+// §4.5 content hash, and the §18 archive-kind flag), counts the committed
+// bytes against the §16.1 lenny_upload_bytes_total metric, and emits the
+// §16.6 session.upload accepted audit row. spec: §15.1, §4.5, §18 line 234,
+// §16.1, §16.6 line 338. F-7.4.17, F-13.4.12.
+func (s *Server) writeUploadResponse(w http.ResponseWriter, r *http.Request, row sessionstore.Session, mimeType string, kind UploadKind, commit uploadCommit) {
 	resp := UploadResponse{
-		UploadRef:   ref,
+		UploadRef:   commit.ref,
 		MimeType:    mimeType,
-		Size:        bytesRead.n,
-		ContentHash: bytesRead.ContentHash(),
+		Size:        commit.bytesRead.n,
+		ContentHash: commit.bytesRead.ContentHash(),
 		IsArchive:   kind == UploadKindArchive,
 	}
 	// §16.1: count the committed bytes against lenny_upload_bytes_total.
 	// F-13.4.12.
 	if s.uploadMetrics != nil {
-		s.uploadMetrics.AddUploadBytes(bytesRead.n)
+		s.uploadMetrics.AddUploadBytes(commit.bytesRead.n)
 	}
 	// F-7.4.17: §16.6 session.upload audit row. One row per successful
 	// blob commit, regardless of UploadKindBlob vs UploadKindArchive —
@@ -495,7 +565,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			RuntimeRef: row.RuntimeRef,
 			State:      string(row.State),
 			Outcome:    uploadOutcomeAccepted,
-			Detail:     ref,
+			Detail:     commit.ref,
 			At:         s.clock(),
 		})
 	}

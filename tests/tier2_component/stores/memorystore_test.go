@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
-	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
 )
 
 // memoryScope returns a tenant+user MemoryScope, the §9.4 owning scope

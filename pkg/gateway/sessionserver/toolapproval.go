@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/toolapproval"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 )
 
 // approvalPollInterval is the cadence at which AwaitApproval re-reads the

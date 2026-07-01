@@ -19,7 +19,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 )
 
 // openAIResponsesCorpusDir returns tests/testdata/openai_responses

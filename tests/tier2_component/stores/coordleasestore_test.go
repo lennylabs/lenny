@@ -15,8 +15,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordlease"
-	coordleasepg "github.com/lennylabs/lenny/pkg/gateway/coordlease/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
+	coordleasepg "github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

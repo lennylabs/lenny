@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // ExtendRetentionMaxSeconds is the §7.1 hard upper bound the

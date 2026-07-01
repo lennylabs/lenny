@@ -29,7 +29,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 	"github.com/lennylabs/lenny/pkg/mtls/denylist"
 )
 

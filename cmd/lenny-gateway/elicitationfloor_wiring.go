@@ -9,7 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/lennylabs/lenny/pkg/gateway/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 )
 
 // phaseStampFloorReader reads the §17.2 line 86

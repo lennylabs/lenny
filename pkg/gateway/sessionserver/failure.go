@@ -8,8 +8,8 @@ import (
 	"fmt"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // FailureReport is the §7.3 line 401 "Gateway detects session failure"

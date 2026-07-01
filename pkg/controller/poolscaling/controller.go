@@ -33,7 +33,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling/convergence"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling/strategy"
-	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 )
 
 // failoverSeconds is the §4.6.2 worst-case controller failover window

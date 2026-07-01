@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
-	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

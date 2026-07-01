@@ -3,16 +3,16 @@
 package main
 
 import (
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/erasure"
-	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
-	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
 // §12.1 mandatory-erasure contract, compile-enforced at the gateway

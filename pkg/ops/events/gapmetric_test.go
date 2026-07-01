@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	gwevents "github.com/lennylabs/lenny/pkg/gateway/events"
+	gwevents "github.com/lennylabs/lenny/pkg/events"
 )
 
 // TestOnGapFiresOnEvictedCursor is the §25.5 line 2788 contract: a poll

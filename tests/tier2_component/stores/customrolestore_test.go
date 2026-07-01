@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
-	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
+	customrolepg "github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore/pgstore"
 )
 
 // spec: 10.2

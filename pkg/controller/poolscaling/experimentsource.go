@@ -10,8 +10,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling/strategy"
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 )
 
 // ExperimentReader yields every §10.7 experiment definition across all

@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
 // requirePoolSelectable honors or rejects a client-pinned pool (the §14.1

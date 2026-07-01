@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )

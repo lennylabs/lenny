@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
-	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
+	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore/pgstore"
 )
 
 // sampleEnvironment returns a fully-populated §10.6 Environment whose

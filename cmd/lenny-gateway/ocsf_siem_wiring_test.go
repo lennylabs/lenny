@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
 // spec: §11.7 Wire Format — the gateway's ocsfMetricsAdapter bridges the

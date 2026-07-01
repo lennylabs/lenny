@@ -62,8 +62,8 @@
       "component": ["tests/tier2_component/gateway_subsystems/llm_proxy_test.go"],
       "integration": ["tests/tier4_integration/llm_proxy_anthropic_test.go"]
     },
-    "pkg/gateway/admin": {
-      "unit": ["pkg/gateway/admin/..."],
+    "pkg/gateway/externalapi/admin": {
+      "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
@@ -196,8 +196,8 @@
       "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/rest_mcp/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
     },
-    "pkg/gateway/sessionstore": {
-      "unit": ["pkg/gateway/sessionstore/..."],
+    "pkg/gateway/session/sessionstore": {
+      "unit": ["pkg/gateway/session/sessionstore/..."],
       "contract": ["tests/tier3_contract/rest_sessions/..."]
     },
     "pkg/gateway/sessionserver": {

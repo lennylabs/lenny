@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
 // spec: §7.3 line 427 — when a session transitions into
@@ -25,7 +26,7 @@ import (
 func TestEmitAwaitingClientActionEnteredEmitsAllSurfaces_spec_7_3_13(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	at := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
 		Events:             bus,
@@ -81,7 +82,7 @@ func TestEmitAwaitingClientActionEnteredEmitsAllSurfaces_spec_7_3_13(t *testing.
 func TestEmitAwaitingClientActionEnteredIgnoresWrongState_spec_7_3_13(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter, LifecycleAuditSink: sink})
 
 	srv.emitAwaitingClientActionEntered(context.Background(), sessionstore.Session{
@@ -152,7 +153,7 @@ func TestServerImplementsAwaitingExpiryNotifier_spec_7_3_25(t *testing.T) {
 // audit row through the existing emit helper. F-6.2.14.
 func TestServerImplementsAwaitingEntryNotifier_spec_6_2_14(t *testing.T) {
 	sink := &captureLifecycleAudit{}
-	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
+	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	bus := sessionevents.NewBus(64)
 	at := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{

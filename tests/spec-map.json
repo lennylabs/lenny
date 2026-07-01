@@ -325,9 +325,9 @@
       "title": "Gateway Policy Engine",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "pkg/gateway/interceptor/...",
-        "pkg/gateway/delegationpolicystore/...",
-        "pkg/gateway/mcptools/predelegation_test.go"
+        "pkg/gateway/policy/interceptor/...",
+        "pkg/gateway/mcpfabric/delegationpolicystore/...",
+        "pkg/gateway/mcpfabric/mcptools/predelegation_test.go"
       ],
       "packages": [
         "pkg/gateway/interceptors",
@@ -356,7 +356,7 @@
       "packages": [
         "pkg/credential",
         "pkg/store/credentialpool",
-        "pkg/gateway/denylist/propagator"
+        "pkg/gateway/credentials/denylist/propagator"
       ],
       "blocked_until_phase": "5.5",
       "notes": "Phase 5.5 ships the §4.9 Provider, AssignmentStrategy, LeaseSource, and RotationTrigger enums plus the §4.7 ceiling-applicable rule and the §4.9 proactive-renewal budget-exclusion rule as Go-callable methods. The full Credential Leasing Service binary (Token Service binding, KMS rotation, materializedConfig schemas, the CredentialRenewalWorker) is deferred to the K8s-integration phase that ships the Token Service."
@@ -402,9 +402,9 @@
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantResetByWarmPoolController",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsCrossTenantRewrite",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsManagedLabelMutation",
-        "pkg/gateway/podclaim/slotclaimer_test.go",
-        "pkg/gateway/podsession/slotbinder_test.go",
-        "pkg/gateway/poolstore/poolstore_test.go::TestValidateConcurrentConfig",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go",
+        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
+        "pkg/gateway/runtime/poolstore/poolstore_test.go::TestValidateConcurrentConfig",
         "pkg/sandbox/state/state_test.go::TestConcurrentOccupancyCollapsesToClaimed_spec_6_2",
         "tests/tier2_component/stores/poolstore_test.go",
         "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2",
@@ -426,8 +426,8 @@
       "packages": [
         "pkg/admission/label_immutability",
         "pkg/pool",
-        "pkg/gateway/podclaim",
-        "pkg/gateway/podsession"
+        "pkg/gateway/podlifecycle/podclaim",
+        "pkg/gateway/podlifecycle/podsession"
       ],
       "blocked_until_phase": "3",
       "notes": "Phase 3.5 ships the §5.2 NET-003 / §17.2 item 5 label-immutability admission-decision logic. The webhook binary that wires this to AdmissionReview transport and the Kind-based admission integration test are deferred to the K8s-integration phase. Phase 12c adds the §5.2 concurrent execution modes (workspace-concurrent and stateless-concurrent): pkg/gateway/podclaim.SlotClaimer is the per-pod slot claim/assignment path, pkg/gateway/podsession.Binder.BindSlot is the concurrent-mode bind path, and poolstore.ValidateConcurrentConfig is the concurrent-pool admission enforcement. The Tier 5 concurrent_modes_test exercises the slot path against real warm pods."
@@ -437,9 +437,9 @@
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
         "pkg/sandbox/isolation/...",
-        "pkg/gateway/poolstore/...",
-        "pkg/gateway/admin/pools_test.go",
-        "pkg/gateway/admin/pools_nonce_only_test.go",
+        "pkg/gateway/runtime/poolstore/...",
+        "pkg/gateway/externalapi/admin/pools_test.go",
+        "pkg/gateway/externalapi/admin/pools_nonce_only_test.go",
         "pkg/admission/webhook/direct_mode_isolation_test.go",
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
@@ -693,7 +693,7 @@
       "title": "Approval Modes",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/gateway/delegationpolicystore/..."
+        "pkg/gateway/mcpfabric/delegationpolicystore/..."
       ],
       "packages": [
         "pkg/delegation/approval"
@@ -705,8 +705,8 @@
       "title": "Delegation Tools",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/gateway/mcptools/...",
-        "pkg/gateway/delegation/..."
+        "pkg/gateway/mcpfabric/mcptools/...",
+        "pkg/gateway/mcpfabric/delegation/..."
       ],
       "packages": [
         "pkg/delegation/tools"
@@ -753,7 +753,7 @@
       "title": "Task Tree",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
-        "pkg/gateway/mcptools/mcptools_test.go",
+        "pkg/gateway/mcpfabric/mcptools/mcptools_test.go",
         "pkg/delegation/recovery/..."
       ],
       "packages": [
@@ -788,9 +788,9 @@
       "title": "Where MCP Is Used",
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
-        "pkg/gateway/mcp/...",
+        "pkg/gateway/mcpfabric/mcp/...",
         "pkg/adapter/mcp/...",
-        "pkg/gateway/mcptools/discover_agents_filtering_test.go"
+        "pkg/gateway/mcpfabric/mcptools/discover_agents_filtering_test.go"
       ],
       "packages": [
         "pkg/mcp"
@@ -841,8 +841,8 @@
       "title": "Memory Store",
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
-        "pkg/gateway/memorystore/...",
-        "pkg/gateway/mcptools/memorytools_test.go",
+        "pkg/gateway/session/memorystore/...",
+        "pkg/gateway/mcpfabric/mcptools/memorytools_test.go",
         "tests/tier2_component/stores/memorystore_test.go",
         "tests/tier2_component/stores/memorysemanticsearch_test.go",
         "tests/tier2_component/stores/semanticcache_test.go"
@@ -860,7 +860,7 @@
         "tests/tier7b_load_kind/scenarios/delegation_fanout_mcp"
       ],
       "packages": [
-        "pkg/gateway/mcptools",
+        "pkg/gateway/mcpfabric/mcptools",
         "pkg/delegation"
       ],
       "blocked_until_phase": "9.5",
@@ -1027,14 +1027,14 @@
         "pkg/auth/jwt/rotating_test.go::TestRotatingVerifierRotateEmitsPromoteCurrentEvent",
         "pkg/auth/jwt/rotating_test.go::TestRotatingVerifierRotateDoesNotEmitOnFailure",
         "pkg/auth/jwt/rotating_test.go::TestRetireExpiredEmitsOnePerPrunedKey",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverEmitsPromoteCurrentRow",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverEmitsRetirePreviousRow",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverWiresIntoRotatingVerifier",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverCountsAppendFailures",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestNewObserverRejectsNilAppender",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestCAObserverEmitsRotatedRow",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestCAObserverWiresIntoCARotation",
-        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestNewCAObserverRejectsNilAppender",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverEmitsPromoteCurrentRow",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverEmitsRetirePreviousRow",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverWiresIntoRotatingVerifier",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverCountsAppendFailures",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestNewObserverRejectsNilAppender",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestCAObserverEmitsRotatedRow",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestCAObserverWiresIntoCARotation",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestNewCAObserverRejectsNilAppender",
         "tests/tier4_integration/jwks_test.go::TestJWKSEndpointPublishedByLiveGateway",
         "tests/tier4_integration/jwks_test.go::TestJWKSEndpointReflectsRotationOverlapWindow",
         "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationEmitsPromoteCurrentAuditRow",
@@ -1048,7 +1048,7 @@
         "pkg/mtls/spiffe",
         "pkg/mtls/denylist",
         "pkg/mtls/denylist/propagator",
-        "pkg/gateway/jwtaudit"
+        "pkg/gateway/audit/jwtaudit"
       ],
       "blocked_until_phase": "3",
       "notes": "Phase 3 ships the SPIFFE-URI parser and the in-memory certificate deny list. The Phase 4 wave that wires the JWT signing-key rotation lifecycle adds the JWKS publication endpoint (pkg/auth/jwt/jwks.go), the `platform.jwt_signing_key_rotated` audit observer (pkg/gateway/jwtaudit), and the in-process CARotation state machine (pkg/mtls/rotation.go); the cert-manager Issuer / Certificate resources, the Helm-rendered trust bundle, the Redis pub/sub fan-out of deny-list entries, and the e2e mTLS enforcement test on Kind are deferred to the K8s-integration phase."
@@ -1057,7 +1057,8 @@
       "title": "Gateway Reliability",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
-        "pkg/gateway/events/...",
+        "pkg/events/...",
+        "pkg/gateway/eventbuffer/...",
         "pkg/gateway/sessionserver/events_test.go",
         "tests/tier2_component/coordination/sweep_test.go"
       ],
@@ -1263,8 +1264,8 @@
       "title": "Timeouts and Cancellation",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
-        "pkg/gateway/watchdog/...",
-        "pkg/gateway/inputwait/...",
+        "pkg/gateway/runtime/watchdog/...",
+        "pkg/gateway/session/inputwait/...",
         "pkg/session/state/...",
         "tests/tier2_component/watchdog/idle_pause_table_test.go::TestWatchdogIdleSweepPauseTable_spec_6_2"
       ],
@@ -1277,7 +1278,7 @@
       "title": "User Invalidation",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
-        "pkg/gateway/admin/...",
+        "pkg/gateway/externalapi/admin/...",
         "pkg/gateway/sessionserver/..."
       ],
       "packages": [
@@ -1381,7 +1382,7 @@
         "pkg/audit/ocsf",
         "pkg/audit/siem",
         "pkg/audit/integrity",
-        "pkg/gateway/auditstore",
+        "pkg/gateway/audit/auditstore",
         "pkg/store/event"
       ],
       "blocked_until_phase": "13",
@@ -1449,7 +1450,7 @@
       ],
       "packages": [
         "pkg/store",
-        "pkg/gateway/evictionstatestore",
+        "pkg/gateway/storage/evictionstatestore",
         "tests/testinfra/containers",
         "tests/tier2_component/migrations"
       ],
@@ -1514,8 +1515,8 @@
       "title": "Storage Interface Design",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
-        "pkg/gateway/eventbus/cloudevents_test.go",
-        "pkg/gateway/eventbus/eventbus_test.go",
+        "pkg/gateway/storage/eventbus/cloudevents_test.go",
+        "pkg/gateway/storage/eventbus/eventbus_test.go",
         "pkg/storerouter/storerouter_test.go",
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier2_component/stores/storerouter_test.go",
@@ -1525,7 +1526,7 @@
       "packages": [
         "pkg/store",
         "pkg/storerouter",
-        "pkg/gateway/eventbus"
+        "pkg/gateway/storage/eventbus"
       ],
       "blocked_until_phase": "2",
       "notes": "The §12.6 EventBus interface (§12.3.7) is implemented by pkg/gateway/eventbus: the RedisEventBus over the §12.4 tenant-prefixed Redis pub/sub substrate, the CloudEvents v1.0.2 envelope with the lenny-prefixed extension attributes, the publish-state machine, and the retranscribe worker. The §12.3.7 OCSF audit-bearing data payload is the §11.7 wire format. pkg/storerouter is the §12.6 StoreRouter interface and its v1 SingleShardRouter; v1 routes every Postgres accessor to a single pool and every RedisConcern to a single Redis client, but maintains the R-03 billing/audit routing discipline so a future split lands without sweeping call sites."
@@ -1542,10 +1543,10 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
-        "pkg/gateway/admin/...",
-        "pkg/gateway/retentiongc/...",
-        "pkg/gateway/erasure/...",
-        "pkg/gateway/erasurejob/...",
+        "pkg/gateway/externalapi/admin/...",
+        "pkg/gateway/storage/retentiongc/...",
+        "pkg/gateway/storage/erasure/...",
+        "pkg/gateway/storage/erasurejob/...",
         "tests/tier8_chaos/chaos_helpers_test.go",
         "tests/tier8_chaos/component_failure_test.go",
         "tests/tier8_chaos/config_drift_test.go",
@@ -1730,8 +1731,8 @@
         "pkg/credential",
         "pkg/admission/credfsgroup",
         "pkg/tokenexchange",
-        "pkg/gateway/pubsub",
-        "pkg/gateway/revocation/propagator"
+        "pkg/gateway/storage/pubsub",
+        "pkg/gateway/credentials/revocation/propagator"
       ],
       "blocked_until_phase": "12a",
       "notes": "Phase 12a ships the §13.3 RFC 8693 token-exchange invariants as a pure Validate function: scope narrowing (subject ⊆), tenant-scope (issued.tenant_id == subject.tenant_id == caller.tenant_id), caller_type cannot elevate (agent < service < human), audience cannot broaden, typ rules (a2a_delegation only via actor_token), delegation_depth = parent+1 on child minting, exp = min(requested, subject.exp, actor.exp, perDialectCap) with the §13.3 ±1s skew and Unix-seconds truncation per RFC 7519. The Postgres-backed write-before-issue transaction, the KMS signing path, the cluster-wide revocation propagation via Redis EventBus, and the Token Service binary are deferred to the K8s-integration phase."
@@ -1766,10 +1767,10 @@
       "title": "Delegation Chain Content Security",
       "spec_file": "spec/13_security-model.md",
       "tests": [
-        "pkg/gateway/delegationpolicystore/...",
-        "pkg/gateway/mcptools/...",
+        "pkg/gateway/mcpfabric/delegationpolicystore/...",
+        "pkg/gateway/mcpfabric/mcptools/...",
         "pkg/delegation/lease/...",
-        "pkg/gateway/interceptor/..."
+        "pkg/gateway/policy/interceptor/..."
       ],
       "packages": [
         "pkg/delegation/security"
@@ -1840,9 +1841,9 @@
         "pkg/api/v1/session/session_test.go::TestValidateUploadMidSessionGated",
         "pkg/api/v1/session/session_test.go::TestValidateDeriveAllowStaleGated",
         "pkg/api/v1/session/session_test.go::TestPreconditionErrorEnvelope",
-        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestCreateAndGet",
-        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestGetRejectsCrossTenant",
-        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestListExcludesForeignTenant",
+        "pkg/gateway/session/sessionstore/memstore/memstore_test.go::TestCreateAndGet",
+        "pkg/gateway/session/sessionstore/memstore/memstore_test.go::TestGetRejectsCrossTenant",
+        "pkg/gateway/session/sessionstore/memstore/memstore_test.go::TestListExcludesForeignTenant",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestCreateSessionReturnsCreatedRow",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestGetSessionMissingReturns404",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestGetSessionCrossTenantReturns404",
@@ -1881,11 +1882,11 @@
       ],
       "packages": [
         "pkg/api/v1/session",
-        "pkg/gateway/sessionstore",
-        "pkg/gateway/sessionstore/memstore",
+        "pkg/gateway/session/sessionstore",
+        "pkg/gateway/session/sessionstore/memstore",
         "pkg/gateway/sessionserver",
         "cmd/lenny-gateway",
-        "pkg/gateway/mcp",
+        "pkg/gateway/mcpfabric/mcp",
         "pkg/gateway/rest",
         "pkg/gateway/internal",
         "cmd/runtimes/echo",
@@ -1915,9 +1916,9 @@
         "pkg/api/v1/session/session_test.go::TestValidateUploadMidSessionGated",
         "pkg/api/v1/session/session_test.go::TestValidateDeriveAllowStaleGated",
         "pkg/api/v1/session/session_test.go::TestPreconditionErrorEnvelope",
-        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestCreateAndGet",
-        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestGetRejectsCrossTenant",
-        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestListExcludesForeignTenant",
+        "pkg/gateway/session/sessionstore/memstore/memstore_test.go::TestCreateAndGet",
+        "pkg/gateway/session/sessionstore/memstore/memstore_test.go::TestGetRejectsCrossTenant",
+        "pkg/gateway/session/sessionstore/memstore/memstore_test.go::TestListExcludesForeignTenant",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestCreateSessionReturnsCreatedRow",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestGetSessionMissingReturns404",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestGetSessionCrossTenantReturns404",
@@ -1945,8 +1946,8 @@
       ],
       "packages": [
         "pkg/api/v1/session",
-        "pkg/gateway/sessionstore",
-        "pkg/gateway/sessionstore/memstore",
+        "pkg/gateway/session/sessionstore",
+        "pkg/gateway/session/sessionstore/memstore",
         "pkg/gateway/sessionserver",
         "cmd/lenny-gateway"
       ],
@@ -1957,11 +1958,11 @@
       "title": "MCP API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "pkg/gateway/mcp/...",
+        "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier4_integration/gateway_full_e2e_test.go"
       ],
       "packages": [
-        "pkg/gateway/mcp"
+        "pkg/gateway/mcpfabric/mcp"
       ],
       "blocked_until_phase": "5"
     },
@@ -1969,7 +1970,7 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "pkg/gateway/mcp/...",
+        "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",
         "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
@@ -1977,7 +1978,7 @@
       ],
       "packages": [
         "pkg/gateway/rest",
-        "pkg/gateway/mcp"
+        "pkg/gateway/mcpfabric/mcp"
       ],
       "blocked_until_phase": "5"
     },
@@ -2015,7 +2016,7 @@
         "cmd/runtimes/echo",
         "cmd/runtimes/streaming-echo",
         "cmd/lenny-compliance",
-        "pkg/gateway/outputpartfidelity"
+        "pkg/gateway/externalapi/outputpartfidelity"
       ],
       "schemas": [
         "schemas/lenny-adapter.proto",
@@ -2125,8 +2126,8 @@
         "pkg/alerting/rules/render_test.go::TestRenderPrometheusRuleRendersFullCatalog",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogHasNoUnspecifiedMetrics",
-        "pkg/gateway/opsevents/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
-        "pkg/gateway/opsevents/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166",
+        "pkg/events/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
+        "pkg/events/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166",
         "pkg/observability/audit/catalog_test.go::TestCatalogIsCompleteAgainstSpec167",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleMatchesAlertCatalog",
@@ -2142,7 +2143,7 @@
         "pkg/observability/logging",
         "pkg/alerting/rules",
         "pkg/observability/audit",
-        "pkg/gateway/opsevents",
+        "pkg/events",
         "cmd/gen-alerting-rules"
       ],
       "chart_templates": [
@@ -2163,13 +2164,13 @@
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogHasNoUnspecifiedMetrics",
         "pkg/observability/metrics/catalog_test.go::TestLookupMetric",
-        "pkg/gateway/gatewaymetrics/retry_resume_test.go::TestSessionExpiryTotalExposes_F_11_3_7",
+        "pkg/gateway/metrics/gatewaymetrics/retry_resume_test.go::TestSessionExpiryTotalExposes_F_11_3_7",
         "tests/tier2_component/watchdog/expiry_counter_test.go::TestWatchdogSessionExpiryCounter_spec_16_1",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability"
       ],
       "packages": [
         "pkg/observability/metrics",
-        "pkg/gateway/gatewaymetrics"
+        "pkg/gateway/metrics/gatewaymetrics"
       ],
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces §16.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed §16.1 metrics catalog (name, type, help) cross-checked for completeness against the §16.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
@@ -2251,16 +2252,15 @@
       "title": "Operational Events Catalog",
       "spec_file": "spec/16_observability.md",
       "tests": [
-        "pkg/gateway/opsevents/...",
-        "pkg/gateway/opsevents/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
-        "pkg/gateway/opsevents/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166"
+        "pkg/events/...",
+        "pkg/events/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
+        "pkg/events/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166"
       ],
       "packages": [
-        "pkg/observability/events",
-        "pkg/gateway/opsevents"
+        "pkg/events"
       ],
       "blocked_until_phase": "14",
-      "notes": "Operational event catalog: every event type, its payload schema, when it fires. pkg/gateway/opsevents/catalog.go is the typed §16.6 catalog (gateway-emitted and lenny-ops-emitted short names) cross-checked for completeness against the §16.6 lists. Phase 14 ships the emitter and the event-store consumer."
+      "notes": "Operational event catalog: every event type, its payload schema, when it fires. pkg/events/catalog.go is the typed §16.6 catalog (gateway-emitted and lenny-ops-emitted short names) cross-checked for completeness against the §16.6 lists. The neutral pkg/events package holds the shared event vocabulary; the §25.3 gateway-side ring buffer and emitters live in pkg/gateway/eventbuffer. Phase 14 ships the emitter and the event-store consumer."
     },
     "16.7": {
       "title": "Section 25 Audit Events",
@@ -2854,11 +2854,11 @@
       "tests": [
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
-        "pkg/gateway/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
-        "pkg/gateway/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
+        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
+        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
       ],
       "packages": [
-        "pkg/gateway/admin"
+        "pkg/gateway/externalapi/admin"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.1 Design Philosophy and Agent Model. The §25.1 enforcement-point-1 admin-API scope gate (proposal 0019 ADM-1) is pinned by the scope-enforcement tests; see TESTING.md §25 for the rest of the operability test plan."
@@ -2962,7 +2962,7 @@
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/gateway/admin/audit_query_test.go"
+        "pkg/gateway/externalapi/admin/audit_query_test.go"
       ],
       "packages": [
         "pkg/operability/audit"
@@ -3162,12 +3162,12 @@
       "title": "Web Playground",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go",
-        "pkg/gateway/playground/sessionrecord_test.go",
+        "pkg/gateway/mcpfabric/playground/playground_test.go",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go",
         "tests/tier3_contract/playground/playground_test.go"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5"
     },
@@ -3175,12 +3175,12 @@
       "title": "Web Playground — Placement and Gating",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
-        "pkg/gateway/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
-        "pkg/gateway/playground/playground_test.go::TestConfigValidateDevTenantRules"
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds."
@@ -3189,19 +3189,19 @@
       "title": "Web Playground — Authentication",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestDevModeMintStampsOriginClaim",
-        "pkg/gateway/playground/playground_test.go::TestDevModeReadyGateRejectsUnseededTenant",
-        "pkg/gateway/playground/playground_test.go::TestAPIKeyModeRejectsNonUserBearer",
-        "pkg/gateway/playground/playground_test.go::TestAPIKeyModeScopeIsNarrowedToIntersection",
-        "pkg/gateway/playground/playground_test.go::TestOIDCModeRejectsBearerOnTokenEndpoint",
-        "pkg/gateway/playground/playground_test.go::TestOIDCLoginRedirectsAndSetsStateCookie",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeMintStampsOriginClaim",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeReadyGateRejectsUnseededTenant",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeRejectsNonUserBearer",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeScopeIsNarrowedToIntersection",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestOIDCModeRejectsBearerOnTokenEndpoint",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestOIDCLoginRedirectsAndSetsStateCookie",
         "tests/tier3_contract/playground/playground_test.go::TestDevModeMintReturnsBearer",
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints."
@@ -3214,7 +3214,7 @@
         "tests/tier3_contract/playground/playground_test.go::TestLoginEndpointIsOIDCModeOnly"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Playground-minted JWTs are honored by the public REST surface. Gatekeeper endpoints exist only in their applicable auth mode."
@@ -3223,15 +3223,15 @@
       "title": "Web Playground — Session Lifecycle and Cleanup",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestEffectiveIdleAndDurationCaps",
-        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
-        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStoreRevocationKeyIsolation",
-        "pkg/gateway/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
-        "pkg/gateway/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
-        "pkg/gateway/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers"
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestEffectiveIdleAndDurationCaps",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStoreRevocationKeyIsolation",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Per-origin idle-timeout override and duration cap. Session-store revocation, logout, and bearer-revocation propagation."
@@ -3240,13 +3240,13 @@
       "title": "Web Playground — Asset Serving and CSP",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestSecurityHeadersAndCSP",
-        "pkg/gateway/playground/playground_test.go::TestStaticAssetCacheHeaders",
-        "pkg/gateway/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestStaticAssetCacheHeaders",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint."
@@ -3258,7 +3258,7 @@
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161"
       ],
       "packages": [
-        "pkg/gateway/playground",
+        "pkg/gateway/mcpfabric/playground",
         "pkg/observability/metrics"
       ],
       "blocked_until_phase": "5",
@@ -3268,12 +3268,12 @@
       "title": "Web Playground — Security Considerations",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/gateway/playground/playground_test.go::TestSecurityHeadersAndCSP",
-        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
-        "pkg/gateway/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers"
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers"
       ],
       "packages": [
-        "pkg/gateway/playground"
+        "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface."

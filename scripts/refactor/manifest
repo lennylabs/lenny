@@ -1,0 +1,215 @@
+# pkg/gateway C3 regroup manifest (proposal 0020, Part B C1).
+#
+# Machine-readable move manifest the C3 driver (scripts/refactor) consumes to
+# regroup pkg/gateway's flat sibling subpackages into intermediate, spec-aligned
+# group directories. Authored by Part B C1; executed by Part B C3.
+#
+# Format: one move per line, two tab-separated fields:
+#     <old fully-qualified import path>\t<new fully-qualified import path>
+# Lines beginning with '#' and blank lines are comments. The driver (proposal
+# §2) per entry: git mv the directory; rewrite the quote-delimited import
+# literal "<old>" -> "<new>" across *.go (boundary-anchored on the closing
+# quote, so a moved path that is a strict prefix of a sibling import does not
+# corrupt the sibling); rewrite the matching slash-joined and split path-segment
+# runtime-read references; rewrite the same tokens in tests/spec-map.json and
+# tests/change-graph.json on a path-token boundary; gofmt/goimports; gate on
+# go build, go vet, and lenny-test validate-maps; regenerate the CodeGraph index.
+# Package names are unchanged, so no identifier rewrites are needed.
+#
+# Group taxonomy and the spec section each group maps to: pkg/gateway/ARCHITECTURE.md.
+#
+# Excluded from this manifest (handled elsewhere; see ARCHITECTURE.md):
+#   pkg/gateway/events        -> split by Part B C2 into pkg/events (shared
+#                                vocabulary, out of the gateway) and
+#                                pkg/gateway/eventbuffer (the §25.3 buffer).
+#   pkg/gateway/sessionserver -> stays whole at the gateway root; it realizes
+#                                the §4.1 Stream Proxy and Upload Handler behind
+#                                their interfaces and is not split across groups.
+#   pkg/gateway/middleware    -> already an intermediate group directory; it
+#                                stays at the gateway root. breakerstore nests
+#                                under its existing middleware/circuitbreaker
+#                                package (the §1.3 gateway-core re-anchor).
+#
+# §1.3 exclusions encoded below:
+#   breakerstore     -> middleware/circuitbreaker/breakerstore (anchors into
+#                       gateway-core, not the persistence cluster).
+#   interceptorstore -> policy/interceptor/interceptorstore (anchors onto its
+#                       interceptor core dependency).
+#   policy           -> policy/policy (§4.8 engine stays embedded in the gateway).
+#   environmentstore -> environment/environmentstore (§10.6, gateway-internal).
+#   experiment*      -> experiment/* (§10.7, gateway-internal).
+#
+# §2 subsystem-seam decision encoded below: §4.1 assigns delegation to the MCP
+# Fabric subsystem, so the delegation-tree lifecycle packages (deadlock,
+# leasecontrol, orphancleanup, resultrollup, treearchive, treebudget,
+# treerecovery) nest under mcpfabric/delegationtree/ rather than a separate
+# top-level group, keeping the whole MCP Fabric subsystem one extractable subtree.
+github.com/lennylabs/lenny/pkg/gateway/adapter	github.com/lennylabs/lenny/pkg/gateway/runtime/adapter
+github.com/lennylabs/lenny/pkg/gateway/adapterclient	github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient
+github.com/lennylabs/lenny/pkg/gateway/adapterregistry	github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry
+github.com/lennylabs/lenny/pkg/gateway/admin	github.com/lennylabs/lenny/pkg/gateway/externalapi/admin
+github.com/lennylabs/lenny/pkg/gateway/admintoken	github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken
+github.com/lennylabs/lenny/pkg/gateway/agentcard	github.com/lennylabs/lenny/pkg/gateway/runtime/agentcard
+github.com/lennylabs/lenny/pkg/gateway/auditretention	github.com/lennylabs/lenny/pkg/gateway/audit/auditretention
+github.com/lennylabs/lenny/pkg/gateway/auditscope	github.com/lennylabs/lenny/pkg/gateway/audit/auditscope
+github.com/lennylabs/lenny/pkg/gateway/auditstore	github.com/lennylabs/lenny/pkg/gateway/audit/auditstore
+github.com/lennylabs/lenny/pkg/gateway/barrier	github.com/lennylabs/lenny/pkg/gateway/coordination/barrier
+github.com/lennylabs/lenny/pkg/gateway/billingcheckpoint	github.com/lennylabs/lenny/pkg/gateway/billing/billingcheckpoint
+github.com/lennylabs/lenny/pkg/gateway/billingfanout	github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout
+github.com/lennylabs/lenny/pkg/gateway/billingretention	github.com/lennylabs/lenny/pkg/gateway/billing/billingretention
+github.com/lennylabs/lenny/pkg/gateway/billingsink	github.com/lennylabs/lenny/pkg/gateway/billing/billingsink
+github.com/lennylabs/lenny/pkg/gateway/billingstore	github.com/lennylabs/lenny/pkg/gateway/billing/billingstore
+github.com/lennylabs/lenny/pkg/gateway/breakerstore	github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore
+github.com/lennylabs/lenny/pkg/gateway/capabilityinference	github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference
+github.com/lennylabs/lenny/pkg/gateway/capacityplanning	github.com/lennylabs/lenny/pkg/gateway/metrics/capacityplanning
+github.com/lennylabs/lenny/pkg/gateway/carotation	github.com/lennylabs/lenny/pkg/gateway/pki/carotation
+github.com/lennylabs/lenny/pkg/gateway/carotationstore	github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore
+github.com/lennylabs/lenny/pkg/gateway/checkpointer	github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer
+github.com/lennylabs/lenny/pkg/gateway/checkpointretention	github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention
+github.com/lennylabs/lenny/pkg/gateway/connectorauthz	github.com/lennylabs/lenny/pkg/gateway/connectors/connectorauthz
+github.com/lennylabs/lenny/pkg/gateway/connectorcredstore	github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore
+github.com/lennylabs/lenny/pkg/gateway/connectorinvoke	github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke
+github.com/lennylabs/lenny/pkg/gateway/connectorsecret	github.com/lennylabs/lenny/pkg/gateway/connectors/connectorsecret
+github.com/lennylabs/lenny/pkg/gateway/connectorstore	github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore
+github.com/lennylabs/lenny/pkg/gateway/connectortools	github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools
+github.com/lennylabs/lenny/pkg/gateway/coordfence	github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence
+github.com/lennylabs/lenny/pkg/gateway/coordination	github.com/lennylabs/lenny/pkg/gateway/coordination/coordination
+github.com/lennylabs/lenny/pkg/gateway/coordlease	github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease
+github.com/lennylabs/lenny/pkg/gateway/correctionstore	github.com/lennylabs/lenny/pkg/gateway/billing/correctionstore
+github.com/lennylabs/lenny/pkg/gateway/createdsweeper	github.com/lennylabs/lenny/pkg/gateway/session/createdsweeper
+github.com/lennylabs/lenny/pkg/gateway/credassign	github.com/lennylabs/lenny/pkg/gateway/credentials/credassign
+github.com/lennylabs/lenny/pkg/gateway/credcache	github.com/lennylabs/lenny/pkg/gateway/credentials/credcache
+github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore	github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore
+github.com/lennylabs/lenny/pkg/gateway/credentialserver	github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver
+github.com/lennylabs/lenny/pkg/gateway/credentialstore	github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore
+github.com/lennylabs/lenny/pkg/gateway/credfallback	github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback
+github.com/lennylabs/lenny/pkg/gateway/credleasestore	github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore
+github.com/lennylabs/lenny/pkg/gateway/credrenewal	github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal
+github.com/lennylabs/lenny/pkg/gateway/credrouter	github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter
+github.com/lennylabs/lenny/pkg/gateway/customrolestore	github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore
+github.com/lennylabs/lenny/pkg/gateway/deadletterredaction	github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction
+github.com/lennylabs/lenny/pkg/gateway/deadlock	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock
+github.com/lennylabs/lenny/pkg/gateway/delegation	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation
+github.com/lennylabs/lenny/pkg/gateway/delegationbudget	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget
+github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore
+github.com/lennylabs/lenny/pkg/gateway/denylist	github.com/lennylabs/lenny/pkg/gateway/credentials/denylist
+github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore	github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore
+github.com/lennylabs/lenny/pkg/gateway/derivelock	github.com/lennylabs/lenny/pkg/gateway/storage/derivelock
+github.com/lennylabs/lenny/pkg/gateway/devmode	github.com/lennylabs/lenny/pkg/gateway/deployment/devmode
+github.com/lennylabs/lenny/pkg/gateway/drainreadiness	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness
+github.com/lennylabs/lenny/pkg/gateway/dualstore	github.com/lennylabs/lenny/pkg/gateway/storage/dualstore
+github.com/lennylabs/lenny/pkg/gateway/elicitationfloor	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor
+github.com/lennylabs/lenny/pkg/gateway/envaccess	github.com/lennylabs/lenny/pkg/gateway/environment/envaccess
+github.com/lennylabs/lenny/pkg/gateway/envblock	github.com/lennylabs/lenny/pkg/gateway/provisioning/envblock
+github.com/lennylabs/lenny/pkg/gateway/environmentstore	github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore
+github.com/lennylabs/lenny/pkg/gateway/erasure	github.com/lennylabs/lenny/pkg/gateway/storage/erasure
+github.com/lennylabs/lenny/pkg/gateway/erasurejob	github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob
+github.com/lennylabs/lenny/pkg/gateway/errorclassify	github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify
+github.com/lennylabs/lenny/pkg/gateway/evalstore	github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore
+github.com/lennylabs/lenny/pkg/gateway/eventbus	github.com/lennylabs/lenny/pkg/gateway/storage/eventbus
+github.com/lennylabs/lenny/pkg/gateway/evictionfallback	github.com/lennylabs/lenny/pkg/gateway/storage/evictionfallback
+github.com/lennylabs/lenny/pkg/gateway/evictionstatestore	github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore
+github.com/lennylabs/lenny/pkg/gateway/executor	github.com/lennylabs/lenny/pkg/gateway/session/executor
+github.com/lennylabs/lenny/pkg/gateway/experimentprovider	github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider
+github.com/lennylabs/lenny/pkg/gateway/experimentsticky	github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky
+github.com/lennylabs/lenny/pkg/gateway/experimentstore	github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore
+github.com/lennylabs/lenny/pkg/gateway/externaladapterstore	github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore
+github.com/lennylabs/lenny/pkg/gateway/extractionthreshold	github.com/lennylabs/lenny/pkg/gateway/metrics/extractionthreshold
+github.com/lennylabs/lenny/pkg/gateway/failopen	github.com/lennylabs/lenny/pkg/gateway/storage/failopen
+github.com/lennylabs/lenny/pkg/gateway/gatewayleader	github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader
+github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics	github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics
+github.com/lennylabs/lenny/pkg/gateway/gcpause	github.com/lennylabs/lenny/pkg/gateway/metrics/gcpause
+github.com/lennylabs/lenny/pkg/gateway/gitref	github.com/lennylabs/lenny/pkg/gateway/provisioning/gitref
+github.com/lennylabs/lenny/pkg/gateway/health	github.com/lennylabs/lenny/pkg/gateway/operability/health
+github.com/lennylabs/lenny/pkg/gateway/impersonation	github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation
+github.com/lennylabs/lenny/pkg/gateway/inputwait	github.com/lennylabs/lenny/pkg/gateway/session/inputwait
+github.com/lennylabs/lenny/pkg/gateway/interactionstore	github.com/lennylabs/lenny/pkg/gateway/session/interactionstore
+github.com/lennylabs/lenny/pkg/gateway/interceptor	github.com/lennylabs/lenny/pkg/gateway/policy/interceptor
+github.com/lennylabs/lenny/pkg/gateway/interceptorstore	github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore
+github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore	github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore
+github.com/lennylabs/lenny/pkg/gateway/jwtaudit	github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit
+github.com/lennylabs/lenny/pkg/gateway/leasecontrol	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol
+github.com/lennylabs/lenny/pkg/gateway/leasestore	github.com/lennylabs/lenny/pkg/gateway/storage/leasestore
+github.com/lennylabs/lenny/pkg/gateway/legalholdreconciler	github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler
+github.com/lennylabs/lenny/pkg/gateway/llmproxy	github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy
+github.com/lennylabs/lenny/pkg/gateway/mcp	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp
+github.com/lennylabs/lenny/pkg/gateway/mcpruntimes	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes
+github.com/lennylabs/lenny/pkg/gateway/mcpschemagen	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpschemagen
+github.com/lennylabs/lenny/pkg/gateway/mcptools	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools
+github.com/lennylabs/lenny/pkg/gateway/memorystore	github.com/lennylabs/lenny/pkg/gateway/session/memorystore
+github.com/lennylabs/lenny/pkg/gateway/messagerouting	github.com/lennylabs/lenny/pkg/gateway/session/messagerouting
+github.com/lennylabs/lenny/pkg/gateway/ofrep	github.com/lennylabs/lenny/pkg/gateway/experiment/ofrep
+github.com/lennylabs/lenny/pkg/gateway/openapi	github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi
+github.com/lennylabs/lenny/pkg/gateway/orphancleanup	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup
+github.com/lennylabs/lenny/pkg/gateway/orphansession	github.com/lennylabs/lenny/pkg/gateway/session/orphansession
+github.com/lennylabs/lenny/pkg/gateway/outputpartfidelity	github.com/lennylabs/lenny/pkg/gateway/externalapi/outputpartfidelity
+github.com/lennylabs/lenny/pkg/gateway/pagination	github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination
+github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore	github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore
+github.com/lennylabs/lenny/pkg/gateway/partitionmaint	github.com/lennylabs/lenny/pkg/gateway/storage/partitionmaint
+github.com/lennylabs/lenny/pkg/gateway/pdbwatcher	github.com/lennylabs/lenny/pkg/gateway/coordination/pdbwatcher
+github.com/lennylabs/lenny/pkg/gateway/pgnotify	github.com/lennylabs/lenny/pkg/gateway/storage/pgnotify
+github.com/lennylabs/lenny/pkg/gateway/pgtenant	github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant
+github.com/lennylabs/lenny/pkg/gateway/platformtools	github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools
+github.com/lennylabs/lenny/pkg/gateway/playground	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground
+github.com/lennylabs/lenny/pkg/gateway/podclaim	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim
+github.com/lennylabs/lenny/pkg/gateway/podsession	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession
+github.com/lennylabs/lenny/pkg/gateway/podterminate	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate
+github.com/lennylabs/lenny/pkg/gateway/policy	github.com/lennylabs/lenny/pkg/gateway/policy/policy
+github.com/lennylabs/lenny/pkg/gateway/poolstore	github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore
+github.com/lennylabs/lenny/pkg/gateway/prestop	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop
+github.com/lennylabs/lenny/pkg/gateway/proxycache	github.com/lennylabs/lenny/pkg/gateway/llmproxy/proxycache
+github.com/lennylabs/lenny/pkg/gateway/pubsub	github.com/lennylabs/lenny/pkg/gateway/storage/pubsub
+github.com/lennylabs/lenny/pkg/gateway/quotabudget	github.com/lennylabs/lenny/pkg/gateway/quota/quotabudget
+github.com/lennylabs/lenny/pkg/gateway/quotacheckpoint	github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint
+github.com/lennylabs/lenny/pkg/gateway/quotaerasure	github.com/lennylabs/lenny/pkg/gateway/quota/quotaerasure
+github.com/lennylabs/lenny/pkg/gateway/quotafailopen	github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen
+github.com/lennylabs/lenny/pkg/gateway/quotastore	github.com/lennylabs/lenny/pkg/gateway/quota/quotastore
+github.com/lennylabs/lenny/pkg/gateway/ratelimit	github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit
+github.com/lennylabs/lenny/pkg/gateway/recommendations	github.com/lennylabs/lenny/pkg/gateway/operability/recommendations
+github.com/lennylabs/lenny/pkg/gateway/recycle	github.com/lennylabs/lenny/pkg/gateway/session/recycle
+github.com/lennylabs/lenny/pkg/gateway/rediskeys	github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys
+github.com/lennylabs/lenny/pkg/gateway/redistopology	github.com/lennylabs/lenny/pkg/gateway/storage/redistopology
+github.com/lennylabs/lenny/pkg/gateway/resultrollup	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup
+github.com/lennylabs/lenny/pkg/gateway/retentiongc	github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc
+github.com/lennylabs/lenny/pkg/gateway/revocation	github.com/lennylabs/lenny/pkg/gateway/credentials/revocation
+github.com/lennylabs/lenny/pkg/gateway/routingcache	github.com/lennylabs/lenny/pkg/gateway/session/routingcache
+github.com/lennylabs/lenny/pkg/gateway/runtimecapoverride	github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride
+github.com/lennylabs/lenny/pkg/gateway/runtimestore	github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore
+github.com/lennylabs/lenny/pkg/gateway/runtimeupgrade	github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade
+github.com/lennylabs/lenny/pkg/gateway/runtimeupgradeguard	github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard
+github.com/lennylabs/lenny/pkg/gateway/runtimeupgradestore	github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore
+github.com/lennylabs/lenny/pkg/gateway/sdkwarm	github.com/lennylabs/lenny/pkg/gateway/runtime/sdkwarm
+github.com/lennylabs/lenny/pkg/gateway/semanticcache	github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache
+github.com/lennylabs/lenny/pkg/gateway/semver	github.com/lennylabs/lenny/pkg/gateway/core/semver
+github.com/lennylabs/lenny/pkg/gateway/sessionage	github.com/lennylabs/lenny/pkg/gateway/session/sessionage
+github.com/lennylabs/lenny/pkg/gateway/sessionbudget	github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget
+github.com/lennylabs/lenny/pkg/gateway/sessioncallback	github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback
+github.com/lennylabs/lenny/pkg/gateway/sessioncheckpointmeta	github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta
+github.com/lennylabs/lenny/pkg/gateway/sessionevents	github.com/lennylabs/lenny/pkg/gateway/session/sessionevents
+github.com/lennylabs/lenny/pkg/gateway/sessionidle	github.com/lennylabs/lenny/pkg/gateway/session/sessionidle
+github.com/lennylabs/lenny/pkg/gateway/sessioninbox	github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox
+github.com/lennylabs/lenny/pkg/gateway/sessionlogstore	github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore
+github.com/lennylabs/lenny/pkg/gateway/sessionstore	github.com/lennylabs/lenny/pkg/gateway/session/sessionstore
+github.com/lennylabs/lenny/pkg/gateway/sessionusage	github.com/lennylabs/lenny/pkg/gateway/session/sessionusage
+github.com/lennylabs/lenny/pkg/gateway/slotcounter	github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter
+github.com/lennylabs/lenny/pkg/gateway/slothealth	github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth
+github.com/lennylabs/lenny/pkg/gateway/sqlitestore	github.com/lennylabs/lenny/pkg/gateway/storage/sqlitestore
+github.com/lennylabs/lenny/pkg/gateway/statelessproxy	github.com/lennylabs/lenny/pkg/gateway/runtime/statelessproxy
+github.com/lennylabs/lenny/pkg/gateway/statelessrouting	github.com/lennylabs/lenny/pkg/gateway/runtime/statelessrouting
+github.com/lennylabs/lenny/pkg/gateway/storagequota	github.com/lennylabs/lenny/pkg/gateway/quota/storagequota
+github.com/lennylabs/lenny/pkg/gateway/subsystem	github.com/lennylabs/lenny/pkg/gateway/core/subsystem
+github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore	github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore
+github.com/lennylabs/lenny/pkg/gateway/tenantaffinity	github.com/lennylabs/lenny/pkg/gateway/runtime/tenantaffinity
+github.com/lennylabs/lenny/pkg/gateway/tenantstore	github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore
+github.com/lennylabs/lenny/pkg/gateway/tlsprobe	github.com/lennylabs/lenny/pkg/gateway/pki/tlsprobe
+github.com/lennylabs/lenny/pkg/gateway/toolapproval	github.com/lennylabs/lenny/pkg/gateway/session/toolapproval
+github.com/lennylabs/lenny/pkg/gateway/transcriptstore	github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore
+github.com/lennylabs/lenny/pkg/gateway/translator	github.com/lennylabs/lenny/pkg/gateway/environment/translator
+github.com/lennylabs/lenny/pkg/gateway/treearchive	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive
+github.com/lennylabs/lenny/pkg/gateway/treebudget	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget
+github.com/lennylabs/lenny/pkg/gateway/treerecovery	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treerecovery
+github.com/lennylabs/lenny/pkg/gateway/usagestore	github.com/lennylabs/lenny/pkg/gateway/billing/usagestore
+github.com/lennylabs/lenny/pkg/gateway/usercreds	github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds
+github.com/lennylabs/lenny/pkg/gateway/userstore	github.com/lennylabs/lenny/pkg/gateway/environment/userstore
+github.com/lennylabs/lenny/pkg/gateway/vcscred	github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred
+github.com/lennylabs/lenny/pkg/gateway/watchdog	github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog

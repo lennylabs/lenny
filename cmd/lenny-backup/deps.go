@@ -11,7 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/backup/runner"
 	"github.com/lennylabs/lenny/pkg/redisconn"
@@ -115,9 +116,9 @@ func resolveDeps(ctx context.Context, in depsInput) (*deps, error) {
 			pool.Close()
 			return nil, fmt.Errorf("build Redis client for the §25.5 event stream: %w", err)
 		}
-		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
+		opsEmitter = eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 			Client:    redisClient,
-			Buffer:    events.NewEventBuffer(0),
+			Buffer:    eventbuffer.NewEventBuffer(0),
 			Source:    "//lenny.dev/ops/backup",
 			ReplicaID: "lenny-backup",
 		})

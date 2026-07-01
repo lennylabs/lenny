@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // messageFrom is the §15.4.1 MessageEnvelope `from` attribution surfaced

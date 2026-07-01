@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // fakeTreeRegistrar captures the §8.6 RegisterTree calls registerLeaseTree

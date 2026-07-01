@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // handleLogs implements GET /v1/sessions/{id}/logs per §15.1 line 673

@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
 // spec: 12.3.7

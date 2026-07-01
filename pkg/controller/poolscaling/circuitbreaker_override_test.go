@@ -11,7 +11,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
-	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 )
 
 // TestSyncDisabledOverrideForcesSDKWarmOff covers the §6.1 line 63

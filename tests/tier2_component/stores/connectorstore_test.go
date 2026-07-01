@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
-	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
+	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore/pgstore"
 )
 
 func connectorID(t *testing.T) string {

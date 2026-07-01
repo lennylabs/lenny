@@ -12,13 +12,13 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podterminate/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
 // newLocalRevocationDenyList builds the §11.4 step-6 deny list the

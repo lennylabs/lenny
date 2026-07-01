@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
-	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	poolpg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

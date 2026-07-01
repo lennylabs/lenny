@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
@@ -249,8 +250,8 @@ func TestPublishParsePlanWarnings_NoOpOnEmpty_spec_14(t *testing.T) {
 // consoles, audit pipelines, and AI DevOps agents (per §25) see them
 // without subscribing to the per-session SSE feed.
 func TestPublishParsePlanWarnings_EmitsOpsEvent_spec_25_3(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	emitter := events.NewEmitter(buf, "test-replica")
+	buf := eventbuffer.NewEventBuffer(0)
+	emitter := eventbuffer.NewEmitter(buf, "test-replica")
 	bus := sessionevents.NewBus(0)
 	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter})
 
@@ -292,8 +293,8 @@ func TestPublishParsePlanWarnings_EmitsOpsEvent_spec_25_3(t *testing.T) {
 // the §16.6 / §25.3 operational-event stream from the FinalizeWorkspace
 // response.
 func TestPublishWorkspaceWarnings_EmitsOpsEvent_spec_25_3(t *testing.T) {
-	buf := events.NewEventBuffer(0)
-	emitter := events.NewEmitter(buf, "test-replica")
+	buf := eventbuffer.NewEventBuffer(0)
+	emitter := eventbuffer.NewEmitter(buf, "test-replica")
 	bus := sessionevents.NewBus(0)
 	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter})
 

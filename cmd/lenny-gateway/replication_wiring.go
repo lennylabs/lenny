@@ -17,8 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 )
 
 // parseReplicationConfig decodes the §25.11 minio.artifactBackup

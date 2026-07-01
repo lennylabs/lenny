@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // leaseElicitPublisher publishes a §7.2 client event to a session's event

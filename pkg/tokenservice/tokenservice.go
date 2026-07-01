@@ -33,8 +33,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
-	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/tokenexchange"
 )
@@ -298,108 +298,35 @@ type revokedAuditPayload struct {
 	Timestamp        time.Time `json:"timestamp"`
 }
 
+// handle dispatches POST /v1/oauth/token through the §13.3 exchange
+// pipeline: a drift gate, caller authentication, request parse and
+// validation, rate limiting, and then either the recursive-revocation
+// branch or the mint-and-write-before-issue branch. Each stage is a
+// helper that owns its error envelope and `// spec:` citations; handle
+// is the ordered sequence and returns as soon as a stage has written a
+// response. spec: §13 token service.
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
-	start := s.clockNow()
-	op := "exchange"
-	finish := func(errClass string) {
-		s.metrics.RecordRequestDuration(op, s.clockNow().Sub(start))
-		if errClass != "" {
-			s.metrics.IncErrors(op, errClass)
-			// §16.1 lenny_oauth_token_5xx_total feeds the §16.5
-			// TokenStoreUnavailable alert; record every 5xx error class so a
-			// Postgres outage is distinguishable from a client error. The
-			// 4xx classes (invalid_*, rate_limited) are excluded. F-13.3.4.
-			if is5xxErrorClass(errClass) {
-				s.metrics.Inc5xx(errClass)
-			}
-		}
-	}
+	finish := s.newRequestFinisher()
 
-	// §13.3 line 595: when this replica's NTP drift exceeds the 5s
-	// ceiling, refuse to issue or validate a token whose `exp` it
-	// cannot trust. The replica's /healthz simultaneously reports
-	// degraded so the Service controller removes it from endpoints.
-	// F-13.3.5.
-	if s.driftDegraded != nil && s.driftDegraded() {
-		writeOAuthError(w, http.StatusServiceUnavailable, "token_validation_unavailable",
-			"replica wall-clock drift exceeds the §13.3 5s ceiling")
-		finish("token_validation_unavailable")
+	if !s.checkDrift(w, finish) {
 		return
 	}
-
-	// Caller token is the Authorization: Bearer header per §13.3.
-	callerToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if callerToken == "" {
-		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "missing Authorization: Bearer caller token")
-		finish("invalid_client")
+	callerClaims, ok := s.authenticateCaller(w, r, finish)
+	if !ok {
 		return
 	}
-	callerClaims, err := s.verifier.Verify(callerToken)
-	if err != nil {
-		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", err.Error())
-		finish("invalid_client")
+	req, ok := parseAndValidateRequest(w, r, finish)
+	if !ok {
 		return
 	}
-
-	req, err := parseRequest(r)
-	if err != nil {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		finish("invalid_request")
+	subjectClaims, actorClaims, ok := s.verifyExchangeTokens(w, req, finish)
+	if !ok {
 		return
-	}
-	if req.GrantType != grantTypeExchange {
-		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", req.GrantType)
-		finish("unsupported_grant_type")
-		return
-	}
-	if req.SubjectToken == "" {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "subject_token is required")
-		finish("invalid_request")
-		return
-	}
-
-	subjectClaims, err := s.verifier.Verify(req.SubjectToken)
-	if err != nil {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
-		finish("invalid_grant")
-		return
-	}
-
-	var actorClaims *jwt.Claims
-	if req.ActorToken != "" {
-		ac, err := s.verifier.Verify(req.ActorToken)
-		if err != nil {
-			writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
-			finish("invalid_grant")
-			return
-		}
-		actorClaims = &ac
 	}
 
 	now := s.clockNow()
-	// §13.3 line 607 / line 609: rate-limit per (tenant_id, sub) plus
-	// a global per-tenant bucket. The check fires before any signing
-	// or audit work so a brute-force attacker cannot consume signer
-	// cycles. The rate limiter samples its audit emission per §13.3
-	// line 609 to avoid saturating the per-tenant audit advisory lock.
-	if s.rateLimiter != nil {
-		dec := s.rateLimiter.Allow(now, callerClaims.TenantID, callerClaims.Subject)
-		if !dec.Allowed {
-			retryAfter := dec.RetryAfter
-			if retryAfter <= 0 {
-				retryAfter = time.Second
-			}
-			s.metrics.IncRateLimited(dec.LimitTier)
-			if dec.AuditSampled {
-				s.metrics.IncRateLimitedSampled(dec.LimitTier)
-				s.emitRateLimitAudit(r.Context(), callerClaims.TenantID, callerClaims.Subject, dec.LimitTier, now)
-			}
-			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
-			writeOAuthError(w, http.StatusTooManyRequests, "rate_limited",
-				"§13.3 "+dec.LimitTier+" rate limit exceeded")
-			finish("rate_limited")
-			return
-		}
+	if !s.allowRateLimited(w, r, callerClaims, now, finish) {
+		return
 	}
 
 	// §13.3 line 603 / §8.3 recursive revocation: a token-exchange
@@ -412,6 +339,183 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.handleExchange(w, r, req, callerClaims, subjectClaims, actorClaims, now, finish)
+}
+
+// newRequestFinisher returns the per-request metric finisher closed over
+// the request start time. Calling it with a non-empty error class
+// records the §16.1 error counter (and the 5xx counter for 5xx classes,
+// per F-13.3.4); calling it with "" records only the request duration on
+// the success path.
+func (s *Server) newRequestFinisher() func(errClass string) {
+	start := s.clockNow()
+	const op = "exchange"
+	return func(errClass string) {
+		s.metrics.RecordRequestDuration(op, s.clockNow().Sub(start))
+		if errClass != "" {
+			s.metrics.IncErrors(op, errClass)
+			// §16.1 lenny_oauth_token_5xx_total feeds the §16.5
+			// TokenStoreUnavailable alert; record every 5xx error class so a
+			// Postgres outage is distinguishable from a client error. The
+			// 4xx classes (invalid_*, rate_limited) are excluded. F-13.3.4.
+			if is5xxErrorClass(errClass) {
+				s.metrics.Inc5xx(errClass)
+			}
+		}
+	}
+}
+
+// checkDrift is the §13.3 line 595 drift gate. It reports false (and
+// writes 503 token_validation_unavailable) when this replica's NTP drift
+// exceeds the 5s ceiling, so the handler refuses to issue or validate a
+// token whose `exp` it cannot trust. The replica's /healthz
+// simultaneously reports degraded so the Service controller removes it
+// from endpoints. F-13.3.5.
+func (s *Server) checkDrift(w http.ResponseWriter, finish func(string)) bool {
+	if s.driftDegraded != nil && s.driftDegraded() {
+		writeOAuthError(w, http.StatusServiceUnavailable, "token_validation_unavailable",
+			"replica wall-clock drift exceeds the §13.3 5s ceiling")
+		finish("token_validation_unavailable")
+		return false
+	}
+	return true
+}
+
+// authenticateCaller verifies the §13.3 Authorization: Bearer caller
+// token. It returns the caller claims and true on success; on a missing
+// or invalid token it writes 401 invalid_client and returns false.
+func (s *Server) authenticateCaller(w http.ResponseWriter, r *http.Request, finish func(string)) (jwt.Claims, bool) {
+	callerToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if callerToken == "" {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "missing Authorization: Bearer caller token")
+		finish("invalid_client")
+		return jwt.Claims{}, false
+	}
+	callerClaims, err := s.verifier.Verify(callerToken)
+	if err != nil {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", err.Error())
+		finish("invalid_client")
+		return jwt.Claims{}, false
+	}
+	return callerClaims, true
+}
+
+// parseAndValidateRequest decodes the RFC 8693 request body and enforces
+// the §13.3 request preconditions (grant_type is the token-exchange
+// grant and subject_token is present). It returns the request and true
+// on success; on a malformed body or a failed precondition it writes the
+// matching 400 envelope and returns false.
+func parseAndValidateRequest(w http.ResponseWriter, r *http.Request, finish func(string)) (Request, bool) {
+	req, err := parseRequest(r)
+	if err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		finish("invalid_request")
+		return Request{}, false
+	}
+	if req.GrantType != grantTypeExchange {
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", req.GrantType)
+		finish("unsupported_grant_type")
+		return Request{}, false
+	}
+	if req.SubjectToken == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "subject_token is required")
+		finish("invalid_request")
+		return Request{}, false
+	}
+	return req, true
+}
+
+// verifyExchangeTokens verifies the subject token and the optional actor
+// token. It returns the subject claims, the actor claims (nil when no
+// actor_token was supplied), and true on success; on a verification
+// failure it writes 400 invalid_grant and returns false.
+func (s *Server) verifyExchangeTokens(w http.ResponseWriter, req Request, finish func(string)) (jwt.Claims, *jwt.Claims, bool) {
+	subjectClaims, err := s.verifier.Verify(req.SubjectToken)
+	if err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
+		finish("invalid_grant")
+		return jwt.Claims{}, nil, false
+	}
+
+	var actorClaims *jwt.Claims
+	if req.ActorToken != "" {
+		ac, err := s.verifier.Verify(req.ActorToken)
+		if err != nil {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
+			finish("invalid_grant")
+			return jwt.Claims{}, nil, false
+		}
+		actorClaims = &ac
+	}
+	return subjectClaims, actorClaims, true
+}
+
+// allowRateLimited applies the §13.3 line 607 / line 609 per-(tenant,
+// sub) and global per-tenant rate limits. It returns true when the
+// request is allowed (or no limiter is configured); on a rejection it
+// emits the unconditional and sampled metrics, the sampled audit row,
+// the Retry-After header, the 429 rate_limited envelope, and returns
+// false. The check fires before any signing or audit work so a
+// brute-force attacker cannot consume signer cycles.
+func (s *Server) allowRateLimited(w http.ResponseWriter, r *http.Request, callerClaims jwt.Claims, now time.Time, finish func(string)) bool {
+	if s.rateLimiter == nil {
+		return true
+	}
+	dec := s.rateLimiter.Allow(now, callerClaims.TenantID, callerClaims.Subject)
+	if dec.Allowed {
+		return true
+	}
+	retryAfter := dec.RetryAfter
+	if retryAfter <= 0 {
+		retryAfter = time.Second
+	}
+	s.metrics.IncRateLimited(dec.LimitTier)
+	if dec.AuditSampled {
+		s.metrics.IncRateLimitedSampled(dec.LimitTier)
+		s.emitRateLimitAudit(r.Context(), callerClaims.TenantID, callerClaims.Subject, dec.LimitTier, now)
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+	writeOAuthError(w, http.StatusTooManyRequests, "rate_limited",
+		"§13.3 "+dec.LimitTier+" rate limit exceeded")
+	finish("rate_limited")
+	return false
+}
+
+// handleExchange runs the mint branch of the §13.3 pipeline: it
+// validates the exchange, mints and signs the issued token, and commits
+// the write-before-issue record. Each step writes its own error envelope
+// on failure and returns; on success it renders the RFC 8693 response.
+func (s *Server) handleExchange(w http.ResponseWriter, r *http.Request, req Request, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) {
+	exchangeReq := s.buildExchangeRequest(req, callerClaims, subjectClaims, actorClaims, now)
+
+	issued, ok := s.validateExchange(w, r, req, callerClaims, subjectClaims, exchangeReq, now, finish)
+	if !ok {
+		return
+	}
+
+	jti, signed, ok := s.mintToken(w, issued, now, finish)
+	if !ok {
+		return
+	}
+
+	if !s.persistIssuedToken(w, r, jti, issued, signed, exchangeReq.PerDialectCap, callerClaims, subjectClaims, actorClaims, now, finish) {
+		return
+	}
+
+	writeJSON(w, http.StatusOK, Response{
+		AccessToken:     signed,
+		IssuedTokenType: tokenTypeJWT,
+		TokenType:       "Bearer",
+		ExpiresIn:       issued.Exp.Unix() - now.Unix(),
+		Scope:           strings.Join(issued.Scope, " "),
+	})
+	finish("")
+}
+
+// buildExchangeRequest assembles the tokenexchange.Request from the
+// caller, subject, and optional actor claims, and resolves the §13.3
+// per-dialect lifetime cap.
+func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time) tokenexchange.Request {
 	exchangeReq := tokenexchange.Request{
 		Subject: toExchangeToken(subjectClaims),
 		Caller:  toExchangeToken(callerClaims),
@@ -426,85 +530,103 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		actor := toExchangeToken(*actorClaims)
 		exchangeReq.Actor = &actor
 	}
-	// §13.3 per-dialect lifetime cap. The cap key is one audience
-	// dialect (e.g. lenny-gateway, lenny-ops, llm-proxy). An exchange
-	// can request a multi-value audience (RFC 8693), so iterate the
-	// requested audiences and apply the tightest matching cap. This
-	// closes the F-13.3.12 lookup bug where a multi-value string was
-	// passed verbatim and never matched a single-key entry. Capture
-	// which cap fired so it can be recorded on the issued_tokens row
-	// for forensic reconstruction. spec: §4.3 line 193, §13.3 line
-	// 564.
-	var appliedDialectCap time.Duration
-	for _, aud := range exchangeReq.Requested.Audience {
+	if dialectCap := s.resolveDialectCap(exchangeReq.Requested.Audience, req.Audience); dialectCap > 0 {
+		exchangeReq.PerDialectCap = dialectCap
+	}
+	return exchangeReq
+}
+
+// resolveDialectCap returns the §13.3 per-dialect lifetime cap to apply.
+// The cap key is one audience dialect (e.g. lenny-gateway, lenny-ops,
+// llm-proxy). An exchange can request a multi-value audience (RFC 8693),
+// so it iterates the requested audiences and applies the tightest
+// matching cap. This closes the F-13.3.12 lookup bug where a multi-value
+// string was passed verbatim and never matched a single-key entry. The
+// returned value is recorded on the issued_tokens row for forensic
+// reconstruction. spec: §4.3 line 193, §13.3 line 564.
+func (s *Server) resolveDialectCap(requestedAudience []string, rawAudience string) time.Duration {
+	var applied time.Duration
+	for _, aud := range requestedAudience {
 		if c, ok := s.perDialect[aud]; ok {
-			if appliedDialectCap == 0 || c < appliedDialectCap {
-				appliedDialectCap = c
+			if applied == 0 || c < applied {
+				applied = c
 			}
 		}
 	}
-	if appliedDialectCap == 0 {
+	if applied == 0 {
 		// Back-compat: callers that still pass a singleton through
 		// req.Audience (the raw form, before whitespace splitting) hit
 		// the original direct lookup. This preserves dialect cap
 		// enforcement on the singleton "lenny-gateway" path even when
 		// the exchange request carried no Audience list (e.g.
 		// non-RFC-8693 callers).
-		if c, ok := s.perDialect[req.Audience]; ok {
-			appliedDialectCap = c
+		if c, ok := s.perDialect[rawAudience]; ok {
+			applied = c
 		}
 	}
-	if appliedDialectCap > 0 {
-		exchangeReq.PerDialectCap = appliedDialectCap
-	}
+	return applied
+}
 
+// validateExchange runs tokenexchange.Validate and renders the §13.3
+// rejection path. It returns the issued token and true on acceptance; on
+// a rejection it emits the §13.3 line 585 token.exchanged audit row,
+// writes the mapped error envelope, and returns false. A failed
+// rejection-audit write fails closed with 500 token_exchange_failed
+// (§13.3 line 589).
+func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Request, callerClaims, subjectClaims jwt.Claims, exchangeReq tokenexchange.Request, now time.Time, finish func(string)) (tokenexchange.Issued, bool) {
 	issued, verr := tokenexchange.Validate(exchangeReq)
-	if verr != nil {
-		var ee *tokenexchange.ExchangeError
-		if errors.As(verr, &ee) {
-			// §13.3 line 585 / line 589: rejected exchanges still
-			// emit a `token.exchanged` audit row with the
-			// policy_result reason so the SIEM has cross-tenant
-			// probe evidence.
-			if auditErr := s.recordExchangeAudit(r.Context(), subjectClaims.TenantID, exchangeAuditPayload{
-				CallerSub:    callerClaims.Subject,
-				SubjectSub:   subjectClaims.Subject,
-				PolicyResult: "rejected:" + ee.Reason,
-				ErrorCode:    ee.Code,
-				Audience:     splitSpace(req.Audience),
-				Scope:        splitScope(req.Scope),
-				Now:          now,
-			}); auditErr != nil {
-				// §13.3 line 589: fail closed when the rejection-audit
-				// write fails. Return 500 token_exchange_failed with the
-				// originally intended rejection reason in the error
-				// body's detail so operators can reconstruct the attempt,
-				// rather than silently swallowing the rejection by
-				// returning the 4xx the client could retry.
-				writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
-					"§13.3 rejection-audit write failed; intended rejection: "+ee.Reason)
-				finish("token_exchange_failed")
-				return
-			}
-			writeOAuthError(w, mapStatus(ee.Code), ee.Code, ee.Reason)
-			finish(ee.Code)
-			return
-		}
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", verr.Error())
-		finish("server_error")
-		return
+	if verr == nil {
+		return issued, true
 	}
+	var ee *tokenexchange.ExchangeError
+	if errors.As(verr, &ee) {
+		// §13.3 line 585 / line 589: rejected exchanges still
+		// emit a `token.exchanged` audit row with the
+		// policy_result reason so the SIEM has cross-tenant
+		// probe evidence.
+		if auditErr := s.recordExchangeAudit(r.Context(), subjectClaims.TenantID, exchangeAuditPayload{
+			CallerSub:    callerClaims.Subject,
+			SubjectSub:   subjectClaims.Subject,
+			PolicyResult: "rejected:" + ee.Reason,
+			ErrorCode:    ee.Code,
+			Audience:     splitSpace(req.Audience),
+			Scope:        splitScope(req.Scope),
+			Now:          now,
+		}); auditErr != nil {
+			// §13.3 line 589: fail closed when the rejection-audit
+			// write fails. Return 500 token_exchange_failed with the
+			// originally intended rejection reason in the error
+			// body's detail so operators can reconstruct the attempt,
+			// rather than silently swallowing the rejection by
+			// returning the 4xx the client could retry.
+			writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
+				"§13.3 rejection-audit write failed; intended rejection: "+ee.Reason)
+			finish("token_exchange_failed")
+			return tokenexchange.Issued{}, false
+		}
+		writeOAuthError(w, mapStatus(ee.Code), ee.Code, ee.Reason)
+		finish(ee.Code)
+		return tokenexchange.Issued{}, false
+	}
+	writeOAuthError(w, http.StatusInternalServerError, "server_error", verr.Error())
+	finish("server_error")
+	return tokenexchange.Issued{}, false
+}
 
-	// Mint the issued token via the signer. The jti is a
-	// crypto/rand-derived 128-bit identifier so two replicas minting
-	// at the same wall-clock instant do not collide on the
-	// issued_tokens primary key. spec: §4.3 line 209 (no affinity
-	// requirements / replicas serve interchangeably).
+// mintToken builds the issued JWT claims and signs them. It returns the
+// freshly minted jti, the signed token, and true on success. The jti is
+// a crypto/rand-derived 128-bit identifier so two replicas minting at
+// the same wall-clock instant do not collide on the issued_tokens
+// primary key. spec: §4.3 line 209 (no affinity requirements / replicas
+// serve interchangeably). An open JWTSigner circuit breaker fails with
+// 503 KMS_SIGNING_UNAVAILABLE and `retryable: true` (§10.2 line 225,
+// F-10.2.6).
+func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, now time.Time, finish func(string)) (string, string, bool) {
 	jti, err := newJTI()
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		finish("server_error")
-		return
+		return "", "", false
 	}
 
 	out := jwt.Claims{
@@ -535,19 +657,23 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, jwt.ErrSigningUnavailable) {
 			writeKMSUnavailable(w, err.Error())
 			finish("kms_signing_unavailable")
-			return
+			return "", "", false
 		}
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		finish("server_error")
-		return
+		return "", "", false
 	}
+	return jti, signed, true
+}
 
-	// §13.3 write-before-issue: the issued-token row + the
-	// token.exchanged audit row commit in one Postgres transaction
-	// under the per-tenant audit advisory lock. The signed token is
-	// not handed to the caller until COMMIT succeeds, so every live
-	// token has a matching issued_tokens record and a matching
-	// audit_log row. spec: §13.3 line 589.
+// persistIssuedToken commits the §13.3 write-before-issue record: the
+// issued_tokens row and the token.exchanged audit row commit in one
+// Postgres transaction under the per-tenant audit advisory lock, so the
+// signed token is not handed to the caller until COMMIT succeeds. It
+// routes between the rotation, transactional-audit, in-memory dev, and
+// test-only store paths and returns true once the record is durable.
+// spec: §13.3 line 589.
+func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
 	hash := sha256.Sum256([]byte(signed))
 	rec := issuedtokenstore.IssuedToken{
 		JTI:       jti,
@@ -561,7 +687,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		// spec: §4.3 line 193, migration 0058.
 		Audience:                 strings.Join(issued.Audience, " "),
 		Audiences:                append([]string{}, issued.Audience...),
-		DialectCapAppliedSeconds: int(appliedDialectCap.Seconds()),
+		DialectCapAppliedSeconds: int(dialectCap.Seconds()),
 		IssuedAt:                 now,
 		ExpiresAt:                issued.Exp,
 	}
@@ -576,20 +702,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		Now:             now,
 	}
 
-	// §13.3 line 597 token rotation: a self-rotation is an exchange in
-	// which the caller presents its own current token as the subject and
-	// requests a privilege-equivalent replacement (same audience set,
-	// same scope, no actor/delegation). On detection the previous token
-	// is revoked atomically with the mint, and a §16.7 token.revoked row
-	// with revocation_reason=rotation_replaced is emitted. The guard is
-	// deliberately narrow: a cross-audience or scope-narrowing
-	// self-exchange is a scope_narrow / dialect derivation, not a
-	// rotation, so its subject token is left live. F-16.7.5.
-	isRotation := actorClaims == nil &&
-		callerClaims.JWTID != "" &&
-		callerClaims.JWTID == subjectClaims.JWTID &&
-		sameStringSet(issued.Audience, subjectClaims.Audience) &&
-		sameStringSet(issued.Scope, splitScope(subjectClaims.Scope))
+	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
 
 	auditStore, _ := s.issuedTokens.(IssuedTokenAuditStore)
 	rotationStore, _ := s.issuedTokens.(IssuedTokenRotationStore)
@@ -603,7 +716,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			string(obsaudit.EventTokenExchanged), auditPayload.JSON(), now)
 		if err != nil {
 			writeIssueStoreError(w, finish, err)
-			return
+			return false
 		}
 		if revoked {
 			// The token.revoked row and cluster propagation run after the
@@ -617,7 +730,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if _, err := auditStore.RecordWithAudit(r.Context(), rec, string(obsaudit.EventTokenExchanged),
 			auditPayload.JSON(), now); err != nil {
 			writeIssueStoreError(w, finish, err)
-			return
+			return false
 		}
 	case s.issuedTokens != nil:
 		// In-memory dev path: no advisory lock is needed because the
@@ -626,7 +739,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		// audit row references a durable jti.
 		if err := s.issuedTokens.Record(r.Context(), rec); err != nil {
 			writeIssueStoreError(w, finish, err)
-			return
+			return false
 		}
 		// The accepted-exchange write-before-issue fail-closed obligation
 		// (§13.3 line 589) is met by the production Postgres path above,
@@ -640,15 +753,24 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		// discarded.
 		_ = s.recordExchangeAudit(r.Context(), issued.TenantID, auditPayload)
 	}
+	return true
+}
 
-	writeJSON(w, http.StatusOK, Response{
-		AccessToken:     signed,
-		IssuedTokenType: tokenTypeJWT,
-		TokenType:       "Bearer",
-		ExpiresIn:       issued.Exp.Unix() - now.Unix(),
-		Scope:           strings.Join(issued.Scope, " "),
-	})
-	finish("")
+// isSelfRotation reports whether this exchange is a §13.3 line 597
+// self-rotation: the caller presents its own current token as the
+// subject and requests a privilege-equivalent replacement (same audience
+// set, same scope, no actor/delegation). On detection the previous token
+// is revoked atomically with the mint, and a §16.7 token.revoked row with
+// revocation_reason=rotation_replaced is emitted. The guard is
+// deliberately narrow: a cross-audience or scope-narrowing self-exchange
+// is a scope_narrow / dialect derivation, not a rotation, so its subject
+// token is left live. F-16.7.5.
+func (s *Server) isSelfRotation(issued tokenexchange.Issued, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims) bool {
+	return actorClaims == nil &&
+		callerClaims.JWTID != "" &&
+		callerClaims.JWTID == subjectClaims.JWTID &&
+		sameStringSet(issued.Audience, subjectClaims.Audience) &&
+		sameStringSet(issued.Scope, splitScope(subjectClaims.Scope))
 }
 
 // exchangeAuditPayload is the §16.7 / §25.4 token.exchanged audit row

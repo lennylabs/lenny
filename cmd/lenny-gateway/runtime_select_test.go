@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 )
 
 // spec: §17.4 line 262 — LENNY_AGENT_RUNTIME=echo selects the built-in

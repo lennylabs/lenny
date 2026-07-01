@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/deadletterredaction"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction"
 )
 
 // spec: §12.8 lines 810-829 — DeleteByUser step-14 redacts the user's

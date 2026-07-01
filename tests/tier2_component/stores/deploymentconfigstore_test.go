@@ -15,8 +15,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore"
-	deploymentconfigpg "github.com/lennylabs/lenny/pkg/gateway/deploymentconfigstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
+	deploymentconfigpg "github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

@@ -15,10 +15,10 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
-	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/transcriptstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 )
 
 // seedSession creates a session row so a transcript can reference it

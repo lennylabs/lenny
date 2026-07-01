@@ -334,55 +334,121 @@ func Failed(report []CheckResult) bool {
 // Run gathers the cluster state the §17.9 admission-plane checks need
 // and runs them. A cluster read that fails is surfaced as a failed
 // check, consistent with the fail-closed posture of the preflight Job.
+//
+// The body is a flat sequence of §17.9 check groups. Each group helper
+// gathers any cluster state it needs and returns its CheckResults,
+// translating a failed read into a failed (or, where the spec scopes it
+// so, advisory) check so the fail-closed posture is preserved at the
+// group boundary. Run concatenates the groups in their original order.
 func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	report := make([]CheckResult, 0, 11)
+	groups := []func(context.Context, client.Reader, Config) []CheckResult{
+		runCosignChecks,
+		runWebhookInventoryChecks,
+		runPhaseStampChecks,
+		runWorkloadSecurityChecks,
+		runNetworkPolicyChecks,
+		runDeploymentIdentityChecks,
+		runStorageChecks,
+		runRuntimeClassChecks,
+		runPoolGracePeriodChecks,
+		runPlaygroundChecks,
+		runCRDSchemaChecks,
+		runPrometheusOperatorChecks,
+		runCertManagerChecks,
+		runConversionWebhookChecks,
+		runRedisMaxmemoryChecks,
+		runCloudPoolerSentinelChecks,
+		runClusterCIDRChecks,
+		runOTLPTLSChecks,
+		runOpsAdminTLSChecks,
+		runPrometheusReachabilityChecks,
+		runVolumeEncryptionChecks,
+		runKubernetesVersionChecks,
+		runInstallPrereqChecks,
+		runNamespaceGovernanceChecks,
+		runOpsIngressIssuerChecks,
+		runMonitoringNamespaceChecks,
+		runOpsSARBACChecks,
+		runIngressControllerChecks,
+	}
+	for _, group := range groups {
+		report = append(report, group(ctx, reader, cfg)...)
+	}
+	return report
+}
 
-	// §5.3 line 669 — image provenance verification is a prerequisite
-	// for production and staging deployments. A pure-function advisory
-	// over the chart values: a production-or-staging install with
-	// cosign disabled gets a non-blocking WARNING, mirroring the §17.6
-	// disk-encryption posture warning. F-5.3.5.
-	report = append(report, CheckResult{
+// runCosignChecks evaluates the §5.3 line 669 image-provenance advisory.
+// A production-or-staging install with cosign disabled gets a
+// non-blocking WARNING, mirroring the §17.6 disk-encryption posture
+// warning. The check is a pure function over the chart values. F-5.3.5.
+func runCosignChecks(_ context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
 		Name:     "cosign-production-posture",
 		Decision: CheckCosignProduction(cfg.Environment, cfg.Features.CosignVerify),
-	})
+	}}
+}
 
-	if deployed, err := gatherWebhooks(ctx, reader); err != nil {
-		report = append(report, CheckResult{
+// runWebhookInventoryChecks lists the lenny-* ValidatingWebhookConfigurations
+// and audits them against the feature-gated expected set. A failed List
+// surfaces as a failed check (fail-closed).
+func runWebhookInventoryChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	deployed, err := gatherWebhooks(ctx, reader)
+	if err != nil {
+		return []CheckResult{{
 			Name:     "admission-webhook-inventory",
 			Decision: Decision{Reason: "list ValidatingWebhookConfigurations: " + err.Error()},
-		})
-	} else {
-		report = append(report, CheckResult{
-			Name:     "admission-webhook-inventory",
-			Decision: CheckAdmissionWebhooks(ExpectedValidatingWebhooks(cfg.Features), deployed),
-		})
+		}}
 	}
+	return []CheckResult{{
+		Name:     "admission-webhook-inventory",
+		Decision: CheckAdmissionWebhooks(ExpectedValidatingWebhooks(cfg.Features), deployed),
+	}}
+}
 
-	if stamp, err := gatherPhaseStamp(ctx, reader, cfg.Namespace); err != nil {
-		report = append(report, CheckResult{
+// runPhaseStampChecks reads the §17.2 phase-stamp ConfigMap and audits
+// the incoming feature-flag values against the recorded enabled state.
+// A failed read surfaces as a failed check (fail-closed).
+func runPhaseStampChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	stamp, err := gatherPhaseStamp(ctx, reader, cfg.Namespace)
+	if err != nil {
+		return []CheckResult{{
 			Name:     "phase-stamp-consistency",
 			Decision: Decision{Reason: "read phase-stamp ConfigMap: " + err.Error()},
-		})
-	} else {
-		incoming := map[string]bool{
-			"llmProxy":       cfg.Features.LLMProxy,
-			"drainReadiness": cfg.Features.DrainReadiness,
-			"compliance":     cfg.Features.Compliance,
-		}
-		report = append(report, CheckResult{
-			Name:     "phase-stamp-consistency",
-			Decision: CheckPhaseStamp(incoming, stamp, cfg.AcceptDowngrade),
-		})
+		}}
 	}
+	incoming := map[string]bool{
+		"llmProxy":       cfg.Features.LLMProxy,
+		"drainReadiness": cfg.Features.DrainReadiness,
+		"compliance":     cfg.Features.Compliance,
+	}
+	return []CheckResult{{
+		Name:     "phase-stamp-consistency",
+		Decision: CheckPhaseStamp(incoming, stamp, cfg.AcceptDowngrade),
+	}}
+}
 
-	// §13.1 line 23 — the host-sharing audit covers all Lenny-managed
-	// Deployments, DaemonSets, and Jobs in the release namespace and the
-	// §17.2 agent namespaces, plus the bare agent Pods the controller
-	// spawns from Sandbox CRs. Scoping the scan to the release namespace
-	// alone let an agent-namespace pod with hostPID escape the gate
-	// (F-13.1.7). The same agent-Pod scan feeds the §13.1 line 25
-	// credential-fsGroup audit (F-13.1.4).
+// runWorkloadSecurityChecks runs the §13.1 host-sharing, agent-pod
+// credential-fsGroup, and pod-security-baseline audits. The host-sharing
+// scan covers all Lenny-managed Deployments, DaemonSets, and Jobs in the
+// release namespace and the §17.2 agent namespaces, plus the bare agent
+// Pods the controller spawns from Sandbox CRs. The same agent-Pod scan
+// feeds the §13.1 line 25 credential-fsGroup audit, so it is read once and
+// its error is reused across both audits. A failed read surfaces as a
+// failed check (fail-closed).
+//
+// spec: §13.1 line 23 (host-sharing scan covers all Lenny-managed
+// workloads), §13.1 line 25 (credential-fsGroup audit), §13.1 lines 6-8
+// (pod-security baseline). F-13.1.7 / F-13.1.4 / F-13.1.12.
+func runWorkloadSecurityChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	var report []CheckResult
+
+	// The host-sharing scan reads every Lenny-managed workload across the
+	// release and agent namespaces plus the controller-spawned agent Pods;
+	// the agent-Pod read also feeds the credential-fsGroup audit, so it is
+	// gathered once here and its error reused below. Scoping the scan to
+	// the release namespace alone let an agent-namespace pod with hostPID
+	// escape the gate (F-13.1.7).
 	workloadNS := dedupeNamespaces(append([]string{cfg.Namespace}, cfg.AgentNamespaces...))
 	workloads, werr := gatherWorkloadPodSpecs(ctx, reader, workloadNS)
 	agentPods, aerr := gatherAgentPods(ctx, reader, cfg.AgentNamespaces)
@@ -446,9 +512,13 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		})
 	}
 
-	// §13.2 NetworkPolicy selector-consistency and parity audits. A
-	// failed List is surfaced as a failure on every audit it would
-	// feed, keeping the fail-closed posture.
+	return report
+}
+
+// runNetworkPolicyChecks runs the §13.2 NetworkPolicy selector-consistency
+// and parity audits. A failed List is surfaced as a failure on every audit
+// it would feed, keeping the fail-closed posture.
+func runNetworkPolicyChecks(ctx context.Context, reader client.Reader, _ Config) []CheckResult {
 	npChecks := []string{
 		"networkpolicy-selector-consistency",
 		"networkpolicy-dns-podselector-parity",
@@ -457,52 +527,67 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		"networkpolicy-cluster-cidr-symmetry",
 		"networkpolicy-ops-egress-selector-parity",
 	}
-	if policies, err := gatherNetworkPolicies(ctx, reader); err != nil {
+	policies, err := gatherNetworkPolicies(ctx, reader)
+	if err != nil {
+		report := make([]CheckResult, 0, len(npChecks))
 		for _, name := range npChecks {
 			report = append(report, CheckResult{
 				Name:     name,
 				Decision: Decision{Reason: "list Lenny-managed NetworkPolicies: " + err.Error()},
 			})
 		}
-	} else {
-		report = append(
-			report,
-			CheckResult{Name: "networkpolicy-selector-consistency", Decision: CheckSelectorConsistency(policies)},
-			CheckResult{Name: "networkpolicy-dns-podselector-parity", Decision: CheckDNSPodSelectorParity(policies)},
-			CheckResult{Name: "networkpolicy-ipblock-family-parity", Decision: CheckIPBlockFamilyParity(policies)},
-			CheckResult{Name: "networkpolicy-ssrf-private-range-parity", Decision: CheckSSRFPrivateRangeParity(policies)},
-			CheckResult{Name: "networkpolicy-cluster-cidr-symmetry", Decision: CheckClusterCIDRSymmetry(policies)},
-			CheckResult{Name: "networkpolicy-ops-egress-selector-parity", Decision: CheckOpsEgressSelectorParity(policies)},
-		)
+		return report
 	}
+	return []CheckResult{
+		{Name: "networkpolicy-selector-consistency", Decision: CheckSelectorConsistency(policies)},
+		{Name: "networkpolicy-dns-podselector-parity", Decision: CheckDNSPodSelectorParity(policies)},
+		{Name: "networkpolicy-ipblock-family-parity", Decision: CheckIPBlockFamilyParity(policies)},
+		{Name: "networkpolicy-ssrf-private-range-parity", Decision: CheckSSRFPrivateRangeParity(policies)},
+		{Name: "networkpolicy-cluster-cidr-symmetry", Decision: CheckClusterCIDRSymmetry(policies)},
+		{Name: "networkpolicy-ops-egress-selector-parity", Decision: CheckOpsEgressSelectorParity(policies)},
+	}
+}
 
-	// §13.2 / §10.3 NET-064 deployment-identity uniqueness audits.
-	if gws, err := gatherGatewayIdentities(ctx, reader); err != nil {
+// runDeploymentIdentityChecks runs the §13.2 / §10.3 NET-064
+// deployment-identity uniqueness audits over the lenny-gateway
+// Deployments. A failed List surfaces as a failure on both audits
+// (fail-closed).
+func runDeploymentIdentityChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	gws, err := gatherGatewayIdentities(ctx, reader)
+	if err != nil {
+		report := make([]CheckResult, 0, 2)
 		for _, name := range []string{"spiffe-trust-domain-uniqueness", "sa-token-audience-uniqueness"} {
 			report = append(report, CheckResult{
 				Name:     name,
 				Decision: Decision{Reason: "list lenny-gateway Deployments: " + err.Error()},
 			})
 		}
-	} else {
-		report = append(
-			report,
-			CheckResult{
-				Name:     "spiffe-trust-domain-uniqueness",
-				Decision: CheckSPIFFETrustDomainUniqueness(cfg.SPIFFETrustDomain, cfg.Namespace, gws),
-			},
-			CheckResult{
-				Name:     "sa-token-audience-uniqueness",
-				Decision: CheckSATokenAudienceUniqueness(cfg.SATokenAudience, cfg.Namespace, gws),
-			},
-		)
+		return report
 	}
+	return []CheckResult{
+		{
+			Name:     "spiffe-trust-domain-uniqueness",
+			Decision: CheckSPIFFETrustDomainUniqueness(cfg.SPIFFETrustDomain, cfg.Namespace, gws),
+		},
+		{
+			Name:     "sa-token-audience-uniqueness",
+			Decision: CheckSATokenAudienceUniqueness(cfg.SATokenAudience, cfg.Namespace, gws),
+		},
+	}
+}
+
+// runStorageChecks runs the §12.5 MinIO server-side encryption and §17.9.4
+// cloud object-storage lifecycle audits. The SSE check runs only when a
+// bucket is configured and the chart wires the prober; the lifecycle check
+// runs unconditionally and self-skips for objectStorage.provider=minio. The
+// probers are dropped under skip-network-probes (airgap).
+func runStorageChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	var report []CheckResult
 
 	// §12.5 line 297 — MinIO server-side encryption posture audit.
-	// Runs only when a bucket is configured and the chart wires the
-	// prober. A regulated complianceProfile (soc2 | fedramp | hipaa)
-	// fails closed on absent SSE; non-regulated installs surface the
-	// posture as advisory and pass.
+	// A regulated complianceProfile (soc2 | fedramp | hipaa) fails closed
+	// on absent SSE; non-regulated installs surface the posture as advisory
+	// and pass.
 	if !cfg.SkipNetworkProbes && cfg.MinIOBucket != "" && cfg.MinIOEncryptionProber != nil {
 		report = append(report, CheckResult{
 			Name: "minio-server-side-encryption",
@@ -521,393 +606,459 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	// delete-marker expiration through a provider SDK read. The prober is
 	// nil under skip-network-probes (airgap) or for a provider without a
 	// wired SDK reader, which routes the check through its advisory path.
-	{
-		prober := cfg.CloudObjectStorageLifecycleProber
-		if cfg.SkipNetworkProbes {
-			prober = nil
-		}
-		report = append(report, CheckResult{
-			Name: "cloud-object-storage-lifecycle",
-			Decision: CloudObjectStorageLifecycleCheck{
-				Provider: cfg.ObjectStorage.Provider,
-				Bucket:   cfg.ObjectStorage.Bucket,
-				Prober:   prober,
-			}.Decide(ctx),
-		})
+	prober := cfg.CloudObjectStorageLifecycleProber
+	if cfg.SkipNetworkProbes {
+		prober = nil
 	}
+	report = append(report, CheckResult{
+		Name: "cloud-object-storage-lifecycle",
+		Decision: CloudObjectStorageLifecycleCheck{
+			Provider: cfg.ObjectStorage.Provider,
+			Bucket:   cfg.ObjectStorage.Bucket,
+			Prober:   prober,
+		}.Decide(ctx),
+	})
 
-	// §5.3 line 676 — required RuntimeClass presence. The chart passes
-	// one requirement per enabled, externally-managed isolation profile;
-	// an absent RuntimeClass fails the install fail-closed before the
-	// first warm pod create would be rejected by the API server.
-	if len(cfg.RequiredRuntimeClasses) > 0 {
-		if existing, err := gatherRuntimeClasses(ctx, reader); err != nil {
-			report = append(report, CheckResult{
-				Name:     "runtimeclass-presence",
-				Decision: Decision{Reason: "list RuntimeClasses: " + err.Error()},
-			})
-		} else {
-			report = append(report, CheckResult{
-				Name:     "runtimeclass-presence",
-				Decision: CheckRuntimeClasses(cfg.RequiredRuntimeClasses, existing),
-			})
-		}
+	return report
+}
+
+// runRuntimeClassChecks runs the §5.3 line 676 required-RuntimeClass
+// presence audit. The chart passes one requirement per enabled,
+// externally-managed isolation profile; an absent RuntimeClass fails the
+// install fail-closed before the first warm pod create would be rejected
+// by the API server. Skips when no RuntimeClasses are required.
+func runRuntimeClassChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	if len(cfg.RequiredRuntimeClasses) == 0 {
+		return nil
 	}
+	existing, err := gatherRuntimeClasses(ctx, reader)
+	if err != nil {
+		return []CheckResult{{
+			Name:     "runtimeclass-presence",
+			Decision: Decision{Reason: "list RuntimeClasses: " + err.Error()},
+		}}
+	}
+	return []CheckResult{{
+		Name:     "runtimeclass-presence",
+		Decision: CheckRuntimeClasses(cfg.RequiredRuntimeClasses, existing),
+	}}
+}
 
-	// §5.2 line 516 — node-drain-timeout warning. Existing pools (on
-	// upgrade) whose terminationGracePeriodSeconds exceeds the common
-	// 600s node drain timeout get an advisory warning. A fresh install
-	// has no pools and the check passes cleanly. The check is
-	// warning-only: a read failure surfaces as an advisory note and
-	// never blocks the install.
-	if pools, err := gatherPoolGracePeriods(ctx, reader); err != nil {
-		report = append(report, CheckResult{
+// runPoolGracePeriodChecks runs the §5.2 line 516 node-drain-timeout
+// warning. Existing pools (on upgrade) whose terminationGracePeriodSeconds
+// exceeds the common 600s node drain timeout get an advisory warning. A
+// fresh install has no pools and the check passes cleanly. The check is
+// warning-only: a read failure surfaces as an advisory note and never
+// blocks the install.
+func runPoolGracePeriodChecks(ctx context.Context, reader client.Reader, _ Config) []CheckResult {
+	pools, err := gatherPoolGracePeriods(ctx, reader)
+	if err != nil {
+		return []CheckResult{{
 			Name:     "pool-termination-grace-period",
 			Decision: Decision{Passed: true, Reason: "WARNING: list SandboxTemplates: " + err.Error()},
-		})
-	} else {
-		report = append(report, CheckResult{
-			Name:     "pool-termination-grace-period",
-			Decision: CheckTerminationGracePeriods(pools),
-		})
+		}}
 	}
+	return []CheckResult{{
+		Name:     "pool-termination-grace-period",
+		Decision: CheckTerminationGracePeriods(pools),
+	}}
+}
 
-	// spec: §27.2 lines 41–42 + §27.3 — install-time cross-field
-	// rejection of malformed playground configuration plus the
-	// non-blocking apiKey-mode acknowledgement warning. The check is a
-	// pure function over the chart values, so it runs without any
-	// cluster gather. F-27.2.2 / F-27.2.4 / F-27.2.5 / F-27.2.6 /
-	// F-27.9.3.
-	report = append(report, CheckResult{
-		Name:     "playground-config",
-		Decision: CheckPlaygroundConfig(cfg.Playground),
-	})
+// runPlaygroundChecks runs the §27.2 / §27.3 install-time playground
+// configuration cross-field rejection and the §27.9 line 255 apiKey-mode
+// acknowledgement advisory. Both are pure functions over the chart values,
+// so the group runs without any cluster gather.
+//
+// spec: §27.2 lines 41-42, §27.3, §27.9 line 255. F-27.2.2 / F-27.2.4 /
+// F-27.2.5 / F-27.2.6 / F-27.9.2 / F-27.9.3.
+func runPlaygroundChecks(_ context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{
+		// §27.2 lines 41-42 + §27.3 — install-time cross-field rejection of
+		// malformed playground configuration plus the non-blocking
+		// apiKey-mode acknowledgement warning.
+		{
+			Name:     "playground-config",
+			Decision: CheckPlaygroundConfig(cfg.Playground),
+		},
+		// §27.9 line 255 — the `playground.apiKeyMode` row emits a
+		// non-blocking WARNING when the playground ships apiKey auth mode
+		// outside dev mode without playground.acknowledgeApiKeyMode, the
+		// single install-time touchpoint for the paste-form phishing-surface
+		// acknowledgement. Surfaced as its own row so the operator-visible
+		// report carries the exact name the spec names. F-27.9.2.
+		{
+			Name:     "playground.apiKeyMode",
+			Decision: CheckPlaygroundAPIKeyMode(cfg.Playground),
+		},
+	}
+}
 
-	// spec: §27.9 line 255 — the `playground.apiKeyMode` row emits a
-	// non-blocking WARNING when the playground ships apiKey auth mode
-	// outside dev mode without playground.acknowledgeApiKeyMode, the
-	// single install-time touchpoint for the paste-form phishing-surface
-	// acknowledgement. Surfaced as its own row so the operator-visible
-	// report carries the exact name the spec names. F-27.9.2.
-	report = append(report, CheckResult{
-		Name:     "playground.apiKeyMode",
-		Decision: CheckPlaygroundAPIKeyMode(cfg.Playground),
-	})
-
-	// spec: §10 line 443 — every installed Lenny CRD MUST carry the
-	// schema-version annotation matching the version the chart release
-	// expects. A stale or absent CRD aborts the install before the
-	// gateway and controllers roll. F-15.5.12.
-	report = append(report, CheckResult{
+// runCRDSchemaChecks runs the §10 line 443 CRD schema-version audit. Every
+// installed Lenny CRD MUST carry the schema-version annotation matching the
+// version the chart release expects; a stale or absent CRD aborts the
+// install before the gateway and controllers roll. F-15.5.12.
+func runCRDSchemaChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
 		Name: "crd-schema-version",
 		Decision: CRDSchemaVersionCheck{
 			Expected: cfg.CRDSchemaVersion,
 			Names:    cfg.CRDNames,
 		}.Decide(ctx, reader),
-	})
+	}}
+}
 
-	// spec: §16.9 R8 — when monitoring.format selects the Prometheus
-	// Operator CRDs (prometheusrule/both) but they are not installed, the
-	// chart falls back to a ConfigMap rule file and skips the scrape
-	// monitors at render time. The preflight names the missing CRDs so the
-	// fallback is not silent. Advisory only (the install is not aborted).
-	// F-16.9.4.
-	report = append(report, CheckResult{
+// runPrometheusOperatorChecks runs the §16.9 R8 advisory: when
+// monitoring.format selects the Prometheus Operator CRDs (prometheusrule /
+// both) but they are not installed, the chart falls back to a ConfigMap
+// rule file and skips the scrape monitors at render time. The preflight
+// names the missing CRDs so the fallback is not silent. Advisory only (the
+// install is not aborted). F-16.9.4.
+func runPrometheusOperatorChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
 		Name:     "prometheus-operator-crds",
 		Decision: PrometheusOperatorCRDCheck{Format: cfg.MonitoringFormat}.Decide(ctx, reader),
-	})
+	}}
+}
 
-	// spec: §10.3 line 304 — when the cert-manager-backed mTLS PKI is
-	// enabled, cert-manager >= v1.12.0 must be installed; an absent or
-	// stale cert-manager aborts the install rather than failing silently
-	// at the first Certificate-resource creation. F-10.3.12.
-	report = append(report, CheckResult{
+// runCertManagerChecks runs the §10.3 line 304 cert-manager version audit.
+// When the cert-manager-backed mTLS PKI is enabled, cert-manager >= v1.12.0
+// must be installed; an absent or stale cert-manager aborts the install
+// rather than failing silently at the first Certificate-resource creation.
+// F-10.3.12.
+func runCertManagerChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
 		Name: "cert-manager-version",
 		Decision: CertManagerVersionCheck{
 			Required: cfg.CertManagerEnabled,
 			Prober:   cfg.CertManagerProber,
 		}.Decide(ctx),
-	})
+	}}
+}
 
-	// spec: §15.5 line 2438 / §17.2 line 58 — the lenny-crd-conversion
-	// webhook is a Phase 3.5 baseline. The admission-webhook-inventory
-	// check excludes it (it is a CRD conversion endpoint, not a
-	// ValidatingWebhookConfiguration), so verify its Service presence and
-	// Deployment readiness here. A missing or unready webhook aborts the
-	// upgrade because it makes every multi-version CRD operation fail.
-	// F-15.5.3 / F-17.2.4 / F-10.5.6.
-	if state, err := gatherConversionWebhook(ctx, reader, cfg.Namespace); err != nil {
-		report = append(report, CheckResult{
+// runConversionWebhookChecks verifies the §15.5 line 2438 / §17.2 line 58
+// lenny-crd-conversion webhook Service presence and Deployment readiness.
+// The admission-webhook-inventory check excludes it (it is a CRD conversion
+// endpoint rather than a ValidatingWebhookConfiguration). A missing or
+// unready webhook aborts the upgrade because it makes every multi-version
+// CRD operation fail; a failed read surfaces as a failed check
+// (fail-closed). F-15.5.3 / F-17.2.4 / F-10.5.6.
+func runConversionWebhookChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	state, err := gatherConversionWebhook(ctx, reader, cfg.Namespace)
+	if err != nil {
+		return []CheckResult{{
 			Name:     "conversion-webhook-availability",
 			Decision: Decision{Reason: "read lenny-crd-conversion workload: " + err.Error()},
-		})
-	} else {
-		report = append(report, CheckResult{
-			Name:     "conversion-webhook-availability",
-			Decision: CheckConversionWebhook(state),
-		})
+		}}
 	}
+	return []CheckResult{{
+		Name:     "conversion-webhook-availability",
+		Decision: CheckConversionWebhook(state),
+	}}
+}
 
-	// spec: §12.4 — the billing stream and per-tenant counters must not
-	// silently evict. Runs only when a BYO Redis URL was supplied; the
-	// cloud Terraform sets maxmemory-policy=noeviction natively, but the
-	// self-managed profile's operator-supplied Redis is unverified
-	// otherwise. F-12.4.15.
-	if !cfg.SkipNetworkProbes && cfg.RedisConfigProber != nil {
-		report = append(report, CheckResult{
-			Name:     "redis-maxmemory-policy",
-			Decision: CheckRedisMaxmemoryPolicy(ctx, cfg.RedisConfigProber),
-		})
+// runRedisMaxmemoryChecks runs the §12.4 BYO-Redis maxmemory-policy audit.
+// The billing stream and per-tenant counters must not silently evict; runs
+// only when a BYO Redis URL was supplied (the cloud Terraform sets
+// maxmemory-policy=noeviction natively), and not under skip-network-probes.
+// F-12.4.15.
+func runRedisMaxmemoryChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	if cfg.SkipNetworkProbes || cfg.RedisConfigProber == nil {
+		return nil
 	}
+	return []CheckResult{{
+		Name:     "redis-maxmemory-policy",
+		Decision: CheckRedisMaxmemoryPolicy(ctx, cfg.RedisConfigProber),
+	}}
+}
 
-	// §17.6 line 488 / §17.9.7 — cloud-managed pooler sentinel defense.
-	// When postgres.connectionPooler is "external" the managed proxy
-	// cannot run the connect_query __unset__ sentinel, so the
-	// lenny_tenant_guard per-transaction trigger is the load-bearing RLS
-	// isolation defense; the check connects to Postgres and fails the
-	// install when the trigger is absent from a tenant-scoped table. Runs
-	// only when the pooler is external (the check itself short-circuits to
-	// a pass otherwise) and not under --skip-network-probes (the airgap
-	// path defers to the gateway's runtime LENNY_POOLER_MODE defense).
-	// F-17.9.2.
-	if !cfg.SkipNetworkProbes && strings.EqualFold(strings.TrimSpace(cfg.ConnectionPooler), "external") {
-		report = append(report, CheckResult{
-			Name: "cloud-pooler-sentinel-defense",
-			Decision: CloudPoolerSentinelCheck{
-				ConnectionPooler: cfg.ConnectionPooler,
-				Prober:           cfg.PoolerSentinelProber,
-			}.Decide(ctx),
-		})
+// runCloudPoolerSentinelChecks runs the §17.6 line 488 / §17.9.7
+// cloud-managed pooler sentinel defense. When postgres.connectionPooler is
+// "external" the managed proxy cannot run the connect_query __unset__
+// sentinel, so the lenny_tenant_guard per-transaction trigger is the
+// load-bearing RLS isolation defense; the check connects to Postgres and
+// fails the install when the trigger is absent from a tenant-scoped table.
+// Runs only when the pooler is external and not under
+// --skip-network-probes (the airgap path defers to the gateway's runtime
+// LENNY_POOLER_MODE defense). F-17.9.2.
+func runCloudPoolerSentinelChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	if cfg.SkipNetworkProbes || !strings.EqualFold(strings.TrimSpace(cfg.ConnectionPooler), "external") {
+		return nil
 	}
+	return []CheckResult{{
+		Name: "cloud-pooler-sentinel-defense",
+		Decision: CloudPoolerSentinelCheck{
+			ConnectionPooler: cfg.ConnectionPooler,
+			Prober:           cfg.PoolerSentinelProber,
+		}.Decide(ctx),
+	}}
+}
 
-	// §13.2 lines 230-262 (NET-040) / 416 (NET-022) — the kube-apiserver
-	// Service ClusterIP must fall within kubeApiServerCIDR and the cluster
-	// service CIDR exclusion, and node pod CIDRs within the pod CIDR
-	// exclusion. A mismatch means the gateway cannot reach the control
-	// plane or the broad external-HTTPS egress does not exclude in-cluster
-	// IPs (SSRF). The chart always supplies kubeApiServerCIDR. F-13.2.13.
-	if cfg.ClusterCIDR.KubeAPIServerCIDR != "" {
-		if clusterIP, podCIDRs, err := gatherClusterCIDRDiscovery(ctx, reader); err != nil {
-			report = append(report, CheckResult{
-				Name:     "cluster-cidr-discovery",
-				Decision: Decision{Reason: "read kubernetes.default Service / Nodes: " + err.Error()},
-			})
-		} else {
-			report = append(report, CheckResult{
-				Name:     "cluster-cidr-discovery",
-				Decision: CheckClusterCIDRDiscovery(clusterIP, podCIDRs, cfg.ClusterCIDR),
-			})
-		}
+// runClusterCIDRChecks runs the §13.2 NET-040 / NET-022 cluster-CIDR
+// discovery audit. The kube-apiserver Service ClusterIP must fall within
+// kubeApiServerCIDR and the cluster service CIDR exclusion, and node pod
+// CIDRs within the pod CIDR exclusion. A mismatch means the gateway cannot
+// reach the control plane or the broad external-HTTPS egress does not
+// exclude in-cluster IPs (SSRF). The chart always supplies
+// kubeApiServerCIDR; a failed read surfaces as a failed check
+// (fail-closed). F-13.2.13.
+func runClusterCIDRChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	if cfg.ClusterCIDR.KubeAPIServerCIDR == "" {
+		return nil
 	}
-
-	// §13.2 lines 176-178 (OTLP-068) — when OTLP export runs over TLS, the
-	// endpoint scheme must not be http:// and the live collector TLS
-	// handshake must complete with a SAN matching the endpoint. Runs only
-	// when an endpoint is configured; the scheme guard is a pure check, the
-	// handshake runs only when the Job wires a prober. F-13.2.9.
-	if !cfg.SkipNetworkProbes && cfg.OTLP.Endpoint != "" {
-		report = append(report, CheckResult{
-			Name: "otlp-tls",
-			Decision: OTLPTLSCheck{
-				Config: cfg.OTLP,
-				Prober: cfg.OTLPTLSProber,
-			}.Decide(ctx),
-		})
+	clusterIP, podCIDRs, err := gatherClusterCIDRDiscovery(ctx, reader)
+	if err != nil {
+		return []CheckResult{{
+			Name:     "cluster-cidr-discovery",
+			Decision: Decision{Reason: "read kubernetes.default Service / Nodes: " + err.Error()},
+		}}
 	}
+	return []CheckResult{{
+		Name:     "cluster-cidr-discovery",
+		Decision: CheckClusterCIDRDiscovery(clusterIP, podCIDRs, cfg.ClusterCIDR),
+	}}
+}
 
-	// §25.4 lines 2544-2546 (NET-070) — when ops.tls.internalEnabled is
-	// set, the lenny-ops → gateway admin-API link runs over TLS; the
-	// ops-admin-tls probe verifies the gateway internal-TLS handshake
-	// completes and the server certificate's SAN covers the lenny-gateway
-	// ClusterIP hostname. Skipped when internal TLS is disabled (the
-	// acknowledged plaintext path). F-25.4.19.
-	if !cfg.SkipNetworkProbes && cfg.OpsAdminTLS.InternalEnabled && cfg.OpsAdminTLS.Endpoint != "" {
-		report = append(report, CheckResult{
-			Name: "ops-admin-tls",
-			Decision: OpsAdminTLSCheck{
-				Config: cfg.OpsAdminTLS,
-				Prober: cfg.OpsAdminTLSProber,
-			}.Decide(ctx),
-		})
+// runOTLPTLSChecks runs the §13.2 OTLP-068 audit. When OTLP export runs
+// over TLS, the endpoint scheme must not be http:// and the live collector
+// TLS handshake must complete with a SAN matching the endpoint. Runs only
+// when an endpoint is configured and not under skip-network-probes; the
+// scheme guard is a pure check, the handshake runs only when the Job wires
+// a prober. F-13.2.9.
+func runOTLPTLSChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	if cfg.SkipNetworkProbes || cfg.OTLP.Endpoint == "" {
+		return nil
 	}
+	return []CheckResult{{
+		Name: "otlp-tls",
+		Decision: OTLPTLSCheck{
+			Config: cfg.OTLP,
+			Prober: cfg.OTLPTLSProber,
+		}.Decide(ctx),
+	}}
+}
 
-	// §25.4 lines 1462-1470 — the prometheus-reachability check is
-	// non-blocking and tier-specific: INFO at Tier 1, WARN at Tier 2/3
-	// (suppressed by monitoring.acknowledgeNoPrometheus). The live dial
-	// is skipped under skip-network-probes (a configured URL is then
-	// assumed reachable); the advisory still runs. F-25.4.25.
+// runOpsAdminTLSChecks runs the §25.4 NET-070 audit. When
+// ops.tls.internalEnabled is set, the lenny-ops → gateway admin-API link
+// runs over TLS; the ops-admin-tls probe verifies the gateway internal-TLS
+// handshake completes and the server certificate's SAN covers the
+// lenny-gateway ClusterIP hostname. Skipped when internal TLS is disabled
+// (the acknowledged plaintext path) and under skip-network-probes.
+// F-25.4.19.
+func runOpsAdminTLSChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	if cfg.SkipNetworkProbes || !cfg.OpsAdminTLS.InternalEnabled || cfg.OpsAdminTLS.Endpoint == "" {
+		return nil
+	}
+	return []CheckResult{{
+		Name: "ops-admin-tls",
+		Decision: OpsAdminTLSCheck{
+			Config: cfg.OpsAdminTLS,
+			Prober: cfg.OpsAdminTLSProber,
+		}.Decide(ctx),
+	}}
+}
+
+// runPrometheusReachabilityChecks runs the §25.4 prometheus-reachability
+// check. It is non-blocking and tier-specific: INFO at Tier 1, WARN at
+// Tier 2/3 (suppressed by monitoring.acknowledgeNoPrometheus). The live
+// dial is skipped under skip-network-probes (a configured URL is then
+// assumed reachable); the advisory still runs. F-25.4.25.
+func runPrometheusReachabilityChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
 	prober := cfg.PrometheusProber
 	if cfg.SkipNetworkProbes {
 		prober = nil
 	}
-	report = append(report, CheckResult{
+	return []CheckResult{{
 		Name: "prometheus-reachability",
 		Decision: PrometheusReachabilityCheck{
 			Config: cfg.Prometheus,
 			Prober: prober,
 		}.Decide(ctx),
-	})
+	}}
+}
 
-	// §12.9 line 1050 — the T2 storage-layer encryption baseline: the
-	// Postgres and Redis volumes must be backed by encrypted storage. The
-	// check runs unconditionally; global.devMode exempts it, and the §17.3
-	// BYO topology routes through the preflight.attestVolumeEncryption
-	// attestation when no in-cluster volume can be probed. F-12.9.12.
-	report = append(report, CheckResult{
+// runVolumeEncryptionChecks runs the §12.9 line 1050 storage-layer
+// encryption baseline: the Postgres and Redis volumes must be backed by
+// encrypted storage. The check runs unconditionally; global.devMode exempts
+// it, and the §17.3 BYO topology routes through the
+// preflight.attestVolumeEncryption attestation when no in-cluster volume
+// can be probed. F-12.9.12.
+func runVolumeEncryptionChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
 		Name: "volume-encryption",
 		Decision: VolumeEncryptionCheck{
 			DevMode:  cfg.DevMode,
 			Attested: cfg.AttestVolumeEncryption,
 			Prober:   cfg.VolumeEncryptionProber,
 		}.Decide(ctx),
-	})
+	}}
+}
 
-	// §17.6 line 503 — the API server must be >= 1.27. The binary reads
-	// the version via the discovery client; an empty/unparseable value is
-	// non-blocking. F-17.6.1.
-	report = append(report, CheckResult{
+// runKubernetesVersionChecks runs the §17.6 line 503 minimum-version gate.
+// The API server must be >= 1.27; the binary reads the version via the
+// discovery client, and an empty/unparseable value is non-blocking.
+// F-17.6.1.
+func runKubernetesVersionChecks(_ context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
 		Name:     "kubernetes-version",
 		Decision: KubernetesVersionCheck{Version: cfg.KubernetesVersion}.Decide(),
-	})
+	}}
+}
 
-	// §17.6 line 517 — non-blocking SIEM-endpoint advisory: a production
-	// install with no audit.siem.endpoint stores audit logs in Postgres
-	// only, which is below the compliance-grade integrity bar. F-17.6.1.
-	report = append(report, CheckResult{
-		Name:     "siem-endpoint",
-		Decision: SIEMEndpointCheck{Environment: cfg.Environment, SIEMEndpoint: cfg.SIEMEndpoint}.Decide(),
-	})
+// runInstallPrereqChecks runs the §17.6 install-prerequisite advisories
+// that are pure functions or a single prober over the chart values: the
+// SIEM-endpoint advisory (line 517), the StorageRouter region-coverage
+// audit (line 504), the legal-hold escrow audit (line 505), the PgBouncer
+// pool_mode / connect_query audit (lines 487-488), and the billing/audit
+// integrity-trigger audit (line 489). Each prober-backed check self-skips
+// when its prober is nil. F-17.6.1.
+func runInstallPrereqChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{
+		// §17.6 line 517 — non-blocking SIEM-endpoint advisory: a production
+		// install with no audit.siem.endpoint stores audit logs in Postgres
+		// only, which is below the compliance-grade integrity bar.
+		{
+			Name:     "siem-endpoint",
+			Decision: SIEMEndpointCheck{Environment: cfg.Environment, SIEMEndpoint: cfg.SIEMEndpoint}.Decide(),
+		},
+		// §17.6 line 504 — every declared StorageRouter region must carry a
+		// Postgres and an object-storage backend. Empty region set skips.
+		{
+			Name:     "storagerouter-region-coverage",
+			Decision: StorageRouterRegionCoverageCheck{Regions: cfg.StorageRouterRegions}.Decide(),
+		},
+		// §17.6 line 505 — when legal hold is enabled every region must have
+		// a region-scoped escrow KEK (§12.8 Phase 3.5). Disabled skips.
+		{
+			Name: "legal-hold-escrow",
+			Decision: LegalHoldEscrowCheck{
+				Enabled:       cfg.LegalHold.Enabled,
+				Regions:       cfg.LegalHold.Regions,
+				EscrowRegions: cfg.LegalHold.EscrowRegions,
+			}.Decide(),
+		},
+		// §17.6 lines 487-488 — PgBouncer pool_mode==transaction + tenant
+		// sentinel connect_query. Runs only when a live PgBouncer admin
+		// connection is wired (nil prober skips).
+		{
+			Name:     "pgbouncer-config",
+			Decision: PgBouncerConfigCheck{Prober: cfg.PgBouncerConfigProber}.Decide(ctx),
+		},
+		// §17.6 line 489 — billing/audit integrity triggers enabled. Runs
+		// only when a billing-database connection is wired (nil prober
+		// skips).
+		{
+			Name:     "billing-audit-trigger",
+			Decision: BillingTriggerCheck{Prober: cfg.BillingTriggerProber}.Decide(ctx),
+		},
+	}
+}
 
-	// §17.6 line 504 — every declared StorageRouter region must carry a
-	// Postgres and an object-storage backend. Empty region set skips.
-	// F-17.6.1.
-	report = append(report, CheckResult{
-		Name:     "storagerouter-region-coverage",
-		Decision: StorageRouterRegionCoverageCheck{Regions: cfg.StorageRouterRegions}.Decide(),
-	})
+// runNamespaceGovernanceChecks runs the §17.6 lines 501-502 agent-namespace
+// ResourceQuota and LimitRange audits. Every existing agent namespace must
+// carry both; not-yet-created namespaces (fresh install, chart applies them
+// in the main phase) are skipped. A failed read surfaces as a failed check
+// on both audits (fail-closed). F-17.6.1.
+func runNamespaceGovernanceChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	if len(cfg.AgentNamespaces) == 0 {
+		return nil
+	}
+	statuses, err := gatherNamespaceGovernance(ctx, reader, cfg.AgentNamespaces)
+	if err != nil {
+		return []CheckResult{
+			{Name: "namespace-resourcequota", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
+			{Name: "namespace-limitrange", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
+		}
+	}
+	return []CheckResult{
+		{Name: "namespace-resourcequota", Decision: CheckNamespaceResourceQuotas(statuses)},
+		{Name: "namespace-limitrange", Decision: CheckNamespaceLimitRanges(statuses)},
+	}
+}
 
-	// §17.6 line 505 — when legal hold is enabled every region must have
-	// a region-scoped escrow KEK (§12.8 Phase 3.5). Disabled skips.
-	// F-17.6.1.
-	report = append(report, CheckResult{
-		Name: "legal-hold-escrow",
-		Decision: LegalHoldEscrowCheck{
-			Enabled:       cfg.LegalHold.Enabled,
-			Regions:       cfg.LegalHold.Regions,
-			EscrowRegions: cfg.LegalHold.EscrowRegions,
+// runOpsIngressIssuerChecks runs the §17.6 line 520 non-blocking
+// ops.ingress ClusterIssuer advisory. Runs only when the annotation names
+// an issuer; a failed read surfaces as a failed check (fail-closed).
+// F-17.6.1.
+func runOpsIngressIssuerChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	if cfg.OpsIngressClusterIssuer == "" {
+		return nil
+	}
+	exists, err := clusterIssuerExists(ctx, reader, cfg.OpsIngressClusterIssuer)
+	if err != nil {
+		return []CheckResult{{Name: "ops-ingress-clusterissuer", Decision: Decision{Reason: "read ClusterIssuer: " + err.Error()}}}
+	}
+	return []CheckResult{{
+		Name:     "ops-ingress-clusterissuer",
+		Decision: OpsIngressClusterIssuerCheck{IssuerName: cfg.OpsIngressClusterIssuer, Exists: exists}.Decide(),
+	}}
+}
+
+// runMonitoringNamespaceChecks runs the §17.6 line 521 non-blocking
+// monitoring-namespace advisory. Runs only when both a monitoring namespace
+// and a pod label are configured; a failed read surfaces as a failed check
+// (fail-closed). F-17.6.1.
+func runMonitoringNamespaceChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	if cfg.Monitoring.Namespace == "" || cfg.Monitoring.PodLabel == "" {
+		return nil
+	}
+	hasPod, err := monitoringPodPresent(ctx, reader, cfg.Monitoring.Namespace, cfg.Monitoring.PodLabel)
+	if err != nil {
+		return []CheckResult{{Name: "monitoring-namespace", Decision: Decision{Reason: "list monitoring pods: " + err.Error()}}}
+	}
+	return []CheckResult{{
+		Name: "monitoring-namespace",
+		Decision: MonitoringNamespaceCheck{
+			Namespace:      cfg.Monitoring.Namespace,
+			PodLabel:       cfg.Monitoring.PodLabel,
+			HasMatchingPod: hasPod,
 		}.Decide(),
-	})
+	}}
+}
 
-	// §17.6 lines 487-488 — PgBouncer pool_mode==transaction + tenant
-	// sentinel connect_query. Runs only when a live PgBouncer admin
-	// connection is wired (nil prober skips). F-17.6.1.
-	report = append(report, CheckResult{
-		Name:     "pgbouncer-config",
-		Decision: PgBouncerConfigCheck{Prober: cfg.PgBouncerConfigProber}.Decide(ctx),
-	})
-
-	// §17.6 line 489 — billing/audit integrity triggers enabled. Runs
-	// only when a billing-database connection is wired (nil prober skips).
-	// F-17.6.1.
-	report = append(report, CheckResult{
-		Name:     "billing-audit-trigger",
-		Decision: BillingTriggerCheck{Prober: cfg.BillingTriggerProber}.Decide(ctx),
-	})
-
-	// §17.6 lines 501-502 — every existing agent namespace must carry a
-	// ResourceQuota and a LimitRange. Not-yet-created namespaces (fresh
-	// install, chart applies them in the main phase) are skipped.
-	// F-17.6.1.
-	if len(cfg.AgentNamespaces) > 0 {
-		if statuses, err := gatherNamespaceGovernance(ctx, reader, cfg.AgentNamespaces); err != nil {
-			report = append(
-				report,
-				CheckResult{Name: "namespace-resourcequota", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
-				CheckResult{Name: "namespace-limitrange", Decision: Decision{Reason: "read agent-namespace resource governance: " + err.Error()}},
-			)
-		} else {
-			report = append(
-				report,
-				CheckResult{Name: "namespace-resourcequota", Decision: CheckNamespaceResourceQuotas(statuses)},
-				CheckResult{Name: "namespace-limitrange", Decision: CheckNamespaceLimitRanges(statuses)},
-			)
-		}
-	}
-
-	// §17.6 line 520 — non-blocking ops.ingress ClusterIssuer advisory.
-	// Runs only when the annotation names an issuer. F-17.6.1.
-	if cfg.OpsIngressClusterIssuer != "" {
-		exists, err := clusterIssuerExists(ctx, reader, cfg.OpsIngressClusterIssuer)
-		if err != nil {
-			report = append(report, CheckResult{Name: "ops-ingress-clusterissuer", Decision: Decision{Reason: "read ClusterIssuer: " + err.Error()}})
-		} else {
-			report = append(report, CheckResult{
-				Name:     "ops-ingress-clusterissuer",
-				Decision: OpsIngressClusterIssuerCheck{IssuerName: cfg.OpsIngressClusterIssuer, Exists: exists}.Decide(),
-			})
-		}
-	}
-
-	// §17.6 line 521 — non-blocking monitoring-namespace advisory. Runs
-	// only when both a monitoring namespace and a pod label are
-	// configured. F-17.6.1.
-	if cfg.Monitoring.Namespace != "" && cfg.Monitoring.PodLabel != "" {
-		hasPod, err := monitoringPodPresent(ctx, reader, cfg.Monitoring.Namespace, cfg.Monitoring.PodLabel)
-		if err != nil {
-			report = append(report, CheckResult{Name: "monitoring-namespace", Decision: Decision{Reason: "list monitoring pods: " + err.Error()}})
-		} else {
-			report = append(report, CheckResult{
-				Name: "monitoring-namespace",
-				Decision: MonitoringNamespaceCheck{
-					Namespace:      cfg.Monitoring.Namespace,
-					PodLabel:       cfg.Monitoring.PodLabel,
-					HasMatchingPod: hasPod,
-				}.Decide(),
-			})
-		}
-	}
-
-	// §17.6 line 519 — lenny-ops-sa RBAC audit. Runs only when a
-	// SubjectAccessReview prober is wired (nil skips). F-17.6.1.
-	report = append(report, CheckResult{
+// runOpsSARBACChecks runs the §17.6 line 519 lenny-ops-sa RBAC audit. Runs
+// only when a SubjectAccessReview prober is wired (a nil prober makes the
+// check self-skip). F-17.6.1.
+func runOpsSARBACChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
 		Name: "lenny-ops-sa-rbac",
 		Decision: OpsSARBACCheck{
 			ServiceAccount: cfg.OpsServiceAccount,
 			Rules:          CanonicalOpsSARBACRules(cfg.Namespace),
 			Prober:         cfg.OpsSARBACProber,
 		}.Decide(ctx),
-	})
+	}}
+}
 
-	// §13.2 line 292 NET-038 — non-blocking ingress-controller advisory.
-	// Validates that the ingressControllerNamespace exists and runs at
-	// least one pod carrying the configured controllerPodLabel, so the
-	// allow-gateway-ingress NetworkPolicy actually admits external HTTPS
-	// to the gateway. A read error degrades to a non-blocking WARNING so a
-	// transient list failure does not abort an otherwise-valid install.
-	// F-13.2.8.
-	if cfg.IngressController.Namespace != "" {
-		nsExists, hasPod, err := gatherIngressController(ctx, reader,
-			cfg.IngressController.Namespace, cfg.IngressController.PodLabelKey, cfg.IngressController.PodLabelValue)
-		if err != nil {
-			report = append(report, CheckResult{Name: "ingress-controller", Decision: Decision{
-				Passed: true,
-				Reason: "WARNING: could not determine ingress-controller posture: " + err.Error(),
-			}})
-		} else {
-			report = append(report, CheckResult{
-				Name: "ingress-controller",
-				Decision: IngressControllerCheck{
-					Namespace:               cfg.IngressController.Namespace,
-					PodLabelKey:             cfg.IngressController.PodLabelKey,
-					PodLabelValue:           cfg.IngressController.PodLabelValue,
-					NamespaceExists:         nsExists,
-					HasRunningControllerPod: hasPod,
-				}.Decide(),
-			})
-		}
+// runIngressControllerChecks runs the §13.2 line 292 NET-038 non-blocking
+// ingress-controller advisory. It validates that the
+// ingressControllerNamespace exists and runs at least one pod carrying the
+// configured controllerPodLabel, so the allow-gateway-ingress
+// NetworkPolicy actually admits external HTTPS to the gateway. A read error
+// degrades to a non-blocking WARNING so a transient list failure does not
+// abort an otherwise-valid install. Runs only when a namespace is
+// configured. F-13.2.8.
+func runIngressControllerChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	if cfg.IngressController.Namespace == "" {
+		return nil
 	}
-
-	return report
+	nsExists, hasPod, err := gatherIngressController(ctx, reader,
+		cfg.IngressController.Namespace, cfg.IngressController.PodLabelKey, cfg.IngressController.PodLabelValue)
+	if err != nil {
+		return []CheckResult{{Name: "ingress-controller", Decision: Decision{
+			Passed: true,
+			Reason: "WARNING: could not determine ingress-controller posture: " + err.Error(),
+		}}}
+	}
+	return []CheckResult{{
+		Name: "ingress-controller",
+		Decision: IngressControllerCheck{
+			Namespace:               cfg.IngressController.Namespace,
+			PodLabelKey:             cfg.IngressController.PodLabelKey,
+			PodLabelValue:           cfg.IngressController.PodLabelValue,
+			NamespaceExists:         nsExists,
+			HasRunningControllerPod: hasPod,
+		}.Decide(),
+	}}
 }
 
 // gatherGatewayIdentities lists every Lenny-managed lenny-gateway

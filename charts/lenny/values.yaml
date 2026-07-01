@@ -1465,7 +1465,7 @@ billing:
       secretName: ""
       key: "secret"
     # Message-queue sink (SQS / Google Pub/Sub / Kafka). The fan-out and
-    # the QueueSink live in pkg/gateway/billingsink; a broker
+    # the QueueSink live in pkg/gateway/billing/billingsink; a broker
     # QueuePublisher driver plugs in to enable it. Configure both the
     # webhook and a queue for the §11.2.1 "Both for redundancy" mode.
   # §11.2.1 line 175 billing.approverNotificationWebhook: a dual-control

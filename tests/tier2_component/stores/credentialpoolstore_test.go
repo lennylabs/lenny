@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
-	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore/pgstore"
 )
 
 // spec: 4.9

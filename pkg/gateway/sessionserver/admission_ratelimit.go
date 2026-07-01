@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

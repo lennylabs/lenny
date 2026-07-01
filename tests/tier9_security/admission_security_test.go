@@ -89,8 +89,9 @@ func TestAdmissionSecurityBypassAttempts(t *testing.T) {
 // spec: 13.1
 // diagnosis: the §13.1 pod-security webhook is over-broad and rejects a
 // pod that sets every §13.1 control correctly. The test applies a pod
-// with runAsNonRoot, the lenny-cred-readers fsGroup, RuntimeDefault
-// seccomp, a dropped-ALL capability set, and a read-only rootfs, and
+// with runAsNonRoot, the lenny-cred-readers fsGroup and
+// supplementalGroups membership, RuntimeDefault seccomp, a dropped-ALL
+// capability set, and a read-only rootfs, and
 // expects the webhook to admit it. This is the positive control for
 // TestAdmissionSecurityBypassAttempts: a rejection here means the
 // bypass-rejection results above could be false positives.
@@ -208,9 +209,9 @@ type podBody struct {
 
 // agentPodManifest renders an agent-namespace pod manifest. The pod
 // always carries the §13.1-compliant pod-level securityContext
-// (runAsNonRoot, the lenny-cred-readers fsGroup, RuntimeDefault
-// seccomp); body supplies the adversarial pod-level field and the
-// container securityContext.
+// (runAsNonRoot, the lenny-cred-readers fsGroup and supplementalGroups
+// membership, RuntimeDefault seccomp); body supplies the adversarial
+// pod-level field and the container securityContext.
 func agentPodManifest(name string, body podBody) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -221,6 +222,7 @@ spec:
 %s  securityContext:
     runAsNonRoot: true
     fsGroup: 65534
+    supplementalGroups: [65534]
     seccompProfile:
       type: RuntimeDefault
   containers:

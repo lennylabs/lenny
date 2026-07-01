@@ -12,14 +12,14 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
-	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // spec: §9.1 GET /v1/runtimes runtime discovery.

@@ -423,8 +423,6 @@ A unified health surface that synthesizes component status, metric thresholds, a
 #### Go Interface
 
 ```go
-// pkg/gateway/health/service.go
-
 type HealthService interface {
     GetAggregateHealth(ctx context.Context) (*AggregateHealthResponse, error)
     GetComponentHealth(ctx context.Context, component string) (*ComponentHealthResponse, error)
@@ -559,8 +557,6 @@ A rules engine that synthesizes current metrics and usage patterns into actionab
 #### Go Interface
 
 ```go
-// pkg/gateway/recommendations/service.go
-
 type CapacityService interface {
     GetRecommendations(ctx context.Context, category *string) (*RecommendationsResponse, error)
 }
@@ -652,8 +648,6 @@ Every emitted event is a [CloudEvents v1.0.2](https://github.com/cloudevents/spe
 **Single-envelope model — no double-wrapping.** Audit-bearing events carry the OCSF record **directly** in the CloudEvents `data` field with `datacontenttype: application/ocsf+json`. The CloudEvents envelope is the transport; the OCSF record is the payload; there is no intermediate container between them. Consumers parse the CloudEvents record first, read `data` as the OCSF v1.1.0 record ([§11.7](11_policy-and-controls.md#117-audit-logging) Wire Format), and apply the Lenny → OCSF field mapping. Non-audit operational events use `datacontenttype: application/json` and carry an event-specific JSON payload in `data` whose schema is documented per `type` in the catalogue ([§16.6](16_observability.md#166-operational-events-catalog)).
 
 ```go
-// pkg/gateway/events/emitter.go
-
 // OperationalEvent is a CloudEvents v1.0.2 Event — see §12.6.
 type OperationalEvent = cloudevents.Event
 
@@ -722,8 +716,6 @@ An in-memory ring buffer of recent operational events, exposed as an admin API e
 #### Go Interface
 
 ```go
-// pkg/gateway/events/buffer.go
-
 type EventBuffer struct {
     mu     sync.RWMutex
     events [500]OperationalEvent  // fixed-size ring buffer
@@ -3217,8 +3209,6 @@ The `runbook` field is the runbook name as used in `GET /v1/admin/runbooks/{name
 The mapping from issue/component to runbook is maintained in the gateway's health service as a simple lookup table:
 
 ```go
-// pkg/gateway/health/runbook_links.go
-
 var issueRunbooks = map[string]string{
     "WARM_POOL_EXHAUSTED":      "warm-pool-exhaustion",
     "WARM_POOL_LOW":            "warm-pool-exhaustion",

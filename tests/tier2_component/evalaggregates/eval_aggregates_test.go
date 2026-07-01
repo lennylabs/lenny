@@ -20,10 +20,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
-	evalpg "github.com/lennylabs/lenny/pkg/gateway/evalstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
+	evalpg "github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

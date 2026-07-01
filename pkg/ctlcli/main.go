@@ -1242,195 +1242,25 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	case "list":
 		return printItemList(ctx, c, "/v1/admin/pools", stdout, stderr)
 	case "get":
-		if len(args) < 2 {
-			fmt.Fprintln(stderr, "lenny-ctl: pools get requires <name>")
-			return 2
-		}
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/pools/"+url.PathEscape(args[1]), nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsGet(ctx, c, args[1:], stdout, stderr)
 	case "create":
-		// spec: §15.1 line 792 — POST /v1/admin/pools accepts the pool
-		// definition as JSON. --from-file reads the body from a local
-		// file so an operator can keep pool definitions under source
-		// control.
-		path := flagValue(args[1:], "--from-file")
-		if path == "" {
-			fmt.Fprintln(stderr, "lenny-ctl: pools create requires --from-file <pool.json>")
-			return 2
-		}
-		body, err := readJSONFile(path)
-		if err != nil {
-			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
-			return 1
-		}
-		var out map[string]any
-		if err := c.Do(ctx, "POST", "/v1/admin/pools", body, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsCreate(ctx, c, args[1:], stdout, stderr)
 	case "update":
-		// spec: §15.1 line 795 — PUT /v1/admin/pools/{name} requires the
-		// updated pool definition in the body.
-		if len(args) < 2 {
-			fmt.Fprintln(stderr, "lenny-ctl: pools update requires <name> --from-file <pool.json>")
-			return 2
-		}
-		path := flagValue(args[2:], "--from-file")
-		if path == "" {
-			fmt.Fprintln(stderr, "lenny-ctl: pools update requires --from-file <pool.json>")
-			return 2
-		}
-		body, err := readJSONFile(path)
-		if err != nil {
-			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
-			return 1
-		}
-		var out map[string]any
-		// spec: §15.1 lines 1207-1213 — the pool PUT enforces the If-Match
-		// precondition; fetch the current ETag and forward it.
-		poolPath := "/v1/admin/pools/" + url.PathEscape(args[1])
-		if err := c.PutIfMatch(ctx, poolPath, poolPath, body, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsUpdate(ctx, c, args[1:], stdout, stderr)
 	case "delete":
-		// spec: §15.1 line 796 — DELETE /v1/admin/pools/{name}.
-		if len(args) < 2 {
-			fmt.Fprintln(stderr, "lenny-ctl: pools delete requires <name>")
-			return 2
-		}
-		var out map[string]any
-		if err := c.Do(ctx, "DELETE", "/v1/admin/pools/"+url.PathEscape(args[1]), nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsDelete(ctx, c, args[1:], stdout, stderr)
 	case "drain":
-		// spec: §15.1 line 797 — POST /v1/admin/pools/{name}/drain.
-		if len(args) < 2 {
-			fmt.Fprintln(stderr, "lenny-ctl: pools drain requires <name>")
-			return 2
-		}
-		var out map[string]any
-		if err := c.Do(ctx, "POST", "/v1/admin/pools/"+url.PathEscape(args[1])+"/drain", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsDrain(ctx, c, args[1:], stdout, stderr)
 	case "sync-status":
-		// spec: §15.1 line 798 — GET /v1/admin/pools/{name}/sync-status.
-		if len(args) < 2 {
-			fmt.Fprintln(stderr, "lenny-ctl: pools sync-status requires <name>")
-			return 2
-		}
-		var out map[string]any
-		if err := c.Do(ctx, "GET", "/v1/admin/pools/"+url.PathEscape(args[1])+"/sync-status", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsSyncStatus(ctx, c, args[1:], stdout, stderr)
 	case "resume-reconciliation":
-		// spec: §15.1 line 799 — POST /v1/admin/pools/{name}/resume-reconciliation.
-		if len(args) < 2 {
-			fmt.Fprintln(stderr, "lenny-ctl: pools resume-reconciliation requires <name>")
-			return 2
-		}
-		var out map[string]any
-		if err := c.Do(ctx, "POST", "/v1/admin/pools/"+url.PathEscape(args[1])+"/resume-reconciliation", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsResumeReconciliation(ctx, c, args[1:], stdout, stderr)
 	case "set-warm-count":
-		// spec: §24.4 line 63 — `admin pools set-warm-count --pool <name>
-		// --min <N>` maps to PUT /v1/admin/pools/{name}/warm-count with the
-		// operability `{minWarm, confirm}` body (§25.17 lines 5232-5239).
-		// The warm-pool-exhaustion / sdk-connect-timeout / pool-bootstrap-
-		// mode / coordinator-handoff-slow runbooks invoke this for
-		// emergency scaling. The operator's explicit invocation confirms
-		// the mutation; --dry-run returns the §25.2 preview instead.
-		fs := flag.NewFlagSet("pools set-warm-count", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		pool := fs.String("pool", "", "pool name (required)")
-		min := fs.Int("min", -1, "new minWarm count (required, >= 0)")
-		dryRun := fs.Bool("dry-run", false, "return the scaling preview without applying it")
-		if err := fs.Parse(args[1:]); err != nil {
-			return 2
-		}
-		if *pool == "" {
-			fmt.Fprintln(stderr, "lenny-ctl: pools set-warm-count requires --pool <name>")
-			return 2
-		}
-		if *min < 0 {
-			fmt.Fprintln(stderr, "lenny-ctl: pools set-warm-count requires --min <N> (>= 0)")
-			return 2
-		}
-		body := map[string]any{"minWarm": *min, "confirm": !*dryRun}
-		var out map[string]any
-		if err := c.Do(ctx, "PUT", "/v1/admin/pools/"+url.PathEscape(*pool)+"/warm-count", body, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsSetWarmCount(ctx, c, args[1:], stdout, stderr)
 	case "exit-bootstrap":
-		// spec: §24.4 line 64 — `admin pools exit-bootstrap --pool <name>`
-		// removes the bootstrap minWarm override and switches to
-		// formula-driven scaling immediately. Maps to DELETE
-		// /v1/admin/pools/{name}/bootstrap-override (§15.1 line 875).
-		fs := flag.NewFlagSet("pools exit-bootstrap", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		pool := fs.String("pool", "", "pool name (required)")
-		if err := fs.Parse(args[1:]); err != nil {
-			return 2
-		}
-		if *pool == "" {
-			fmt.Fprintln(stderr, "lenny-ctl: pools exit-bootstrap requires --pool <name>")
-			return 2
-		}
-		var out map[string]any
-		if err := c.Do(ctx, "DELETE", "/v1/admin/pools/"+url.PathEscape(*pool)+"/bootstrap-override", nil, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsExitBootstrap(ctx, c, args[1:], stdout, stderr)
 	case "circuit-breaker":
-		// spec: §24.4 line 75 — `admin pools circuit-breaker --pool <name>
-		// --state <enabled|disabled|auto>` overrides the §6.1 SDK-warm
-		// circuit-breaker state. Maps to PUT
-		// /v1/admin/pools/{name}/circuit-breaker (§15.1 line 801), which
-		// requires If-Match; the ETag is read from the pool resource it
-		// shares pool_config_generation with.
-		fs := flag.NewFlagSet("pools circuit-breaker", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		pool := fs.String("pool", "", "pool name (required)")
-		state := fs.String("state", "", "circuit-breaker override: enabled|disabled|auto (required)")
-		if err := fs.Parse(args[1:]); err != nil {
-			return 2
-		}
-		if *pool == "" {
-			fmt.Fprintln(stderr, "lenny-ctl: pools circuit-breaker requires --pool <name>")
-			return 2
-		}
-		switch *state {
-		case "enabled", "disabled", "auto":
-		default:
-			fmt.Fprintln(stderr, "lenny-ctl: pools circuit-breaker requires --state <enabled|disabled|auto>")
-			return 2
-		}
-		body := map[string]any{"sdkWarm": map[string]any{"circuitBreakerOverride": *state}}
-		poolPath := "/v1/admin/pools/" + url.PathEscape(*pool)
-		var out map[string]any
-		if err := c.PutIfMatch(ctx, poolPath, poolPath+"/circuit-breaker", body, &out); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		printJSON(stdout, out)
+		return cmdPoolsCircuitBreaker(ctx, c, args[1:], stdout, stderr)
 	case "grant-access", "list-access", "revoke-access":
 		// spec: §24.4 lines 76-78 — pool tenant-access management.
 		// grant-access and revoke-access take --pool + --tenant;
@@ -1441,6 +1271,242 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		fmt.Fprintf(stderr, "lenny-ctl: unknown pools subcommand %q\n", args[0])
 		return 2
 	}
+}
+
+// cmdPoolsGet implements `lenny-ctl admin pools get <name>`. spec: §15.1
+// line 793 — GET /v1/admin/pools/{name}. args excludes the "get" verb.
+func cmdPoolsGet(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools get requires <name>")
+		return 2
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "GET", "/v1/admin/pools/"+url.PathEscape(args[0]), nil, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsCreate implements `lenny-ctl admin pools create --from-file
+// <pool.json>`. args excludes the "create" verb. spec: §15.1 line 792 —
+// POST /v1/admin/pools accepts the pool definition as JSON. --from-file
+// reads the body from a local file so an operator can keep pool
+// definitions under source control.
+func cmdPoolsCreate(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	path := flagValue(args, "--from-file")
+	if path == "" {
+		fmt.Fprintln(stderr, "lenny-ctl: pools create requires --from-file <pool.json>")
+		return 2
+	}
+	body, err := readJSONFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+		return 1
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "POST", "/v1/admin/pools", body, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsUpdate implements `lenny-ctl admin pools update <name>
+// --from-file <pool.json>`. args excludes the "update" verb. spec: §15.1
+// line 795 — PUT /v1/admin/pools/{name} requires the updated pool
+// definition in the body.
+func cmdPoolsUpdate(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools update requires <name> --from-file <pool.json>")
+		return 2
+	}
+	path := flagValue(args[1:], "--from-file")
+	if path == "" {
+		fmt.Fprintln(stderr, "lenny-ctl: pools update requires --from-file <pool.json>")
+		return 2
+	}
+	body, err := readJSONFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+		return 1
+	}
+	var out map[string]any
+	// spec: §15.1 lines 1207-1213 — the pool PUT enforces the If-Match
+	// precondition; fetch the current ETag and forward it.
+	poolPath := "/v1/admin/pools/" + url.PathEscape(args[0])
+	if err := c.PutIfMatch(ctx, poolPath, poolPath, body, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsDelete implements `lenny-ctl admin pools delete <name>`. args
+// excludes the "delete" verb. spec: §15.1 line 796 — DELETE
+// /v1/admin/pools/{name}.
+func cmdPoolsDelete(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools delete requires <name>")
+		return 2
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "DELETE", "/v1/admin/pools/"+url.PathEscape(args[0]), nil, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsDrain implements `lenny-ctl admin pools drain <name>`. args
+// excludes the "drain" verb. spec: §15.1 line 797 — POST
+// /v1/admin/pools/{name}/drain.
+func cmdPoolsDrain(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools drain requires <name>")
+		return 2
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "POST", "/v1/admin/pools/"+url.PathEscape(args[0])+"/drain", nil, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsSyncStatus implements `lenny-ctl admin pools sync-status
+// <name>`. args excludes the "sync-status" verb. spec: §15.1 line 798 —
+// GET /v1/admin/pools/{name}/sync-status.
+func cmdPoolsSyncStatus(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools sync-status requires <name>")
+		return 2
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "GET", "/v1/admin/pools/"+url.PathEscape(args[0])+"/sync-status", nil, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsResumeReconciliation implements `lenny-ctl admin pools
+// resume-reconciliation <name>`. args excludes the
+// "resume-reconciliation" verb. spec: §15.1 line 799 — POST
+// /v1/admin/pools/{name}/resume-reconciliation.
+func cmdPoolsResumeReconciliation(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools resume-reconciliation requires <name>")
+		return 2
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "POST", "/v1/admin/pools/"+url.PathEscape(args[0])+"/resume-reconciliation", nil, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsSetWarmCount implements `lenny-ctl admin pools set-warm-count
+// --pool <name> --min <N>`. args excludes the "set-warm-count" verb.
+// spec: §24.4 line 63 — it maps to PUT /v1/admin/pools/{name}/warm-count
+// with the operability `{minWarm, confirm}` body (§25.17 lines
+// 5232-5239). The warm-pool-exhaustion / sdk-connect-timeout /
+// pool-bootstrap-mode / coordinator-handoff-slow runbooks invoke this for
+// emergency scaling. The operator's explicit invocation confirms the
+// mutation; --dry-run returns the §25.2 preview instead.
+func cmdPoolsSetWarmCount(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("pools set-warm-count", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	pool := fs.String("pool", "", "pool name (required)")
+	min := fs.Int("min", -1, "new minWarm count (required, >= 0)")
+	dryRun := fs.Bool("dry-run", false, "return the scaling preview without applying it")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *pool == "" {
+		fmt.Fprintln(stderr, "lenny-ctl: pools set-warm-count requires --pool <name>")
+		return 2
+	}
+	if *min < 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools set-warm-count requires --min <N> (>= 0)")
+		return 2
+	}
+	body := map[string]any{"minWarm": *min, "confirm": !*dryRun}
+	var out map[string]any
+	if err := c.Do(ctx, "PUT", "/v1/admin/pools/"+url.PathEscape(*pool)+"/warm-count", body, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsExitBootstrap implements `lenny-ctl admin pools exit-bootstrap
+// --pool <name>`. args excludes the "exit-bootstrap" verb. spec: §24.4
+// line 64 — it removes the bootstrap minWarm override and switches to
+// formula-driven scaling immediately. Maps to DELETE
+// /v1/admin/pools/{name}/bootstrap-override (§15.1 line 875).
+func cmdPoolsExitBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("pools exit-bootstrap", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	pool := fs.String("pool", "", "pool name (required)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *pool == "" {
+		fmt.Fprintln(stderr, "lenny-ctl: pools exit-bootstrap requires --pool <name>")
+		return 2
+	}
+	var out map[string]any
+	if err := c.Do(ctx, "DELETE", "/v1/admin/pools/"+url.PathEscape(*pool)+"/bootstrap-override", nil, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
+	return 0
+}
+
+// cmdPoolsCircuitBreaker implements `lenny-ctl admin pools
+// circuit-breaker --pool <name> --state <enabled|disabled|auto>`. args
+// excludes the "circuit-breaker" verb. spec: §24.4 line 75 — it overrides
+// the §6.1 SDK-warm circuit-breaker state. Maps to PUT
+// /v1/admin/pools/{name}/circuit-breaker (§15.1 line 801), which requires
+// If-Match; the ETag is read from the pool resource it shares
+// pool_config_generation with.
+func cmdPoolsCircuitBreaker(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("pools circuit-breaker", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	pool := fs.String("pool", "", "pool name (required)")
+	state := fs.String("state", "", "circuit-breaker override: enabled|disabled|auto (required)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *pool == "" {
+		fmt.Fprintln(stderr, "lenny-ctl: pools circuit-breaker requires --pool <name>")
+		return 2
+	}
+	switch *state {
+	case "enabled", "disabled", "auto":
+	default:
+		fmt.Fprintln(stderr, "lenny-ctl: pools circuit-breaker requires --state <enabled|disabled|auto>")
+		return 2
+	}
+	body := map[string]any{"sdkWarm": map[string]any{"circuitBreakerOverride": *state}}
+	poolPath := "/v1/admin/pools/" + url.PathEscape(*pool)
+	var out map[string]any
+	if err := c.PutIfMatch(ctx, poolPath, poolPath+"/circuit-breaker", body, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printJSON(stdout, out)
 	return 0
 }
 

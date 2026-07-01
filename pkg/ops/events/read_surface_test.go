@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	gwevents "github.com/lennylabs/lenny/pkg/gateway/events"
+	gwevents "github.com/lennylabs/lenny/pkg/events"
 )
 
 func ts() time.Time { return time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC) }

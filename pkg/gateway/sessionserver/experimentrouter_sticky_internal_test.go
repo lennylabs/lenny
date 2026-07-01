@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // fakeSticky is an in-memory StickyCache that records calls so the wrapper's

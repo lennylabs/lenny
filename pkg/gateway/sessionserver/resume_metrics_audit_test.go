@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 // spec: §16.1 catalog — lenny_session_resume_attempts_total{pool, outcome}

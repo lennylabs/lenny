@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
-	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
+	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
