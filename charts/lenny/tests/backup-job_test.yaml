@@ -105,6 +105,12 @@ tests:
       - matchRegex:
           path: spec.template.spec.containers[0].image
           pattern: lenny-backup
+      # §25.11 step-2 config export reads the lenny-bootstrap-values ConfigMap
+      # in the release namespace through the get-on-ConfigMaps grant, so the
+      # Job carries --namespace.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --namespace=NAMESPACE
 
   - it: sources backup credentials from the lenny-backup Secrets, never inlined
     set:

@@ -142,6 +142,11 @@ spec:
           args:
             - --mode={{ .mode | default "full" }}
             - --backup-id=$(LENNY_BACKUP_ID)
+            {{- /* §25.11 step-2 config export reads the lenny-bootstrap-values
+                   ConfigMap in the release namespace through the lenny-backup-sa
+                   get-on-ConfigMaps grant; pass the namespace so the read
+                   targets it. */}}
+            - --namespace={{ $.Release.Namespace }}
             {{- if or (eq (.mode | default "full") "full") (eq (.mode | default "full") "postgres") }}
             - --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
             {{- end }}
