@@ -147,7 +147,13 @@ spec:
                    get-on-ConfigMaps grant; pass the namespace so the read
                    targets it. */}}
             - --namespace={{ $.Release.Namespace }}
-            {{- if or (eq (.mode | default "full") "full") (eq (.mode | default "full") "postgres") }}
+            {{- /* §25.11 step-1/2: full and postgres modes pg_dump the shard;
+                   config mode does not pg_dump but still needs the shard DSN
+                   so the config export can SELECT tenants/quotas/runtimes/pools
+                   through the read-only lenny-backup role (SEC-BACKUP-1). A
+                   config-only run without the shard DSN would export an empty
+                   config archive, the very defect SEC-BACKUP-1 closes. */}}
+            {{- if or (eq (.mode | default "full") "full") (eq (.mode | default "full") "postgres") (eq (.mode | default "full") "config") }}
             - --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
             {{- end }}
             {{- /* §25.11 Sensitive Content Policy — forward the

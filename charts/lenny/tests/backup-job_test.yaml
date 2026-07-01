@@ -124,6 +124,31 @@ tests:
           path: spec.template.spec.containers[0].env[4].valueFrom.secretKeyRef.name
           value: lenny-backup-minio
 
+  # SEC-BACKUP-1: a config-only backup runs the §25.11 step-2 config export,
+  # which SELECTs tenants/quotas/runtimes/pools through the read-only
+  # lenny-backup role, so the config Job must carry --postgres-shard. Without
+  # it the config export has no DSN and produces an empty config archive — the
+  # very defect SEC-BACKUP-1 closes.
+  - it: passes --postgres-shard to a config-only backup so the config export has a shard DSN (SEC-BACKUP-1)
+    set:
+      backups.onDemand.enabled: true
+      backups.onDemand.mode: config
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
+
+  - it: passes --postgres-shard to full and postgres backups
+    set:
+      backups.onDemand.enabled: true
+      backups.onDemand.mode: postgres
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --postgres-shard=$(LENNY_BACKUP_POSTGRES_DSN)
+
   # §25.11 Sensitive Content Policy — F-17.3.17.
   - it: forwards no content-policy or encryption flags by default
     set:

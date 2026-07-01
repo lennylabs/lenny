@@ -198,8 +198,12 @@ func buildExporters(ctx context.Context, in depsInput) (
 		return nil, crdExport, closeExport
 	}
 	if in.configDSN == "" {
-		// A run with no shard (retention/verify) has no Postgres config
-		// source; the CRD export still runs.
+		// Only a retention or verify run legitimately lacks a shard, and so
+		// a Postgres config source; those modes export no config. A full,
+		// postgres, or config run always carries --postgres-shard (the chart
+		// renders it for config mode too, so a config-only backup does not
+		// silently produce an empty config archive — SEC-BACKUP-1). The CRD
+		// export still runs.
 		return nil, crdExport, closeExport
 	}
 	cfgPool, err := pgxpool.New(ctx, in.configDSN)
