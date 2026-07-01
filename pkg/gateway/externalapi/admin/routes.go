@@ -721,7 +721,7 @@ func (r *Router) registerAdminTokenRoutes(mux *http.ServeMux) {
 	if r.adminToken == nil {
 		return
 	}
-	// §17.6 line 472 — rotate the initial admin token. platform-admin
+	// §17.6 — rotate the initial admin token. platform-admin
 	// only (requireAdmin). F-17.6.3.
 	mux.Handle("POST /v1/admin/users/{user}/rotate-token",
 		r.requireAdmin(http.HandlerFunc(r.handleRotateToken)))

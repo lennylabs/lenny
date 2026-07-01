@@ -43,7 +43,7 @@ const (
 	// TokenKey / CreatedAtKey / jtiKey are the §17.6 line 470 `data`
 	// fields. jtiKey is a Lenny addition: it records the token's `jti`
 	// so Rotate can revoke the superseded token (the spec's "old token
-	// is immediately invalidated" clause, line 472).
+	// is immediately invalidated" clause).
 	TokenKey     = "token"
 	CreatedAtKey = "created_at"
 	jtiKey       = "jti"
@@ -88,7 +88,7 @@ type MintedToken struct {
 // The production wiring passes the §13.3 issued-token store: recording at
 // mint makes the token revocable, and Revoke on rotation marks the prior
 // token revoked so the gateway rejects it on the next request (the §17.6
-// line 472 "immediately invalidated, not a grace period" guarantee).
+// "immediately invalidated, not a grace period" guarantee).
 // Optional: a nil store leaves the token un-revocable, so a rotated token
 // then lapses only at its own expiry. The degraded behavior is acceptable
 // for dev/in-memory deployments that have no durable token store.
@@ -228,7 +228,7 @@ func (p *Provisioner) Provision(ctx context.Context) (Result, error) {
 // before the first bootstrap has run). The old token stops validating
 // as soon as the revocation propagates; there is no grace period.
 //
-// spec: §17.6 line 472 — F-17.6.3.
+// spec: §17.6 — F-17.6.3.
 func (p *Provisioner) Rotate(ctx context.Context) (Result, error) {
 	if err := p.ensureUser(ctx); err != nil {
 		return Result{}, err
@@ -316,7 +316,7 @@ func (p *Provisioner) mint(ctx context.Context) (token, jti string, createdAt ti
 	// Record the token in the §13.3 issued-token store so a later
 	// rotation can revoke it. A record failure aborts the mint: an
 	// un-recorded token could not be revoked, which would silently break
-	// the §17.6 line 472 rotation guarantee.
+	// the §17.6 rotation guarantee.
 	if p.issued != nil {
 		sum := sha256.Sum256([]byte(token))
 		if rerr := p.issued.Record(ctx, MintedToken{

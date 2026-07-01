@@ -11,7 +11,7 @@ import (
 )
 
 // users.go implements the §24.9 `lenny-ctl admin users` resource. For v1
-// the only subcommand is `rotate-token`, the §17.6 line 472 admin-token
+// the only subcommand is `rotate-token`, the §17.6 admin-token
 // rotation. The CLI calls the gateway's rotate-token endpoint, which
 // mints a fresh token, patches the lenny-admin-token Secret, and revokes
 // the prior token. The gateway is the actor because it holds the signer,
@@ -50,10 +50,10 @@ type rotateTokenResponse struct {
 // (§24.9 line 119). It POSTs to the gateway's
 // POST /v1/admin/users/{user}/rotate-token, which mints a new token,
 // patches the lenny-admin-token Secret, and immediately revokes the prior
-// token (§17.6 line 472, no grace period). Requires a platform-admin
+// token (§17.6, no grace period). Requires a platform-admin
 // bearer.
 //
-// spec: §24.9 line 119; §17.6 line 472 (rotation procedure).
+// spec: §24.9 line 119; §17.6 (rotation procedure).
 func cmdUsersRotateToken(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	var user string
 	for i := 0; i < len(args); i++ {

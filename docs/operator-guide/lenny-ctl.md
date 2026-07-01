@@ -262,7 +262,7 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token (internally calls `POST /v1/oauth/token` with RFC 8693 token-exchange grant) and patch K8s Secret | `platform-admin` |
+| `lenny-ctl admin users rotate-token --user <name>` | Rotate the initial admin token: the CLI calls `POST /v1/admin/users/{user}/rotate-token` and the gateway mints the new token in process, patches the `lenny-admin-token` Kubernetes Secret, and revokes the prior token | `platform-admin` |
 | `lenny-ctl admin users invalidate --user <name>` | Invalidate all active sessions for a user | `platform-admin` |
 
 ---

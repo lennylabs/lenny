@@ -185,9 +185,9 @@ func TestProvisionIsIdempotent_spec_17_6_459(t *testing.T) {
 	_ = first
 }
 
-// spec: §17.6 line 472 — rotation mints a new token, patches the Secret,
+// spec: §17.6 — rotation mints a new token, patches the Secret,
 // and revokes the superseded token's jti immediately. F-17.6.3.
-func TestRotateMintsAndRevokesPrevious_spec_17_6_472(t *testing.T) {
+func TestRotateMintsAndRevokesPrevious_spec_17_6(t *testing.T) {
 	secrets := newFakeSecrets()
 	rev := &fakeIssued{}
 	p, signer, _ := newProvisioner(t, secrets, rev)
@@ -236,7 +236,7 @@ func TestRotateMintsAndRevokesPrevious_spec_17_6_472(t *testing.T) {
 }
 
 // Rotate with no existing Secret provisions one fresh (an operator
-// rotating before the first bootstrap). spec: §17.6 line 472.
+// rotating before the first bootstrap). spec: §17.6.
 func TestRotateWithoutExistingSecretCreates(t *testing.T) {
 	secrets := newFakeSecrets()
 	rev := &fakeIssued{}

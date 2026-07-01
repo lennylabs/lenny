@@ -105,13 +105,13 @@ The Token Service runs as a **separate process** with its own ServiceAccount and
 - Gateway replicas call the Token Service over mTLS
 - Gateway replicas receive short-lived access tokens, never refresh tokens or KMS keys
 - 2+ replicas with `PodDisruptionBudget` (`minAvailable: 1`)
-- Serves the canonical `POST /v1/oauth/token` endpoint (RFC 6749 + RFC 8693 token exchange) for all bearer-token minting
+- Serves the canonical `POST /v1/oauth/token` endpoint (RFC 6749 + RFC 8693 token exchange) for bearer-token minting, except the bootstrap admin-credential mint and rotation, which the gateway mints in process (see below)
 
 ### What It Manages
 
 1. **Connector credentials** -- OAuth tokens for external tools and agents (GitHub, Jira, etc.) accessed via registered connectors
 2. **LLM provider credentials** -- API keys, cloud IAM roles for backing LLMs
-3. **Bearer tokens** -- admin tokens, session tokens, delegation child tokens, credential-lease tokens, agent-operability scoped tokens. Every token minted by Lenny flows through the RFC 8693 token-exchange path, either by direct caller request (admin rotation via `lenny-ctl`) or by internal Token Service calls (credential leasing, delegation minting). RFC 8693 semantic preservation is enforced: scope may only narrow, `delegation_depth` may only increase, audience may not broaden, `caller_type` may not elevate.
+3. **Bearer tokens** -- admin tokens, session tokens, delegation child tokens, credential-lease tokens, agent-operability scoped tokens. Most tokens minted by Lenny flow through the RFC 8693 token-exchange path, either by direct caller request (self and service-principal rotation) or by internal Token Service calls (credential leasing, delegation minting). RFC 8693 semantic preservation is enforced: scope may only narrow, `delegation_depth` may only increase, audience may not broaden, `caller_type` may not elevate. The bootstrap admin credential is the exception: `lenny-ctl admin users rotate-token --user lenny-admin` calls the dedicated `POST /v1/admin/users/{user}/rotate-token` route, and the gateway mints the new admin token in process and patches the `lenny-admin-token` Secret without going through `/v1/oauth/token`.
 
 ### Token Storage
 

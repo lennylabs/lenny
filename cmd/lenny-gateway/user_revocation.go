@@ -204,7 +204,7 @@ func (u *userTokenRevoker) RevokeUserTokens(ctx context.Context, tenantID, subje
 // §17.6 admin token so the token is revocable, and on rotation marks the
 // prior token revoked in Postgres and pushes the revocation onto the
 // cross-replica cache so the old token stops validating immediately (the
-// §17.6 line 472 no-grace-period guarantee). spec: §17.6 line 472 —
+// §17.6 no-grace-period guarantee). spec: §17.6 —
 // F-17.6.3.
 type adminIssuedTokens struct {
 	store *issuedtokenstore.Store
