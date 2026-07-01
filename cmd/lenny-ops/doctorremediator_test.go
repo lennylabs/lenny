@@ -153,8 +153,14 @@ func certScheme() *runtime.Scheme {
 }
 
 func certDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
+	// Detect traverses every doctor GVR when the dynamic client is set, so
+	// the fake registers the list kinds for all of them even when a test
+	// stages only Certificate objects.
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(certScheme(),
-		map[schema.GroupVersionResource]string{certManagerGVR: "CertificateList"}, objs...)
+		map[schema.GroupVersionResource]string{
+			certManagerGVR:     "CertificateList",
+			sandboxWarmPoolGVR: "SandboxWarmPoolList",
+		}, objs...)
 }
 
 // spec: §25.6 line 2964 — certManagerExpiring fires for a Ready
@@ -226,11 +232,17 @@ func TestRemediator_CertManager_Unhealthy_NotDetected(t *testing.T) {
 	}
 }
 
-// A finding outside the remediator's live coverage returns
-// ErrManualRemediation so the orchestrator reports it manual.
+// A code outside the §25.6 fixable table returns ErrManualRemediation so
+// the orchestrator reports it manual. The three F-DR-1 findings
+// (bootstrapConfigDrift, prometheusRuleMissing, warmPoolStuckReplenish)
+// are no longer routed here; only a non-fixable code reaches the default.
+//
+// diagnosis: the default Apply branch stopped returning
+// ErrManualRemediation for a code outside the fixable table, or one of
+// the three F-DR-1 findings regressed to the manual default.
 func TestRemediator_UnsupportedFinding_Manual(t *testing.T) {
 	rem := &k8sDoctorRemediator{clientset: fake.NewSimpleClientset()}
-	err := rem.Apply(context.Background(), doctor.Detected{Code: doctor.FindingBootstrapConfigDrift})
+	err := rem.Apply(context.Background(), doctor.Detected{Code: "someUnknownFinding"})
 	if err != doctor.ErrManualRemediation {
 		t.Fatalf("err=%v want ErrManualRemediation", err)
 	}

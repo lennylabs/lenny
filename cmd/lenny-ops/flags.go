@@ -42,6 +42,7 @@ type opsFlags struct {
 	runbookDir                       *string
 	doctorFixTimeout                 *int
 	doctorAllowedFixes               *string
+	doctorRenderDir                  *string
 	maintenanceMode                  *bool
 	backupImage                      *string
 	backupMinIOEndpoint              *string
@@ -189,6 +190,10 @@ func (f *opsFlags) registerBackupFlags() {
 		"§25.6 admin.doctor.fixTimeoutSeconds: per-remediation timeout for `doctor --fix`")
 	f.doctorAllowedFixes = flag.String("doctor-allowed-fixes", os.Getenv("LENNY_DOCTOR_ALLOWED_FIXES"),
 		"§25.6 admin.doctor.allowedFixes: comma-separated allowlist of fixable findings; empty means the full set")
+	f.doctorRenderDir = flag.String("doctor-render-dir", os.Getenv("LENNY_DOCTOR_RENDER_DIR"),
+		"§25.6 directory of Helm-rendered references the bootstrapConfigDrift and prometheusRuleMissing "+
+			"fixes re-apply (operator-mounted via chart values). Empty leaves both findings undetected "+
+			"(reported not_detected).")
 	f.maintenanceMode = flag.Bool("maintenance-mode", envOr("LENNY_MAINTENANCE_MODE", "false") == "true",
 		"§25.6 global.maintenanceMode: when true, `doctor --fix` skips every remediation")
 	f.backupImage = flag.String("backup-image", os.Getenv("LENNY_BACKUP_IMAGE"),

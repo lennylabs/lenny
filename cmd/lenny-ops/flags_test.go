@@ -67,6 +67,7 @@ func TestParseFlags(t *testing.T) {
 		{"shutdownTimeout", *f.shutdownTimeout, 10 * time.Second},
 		// registerBackupFlags
 		{"doctorFixTimeout", *f.doctorFixTimeout, 120},
+		{"doctorRenderDir", *f.doctorRenderDir, ""},
 		{"backupMinIOBucket", *f.backupMinIOBucket, "lenny-backups"},
 		// registerEventFlags
 		{"selfHealthInterval", *f.selfHealthInterval, 10 * time.Second},

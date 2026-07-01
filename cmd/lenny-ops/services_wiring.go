@@ -186,10 +186,12 @@ func (w *opsWiring) buildOpsServices() {
 	// §25.6 doctor auto-remediation orchestrator backing POST
 	// /v1/admin/diagnostics/run[?fix=true]. Built only when a Kubernetes
 	// client is available; otherwise the endpoint reports 503. F-25.6.2.
+	releaseNS := envOr("POD_NAMESPACE", *w.f.leaderElectNS)
 	dDeps := doctorDeps{
-		ReleaseNS:    envOr("POD_NAMESPACE", *w.f.leaderElectNS),
+		ReleaseNS:    releaseNS,
 		AllowedFixes: splitCSV(*w.f.doctorAllowedFixes),
 		FixTimeout:   time.Duration(*w.f.doctorFixTimeout) * time.Second,
+		Helm:         newHelmRenderSource(*w.f.doctorRenderDir, releaseNS),
 		Audit: func(ev doctor.Event) {
 			w.auditRecorder.Record(string(ev.Type), ev.Fields, time.Time{})
 		},

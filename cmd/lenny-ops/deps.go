@@ -1425,8 +1425,14 @@ type doctorDeps struct {
 	Clientset kubernetes.Interface
 	Dynamic   dynamic.Interface
 	// ReleaseNS is the namespace holding the cert-manager Certificate CRs
-	// the certManagerExpiring fix targets.
+	// the certManagerExpiring fix targets, the lenny-bootstrap ConfigMap
+	// the bootstrapConfigDrift fix re-applies, and the monitoring objects
+	// the prometheusRuleMissing fix asserts.
 	ReleaseNS string
+	// Helm yields the §25.6 Helm-rendered references the bootstrapConfigDrift
+	// and prometheusRuleMissing fixes compare against and re-apply. A nil
+	// source leaves both findings undetected (reported not_detected).
+	Helm doctor.HelmRenderSource
 	// AllowedFixes is admin.doctor.allowedFixes; empty means the full set.
 	AllowedFixes []string
 	// FixTimeout is admin.doctor.fixTimeoutSeconds; zero applies the 120s
@@ -1451,6 +1457,7 @@ func buildDoctorService(deps doctorDeps) doctor.Service {
 		clientset: deps.Clientset,
 		dyn:       deps.Dynamic,
 		releaseNS: deps.ReleaseNS,
+		helm:      deps.Helm,
 	}
 	o := doctor.New(rem, doctor.Config{
 		AllowedFixes:    deps.AllowedFixes,
