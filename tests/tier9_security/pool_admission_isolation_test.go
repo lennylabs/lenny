@@ -93,7 +93,14 @@ func TestPoolAdmissionDerivedPropertyGates_spec_5_2(t *testing.T) {
 	// plus every control pool the cases create.
 	seedPoolAdmissionRuntimes(t, c, probe, gatewayIP, admin)
 
-	for _, tc := range poolAdmissionGateCases() {
+	// Pool DELETE is a §15.1 soft delete: it stamps deleted_at and leaves
+	// the name occupied, so a create reusing that name returns 409
+	// RESOURCE_ALREADY_EXISTS. A per-run suffix gives each pool a fresh name
+	// so a soft-deleted leftover from a prior run never collides and the
+	// test is re-runnable against the same cluster.
+	suffix := fmt.Sprintf("-%d", time.Now().UnixNano())
+
+	for _, tc := range poolAdmissionGateCases(suffix) {
 		t.Run(tc.name, func(t *testing.T) {
 			// The adversarial pool must be rejected at admission.
 			bad := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/pools", admin, tc.badBody)
@@ -146,41 +153,57 @@ type poolAdmissionGate struct {
 	wantSub         string
 }
 
-// poolAdmissionGateCases builds the four derived-property gate cases. The
-// JSON bodies carry no single quotes so the probe's shell quoting holds.
-func poolAdmissionGateCases() []poolAdmissionGate {
+// poolAdmissionGateCases builds the four derived-property gate cases. Each
+// pool name carries the per-run suffix so a soft-deleted leftover from a
+// prior run never collides with a fresh create. The JSON bodies carry no
+// single quotes so the probe's shell quoting holds.
+func poolAdmissionGateCases(suffix string) []poolAdmissionGate {
+	badXtenantSandboxed := "t9-padm-xtenant-sandboxed" + suffix
+	ctlXtenantMicrovm := "t9-padm-xtenant-microvm" + suffix
+	badT4Xtenant := "t9-padm-t4-xtenant" + suffix
+	ctlT4NoXtenant := "t9-padm-t4-noxtenant" + suffix
+	badConcurrentXtenant := "t9-padm-concurrent-xtenant" + suffix
+	ctlConcurrentNoXtenant := "t9-padm-concurrent-noxtenant" + suffix
+	badConcurrentNoAck := "t9-padm-concurrent-noack" + suffix
+	ctlConcurrentAck := "t9-padm-concurrent-ack" + suffix
 	return []poolAdmissionGate{
 		{
 			// Sequential cross-tenant reuse requires microvm isolation.
 			name:            "microvm-cross-tenant-gate",
-			poolName:        "t9-padm-xtenant-sandboxed",
-			controlPoolName: "t9-padm-xtenant-microvm",
+			poolName:        badXtenantSandboxed,
+			controlPoolName: ctlXtenantMicrovm,
 			wantSub:         "isolationProfile is microvm",
 			badBody: poolBodyJSON(poolFields{
-				name: "t9-padm-xtenant-sandboxed", runtimeRef: poolAdmissionRuntime,
+				name: badXtenantSandboxed, runtimeRef: poolAdmissionRuntime,
 				isolationProfile: "sandboxed", executionMode: "session",
 				sessionPolicy: recycleCrossTenant(),
 			}),
 			goodBody: poolBodyJSON(poolFields{
-				name: "t9-padm-xtenant-microvm", runtimeRef: poolAdmissionRuntime,
+				name: ctlXtenantMicrovm, runtimeRef: poolAdmissionRuntime,
 				isolationProfile: "microvm", executionMode: "session",
-				sessionPolicy: recycleCrossTenant(),
+				// §5.2: a cross-tenant-reuse microvm pool must set
+				// scrubProfile vm-restart or in-place; the standard in-guest
+				// scrub is insufficient for the cross-tenant residual-state
+				// boundary. The control pool sets vm-restart so it is
+				// admitted, isolating the isolationProfile gate the bad pool
+				// trips (sandboxed) from the scrubProfile requirement.
+				sessionPolicy: recycleCrossTenantScrubbed(),
 			}),
 		},
 		{
 			// A T4-tier runtime forbids cross-tenant reuse regardless of
 			// isolation profile (even microvm).
 			name:            "t4-cross-tenant-prohibition",
-			poolName:        "t9-padm-t4-xtenant",
-			controlPoolName: "t9-padm-t4-noxtenant",
+			poolName:        badT4Xtenant,
+			controlPoolName: ctlT4NoXtenant,
 			wantSub:         "T4",
 			badBody: poolBodyJSON(poolFields{
-				name: "t9-padm-t4-xtenant", runtimeRef: poolAdmissionRuntimeT4,
+				name: badT4Xtenant, runtimeRef: poolAdmissionRuntimeT4,
 				isolationProfile: "microvm", executionMode: "session",
 				sessionPolicy: recycleCrossTenant(),
 			}),
 			goodBody: poolBodyJSON(poolFields{
-				name: "t9-padm-t4-noxtenant", runtimeRef: poolAdmissionRuntimeT4,
+				name: ctlT4NoXtenant, runtimeRef: poolAdmissionRuntimeT4,
 				isolationProfile: "microvm", executionMode: "session",
 				sessionPolicy: recycleNoCrossTenant(),
 			}),
@@ -189,18 +212,22 @@ func poolAdmissionGateCases() []poolAdmissionGate {
 			// Concurrent slots never permit cross-tenant reuse, regardless of
 			// isolation profile.
 			name:            "concurrent-cross-tenant-rejection",
-			poolName:        "t9-padm-concurrent-xtenant",
-			controlPoolName: "t9-padm-concurrent-noxtenant",
-			wantSub:         "maxConcurrentSessions > 1",
+			poolName:        badConcurrentXtenant,
+			controlPoolName: ctlConcurrentNoXtenant,
+			// The gate message contains a greater-than sign that the JSON
+			// error body renders as a > escape, so a wantSub carrying
+			// the literal sign never matches. wantSub matches the distinctive
+			// escape-free tail of the §5.2 message instead.
+			wantSub: "cross-tenant slot sharing has no isolation boundary",
 			badBody: poolBodyJSON(poolFields{
-				name: "t9-padm-concurrent-xtenant", runtimeRef: poolAdmissionRuntime,
+				name: badConcurrentXtenant, runtimeRef: poolAdmissionRuntime,
 				isolationProfile: "microvm", executionMode: "session",
 				sessionPolicy: `"sessionPolicy":{"maxConcurrentSessions":4,` +
 					`"acknowledgeProcessLevelIsolation":true,` +
 					`"recycle":{"allowCrossTenantReuse":true}}`,
 			}),
 			goodBody: poolBodyJSON(poolFields{
-				name: "t9-padm-concurrent-noxtenant", runtimeRef: poolAdmissionRuntime,
+				name: ctlConcurrentNoXtenant, runtimeRef: poolAdmissionRuntime,
 				isolationProfile: "microvm", executionMode: "session",
 				sessionPolicy: `"sessionPolicy":{"maxConcurrentSessions":4,` +
 					`"acknowledgeProcessLevelIsolation":true}`,
@@ -210,16 +237,16 @@ func poolAdmissionGateCases() []poolAdmissionGate {
 			// maxConcurrentSessions > 1 requires the process-level isolation
 			// acknowledgment.
 			name:            "concurrent-process-ack-requirement",
-			poolName:        "t9-padm-concurrent-noack",
-			controlPoolName: "t9-padm-concurrent-ack",
+			poolName:        badConcurrentNoAck,
+			controlPoolName: ctlConcurrentAck,
 			wantSub:         "acknowledgeProcessLevelIsolation",
 			badBody: poolBodyJSON(poolFields{
-				name: "t9-padm-concurrent-noack", runtimeRef: poolAdmissionRuntime,
+				name: badConcurrentNoAck, runtimeRef: poolAdmissionRuntime,
 				isolationProfile: "sandboxed", executionMode: "session",
 				sessionPolicy: `"sessionPolicy":{"maxConcurrentSessions":4}`,
 			}),
 			goodBody: poolBodyJSON(poolFields{
-				name: "t9-padm-concurrent-ack", runtimeRef: poolAdmissionRuntime,
+				name: ctlConcurrentAck, runtimeRef: poolAdmissionRuntime,
 				isolationProfile: "sandboxed", executionMode: "session",
 				sessionPolicy: `"sessionPolicy":{"maxConcurrentSessions":4,` +
 					`"acknowledgeProcessLevelIsolation":true}`,
@@ -233,6 +260,17 @@ func poolAdmissionGateCases() []poolAdmissionGate {
 func recycleCrossTenant() string {
 	return `"sessionPolicy":{"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,` +
 		`"maxSessionsPerPod":10,"allowCrossTenantReuse":true}}`
+}
+
+// recycleCrossTenantScrubbed is the cross-tenant recycling sessionPolicy
+// with scrubProfile vm-restart set, the corrected control for the microvm
+// cross-tenant gate. §5.2 rejects cross-tenant reuse on a microvm pool
+// unless scrubProfile is vm-restart or in-place, so the admitted control
+// pool must carry it (vm-restart avoids the in-place
+// acknowledgeMicrovmResidualState requirement).
+func recycleCrossTenantScrubbed() string {
+	return `"sessionPolicy":{"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,` +
+		`"maxSessionsPerPod":10,"allowCrossTenantReuse":true,"scrubProfile":"vm-restart"}}`
 }
 
 // recycleNoCrossTenant is the same recycling sessionPolicy without the
@@ -285,9 +323,13 @@ func seedPoolAdmissionRuntimes(t *testing.T, c *kind.Cluster, probe, gatewayIP s
 		if rt.tier != "" {
 			tierField = fmt.Sprintf(`,"workspaceTier":%q`, rt.tier)
 		}
+		// §5.1 line 51: labels are required from v1. The seed runtime must
+		// declare at least one label or the gateway rejects the create with
+		// 400 VALIDATION_ERROR before the gate cases can bind a pool to it.
 		body := fmt.Sprintf(
 			`{"name":%q,"type":"agent","image":%q,"executionMode":"session",`+
-				`"isolationProfile":"sandboxed","integrationLevel":"full"%s}`,
+				`"isolationProfile":"sandboxed","integrationLevel":"full",`+
+				`"labels":{"lenny.dev/test":"tier9-pool-admission"}%s}`,
 			rt.name, poolAdmissionImage, tierField,
 		)
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/runtimes", admin, body)
