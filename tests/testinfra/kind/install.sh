@@ -36,6 +36,13 @@
 #   LENNY_IMAGE_TAG      Image tag for the built binaries. Default: e2e.
 #   LENNY_SKIP_BUILD     When "1", skip the image build and load steps
 #                        (the images are assumed already loaded).
+#   LENNY_FORCE_BUILD    When "1", rebuild every image even when a
+#                        <name>:<tag> image already exists locally. The
+#                        default skip-if-present shortcut reuses a stale
+#                        image built from older source, which silently
+#                        deploys out-of-date binaries after a code change;
+#                        set this to guarantee the deployed images reflect
+#                        the current tree. Ignored when LENNY_SKIP_BUILD=1.
 
 set -euo pipefail
 
@@ -146,8 +153,8 @@ build_image() {
   local cmd_path="${2:-$1}"
   local image="${image_base}:${TAG}"
 
-  if docker image inspect "${image}" >/dev/null 2>&1; then
-    log "image ${image} already built; skipping"
+  if [[ "${LENNY_FORCE_BUILD:-}" != "1" ]] && docker image inspect "${image}" >/dev/null 2>&1; then
+    log "image ${image} already built; skipping (set LENNY_FORCE_BUILD=1 to rebuild)"
     return 0
   fi
 
@@ -729,23 +736,32 @@ sed \
 # the warm pods are created and pass their readiness probe. That whole
 # chain runs asynchronously after `helm install` returns, so poll for the
 # warm pods rather than expecting them immediately. The §6.3 startup
-# benchmark needs the echo-pool-sidecar (pod-warm) and preconnect-echo-pool
-# (SDK-warm) pods, so wait for at least two managed pods before the Ready
-# wait.
-log "waiting for the warm agent pods to appear (pools warm asynchronously)"
-for _ in $(seq 1 60); do
-  running="$(kc -n lenny-agents get pods -l lenny.dev/managed=true \
-    --no-headers 2>/dev/null | grep -c '.' || true)"
-  [ "${running:-0}" -ge 2 ] && break
+# benchmark needs a warm pod from the echo-pool-sidecar (pod-warm) and
+# preconnect-echo-pool (SDK-warm) pools, so wait until at least two managed
+# pods report Ready. This is a positive threshold on purpose rather than an
+# all-managed-pods-Ready wait: a persistent cluster accumulates leftover
+# managed pods from earlier test runs (for example chaos pools whose
+# ephemeral runtime images were pruned and now sit in ImagePullBackOff), and
+# those never become Ready. A blanket `kubectl wait ... Ready pod` over the
+# lenny.dev/managed=true selector blocks on them and fails the install even
+# though the freshly-installed pools are healthy. Counting Ready pods
+# tolerates those leftovers and gates only on two healthy managed pods.
+log "waiting for at least two warm agent pods to become Ready (pools warm asynchronously)"
+ready=0
+for _ in $(seq 1 36); do
+  ready="$(kc -n lenny-agents get pods -l lenny.dev/managed=true \
+    -o 'jsonpath={range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' \
+    2>/dev/null | grep -c '^True$' || true)"
+  [ "${ready:-0}" -ge 2 ] && break
   sleep 5
 done
-if ! kc -n lenny-agents wait --for=condition=Ready pod \
-  -l lenny.dev/managed=true --timeout=180s; then
-  log "the warm agent pods did not become Ready; dumping their state"
+if [ "${ready:-0}" -lt 2 ]; then
+  log "fewer than two warm agent pods became Ready; dumping their state"
   kc -n lenny-agents get sandboxwarmpool,pods -o wide || true
-  echo "error: the warm agent pods did not become Ready" >&2
+  echo "error: fewer than two warm agent pods became Ready" >&2
   exit 1
 fi
+log "${ready} warm agent pod(s) Ready"
 
 log "Lenny is installed on the ${CLUSTER} Kind cluster."
 log "Run the tier-5 e2e suite with:"
