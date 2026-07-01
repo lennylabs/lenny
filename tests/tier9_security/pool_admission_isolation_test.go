@@ -405,6 +405,16 @@ func TestNonceOnlyAcknowledgmentGate_spec_4_7(t *testing.T) {
 	gatewayIP := startGatewayProbe(t, c, probe)
 	admin := platformAdmin()
 
+	// Pool DELETE is a §15.1 soft delete: it stamps deleted_at and leaves the
+	// name occupied, so a create reusing that name returns 409
+	// RESOURCE_ALREADY_EXISTS. A per-run suffix gives each pool a fresh name so
+	// a soft-deleted leftover from a prior run never collides and the test is
+	// re-runnable against the same cluster.
+	suffix := fmt.Sprintf("-%d", time.Now().UnixNano())
+	noackPool := "t9-nonce-noack" + suffix
+	ackPool := "t9-nonce-ack" + suffix
+	swapPool := "t9-nonce-swap" + suffix
+
 	// Apply the two runtimes as Runtime CRs: a nonce-only sidecar runtime
 	// (requireSoPeercred: false) and an SO_PEERCRED-enforcing one. The
 	// reconciler mirrors requireSoPeercred CRD-to-store, where the gate reads
@@ -417,10 +427,10 @@ func TestNonceOnlyAcknowledgmentGate_spec_4_7(t *testing.T) {
 
 	// Create: an unacknowledged nonce-only pool is rejected.
 	t.Run("create-rejected-without-ack", func(t *testing.T) {
-		body := noncePoolJSON("t9-nonce-noack", nonceOnlyRuntime, false)
+		body := noncePoolJSON(noackPool, nonceOnlyRuntime, false)
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/pools", admin, body)
 		if res.statusCode != 400 {
-			cleanupPool(t, c, probe, gatewayIP, admin, "t9-nonce-noack")
+			cleanupPool(t, c, probe, gatewayIP, admin, noackPool)
 			t.Fatalf("§4.7: unacknowledged nonce-only pool admitted with status %d, want 400 (body %q)",
 				res.statusCode, res.body)
 		}
@@ -434,9 +444,9 @@ func TestNonceOnlyAcknowledgmentGate_spec_4_7(t *testing.T) {
 
 	// Create: an acknowledged nonce-only pool is admitted.
 	t.Run("create-admitted-with-ack", func(t *testing.T) {
-		body := noncePoolJSON("t9-nonce-ack", nonceOnlyRuntime, true)
+		body := noncePoolJSON(ackPool, nonceOnlyRuntime, true)
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/pools", admin, body)
-		t.Cleanup(func() { cleanupPool(t, c, probe, gatewayIP, admin, "t9-nonce-ack") })
+		t.Cleanup(func() { cleanupPool(t, c, probe, gatewayIP, admin, ackPool) })
 		if res.statusCode != 201 {
 			t.Fatalf("§4.7: acknowledged nonce-only pool rejected with status %d, want 201 (body %q)",
 				res.statusCode, res.body)
@@ -447,7 +457,7 @@ func TestNonceOnlyAcknowledgmentGate_spec_4_7(t *testing.T) {
 	// nonce-only runtime without the ack: rejected. The same swap with the
 	// ack is admitted.
 	t.Run("runtimeref-swap-to-nonce-only", func(t *testing.T) {
-		pool := "t9-nonce-swap"
+		pool := swapPool
 		create := noncePoolJSON(pool, nonceEnforceRT, false)
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/pools", admin, create)
 		t.Cleanup(func() { cleanupPool(t, c, probe, gatewayIP, admin, pool) })
