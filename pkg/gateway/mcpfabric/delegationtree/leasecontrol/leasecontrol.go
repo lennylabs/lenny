@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
 
 // Package leasecontrol implements the gateway side of the §8.6
-// lease-extension control plane: the GatewayControl.ExtendLease gRPC
-// handler the pod adapter calls when its LLM proxy rejects a call for
-// budget exhaustion.
+// lease-extension control plane: the in-process ExtendLease dispatch the
+// gateway LLM Proxy calls when it settles a proxy-mode call that
+// exhausts the session's token budget. The trigger runs inside the
+// gateway process rather than on the pod adapter (proposal 0023 /
+// F-8.6.6): the adapter is never in the LLM request path, so the
+// gateway LLM Proxy, which settles the per-call usage, is the entity
+// that detects exhaustion and requests the extension. The dispatch is a
+// plain in-process Go method, not a gRPC RPC.
 //
 // The handler is the stateful counterpart to pkg/leaseextension, which
 // holds the pure §8.6 decision math (Grant and ResolveEffectiveMax).
@@ -382,9 +387,10 @@ type TenantResolver interface {
 	TenantOf(ctx context.Context, sessionID string) (string, error)
 }
 
-// Service implements adapterv1.GatewayControlServer. It is the
-// gateway-hosted endpoint of the §8.6 control plane; the pod adapter
-// dials it as a GatewayControl client.
+// Service implements adapterv1.GatewayControlServer for the surviving
+// §9.1/§9.3 tool-bridge and §5.2 scrub-report RPCs, and hosts the §8.6
+// in-process ExtendLease dispatch the gateway LLM Proxy calls directly
+// (no gRPC RPC; see the package doc comment and proposal 0023).
 type Service struct {
 	adapterv1.UnimplementedGatewayControlServer
 
@@ -402,6 +408,13 @@ type Service struct {
 	// elicitation-mode request fails closed rather than auto-granting.
 	// F-8.6.2.
 	coordinator *elicitCoordinator
+
+	// episodes runs the §8.6 budget-exhaustion extension episodes the
+	// gateway LLM Proxy drives through ExtendForBudget: one per-tree
+	// episode on a single tracked goroutine that concurrent exhausting
+	// sessions join, decoupling the elicitation lifecycle from the
+	// proxy's in-path wait. spec: §8.6 line 629, line 719.
+	episodes *episodeManager
 
 	// autoLimiter enforces the §8.6 line 712 auto-mode rate limit. It is
 	// always present (in-memory counter when none is supplied) but inert
@@ -714,6 +727,19 @@ type Options struct {
 	// the Postgres-only dev posture that runs no Redis budget counter.
 	// F-8.6.3. spec: §8.6 line 643.
 	TreeBudget TreeBudgetGranter
+
+	// EpisodeContext supplies the session-scoped context an ExtendForBudget
+	// extension episode dispatches its ExtendLease elicitation on. §8.6
+	// (proposal 0023) requires the elicitation to survive the proxy's
+	// in-path wait: the episode context is bounded by the §8.6 elicitation
+	// lifecycle (the elicitor's own timeout, the rejectionCoolOffSeconds
+	// cool-off, and the interaction expiry) rather than the caller's
+	// request context, so cancelling the in-path wait does not cancel the
+	// still-pending elicitation. Nil selects context.Background (the
+	// elicitor bounds its own lifetime), which is the production default;
+	// tests can inject a bounded context to assert episode cleanup.
+	// spec: §8.6 line 629.
+	EpisodeContext func() context.Context
 }
 
 // NewService returns a §8.6 ExtendLease Service.
@@ -755,13 +781,17 @@ func NewService(opts Options) (*Service, error) {
 	svc.connectorTools = opts.ConnectorTools
 	svc.scrubReports = opts.ScrubReports
 	svc.treeGranter = opts.TreeBudget
+	svc.episodes = newEpisodeManager(svc, opts.EpisodeContext)
 	return svc, nil
 }
 
-// ExtendLease handles the §8.6 adapter→gateway extension request. It
-// resolves the requesting session's tree budget and effective ceiling,
-// enforces the rejection cool-off, computes the grant with
-// pkg/leaseextension, and applies it.
+// ExtendLease handles the §8.6 in-process extension request the gateway
+// LLM Proxy drives when it settles a proxy-mode call that exhausts the
+// session's token budget. It resolves the requesting session's tree
+// budget and effective ceiling, enforces the rejection cool-off,
+// computes the grant with pkg/leaseextension, and applies it. The
+// request and response are plain in-process Go structs (proposal 0023;
+// the gRPC ExtendLease RPC is removed).
 //
 // The §8.6 status mapping is:
 //
@@ -769,34 +799,34 @@ func NewService(opts Options) (*Service, error) {
 //   - PARTIALLY_GRANTED — the request was capped to the remaining
 //     headroom, which is non-zero.
 //   - CEILING_REACHED — no headroom remained; the grant is zero. The
-//     adapter MUST treat this as terminal and not retry.
+//     gateway LLM Proxy MUST treat this as terminal and not re-request.
 //   - REJECTED — the subtree's extension-denied flag is set and the
 //     cool-off has not expired. The response carries the cool-off
 //     expiry.
-func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseRequest) (*adapterv1.ExtendLeaseResponse, error) {
-	sessionID := req.GetSessionId().GetValue()
+func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendResponse, error) {
+	sessionID := req.SessionID
 	if sessionID == "" {
-		return nil, fmt.Errorf("leasecontrol: ExtendLease request carries no session id")
+		return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease request carries no session id")
 	}
 
 	tenantID, err := s.tenants.TenantOf(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
-			return nil, fmt.Errorf("leasecontrol: ExtendLease for unknown session %s: %w", sessionID, err)
+			return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease for unknown session %s: %w", sessionID, err)
 		}
-		return nil, fmt.Errorf("leasecontrol: resolve tenant for session %s: %w", sessionID, err)
+		return ExtendResponse{}, fmt.Errorf("leasecontrol: resolve tenant for session %s: %w", sessionID, err)
 	}
 
 	budget, err := s.budgets.TreeBudget(ctx, tenantID, sessionID)
 	if err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
-			return nil, fmt.Errorf("leasecontrol: no tree budget for session %s: %w", sessionID, err)
+			return ExtendResponse{}, fmt.Errorf("leasecontrol: no tree budget for session %s: %w", sessionID, err)
 		}
-		return nil, fmt.Errorf("leasecontrol: load tree budget for session %s: %w", sessionID, err)
+		return ExtendResponse{}, fmt.Errorf("leasecontrol: load tree budget for session %s: %w", sessionID, err)
 	}
 
 	mode := s.approvalModeFor(ctx, tenantID, budget.RootSessionID)
-	requested := requestedDimensions(req)
+	requested := req.Requested
 
 	// §8.6 rejection cool-off. When the subtree is extension-denied and
 	// the cool-off has not expired, auto-reject without entering the
@@ -822,7 +852,7 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 	// approver attribution flows into the §8.6 line 743 audit.
 	g := s.gate(ctx, mode, tenantID, budget, sessionID, requested)
 	if g.err != nil {
-		return nil, g.err
+		return ExtendResponse{}, g.err
 	}
 	if !g.proceed {
 		return g.resp, nil
@@ -857,7 +887,7 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 				s.audit(ctx, tenantID, budget, sessionID, requested, AuditOutcomeDenied, mode)
 				return rejectedResponse(sessionID, expiry), nil
 			}
-			return nil, fmt.Errorf("leasecontrol: apply grant for tree %s: %w", budget.RootSessionID, err)
+			return ExtendResponse{}, fmt.Errorf("leasecontrol: apply grant for tree %s: %w", budget.RootSessionID, err)
 		}
 		newLimits = applied
 
@@ -888,45 +918,10 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 	s.auditFull(ctx, tenantID, budget, sessionID, requested, granted,
 		auditOutcomeFor(combined),
 		auditExtras{approvalMode: mode, newLimits: newLimits, approverOverride: g.approver})
-	return &adapterv1.ExtendLeaseResponse{
-		Status:                  status,
-		GrantedTokens:           granted.Tokens,
-		GrantedSeconds:          int32(granted.Seconds),
-		GrantedChildren:         granted.Children,
-		GrantedParallelChildren: granted.ParallelChildren,
-		GrantedTreeSize:         granted.TreeSize,
-		GrantedFileExportLimits: fileExportDelta(granted),
+	return ExtendResponse{
+		Status:  status,
+		Granted: granted,
 	}, nil
-}
-
-// requestedDimensions lifts the §8.6 line 643 requested amounts off the
-// wire request into a Dimensions value. The proto getters are nil-safe,
-// so an absent file_export_limits message reads as zero on both of its
-// components. F-8.6.1.
-func requestedDimensions(req *adapterv1.ExtendLeaseRequest) Dimensions {
-	fe := req.GetRequestedFileExportLimits()
-	return Dimensions{
-		Tokens:           req.GetRequestedTokens(),
-		Seconds:          int64(req.GetRequestedSeconds()),
-		Children:         req.GetRequestedChildren(),
-		ParallelChildren: req.GetRequestedParallelChildren(),
-		TreeSize:         req.GetRequestedTreeSize(),
-		FileExportFiles:  fe.GetAdditionalMaxFiles(),
-		FileExportBytes:  fe.GetAdditionalMaxBytes(),
-	}
-}
-
-// fileExportDelta packs the §8.6 fileExportLimits grant back onto the
-// wire, returning nil when neither component was granted so the response
-// omits an empty message. F-8.6.1.
-func fileExportDelta(d Dimensions) *adapterv1.FileExportLimitsDelta {
-	if d.FileExportFiles == 0 && d.FileExportBytes == 0 {
-		return nil
-	}
-	return &adapterv1.FileExportLimitsDelta{
-		AdditionalMaxFiles: d.FileExportFiles,
-		AdditionalMaxBytes: d.FileExportBytes,
-	}
 }
 
 // rejectedResponse builds the §8.6 / §15.1 REJECTED ExtendLease response
@@ -934,11 +929,11 @@ func fileExportDelta(d Dimensions) *adapterv1.FileExportLimitsDelta {
 // cool-off window. Both the pre-grant check and the in-flight atomic
 // re-check return it. F-8.6.9.
 // spec: §15.1 line 1080
-func rejectedResponse(subtreeID string, expiry time.Time) *adapterv1.ExtendLeaseResponse {
-	return &adapterv1.ExtendLeaseResponse{
-		Status:              adapterv1.ExtendLeaseResponse_STATUS_REJECTED,
+func rejectedResponse(subtreeID string, expiry time.Time) ExtendResponse {
+	return ExtendResponse{
+		Status:              StatusRejected,
 		CoolOffExpiryUnixMs: expiry.UnixMilli(),
-		SubtreeId:           subtreeID,
+		SubtreeID:           subtreeID,
 		CoolOffExpiresAt:    formatCoolOffExpiry(expiry),
 		Error:               coolOffActiveError(),
 	}
@@ -996,19 +991,20 @@ func combineOutcomes(dims []dimOutcome) leaseextension.Outcome {
 	}
 }
 
-// statusFor maps a §8.6 leaseextension.Outcome to the proto status
-// enum. PartiallyGranted with a zero grant cannot occur — Grant returns
-// CeilingReached when no headroom remains — so the mapping is total.
-func statusFor(o leaseextension.Outcome) adapterv1.ExtendLeaseResponse_Status {
+// statusFor maps a §8.6 leaseextension.Outcome to the in-process
+// ExtendStatus. PartiallyGranted with a zero grant cannot occur — Grant
+// returns CeilingReached when no headroom remains — so the mapping is
+// total.
+func statusFor(o leaseextension.Outcome) ExtendStatus {
 	switch o {
 	case leaseextension.Granted:
-		return adapterv1.ExtendLeaseResponse_STATUS_GRANTED
+		return StatusGranted
 	case leaseextension.PartiallyGranted:
-		return adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED
+		return StatusPartiallyGranted
 	case leaseextension.CeilingReached:
-		return adapterv1.ExtendLeaseResponse_STATUS_CEILING_REACHED
+		return StatusCeilingReached
 	default:
-		return adapterv1.ExtendLeaseResponse_STATUS_UNSPECIFIED
+		return StatusUnspecified
 	}
 }
 
@@ -1088,7 +1084,7 @@ type gateResult struct {
 	approver string
 	// resp is the terminal response when the gate rejects without an
 	// error (a user-denied elicitation).
-	resp *adapterv1.ExtendLeaseResponse
+	resp ExtendResponse
 	// err is a handler-level error (rate-limit store failure, elicitation
 	// transport failure, or a misconfigured elicitation mode).
 	err error

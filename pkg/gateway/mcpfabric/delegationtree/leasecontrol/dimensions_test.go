@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // dimsTreeConfig registers a tree with non-zero current values and
@@ -44,34 +43,33 @@ func TestExtendLeaseAllDimensionsGranted_Spec8_6_643(t *testing.T) {
 	budgets.RegisterTree("root-1", dimsTreeConfig())
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:                 &adapterv1.SessionId{Value: "root-1"},
-		RequestedTokens:           50_000,
-		RequestedSeconds:          1_200,
-		RequestedChildren:         3,
-		RequestedParallelChildren: 2,
-		RequestedTreeSize:         5,
-		RequestedFileExportLimits: &adapterv1.FileExportLimitsDelta{
-			AdditionalMaxFiles: 4,
-			AdditionalMaxBytes: 2_000,
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{
+			Tokens:           50_000,
+			Seconds:          1_200,
+			Children:         3,
+			ParallelChildren: 2,
+			TreeSize:         5,
+			FileExportFiles:  4,
+			FileExportBytes:  2_000,
 		},
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Fatalf("status = %v, want GRANTED", resp.Status)
 	}
-	if resp.GrantedTokens != 50_000 || resp.GrantedSeconds != 1_200 {
-		t.Errorf("tokens/seconds granted = (%d, %d), want (50000, 1200)", resp.GrantedTokens, resp.GrantedSeconds)
+	if resp.Granted.Tokens != 50_000 || resp.Granted.Seconds != 1_200 {
+		t.Errorf("tokens/seconds granted = (%d, %d), want (50000, 1200)", resp.Granted.Tokens, resp.Granted.Seconds)
 	}
-	if resp.GrantedChildren != 3 || resp.GrantedParallelChildren != 2 || resp.GrantedTreeSize != 5 {
+	if resp.Granted.Children != 3 || resp.Granted.ParallelChildren != 2 || resp.Granted.TreeSize != 5 {
 		t.Errorf("children/parallel/tree granted = (%d, %d, %d), want (3, 2, 5)",
-			resp.GrantedChildren, resp.GrantedParallelChildren, resp.GrantedTreeSize)
+			resp.Granted.Children, resp.Granted.ParallelChildren, resp.Granted.TreeSize)
 	}
-	fe := resp.GetGrantedFileExportLimits()
-	if fe.GetAdditionalMaxFiles() != 4 || fe.GetAdditionalMaxBytes() != 2_000 {
-		t.Errorf("file-export granted = (%d, %d), want (4, 2000)", fe.GetAdditionalMaxFiles(), fe.GetAdditionalMaxBytes())
+	if resp.Granted.FileExportFiles != 4 || resp.Granted.FileExportBytes != 2_000 {
+		t.Errorf("file-export granted = (%d, %d), want (4, 2000)", resp.Granted.FileExportFiles, resp.Granted.FileExportBytes)
 	}
 
 	// Each dimension's current value rose by its grant.
@@ -98,22 +96,24 @@ func TestExtendLeaseDimensionsIndependent_Spec8_6_643(t *testing.T) {
 	budgets.RegisterTree("root-1", cfg)
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:         &adapterv1.SessionId{Value: "root-1"},
-		RequestedChildren: 2, // hits the children ceiling → zero grant
-		RequestedTreeSize: 5, // has headroom → granted
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{
+			Children: 2, // hits the children ceiling → zero grant
+			TreeSize: 5, // has headroom → granted
+		},
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED {
+	if resp.Status != leasecontrol.StatusPartiallyGranted {
 		t.Fatalf("status = %v, want PARTIALLY_GRANTED", resp.Status)
 	}
-	if resp.GrantedChildren != 0 {
-		t.Errorf("children granted = %d, want 0 (ceiling reached)", resp.GrantedChildren)
+	if resp.Granted.Children != 0 {
+		t.Errorf("children granted = %d, want 0 (ceiling reached)", resp.Granted.Children)
 	}
-	if resp.GrantedTreeSize != 5 {
-		t.Errorf("tree-size granted = %d, want 5 (independent of children)", resp.GrantedTreeSize)
+	if resp.Granted.TreeSize != 5 {
+		t.Errorf("tree-size granted = %d, want 5 (independent of children)", resp.Granted.TreeSize)
 	}
 }
 
@@ -127,18 +127,19 @@ func TestExtendLeaseSingleDimensionCeiling_Spec8_6_643(t *testing.T) {
 	budgets.RegisterTree("root-1", cfg)
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:         &adapterv1.SessionId{Value: "root-1"},
-		RequestedTreeSize: 4,
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{TreeSize: 4},
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_CEILING_REACHED {
+	if resp.Status != leasecontrol.StatusCeilingReached {
 		t.Fatalf("status = %v, want CEILING_REACHED", resp.Status)
 	}
-	if resp.GetGrantedFileExportLimits() != nil {
-		t.Errorf("granted file-export limits = %v, want nil (none requested)", resp.GetGrantedFileExportLimits())
+	if resp.Granted.FileExportFiles != 0 || resp.Granted.FileExportBytes != 0 {
+		t.Errorf("granted file-export limits = (%d, %d), want (0, 0) (none requested)",
+			resp.Granted.FileExportFiles, resp.Granted.FileExportBytes)
 	}
 }
 
@@ -154,18 +155,18 @@ func TestExtendLeaseParentCeilingOnNewDimension_Spec8_6_648(t *testing.T) {
 	budgets.SetParentLease("child-2", leasecontrol.SessionLease{ChildrenCeiling: 4})
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:         &adapterv1.SessionId{Value: "child-2"},
-		RequestedChildren: 5, // capped by parent ceiling (4) to a grant of 2
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "child-2",
+		Requested: leasecontrol.Dimensions{Children: 5}, // capped by parent ceiling (4) to a grant of 2
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED {
+	if resp.Status != leasecontrol.StatusPartiallyGranted {
 		t.Fatalf("status = %v, want PARTIALLY_GRANTED", resp.Status)
 	}
-	if resp.GrantedChildren != 2 {
-		t.Errorf("children granted = %d, want 2 (parent ceiling 4 − current 2)", resp.GrantedChildren)
+	if resp.Granted.Children != 2 {
+		t.Errorf("children granted = %d, want 2 (parent ceiling 4 − current 2)", resp.Granted.Children)
 	}
 }
 
@@ -181,10 +182,9 @@ func TestExtendLeaseAuditCarriesAllDimensions_Spec8_6_743(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	if _, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:         &adapterv1.SessionId{Value: "root-1"},
-		RequestedChildren: 3,
-		RequestedTreeSize: 5,
+	if _, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{Children: 3, TreeSize: 5},
 	}); err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}

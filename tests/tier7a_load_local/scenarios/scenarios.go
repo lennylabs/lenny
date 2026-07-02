@@ -22,6 +22,12 @@ import (
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/lease_extension_race"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/quota_decrement_race"
 
+	// Proposal 0023: the §8.6 budget-exhaustion lease-extension episode —
+	// concurrent exhausting sessions in one tree join one per-tree episode
+	// and the per-session fan-out raises or terminates each, goroutine-leak
+	// free and -race clean.
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/extension_episode_fanout"
+
 	// Wave 3: §3.5 component-isolated benches.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/auth_jwt_verify_throughput"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/experiment_bucket_determinism"
