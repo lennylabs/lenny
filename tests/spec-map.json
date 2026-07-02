@@ -1725,7 +1725,20 @@
         "tests/tier3_contract/oauth_token/...",
         "tests/tier2_component/securitycaches/propagation_test.go",
         "tests/tier2_component/stores/connectorcredstore_test.go",
-        "tests/tier2_component/issuedtokencascade/cascade_test.go"
+        "tests/tier2_component/issuedtokencascade/cascade_test.go",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationEmitsExchangeAndRevokeAudit",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationSecretPatchFailureLeavesOldTokenLive",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationConcurrentLeavesNoLiveSupersededToken",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestReclaimerRevokesOrphanedPredecessorAfterCrash",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestReclaimerMidRotationDoesNotRevokeSuccessor",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestReclaimerLeavesFlow2SelfRotatedTokenAlive",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestReclaimerTwoCrashRetryRotationsRevokeBothPredecessors",
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditBindsRevocationAndAuditRow",
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound",
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestWithSubjectLockSerializesSameSubject",
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestWithSubjectLockAllowsDistinctSubjects"
       ],
       "packages": [
         "pkg/credential",
@@ -2280,7 +2293,10 @@
         "pkg/tokenservice/exchange_type_test.go::TestExchangedRowCarriesExchangeType_Rotation_spec_16_7",
         "pkg/tokenservice/exchange_type_test.go::TestExchangedRowCarriesExchangeType_DelegationMint_spec_16_7",
         "pkg/tokenservice/exchange_type_test.go::TestExchangedRowCarriesExchangeType_ScopeNarrow_spec_16_7",
-        "pkg/tokenservice/exchange_type_test.go::TestRejectedExchangeCarriesExchangeType_spec_16_7"
+        "pkg/tokenservice/exchange_type_test.go::TestRejectedExchangeCarriesExchangeType_spec_16_7",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationEmitsExchangeAndRevokeAudit",
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound"
       ],
       "packages": [
         "pkg/observability/audit"
@@ -2428,7 +2444,8 @@
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
         "cmd/lenny-ctl/...",
-        "tests/tier6_e2e_cloud/eks_platform_test.go"
+        "tests/tier6_e2e_cloud/eks_platform_test.go",
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache"
       ],
       "packages": [
         "charts/lenny",
