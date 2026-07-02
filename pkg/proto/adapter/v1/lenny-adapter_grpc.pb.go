@@ -1207,7 +1207,6 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	GatewayControl_ExtendLease_FullMethodName           = "/lenny.adapter.v1.GatewayControl/ExtendLease"
 	GatewayControl_ListPlatformTools_FullMethodName     = "/lenny.adapter.v1.GatewayControl/ListPlatformTools"
 	GatewayControl_CallPlatformTool_FullMethodName      = "/lenny.adapter.v1.GatewayControl/CallPlatformTool"
 	GatewayControl_ListSessionConnectors_FullMethodName = "/lenny.adapter.v1.GatewayControl/ListSessionConnectors"
@@ -1227,19 +1226,18 @@ const (
 // on this service is initiated by the adapter, in contrast to the
 // Adapter service where the gateway initiates every RPC.
 //
-// The service exists because a few §8 control operations originate at
-// the pod and need a gateway decision. ExtendLease is the first such
-// operation: the adapter cannot resolve a token-budget extension
-// itself because the layered §8.6 ceiling and the per-tree budget
-// state live on the gateway.
+// The service exists because a few pod-originated control operations
+// need a gateway decision the pod cannot make itself. It bridges the
+// §9.1 platform tool catalog and dispatch (ListPlatformTools,
+// CallPlatformTool) and the §9.3 connector catalog and dispatch
+// (ListSessionConnectors, ListConnectorTools, CallConnectorTool) from
+// the adapter's intra-pod MCP servers to the gateway's tool surfaces,
+// and carries the §5.2 per-slot and whole-pod scrub reports
+// (ReportSessionScrub, ReportPodScrub) the adapter emits on release.
+// Lease extension is not on this service: the §8.6 budget-exhaustion
+// trigger is driven by the gateway LLM Proxy in-process, so no adapter
+// RPC requests it.
 type GatewayControlClient interface {
-	// ExtendLease is the adapter's request to the gateway for additional
-	// token budget. Per spec §8.6 the adapter issues it when the LLM
-	// proxy rejects a call for budget exhaustion. Response carries one
-	// of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED, REJECTED. On
-	// CEILING_REACHED or REJECTED the adapter MUST NOT retry the
-	// extension; it propagates BUDGET_EXHAUSTED to the runtime.
-	ExtendLease(ctx context.Context, in *ExtendLeaseRequest, opts ...grpc.CallOption) (*ExtendLeaseResponse, error)
 	// ListPlatformTools returns the §9.1 platform tool catalog (lines
 	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
 	// intra-pod platform MCP server advertises to a type:agent runtime on
@@ -1316,16 +1314,6 @@ type gatewayControlClient struct {
 
 func NewGatewayControlClient(cc grpc.ClientConnInterface) GatewayControlClient {
 	return &gatewayControlClient{cc}
-}
-
-func (c *gatewayControlClient) ExtendLease(ctx context.Context, in *ExtendLeaseRequest, opts ...grpc.CallOption) (*ExtendLeaseResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExtendLeaseResponse)
-	err := c.cc.Invoke(ctx, GatewayControl_ExtendLease_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *gatewayControlClient) ListPlatformTools(ctx context.Context, in *ListPlatformToolsRequest, opts ...grpc.CallOption) (*ListPlatformToolsResponse, error) {
@@ -1408,19 +1396,18 @@ func (c *gatewayControlClient) ReportPodScrub(ctx context.Context, in *ReportPod
 // on this service is initiated by the adapter, in contrast to the
 // Adapter service where the gateway initiates every RPC.
 //
-// The service exists because a few §8 control operations originate at
-// the pod and need a gateway decision. ExtendLease is the first such
-// operation: the adapter cannot resolve a token-budget extension
-// itself because the layered §8.6 ceiling and the per-tree budget
-// state live on the gateway.
+// The service exists because a few pod-originated control operations
+// need a gateway decision the pod cannot make itself. It bridges the
+// §9.1 platform tool catalog and dispatch (ListPlatformTools,
+// CallPlatformTool) and the §9.3 connector catalog and dispatch
+// (ListSessionConnectors, ListConnectorTools, CallConnectorTool) from
+// the adapter's intra-pod MCP servers to the gateway's tool surfaces,
+// and carries the §5.2 per-slot and whole-pod scrub reports
+// (ReportSessionScrub, ReportPodScrub) the adapter emits on release.
+// Lease extension is not on this service: the §8.6 budget-exhaustion
+// trigger is driven by the gateway LLM Proxy in-process, so no adapter
+// RPC requests it.
 type GatewayControlServer interface {
-	// ExtendLease is the adapter's request to the gateway for additional
-	// token budget. Per spec §8.6 the adapter issues it when the LLM
-	// proxy rejects a call for budget exhaustion. Response carries one
-	// of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED, REJECTED. On
-	// CEILING_REACHED or REJECTED the adapter MUST NOT retry the
-	// extension; it propagates BUDGET_EXHAUSTED to the runtime.
-	ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error)
 	// ListPlatformTools returns the §9.1 platform tool catalog (lines
 	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
 	// intra-pod platform MCP server advertises to a type:agent runtime on
@@ -1498,9 +1485,6 @@ type GatewayControlServer interface {
 // pointer dereference when methods are called.
 type UnimplementedGatewayControlServer struct{}
 
-func (UnimplementedGatewayControlServer) ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ExtendLease not implemented")
-}
 func (UnimplementedGatewayControlServer) ListPlatformTools(context.Context, *ListPlatformToolsRequest) (*ListPlatformToolsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPlatformTools not implemented")
 }
@@ -1540,24 +1524,6 @@ func RegisterGatewayControlServer(s grpc.ServiceRegistrar, srv GatewayControlSer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&GatewayControl_ServiceDesc, srv)
-}
-
-func _GatewayControl_ExtendLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExtendLeaseRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GatewayControlServer).ExtendLease(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: GatewayControl_ExtendLease_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GatewayControlServer).ExtendLease(ctx, req.(*ExtendLeaseRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _GatewayControl_ListPlatformTools_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1693,10 +1659,6 @@ var GatewayControl_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "lenny.adapter.v1.GatewayControl",
 	HandlerType: (*GatewayControlServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "ExtendLease",
-			Handler:    _GatewayControl_ExtendLease_Handler,
-		},
 		{
 			MethodName: "ListPlatformTools",
 			Handler:    _GatewayControl_ListPlatformTools_Handler,
