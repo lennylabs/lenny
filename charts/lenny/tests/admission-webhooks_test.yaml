@@ -385,6 +385,54 @@ tests:
       - notExists:
           path: spec.template.metadata.labels["lenny.dev/webhook-name"]
 
+  # spec: §13.2 NET-068 / sub-rule (c), §17.2 line 56. Least privilege:
+  # ONLY lenny-drain-readiness and lenny-sandboxtemplate-deletion-guard
+  # carry the additive lenny.dev/webhook-name label AND a per-webhook
+  # gateway-egress NetworkPolicy. Every other admission webhook is a
+  # purely in-process validator with no legitimate need to reach the
+  # gateway internal admin port, so its template must stamp no
+  # webhook-name label and render no allow-*-gateway-egress policy. The
+  # first assert on each webhook fails if that template ever renders a
+  # NetworkPolicy document (the only per-webhook policy is the two
+  # documented gateway-egress grants), and the second fails if a
+  # Deployment ever carries the additive webhook-name label — either would
+  # broaden sub-rule (c) beyond the two documented probing webhooks.
+  # notExists is evaluated per rendered document, so a NetworkPolicy
+  # document introduced by a future edit makes the filter match on that
+  # document and the assertion fails. F-13.2.24.
+  - it: renders no NetworkPolicy and no webhook-name label for pod-security (least privilege)
+    template: admission-policies/pod-security-webhook.yaml
+    asserts:
+      - notExists:
+          path: $[?(@.kind == "NetworkPolicy")]
+      - notExists:
+          path: spec.template.metadata.labels["lenny.dev/webhook-name"]
+        documentSelector:
+          path: kind
+          value: Deployment
+
+  - it: renders no NetworkPolicy and no webhook-name label for sandboxclaim-guard (least privilege)
+    template: admission-policies/sandboxclaim-guard-webhook.yaml
+    asserts:
+      - notExists:
+          path: $[?(@.kind == "NetworkPolicy")]
+      - notExists:
+          path: spec.template.metadata.labels["lenny.dev/webhook-name"]
+        documentSelector:
+          path: kind
+          value: Deployment
+
+  - it: renders no NetworkPolicy and no webhook-name label for pool-config-validator (least privilege)
+    template: admission-policies/pool-config-validator-webhook.yaml
+    asserts:
+      - notExists:
+          path: $[?(@.kind == "NetworkPolicy")]
+      - notExists:
+          path: spec.template.metadata.labels["lenny.dev/webhook-name"]
+        documentSelector:
+          path: kind
+          value: Deployment
+
   # spec: §13.2 NET-068 / sub-rule (c), §17.2 (deletion-guard additive
   # label), §10.5 (runtime-upgrade probe). The deletion-guard is the
   # second webhook (after drain-readiness) to carry the additive
