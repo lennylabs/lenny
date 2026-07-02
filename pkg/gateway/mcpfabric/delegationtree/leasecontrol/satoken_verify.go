@@ -42,9 +42,10 @@ type TokenReviewer interface {
 // rejected even though both are signed by the same cluster issuer.
 //
 // Every call performs a TokenReview. Pod→gateway control-plane traffic
-// (ExtendLease, intra-pod platform-tool forwarding) is agent-paced rather
-// than a hot loop, so the per-request apiserver round-trip is acceptable;
-// a short-TTL positive cache is a future optimization if call volume grows.
+// (intra-pod platform-tool forwarding, connector-tool and scrub-report
+// operations) is agent-paced rather than a hot loop, so the per-request
+// apiserver round-trip is acceptable; a short-TTL positive cache is a
+// future optimization if call volume grows.
 // spec: §10.2 line 227.
 type TokenReviewVerifier struct {
 	Reviews TokenReviewer

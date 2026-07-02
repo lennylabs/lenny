@@ -222,7 +222,8 @@ func (w *gatewayWiring) buildSessionServer(
 		TaskUsage:          taskUsageBuilder,
 		TreeBudgetReturner: w.treeBudgetReserver,
 		// §8.6: register each root tree's lease-extension budget so a
-		// later adapter ExtendLease resolves it. F-15.3.5.
+		// later in-process budget-exhaustion extension (the gateway LLM
+		// Proxy's ExtendForBudget trigger) resolves it. F-15.3.5.
 		LeaseRegistrar:         sessionLeaseRegistrar,
 		LeaseExtensionDefaults: leaseExtDefaults,
 		QuotaCheckpointer:      quotaCheckpointSvc,

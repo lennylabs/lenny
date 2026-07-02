@@ -381,9 +381,9 @@ Clients reference presets by name: `"delegationLease": "standard"`. Presets can 
 
 ## Lease Extension
 
-When your runtime's token budget is exhausted, the adapter automatically requests an extension from the gateway. The exchange is transparent to your runtime, which observes a slightly slower LLM response while the extension resolves.
+When your runtime's token budget is exhausted in `deliveryMode: proxy`, the gateway's LLM proxy automatically requests an extension in-process as it settles the exhausting call. The exchange is transparent to your runtime, which observes a slightly slower LLM response while the extension resolves. In `deliveryMode: direct` the gateway has no per-call view of LLM traffic, so no automatic in-path extension runs; a direct-mode over-run is reconciled against the parent budget at the next usage settlement.
 
-Extension is handled over the adapter-to-gateway gRPC channel rather than the platform MCP server. Your runtime never calls it directly.
+Extension is an internal gateway operation rather than a platform MCP server tool. Your runtime never calls it directly.
 
 **Approval modes:**
 
@@ -493,7 +493,7 @@ Your runtime can:
 
 ### Budget Exhaustion
 
-If a child exhausts its token budget, the adapter requests an extension (see Lease Extension above). If the extension is denied or the ceiling is reached, the child fails with `BUDGET_EXHAUSTED`.
+If a child exhausts its token budget in `deliveryMode: proxy`, the gateway's LLM proxy requests an extension in-process (see Lease Extension above). If the extension is denied or the ceiling is reached, the child fails with `BUDGET_EXHAUSTED`.
 
 ### Timeout
 

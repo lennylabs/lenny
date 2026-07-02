@@ -87,7 +87,7 @@ func TestRequireVerifiedPeerInterceptor_Spec4_7(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ran := false
 			interceptor := leasecontrol.RequireVerifiedPeerInterceptor(tc.enabled)
-			_, err := interceptor(tc.ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/ExtendLease"}, passThrough(&ran))
+			_, err := interceptor(tc.ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/CallPlatformTool"}, passThrough(&ran))
 			if ran != tc.wantRan {
 				t.Fatalf("handler ran = %v, want %v", ran, tc.wantRan)
 			}

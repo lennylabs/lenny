@@ -259,7 +259,8 @@ func TestCredentialPoolExhaustion(t *testing.T) {
 //   - pkg/delegation/cycle (cycle detector + fuzz suite).
 //   - pkg/delegation/lease (lease + extension).
 //   - pkg/delegation/tracing.
-//   - pkg/gateway/leasecontrol (gateway-hosted ExtendLease RPC).
+//   - pkg/gateway/leasecontrol (in-process ExtendLease dispatch and the
+//     gateway LLM Proxy's ExtendForBudget budget-exhaustion trigger).
 //   - cmd/runtimes/delegation-echo (reference Standard-level runtime).
 //   - tests/tier4_integration/delegation_test.go (tier-4
 //     spawn-and-tree contract).

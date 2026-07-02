@@ -766,7 +766,9 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	}
 	s.recordSessionCreated(r.Context(), *row)
 	// §8.6: register the root tree's lease-extension budget so a later
-	// adapter ExtendLease resolves it instead of ErrSessionNotFound. F-15.3.5.
+	// in-process budget-exhaustion extension (the gateway LLM Proxy's
+	// ExtendForBudget trigger) resolves it instead of ErrSessionNotFound.
+	// F-15.3.5.
 	s.registerLeaseTree(*row)
 	s.registerBinding(r.Context(), bound)
 	// spec: §14 lines 100, 334, 338 — publish parse-time

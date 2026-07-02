@@ -86,7 +86,7 @@ The table below seeds the resolved decisions from [Spec §19](https://github.com
 | ADR-0011 | Allowlist-default setup command policy | Planned | [§19 #10](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0012 | Per-session / token / minute usage tracking | Planned | [§19 #11](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0013 | No session forking; derive via workspace snapshot | Planned | [§19 #12](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
-| ADR-0014 | Lease extension via adapter↔gateway gRPC | Planned | [§19 #13](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
+| ADR-0014 | Lease extension as an internal gateway operation | Planned | [§19 #13](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0015 | MinIO for blob storage (never Postgres) | Planned | [§19 #7](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 
 `Planned` ADRs have reserved numbers but no file yet. When a contributor writes one, they flip the status in both the ADR and this table (to `Accepted` or whatever the outcome is) in the same PR. Inbound links from the rest of the docs should reference the ADR number, not the path — renumbering is not allowed, so the number is stable.

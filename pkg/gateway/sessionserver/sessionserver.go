@@ -275,11 +275,11 @@ type Server struct {
 	taskUsage             *resultrollup.Builder
 	treeBudgetReturner    TreeBudgetReturner
 	// leaseRegistrar, when set, registers a newly created root session
-	// with the §8.6 lease-extension budget source so a later adapter
-	// ExtendLease resolves the tree instead of failing
-	// ErrSessionNotFound. leaseExtDefaults carries the deployment-level
-	// configuration the root tree's budget ceiling is resolved from.
-	// F-15.3.5.
+	// with the §8.6 lease-extension budget source so a later in-process
+	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
+	// trigger) resolves the tree instead of failing ErrSessionNotFound.
+	// leaseExtDefaults carries the deployment-level configuration the root
+	// tree's budget ceiling is resolved from. F-15.3.5.
 	leaseRegistrar     LeaseTreeRegistrar
 	leaseExtDefaults   LeaseExtensionDefaults
 	quotaCheckpointer  QuotaFinalCheckpointer
@@ -684,7 +684,8 @@ type TreeBudgetReturner interface {
 }
 
 // LeaseTreeRegistrar registers a root session's §8.6 lease-extension
-// budget tree so a later adapter ExtendLease from the root session or
+// budget tree so a later in-process budget-exhaustion extension (the
+// gateway LLM Proxy's ExtendForBudget trigger) from the root session or
 // its delegated descendants resolves the tree instead of failing
 // ErrSessionNotFound. *leasecontrol.MemoryBudgetSource satisfies it.
 // F-15.3.5.
@@ -1281,7 +1282,8 @@ type Options struct {
 
 	// LeaseRegistrar, when set, registers each newly created root session
 	// with the §8.6 lease-extension budget source (RegisterTree) so an
-	// adapter ExtendLease from the root or its delegated descendants
+	// in-process budget-exhaustion extension (the gateway LLM Proxy's
+	// ExtendForBudget trigger) from the root or its delegated descendants
 	// resolves the tree instead of failing ErrSessionNotFound. Nil leaves
 	// the tree unregistered (the in-process gateway with no GatewayControl
 	// listener). LeaseExtensionDefaults supplies the §8.6 deployment-level

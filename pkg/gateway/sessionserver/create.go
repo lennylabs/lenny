@@ -402,7 +402,9 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	}
 	s.recordSessionCreated(r.Context(), *row)
 	// §8.6: register the root tree's lease-extension budget so a later
-	// adapter ExtendLease resolves it instead of ErrSessionNotFound. F-15.3.5.
+	// in-process budget-exhaustion extension (the gateway LLM Proxy's
+	// ExtendForBudget trigger) resolves it instead of ErrSessionNotFound.
+	// F-15.3.5.
 	s.registerLeaseTree(*row)
 	// spec: §14 lines 100, 334, 338 — each plan warning is an "event"
 	// the gateway emits, not just an echo-in-response. Publish the
