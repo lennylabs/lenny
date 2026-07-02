@@ -35,6 +35,14 @@ import (
 	// -race clean.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/raisebudget_enforcer_race"
 
+	// Proposal 0023 S4: the §11.2/§8.6 gateway LLM Proxy write path under
+	// concurrency — many in-flight ServeHTTP requests read the shared
+	// deny-next-request flag through the handler's pre-flight BudgetGate.Allow
+	// gate while the out-of-band episode fan-out mutates it (RaiseBudget /
+	// TerminateSession), with no torn read of the deny flag and no request
+	// admitted after its session terminated, -race clean.
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/budget_gate_deny_flag_race"
+
 	// Wave 3: §3.5 component-isolated benches.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/auth_jwt_verify_throughput"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/experiment_bucket_determinism"

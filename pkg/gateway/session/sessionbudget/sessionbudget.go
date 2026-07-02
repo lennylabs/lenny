@@ -188,9 +188,16 @@ func New(t Terminator, extend ExtendOnExhaustion, onExceeded func(tenantID, sess
 // budget the allocation is fully spent and the next request would
 // overshoot, so the extension is attempted at the boundary rather than
 // after the first over-budget request.
-func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID string, budget, tokens int64) {
+//
+// Record returns whether recording this usage exhausted the session (the
+// record boundary this call crossed). The recorder relays that signal to
+// the proxy so the proxy attempts the §8.6 extension at the exhaustion
+// boundary and drives its write-path branch (deliver the held response on a
+// grant, deny it otherwise). A call that does not cross the boundary, or a
+// repeat exhaustion already seen for this session, returns false.
+func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID string, budget, tokens int64) (exhausted bool) {
 	if sessionID == "" {
-		return
+		return false
 	}
 	e.mu.Lock()
 	c := e.sessions[sessionID]
@@ -202,10 +209,10 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 	if tokens > 0 {
 		c.consumed += tokens
 	}
-	exhausted := false
+	crossedBoundary := false
 	if !c.exhausted && c.budget > 0 && c.consumed >= c.budget {
 		c.exhausted = true
-		exhausted = true
+		crossedBoundary = true
 		if e.onExceeded != nil {
 			e.onExceeded(tenantID, sessionID, c.budget, c.consumed)
 		}
@@ -213,8 +220,8 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 	consumed := c.consumed
 	e.mu.Unlock()
 
-	if !exhausted {
-		return
+	if !crossedBoundary {
+		return false
 	}
 
 	// Attempt the §8.6 extension outside the lock: the seam blocks on the
@@ -232,14 +239,12 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 	case Granted:
 		// The seam raised the budget and cleared the deny flag through
 		// RaiseBudget; the session continues. Nothing to deny or terminate.
-		return
 	case Pending:
 		// The in-path deadline elapsed with an elicitation still unresolved.
 		// Deny the session's next request but do NOT terminate it: the
 		// out-of-band episode fan-out later raises its budget or terminates
 		// it through the SessionReclaimer. spec: §8.6 line 629.
 		e.setDeny(sessionID)
-		return
 	default:
 		// Terminal, or a nil seam / non-extendable path. Deny and terminate.
 		e.setDeny(sessionID)
@@ -251,6 +256,11 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 			e.terminate.TerminateSession(sessionID, ReasonBudgetExhausted)
 		}
 	}
+	// Recording this usage exhausted the session (the record boundary). The
+	// recorder reports this to the proxy so the proxy attempts the §8.6
+	// extension at the exhaustion boundary and drives its write-path branch
+	// (proposal 0023 S4).
+	return true
 }
 
 // setDeny sets sessionID's deny-next-request flag under the lock so the

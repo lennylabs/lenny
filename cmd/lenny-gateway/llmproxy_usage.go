@@ -76,19 +76,33 @@ type proxyUsageRecorder struct {
 	// now returns the current time; nil selects time.Now. Overridden in
 	// tests so the quota window key is deterministic.
 	now func() time.Time
+	// proxyExtensionWaitTimeout bounds the in-path §8.6 extension wait the
+	// recorder derives (context.WithTimeout(reqCtx, proxyExtensionWaitTimeout))
+	// before calling the enforcer's Record, so a slow elicitation-mode
+	// extension falls through to a recover-on-next-request BUDGET_EXHAUSTED
+	// rather than pinning the request. It is the operator-tunable gateway
+	// deadline (§8.6 does not fix it); a non-positive value selects
+	// defaultProxyExtensionWaitTimeout. spec: §8.6 line 629; proposal 0023.
+	proxyExtensionWaitTimeout time.Duration
 }
+
+// defaultProxyExtensionWaitTimeout is the recorder's fallback in-path §8.6
+// extension wait when the operator has not tuned one. It matches the
+// llmproxy handler default so the two paths agree. spec: §8.6 line 629.
+const defaultProxyExtensionWaitTimeout = 5 * time.Second
 
 func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, sessUsage sessionusage.Store, quotaCounter *quotastore.Counter, limits policy.TenantLimitLookup, budget *sessionbudget.Enforcer) *proxyUsageRecorder {
 	if usage == nil {
 		return nil
 	}
 	return &proxyUsageRecorder{
-		usage:        usage,
-		sessions:     sessions,
-		sessionUsage: sessUsage,
-		quota:        quotaCounter,
-		limits:       limits,
-		budget:       budget,
+		usage:                     usage,
+		sessions:                  sessions,
+		sessionUsage:              sessUsage,
+		quota:                     quotaCounter,
+		limits:                    limits,
+		budget:                    budget,
+		proxyExtensionWaitTimeout: defaultProxyExtensionWaitTimeout,
 	}
 }
 
@@ -135,19 +149,19 @@ func (r *proxyUsageRecorder) setActivityStamper(s *sessionidle.Stamper) {
 // against the tenant alone, leaving Runtime empty and the per-user
 // quota window keyed on the empty user id (the tenant and global rollups
 // are unaffected).
-func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usage) {
+func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.Lease, u llmproxy.Usage) (exhausted bool) {
 	if r == nil {
-		return
+		return false
 	}
 	if lease.DeliveryMode != credential.DeliveryProxy {
 		// spec: §4.9 line 1468 — only proxy-mode counts are authoritative.
-		return
+		return false
 	}
 	if lease.TenantID == "" {
 		// Without a tenant attribution the record is meaningless to the
 		// §15.1 byTenant rollup and the §11.2 per-tenant window; drop
 		// rather than emit an "unknown" tenant series.
-		return
+		return false
 	}
 	// spec: §6.2 lines 277 — proxy-mode activity. Each proxied response is
 	// direct evidence of active agent work; reset the idle clock so a
@@ -166,8 +180,8 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 	userID := ""
 	var tokenBudget int64
 	if r.sessions != nil && lease.SessionID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), proxyUsageLookupTimeout)
-		if sess, err := r.sessions.Get(ctx, lease.TenantID, lease.SessionID); err == nil {
+		lookupCtx, cancel := context.WithTimeout(ctx, proxyUsageLookupTimeout)
+		if sess, err := r.sessions.Get(lookupCtx, lease.TenantID, lease.SessionID); err == nil {
 			rec.Runtime = sess.RuntimeRef
 			// spec: §14 line 106 — denormalize the session's labels onto the
 			// proxy-extracted usage record so a label-scoped usage report
@@ -188,11 +202,13 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 		}
 		cancel()
 	}
-	// Record is best-effort: the metering store is already a degradable
-	// dependency in this gateway (memory fallback when Postgres is off),
-	// so a transient failure must not fail the proxied LLM call.
-	ctx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
-	_ = r.usage.Record(ctx, rec)
+	// The metering and per-session usage writes are best-effort and MUST
+	// survive a client disconnect: they are the authoritative §15.1 billing
+	// and §8.8 rollup records, so they run on a fresh background-derived
+	// context with their own timeout rather than the request context. A
+	// cancelled request must not drop the usage the pod already consumed.
+	recordCtx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
+	_ = r.usage.Record(recordCtx, rec)
 	cancel()
 
 	// spec: §8.8 lines 897-917 — fold the proxy-extracted counts into the
@@ -200,27 +216,28 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 	// usage / treeUsage rollups can read them at settle time. Best-effort
 	// for the same reason as the metering write.
 	if r.sessionUsage != nil && lease.SessionID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
-		_ = r.sessionUsage.Add(ctx, lease.TenantID, lease.SessionID, int64(u.InputTokens), int64(u.OutputTokens))
+		addCtx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
+		_ = r.sessionUsage.Add(addCtx, lease.TenantID, lease.SessionID, int64(u.InputTokens), int64(u.OutputTokens))
 		cancel()
 	}
 
 	tokens := int64(u.InputTokens) + int64(u.OutputTokens)
 	r.recordQuota(lease.TenantID, userID, tokens)
 
-	// spec: §11.2 line 44 — enforce the per-session token budget against
-	// the cumulative proxy-recorded usage and terminate immediately when
-	// it is exhausted. Runs after the metering / quota writes so the
-	// authoritative record lands before the session is torn down.
+	// spec: §11.2 line 44 / §8.6 line 629 — enforce the per-session token
+	// budget against the cumulative proxy-recorded usage. Recording detects
+	// exhaustion; Record reports it so the proxy attempts the §8.6 extension
+	// at the exhaustion boundary and drives its write-path branch. The
+	// enforcer runs under the request context so its in-path extension wait
+	// honors a client disconnect and the proxyExtensionWaitTimeout deadline
+	// (the waitCtx the enforcer derives). The metering write above already
+	// landed the authoritative record before the session can be torn down.
 	if r.budget != nil {
-		// The request context threading (r.Context() -> reqCtx, the derived
-		// proxyExtensionWaitTimeout waitCtx) and the granted-delta budget
-		// input are wired by the proxy record-boundary in a later build step
-		// (proposal 0023 S3/S4). Until then the enforcer's nil seam denies
-		// and terminates immediately on exhaustion, so background contexts
-		// preserve the current §11.2 line 44 behavior.
-		r.budget.Record(context.Background(), context.Background(), lease.TenantID, lease.SessionID, tokenBudget, tokens)
+		waitCtx, cancel := context.WithTimeout(ctx, r.proxyExtensionWaitTimeout)
+		exhausted = r.budget.Record(ctx, waitCtx, lease.TenantID, lease.SessionID, tokenBudget, tokens)
+		cancel()
 	}
+	return exhausted
 }
 
 // recordQuota advances the §11.2 hierarchical token counter (per-user,
