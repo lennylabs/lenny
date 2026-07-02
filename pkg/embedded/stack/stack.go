@@ -45,12 +45,11 @@ const (
 	defaultHTTPPort   = 8080
 	defaultHTTPSPort  = 8443
 	defaultK3sAPIPort = 6443
-	// defaultGatewayGRPCPort is the host port the gateway's §9.1
+	// defaultGatewayGRPCPort is the host port the gateway's §8.6/§9.1
 	// GatewayControl listener binds. In-cluster agent-pod adapters dial it
-	// to forward platform tool, connector-tool, and scrub-report calls
-	// across the host/Docker boundary; the controller stamps the
-	// launcher's externally-reachable address (GatewayHost():this-port)
-	// onto pods. spec: §4.7, §9.1.
+	// to forward platform tool calls across the host/Docker boundary; the
+	// controller stamps the launcher's externally-reachable address
+	// (GatewayHost():this-port) onto pods. spec: §4.7, §8.6.
 	defaultGatewayGRPCPort = 50061
 )
 

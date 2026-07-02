@@ -834,7 +834,7 @@ func (f *gatewayFlags) registerSessionFlags() {
 	f.elicitationFloorReconcileSeconds = flag.Int("elicitation-floor-reconcile-interval-seconds", int(elicitationfloor.DefaultReconcileInterval/time.Second),
 		"§17.2 line 86 cadence the gateway re-reads the phase-stamp ConfigMap floor key. The change is observed by polling because the gateway client is non-cached; the value bounds floor-change staleness.")
 	f.grpcAddr = flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
-		"§9.1 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — the §9.1 platform-tool, §9.3 connector-tool, and §4.7 scrub-report RPCs — on this address. Empty disables the GatewayControl listener.")
+		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — the §9.1 platform-tool, §9.3 connector-tool, and §4.7 scrub-report RPCs — on this address. Empty disables the GatewayControl listener.")
 	f.leaseAutoMaxPerMin = flag.Int("lease-extension-auto-max-per-min", 0,
 		"§8.6 line 712 deployment-default autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap on auto-approved lease extensions per minute before the gateway pauses auto-approval and falls back to elicitation. Zero is the spec default (no limit). A tenant or runtime override (when registered) takes precedence. F-8.6.7.")
 	f.leaseDefaultBudget = flag.Int64("lease-extension-default-budget", 0,
