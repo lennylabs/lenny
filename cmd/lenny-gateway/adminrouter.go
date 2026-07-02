@@ -847,7 +847,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			Audience:    w.expectedAuds,
 		}, w.jwtSigner, w.users,
 			k8ssecret.New(w.clusterClient),
-			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: revProp},
+			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: revProp, metrics: gwMetrics, clock: clockinject.Now},
 			clockinject.Now)
 		if atErr != nil {
 			log.Fatalf("lenny-gateway: initial admin credential: %v", atErr)

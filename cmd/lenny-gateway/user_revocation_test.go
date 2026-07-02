@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
@@ -18,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
@@ -246,10 +250,154 @@ func TestPodTerminateFanOutEmptySessionSet(t *testing.T) {
 	}
 }
 
+// recordingRevocationObserver captures the ObserveRevocationPropagation
+// calls the admin-rotation adapter makes so a test can assert the SEC-TS-1
+// producer fires exactly on the durable-revoke success path, keyed by the
+// §16.7 propagation_mode outcome. spec: §16.7 — SEC-TS-1.
+type recordingRevocationObserver struct {
+	outcomes []string
+}
+
+func (r *recordingRevocationObserver) ObserveRevocationPropagation(outcome string, _ time.Duration) {
+	r.outcomes = append(r.outcomes, outcome)
+}
+
+// fakeAdminIssuedTokenStore is a Postgres-free stand-in for
+// *issuedtokenstore.Store so the adapter's audit-vocabulary and SEC-TS-1
+// metric wiring can be exercised at tier 1. revokeErr, when non-nil, is
+// returned by RevokeWithAudit so the fail-closed durable-revoke branch is
+// reachable without a real datastore.
+type fakeAdminIssuedTokenStore struct {
+	revokeErr    error
+	revokeCalled int
+}
+
+func (f *fakeAdminIssuedTokenStore) Record(context.Context, issuedtokenstore.IssuedToken) error {
+	return nil
+}
+
+func (f *fakeAdminIssuedTokenStore) RecordWithAudit(context.Context, issuedtokenstore.IssuedToken, string, json.RawMessage, time.Time) (audit.Row, error) {
+	return audit.Row{}, nil
+}
+
+func (f *fakeAdminIssuedTokenStore) RevokeWithAudit(_ context.Context, _, _, _, _ string, _ json.RawMessage, _ time.Time) (audit.Row, error) {
+	f.revokeCalled++
+	return audit.Row{}, f.revokeErr
+}
+
+func (f *fakeAdminIssuedTokenStore) WithSubjectLock(ctx context.Context, _, _ string, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+// recordingRevocationCache records the jtis pushed onto the cross-replica
+// cache so a test can assert the fail-closed ordering: the cache push
+// happens only after the durable write commits.
+type recordingRevocationCache struct {
+	revoked []string
+}
+
+func (c *recordingRevocationCache) Revoke(jti string) { c.revoked = append(c.revoked, jti) }
+
+// TestAdminDurableRevokeObservesPostgresOnly_SEC_TS_1 pins the SEC-TS-1
+// producer wiring on the gateway admin-rotation path: a successful durable
+// revoke observes lenny_token_revocation_propagation_seconds keyed by the
+// §16.7 propagation_mode (`postgres_only`), which the C3/§7 design lists as
+// a producer site alongside the Token Service. Before the fix the adapter
+// recorded propagation_mode in the audit payload but never observed the
+// histogram, so no producer fired on this path and the outcomes slice would
+// stay empty. spec: §16.7 — SEC-TS-1.
+func TestAdminDurableRevokeObservesPostgresOnly_SEC_TS_1(t *testing.T) {
+	obs := &recordingRevocationObserver{}
+	cache := &recordingRevocationCache{}
+	a := adminIssuedTokens{
+		store:   &fakeAdminIssuedTokenStore{},
+		cache:   cache,
+		metrics: obs,
+		clock:   func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+	if err := a.DurableRevoke(context.Background(), "AdminTenant", "jti-old", time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("DurableRevoke: %v", err)
+	}
+	if len(obs.outcomes) != 1 || obs.outcomes[0] != "postgres_only" {
+		t.Fatalf("SEC-TS-1 producer did not fire: observed outcomes %v, want [postgres_only]", obs.outcomes)
+	}
+	if len(cache.revoked) != 1 || cache.revoked[0] != "jti-old" {
+		t.Errorf("cross-replica cache push = %v, want [jti-old] after the durable commit", cache.revoked)
+	}
+
+	// A nil clock defaults to the wall clock, so the producer still fires
+	// (the injected-clock default path). This covers the now() fallback the
+	// production wiring never hits (it always injects clockinject.Now).
+	obsNil := &recordingRevocationObserver{}
+	aNil := adminIssuedTokens{store: &fakeAdminIssuedTokenStore{}, cache: &recordingRevocationCache{}, metrics: obsNil}
+	if err := aNil.DurableRevoke(context.Background(), "AdminTenant", "jti-old", time.Now().UTC()); err != nil {
+		t.Fatalf("DurableRevoke with a nil clock: %v", err)
+	}
+	if len(obsNil.outcomes) != 1 || obsNil.outcomes[0] != "postgres_only" {
+		t.Fatalf("SEC-TS-1 producer did not fire with a nil clock: %v, want [postgres_only]", obsNil.outcomes)
+	}
+}
+
+// TestAdminDurableRevokeNoObserveOnDurableFailure_SEC_TS_1 asserts the
+// producer does NOT fire when the durable Postgres write fails: the
+// observation is bracketed to run only after RevokeWithAudit commits, so a
+// failed revoke surfaces the error, pushes nothing onto the cache (the
+// §13.3 fail-closed ordering), and records no propagation latency. This
+// distinguishes the corrected wiring from a naive unconditional observe.
+// spec: §13.3, §16.7 — SEC-TS-1.
+func TestAdminDurableRevokeNoObserveOnDurableFailure_SEC_TS_1(t *testing.T) {
+	obs := &recordingRevocationObserver{}
+	cache := &recordingRevocationCache{}
+	a := adminIssuedTokens{
+		store:   &fakeAdminIssuedTokenStore{revokeErr: errors.New("postgres down")},
+		cache:   cache,
+		metrics: obs,
+		clock:   func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+	err := a.DurableRevoke(context.Background(), "AdminTenant", "jti-old", time.Unix(0, 0).UTC())
+	if err == nil {
+		t.Fatal("DurableRevoke returned nil on a durable-write failure; the caller must retry")
+	}
+	if len(obs.outcomes) != 0 {
+		t.Errorf("SEC-TS-1 producer fired on a failed durable revoke: %v, want none", obs.outcomes)
+	}
+	if len(cache.revoked) != 0 {
+		t.Errorf("cache push on a failed durable revoke: %v, want none (fail-closed)", cache.revoked)
+	}
+}
+
+// TestAdminDurableRevokeNoObserveOnAlreadyRevoked_SEC_TS_1 asserts an
+// idempotent no-op (ErrNotFound: already revoked or absent) neither observes
+// the histogram nor double-pushes the cache, so a retried rotation does not
+// inflate the propagation metric. spec: §16.7 — SEC-TS-1.
+func TestAdminDurableRevokeNoObserveOnAlreadyRevoked_SEC_TS_1(t *testing.T) {
+	obs := &recordingRevocationObserver{}
+	cache := &recordingRevocationCache{}
+	a := adminIssuedTokens{
+		store:   &fakeAdminIssuedTokenStore{revokeErr: issuedtokenstore.ErrNotFound},
+		cache:   cache,
+		metrics: obs,
+		clock:   func() time.Time { return time.Unix(0, 0).UTC() },
+	}
+	if err := a.DurableRevoke(context.Background(), "AdminTenant", "jti-old", time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("DurableRevoke on an already-revoked jti should be a nil no-op, got %v", err)
+	}
+	if len(obs.outcomes) != 0 {
+		t.Errorf("SEC-TS-1 producer fired on an idempotent no-op: %v, want none", obs.outcomes)
+	}
+	if len(cache.revoked) != 0 {
+		t.Errorf("cache push on an idempotent no-op: %v, want none", cache.revoked)
+	}
+}
+
 // The fan-out adapters satisfy the §11.4 admin-router interfaces they
 // are wired against in WithUserRevocation.
 var (
 	_ admin.UserPodTerminator = (*podTerminateFanOut)(nil)
 	_ admin.UserLeaseRevoker  = (*userLeaseRevoker)(nil)
 	_ admin.UserTokenRevoker  = (*userTokenRevoker)(nil)
+	// *issuedtokenstore.Store satisfies the consumer-side store interface
+	// the adapter now depends on, so the production wiring is type-checked.
+	_ adminIssuedTokenStore         = (*issuedtokenstore.Store)(nil)
+	_ revocationPropagationObserver = (*recordingRevocationObserver)(nil)
 )

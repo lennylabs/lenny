@@ -907,7 +907,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 			Interval:   time.Duration(*adminTokenReclaimIntervalSeconds) * time.Second,
 		},
 			k8ssecret.New(w.clusterClient),
-			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: w.revProp},
+			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: w.revProp, metrics: w.gwMetrics, clock: clockinject.Now},
 			clockinject.Now)
 		if rerr != nil {
 			log.Fatalf("lenny-gateway: §13.3 admin-token reclaimer: %v", rerr)
