@@ -137,7 +137,9 @@ func (a storeAdminIssued) RecordWithExchangeAudit(ctx context.Context, rec admin
 		"caller_sub":    rec.Subject,
 		"subject_sub":   rec.Subject,
 		"jti":           rec.JTI,
-		"policy_result": "allow",
+		// spec: §16.7 line 672 — mirrors the Token Service emitter's
+		// policy_result="accepted" for a successful exchange.
+		"policy_result": "accepted",
 		"timestamp":     rec.IssuedAt,
 	})
 	_, err := a.store.RecordWithAudit(ctx, a.issued(rec),
@@ -202,11 +204,12 @@ func jtiOf(t *testing.T, signer *jwt.HMACSigner, token string) string {
 // ordering), §16.7 line 672/673 (token.exchanged admin_rotation,
 // token.revoked rotation_replaced).
 // diagnosis: a rotation must emit exactly one token.exchanged row carrying
-// exchange_type=admin_rotation for the new token and one token.revoked row
-// carrying revocation_reason=rotation_replaced for the superseded token. A
-// failure means the gateway's in-process admin rotation does not produce
-// the §16.7-mandated rotation audit rows, so an admin credential rotation
-// is unauditable. Pre-fix Rotate emitted NO audit rows at all, so this
+// exchange_type=admin_rotation and policy_result=accepted for the new token
+// and one token.revoked row carrying revocation_reason=rotation_replaced for
+// the superseded token. A failure means the gateway's in-process admin
+// rotation does not produce the §16.7-mandated rotation audit rows, or emits
+// a policy_result outside the §16.7 enum, so an admin credential rotation is
+// unauditable or mis-classified. Pre-fix Rotate emitted NO audit rows at all, so this
 // contract assertion fails against it.
 func TestAdminRotationEmitsExchangeAndRevokeAudit(t *testing.T) {
 	t.Parallel()
@@ -246,12 +249,20 @@ func TestAdminRotationEmitsExchangeAndRevokeAudit(t *testing.T) {
 			exchanged++
 			var d struct {
 				ExchangeType string `json:"exchange_type"`
+				PolicyResult string `json:"policy_result"`
 			}
 			if err := json.Unmarshal(r.Payload, &d); err != nil {
 				t.Fatalf("decode token.exchanged payload: %v", err)
 			}
 			if d.ExchangeType != "admin_rotation" {
 				t.Errorf("token.exchanged exchange_type=%q, want admin_rotation", d.ExchangeType)
+			}
+			// spec: §16.7 line 672 — policy_result is (accepted |
+			// rejected:<reason>); a successful admin rotation mirrors the
+			// Token Service emitter and carries "accepted", never the
+			// out-of-enum "allow" the pre-fix adapter wrote.
+			if d.PolicyResult != "accepted" {
+				t.Errorf("token.exchanged policy_result=%q, want accepted", d.PolicyResult)
 			}
 		case string(auditcatalog.EventTokenRevoked):
 			revoked++

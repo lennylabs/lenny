@@ -266,7 +266,10 @@ func (a adminIssuedTokens) RecordWithExchangeAudit(ctx context.Context, rec admi
 		"caller_sub":    rec.Subject,
 		"subject_sub":   rec.Subject,
 		"jti":           rec.JTI,
-		"policy_result": "allow",
+		// spec: §16.7 line 672 — token.exchanged policy_result enum is
+		// (accepted | rejected:<reason>). A successful rotation mirrors the
+		// Token Service emitter (pkg/tokenservice PolicyResult="accepted").
+		"policy_result": "accepted",
 		"timestamp":     rec.IssuedAt,
 	})
 	if err != nil {
