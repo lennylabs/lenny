@@ -158,11 +158,14 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	sess := 1 + ((vu/treeCount + iter) % (sessionsPerTree - 1))
 	id := sessionID(tree, sess)
 
-	// Short in-path wait: many callers detach at Pending while the shared
-	// elicitation resolves, then the episode fan-out reclaims each.
-	callCtx, cancel := context.WithTimeout(ctx, 2*time.Millisecond)
+	// Short in-path wait derived from the scenario request context: many
+	// callers detach at Pending (the wait deadline elapses while ctx stays
+	// live) while the shared elicitation resolves, then the episode fan-out
+	// reclaims each. The parent ctx doubles as the request context so a
+	// genuine run cancellation surfaces as Terminal, not Pending.
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Millisecond)
 	defer cancel()
-	outcome, err := s.svc.ExtendForBudget(callCtx, id)
+	outcome, err := s.svc.ExtendForBudget(ctx, waitCtx, id)
 	if err != nil {
 		s.counters.IncOnError(ctx, "errors", err)
 		return err
@@ -290,9 +293,10 @@ func (s *Scenario) assertOnePromptPerTree() error {
 			wg.Add(1)
 			go func(i, j int) {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+				reqCtx := context.Background()
+				waitCtx, cancel := context.WithTimeout(reqCtx, 25*time.Millisecond)
 				defer cancel()
-				_, _ = svc.ExtendForBudget(ctx, sessionID(i, j))
+				_, _ = svc.ExtendForBudget(reqCtx, waitCtx, sessionID(i, j))
 			}(i, j)
 		}
 	}

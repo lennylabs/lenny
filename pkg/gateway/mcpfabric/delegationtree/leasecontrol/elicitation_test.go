@@ -488,9 +488,10 @@ func TestExtendForBudgetPerTreeEpisodeFanOut_spec_8_6_line_719(t *testing.T) {
 	}
 	out := make(chan outcomeRes, 2)
 	call := func(sess string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		reqCtx := context.Background()
+		waitCtx, cancel := context.WithTimeout(reqCtx, 30*time.Millisecond)
 		defer cancel()
-		o, e := svc.ExtendForBudget(ctx, sess)
+		o, e := svc.ExtendForBudget(reqCtx, waitCtx, sess)
 		out <- outcomeRes{sess, o, e}
 	}
 	go call("root-1")
@@ -658,9 +659,10 @@ func TestExtendForBudgetPerTreeEpisodeRejectionSinglePrompt_spec_8_6_line_719(t 
 	}
 	out := make(chan outcomeRes, 2)
 	call := func(sess string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		reqCtx := context.Background()
+		waitCtx, cancel := context.WithTimeout(reqCtx, 30*time.Millisecond)
 		defer cancel()
-		o, e := svc.ExtendForBudget(ctx, sess)
+		o, e := svc.ExtendForBudget(reqCtx, waitCtx, sess)
 		out <- outcomeRes{sess, o, e}
 	}
 	go call("root-1")
@@ -731,9 +733,10 @@ func TestExtendForBudgetAutoModeGrantedInPath_spec_8_6_line_629(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	reqCtx := context.Background()
+	waitCtx, cancel := context.WithTimeout(reqCtx, 2*time.Second)
 	defer cancel()
-	got, err := svc.ExtendForBudget(ctx, "root-1")
+	got, err := svc.ExtendForBudget(reqCtx, waitCtx, "root-1")
 	if err != nil {
 		t.Fatalf("ExtendForBudget: %v", err)
 	}
@@ -770,9 +773,10 @@ func TestExtendForBudgetCeilingReachedTerminal_spec_8_6_line_712(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	reqCtx := context.Background()
+	waitCtx, cancel := context.WithTimeout(reqCtx, 2*time.Second)
 	defer cancel()
-	got, err := svc.ExtendForBudget(ctx, "root-1")
+	got, err := svc.ExtendForBudget(reqCtx, waitCtx, "root-1")
 	if err != nil {
 		t.Fatalf("ExtendForBudget: %v", err)
 	}
@@ -802,22 +806,34 @@ func TestExtendForBudgetClientDisconnectIsTerminal_spec_8_6_line_629(t *testing.
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	reqCtx, cancel := context.WithCancel(context.Background())
+	// The in-path wait derives from reqCtx with a long timeout, so the wait
+	// deadline cannot fire first. This isolates the parent-cancellation path:
+	// only the client disconnect (reqCtx cancellation) can unblock the caller,
+	// and the Terminal outcome must come from inspecting reqCtx.Err(), not
+	// from any wait-deadline expiry. An implementation that inspected the
+	// derived wait context's error type instead of reqCtx would still see a
+	// Canceled here (cancellation propagates), so this test also guards that
+	// the wait context is derived from reqCtx rather than an independent
+	// timeout that would surface DeadlineExceeded (Pending) on a disconnect.
+	waitCtx, waitCancel := context.WithTimeout(reqCtx, time.Hour)
+	defer waitCancel()
 	type outcomeRes struct {
 		outcome leasecontrol.Outcome
 		err     error
 	}
 	out := make(chan outcomeRes, 1)
 	go func() {
-		o, e := svc.ExtendForBudget(ctx, "root-1")
+		o, e := svc.ExtendForBudget(reqCtx, waitCtx, "root-1")
 		out <- outcomeRes{o, e}
 	}()
 	<-el.started // the elicitation is open and blocked inside the episode.
 	// The client disconnects: cancel the request context. The elicitation
 	// is still blocked (release is not closed), so the caller unblocks via
-	// ctx.Done() with a genuine cancellation and returns Terminal (fail
-	// closed) rather than Pending — deterministic because the episode
-	// cannot resolve while Elicit is still blocked.
+	// waitCtx.Done() (cancellation propagates from reqCtx) and returns
+	// Terminal (fail closed) rather than Pending, because reqCtx.Err() is
+	// non-nil — a genuine parent cancellation. Deterministic because the
+	// episode cannot resolve while Elicit is still blocked.
 	cancel()
 	r := <-out
 	if r.err != nil {
@@ -825,6 +841,65 @@ func TestExtendForBudgetClientDisconnectIsTerminal_spec_8_6_line_629(t *testing.
 	}
 	if r.outcome != leasecontrol.OutcomeTerminal {
 		t.Errorf("outcome = %v, want Terminal (client disconnect fails closed)", r.outcome)
+	}
+	// Release the still-open elicitation so the episode goroutine resolves
+	// and exits rather than leaking after the test returns.
+	close(el.release)
+}
+
+// TestExtendForBudgetInPathDeadlineIsPending_spec_8_6_line_629: when the
+// in-path wait deadline elapses while the request context reqCtx stays
+// live (the elicitation is still blocked), ExtendForBudget returns
+// Pending rather than Terminal. This pins the Pending-vs-Terminal
+// discriminator on reqCtx.Err() (proposal 0023 S3 line 148): the wait
+// deadline fires with DeadlineExceeded on the derived wait context, but
+// because reqCtx is not cancelled the outcome is Pending, leaving the
+// episode running for the fan-out. A regression that treated the wait
+// context's own DeadlineExceeded (or that inspected the wait context
+// rather than reqCtx) as anything but Pending would flip this to Terminal
+// and terminate a recoverable session. Proposal 0023 S3.
+func TestExtendForBudgetInPathDeadlineIsPending_spec_8_6_line_629(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     1_000_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeElicitation,
+	})
+	el := &scriptedElicitor{approve: true, release: make(chan struct{}), started: make(chan struct{})}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Elicitor: el, EpisodeContext: context.Background,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reclaimer := newFakeReclaimer()
+	svc.SetReclaimer(reclaimer)
+
+	// reqCtx stays live for the whole call; only the derived wait context
+	// carries the short in-path deadline. A disconnect never happens, so the
+	// caller unblocks solely on the wait deadline (DeadlineExceeded) while
+	// reqCtx.Err() is nil.
+	reqCtx := context.Background()
+	waitCtx, cancel := context.WithTimeout(reqCtx, 30*time.Millisecond)
+	defer cancel()
+	type outcomeRes struct {
+		outcome leasecontrol.Outcome
+		err     error
+	}
+	out := make(chan outcomeRes, 1)
+	go func() {
+		o, e := svc.ExtendForBudget(reqCtx, waitCtx, "root-1")
+		out <- outcomeRes{o, e}
+	}()
+	<-el.started // the elicitation is open and blocked inside the episode.
+	r := <-out
+	if r.err != nil {
+		t.Fatalf("ExtendForBudget: %v", r.err)
+	}
+	if r.outcome != leasecontrol.OutcomePending {
+		t.Errorf("outcome = %v, want Pending (in-path deadline with a live reqCtx)", r.outcome)
 	}
 	// Release the still-open elicitation so the episode goroutine resolves
 	// and exits rather than leaking after the test returns.
@@ -842,7 +917,7 @@ func TestExtendForBudgetUnknownSessionIsTerminal_spec_8_6_line_629(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	got, err := svc.ExtendForBudget(context.Background(), "ghost")
+	got, err := svc.ExtendForBudget(context.Background(), context.Background(), "ghost")
 	if err == nil {
 		t.Fatal("ExtendForBudget for an unknown session should error (fail closed)")
 	}
@@ -862,7 +937,7 @@ func TestExtendForBudgetEmptySessionIsTerminal_spec_8_6_line_629(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	got, err := svc.ExtendForBudget(context.Background(), "")
+	got, err := svc.ExtendForBudget(context.Background(), context.Background(), "")
 	if err == nil {
 		t.Fatal("ExtendForBudget with an empty session id should error")
 	}

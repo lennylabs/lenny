@@ -72,8 +72,11 @@ type SessionReclaimer interface {
 // ExtendForBudget is the §8.6 budget-exhaustion extension entry the
 // gateway LLM Proxy calls at the exhaustion boundary of a proxy-mode
 // session. It requests a token-budget extension for sessionID and
-// returns a tri-state Outcome bounded by ctx, which the caller derives
-// as context.WithTimeout(r.Context(), proxyExtensionWaitTimeout).
+// returns a tri-state Outcome. reqCtx is the caller's own request context
+// (r.Context()); waitCtx is the in-path wait the caller derives as
+// context.WithTimeout(reqCtx, proxyExtensionWaitTimeout). The caller
+// blocks on the episode's resolution up to waitCtx and the
+// Pending-vs-Terminal discrimination inspects reqCtx (see below).
 //
 // The extension is dispatched as a single per-tree episode whose joined
 // sessions batch onto one elicitation prompt: a first exhausting session
@@ -85,23 +88,23 @@ type SessionReclaimer interface {
 // batch onto the one live tc.pending prompt; a session that joins after a
 // batch has resolved is picked up as the next batch on the same episode
 // goroutine. The episode dispatches its elicitation on the injected
-// session-scoped EpisodeContext, not on ctx, so cancelling the caller's
-// in-path wait does not cancel a still pending elicitation. When no
-// unresolved member remains the episode goroutine runs the single
+// session-scoped EpisodeContext, not on waitCtx or reqCtx, so cancelling
+// the caller's in-path wait does not cancel a still pending elicitation.
+// When no unresolved member remains the episode goroutine runs the single
 // per-session fan-out exactly once and exits, so no goroutine outlives
 // the episode.
 //
 // The caller blocks on the episode's resolution for this session up to
-// ctx. When ctx fires first, ExtendForBudget returns OutcomePending if
-// the caller's own request context is still live (the in-path deadline
-// elapsed) or OutcomeTerminal if the caller's request context was
-// cancelled (a client disconnect, distinguished via r.Context().Err()
-// passed as reqCtx). When the episode resolves within ctx it returns
-// OutcomeGranted or OutcomeTerminal. On a deferred resolution after a
-// Pending return, the episode's per-session fan-out raises or terminates
-// the session through the SessionReclaimer.
+// waitCtx. When waitCtx fires first, ExtendForBudget returns
+// OutcomePending if the caller's own request context reqCtx is still live
+// (the in-path deadline elapsed) or OutcomeTerminal if reqCtx was itself
+// cancelled (a client disconnect, distinguished via reqCtx.Err() rather
+// than the derived waitCtx's error). When the episode resolves within
+// waitCtx it returns OutcomeGranted or OutcomeTerminal. On a deferred
+// resolution after a Pending return, the episode's per-session fan-out
+// raises or terminates the session through the SessionReclaimer.
 // spec: §8.6 line 629; proposal 0023 S3.
-func (s *Service) ExtendForBudget(ctx context.Context, sessionID string) (Outcome, error) {
+func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID string) (Outcome, error) {
 	if sessionID == "" {
 		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires a session id")
 	}
@@ -109,12 +112,12 @@ func (s *Service) ExtendForBudget(ctx context.Context, sessionID string) (Outcom
 		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires an initialized episode manager")
 	}
 
-	tenantID, err := s.tenants.TenantOf(ctx, sessionID)
+	tenantID, err := s.tenants.TenantOf(reqCtx, sessionID)
 	if err != nil {
 		// Fail closed: an unresolvable session cannot be extended.
 		return OutcomeTerminal, fmt.Errorf("leasecontrol: ExtendForBudget resolve tenant for %s: %w", sessionID, err)
 	}
-	budget, err := s.budgets.TreeBudget(ctx, tenantID, sessionID)
+	budget, err := s.budgets.TreeBudget(reqCtx, tenantID, sessionID)
 	if err != nil {
 		return OutcomeTerminal, fmt.Errorf("leasecontrol: ExtendForBudget load tree budget for %s: %w", sessionID, err)
 	}
@@ -140,7 +143,7 @@ func (s *Service) ExtendForBudget(ctx context.Context, sessionID string) (Outcom
 			return OutcomeGranted, nil
 		}
 		return OutcomeTerminal, nil
-	case <-ctx.Done():
+	case <-waitCtx.Done():
 		// The in-path wait elapsed or the caller's request context was
 		// cancelled. detach hands ownership of this session's resolution to
 		// the episode's fan-out — unless the fan-out already resolved it in
@@ -148,7 +151,10 @@ func (s *Service) ExtendForBudget(ctx context.Context, sessionID string) (Outcom
 		// the caller uses it. Leaving the episode running lets its fan-out
 		// reclaim this session later. Distinguish a client disconnect
 		// (Terminal, fail closed) from the in-path deadline (Pending) by
-		// inspecting the caller's own request-context error.
+		// inspecting the caller's own request context reqCtx rather than the
+		// derived waitCtx: waitCtx.Done() also fires on the proxyExtensionWaitTimeout
+		// deadline, which is a Pending, so only reqCtx.Err() being non-nil
+		// identifies a genuine parent (request) cancellation.
 		res, resolved := mem.detach()
 		if resolved {
 			if res.err != nil {
@@ -159,7 +165,7 @@ func (s *Service) ExtendForBudget(ctx context.Context, sessionID string) (Outcom
 			}
 			return OutcomeTerminal, nil
 		}
-		if reqCtxCancelled(ctx) {
+		if reqCtx.Err() != nil {
 			return OutcomeTerminal, nil
 		}
 		return OutcomePending, nil
@@ -175,18 +181,6 @@ func (s *Service) SetReclaimer(r SessionReclaimer) {
 	if s.episodes != nil {
 		s.episodes.setReclaimer(r)
 	}
-}
-
-// reqCtxCancelled reports whether the caller's derived in-path wait
-// context was cancelled by a genuine parent (request) cancellation
-// rather than by its own timeout. The caller derives the wait as
-// context.WithTimeout(r.Context(), proxyExtensionWaitTimeout): a
-// DeadlineExceeded is the in-path timeout (Pending), while a Canceled is
-// the parent request cancellation propagating (Terminal). A wait context
-// with no deadline that reports Canceled is likewise a parent
-// cancellation.
-func reqCtxCancelled(ctx context.Context) bool {
-	return errors.Is(ctx.Err(), context.Canceled)
 }
 
 // sessionResult is the resolution the episode fan-out delivers to one
