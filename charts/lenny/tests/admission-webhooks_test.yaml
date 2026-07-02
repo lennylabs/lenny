@@ -385,6 +385,38 @@ tests:
       - notExists:
           path: spec.template.metadata.labels["lenny.dev/webhook-name"]
 
+  # spec: §13.2 NET-068 / sub-rule (c), §17.2 (deletion-guard additive
+  # label), §10.5 (runtime-upgrade probe). The deletion-guard is the
+  # second webhook (after drain-readiness) to carry the additive
+  # lenny.dev/webhook-name label, so the gateway-egress sub-rule narrows
+  # to it alone. F-13.2.24. Unlike drain-readiness this renders under
+  # admissionWebhooks.enabled with no separate feature flag.
+  - it: stamps the additive webhook-name egress label on the deletion-guard pods
+    template: admission-policies/sandboxtemplate-deletion-guard-webhook.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/webhook-name"]
+          value: sandboxtemplate-deletion-guard
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: admission-webhook
+
+  - it: narrows the deletion-guard gateway-egress policy to the canonical + additive selector
+    template: admission-policies/sandboxtemplate-deletion-guard-webhook.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-deletion-guard-gateway-egress
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: admission-webhook
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/webhook-name"]
+          value: sandboxtemplate-deletion-guard
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

@@ -108,6 +108,15 @@ func TestAdmissionWebhooksDefaultRendersFullStack(t *testing.T) {
 	if _, ok := m.Find("Deployment", "lenny-pod-security"); !ok {
 		t.Errorf("admissionWebhooks.enabled defaults true: the lenny-pod-security webhook Deployment must render")
 	}
+	// spec: §13.2 (admission-webhook NetworkPolicy row, sub-rule (c),
+	// NET-068), §17.2, §10.5. The deletion-guard's gateway-egress policy
+	// renders under admissionWebhooks.enabled (no separate feature flag),
+	// re-admitting the runtime-upgrade probe hop the lenny-system
+	// default-deny blocks. Without it the fail-closed webhook denies a
+	// SandboxTemplate DELETE with a referencing SandboxWarmPool. F-13.2.24.
+	if _, ok := m.Find("NetworkPolicy", "allow-deletion-guard-gateway-egress"); !ok {
+		t.Errorf("admissionWebhooks.enabled defaults true: the allow-deletion-guard-gateway-egress NetworkPolicy must render")
+	}
 }
 
 // TestAdmissionWebhooksDisabledRendersNoCertManagerObject asserts that
@@ -164,6 +173,14 @@ func TestAdmissionWebhooksDisabledRendersNoCertManagerObject(t *testing.T) {
 		if _, ok := m.Find("Deployment", name); ok {
 			t.Errorf("admissionWebhooks.enabled=false must not render the %s webhook Deployment", name)
 		}
+	}
+	// spec: §13.2 (deletion-guard gateway-egress sub-rule (c)), §17.2,
+	// §10.5. The deletion-guard's gateway-egress NetworkPolicy sits inside
+	// the same admissionWebhooks.enabled block as the workload, so it is
+	// gated off with the webhook; a leaked egress policy would grant
+	// gateway reachability to pods that do not exist. F-13.2.24.
+	if _, ok := m.Find("NetworkPolicy", "allow-deletion-guard-gateway-egress"); ok {
+		t.Errorf("admissionWebhooks.enabled=false must not render the allow-deletion-guard-gateway-egress NetworkPolicy")
 	}
 }
 

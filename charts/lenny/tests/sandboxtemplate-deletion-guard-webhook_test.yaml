@@ -5,12 +5,16 @@ release:
 templates:
   - admission-policies/sandboxtemplate-deletion-guard-webhook.yaml
 tests:
-  - it: renders the workload and webhook config unconditionally (§10.5 line 508 key safety invariant)
+  - it: renders the workload, gateway-egress policy, and webhook config unconditionally (§10.5 key safety invariant)
     asserts:
       # Deployment, Service, PodDisruptionBudget, Certificate,
-      # ValidatingWebhookConfiguration.
+      # allow-deletion-guard-gateway-egress NetworkPolicy,
+      # ValidatingWebhookConfiguration. The NetworkPolicy (§13.2 sub-rule
+      # (c) / F-13.2.24) is the sixth document; before this fix the
+      # template rendered only five and the fail-closed webhook's
+      # runtime-upgrade probe was dropped by the lenny-system default-deny.
       - hasDocuments:
-          count: 5
+          count: 6
 
   - it: passes the gateway runtime-upgrade-active URL to the webhook binary
     documentIndex: 0
@@ -21,8 +25,80 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --gateway-runtime-upgrade-active-url=http://lenny-gateway.lenny-system.svc:8080/internal/runtime-upgrade/active
 
+  # spec: §13.2 (NET-068 additive label), §17.2 (deletion-guard additive
+  # label acknowledgement), §10.5 (runtime-upgrade probe). The
+  # deletion-guard pods carry the additive lenny.dev/webhook-name label
+  # alongside the canonical lenny.dev/component label so the §13.2
+  # sub-rule (c) gateway-egress grant narrows to this webhook alone.
+  # F-13.2.24. Before this fix the workload include passed no egressLabel
+  # and the pods carried only the canonical component label, so no
+  # narrowed egress could be granted.
+  - it: stamps the additive webhook-name egress label on the deletion-guard pods
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/webhook-name"]
+          value: sandboxtemplate-deletion-guard
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: admission-webhook
+
+  # spec: §13.2 (admission-webhook NetworkPolicy row, sub-rule (c),
+  # NET-068), §17.2 (deletion-guard additive-label acknowledgement),
+  # §10.5 (runtime-upgrade probe safety webhook). The rendered
+  # allow-deletion-guard-gateway-egress NetworkPolicy re-admits the
+  # gateway-probe hop the lenny-system default-deny blocks, narrowed to
+  # the deletion-guard pods by the paired canonical + additive selector,
+  # egressing to the gateway on the internal port. F-13.2.24. Before this
+  # fix no NetworkPolicy rendered and the fail-closed webhook denied a
+  # SandboxTemplate DELETE with a referencing SandboxWarmPool.
+  - it: renders allow-deletion-guard-gateway-egress narrowed to the paired selector, egress-only to the gateway
+    documentSelector:
+      path: metadata.name
+      value: allow-deletion-guard-gateway-egress
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - isAPIVersion:
+          of: networking.k8s.io/v1
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: admission-webhook
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/webhook-name"]
+          value: sandboxtemplate-deletion-guard
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 8080
+      - equal:
+          path: spec.egress[0].ports[0].protocol
+          value: TCP
+      - equal:
+          path: spec.policyTypes
+          value: [Egress]
+
+  # spec: §13.2 — the gateway internal port is operator-tunable via
+  # gateway.internalPort; the egress grant tracks the override so an
+  # operator that moves the internal port does not silently lose the
+  # probe path. F-13.2.24.
+  - it: tracks a custom gateway.internalPort into the egress grant
+    set:
+      gateway.internalPort: 9090
+    documentSelector:
+      path: metadata.name
+      value: allow-deletion-guard-gateway-egress
+    asserts:
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 9090
+
   - it: configures the webhook fail-closed with CA injection on DELETE of sandboxtemplates
-    documentIndex: 4
+    documentIndex: 5
     asserts:
       - isKind:
           of: ValidatingWebhookConfiguration
