@@ -411,8 +411,9 @@ type Service struct {
 
 	// episodes runs the §8.6 budget-exhaustion extension episodes the
 	// gateway LLM Proxy drives through ExtendForBudget: one per-tree
-	// episode on a single tracked goroutine that concurrent exhausting
-	// sessions join, decoupling the elicitation lifecycle from the
+	// episode that concurrent exhausting sessions join, each on its own
+	// ExtendLease worker so a joiner batches onto the one live elicitation
+	// prompt (§8.6 line 719), decoupling the elicitation lifecycle from the
 	// proxy's in-path wait. spec: §8.6 line 629, line 719.
 	episodes *episodeManager
 

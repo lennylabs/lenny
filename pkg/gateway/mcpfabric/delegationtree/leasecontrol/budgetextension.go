@@ -75,13 +75,20 @@ type SessionReclaimer interface {
 // returns a tri-state Outcome bounded by ctx, which the caller derives
 // as context.WithTimeout(r.Context(), proxyExtensionWaitTimeout).
 //
-// The extension is dispatched as a per-tree episode on a single tracked
-// goroutine: a first exhausting session in a tree starts it and
-// concurrent exhausting sessions join it (§8.6 line 719 batching)
-// rather than opening a second elicitation. The episode dispatches the
-// elicitation on the injected session-scoped EpisodeContext, not on
-// ctx, so cancelling the caller's in-path wait does not cancel a still
-// pending elicitation.
+// The extension is dispatched as a single per-tree episode whose joined
+// sessions batch onto one elicitation prompt: a first exhausting session
+// in a tree starts the episode and concurrent (and mid-episode)
+// exhausting sessions join it (§8.6 line 719 batching) rather than
+// opening a second elicitation. Each joined session runs its own
+// ExtendLease worker so a mid-episode joiner overlaps inside
+// requestConsent and batches onto the one live tc.pending prompt (see the
+// episode struct doc for why a strict single-goroutine batch-then-wait
+// design would instead force a second prompt and break the §8.6 line 719
+// invariant). The workers dispatch their elicitation on the injected
+// session-scoped EpisodeContext, not on ctx, so cancelling the caller's
+// in-path wait does not cancel a still pending elicitation. The last
+// worker to finish runs the single per-session fan-out exactly once and
+// exits, so no goroutine outlives the episode.
 //
 // The caller blocks on the episode's resolution for this session up to
 // ctx. When ctx fires first, ExtendForBudget returns OutcomePending if

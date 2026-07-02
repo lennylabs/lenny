@@ -5,15 +5,20 @@
 // Package extension_episode_fanout exercises the §8.6 budget-exhaustion
 // lease-extension episode under concurrent load. Proposal 0023 relocates
 // the trigger into the gateway LLM Proxy and dispatches the extension as
-// a per-tree episode on a single tracked goroutine: many concurrent
-// exhausting sessions in one tree join the one pending episode
-// (treeConsent.pending / §8.6 line 719 batching) rather than opening a
-// second elicitation, then the episode's per-session completion fan-out
-// raises or terminates each joined session.
+// a single per-tree episode whose joined sessions batch onto one
+// elicitation prompt: many concurrent exhausting sessions in one tree
+// join the one pending episode (treeConsent.pending / §8.6 line 719
+// batching) rather than opening a second elicitation, then the episode's
+// per-session completion fan-out raises or terminates each joined
+// session. Each joined session runs its own ExtendLease worker so a
+// mid-episode joiner overlaps inside requestConsent and batches onto the
+// live prompt; the last worker to finish runs the fan-out exactly once
+// and exits, so no goroutine outlives a resolved episode.
 //
 // The invariants this scenario asserts:
-//   - The per-tree episode goroutine runs the fan-out and exits, leaking
-//     no goroutine per pending elicitation.
+//   - The episode's per-session workers finish and exit and the last one
+//     runs the fan-out exactly once, so no goroutine outlives a resolved
+//     episode and none leaks per pending elicitation.
 //   - Every joined session is reclaimed (raised or terminated); no
 //     session is left denied with nothing to clear it.
 //   - Exactly one elicitation opens per tree for a batch of concurrent
