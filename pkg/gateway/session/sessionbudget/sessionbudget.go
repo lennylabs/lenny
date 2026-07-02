@@ -190,14 +190,21 @@ func New(t Terminator, extend ExtendOnExhaustion, onExceeded func(tenantID, sess
 // after the first over-budget request.
 //
 // Record returns whether recording this usage exhausted the session (the
-// record boundary this call crossed). The recorder relays that signal to
-// the proxy so the proxy attempts the §8.6 extension at the exhaustion
-// boundary and drives its write-path branch (deliver the held response on a
-// grant, deny it otherwise). A call that does not cross the boundary, or a
-// repeat exhaustion already seen for this session, returns false.
-func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID string, budget, tokens int64) (exhausted bool) {
+// record boundary this call crossed) and, when it did, the seam's resolved
+// tri-state Outcome. The §8.6 extension is dispatched exactly once here,
+// inside the record path: Record consults the injected seam, applies
+// RaiseBudget / setDeny / TerminateSession itself, and surfaces the Outcome
+// so the proxy drives its write-path branch (deliver the held response on
+// Granted, deny it otherwise) WITHOUT re-dispatching the extension. A call
+// that does not cross the boundary, or a repeat exhaustion already seen for
+// this session, returns (false, Granted); the Granted zero value is inert
+// because the caller ignores the Outcome when exhausted is false.
+//
+// spec: §8.6 line 629 (the extension is attempted at most once per distinct
+// exhaustion event, in-path at the record boundary); proposal 0023 S3/S4.
+func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID string, budget, tokens int64) (exhausted bool, outcome Outcome) {
 	if sessionID == "" {
-		return false
+		return false, Granted
 	}
 	e.mu.Lock()
 	c := e.sessions[sessionID]
@@ -221,7 +228,7 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 	e.mu.Unlock()
 
 	if !crossedBoundary {
-		return false
+		return false, Granted
 	}
 
 	// Attempt the §8.6 extension outside the lock: the seam blocks on the
@@ -229,8 +236,10 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 	// per-request fast path or deadlock against a concurrent Forget driven
 	// by the terminal pipeline, mirroring the terminate-outside-the-lock
 	// pattern below. A nil seam is the non-extendable path and terminates
-	// immediately.
-	outcome := Terminal
+	// immediately. This is the single §8.6 dispatch for this exhaustion
+	// event; the resolved outcome is returned to the caller rather than
+	// re-derived by a second dispatch. spec: §8.6 line 629.
+	outcome = Terminal
 	if e.extendOnExhaustion != nil {
 		outcome = e.extendOnExhaustion(reqCtx, waitCtx, tenantID, sessionID, budget, consumed)
 	}
@@ -257,10 +266,11 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 		}
 	}
 	// Recording this usage exhausted the session (the record boundary). The
-	// recorder reports this to the proxy so the proxy attempts the §8.6
-	// extension at the exhaustion boundary and drives its write-path branch
-	// (proposal 0023 S4).
-	return true
+	// recorder relays this exhaustion signal and the seam's resolved outcome
+	// to the proxy so the proxy drives its write-path branch (deliver the
+	// held response on Granted, deny otherwise) without re-dispatching the
+	// extension (proposal 0023 S4).
+	return true, outcome
 }
 
 // setDeny sets sessionID's deny-next-request flag under the lock so the

@@ -325,21 +325,65 @@ func TestHandlerRejectsNonPost(t *testing.T) {
 	}
 }
 
-// fakeUsage is a UsageRecorder capturing the last recorded usage. It
-// reports exhaustion after a fixed number of calls so a handler test can
-// drive the §8.6 exhaustion-boundary write branch: exhaustOnCall is the
-// 1-based call index on which RecordUsage returns exhausted (0 never
-// exhausts).
+// fakeUsage is a UsageRecorder capturing the last recorded usage. It stands
+// in for the cmd/lenny-gateway proxyUsageRecorder: it detects exhaustion and
+// surfaces the §8.6 extension Outcome the real record path resolves inside the
+// enforcer, so the handler drives its write-path branch off the returned
+// Outcome without any second extension dispatch (proposal 0023 S4).
+//
+// exhaustOnCall is the 1-based call index on which RecordUsage reports
+// exhausted (0 never exhausts). outcomes supplies the per-exhaustion Outcome
+// the record path resolves, consumed in order; when it runs out the last
+// value is reused, and OutcomeTerminal is the default. onExhaust, when set,
+// runs the out-of-band episode effect (raise/terminate) a real leasecontrol
+// fan-out would apply through the SessionReclaimer, so a test can model a
+// deferred grant recovering a Pending session by flipping the pre-flight gate.
 type fakeUsage struct {
+	mu            sync.Mutex
 	usage         llmproxy.Usage
 	calls         int
+	exhaustCalls  int // number of exhaustion events observed
 	exhaustOnCall int
+	outcomes      []llmproxy.Outcome
+	onExhaust     func(outcome llmproxy.Outcome)
 }
 
-func (f *fakeUsage) RecordUsage(_ context.Context, _ credential.Lease, u llmproxy.Usage) bool {
+func (f *fakeUsage) RecordUsage(_ context.Context, lease credential.Lease, u llmproxy.Usage) (bool, llmproxy.Outcome) {
+	f.mu.Lock()
 	f.usage = u
 	f.calls++
-	return f.exhaustOnCall != 0 && f.calls == f.exhaustOnCall
+	exhausted := f.exhaustOnCall != 0 && f.calls == f.exhaustOnCall
+	if !exhausted {
+		f.mu.Unlock()
+		return false, llmproxy.OutcomeGranted
+	}
+	out := llmproxy.OutcomeTerminal
+	if len(f.outcomes) > 0 {
+		out = f.outcomes[0]
+		if len(f.outcomes) > 1 {
+			f.outcomes = f.outcomes[1:]
+		}
+	}
+	f.exhaustCalls++
+	hook := f.onExhaust
+	_ = lease
+	f.mu.Unlock()
+	if hook != nil {
+		hook(out)
+	}
+	return true, out
+}
+
+func (f *fakeUsage) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakeUsage) exhaustionCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.exhaustCalls
 }
 
 func TestHandlerRecordsAuthoritativeUsage(t *testing.T) {
@@ -353,8 +397,8 @@ func TestHandlerRecordsAuthoritativeUsage(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rr.Code)
 	}
 	// The fake upstream replies with usage 5 in / 7 out.
-	if rec.calls != 1 || rec.usage.InputTokens != 5 || rec.usage.OutputTokens != 7 {
-		t.Errorf("recorded usage = %+v calls=%d, want 5/7 recorded once", rec.usage, rec.calls)
+	if rec.callCount() != 1 || rec.usage.InputTokens != 5 || rec.usage.OutputTokens != 7 {
+		t.Errorf("recorded usage = %+v calls=%d, want 5/7 recorded once", rec.usage, rec.callCount())
 	}
 }
 
@@ -389,8 +433,8 @@ func TestHandlerStreamsSSEResponse(t *testing.T) {
 	if rr.Body.String() != anthropicSSEStream {
 		t.Errorf("relayed body is not the upstream SSE stream:\n got %q", rr.Body.String())
 	}
-	if rec.calls != 1 || rec.usage.InputTokens != 12 || rec.usage.OutputTokens != 34 {
-		t.Errorf("streamed usage = %+v calls=%d, want 12/34 recorded once", rec.usage, rec.calls)
+	if rec.callCount() != 1 || rec.usage.InputTokens != 12 || rec.usage.OutputTokens != 34 {
+		t.Errorf("streamed usage = %+v calls=%d, want 12/34 recorded once", rec.usage, rec.callCount())
 	}
 }
 
@@ -414,46 +458,13 @@ func TestHandlerStreamingRejectsExpiredLeaseBeforeUpstream(t *testing.T) {
 // lease-extension trigger in-process, delivering the exhausting call's
 // already-computed response transparently), §11.2 line 44 (budget
 // enforcement). These tests exercise the proxy's write-path branch on the
-// tri-state Outcome the injected LeaseExtender returns; proposal 0023 S4.
+// tri-state Outcome the record path (Usage.RecordUsage) surfaces from its
+// single §8.6 extension dispatch. The handler never issues its own extension
+// call; it consumes the Outcome the enforcer already resolved, so the
+// extension is attempted at most once per exhaustion event (proposal 0023 S4).
 
-// fakeExtender is a LeaseExtender returning a scripted per-call Outcome so
-// a handler test can drive each §8.6 write-path branch. onExtend, when set,
-// runs the out-of-band episode effect (raise/terminate) a real leasecontrol
-// fan-out would apply through the SessionReclaimer, so a test can model a
-// deferred grant recovering a Pending session.
-type fakeExtender struct {
-	mu       sync.Mutex
-	outcomes []llmproxy.Outcome
-	err      error
-	calls    []string // session ids, in call order
-	onExtend func(sessionID string, outcome llmproxy.Outcome)
-}
-
-func (f *fakeExtender) ExtendForBudget(_, _ context.Context, sessionID string) (llmproxy.Outcome, error) {
-	f.mu.Lock()
-	f.calls = append(f.calls, sessionID)
-	out := llmproxy.OutcomeTerminal
-	if len(f.outcomes) > 0 {
-		out = f.outcomes[0]
-		f.outcomes = f.outcomes[1:]
-	}
-	err := f.err
-	hook := f.onExtend
-	f.mu.Unlock()
-	if hook != nil {
-		hook(sessionID, out)
-	}
-	return out, err
-}
-
-func (f *fakeExtender) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
-
-// mutableGate is a BudgetGate whose denied session set a test (or a fake
-// extender's out-of-band effect) can flip, modelling the enforcer's
+// mutableGate is a BudgetGate whose denied session set a test (or a
+// recorder's out-of-band effect) can flip, modelling the enforcer's
 // deny-next-request state the pre-flight gate reads.
 type mutableGate struct {
 	mu     sync.Mutex
@@ -496,112 +507,81 @@ func TestOutcomeString_spec_8_6_line_629(t *testing.T) {
 	}
 }
 
-// TestHandlerHonorsOperatorTunedExtensionWaitTimeout confirms the handler
-// uses its operator-tuned ProxyExtensionWaitTimeout for the in-path wait
-// rather than the package default, so §8.6's operator-tunable deadline takes
-// effect. The extender records the waitCtx deadline it observed.
-func TestHandlerHonorsOperatorTunedExtensionWaitTimeout_spec_8_6_line_629(t *testing.T) {
-	h := newProxyHarness(t)
-	if err := h.leases.Put(handlerLease("lt-to")); err != nil {
-		t.Fatalf("seed lease: %v", err)
-	}
-	const tuned = 250 * time.Millisecond
-	var sawDeadline time.Duration
-	ext := &deadlineExtender{onWait: func(d time.Duration) { sawDeadline = d }}
-	h.handler.Usage = &fakeUsage{exhaustOnCall: 1}
-	h.handler.LeaseExtender = ext
-	h.handler.ProxyExtensionWaitTimeout = tuned
-
-	_ = post(h.handler, "lt-to", messagesBody)
-	// The observed in-path wait deadline must reflect the tuned value, not the
-	// 5s package default. Allow slack for scheduling.
-	if sawDeadline <= 0 || sawDeadline > time.Second {
-		t.Errorf("in-path wait deadline = %v, want ~%v (operator-tuned, not the 5s default)", sawDeadline, tuned)
-	}
-}
-
-// deadlineExtender is a LeaseExtender that reports the remaining deadline on
-// the waitCtx it receives, so a test can assert the handler derived the
-// in-path wait from ProxyExtensionWaitTimeout.
-type deadlineExtender struct {
-	onWait func(time.Duration)
-}
-
-func (e *deadlineExtender) ExtendForBudget(_, waitCtx context.Context, _ string) (llmproxy.Outcome, error) {
-	if dl, ok := waitCtx.Deadline(); ok && e.onWait != nil {
-		e.onWait(time.Until(dl))
-	}
-	return llmproxy.OutcomeTerminal, nil
-}
-
-// diagnosis: a broken non-streaming Granted branch means a §8.6 extension
-// that was granted within the in-path wait still fails the exhausting
+// diagnosis: a broken non-streaming Granted branch means a §8.6 extension the
+// record path granted within the in-path wait still fails the exhausting
 // request or re-issues the upstream call, breaking the runtime-transparency
-// contract or double-billing the provider.
+// contract or double-billing the provider. The handler must deliver the held
+// 200 off the record path's returned OutcomeGranted with no second dispatch.
 func TestHandlerNonStreamingGrantedDeliversHeldResponse_spec_8_6_line_629(t *testing.T) {
 	h := newProxyHarness(t)
 	if err := h.leases.Put(handlerLease("lt-g")); err != nil {
 		t.Fatalf("seed lease: %v", err)
 	}
-	rec := &fakeUsage{exhaustOnCall: 1}
-	ext := &fakeExtender{outcomes: []llmproxy.Outcome{llmproxy.OutcomeGranted}}
+	// The record path detects exhaustion and surfaces OutcomeGranted (the
+	// enforcer's single-dispatch resolution). The handler branches its write
+	// path on that returned outcome.
+	rec := &fakeUsage{exhaustOnCall: 1, outcomes: []llmproxy.Outcome{llmproxy.OutcomeGranted}}
 	h.handler.Usage = rec
-	h.handler.LeaseExtender = ext
 
 	rr := post(h.handler, "lt-g", messagesBody)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("granted extension must deliver the held 200; status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	// The held response is the already-computed body; exactly one upstream
-	// call and one usage record, no re-issue on the grant.
+	if !strings.Contains(rr.Body.String(), `"id":"msg_1"`) {
+		t.Errorf("body = %q, want the held upstream response", rr.Body.String())
+	}
+	// The held response is the already-computed body: exactly one upstream
+	// call and one usage record, no re-issue and no second extension dispatch
+	// on the grant. The single record call IS the single §8.6 dispatch.
 	if h.forwards() != 1 {
 		t.Errorf("forwards = %d, want exactly one upstream call on the transparent path", h.forwards())
 	}
-	if rec.calls != 1 {
-		t.Errorf("usage recorded %d times, want exactly one (no duplicate on grant)", rec.calls)
+	if rec.callCount() != 1 {
+		t.Errorf("usage recorded %d times, want exactly one (no duplicate on grant)", rec.callCount())
 	}
-	if ext.callCount() != 1 {
-		t.Errorf("extension attempted %d times, want exactly one per exhaustion event", ext.callCount())
+	if rec.exhaustionCount() != 1 {
+		t.Errorf("exhaustion resolved %d times, want exactly one dispatch per exhaustion event", rec.exhaustionCount())
 	}
 }
 
 // diagnosis: a broken non-streaming Terminal branch means a session whose
-// extension hit CEILING_REACHED/REJECTED (or errored) still receives its
-// held 200 instead of a fail-closed BUDGET_EXHAUSTED, bypassing the ceiling.
+// record-path extension hit CEILING_REACHED/REJECTED (or errored) still
+// receives its held 200 instead of a fail-closed BUDGET_EXHAUSTED, bypassing
+// the ceiling.
 func TestHandlerNonStreamingTerminalFailsClosed_spec_8_6_line_712(t *testing.T) {
 	h := newProxyHarness(t)
 	if err := h.leases.Put(handlerLease("lt-t")); err != nil {
 		t.Fatalf("seed lease: %v", err)
 	}
-	rec := &fakeUsage{exhaustOnCall: 1}
-	ext := &fakeExtender{outcomes: []llmproxy.Outcome{llmproxy.OutcomeTerminal}}
+	rec := &fakeUsage{exhaustOnCall: 1, outcomes: []llmproxy.Outcome{llmproxy.OutcomeTerminal}}
 	h.handler.Usage = rec
-	h.handler.LeaseExtender = ext
 
 	rr := post(h.handler, "lt-t", messagesBody)
 	if rr.Code != http.StatusForbidden || errorCode(t, rr) != "BUDGET_EXHAUSTED" {
 		t.Fatalf("terminal extension must fail closed; status=%d code=%q", rr.Code, errorCode(t, rr))
 	}
 	// The exhausting call already completed and recorded its usage exactly
-	// once; the terminal branch does not re-issue it.
-	if h.forwards() != 1 || rec.calls != 1 {
-		t.Errorf("forwards=%d records=%d, want 1/1 (no re-issue on terminal)", h.forwards(), rec.calls)
+	// once; the terminal branch does not re-issue it or re-dispatch.
+	if h.forwards() != 1 || rec.callCount() != 1 {
+		t.Errorf("forwards=%d records=%d, want 1/1 (no re-issue on terminal)", h.forwards(), rec.callCount())
 	}
 }
 
-// diagnosis: a nil LeaseExtender that does not fail closed would deliver a
-// held 200 for an exhausted session with no extension wired, defeating the
-// §11.2 terminate-immediately posture where no automatic extension exists.
-func TestHandlerNonStreamingNoExtenderFailsClosed_spec_11_2_line_44(t *testing.T) {
+// diagnosis: a record path that reports exhausted with a non-granted outcome
+// (the nil-seam / non-extendable posture surfaces OutcomeTerminal) must fail
+// the exhausting request closed, defeating the §11.2 terminate-immediately
+// posture only if it wrongly delivered the held 200.
+func TestHandlerNonStreamingNonGrantedFailsClosed_spec_11_2_line_44(t *testing.T) {
 	h := newProxyHarness(t)
 	if err := h.leases.Put(handlerLease("lt-ne")); err != nil {
 		t.Fatalf("seed lease: %v", err)
 	}
-	h.handler.Usage = &fakeUsage{exhaustOnCall: 1}
-	// No LeaseExtender wired: the proxy fails closed on exhaustion.
+	// The record path reports exhausted with OutcomeTerminal (the enforcer's
+	// nil-seam resolution): the proxy fails closed.
+	h.handler.Usage = &fakeUsage{exhaustOnCall: 1, outcomes: []llmproxy.Outcome{llmproxy.OutcomeTerminal}}
 	rr := post(h.handler, "lt-ne", messagesBody)
 	if rr.Code != http.StatusForbidden || errorCode(t, rr) != "BUDGET_EXHAUSTED" {
-		t.Fatalf("no extender must fail closed on exhaustion; status=%d code=%q", rr.Code, errorCode(t, rr))
+		t.Fatalf("a non-granted exhaustion must fail closed; status=%d code=%q", rr.Code, errorCode(t, rr))
 	}
 }
 
@@ -615,19 +595,20 @@ func TestHandlerNonStreamingPendingDeniesThenRecovers_spec_8_6_line_629(t *testi
 		t.Fatalf("seed lease: %v", err)
 	}
 	gate := newMutableGate()
-	// The Pending extension sets the session's deny-next-request state the
-	// pre-flight gate reads (the enforcer does this on Pending); model it via
-	// the gate so subsequent requests are denied until the deferred grant.
-	ext := &fakeExtender{
-		outcomes: []llmproxy.Outcome{llmproxy.OutcomePending},
-		onExtend: func(sessionID string, out llmproxy.Outcome) {
+	// The record path resolves Pending and (as the real enforcer does) sets the
+	// session's deny-next-request state the pre-flight gate reads; model that
+	// side-effect via the gate so subsequent requests are denied until the
+	// deferred grant.
+	rec := &fakeUsage{
+		exhaustOnCall: 1,
+		outcomes:      []llmproxy.Outcome{llmproxy.OutcomePending},
+		onExhaust: func(out llmproxy.Outcome) {
 			if out == llmproxy.OutcomePending {
-				gate.deny(sessionID)
+				gate.deny("s_h1")
 			}
 		},
 	}
-	h.handler.Usage = &fakeUsage{exhaustOnCall: 1}
-	h.handler.LeaseExtender = ext
+	h.handler.Usage = rec
 	h.handler.BudgetGate = gate
 
 	// The exhausting non-streaming request's response is not yet written, so
@@ -637,14 +618,15 @@ func TestHandlerNonStreamingPendingDeniesThenRecovers_spec_8_6_line_629(t *testi
 		t.Fatalf("non-streaming Pending must deny the current request; status=%d code=%q", rr.Code, errorCode(t, rr))
 	}
 	// Every subsequent request is denied by the pre-flight gate while the
-	// episode is unresolved (no new extension is opened).
-	before := ext.callCount()
+	// episode is unresolved; the pre-flight rejection never reaches the record
+	// path, so no new extension is dispatched.
+	before := rec.exhaustionCount()
 	rr = post(h.handler, "lt-p", messagesBody)
 	if rr.Code != http.StatusForbidden || errorCode(t, rr) != "BUDGET_EXHAUSTED" {
 		t.Fatalf("subsequent request must be denied while pending; status=%d code=%q", rr.Code, errorCode(t, rr))
 	}
-	if ext.callCount() != before {
-		t.Errorf("pre-flight-denied request must not open a new extension: calls %d -> %d", before, ext.callCount())
+	if rec.exhaustionCount() != before {
+		t.Errorf("pre-flight-denied request must not reach the record path: dispatches %d -> %d", before, rec.exhaustionCount())
 	}
 	// The out-of-band episode fan-out later applies a deferred grant, clearing
 	// the deny state; the session recovers to 200.
@@ -656,54 +638,31 @@ func TestHandlerNonStreamingPendingDeniesThenRecovers_spec_8_6_line_629(t *testi
 
 // diagnosis: a broken second-exhaustion path means a session that
 // legitimately extends more than once is abandoned before its ceiling — the
-// second distinct exhaustion event must attempt a fresh extension, continuing
-// on a grant and terminating only on a terminal outcome.
-func TestHandlerSecondExhaustionAttemptsSecondExtension_spec_8_6_line_629(t *testing.T) {
+// second distinct exhaustion event must resolve a fresh outcome, continuing
+// on a grant and failing closed only on a terminal outcome.
+func TestHandlerSecondExhaustionResolvesFreshOutcome_spec_8_6_line_629(t *testing.T) {
 	h := newProxyHarness(t)
 	if err := h.leases.Put(handlerLease("lt-2x")); err != nil {
 		t.Fatalf("seed lease: %v", err)
 	}
-	// The recorder exhausts on call 1 and again later, so the first and the
-	// third requests each cross a fresh exhaustion boundary; the extender
-	// grants the first and hits CEILING_REACHED (terminal) on the second.
-	rec := &fakeUsage{exhaustOnCall: 1}
-	ext := &fakeExtender{outcomes: []llmproxy.Outcome{llmproxy.OutcomeGranted, llmproxy.OutcomeTerminal}}
+	// The recorder exhausts on call 1 and again later, so two requests each
+	// cross a fresh exhaustion boundary; the record path grants the first and
+	// hits CEILING_REACHED (terminal) on the second.
+	rec := &fakeUsage{exhaustOnCall: 1, outcomes: []llmproxy.Outcome{llmproxy.OutcomeGranted, llmproxy.OutcomeTerminal}}
 	h.handler.Usage = rec
-	h.handler.LeaseExtender = ext
 
 	// First exhaustion → granted → held 200.
 	if rr := post(h.handler, "lt-2x", messagesBody); rr.Code != http.StatusOK {
 		t.Fatalf("first exhaustion (granted) must deliver 200; status=%d", rr.Code)
 	}
 	// A later request re-exhausts the raised-and-consumed budget: a fresh
-	// exhaustion event attempts a fresh extension, which is terminal here.
-	rec.exhaustOnCall = rec.calls + 1
+	// exhaustion event resolves a fresh outcome, which is terminal here.
+	rec.exhaustOnCall = rec.callCount() + 1
 	if rr := post(h.handler, "lt-2x", messagesBody); rr.Code != http.StatusForbidden || errorCode(t, rr) != "BUDGET_EXHAUSTED" {
 		t.Fatalf("second exhaustion (ceiling reached) must fail closed; status=%d code=%q", rr.Code, errorCode(t, rr))
 	}
-	if ext.callCount() != 2 {
-		t.Errorf("extension attempted %d times, want two (one per distinct exhaustion)", ext.callCount())
-	}
-}
-
-// diagnosis: a broken client-disconnect / dispatch-error path means a genuine
-// request-context cancellation or transport fault is treated as a success
-// rather than a fail-closed Terminal, admitting an unbudgeted response.
-func TestHandlerExtensionErrorFailsClosed_spec_8_6_line_629(t *testing.T) {
-	h := newProxyHarness(t)
-	if err := h.leases.Put(handlerLease("lt-err")); err != nil {
-		t.Fatalf("seed lease: %v", err)
-	}
-	// A dispatch error is a fail-closed terminal outcome regardless of the
-	// Outcome the extender returned alongside it (the client-disconnect and
-	// transport-fault path).
-	ext := &fakeExtender{outcomes: []llmproxy.Outcome{llmproxy.OutcomeGranted}, err: context.Canceled}
-	h.handler.Usage = &fakeUsage{exhaustOnCall: 1}
-	h.handler.LeaseExtender = ext
-
-	rr := post(h.handler, "lt-err", messagesBody)
-	if rr.Code != http.StatusForbidden || errorCode(t, rr) != "BUDGET_EXHAUSTED" {
-		t.Fatalf("extension error must fail closed; status=%d code=%q", rr.Code, errorCode(t, rr))
+	if rec.exhaustionCount() != 2 {
+		t.Errorf("exhaustion resolved %d times, want two (one per distinct exhaustion)", rec.exhaustionCount())
 	}
 }
 
@@ -724,15 +683,14 @@ func TestHandlerStreamingGrantedKeepsSessionAlive_spec_8_6_line_629(t *testing.T
 		t.Fatalf("seed lease: %v", err)
 	}
 	gate := newMutableGate()
-	ext := &fakeExtender{outcomes: []llmproxy.Outcome{llmproxy.OutcomeGranted}}
+	rec := &fakeUsage{exhaustOnCall: 1, outcomes: []llmproxy.Outcome{llmproxy.OutcomeGranted}}
 	h := &llmproxy.Handler{
-		Leases:        leases,
-		Translator:    &llmproxy.AnthropicDirectTranslator{BaseURL: upstream.URL, DefaultAnthropicVersion: "2023-06-01"},
-		Forwarder:     &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
-		Credentials:   fakeResolver{key: "sk-ant-real", ok: true},
-		Usage:         &fakeUsage{exhaustOnCall: 1},
-		LeaseExtender: ext,
-		BudgetGate:    gate,
+		Leases:      leases,
+		Translator:  &llmproxy.AnthropicDirectTranslator{BaseURL: upstream.URL, DefaultAnthropicVersion: "2023-06-01"},
+		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Credentials: fakeResolver{key: "sk-ant-real", ok: true},
+		Usage:       rec,
+		BudgetGate:  gate,
 	}
 	streamBody := `{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hi"}],"stream":true}`
 	rr := post(h, "lt-sg", streamBody)
@@ -744,8 +702,8 @@ func TestHandlerStreamingGrantedKeepsSessionAlive_spec_8_6_line_629(t *testing.T
 	if rr.Body.String() != anthropicSSEStream {
 		t.Errorf("committed stream must not be re-issued or altered on grant")
 	}
-	if ext.callCount() != 1 {
-		t.Errorf("extension attempted %d times, want one on streaming exhaustion", ext.callCount())
+	if rec.exhaustionCount() != 1 {
+		t.Errorf("exhaustion resolved %d times, want one on streaming exhaustion", rec.exhaustionCount())
 	}
 	// The session stays alive: the pre-flight gate still admits its next
 	// request (the grant applies to it).
@@ -770,22 +728,22 @@ func TestHandlerStreamingPendingCommittedStreamStands_spec_8_6_line_629(t *testi
 		t.Fatalf("seed lease: %v", err)
 	}
 	gate := newMutableGate()
-	ext := &fakeExtender{
-		outcomes: []llmproxy.Outcome{llmproxy.OutcomePending},
-		onExtend: func(sessionID string, out llmproxy.Outcome) {
+	rec := &fakeUsage{
+		exhaustOnCall: 1,
+		outcomes:      []llmproxy.Outcome{llmproxy.OutcomePending},
+		onExhaust: func(out llmproxy.Outcome) {
 			if out == llmproxy.OutcomePending {
-				gate.deny(sessionID)
+				gate.deny("s_h1")
 			}
 		},
 	}
 	h := &llmproxy.Handler{
-		Leases:        leases,
-		Translator:    &llmproxy.AnthropicDirectTranslator{BaseURL: upstream.URL, DefaultAnthropicVersion: "2023-06-01"},
-		Forwarder:     &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
-		Credentials:   fakeResolver{key: "sk-ant-real", ok: true},
-		Usage:         &fakeUsage{exhaustOnCall: 1},
-		LeaseExtender: ext,
-		BudgetGate:    gate,
+		Leases:      leases,
+		Translator:  &llmproxy.AnthropicDirectTranslator{BaseURL: upstream.URL, DefaultAnthropicVersion: "2023-06-01"},
+		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Credentials: fakeResolver{key: "sk-ant-real", ok: true},
+		Usage:       rec,
+		BudgetGate:  gate,
 	}
 	streamBody := `{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hi"}],"stream":true}`
 	// The 200/SSE response is committed before usage settles, so a Pending

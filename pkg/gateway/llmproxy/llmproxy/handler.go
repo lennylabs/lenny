@@ -23,15 +23,6 @@ import (
 // bounds memory against a hostile or buggy agent pod.
 const maxRequestBytes = 8 << 20
 
-// defaultProxyExtensionWaitTimeout is the fallback in-path wait for a §8.6
-// budget-exhaustion extension when Handler.ProxyExtensionWaitTimeout is not
-// set. §8.6 does not fix the value; the gateway makes it operator-tunable
-// (default 5s) and passes it through, so this is only the last-resort default
-// for a Handler constructed without one.
-//
-// spec: §8.6 line 629 (proxyExtensionWaitTimeout); proposal 0023.
-const defaultProxyExtensionWaitTimeout = 5 * time.Second
-
 // §4.8 lines 1055-1056, §15.1 lines 1012-1013. A deliberate REJECT by
 // a PreLLMRequest interceptor returns LLM_REQUEST_REJECTED (HTTP 403);
 // a PostLLMResponse REJECT returns LLM_RESPONSE_REJECTED (HTTP 502).
@@ -79,13 +70,16 @@ type BudgetGate interface {
 }
 
 // Outcome is the tri-state result of a §8.6 budget-exhaustion lease
-// extension the proxy attempts at the exhaustion boundary of a proxy-mode
-// session. It is a proxy-local mirror of the leasecontrol tri-state so the
-// proxy stays decoupled from the leasecontrol package; the cmd/lenny-gateway
-// wiring maps leasecontrol.Outcome onto it when it injects the LeaseExtender
-// (proposal 0023 S6). Outcome bounds the proxy's write-path branch: continue
-// the request (deliver the held response), deny it now, or leave the session
-// denying-per-request while the elicitation resolves out-of-band.
+// extension the record path attempts at the exhaustion boundary of a
+// proxy-mode session. It is a proxy-local mirror of the leasecontrol
+// tri-state so the proxy stays decoupled from the leasecontrol package; the
+// cmd/lenny-gateway recorder maps leasecontrol.Outcome onto it when it
+// surfaces the enforcer's resolved outcome through RecordUsage (proposal 0023
+// S6). Outcome bounds the proxy's write-path branch: continue the request
+// (deliver the held response), deny it now, or leave the session
+// denying-per-request while the elicitation resolves out-of-band. The proxy
+// does not itself dispatch the extension; it consumes the outcome the record
+// path already computed from its single dispatch.
 //
 // spec: §8.6 line 629 (the gateway LLM Proxy drives the trigger in-process);
 // proposal 0023.
@@ -129,27 +123,6 @@ func (o Outcome) String() string {
 	}
 }
 
-// LeaseExtender requests a §8.6 token-budget extension for a proxy-mode
-// session at the exhaustion boundary. The proxy calls it in-process when a
-// completed call's settled usage exhausts the session's token budget, before
-// the session's terminal side-effects fire, and branches its write path on
-// the returned Outcome (proposal 0023 S4).
-//
-// reqCtx is the caller's own request context (r.Context()); waitCtx is the
-// derived in-path wait (context.WithTimeout(reqCtx, ProxyExtensionWaitTimeout)).
-// The two-context signature matches leasecontrol.Service.ExtendForBudget so
-// the gateway wires the concrete service directly: the extension attempt
-// honors reqCtx for the Pending-vs-Terminal discrimination (a genuine request
-// cancellation is Terminal, an in-path deadline is Pending) and waitCtx for
-// the in-path deadline. A nil LeaseExtender disables the automatic extension:
-// the proxy fails closed on exhaustion, preserving the §11.2 line 44
-// terminate-immediately posture.
-//
-// spec: §8.6 line 629; proposal 0023 S3/S4.
-type LeaseExtender interface {
-	ExtendForBudget(reqCtx, waitCtx context.Context, sessionID string) (Outcome, error)
-}
-
 // UsageRecorder receives the authoritative §4.9 token usage the proxy
 // extracts from each upstream response. §4.9 makes the proxy-extracted
 // counts the record for quota accounting; pod-reported counts are not
@@ -157,12 +130,17 @@ type LeaseExtender interface {
 type UsageRecorder interface {
 	// RecordUsage records the token usage of one request against a lease and
 	// reports whether recording it exhausted the session's token budget
-	// (cumulative consumption reached the budget). The proxy uses that signal
-	// to attempt the §8.6 lease extension at the exhaustion boundary before
-	// the session is torn down (proposal 0023 S4). ctx is the caller's
-	// request context, threaded so a metering or enforcement path can honor
-	// cancellation and deadlines.
-	RecordUsage(ctx context.Context, lease credential.Lease, usage Usage) (exhausted bool)
+	// (cumulative consumption reached the budget) and, when it did, the
+	// tri-state Outcome of the §8.6 lease extension the record path attempts
+	// at the exhaustion boundary. The recorder dispatches that extension
+	// exactly once, inside the enforcement path, and surfaces its resolved
+	// Outcome here so the proxy drives its write-path branch (deliver the
+	// held response on OutcomeGranted, deny it otherwise) without issuing a
+	// second, independent extension call (proposal 0023 S4). When exhausted
+	// is false the Outcome is inert (OutcomeGranted) and the proxy ignores
+	// it. ctx is the caller's request context, threaded so the metering and
+	// the in-path extension wait honor cancellation and deadlines.
+	RecordUsage(ctx context.Context, lease credential.Lease, usage Usage) (exhausted bool, outcome Outcome)
 }
 
 // ProxyCache is the §4.9 semantic-cache seam on the proxy path. It backs
@@ -238,28 +216,15 @@ type Handler struct {
 	// pre-flight: a request for a session that has already exhausted its
 	// token budget is rejected with BUDGET_EXHAUSTED before any upstream
 	// call. A nil gate disables the check.
+	//
+	// The §8.6 budget-exhaustion lease extension is dispatched exactly once
+	// per exhaustion event, inside the record path (Usage.RecordUsage), which
+	// applies the raise / deny / terminate side-effects and surfaces the
+	// resolved Outcome the proxy branches its write path on (proposal 0023
+	// S4). The proxy never issues its own extension call, so the
+	// exhaustion decision and the terminate gate live in the enforcer, not
+	// here.
 	BudgetGate BudgetGate
-	// LeaseExtender attempts the §8.6 budget-exhaustion lease extension at
-	// the exhaustion boundary of a proxy-mode session, before the session is
-	// torn down. When Usage.RecordUsage reports the settling call exhausted
-	// the session, the proxy derives an in-path wait bounded by
-	// ProxyExtensionWaitTimeout and calls ExtendForBudget once per exhaustion
-	// event, branching its write path on the Outcome (proposal 0023 S4). A
-	// nil LeaseExtender disables the automatic extension: the proxy fails
-	// closed on exhaustion (the §11.2 line 44 terminate-immediately posture).
-	//
-	// spec: §8.6 line 629.
-	LeaseExtender LeaseExtender
-	// ProxyExtensionWaitTimeout bounds the in-path wait for a §8.6 extension
-	// attempt: the proxy derives waitCtx as context.WithTimeout(r.Context(),
-	// ProxyExtensionWaitTimeout) before calling LeaseExtender.ExtendForBudget,
-	// so a slow (elicitation-mode) extension falls through to a
-	// recover-on-next-request BUDGET_EXHAUSTED rather than pinning the
-	// request. It is operator-tunable because §8.6 does not fix it; a
-	// non-positive value selects defaultProxyExtensionWaitTimeout.
-	//
-	// spec: §8.6 line 629 (proxyExtensionWaitTimeout); proposal 0023.
-	ProxyExtensionWaitTimeout time.Duration
 	// Cache is the §4.9 semantic cache consulted on the non-streaming
 	// request path. A nil Cache disables caching (the §4.9 default).
 	Cache ProxyCache
@@ -496,16 +461,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// spec: §8.6 line 629 / §11.2 line 44 — settle the call's usage against
 	// the session's token budget. Recording is what detects budget
-	// exhaustion, so it must precede the write: on a non-streaming request
-	// the response is not yet committed, so an exhausting call whose §8.6
-	// extension fails or is still pending returns BUDGET_EXHAUSTED rather
-	// than the held 200.
-	exhausted := h.recordUsage(r.Context(), lease, resp.Usage)
-	if exhausted && h.extendOnExhaustion(r.Context(), lease) != OutcomeGranted {
+	// exhaustion and, inside the record path, dispatches the single §8.6
+	// extension and applies its side-effects; it returns the resolved
+	// Outcome. It must precede the write: on a non-streaming request the
+	// response is not yet committed, so an exhausting call whose §8.6
+	// extension is denied, still pending, or has no extender wired returns
+	// BUDGET_EXHAUSTED rather than the held 200.
+	exhausted, outcome := h.recordUsage(r.Context(), lease, resp.Usage)
+	if exhausted && outcome != OutcomeGranted {
 		// The extension was denied, is still pending, or no extender is
 		// wired: fail closed for this request. The exhausting call's usage
-		// is already recorded exactly once above; the session's subsequent
-		// requests are gated by the pre-flight BudgetGate.
+		// is already recorded exactly once above, and the enforcer has
+		// already applied the deny / terminate side-effects; the session's
+		// subsequent requests are gated by the pre-flight BudgetGate.
 		h.writeError(w, http.StatusForbidden, "BUDGET_EXHAUSTED",
 			"the session's token budget is exhausted")
 		return
@@ -560,15 +528,14 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 	// spec: §8.6 line 629 — settle the streamed usage against the session's
 	// token budget. The 200/SSE response is already committed (WriteHeader
 	// and RelayStream have flushed the body to the pod), so a committed
-	// stream cannot be denied. On exhaustion the §8.6 extension still fires:
-	// a granted extension raises the session's budget for its next request
-	// (admitted by the pre-flight BudgetGate), and a terminal or still-pending
-	// outcome leaves that gate denying the session's subsequent requests. The
-	// current request's committed response stands in every case.
-	exhausted := h.recordUsage(r.Context(), lease, usage)
-	if exhausted {
-		h.extendOnExhaustion(r.Context(), lease)
-	}
+	// stream cannot be denied. On exhaustion the §8.6 extension still fires
+	// inside the record path: a granted extension raises the session's budget
+	// for its next request (admitted by the pre-flight BudgetGate), and a
+	// terminal or still-pending outcome leaves that gate denying the session's
+	// subsequent requests. The record path applies those side-effects, so the
+	// streaming handler discards the returned outcome: the current request's
+	// committed response stands in every case.
+	_, _ = h.recordUsage(r.Context(), lease, usage)
 }
 
 // runLLMPhase runs the §4.8 interceptor chain for an LLM proxy phase
@@ -640,51 +607,15 @@ func requestWantsStream(body []byte) bool {
 
 // recordUsage forwards the authoritative token usage to the configured
 // recorder under the request context and reports whether recording it
-// exhausted the session's token budget. A nil recorder records nothing and
-// reports not exhausted.
-func (h *Handler) recordUsage(ctx context.Context, lease credential.Lease, usage Usage) (exhausted bool) {
+// exhausted the session's token budget and, when it did, the tri-state
+// Outcome the record path's single §8.6 extension resolved to. The proxy
+// branches its write path on that Outcome without issuing its own extension
+// call. A nil recorder records nothing and reports not exhausted.
+func (h *Handler) recordUsage(ctx context.Context, lease credential.Lease, usage Usage) (exhausted bool, outcome Outcome) {
 	if h.Usage == nil {
-		return false
+		return false, OutcomeGranted
 	}
 	return h.Usage.RecordUsage(ctx, lease, usage)
-}
-
-// extendOnExhaustion attempts the §8.6 budget-exhaustion lease extension for
-// a proxy-mode session at the exhaustion boundary and returns the tri-state
-// Outcome the caller branches its write path on. It fires at most once per
-// call (the caller guards it behind a single exhaustion detection), before
-// the session's terminal side-effects, and derives the in-path wait from the
-// request context bounded by ProxyExtensionWaitTimeout so a client disconnect,
-// the runtime SDK's own timeout, or the wait deadline unblocks it.
-//
-// It fails closed (OutcomeTerminal) when no LeaseExtender is wired, when the
-// lease is not proxy-mode, or when it carries no session id, so the caller
-// denies the request and the enforcer terminates immediately — preserving the
-// §11.2 line 44 posture where no automatic extension is available. spec: §8.6
-// line 629; proposal 0023 S4.
-func (h *Handler) extendOnExhaustion(reqCtx context.Context, lease credential.Lease) Outcome {
-	if h.LeaseExtender == nil || lease.DeliveryMode != credential.DeliveryProxy || lease.SessionID == "" {
-		return OutcomeTerminal
-	}
-	waitCtx, cancel := context.WithTimeout(reqCtx, h.proxyExtensionWaitTimeout())
-	defer cancel()
-	outcome, err := h.LeaseExtender.ExtendForBudget(reqCtx, waitCtx, lease.SessionID)
-	if err != nil {
-		// A dispatch error is a fail-closed terminal outcome regardless of
-		// what the extender reported alongside it (spec: §8.6 line 629).
-		return OutcomeTerminal
-	}
-	return outcome
-}
-
-// proxyExtensionWaitTimeout resolves the in-path §8.6 extension wait, falling
-// back to the package default when the handler carries no operator-tuned
-// value.
-func (h *Handler) proxyExtensionWaitTimeout() time.Duration {
-	if h.ProxyExtensionWaitTimeout > 0 {
-		return h.ProxyExtensionWaitTimeout
-	}
-	return defaultProxyExtensionWaitTimeout
 }
 
 // now returns the handler clock.

@@ -149,19 +149,19 @@ func (r *proxyUsageRecorder) setActivityStamper(s *sessionidle.Stamper) {
 // against the tenant alone, leaving Runtime empty and the per-user
 // quota window keyed on the empty user id (the tenant and global rollups
 // are unaffected).
-func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.Lease, u llmproxy.Usage) (exhausted bool) {
+func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.Lease, u llmproxy.Usage) (exhausted bool, outcome llmproxy.Outcome) {
 	if r == nil {
-		return false
+		return false, llmproxy.OutcomeGranted
 	}
 	if lease.DeliveryMode != credential.DeliveryProxy {
 		// spec: §4.9 line 1468 — only proxy-mode counts are authoritative.
-		return false
+		return false, llmproxy.OutcomeGranted
 	}
 	if lease.TenantID == "" {
 		// Without a tenant attribution the record is meaningless to the
 		// §15.1 byTenant rollup and the §11.2 per-tenant window; drop
 		// rather than emit an "unknown" tenant series.
-		return false
+		return false, llmproxy.OutcomeGranted
 	}
 	// spec: §6.2 lines 277 — proxy-mode activity. Each proxied response is
 	// direct evidence of active agent work; reset the idle clock so a
@@ -225,19 +225,43 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 	r.recordQuota(lease.TenantID, userID, tokens)
 
 	// spec: §11.2 line 44 / §8.6 line 629 — enforce the per-session token
-	// budget against the cumulative proxy-recorded usage. Recording detects
-	// exhaustion; Record reports it so the proxy attempts the §8.6 extension
-	// at the exhaustion boundary and drives its write-path branch. The
-	// enforcer runs under the request context so its in-path extension wait
-	// honors a client disconnect and the proxyExtensionWaitTimeout deadline
-	// (the waitCtx the enforcer derives). The metering write above already
-	// landed the authoritative record before the session can be torn down.
+	// budget against the cumulative proxy-recorded usage. Record detects
+	// exhaustion, dispatches the single §8.6 extension through the enforcer's
+	// injected seam, applies the raise / deny / terminate side-effects, and
+	// returns the resolved tri-state Outcome. The recorder maps that onto the
+	// proxy-local Outcome so the proxy drives its write-path branch without a
+	// second, independent extension dispatch (proposal 0023 S4). The enforcer
+	// runs under the request context so its in-path extension wait honors a
+	// client disconnect and the proxyExtensionWaitTimeout deadline (the
+	// waitCtx the recorder derives). The metering write above already landed
+	// the authoritative record before the session can be torn down.
+	outcome = llmproxy.OutcomeGranted
 	if r.budget != nil {
 		waitCtx, cancel := context.WithTimeout(ctx, r.proxyExtensionWaitTimeout)
-		exhausted = r.budget.Record(ctx, waitCtx, lease.TenantID, lease.SessionID, tokenBudget, tokens)
+		var budgetOutcome sessionbudget.Outcome
+		exhausted, budgetOutcome = r.budget.Record(ctx, waitCtx, lease.TenantID, lease.SessionID, tokenBudget, tokens)
 		cancel()
+		outcome = proxyOutcome(budgetOutcome)
 	}
-	return exhausted
+	return exhausted, outcome
+}
+
+// proxyOutcome maps the §11.2 sessionbudget tri-state onto the proxy-local
+// tri-state so the enforcer stays decoupled from the llmproxy package. The
+// two enums are structurally identical; the mapping is explicit so a future
+// divergence in either enum is a compile-time break here rather than a silent
+// mis-branch on the proxy write path. spec: §8.6 line 629; proposal 0023 S6.
+func proxyOutcome(o sessionbudget.Outcome) llmproxy.Outcome {
+	switch o {
+	case sessionbudget.Granted:
+		return llmproxy.OutcomeGranted
+	case sessionbudget.Pending:
+		return llmproxy.OutcomePending
+	default:
+		// sessionbudget.Terminal and any unknown value fail closed to the
+		// proxy's terminal branch (deny the request).
+		return llmproxy.OutcomeTerminal
+	}
 }
 
 // recordQuota advances the §11.2 hierarchical token counter (per-user,

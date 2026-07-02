@@ -163,7 +163,7 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 	}
 	// First request stays under the 200-token budget: no termination, gate
 	// open, and the record path reports not-exhausted.
-	if exhausted := rec.RecordUsage(context.Background(), lease, llmproxy.Usage{InputTokens: 80, OutputTokens: 40}); exhausted { // 120
+	if exhausted, _ := rec.RecordUsage(context.Background(), lease, llmproxy.Usage{InputTokens: 80, OutputTokens: 40}); exhausted { // 120
 		t.Fatalf("under-budget record must report not exhausted")
 	}
 	if !enforcer.Allow("s_1") {
@@ -173,11 +173,17 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 		t.Fatalf("no termination expected under budget, got %v", term.calls)
 	}
 	// Second request crosses the budget (cumulative 240 >= 200): the record
-	// path reports exhausted (the signal the proxy uses to attempt the §8.6
-	// extension and drive its write branch), and the enforcer's nil-seam path
-	// terminates the session and closes its pre-flight gate.
-	if exhausted := rec.RecordUsage(context.Background(), lease, llmproxy.Usage{InputTokens: 90, OutputTokens: 30}); !exhausted { // +120 = 240
-		t.Fatalf("over-budget record must report exhausted so the proxy attempts the §8.6 extension")
+	// path reports exhausted and surfaces the enforcer's resolved Outcome (the
+	// signal the proxy branches its write path on), and the enforcer's
+	// nil-seam path terminates the session and closes its pre-flight gate. The
+	// surfaced Outcome is Terminal so the proxy fails the exhausting request
+	// closed rather than re-dispatching its own extension.
+	exhausted, outcome := rec.RecordUsage(context.Background(), lease, llmproxy.Usage{InputTokens: 90, OutputTokens: 30}) // +120 = 240
+	if !exhausted {
+		t.Fatalf("over-budget record must report exhausted so the proxy drives its write branch")
+	}
+	if outcome != llmproxy.OutcomeTerminal {
+		t.Fatalf("nil-seam exhaustion must surface OutcomeTerminal (fail closed), got %v", outcome)
 	}
 	if enforcer.Allow("s_1") {
 		t.Fatalf("exhausted session must be denied by the pre-flight gate")

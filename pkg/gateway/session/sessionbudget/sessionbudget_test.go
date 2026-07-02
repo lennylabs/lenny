@@ -87,8 +87,11 @@ func TestRecordTerminatesOnBudgetExhaustion_spec_11_2(t *testing.T) {
 	e := New(term, nil, nil)
 	req, wait := bg()
 
-	// Under budget: no termination, request allowed.
-	e.Record(req, wait, "acme", "s1", 1000, 400)
+	// Under budget: no termination, request allowed. A call that does not
+	// cross the boundary reports not-exhausted with the inert Granted outcome.
+	if exhausted, outcome := e.Record(req, wait, "acme", "s1", 1000, 400); exhausted || outcome != Granted {
+		t.Fatalf("under-budget Record = (%v, %v), want (false, GRANTED)", exhausted, outcome)
+	}
 	if !e.Allow("s1") {
 		t.Fatalf("session under budget should be allowed")
 	}
@@ -96,9 +99,12 @@ func TestRecordTerminatesOnBudgetExhaustion_spec_11_2(t *testing.T) {
 		t.Fatalf("no termination expected under budget, got %v", got)
 	}
 
-	// Reaching the budget exhausts it: terminate once, deny further
-	// requests.
-	e.Record(req, wait, "acme", "s1", 1000, 700) // cumulative 1100 >= 1000
+	// Reaching the budget exhausts it with no seam wired: the returned outcome
+	// is Terminal (fail closed), terminate once, deny further requests.
+	exhausted, outcome := e.Record(req, wait, "acme", "s1", 1000, 700) // cumulative 1100 >= 1000
+	if !exhausted || outcome != Terminal {
+		t.Fatalf("nil-seam exhaustion = (%v, %v), want (true, TERMINAL)", exhausted, outcome)
+	}
 	if e.Allow("s1") {
 		t.Fatalf("exhausted session must be denied by the §8.10 gate")
 	}
@@ -220,7 +226,15 @@ func TestRecordGrantedSeamContinues_spec_8_6(t *testing.T) {
 	seam.e = e
 	req, wait := bg()
 
-	e.Record(req, wait, "acme", "s1", 1000, 1000) // exhausts, seam grants
+	exhausted, outcome := e.Record(req, wait, "acme", "s1", 1000, 1000) // exhausts, seam grants
+	if !exhausted {
+		t.Fatalf("crossing the budget boundary must report exhausted")
+	}
+	// The returned Outcome is what the recorder surfaces to the proxy so the
+	// proxy delivers the held response without a second extension dispatch.
+	if outcome != Granted {
+		t.Fatalf("a Granted seam resolution must be returned as Granted, got %v", outcome)
+	}
 	if seam.count() != 1 {
 		t.Fatalf("the extension seam must be consulted once at the exhaustion boundary, got %d calls", seam.count())
 	}
@@ -244,7 +258,15 @@ func TestRecordPendingSeamDeniesButDoesNotTerminate_spec_8_6(t *testing.T) {
 	e := New(term, seam.fn, nil)
 	req, wait := bg()
 
-	e.Record(req, wait, "acme", "s1", 1000, 1000) // exhausts, seam pends
+	exhausted, outcome := e.Record(req, wait, "acme", "s1", 1000, 1000) // exhausts, seam pends
+	if !exhausted {
+		t.Fatalf("crossing the budget boundary must report exhausted")
+	}
+	// The returned Outcome is Pending: the recorder surfaces it so the proxy
+	// denies the current non-streaming request while the episode resolves.
+	if outcome != Pending {
+		t.Fatalf("a Pending seam resolution must be returned as Pending, got %v", outcome)
+	}
 	if seam.count() != 1 {
 		t.Fatalf("the extension seam must be consulted once, got %d calls", seam.count())
 	}
