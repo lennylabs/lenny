@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
+	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -477,4 +478,378 @@ func startIssuedStore(t *testing.T) (*issuedtokenstore.Store, *containers.Postgr
 	t.Helper()
 	_, pg := startStore(t)
 	return issuedtokenstore.New(pg.Pool), pg
+}
+
+// crashingIssued wraps storeAdminIssued and fails the DurableRevoke of a single
+// targeted jti, simulating a process crash (or hard revoke failure) after the
+// Secret patch commits but before the in-request durable revoke of that jti
+// commits. Targeting a single jti rather than every revoke lets the crash be
+// placed precisely on the post-patch revoke while leaving the earlier
+// revoke-before-overwrite step (which targets a different, already-handled jti)
+// free to commit — the sequence the two-crash-then-retry test exercises. With
+// crashJTI empty, every revoke passes through to the real store.
+type crashingIssued struct {
+	inner    storeAdminIssued
+	mu       sync.Mutex
+	crashJTI string
+}
+
+func (c *crashingIssued) Record(ctx context.Context, rec admintoken.MintedToken) error {
+	return c.inner.Record(ctx, rec)
+}
+
+func (c *crashingIssued) RecordWithExchangeAudit(ctx context.Context, rec admintoken.MintedToken) error {
+	return c.inner.RecordWithExchangeAudit(ctx, rec)
+}
+
+func (c *crashingIssued) DurableRevoke(ctx context.Context, tenantID, jti string, at time.Time) error {
+	c.mu.Lock()
+	crash := c.crashJTI != "" && c.crashJTI == jti
+	c.mu.Unlock()
+	if crash {
+		return errors.New("simulated crash between Secret patch and durable revoke")
+	}
+	return c.inner.DurableRevoke(ctx, tenantID, jti, at)
+}
+
+func (c *crashingIssued) WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error {
+	return c.inner.WithSubjectLock(ctx, tenantID, subject, fn)
+}
+
+// crashOn arms the wrapper to fail the durable revoke of exactly jti (the
+// post-patch revoke of the read-time current token). Passing "" disarms it.
+func (c *crashingIssued) crashOn(jti string) {
+	c.mu.Lock()
+	c.crashJTI = jti
+	c.mu.Unlock()
+}
+
+// newReclaimer wires the production admintoken/reclaimer.Reclaimer over the
+// same fake Secret the provisioner patches and the same real store adapter the
+// in-handler revoke uses, so the sweep exercises the real durable-revoke +
+// audit + idempotency path against real Postgres. A zero interval falls back
+// to the default; the tests call Sweep directly rather than Run.
+func newReclaimer(t *testing.T, secrets admintokenreclaimer.SecretReader, revoker admintokenreclaimer.Revoker, tenant string) *admintokenreclaimer.Reclaimer {
+	t.Helper()
+	r, err := admintokenreclaimer.New(admintokenreclaimer.Config{
+		Namespace:  "lenny-system",
+		SecretName: admintoken.DefaultSecretName,
+		Tenant:     tenant,
+	}, secrets, revoker, time.Now)
+	if err != nil {
+		t.Fatalf("reclaimer.New: %v", err)
+	}
+	return r
+}
+
+// spec: §13.3 lines 601-603 (named predecessor and leader-gated reclaimer),
+// §16.7 line 673 (token.revoked rotation_replaced), §17.6.
+// diagnosis: a crash after the Secret patch but before the in-request durable
+// revoke leaves the prior admin token live and named in prev_jti. The
+// leader-gated reclaimer sweep MUST durably revoke that named predecessor on
+// its next pass, so the superseded credential stops validating within the
+// sweep interval rather than validating indefinitely (§13.3 line 601 crash
+// window). A failure means the crash-recovery surface does not close the
+// window and the orphaned admin token validates until its ~10-year TTL.
+func TestReclaimerRevokesOrphanedPredecessorAfterCrash(t *testing.T) {
+	t.Parallel()
+	store, pg := startIssuedStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	signer := jwt.NewHMACSigner("k", []byte("admin-token-secret"))
+	cache := &recordingCache{}
+	secrets := &memSecrets{}
+	crash := &crashingIssued{inner: storeAdminIssued{store: store, cache: cache}}
+	p, err := admintoken.New(admintoken.Config{Namespace: "lenny-system", SecretName: admintoken.DefaultSecretName, AdminTenant: tenant},
+		signer, userstore.NewMemory(), secrets, crash, time.Now)
+	if err != nil {
+		t.Fatalf("admintoken.New: %v", err)
+	}
+
+	// Establish an admin token (first rotation on empty state: mint only).
+	first, err := p.Rotate(ctx)
+	if err != nil {
+		t.Fatalf("first Rotate: %v", err)
+	}
+	orphanJTI := jtiOf(t, signer, first.Token)
+
+	// A second rotation crashes after the Secret patch but before the
+	// in-request durable revoke of orphanJTI commits: the Secret is patched
+	// (naming orphanJTI in prev_jti) and Rotate returns an error, leaving
+	// orphanJTI live-and-named.
+	crash.crashOn(orphanJTI)
+	if _, err := p.Rotate(ctx); err == nil {
+		t.Fatal("Rotate must surface the crash on the post-patch revoke")
+	}
+	if got := secrets.prevJTI(); got != orphanJTI {
+		t.Fatalf("prev_jti = %q, want the orphaned predecessor %q named after the crash", got, orphanJTI)
+	}
+	// The predecessor is still live in Postgres (the crash window is open).
+	got, err := store.Get(ctx, tenant, orphanJTI)
+	if err != nil {
+		t.Fatalf("Get orphan: %v", err)
+	}
+	if got.Revoked() {
+		t.Fatal("precondition: orphan must be live after the crash (the sweep has not run yet)")
+	}
+
+	// Run the leader-gated reclaimer sweep once. It reads prev_jti and durably
+	// revokes the orphan through a fresh, non-crashing store adapter (the sweep
+	// runs on a healthy replica after the crash, so its durable revoke commits).
+	recl := newReclaimer(t, secrets, storeAdminIssued{store: store, cache: cache}, tenant)
+	reclaimed, err := recl.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if !reclaimed {
+		t.Fatal("Sweep did not reclaim the named predecessor")
+	}
+
+	// The orphan is now durably revoked with rotation_replaced.
+	after, err := store.Get(ctx, tenant, orphanJTI)
+	if err != nil {
+		t.Fatalf("Get orphan after sweep: %v", err)
+	}
+	if !after.Revoked() {
+		t.Fatal("reclaimer sweep did not durably revoke the orphaned predecessor (crash window stays open)")
+	}
+	if after.RevokedReason != "rotation_replaced" {
+		t.Errorf("revoked_reason=%q, want rotation_replaced", after.RevokedReason)
+	}
+	if !cache.has(orphanJTI) {
+		t.Error("reclaimer sweep did not push the orphan onto the cross-replica cache after the durable revoke")
+	}
+
+	// The sweep is idempotent: a second pass over the same still-named
+	// predecessor is a no-op durable revoke (already revoked), not a
+	// double-emit or an error.
+	if _, err := recl.Sweep(ctx); err != nil {
+		t.Fatalf("second Sweep must be idempotent, got: %v", err)
+	}
+}
+
+// spec: §13.3 line 603 (the sweep targets only the single named predecessor).
+// diagnosis: the reclaimer sweep must NOT revoke the about-to-be-installed
+// successor when it fires mid-rotation (the new token is recorded but the
+// Secret is not yet patched, so the Secret's prev_jti still names the prior
+// predecessor, not the successor). A failure means a sweep firing during a
+// rotation revokes the successor before it is installed, handing the operator
+// a dead-on-arrival token and locking them out — the exact lockout the
+// persist-Secret-before-revoke ordering exists to prevent.
+func TestReclaimerMidRotationDoesNotRevokeSuccessor(t *testing.T) {
+	t.Parallel()
+	store, pg := startIssuedStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	p, secrets, signer, cache := newAdminProvisioner(t, store, tenant)
+
+	// Establish an admin token so the Secret exists with a current jti and an
+	// empty prev_jti slot.
+	first, err := p.Rotate(ctx)
+	if err != nil {
+		t.Fatalf("first Rotate: %v", err)
+	}
+	installedJTI := jtiOf(t, signer, first.Token)
+
+	// Simulate mid-rotation: the successor token is recorded in Postgres
+	// (RecordWithExchangeAudit) but the Secret is NOT yet patched, so its
+	// prev_jti is still empty. The sweep reads the Secret, sees no named
+	// predecessor, and does nothing — it never reaches the recorded-but-not-
+	// installed successor.
+	successorJTI := "successor-recorded-not-installed"
+	now := time.Now().UTC()
+	if err := store.Record(ctx, issuedtokenstore.IssuedToken{
+		JTI: successorJTI, TenantID: tenant, Subject: admintoken.DefaultUsername,
+		TokenHash: []byte("successor-hash"), IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("record successor: %v", err)
+	}
+
+	recl := newReclaimer(t, secrets, storeAdminIssued{store: store, cache: cache}, tenant)
+	reclaimed, err := recl.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if reclaimed {
+		t.Fatal("Sweep reclaimed something when prev_jti is empty (mid-rotation successor must be untouched)")
+	}
+
+	// The recorded-but-not-installed successor is still live.
+	succ, err := store.Get(ctx, tenant, successorJTI)
+	if err != nil {
+		t.Fatalf("Get successor: %v", err)
+	}
+	if succ.Revoked() {
+		t.Fatal("reclaimer sweep revoked the about-to-be-installed successor (dead-on-arrival lockout)")
+	}
+	// The currently installed token is also untouched.
+	cur, err := store.Get(ctx, tenant, installedJTI)
+	if err != nil {
+		t.Fatalf("Get installed: %v", err)
+	}
+	if cur.Revoked() {
+		t.Fatal("reclaimer sweep revoked the currently installed admin token")
+	}
+}
+
+// spec: §13.3 line 603 (the sweep never revokes a flow-2 self-rotated token
+// for the same platform-admin subject).
+// diagnosis: the lenny-admin subject is a platform-admin eligible for the
+// general /v1/oauth/token self-rotation grant, which mints a live token for
+// the same subject WITHOUT patching the Secret. The reclaimer sweep, which
+// targets only the single jti the Secret names in prev_jti, MUST leave that
+// self-rotated token live. A failure means the sweep revokes a legitimately
+// self-rotated admin token within one sweep interval — a whole-subject sweep's
+// exact defect, which the named-predecessor design avoids.
+func TestReclaimerLeavesFlow2SelfRotatedTokenAlive(t *testing.T) {
+	t.Parallel()
+	store, pg := startIssuedStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	p, secrets, _, cache := newAdminProvisioner(t, store, tenant)
+
+	// Two bootstrap-Secret rotations: the first mints, the second supersedes it
+	// and names the first as prev_jti, then the in-handler revoke durably
+	// revokes the first. After this, prev_jti names the (already revoked) first
+	// jti and the Secret's current jti is the second.
+	if _, err := p.Rotate(ctx); err != nil {
+		t.Fatalf("first Rotate: %v", err)
+	}
+	if _, err := p.Rotate(ctx); err != nil {
+		t.Fatalf("second Rotate: %v", err)
+	}
+
+	// A flow-2 general /v1/oauth/token self-rotation mints a NEW live token for
+	// the same lenny-admin subject via RecordWithRotationAudit, without patching
+	// the Secret. Its jti is therefore never written into prev_jti.
+	selfRotatedJTI := "flow2-self-rotated-live"
+	now := time.Now().UTC()
+	if err := store.Record(ctx, issuedtokenstore.IssuedToken{
+		JTI: selfRotatedJTI, TenantID: tenant, Subject: admintoken.DefaultUsername,
+		TokenHash: []byte("flow2-hash"), IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("record flow-2 token: %v", err)
+	}
+
+	// The sweep runs. prev_jti names the already-revoked first bootstrap jti, so
+	// the sweep's durable revoke is an idempotent no-op; the flow-2 token, named
+	// nowhere in the Secret, is untouched.
+	recl := newReclaimer(t, secrets, storeAdminIssued{store: store, cache: cache}, tenant)
+	if _, err := recl.Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	selfRotated, err := store.Get(ctx, tenant, selfRotatedJTI)
+	if err != nil {
+		t.Fatalf("Get flow-2 token: %v", err)
+	}
+	if selfRotated.Revoked() {
+		t.Fatal("reclaimer sweep revoked a flow-2 self-rotated lenny-admin token (whole-subject sweep defect)")
+	}
+	// Sanity: the Secret's current bootstrap token is also live.
+	cur, err := store.Get(ctx, tenant, secrets.currentJTI())
+	if err != nil {
+		t.Fatalf("Get current bootstrap token: %v", err)
+	}
+	if cur.Revoked() {
+		t.Fatal("current bootstrap admin token unexpectedly revoked")
+	}
+}
+
+// spec: §13.3 lines 603-604 (revoke-before-overwrite plus the sweep closing
+// the last-named predecessor).
+// diagnosis: two crash-then-retry rotations straddling the sweep window must
+// leave NEITHER superseded token live. Rotation A crashes leaving predecessor
+// jti_A orphaned and named; the operator retries with rotation B, which
+// durably revokes jti_A before overwriting prev_jti (revoke-before-overwrite),
+// then itself crashes leaving jti_B orphaned and named. The sweep then closes
+// jti_B. A failure means an orphan escapes both the revoke-before-overwrite
+// step and the sweep, validating indefinitely under the ~10-year admin TTL —
+// the indefinite-validation leak the two rules jointly close.
+func TestReclaimerTwoCrashRetryRotationsRevokeBothPredecessors(t *testing.T) {
+	t.Parallel()
+	store, pg := startIssuedStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	signer := jwt.NewHMACSigner("k", []byte("admin-token-secret"))
+	cache := &recordingCache{}
+	secrets := &memSecrets{}
+	crash := &crashingIssued{inner: storeAdminIssued{store: store, cache: cache}}
+	p, err := admintoken.New(admintoken.Config{Namespace: "lenny-system", SecretName: admintoken.DefaultSecretName, AdminTenant: tenant},
+		signer, userstore.NewMemory(), secrets, crash, time.Now)
+	if err != nil {
+		t.Fatalf("admintoken.New: %v", err)
+	}
+
+	// Establish jti_A as the current admin token.
+	rA, err := p.Rotate(ctx)
+	if err != nil {
+		t.Fatalf("Rotate A: %v", err)
+	}
+	jtiA := jtiOf(t, signer, rA.Token)
+
+	// Rotation A' patches the Secret to {jti_B, prev_jti: jti_A} then crashes on
+	// its post-patch revoke of jti_A, leaving jti_A orphaned and named.
+	crash.crashOn(jtiA)
+	if _, err := p.Rotate(ctx); err == nil {
+		t.Fatal("rotation A' must surface the crash on the post-patch revoke of jti_A")
+	}
+	jtiB := secrets.currentJTI()
+	if secrets.prevJTI() != jtiA {
+		t.Fatalf("after crash A': prev_jti=%q want jti_A=%q", secrets.prevJTI(), jtiA)
+	}
+
+	// The operator retries with rotation B. Its revoke-before-overwrite step
+	// (step 2) durably revokes jti_A — the predecessor the live Secret names —
+	// BEFORE overwriting prev_jti; the crash is armed only on jti_B, so this step
+	// commits and closes the first orphan. B then mints jti_C, patches to
+	// {jti_C, prev_jti: jti_B}, and crashes on its post-patch revoke of jti_B,
+	// leaving jti_B orphaned and named. This is the real rotateLocked sequence,
+	// driven end to end rather than modeled out of band.
+	crash.crashOn(jtiB)
+	if _, err := p.Rotate(ctx); err == nil {
+		t.Fatal("rotation B must surface the crash on the post-patch revoke of jti_B")
+	}
+	if secrets.prevJTI() != jtiB {
+		t.Fatalf("after crash B: prev_jti=%q want jti_B=%q", secrets.prevJTI(), jtiB)
+	}
+
+	// jti_A is durably revoked by rotation B's revoke-before-overwrite step;
+	// jti_B is still live-and-named after B's crash.
+	aTok, err := store.Get(ctx, tenant, jtiA)
+	if err != nil {
+		t.Fatalf("Get jti_A: %v", err)
+	}
+	if !aTok.Revoked() {
+		t.Fatal("jti_A not revoked by revoke-before-overwrite (first orphan leaked)")
+	}
+	bTok, err := store.Get(ctx, tenant, jtiB)
+	if err != nil {
+		t.Fatalf("Get jti_B: %v", err)
+	}
+	if bTok.Revoked() {
+		t.Fatal("precondition: jti_B must be live-and-named before the sweep runs")
+	}
+
+	// The sweep closes the last-named predecessor jti_B.
+	recl := newReclaimer(t, secrets, storeAdminIssued{store: store, cache: cache}, tenant)
+	if _, err := recl.Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	// Neither superseded token is live after the sweep.
+	bAfter, err := store.Get(ctx, tenant, jtiB)
+	if err != nil {
+		t.Fatalf("Get jti_B after sweep: %v", err)
+	}
+	if !bAfter.Revoked() {
+		t.Fatal("sweep did not close the last-named predecessor jti_B (indefinite-validation leak)")
+	}
+	if bAfter.RevokedReason != "rotation_replaced" {
+		t.Errorf("jti_B revoked_reason=%q, want rotation_replaced", bAfter.RevokedReason)
+	}
 }

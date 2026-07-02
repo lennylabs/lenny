@@ -309,6 +309,7 @@ type gatewayFlags struct {
 	adminTokenNamespace                     *string
 	adminTokenSecretName                    *string
 	adminTokenTenant                        *string
+	adminTokenReclaimIntervalSeconds        *int
 	sessionEventReplayBufferDepth           *int
 	memoryMaxPerUser                        *int
 	memoryEnabled                           *bool
@@ -1174,6 +1175,8 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§17.6 line 463 name of the initial-admin-token Secret. Override via LENNY_ADMIN_TOKEN_SECRET_NAME.")
 	f.adminTokenTenant = flag.String("admin-token-tenant", envOr("LENNY_ADMIN_TOKEN_TENANT", "default"),
 		"§17.6 tenant the initial lenny-admin user and token are scoped to. Override via LENNY_ADMIN_TOKEN_TENANT.")
+	f.adminTokenReclaimIntervalSeconds = flag.Int("admin-token-reclaim-interval-seconds", envInt("LENNY_ADMIN_TOKEN_RECLAIM_INTERVAL_SECONDS", 300),
+		"§13.3 cadence in seconds of the leader-gated admin-token reclaimer sweep, which durably revokes a lenny-admin-token predecessor orphaned by a crash between the Secret patch and the in-request revoke (default 300 / 5 minutes). A non-positive value falls back to the default. This bounds the residual crash-window exposure of a superseded admin credential. Override via LENNY_ADMIN_TOKEN_RECLAIM_INTERVAL_SECONDS.")
 	// spec: §10.4 line 389 — operator-tunable SSE replay-buffer depth.
 	// Default 512 events matches the §10.4 reconnect-window assumption
 	// (60s at 10 events/s). The 64..4096 envelope is the spec-mandated

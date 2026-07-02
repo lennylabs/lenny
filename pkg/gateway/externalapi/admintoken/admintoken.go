@@ -514,6 +514,17 @@ func (p *Provisioner) mintForRotation(ctx context.Context) (mintedToken, error) 
 	return m, nil
 }
 
+// PredecessorJTI reports the single predecessor jti a rotation named in the
+// Secret's prevJtiKey slot, or "" when the slot is absent or empty. The
+// §13.3 leader-gated reclaimer sweep reads it to durably revoke a predecessor
+// orphaned by a crash between the Secret patch and the in-request durable
+// revoke, without duplicating the prevJtiKey string outside this package.
+//
+// spec: §13.3 (named predecessor and leader-gated reclaimer, line 603).
+func PredecessorJTI(data map[string][]byte) string {
+	return string(data[prevJtiKey])
+}
+
 // secretData builds the §17.6 line 470 Secret `data` map. prevJTI is the
 // predecessor the new token supersedes; it is empty on a first Secret
 // creation (no predecessor) and carries the read-time current jti on a
