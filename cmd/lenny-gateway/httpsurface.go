@@ -260,11 +260,15 @@ func (w *gatewayWiring) buildHTTPSurface(
 	openapiHandler := openapi.HandlerWithVersion(buildVersion)
 	mux.Handle("/openapi.yaml", openapiHandler)
 	// spec: §15.1 line 589 — `/openapi.json` is the canonical
-	// gateway-side JSON mount; `/v1/openapi.json` is retained for
-	// the §18 build-sequence reference and §25.4 lenny-ops parity.
-	// F-15.1.17.
+	// gateway-side JSON mount. spec: §15.1 (OpenAPI generation and
+	// discovery) — `/v1/openapi.json` and `/v1/openapi.yaml` are the
+	// admin-API discovery paths the §25.12 schema-discovery block and
+	// the §25.4 `/me` `links.openApi` hop resolve against; both forms
+	// are mounted so the YAML path is not a 404 against the gateway.
+	// F-15.1.17 / F-COV-1.
 	mux.Handle("/openapi.json", openapiHandler)
 	mux.Handle("/v1/openapi.json", openapiHandler)
+	mux.Handle("/v1/openapi.yaml", openapiHandler)
 	// §4.3 line 193 canonical token endpoint. The gateway reverse-
 	// proxies /v1/oauth/* to lenny-token-service so the Token Service
 	// is the actual minter for every Lenny bearer token. When the

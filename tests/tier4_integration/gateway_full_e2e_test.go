@@ -208,6 +208,34 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 		t.Errorf("openapi version: %v", doc["openapi"])
 	}
 
+	// spec: §15.1 (OpenAPI generation and discovery) — F-COV-1. §15.1
+	// lists both `/v1/openapi.json` and `/v1/openapi.yaml` as the
+	// admin-API discovery paths the §25.4 `/me` `links.openApi` hop and
+	// the §25.12 schema-discovery block resolve against. The gateway must
+	// serve the YAML alias, not 404 it, so an agent following the
+	// absolute-to-gateway link reaches the document. This fails against
+	// the pre-fix gateway, which mounted only the JSON `/v1` path.
+	resp, err = client.Get(base + "/v1/openapi.yaml")
+	if err != nil {
+		t.Fatalf("GET /v1/openapi.yaml: %v", err)
+	}
+	yamlBody, _ := io.ReadAll(resp.Body)
+	ct := resp.Header.Get("Content-Type")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/openapi.yaml status = %d, want 200", resp.StatusCode)
+	}
+	if ct != "application/yaml" {
+		t.Errorf("GET /v1/openapi.yaml Content-Type = %q, want application/yaml", ct)
+	}
+	var yamlDoc map[string]any
+	if err := json.Unmarshal(yamlBody, &yamlDoc); err != nil {
+		t.Fatalf("GET /v1/openapi.yaml body is not valid JSON/YAML: %v", err)
+	}
+	if yamlDoc["openapi"] != "3.1.0" {
+		t.Errorf("GET /v1/openapi.yaml openapi version: %v", yamlDoc["openapi"])
+	}
+
 	// ---- §15.2: the MCP adapter answers initialize ----
 	mcpResp, err := client.Post(base+"/mcp", "application/json",
 		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))

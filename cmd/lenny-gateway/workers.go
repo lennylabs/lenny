@@ -26,6 +26,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
+	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
 	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
@@ -552,6 +554,11 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	eventBusRetryIntervalSeconds := f.eventBusRetryIntervalSeconds
 	t4KmsProbeIntervalSeconds := f.t4KmsProbeIntervalSeconds
 	t4KmsProbeRateLimit := f.t4KmsProbeRateLimit
+	adminTokenDisabled := f.adminTokenDisabled
+	adminTokenNamespace := f.adminTokenNamespace
+	adminTokenSecretName := f.adminTokenSecretName
+	adminTokenTenant := f.adminTokenTenant
+	adminTokenReclaimIntervalSeconds := f.adminTokenReclaimIntervalSeconds
 	// ----- §12.5 gateway-leader election (lenny-gateway-leader Lease) -----
 	// spec: §12.5 lines 317, 332 — the artifact-GC orchestrator and the
 	// other gateway-singleton sweeps below (tombstone hard-prune,
@@ -870,6 +877,53 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 			if err := prober.Start(ctx); err != nil {
 				log.Printf("lenny-gateway: §12.5 T4 KMS probe loop exited: %v", err)
 			}
+		})
+	}
+
+	// ----- §13.3 admin-token reclaimer sweep (C7 crash recovery) -----
+	// The §17.6 gateway-mediated bootstrap admin-credential rotation patches
+	// the lenny-admin-token Secret before durably revoking the prior token, so
+	// a crash after the patch but before the revoke commits leaves the prior
+	// token live. The rotation durably names that orphaned predecessor in the
+	// Secret's prev_jti slot; this leader-gated sweep durably revokes the
+	// single named jti with revocation_reason: rotation_replaced whenever it is
+	// still unrevoked (idempotent once the in-request revoke has committed). It
+	// closes the crash window the persist-Secret-before-revoke ordering opens
+	// without weakening the no-grace-period guarantee, bounding the residual to
+	// the sweep interval. A Provision()-time reclaimer would not cover this
+	// window: provisioning runs only on an operator bootstrap call, not on a
+	// gateway start, and early-returns on an existing Secret (the post-crash
+	// state), so the always-running leader-gated sweep is the crash-recovery
+	// surface. Wired under the same preconditions as the provisioner
+	// (adminrouter.go): an in-cluster client to read the Secret, a durable
+	// token store to revoke, a namespace, and admin-token provisioning enabled.
+	// spec: §13.3 (named predecessor and leader-gated reclaimer, lines
+	// 601-607), §16.7 (token.revoked rotation_replaced, line 673), §17.6.
+	if !*adminTokenDisabled && w.clusterClient != nil && w.pgPool != nil && *adminTokenNamespace != "" {
+		recl, rerr := admintokenreclaimer.New(admintokenreclaimer.Config{
+			Namespace:  *adminTokenNamespace,
+			SecretName: *adminTokenSecretName,
+			Tenant:     *adminTokenTenant,
+			Interval:   time.Duration(*adminTokenReclaimIntervalSeconds) * time.Second,
+		},
+			k8ssecret.New(w.clusterClient),
+			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: w.revProp, metrics: w.gwMetrics, clock: clockinject.Now},
+			clockinject.Now)
+		if rerr != nil {
+			log.Fatalf("lenny-gateway: §13.3 admin-token reclaimer: %v", rerr)
+		}
+		log.Printf("lenny-gateway: §13.3 admin-token reclaimer sweep cadence %s (Secret %s/%s, tenant %s)",
+			recl.Interval(), *adminTokenNamespace, *adminTokenSecretName, *adminTokenTenant)
+		leaderGate.Add("admin-token-reclaimer", func(ctx context.Context) {
+			recl.Run(ctx, func(reclaimed bool, err error) {
+				if err != nil {
+					log.Printf("lenny-gateway: §13.3 admin-token reclaimer sweep error: %v", err)
+					return
+				}
+				if reclaimed {
+					log.Printf("lenny-gateway: §13.3 admin-token reclaimer durably revoked an orphaned predecessor token (crash between Secret patch and revoke)")
+				}
+			})
 		})
 	}
 

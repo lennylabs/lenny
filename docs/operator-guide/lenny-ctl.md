@@ -79,8 +79,8 @@ See [krew installation](krew-install.md) for kubectl-plugin details. Everything 
 
 `lenny-ctl` talks to two services:
 
-- The **gateway** for every `admin`-prefixed command (all of Sections 24.1-24.14 below). Target: `--api-url` / `LENNY_API_URL`.
-- **`lenny-ops`** for the Section 25 operability commands (`me`, `operations`, `events`, `diagnose`, `runbooks`, `upgrade`, `audit`, `drift`, `backup`, `restore`, `locks`, `escalations`, `logs`, `mcp-management`). Target: `--ops-server` / `LENNY_OPS_URL`, or auto-discovered from the gateway.
+- The **gateway** for every `admin`-prefixed command (all of Sections 24.1-24.14 below) and for the `audit` family, which targets the gateway-resident audit query API (`/v1/admin/audit-events`). Target: `--api-url` / `LENNY_API_URL`.
+- **`lenny-ops`** for the Section 25 operability commands (`me`, `operations`, `events`, `diagnose`, `runbooks`, `upgrade`, `drift`, `backup`, `restore`, `locks`, `escalations`, `logs`, `mcp-management`). Target: `--ops-server` / `LENNY_OPS_URL`, or auto-discovered from the gateway.
 
 Discovery rules:
 
@@ -262,7 +262,7 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token (internally calls `POST /v1/oauth/token` with RFC 8693 token-exchange grant) and patch K8s Secret | `platform-admin` |
+| `lenny-ctl admin users rotate-token --user <name>` | Rotate the initial admin token: the CLI calls `POST /v1/admin/users/{user}/rotate-token` and the gateway mints the new token in process, patches the `lenny-admin-token` Kubernetes Secret, and revokes the prior token | `platform-admin` |
 | `lenny-ctl admin users invalidate --user <name>` | Invalidate all active sessions for a user | `platform-admin` |
 
 ---
@@ -494,7 +494,7 @@ The wizard orchestrates the flow from [Installation](installation): cluster dete
 
 ## Agent-Operability Commands
 
-These commands target `lenny-ops` (the management plane) rather than the gateway. See [Server discovery and routing](#server-discovery-and-routing) for how `--ops-server` is resolved.
+These commands target `lenny-ops` (the management plane) rather than the gateway, with one exception: the `lenny-ctl audit` family targets the gateway-resident audit query API (see [Audit](#audit-lenny-ctl-audit) below). See [Server discovery and routing](#server-discovery-and-routing) for how `--ops-server` is resolved.
 
 ### Identity (`lenny-ctl me`)
 
@@ -539,6 +539,8 @@ These commands target `lenny-ops` (the management plane) rather than the gateway
 | `lenny-ctl runbooks get <name>` | Print the full structured runbook (machine-parseable steps) | `platform-admin` |
 
 ### Audit (`lenny-ctl audit`)
+
+Unlike the other commands in this section, the `lenny-ctl audit` family targets the **gateway** (`--api-url` / `LENNY_API_URL`) rather than `lenny-ops`. The audit query API is gateway-resident (`/v1/admin/audit-events`), backed by the gateway's per-tenant Postgres audit chains.
 
 | Command | Description | Min Role |
 |---|---|---|

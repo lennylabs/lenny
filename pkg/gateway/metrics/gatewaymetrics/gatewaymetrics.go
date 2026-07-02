@@ -2350,6 +2350,24 @@ func (m *Metrics) SetTimeDrift(seconds float64) {
 	m.timeDrift.Set(seconds)
 }
 
+// ObserveRevocationPropagation observes one token-revocation propagation
+// latency onto the §16.1 / §16.5 lenny_token_revocation_propagation_seconds
+// histogram keyed by the §16.7 propagation_mode outcome. The gateway calls
+// it from the §17.6 in-process admin-credential rotation path with
+// outcome=`postgres_only` (the gateway durably revokes the superseded token
+// in Postgres and does not publish on the EventBus). The §16.5
+// TokenRevocationPropagationLag alert keys on the `outcome="eventbus"`
+// bucket, so the gateway's `postgres_only` observation does not fire the
+// alert; it makes the rotation path a declared producer of the metric the
+// SEC-TS-1 design names on both the Token Service and the gateway paths.
+// spec: §16.5, §16.7 — SEC-TS-1.
+func (m *Metrics) ObserveRevocationPropagation(outcome string, d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.revocationPropagation.WithLabelValues(outcome).Observe(d.Seconds())
+}
+
 // Middleware returns an http.Handler that records the §16.1 request
 // metrics for every request to inner. The route label is taken from
 // the supplied routeOf function so high-cardinality path segments

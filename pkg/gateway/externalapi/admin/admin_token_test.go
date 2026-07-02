@@ -106,9 +106,9 @@ func TestBootstrapDryRunSkipsAdminToken(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 472 — the rotate-token route rotates the managed admin
+// spec: §17.6 — the rotate-token route rotates the managed admin
 // user and rejects any other user with 404. F-17.6.3.
-func TestRotateTokenRoute_spec_17_6_472(t *testing.T) {
+func TestRotateTokenRoute_spec_17_6(t *testing.T) {
 	prov := &fakeProvisioner{}
 	router := newAdminTokenRouter(t, prov)
 

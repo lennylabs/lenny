@@ -286,6 +286,60 @@ const (
 	propagationModePostgresOnly = "postgres_only"
 )
 
+// §16.7 line 672 token.exchanged `exchange_type` enum. The Token
+// Service's /v1/oauth/token exchange path emits every value except
+// `admin_rotation`'s gateway-direct bootstrap variant (the gateway
+// emits that on its in-process admin-Secret rotation, §13.3 line 599);
+// the general self/service-principal rotation grant on /v1/oauth/token
+// is classified `admin_rotation` here.
+const (
+	exchangeTypeAdminRotation  = "admin_rotation"
+	exchangeTypeDelegationMint = "delegation_mint"
+	exchangeTypeLeaseIssue     = "lease_issue"
+	exchangeTypeScopeNarrow    = "scope_narrow"
+)
+
+// classifyExchangeType maps one /v1/oauth/token exchange to its §16.7
+// line 672 `exchange_type`. The order is significant: a delegation mint
+// (actor token present) takes precedence over a self-rotation because
+// an actor-bearing exchange always mints a delegation child; a
+// self-rotation (the general rotation grant presenting the current
+// token as subject) is `admin_rotation`; a credential-lease issuance
+// (the issued token is a session-capability lease) is `lease_issue`;
+// every other narrowing derivation is `scope_narrow`. spec: §16.7 line
+// 672. SEC-TS-1.
+func classifyExchangeType(issued tokenexchange.Issued, isRotation bool, actorClaims *jwt.Claims) string {
+	switch {
+	case actorClaims != nil:
+		return exchangeTypeDelegationMint
+	case isRotation:
+		return exchangeTypeAdminRotation
+	case issued.Typ == tokenexchange.TypeSessionCapability:
+		return exchangeTypeLeaseIssue
+	default:
+		return exchangeTypeScopeNarrow
+	}
+}
+
+// classifyRejectedExchangeType maps a *rejected* /v1/oauth/token
+// exchange to its §16.7 line 672 `exchange_type` from the request
+// inputs alone, since no token was issued and self-rotation cannot be
+// confirmed without the minted token. A rejected delegation-mint
+// attempt (actor token present) is `delegation_mint`; a rejected lease
+// issuance (requested a session-capability lease) is `lease_issue`;
+// every other rejected derivation is `scope_narrow`. spec: §16.7 line
+// 672. SEC-TS-1.
+func classifyRejectedExchangeType(req tokenexchange.Request) string {
+	switch {
+	case req.Actor != nil:
+		return exchangeTypeDelegationMint
+	case req.Requested.Typ == tokenexchange.TypeSessionCapability:
+		return exchangeTypeLeaseIssue
+	default:
+		return exchangeTypeScopeNarrow
+	}
+}
+
 // revokedAuditPayload is the §16.7 line 666 `token.revoked` audit row
 // payload. It carries claim identifiers and revocation provenance only,
 // never the raw token bytes.
@@ -585,6 +639,7 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 		// policy_result reason so the SIEM has cross-tenant
 		// probe evidence.
 		if auditErr := s.recordExchangeAudit(r.Context(), subjectClaims.TenantID, exchangeAuditPayload{
+			ExchangeType: classifyRejectedExchangeType(exchangeReq),
 			CallerSub:    callerClaims.Subject,
 			SubjectSub:   subjectClaims.Subject,
 			PolicyResult: "rejected:" + ee.Reason,
@@ -691,7 +746,10 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 		IssuedAt:                 now,
 		ExpiresAt:                issued.Exp,
 	}
+	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
+
 	auditPayload := exchangeAuditPayload{
+		ExchangeType:    classifyExchangeType(issued, isRotation, actorClaims),
 		CallerSub:       callerClaims.Subject,
 		SubjectSub:      issued.Subject,
 		JTI:             jti,
@@ -701,8 +759,6 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 		PolicyResult:    "accepted",
 		Now:             now,
 	}
-
-	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
 
 	auditStore, _ := s.issuedTokens.(IssuedTokenAuditStore)
 	rotationStore, _ := s.issuedTokens.(IssuedTokenRotationStore)
@@ -780,6 +836,13 @@ func (s *Server) isSelfRotation(issued tokenexchange.Issued, callerClaims, subje
 // spec: §13.3 line 587 ("Token contents — access_token, subject_token,
 // actor_token — are NEVER written to audit payloads").
 type exchangeAuditPayload struct {
+	// ExchangeType is the §16.7 line 672 mandatory classification of the
+	// exchange: `admin_rotation` (the general self/service-principal
+	// rotation grant), `delegation_mint` (an actor-token delegation
+	// child mint), `lease_issue` (credential-lease issuance), or
+	// `scope_narrow` (an operability-scope narrowing derivation). Every
+	// `token.exchanged` row carries it. spec: §16.7 line 672. SEC-TS-1.
+	ExchangeType    string    `json:"exchange_type"`
 	CallerSub       string    `json:"caller_sub,omitempty"`
 	SubjectSub      string    `json:"subject_sub,omitempty"`
 	JTI             string    `json:"jti,omitempty"`
@@ -964,14 +1027,23 @@ func (s *Server) emitRotationRevoked(ctx context.Context, tenantID, revokedJTI, 
 // a publish failure yields `postgres_only`: Postgres remains the
 // authoritative revocation store, so peers fall back to the
 // issued_tokens.revoked_at check. F-16.7.5.
+//
+// It also observes the §16.1 lenny_token_revocation_propagation_seconds
+// histogram keyed by the resulting outcome, measuring the elapsed time
+// from the durable revocation write (this call is invoked once the
+// revoked_at COMMIT has landed) to the propagation-path completion, so
+// the §16.5 TokenRevocationPropagationLag alert on the `eventbus`
+// outcome is fireable. spec: §16.5, §16.7. SEC-TS-1.
 func (s *Server) propagateRevocation(ctx context.Context, tenantID, jti string) string {
-	if s.revocationPropagator == nil {
-		return propagationModePostgresOnly
+	start := s.clockNow()
+	mode := propagationModePostgresOnly
+	if s.revocationPropagator != nil {
+		if err := s.revocationPropagator(ctx, tenantID, jti); err == nil {
+			mode = propagationModeEventBus
+		}
 	}
-	if err := s.revocationPropagator(ctx, tenantID, jti); err != nil {
-		return propagationModePostgresOnly
-	}
-	return propagationModeEventBus
+	s.metrics.ObserveRevocationPropagation(mode, s.clockNow().Sub(start))
+	return mode
 }
 
 // clockNow returns the configured clock or time.Now.

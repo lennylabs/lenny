@@ -112,6 +112,65 @@ type Detected struct {
 	Detail string
 }
 
+// RenderedConfigMap is one §25.6 Helm-rendered ConfigMap the
+// bootstrapConfigDrift fix re-applies. Data is the canonical key/value
+// content the chart renders; Hash is the content hash the release
+// annotation records so detection can compare it against the live
+// ConfigMap without re-hashing the chart output. spec: §25.6 line 2953.
+type RenderedConfigMap struct {
+	// Name is the ConfigMap name (e.g. "lenny-bootstrap-values").
+	Name string
+	// Data is the rendered key/value content the fix re-applies.
+	Data map[string]string
+	// Hash is the content hash the drift detection compares against the
+	// live ConfigMap's release annotation.
+	Hash string
+}
+
+// RenderedMonitoring is the §25.6 Helm-rendered monitoring bundle the
+// prometheusRuleMissing fix re-applies: the PrometheusRule and
+// ServiceMonitor objects the chart's monitoring.yaml template produces
+// when monitoring.enabled=true. Each object is an unstructured manifest
+// keyed by its group/version/resource so the remediator can apply it
+// through the dynamic client. spec: §25.6 line 2955.
+type RenderedMonitoring struct {
+	// Objects is the rendered PrometheusRule/ServiceMonitor manifests.
+	Objects []RenderedObject
+}
+
+// RenderedObject is one Helm-rendered custom resource the doctor
+// re-applies, carrying the group/version/resource the dynamic client
+// addresses and the object's JSON manifest.
+type RenderedObject struct {
+	Group     string
+	Version   string
+	Resource  string
+	Namespace string
+	Name      string
+	// Manifest is the object body as an unstructured map the dynamic
+	// client server-side-applies.
+	Manifest map[string]any
+}
+
+// HelmRenderSource yields the §25.6 Helm-rendered references the
+// bootstrapConfigDrift and prometheusRuleMissing remediations compare
+// against the live cluster and re-apply. lenny-ops does not hold the
+// chart, so the source is injected from the values the operator
+// installs with (threaded through chart values to lenny-ops). A nil
+// HelmRenderSource on the production remediator leaves both findings
+// undetectable, so they report not_detected rather than a false
+// success. spec: §25.6 lines 2953, 2955.
+type HelmRenderSource interface {
+	// BootstrapConfigMap returns the rendered lenny-bootstrap ConfigMap
+	// the drift fix re-applies. A false ok means the operator did not
+	// supply the bootstrap render, so bootstrapConfigDrift is not detected.
+	BootstrapConfigMap(ctx context.Context) (cm RenderedConfigMap, ok bool, err error)
+	// Monitoring returns the rendered PrometheusRule/ServiceMonitor bundle
+	// the prometheusRuleMissing fix re-applies. A false ok means monitoring
+	// is not enabled in the release, so prometheusRuleMissing is not detected.
+	Monitoring(ctx context.Context) (m RenderedMonitoring, ok bool, err error)
+}
+
 // Remediator detects the §25.6 fixable findings present in the cluster
 // and applies each finding's idempotent remediation. A nil Remediator
 // leaves the doctor surface unconfigured (the endpoint reports 503).

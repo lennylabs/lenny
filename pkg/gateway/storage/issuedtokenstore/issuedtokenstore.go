@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -87,6 +88,63 @@ type Store struct {
 // New returns a Store backed by pool. The pool must point at a
 // database that has the migrations/ schema applied.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+
+// WithSubjectLock acquires a per-subject session-scoped Postgres advisory
+// lock, runs fn, and releases the lock on the same pinned connection. It
+// serializes the gateway's non-atomic admin-credential rotation
+// read-modify-write for one subject so two concurrent rotations cannot
+// interleave the Kubernetes Secret patch and the separate issued-token-store
+// transactions and drop a successor jti through the Secret's blind
+// full-map replace.
+//
+// The lock is session-scoped (`pg_advisory_lock` / `pg_advisory_unlock` on
+// one acquired connection) rather than transaction-scoped
+// (`pg_advisory_xact_lock`, used by the §11.7 audit lock and the §12.2.1
+// session-admission lock) because the protected sequence is not a single
+// Postgres transaction: it interleaves a K8s Secret read-modify-write with
+// several independent store transactions (Record, RecordWithAudit,
+// RevokeWithAudit), each opening its own pgtenant.InTx. A
+// transaction-scoped lock releases at the COMMIT of whichever store
+// transaction took it, before the next store or Secret step runs, so it
+// cannot span the whole sequence. fn does its own store transactions on
+// other pool connections; this connection only holds the mutual exclusion.
+//
+// The key is derived by Postgres as hashtext("admintoken:"+subject) so it
+// is stable across gateway replicas. The advisory lock is database-global
+// and reads no tenant-scoped row, so this method does not open a
+// pgtenant.InTx or SET app.current_tenant; tenantID names the tenant the
+// caller's protected rotation operates on (the §17.6 AdminTenant) and
+// keeps the calling convention parallel to the store's other methods.
+//
+// spec: §13.3 line 605 (advisory-locked concurrent-rotation discipline),
+// §13.3 line 597 (gateway-mediated admin-credential rotation ordering).
+func (s *Store) WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error {
+	_ = tenantID // Advisory lock is database-global; keyed on subject only.
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("issuedtokenstore: acquire connection for subject lock %q: %w", subject, err)
+	}
+	defer conn.Release()
+
+	// hashtext(text) returns int4; pg_advisory_lock accepts it via the
+	// implicit widening to bigint. Computing the key in Postgres keeps the
+	// "admintoken:"+subject convention in one place and matches the
+	// saltlockpg session-scoped idiom.
+	const lockKey = `SELECT pg_advisory_lock(hashtext('admintoken:' || $1))`
+	if _, err := conn.Exec(ctx, lockKey, subject); err != nil {
+		return fmt.Errorf("issuedtokenstore: acquire advisory lock for subject %q: %w", subject, err)
+	}
+	defer func() {
+		// Release on a background-derived context so a cancelled ctx still
+		// frees the session-level lock before the connection returns to the
+		// pool; a leaked session lock would deadlock every later rotation
+		// for this subject. spec: erasurejob/saltlockpg leak-safe unlock.
+		const unlock = `SELECT pg_advisory_unlock(hashtext('admintoken:' || $1))`
+		_, _ = conn.Exec(context.WithoutCancel(ctx), unlock, subject)
+	}()
+
+	return fn(ctx)
+}
 
 // Eraser is the §12.1 mandatory-erasure surface. The compile-time
 // assertion below proves the TokenIssuanceStore honors the erasure
@@ -304,6 +362,74 @@ func (s *Store) Revoke(ctx context.Context, tenantID, jti, reason string, at tim
 		}
 		return nil
 	})
+}
+
+// RevokeWithAudit durably revokes jti and writes the §16.7 `token.revoked`
+// audit row in a single Postgres transaction. The revoked_at/revoked_reason
+// stamp and the audit row therefore commit together: a §12.2 rehydration
+// (which reads `revoked_at IS NOT NULL`) can never observe a revocation with
+// no audit trail, and no audit row can name a token the durable store did
+// not revoke. Only after COMMIT should the caller push the jti onto the
+// cross-replica revocation cache, so a durable-write failure never leaves
+// the cache holding a revocation the authoritative store lacks.
+//
+// This is the reason-parameterized durable revoke the gateway's in-process
+// admin-credential rotation path uses: the standalone Token Service
+// revocation request emits `explicit_revoke` and the atomic rotation grant
+// uses RecordWithRotationAudit (which revokes the prior token inside the
+// mint transaction, before the Secret is patched). The gateway-mediated
+// bootstrap rotation must persist the `lenny-admin-token` Secret before
+// revoking the prior token, so it mints and records the new token first
+// (RecordWithAudit), patches the Secret, then calls RevokeWithAudit with
+// `revocation_reason: rotation_replaced` once the patch succeeds. The
+// revocation reason (revokedReason) is stamped on revoked_reason; the
+// auditEventType and auditPayload carry the §16.7-owned vocabulary
+// (`token.revoked` with `revocation_reason`, `propagation_mode`, and the
+// revoked jti/sub), so the store does not bake that schema in — the same
+// separation of concerns RecordWithAudit uses.
+//
+// Returns ErrNotFound when the token does not exist or is already revoked,
+// so a retried rotation does not double-emit a `token.revoked` row for a
+// jti the durable store already stamped. The audit row is returned to the
+// caller for cross-checking and metric labelling.
+//
+// spec: §13.3 line 597 (gateway-mediated admin-credential rotation
+// ordering: mint-record-persist-revoke, distinct from the single-transaction
+// token-exchange rotation), §16.7 line 673 (token.revoked
+// revocation_reason=rotation_replaced).
+func (s *Store) RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReason, auditEventType string, auditPayload json.RawMessage, at time.Time) (audit.Row, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	var committed audit.Row
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		// Stamp revoked_at/revoked_reason only when the token exists and is
+		// not already revoked, so a retry after the durable write already
+		// committed is a no-op (ErrNotFound) rather than a double-emit.
+		tag, err := tx.Exec(ctx,
+			`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
+			 WHERE jti = $1 AND tenant_id = $2 AND revoked_at IS NULL`,
+			jti, tenantID, at, pgtenant.NullString(revokedReason))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		// Bind the §16.7 token.revoked audit row to the same transaction
+		// under the §11.7 per-tenant advisory lock, so the revocation and
+		// its audit trail share one COMMIT.
+		row, err := auditstore.AppendInTx(ctx, tx, tenantID, auditEventType, auditPayload, at)
+		if err != nil {
+			return err
+		}
+		committed = row
+		return nil
+	})
+	if err != nil {
+		return audit.Row{}, err
+	}
+	return committed, nil
 }
 
 // RevokeBySubject marks every not-yet-revoked token issued for

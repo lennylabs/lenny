@@ -4,9 +4,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/credential"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
@@ -14,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
 // Compile-time assertion that the §4.9 credential-lease revocation
@@ -199,33 +204,178 @@ func (u *userTokenRevoker) RevokeUserTokens(ctx context.Context, tenantID, subje
 	return u.store.RevokeBySubject(ctx, tenantID, subject, reason, at)
 }
 
-// adminIssuedTokens adapts the §13.3 issued-token store plus the
-// revocation cache to admintoken.IssuedTokens. It records each minted
-// §17.6 admin token so the token is revocable, and on rotation marks the
-// prior token revoked in Postgres and pushes the revocation onto the
-// cross-replica cache so the old token stops validating immediately (the
-// §17.6 line 472 no-grace-period guarantee). spec: §17.6 line 472 —
-// F-17.6.3.
-type adminIssuedTokens struct {
-	store *issuedtokenstore.Store
-	cache admin.RevocationCache
+// revocationPropagationObserver observes the §16.1
+// lenny_token_revocation_propagation_seconds histogram keyed by the §16.7
+// propagation_mode outcome. Defined at the consumer so the gateway metrics
+// emitter (*gatewaymetrics.Metrics) satisfies it without this file
+// depending on the metric registration. A nil observer disables the
+// observation, matching the other optional gateway dependencies. SEC-TS-1.
+type revocationPropagationObserver interface {
+	ObserveRevocationPropagation(outcome string, d time.Duration)
 }
 
-func (a adminIssuedTokens) Record(ctx context.Context, rec admintoken.MintedToken) error {
-	return a.store.Record(ctx, issuedtokenstore.IssuedToken{
+// adminIssuedTokenStore is the slice of the §13.3 issued-token store the
+// admin-rotation adapter needs. It is defined at the consumer (rather than
+// the producer *issuedtokenstore.Store) so a unit test can substitute a
+// fake and exercise the audit-vocabulary and SEC-TS-1 metric wiring without
+// a Postgres pool. The production wiring passes *issuedtokenstore.Store.
+type adminIssuedTokenStore interface {
+	Record(ctx context.Context, tok issuedtokenstore.IssuedToken) error
+	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
+	RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReason, auditEventType string, auditPayload json.RawMessage, at time.Time) (audit.Row, error)
+	WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error
+}
+
+// adminIssuedTokens adapts the §13.3 issued-token store plus the
+// revocation cache to admintoken.IssuedTokens. It records each minted
+// §17.6 admin token so the token is revocable, records a rotated token
+// with its §16.7 token.exchanged audit row, and durably revokes the prior
+// token (with the token.revoked audit row) before pushing the revocation
+// onto the cross-replica cache, so the old token stops validating
+// immediately (the §17.6 no-grace-period guarantee) and a durable-write
+// failure never leaves the cache holding a revocation the authoritative
+// store lacks. The adapter owns the §16.7 audit-payload vocabulary; the
+// admintoken package passes only domain data.
+//
+// spec: §13.3 (gateway-mediated admin-credential rotation ordering and
+// mandatory exchange/revoke audit, lines 587/599), §16.7 (token.exchanged
+// exchange_type=admin_rotation, line 672; token.revoked rotation_replaced,
+// line 673) — F-17.6.3.
+type adminIssuedTokens struct {
+	store adminIssuedTokenStore
+	cache admin.RevocationCache
+	// metrics observes the §16.1 revocation-propagation histogram on the
+	// durable-revoke path. The gateway's in-process admin-credential
+	// rotation is always postgres_only (no EventBus publish), so this
+	// wires the gateway as the SEC-TS-1 producer the C3/§7 design lists
+	// alongside the Token Service path. Optional: a nil metrics field is a
+	// no-op. SEC-TS-1.
+	metrics revocationPropagationObserver
+	// clock brackets the durable-revoke latency the histogram observes.
+	// Defaults to time.Now.UTC when nil.
+	clock func() time.Time
+}
+
+// now returns the adapter's injected clock or the wall clock.
+func (a adminIssuedTokens) now() time.Time {
+	if a.clock != nil {
+		return a.clock()
+	}
+	return time.Now().UTC()
+}
+
+// §16.7 admin-rotation audit vocabulary. The gateway is a second emitter
+// of token.exchanged{admin_rotation} (its in-process bootstrap Secret
+// rotation) alongside the Token Service's /v1/oauth/token exchange grant;
+// both classify the rotation identically. spec: §16.7 lines 672, 673.
+const (
+	adminRotationExchangeType     = "admin_rotation"
+	adminRotationRevocationReason = "rotation_replaced"
+	// adminRotationPropagationMode records that the durable Postgres write
+	// is the authoritative revocation store; a peer replica falls back to
+	// issued_tokens.revoked_at, so the durable revoke alone satisfies the
+	// no-grace-period guarantee. The gateway path does not publish on the
+	// EventBus, so the mode is postgres_only. spec: §16.7 line 673.
+	adminRotationPropagationMode = "postgres_only"
+)
+
+func (a adminIssuedTokens) issuedToken(rec admintoken.MintedToken) issuedtokenstore.IssuedToken {
+	return issuedtokenstore.IssuedToken{
 		JTI:       rec.JTI,
 		TenantID:  rec.TenantID,
 		Subject:   rec.Subject,
 		TokenHash: rec.TokenHash,
 		IssuedAt:  rec.IssuedAt,
 		ExpiresAt: rec.ExpiresAt,
-	})
+	}
 }
 
-func (a adminIssuedTokens) Revoke(ctx context.Context, tenantID, jti, reason string, at time.Time) error {
-	err := a.store.Revoke(ctx, tenantID, jti, reason, at)
+// Record persists the bootstrap first token with no audit row. The
+// initial credential issuance is not a token exchange, so no
+// token.exchanged row is emitted (§13.3 line 587).
+func (a adminIssuedTokens) Record(ctx context.Context, rec admintoken.MintedToken) error {
+	return a.store.Record(ctx, a.issuedToken(rec))
+}
+
+// RecordWithExchangeAudit persists a rotated token and writes the §16.7
+// token.exchanged{exchange_type: admin_rotation} audit row in the same
+// transaction. It does not revoke the prior token: the §13.3 ordering
+// persists the Secret before the durable revoke.
+func (a adminIssuedTokens) RecordWithExchangeAudit(ctx context.Context, rec admintoken.MintedToken) error {
+	payload, err := json.Marshal(map[string]any{
+		"exchange_type": adminRotationExchangeType,
+		"caller_sub":    rec.Subject,
+		"subject_sub":   rec.Subject,
+		"jti":           rec.JTI,
+		// spec: §16.7 line 672 — token.exchanged policy_result enum is
+		// (accepted | rejected:<reason>). A successful rotation mirrors the
+		// Token Service emitter (pkg/tokenservice PolicyResult="accepted").
+		"policy_result": "accepted",
+		"timestamp":     rec.IssuedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal token.exchanged payload: %w", err)
+	}
+	_, err = a.store.RecordWithAudit(ctx, a.issuedToken(rec),
+		string(obsaudit.EventTokenExchanged), payload, rec.IssuedAt)
+	return err
+}
+
+// DurableRevoke durably revokes jti with revocation_reason=
+// rotation_replaced, binds the §16.7 token.revoked audit row to the same
+// transaction, and only then pushes the jti onto the cross-replica
+// revocation cache, so a durable-write failure never leaves the cache
+// holding a revocation the authoritative store lacks (a §12.2 rehydration
+// reads issued_tokens.revoked_at, so an in-memory-only revocation would
+// silently un-revoke the old token). An already-revoked or absent jti is a
+// no-op (ErrNotFound), so a retried rotation does not double-emit.
+func (a adminIssuedTokens) DurableRevoke(ctx context.Context, tenantID, jti string, at time.Time) error {
+	payload, err := json.Marshal(map[string]any{
+		"revoked_jti":       jti,
+		"revocation_reason": adminRotationRevocationReason,
+		"propagation_mode":  adminRotationPropagationMode,
+		"timestamp":         at,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal token.revoked payload: %w", err)
+	}
+	// Bracket the durable revoke so the §16.1
+	// lenny_token_revocation_propagation_seconds histogram observes the
+	// gateway path's propagation latency keyed by the §16.7 propagation_mode
+	// (postgres_only on the gateway). This wires the gateway as the SEC-TS-1
+	// producer the C3/§7 design lists alongside the Token Service. The
+	// observation runs only once the durable write commits, mirroring the
+	// Token Service's post-COMMIT observation in propagateRevocation.
+	start := a.now()
+	_, err = a.store.RevokeWithAudit(ctx, tenantID, jti, adminRotationRevocationReason,
+		string(obsaudit.EventTokenRevoked), payload, at)
+	if errors.Is(err, issuedtokenstore.ErrNotFound) {
+		// Already revoked (a retry) or never issued: idempotent no-op, and
+		// no cache push for a revocation the durable store did not apply.
+		return nil
+	}
+	if err != nil {
+		// The durable write failed. Do NOT push onto the cross-replica
+		// cache: a cache-only revocation a rehydration would later erase is
+		// exactly the fail-open the §13.3 authoritative-durability invariant
+		// forbids. Surface the error so the caller retries.
+		return fmt.Errorf("durable revoke of admin token %q: %w", jti, err)
+	}
+	if a.metrics != nil {
+		a.metrics.ObserveRevocationPropagation(adminRotationPropagationMode, a.now().Sub(start))
+	}
+	// Durable write committed: now push onto the cross-replica cache so the
+	// old token stops validating immediately without waiting for a
+	// rehydration.
 	if a.cache != nil {
 		a.cache.Revoke(jti)
 	}
-	return err
+	return nil
+}
+
+// WithSubjectLock serializes the whole non-atomic rotation read-modify-write
+// for one subject through the store's per-subject session-scoped advisory
+// lock. spec: §13.3 line 605.
+func (a adminIssuedTokens) WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error {
+	return a.store.WithSubjectLock(ctx, tenantID, subject, fn)
 }

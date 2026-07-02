@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §24.9 line 119; §17.6 line 472 — `lenny-ctl admin users
+// spec: §24.9 line 119; §17.6 — `lenny-ctl admin users
 // rotate-token` calls the gateway's rotate-token endpoint.
 
 // TestRotateTokenCallsGatewayEndpoint checks the happy path: the CLI

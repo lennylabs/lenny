@@ -161,6 +161,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
+	// The §25.11 step-2 config export reads tenants and quotas from the
+	// first shard's Postgres via the read-only lenny-backup role.
+	configDSN := ""
+	if len(shardList.values) > 0 {
+		configDSN = shardList.values[0]
+	}
 	deps, err := resolveDeps(ctx, depsInput{
 		minioEndpoint:  *minioEndpoint,
 		minioBucket:    *minioBucket,
@@ -172,6 +178,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		reportDSN:      *reportDSN,
 		redisURL:       *redisURL,
 		redisPassword:  *redisPassword,
+		configDSN:      configDSN,
+		namespace:      *namespace,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny-backup: %v\n", err)

@@ -28,6 +28,10 @@ func TestEmitterRegistersAndServesCatalog(t *testing.T) {
 	// §16.1 / §16.5 — the 5xx counter feeds the TokenStoreUnavailable
 	// alert. F-13.3.4.
 	emitter.Inc5xx("token_store_unavailable")
+	// §16.1 / §16.5 — the revocation-propagation histogram feeds the
+	// TokenRevocationPropagationLag alert on the eventbus outcome.
+	// SEC-TS-1.
+	emitter.ObserveRevocationPropagation("eventbus", 40*time.Millisecond)
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -44,6 +48,7 @@ func TestEmitterRegistersAndServesCatalog(t *testing.T) {
 		"lenny_oauth_token_rate_limited_total",
 		"lenny_oauth_token_rate_limited_sampled_total",
 		`lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}`,
+		`lenny_token_revocation_propagation_seconds_bucket{outcome="eventbus"`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(bodyStr, want) {

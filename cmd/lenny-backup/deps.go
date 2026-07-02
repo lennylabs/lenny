@@ -6,10 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
@@ -31,6 +35,15 @@ type depsInput struct {
 	reportDSN      string
 	redisURL       string
 	redisPassword  string
+	// configDSN is the §25.11 step-2 shard Postgres DSN the config export
+	// reads tenants and quotas from, through the read-only lenny-backup
+	// role. Empty (a retention/verify run, or a Job with no shard) leaves
+	// the config export without a Postgres source. It is the first
+	// --postgres-shard on a full or config backup.
+	configDSN string
+	// namespace is the release namespace the §17.6 lenny-bootstrap-values
+	// ConfigMap lives in; the config export reads it there.
+	namespace string
 }
 
 // deps holds the §25.11 backup-run dependencies: the MinIO uploader,
@@ -128,20 +141,87 @@ func resolveDeps(ctx context.Context, in depsInput) (*deps, error) {
 		}
 	}
 
+	// §25.11 step-2/3 config and CRD export. The exporters read only from
+	// the sources the backup Job can reach: the shard Postgres via the
+	// read-only lenny-backup role for tenants and quotas, and the K8s API
+	// for the runtime/pool CRDs and the bootstrap ConfigMap (§25.11 line
+	// 3982/3984; no gateway egress). Off-cluster (local dev, a run with no
+	// shard) the exporters stay nil and the run produces explicit empty
+	// config/CRD components, the correct behavior for a Postgres-only Job.
+	configExport, crdExport, exportClose := buildExporters(ctx, in)
+	prevClose := closeFn
+	closeFn = func() {
+		exportClose()
+		prevClose()
+	}
+
 	return &deps{
-		uploader:    uploader,
-		reporter:    &pgReporter{pool: pool},
-		audit:       buildBackupAuditSink(pool),
-		opsEmitter:  opsEmitter,
-		dataKey:     dataKey,
-		minioClient: client,
-		bucket:      in.minioBucket,
-		// The config and CRD exports are wired when the gateway admin API
-		// and a Kubernetes connection are available to the Job; until then
-		// the run produces empty config/CRD components, which is the
-		// correct behavior for a Postgres-only-reachable Job.
-		configExport: nil,
-		crdExport:    nil,
+		uploader:     uploader,
+		reporter:     &pgReporter{pool: pool},
+		audit:        buildBackupAuditSink(pool),
+		opsEmitter:   opsEmitter,
+		dataKey:      dataKey,
+		minioClient:  client,
+		bucket:       in.minioBucket,
+		configExport: configExport,
+		crdExport:    crdExport,
 		closeFn:      closeFn,
 	}, nil
+}
+
+// buildExporters wires the §25.11 config and CRD exporters from the
+// in-cluster Kubernetes config and the shard Postgres DSN. It fails soft:
+// when the binary is not running inside a cluster, or the K8s clients or
+// the config-DSN pool cannot be built, the corresponding exporter is left
+// nil so the run falls back to an explicit empty component rather than
+// aborting. The returned closeExport releases the config-DSN pool.
+func buildExporters(ctx context.Context, in depsInput) (
+	configExport, crdExport func(ctx context.Context) ([]byte, error), closeExport func(),
+) {
+	closeExport = func() {}
+	restCfg, err := rest.InClusterConfig()
+	if err != nil {
+		// Not running in a cluster (local dev or a unit test). The exports
+		// fall back to empty components. spec: §25.11 line 3984.
+		return nil, nil, closeExport
+	}
+
+	if crdCS, err := apiextensionsclientset.NewForConfig(restCfg); err == nil {
+		crdExport = runner.NewCRDExporter(crdCS)
+	} else {
+		slog.WarnContext(ctx, "lenny-backup: CRD export disabled: build apiextensions client", "error", err)
+	}
+
+	coreCS, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		slog.WarnContext(ctx, "lenny-backup: config export disabled: build kubernetes client", "error", err)
+		return nil, crdExport, closeExport
+	}
+	// The config export reads runtimes and pools from the lenny.dev Runtime
+	// and SandboxWarmPool custom resources through the K8s API (§25.11 C4:
+	// the K8s API for the runtime and pool CRDs), using the lenny-backup-sa
+	// get/list-on-CRDs grant. A failed CRD-reader build disables the config
+	// export rather than silently omitting runtimes/pools.
+	crdReader, err := runner.NewCRDReader(restCfg)
+	if err != nil {
+		slog.WarnContext(ctx, "lenny-backup: config export disabled: build lenny.dev CRD reader", "error", err)
+		return nil, crdExport, closeExport
+	}
+	if in.configDSN == "" {
+		// Only a retention or verify run legitimately lacks a shard, and so
+		// a Postgres config source; those modes export no config. A full,
+		// postgres, or config run always carries --postgres-shard (the chart
+		// renders it for config mode too, so a config-only backup does not
+		// silently produce an empty config archive — SEC-BACKUP-1). The CRD
+		// export still runs.
+		return nil, crdExport, closeExport
+	}
+	cfgPool, err := pgxpool.New(ctx, in.configDSN)
+	if err != nil {
+		slog.WarnContext(ctx, "lenny-backup: config export disabled: connect to the shard Postgres", "error", err)
+		return nil, crdExport, closeExport
+	}
+	configExport = runner.NewConfigExporter(cfgPool, crdReader, coreCS, in.namespace)
+	closeExport = cfgPool.Close
+	return configExport, crdExport, closeExport
 }

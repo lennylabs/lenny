@@ -369,7 +369,7 @@ kubectl get secret lenny-admin-token -n lenny-system \
   -o jsonpath='{.data.token}' | base64 -d
 ```
 
-To rotate the initial admin token (internally calls `POST /v1/oauth/token` with an RFC 8693 token-exchange grant and patches the `lenny-admin-token` Kubernetes Secret):
+To rotate the initial admin token, run the command below. The CLI calls the dedicated `POST /v1/admin/users/{user}/rotate-token` route, and the gateway mints the new token in process, patches the `lenny-admin-token` Kubernetes Secret with it, and revokes the prior token. The CLI does not mint the token or patch the Secret.
 
 ```bash
 lenny-ctl admin users rotate-token --user lenny-admin

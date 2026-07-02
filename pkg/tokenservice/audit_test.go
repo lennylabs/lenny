@@ -61,6 +61,15 @@ type recordingMetrics struct {
 	rateLimited        []string
 	rateLimitedSampled []string
 	fivexx             []string
+	// revocationPropagations records one entry per
+	// ObserveRevocationPropagation call, keyed by the §16.7 outcome
+	// label, so a test can assert the SEC-TS-1 producer fired. SEC-TS-1.
+	revocationPropagations []propagationObservation
+}
+
+type propagationObservation struct {
+	outcome string
+	d       time.Duration
 }
 
 func (m *recordingMetrics) RecordRequestDuration(op string, _ time.Duration) {
@@ -91,6 +100,20 @@ func (m *recordingMetrics) Inc5xx(errorType string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.fivexx = append(m.fivexx, errorType)
+}
+
+func (m *recordingMetrics) ObserveRevocationPropagation(outcome string, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.revocationPropagations = append(m.revocationPropagations, propagationObservation{outcome: outcome, d: d})
+}
+
+func (m *recordingMetrics) propagations() []propagationObservation {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]propagationObservation, len(m.revocationPropagations))
+	copy(out, m.revocationPropagations)
+	return out
 }
 
 // recordingIssuedTokenStore records what was stored. Implements

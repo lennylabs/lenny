@@ -70,10 +70,13 @@ func TestToolsListReturnsTheInventory(t *testing.T) {
 		t.Fatal("tools/list returned an empty inventory")
 	}
 	// The §25.12 operability tools are present, including the §4.0 /
-	// §25.4 unified Operations Inventory tools.
+	// §25.4 unified Operations Inventory tools. The tool names are the
+	// x-lenny-mcp-tool values the openapi-to-mcp generator reads from the
+	// served document: the gateway-hosted health tool is admin.health, and
+	// the lenny-ops-hosted tools keep their lenny_* names.
 	names := toolNames(tools)
 	for _, want := range []string{
-		"lenny_health_get", "lenny_diagnostics_session", "lenny_drift_report",
+		"admin.health", "lenny_diagnostics_session", "lenny_drift_report",
 		"lenny_lock_acquire", "lenny_escalation_create",
 		"lenny_operations_list", "lenny_operation_get",
 	} {
@@ -98,8 +101,8 @@ func TestToolsListReadOnlyFilterExcludesMutatingTools(t *testing.T) {
 	tools, _ := result["tools"].([]any)
 	names := toolNames(tools)
 	// §25.12 readOnly capability: observation tools stay, mutating ones go.
-	if !names["lenny_health_get"] {
-		t.Error("readOnly filter dropped the read-only lenny_health_get")
+	if !names["admin.health"] {
+		t.Error("readOnly filter dropped the read-only admin.health")
 	}
 	if names["lenny_lock_acquire"] {
 		t.Error("readOnly filter kept the mutating lenny_lock_acquire")
@@ -113,10 +116,10 @@ func TestToolsCallDispatchesThroughTheInvoker(t *testing.T) {
 	srv := mcp.NewServer(inv)
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]any{"name": "lenny_health_get", "arguments": map[string]any{}},
+		"params": map[string]any{"name": "admin.health", "arguments": map[string]any{}},
 	})
-	if inv.called != "lenny_health_get" {
-		t.Errorf("invoker ran %q, want lenny_health_get", inv.called)
+	if inv.called != "admin.health" {
+		t.Errorf("invoker ran %q, want admin.health", inv.called)
 	}
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != false {
@@ -220,7 +223,7 @@ func TestToolsCallEndpointUnavailable(t *testing.T) {
 	srv := mcp.NewServer(inv)
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]any{"name": "lenny_health_get"},
+		"params": map[string]any{"name": "admin.health"},
 	})
 	rpcErr, _ := resp["error"].(map[string]any)
 	if rpcErr == nil || rpcErr["code"].(float64) != -32000 {
@@ -238,8 +241,8 @@ func TestToolsCallEndpointUnavailable(t *testing.T) {
 	// §25.12: the tool stays in tools/list during the outage.
 	_, list := rpc(t, srv, nil, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
 	listResult, _ := list["result"].(map[string]any)
-	if !toolNames(listResult["tools"].([]any))["lenny_health_get"] {
-		t.Error("lenny_health_get was removed from tools/list during an endpoint outage")
+	if !toolNames(listResult["tools"].([]any))["admin.health"] {
+		t.Error("admin.health was removed from tools/list during an endpoint outage")
 	}
 }
 

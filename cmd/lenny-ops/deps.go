@@ -941,7 +941,7 @@ func sampleRestoreTestMetrics(ctx context.Context, store restoretest.Store) erro
 // opsSelfHealthStatus is the §16.8 / §25.4 line 2507
 // lenny_ops_self_health_status{check} gauge: each self-health check's
 // status encoded as 0=healthy, 1=degraded, 2=unhealthy. The
-// LenniOpsSelfHealthDegraded alert (§16.5) reads it. Registered on the
+// OpsSelfHealthDegraded alert (§16.5) reads it. Registered on the
 // default registry the §16.9 /metrics exposition serves.
 var opsSelfHealthStatus = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
@@ -1425,8 +1425,19 @@ type doctorDeps struct {
 	Clientset kubernetes.Interface
 	Dynamic   dynamic.Interface
 	// ReleaseNS is the namespace holding the cert-manager Certificate CRs
-	// the certManagerExpiring fix targets.
+	// the certManagerExpiring fix targets, the lenny-bootstrap ConfigMap
+	// the bootstrapConfigDrift fix re-applies, and the monitoring objects
+	// the prometheusRuleMissing fix asserts.
 	ReleaseNS string
+	// Helm yields the §25.6 Helm-rendered references the bootstrapConfigDrift
+	// and prometheusRuleMissing fixes compare against and re-apply. A nil
+	// source leaves both findings undetected (reported not_detected).
+	Helm doctor.HelmRenderSource
+	// PoolDiagnosis is the §25.6.1 pool-diagnosis service the
+	// warmPoolStuckReplenish detection reads its DEMAND_EXCEEDS_SUPPLY
+	// bottleneck classification and pod-state breakdown from. A nil source
+	// leaves that finding undetected (reported not_detected).
+	PoolDiagnosis poolDiagnosisSource
 	// AllowedFixes is admin.doctor.allowedFixes; empty means the full set.
 	AllowedFixes []string
 	// FixTimeout is admin.doctor.fixTimeoutSeconds; zero applies the 120s
@@ -1451,6 +1462,8 @@ func buildDoctorService(deps doctorDeps) doctor.Service {
 		clientset: deps.Clientset,
 		dyn:       deps.Dynamic,
 		releaseNS: deps.ReleaseNS,
+		helm:      deps.Helm,
+		poolDx:    deps.PoolDiagnosis,
 	}
 	o := doctor.New(rem, doctor.Config{
 		AllowedFixes:    deps.AllowedFixes,

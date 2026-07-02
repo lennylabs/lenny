@@ -16,6 +16,7 @@ package opsinventory
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
@@ -25,6 +26,26 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/upgrade"
 )
+
+// auditLink builds the §25.4 per-operation `audit` resource link. The
+// audit-events query API is gateway-resident (§25.9,
+// pkg/gateway/externalapi/admin), so the link is joined to the gateway
+// base URL an agent already holds; a relative link would 404 against
+// lenny-ops's own origin. When no gateway URL is configured (the dev /
+// embedded path) it falls back to the relative path. The sibling
+// resource links (get/extend/release/steal, list/update,
+// status/proceed/pause/rollback) target lenny-ops-resident routes and
+// stay relative so they resolve against lenny-ops's origin. F-COV-1.
+//
+// spec: §25.4 (Operations Inventory `resources.audit` resolves to the
+// gateway-resident §25.9 audit-events query).
+func auditLink(gatewayURL, query string) string {
+	path := "/v1/admin/audit-events?" + query
+	if gatewayURL == "" {
+		return "GET " + path
+	}
+	return "GET " + strings.TrimRight(gatewayURL, "/") + path
+}
 
 // jsonMetadata marshals a §25.4 per-operation metadata block. A marshal
 // failure (which the small string-keyed maps below never trigger) yields
@@ -45,13 +66,15 @@ func jsonMetadata(m map[string]any) json.RawMessage {
 // remediation_lock in status held; its natural key is the lock ID (which
 // already carries the canonical "lock-" prefix), so operationId == ID.
 type LockSource struct {
-	svc coordination.RemediationLockService
+	svc        coordination.RemediationLockService
+	gatewayURL string
 }
 
 // NewLockSource adapts a remediation-lock service. A nil service yields
-// no operations.
-func NewLockSource(svc coordination.RemediationLockService) *LockSource {
-	return &LockSource{svc: svc}
+// no operations. gatewayURL is the gateway base URL the gateway-resident
+// `audit` resource link is joined to (empty on the dev / embedded path).
+func NewLockSource(svc coordination.RemediationLockService, gatewayURL string) *LockSource {
+	return &LockSource{svc: svc, gatewayURL: gatewayURL}
 }
 
 // Kinds reports the remediation_lock kind.
@@ -87,7 +110,7 @@ func (s *LockSource) List(ctx context.Context, _ operations.Filter) ([]operation
 				"extend":  "PATCH " + base,
 				"release": "DELETE " + base,
 				"steal":   "POST " + base + "/steal",
-				"audit":   "GET /v1/admin/audit-events?operationId=" + l.ID,
+				"audit":   auditLink(s.gatewayURL, "operationId="+l.ID),
 			},
 			Cancellable: true,
 			Metadata: jsonMetadata(map[string]any{
@@ -107,13 +130,15 @@ var _ operations.Source = (*LockSource)(nil)
 // is kind escalation_open in status in_progress; a resolved escalation is
 // completed (excluded by the default status filter).
 type EscalationSource struct {
-	svc *escalation.Service
+	svc        *escalation.Service
+	gatewayURL string
 }
 
 // NewEscalationSource adapts an escalation service. A nil service yields
-// no operations.
-func NewEscalationSource(svc *escalation.Service) *EscalationSource {
-	return &EscalationSource{svc: svc}
+// no operations. gatewayURL is the gateway base URL the gateway-resident
+// `audit` resource link is joined to (empty on the dev / embedded path).
+func NewEscalationSource(svc *escalation.Service, gatewayURL string) *EscalationSource {
+	return &EscalationSource{svc: svc, gatewayURL: gatewayURL}
 }
 
 // Kinds reports the two escalation kinds.
@@ -148,7 +173,7 @@ func (s *EscalationSource) List(ctx context.Context, _ operations.Filter) ([]ope
 			Resources: map[string]string{
 				"list":   "GET /v1/admin/escalations",
 				"update": "PUT /v1/admin/escalations/" + e.ID,
-				"audit":  "GET /v1/admin/audit-events?operationId=" + e.ID,
+				"audit":  auditLink(s.gatewayURL, "operationId="+e.ID),
 			},
 			// Escalations are records to acknowledge or resolve, not
 			// cancellable in-flight work.
@@ -192,13 +217,16 @@ var _ operations.Source = (*EscalationSource)(nil)
 // Operations Inventory as kind platform_upgrade. The natural key is the
 // upgrade's operationId (already "upgrade-" prefixed).
 type UpgradeSource struct {
-	svc *upgradeservice.Service
+	svc        *upgradeservice.Service
+	gatewayURL string
 }
 
 // NewUpgradeSource adapts a platform-upgrade service. A nil service
-// yields no operations.
-func NewUpgradeSource(svc *upgradeservice.Service) *UpgradeSource {
-	return &UpgradeSource{svc: svc}
+// yields no operations. gatewayURL is the gateway base URL the
+// gateway-resident `audit` resource link is joined to (empty on the dev /
+// embedded path).
+func NewUpgradeSource(svc *upgradeservice.Service, gatewayURL string) *UpgradeSource {
+	return &UpgradeSource{svc: svc, gatewayURL: gatewayURL}
 }
 
 // Kinds reports the platform_upgrade kind.
@@ -233,7 +261,7 @@ func (s *UpgradeSource) List(ctx context.Context, _ operations.Filter) ([]operat
 			"proceed":  "POST /v1/admin/platform/upgrade/proceed",
 			"pause":    "POST /v1/admin/platform/upgrade/pause",
 			"rollback": "POST /v1/admin/platform/upgrade/rollback",
-			"audit":    "GET /v1/admin/audit-events?operationId=" + st.OperationID,
+			"audit":    auditLink(s.gatewayURL, "operationId="+st.OperationID),
 		},
 		Cancellable: st.Active(),
 		Metadata: jsonMetadata(map[string]any{

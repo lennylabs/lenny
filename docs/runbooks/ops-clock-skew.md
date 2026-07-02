@@ -125,6 +125,6 @@ Escalate to:
 - **Cloud provider support** when Postgres or Redis is a managed service whose clock you cannot inspect or correct directly.
 - **Platform / infrastructure team** for VM host time-source issues in self-managed environments.
 
-Escalate if the skew persists above the tolerance after correcting NTP on both dependency nodes, or if the skew correlates with remediation-lock split-brain events (`LenniOpsLockSplitBrainDetected`); see [ops-lock-split-brain](ops-lock-split-brain.html).
+Escalate if the skew persists above the tolerance after correcting NTP on both dependency nodes, or if the skew correlates with remediation-lock split-brain events (`OpsLockSplitBrainDetected`); see [ops-lock-split-brain](ops-lock-split-brain.html).
 
 Cross-reference: Spec §25.4 (clock source, Postgres-Redis skew monitoring).

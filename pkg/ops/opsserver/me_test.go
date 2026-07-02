@@ -119,6 +119,60 @@ func TestMePlatformAdmin(t *testing.T) {
 	}
 }
 
+// spec: §25.4 (`/me` links.openApi/platformHealth/myRecentAudit) —
+// F-COV-1. The three gateway-hosted discovery links are emitted
+// absolute-to-gateway by joining `platform.gatewayURL`, while
+// lenny-ops's own routes (authorizedTools, myOperations) stay relative.
+// This asserts the corrected output and fails against the pre-fix code,
+// which emitted `openApi` and `platformHealth` (and `myRecentAudit`) as
+// relative paths that 404 against lenny-ops's own origin.
+func TestMeLinksAbsoluteToGateway(t *testing.T) {
+	srv, _ := meServer()
+	p := platformAdmin("sa-watchdog")
+	_, body := getAuthed(t, srv, "/v1/admin/me", &p)
+	links := body["links"].(map[string]any)
+
+	const gw = "https://lenny-gateway:8443"
+	cases := map[string]string{
+		"openApi":        gw + "/v1/openapi.json",
+		"platformHealth": gw + "/v1/admin/health/summary",
+		"myRecentAudit":  gw + "/v1/admin/audit-events?actorId=sa-watchdog&limit=50",
+	}
+	for field, want := range cases {
+		if got := links[field]; got != want {
+			t.Errorf("links.%s = %v, want %q (absolute-to-gateway)", field, got, want)
+		}
+	}
+	// lenny-ops's own routes resolve against lenny-ops's origin, so they
+	// stay relative.
+	if got := links["authorizedTools"]; got != "/v1/admin/me/authorized-tools" {
+		t.Errorf("links.authorizedTools = %v, want relative (lenny-ops-resident)", got)
+	}
+	if got := links["myOperations"]; got != "/v1/admin/me/operations" {
+		t.Errorf("links.myOperations = %v, want relative (lenny-ops-resident)", got)
+	}
+}
+
+// spec: §25.4 (`/me` links) — F-COV-1. On the dev / embedded path with no
+// separate gateway URL, the gateway-hosted links fall back to their
+// relative form rather than emitting a bare host with no path.
+func TestMeLinksRelativeFallbackWithoutGatewayURL(t *testing.T) {
+	audit := &captureAudit{}
+	srv := opsserver.New(opsserver.Options{
+		Audit: audit,
+		Me:    &opsserver.MeConfig{Version: "1.5.0"}, // no GatewayURL
+	})
+	p := platformAdmin("sa-watchdog")
+	_, body := getAuthed(t, srv, "/v1/admin/me", &p)
+	links := body["links"].(map[string]any)
+	if got := links["openApi"]; got != "/v1/openapi.json" {
+		t.Errorf("links.openApi = %v, want relative fallback", got)
+	}
+	if got := links["platformHealth"]; got != "/v1/admin/health/summary" {
+		t.Errorf("links.platformHealth = %v, want relative fallback", got)
+	}
+}
+
 // spec §25.4 lines 1606-1611: through the real auth gate the rateLimits
 // block surfaces the caller's token-bucket balance so an agent can
 // self-pace.

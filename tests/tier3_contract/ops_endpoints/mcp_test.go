@@ -67,8 +67,11 @@ func TestMCPToolsListContract(t *testing.T) {
 			names[n] = true
 		}
 	}
+	// Tool names are the x-lenny-mcp-tool values the openapi-to-mcp generator
+	// reads from the served document: the gateway-hosted health tool is
+	// admin.health; the lenny-ops-hosted tools keep their lenny_* names.
 	for _, want := range []string{
-		"lenny_health_get", "lenny_diagnostics_pool", "lenny_drift_report",
+		"admin.health", "lenny_diagnostics_pool", "lenny_drift_report",
 		"lenny_lock_acquire", "lenny_escalation_create",
 	} {
 		if !names[want] {

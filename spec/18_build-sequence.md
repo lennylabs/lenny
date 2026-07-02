@@ -602,7 +602,8 @@ _Operational coordination._
 
 _MCP management._
 
-- MCP Management Server per [§25.12](25_agent-operability.md#2512-mcp-management-server): the `ManagementMCPAdapter`, `POST /mcp/management`, the build-time `openapi-to-mcp` generator that emits one MCP tool per admin-API endpoint from the Phase 5 OpenAPI 3.1 document, capability negotiation, and the `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`, and `x-lenny-category` scope-and-RBAC enforcement.
+- Complete-document `lenny-ops`-schema merge: once the `lenny-ops` operability routes exist in Phase 13, their path schemas are merged into the single served OpenAPI 3.1 document so it covers the entire operability surface. The merge runs after the Phase 5 document generator and before the `openapi-to-mcp` generation below, so the generator runs over the complete document rather than the gateway-only Phase 5 document. Each merged `lenny-ops` path schema carries the `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`, and `x-lenny-category` extensions, with `x-lenny-mcp-tool` permitted to be null for a route not exposed as a tool.
+- MCP Management Server per [§25.12](25_agent-operability.md#2512-mcp-management-server): the `ManagementMCPAdapter`, `POST /mcp/management`, the build-time `openapi-to-mcp` generator that emits one MCP tool per admin-API endpoint and per `lenny-ops` operability route from the complete OpenAPI 3.1 document, capability negotiation, and the `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`, and `x-lenny-category` scope-and-RBAC enforcement.
 
 _Observability catalog and chart wiring._
 
@@ -620,7 +621,7 @@ _`lenny-ctl` operability extensions per [§25.14](25_agent-operability.md#2514-l
 
 - `lenny-ctl admin backup *`, `lenny-ctl admin restore *`, `lenny-ctl admin audit *`, `lenny-ctl admin drift *`, `lenny-ctl admin operations *`, `lenny-ctl admin events *`, `lenny-ctl admin diagnose *`, `lenny-ctl admin runbooks *`, `lenny-ctl admin me`, `lenny-ctl admin locks *`, `lenny-ctl admin escalations *`, `lenny-ctl admin logs *`, `lenny-ctl admin mcp-management *`, `lenny-ctl admin erasure-jobs *`, `lenny-ctl admin sessions *`, `lenny-ctl admin migrate *`, `lenny-ctl admin tenants force-delete`, `lenny-ctl pools *` (sync-status, resume-reconciliation, circuit-breaker, exit-bootstrap, drain), and `lenny-ctl external-adapters validate`.
 
-**Prerequisites.** Phase 12c exit gate. The Phase 3.5 phase-stamp ConfigMap and the Phase 5 OpenAPI generator are both required: the `features.compliance` flag is gated by the former, and the MCP Management Server's `openapi-to-mcp` tool inventory is gated by the latter. See [§18.40](#1840-hard-prerequisite-chain).
+**Prerequisites.** Phase 12c exit gate. The Phase 3.5 phase-stamp ConfigMap, the Phase 5 OpenAPI generator, and the Phase 13 `lenny-ops`-schema merge are required: the `features.compliance` flag is gated by the phase-stamp ConfigMap, and the MCP Management Server's `openapi-to-mcp` tool inventory is gated by both the Phase 5 document generator and the Phase 13 merge that completes the document with the `lenny-ops` operability routes. See [§18.40](#1840-hard-prerequisite-chain).
 
 **Exit criteria.** Tier 2 `event_store_test`, Tier 4 `audit_pipeline_test`, Tier 5 `admission_data_residency_test`, `admission_t4_node_isolation_test`, and `backup_restore_test` pass per [TESTING.md §13.28](../TESTING.md#1328-phase-13--full-observability--audit--lenny-backup--compliance-webhooks). The metrics, alert, audit-event, and operational-event catalog cross-checks pass against the rendered chart manifests.
 

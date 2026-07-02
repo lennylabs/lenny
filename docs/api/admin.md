@@ -810,7 +810,14 @@ Canonical OAuth token endpoint (RFC 6749 + RFC 8693 token exchange). Used across
 
 For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For delegation child-token minting, additionally supply `actor_token=<parent_session_token>` and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
 
-See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken). The CLI command `lenny-ctl admin users rotate-token --user <name>` wraps this endpoint and additionally patches the `lenny-admin-token` Kubernetes Secret.
+See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken). This endpoint serves self and service-principal rotation. The bootstrap admin credential rotates through the dedicated route below rather than this endpoint.
+
+### POST /v1/admin/users/{userId}/rotate-token
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+Rotate the bootstrap admin credential. Only the managed admin user (`lenny-admin`) is rotatable through this route; any other user returns `404`. The gateway mints a new token in process, records it, patches the `lenny-admin-token` Kubernetes Secret with the new value, and revokes the prior token immediately with no grace period. The token value is not returned in the response; the credential lives only in the Secret. The CLI command `lenny-ctl admin users rotate-token --user lenny-admin` calls this route, and the CLI does not mint the token or patch the Secret.
 
 ### POST /v1/admin/users/{userId}/invalidate
 {: .d-inline-block }

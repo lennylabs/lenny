@@ -32,7 +32,7 @@ var imageRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]*$`)
 func cmdImage(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny image: a subcommand is required: import, list, or rm")
-		return 2
+		return exitImageUsageError
 	}
 	switch args[0] {
 	case "import":
@@ -43,7 +43,7 @@ func cmdImage(args []string, stdout, stderr io.Writer) int {
 		return cmdImageRm(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny image: unknown subcommand %q (want import, list, or rm)\n", args[0])
-		return 2
+		return exitImageUsageError
 	}
 }
 
@@ -74,7 +74,7 @@ func cmdImageImport(args []string, stdout, stderr io.Writer) int {
 	}
 	if reference == "" {
 		fmt.Fprintln(stderr, "lenny image import: a <reference> argument is required")
-		return 2
+		return exitImageUsageError
 	}
 	if !imageRefPattern.MatchString(reference) {
 		fmt.Fprintf(stderr, "lenny image import: %q is not a valid OCI reference (INVALID_IMAGE_REFERENCE)\n", reference)
@@ -159,7 +159,7 @@ func cmdImageRm(args []string, stdout, stderr io.Writer) int {
 	}
 	if reference == "" {
 		fmt.Fprintln(stderr, "lenny image rm: a <reference> argument is required")
-		return 2
+		return exitImageUsageError
 	}
 	if !imageRefPattern.MatchString(reference) {
 		fmt.Fprintf(stderr, "lenny image rm: %q is not a valid OCI reference (INVALID_IMAGE_REFERENCE)\n", reference)

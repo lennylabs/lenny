@@ -662,7 +662,7 @@ func criticalAlerts() []Rule {
 			SpecRef:    "§16.5",
 		},
 		{
-			Name:        "LenniOpsLockSplitBrainDetected",
+			Name:        "OpsLockSplitBrainDetected",
 			Expr:        `lenny_ops_lock_split_brain_detected_total > 0`,
 			Severity:    SeverityCritical,
 			Summary:     "lenny-ops remediation lock split-brain detected",
@@ -1693,7 +1693,7 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			Name:        "LenniOpsSelfHealthDegraded",
+			Name:        "OpsSelfHealthDegraded",
 			Expr:        `lenny_ops_self_health_status != 1`,
 			Severity:    SeverityWarning,
 			Summary:     "lenny-ops self-health degraded",

@@ -186,10 +186,16 @@ func (w *opsWiring) buildOpsServices() {
 	// §25.6 doctor auto-remediation orchestrator backing POST
 	// /v1/admin/diagnostics/run[?fix=true]. Built only when a Kubernetes
 	// client is available; otherwise the endpoint reports 503. F-25.6.2.
+	releaseNS := envOr("POD_NAMESPACE", *w.f.leaderElectNS)
 	dDeps := doctorDeps{
-		ReleaseNS:    envOr("POD_NAMESPACE", *w.f.leaderElectNS),
+		ReleaseNS:    releaseNS,
 		AllowedFixes: splitCSV(*w.f.doctorAllowedFixes),
 		FixTimeout:   time.Duration(*w.f.doctorFixTimeout) * time.Second,
+		Helm:         newHelmRenderSource(*w.f.doctorRenderDir, releaseNS),
+		// The §25.6.1 pool-diagnosis service supplies warmPoolStuckReplenish
+		// its DEMAND_EXCEEDS_SUPPLY classification. buildDiagnosticService
+		// returns a non-nil *Service, so this never traps a typed nil.
+		PoolDiagnosis: w.diagnosticSvc,
 		Audit: func(ev doctor.Event) {
 			w.auditRecorder.Record(string(ev.Type), ev.Fields, time.Time{})
 		},
@@ -311,10 +317,15 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 	// tracker is already an operations.Source. The backup/restore,
 	// idempotency, and webhook-delivery kinds plug in as their subsystems
 	// expose enumeration. F-25.4.3.
+	// spec: §25.4 (Operations Inventory `resources.audit`) — the
+	// gateway-resident §25.9 audit-events query the audit link targets is
+	// joined to the gateway base URL so the discovery hop resolves against
+	// the gateway rather than 404ing on lenny-ops's origin. F-COV-1.
+	gatewayURL := *w.f.gatewayURL
 	w.inventory = operations.New(
-		opsinventory.NewLockSource(w.lockSvc),
-		opsinventory.NewEscalationSource(w.escalationSvc),
-		opsinventory.NewUpgradeSource(w.upgradeSvc),
+		opsinventory.NewLockSource(w.lockSvc, gatewayURL),
+		opsinventory.NewEscalationSource(w.escalationSvc, gatewayURL),
+		opsinventory.NewUpgradeSource(w.upgradeSvc, gatewayURL),
 		w.driftSvc.ReconcileSource(),
 	)
 	// §25.2 lines 357-396: enrich every in-progress operation's Progress

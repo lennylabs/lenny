@@ -72,12 +72,12 @@ func (r *Router) provisionAdminToken(ctx context.Context, dryRun bool) (AdminTok
 }
 
 // handleRotateToken implements POST /v1/admin/users/{user}/rotate-token —
-// the §17.6 line 472 admin-token rotation. It mints a fresh token,
+// the §17.6 admin-token rotation. It mints a fresh token,
 // patches the Secret, and revokes the superseded token immediately. Only
 // the managed admin username is rotatable through this route; any other
 // user returns 404 so the route does not leak as a generic token mint.
 //
-// spec: §17.6 line 472 — F-17.6.3.
+// spec: §17.6 — F-17.6.3.
 func (r *Router) handleRotateToken(w http.ResponseWriter, req *http.Request) {
 	if r.adminToken == nil {
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",

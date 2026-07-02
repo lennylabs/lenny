@@ -54,7 +54,6 @@ Every step in every runbook can be performed by an API call, and every signal on
 | Diagnostic endpoints | Structured platform health, scoped by subsystem | `/v1/admin/diagnostics/*` |
 | Operational event stream | CloudEvents-compatible feed of platform events | `/v1/admin/events/stream` (SSE) |
 | [Runbook catalog]({{ site.baseurl }}/runbooks/) | Machine-parseable runbooks bound to alerts | `/v1/admin/runbooks` |
-| Audit log query API | OCSF-formatted, hash-chain verified | `/v1/admin/audit-events` |
 | Drift detection | Deviation from declared configuration | `/v1/admin/drift` |
 | Backup and restore API | Platform-lifecycle operations without direct cluster access | `/v1/admin/backups`, `/v1/admin/restore/*` |
 | Platform upgrade state machine | Drive multi-phase upgrades end-to-end | `/v1/admin/platform/upgrade/*` |
@@ -168,7 +167,9 @@ This replaces any earlier ad-hoc "mint a narrowed token" mechanism.
 
 Lenny exposes its full admin and operability surface as an MCP tool server at `/mcp/management` on `lenny-ops`. Any MCP-capable agent can discover every tool, inspect its schema, and invoke it without REST-specific knowledge.
 
-Tool schemas are auto-generated at build time from the canonical OpenAPI document (served at `/v1/openapi.yaml` on `lenny-ops`), ensuring the MCP inventory never drifts from the REST contract.
+Tool schemas are auto-generated at build time from the canonical OpenAPI document (served by the gateway at `/v1/openapi.yaml` and `/v1/openapi.json`), so the MCP inventory tracks the REST contract.
+
+The `/mcp/management` server runs on `lenny-ops`, but each tool's REST backend is the path in its **Maps to** column, and that path resolves to whichever plane hosts it rather than always to `lenny-ops`. The catalog includes gateway-resident admin tools alongside the `lenny-ops` operability tools. For example, `lenny_audit_query` maps to `GET /v1/admin/audit-events`, a gateway-resident route, so its backend is the gateway even though the tool is discovered and invoked through the `lenny-ops` MCP server.
 
 ### Observation tools (read-only)
 
@@ -350,11 +351,11 @@ The operability surface is designed to stay up precisely when it's most needed.
 
 | Failure | Impact |
 |---|---|
-| Gateway down, `lenny-ops` up | Ops surface remains fully available. Tools whose REST backend is the gateway return `ENDPOINT_UNAVAILABLE` (retryable). Diagnostics, runbook index, audit, drift, backup/restore, lock coordination, escalation — all work. |
+| Gateway down, `lenny-ops` up | Ops surface remains available. Tools whose REST backend is the gateway return `ENDPOINT_UNAVAILABLE` (retryable). Diagnostics, runbook index, drift, backup/restore, lock coordination, and escalation work. Audit queries fail because the audit query API is gateway-resident (served at `/v1/admin/audit-events`); the agent escalates or waits for gateway recovery. |
 | `lenny-ops` down, gateway up | Client traffic unaffected. Ops tooling unavailable. Watchdog detects via Ingress health check. |
-| Postgres down | Audit queries, backup management, upgrade state machine unavailable. Diagnostics degrade to K8s-API data. Drift detection works when caller supplies desired state. Locks and escalations fall back to Redis / in-memory. |
+| Postgres down | Backup management and upgrade state machine unavailable. Diagnostics degrade to K8s-API data. Drift detection works when caller supplies desired state. Locks and escalations fall back to Redis / in-memory. Audit-query availability tracks the gateway's Postgres rather than `lenny-ops`'s. |
 | Redis down | Event stream falls back to gateway ring buffer. Lock coordination falls back to Postgres. |
-| Postgres + Redis both down | Core loop still functions in degraded mode: diagnostics via K8s API, locks in-memory (single-replica), escalations in-memory, event stream from gateway buffer. Unavailable: audit, backup/upgrade state machines. |
+| Postgres + Redis both down | Core loop still functions in degraded mode: diagnostics via K8s API, locks in-memory (single-replica), escalations in-memory, event stream from gateway buffer. Unavailable: backup and upgrade state machines. (Audit queries are gateway-resident and unaffected by a `lenny-ops` store outage.) |
 | `lenny-ops` + gateway both down | Total outage. Manual escape hatches: `kubectl port-forward -n lenny-system svc/lenny-ops 8090` (bypasses Ingress and NetworkPolicy). Full procedure in the [total-outage runbook]({{ site.baseurl }}/runbooks/total-outage.html). |
 
 ---

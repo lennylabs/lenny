@@ -36,7 +36,7 @@ func TestDiagnosticsAuditRateLimitedIncrementsCounter_spec_16_8_4(t *testing.T) 
 
 // spec: §16.8 line 704 / §25.4 line 2507 — publishSelfHealthMetric maps
 // each self-health check onto lenny_ops_self_health_status{check} with the
-// 0=healthy, 1=degraded, 2=unhealthy encoding so LenniOpsSelfHealthDegraded
+// 0=healthy, 1=degraded, 2=unhealthy encoding so OpsSelfHealthDegraded
 // has a per-check source on the §16.9 /metrics scrape.
 func TestPublishSelfHealthMetric_PerCheckEncoding_spec_16_8(t *testing.T) {
 	if opsSelfHealthStatus == nil {

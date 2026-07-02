@@ -3,7 +3,7 @@ layout: default
 title: "ops-lock-split-brain"
 parent: "Runbooks"
 triggers:
-  - alert: LenniOpsLockSplitBrainDetected
+  - alert: OpsLockSplitBrainDetected
     severity: critical
 components:
   - ops
@@ -29,7 +29,7 @@ Two `lenny-ops` replicas briefly believed they held the same remediation lock. O
 
 ## Trigger
 
-`LenniOpsLockSplitBrainDetected` — `lenny_ops_lock_split_brain_detected_total > 0`.
+`OpsLockSplitBrainDetected` — `lenny_ops_lock_split_brain_detected_total > 0`.
 
 ## Diagnosis
 

@@ -75,6 +75,45 @@ func TestServesJSONAtCanonicalSpecPath_spec_15_1_589(t *testing.T) {
 	}
 }
 
+// spec: §15.1 (OpenAPI generation and discovery) — F-COV-1. §15.1 lists
+// both `/v1/openapi.json` and `/v1/openapi.yaml` as the admin-API
+// discovery paths, but the gateway previously served only the JSON form,
+// so a consumer following the §25.4 `/me` `links.openApi` YAML variant or
+// the §15.1 two-path claim hit a 404. This asserts the gateway now serves
+// the `/v1/openapi.yaml` alias with the YAML content type and the same
+// document bytes as `/openapi.yaml`; it fails against the pre-fix handler,
+// which routed `/v1/openapi.yaml` to the ServeMux 404.
+func TestServesYAMLAtV1DiscoveryPath_spec_15_1(t *testing.T) {
+	rootReq := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	rootRR := httptest.NewRecorder()
+	openapi.Handler().ServeHTTP(rootRR, rootReq)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/openapi.yaml", nil)
+	rr := httptest.NewRecorder()
+	openapi.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/v1/openapi.yaml status: %d, want 200", rr.Code)
+	}
+	if got := rr.Header().Get("Content-Type"); got != "application/yaml" {
+		t.Errorf("Content-Type: got %q, want application/yaml", got)
+	}
+	if rr.Body.Len() == 0 {
+		t.Error("body empty")
+	}
+	if rr.Body.String() != rootRR.Body.String() {
+		t.Error("/v1/openapi.yaml must serve the same document bytes as /openapi.yaml")
+	}
+	// The YAML form is the same document, so it parses as JSON (JSON is a
+	// strict subset of YAML 1.2 and the served bytes are JSON).
+	var doc map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("body is not valid JSON/YAML: %v", err)
+	}
+	if doc["openapi"] != "3.1.0" {
+		t.Errorf("openapi version: got %v", doc["openapi"])
+	}
+}
+
 // spec: §15.1 line 589 — the canonical `/openapi.json` mount preserves
 // the gateway release version stamped via HandlerWithVersion. F-15.1.17.
 func TestCanonicalJSONMountStampsReleaseVersion_spec_15_1_589(t *testing.T) {

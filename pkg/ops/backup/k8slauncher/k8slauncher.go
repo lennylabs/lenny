@@ -329,6 +329,12 @@ func (l *Launcher) args(spec backup.JobSpec) []string {
 	case backup.JobRestore:
 		args = append(args, "--restore-id=$(LENNY_RESTORE_ID)")
 	}
+	// §25.11 step-2 config export reads the lenny-bootstrap-values ConfigMap
+	// in the release namespace through the lenny-backup-sa get-on-ConfigMaps
+	// grant, so a backup Job carries the namespace.
+	if spec.Kind == backup.JobBackup {
+		args = append(args, "--namespace="+l.cfg.Namespace)
+	}
 	if spec.Kind == backup.JobBackup {
 		cp := l.cfg.ContentPolicy
 		if cp.IncludeSensitiveTables {

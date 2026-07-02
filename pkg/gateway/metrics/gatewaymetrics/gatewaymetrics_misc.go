@@ -93,6 +93,18 @@ type miscMetrics struct {
 	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
 	// 0.5`; the replica self-degrades once |drift| >= 5s. F-13.3.5.
 	timeDrift prometheus.Gauge
+	// revocationPropagation is the §16.1 / §16.5
+	// lenny_token_revocation_propagation_seconds histogram labeled by the
+	// §16.7 propagation_mode outcome. The Token Service registers and
+	// observes the same metric for its /v1/oauth/token revocation path
+	// (pkg/tokenservice/promemit); the gateway registers and observes it
+	// here for the §17.6 in-process admin-credential rotation, whose durable
+	// revoke is always `postgres_only` (the gateway does not publish on the
+	// EventBus). The §16.5 TokenRevocationPropagationLag alert keys on the
+	// `outcome="eventbus"` bucket, so the gateway's `postgres_only`
+	// observation does not fire the alert; it makes the rotation path a
+	// declared producer of the metric the SEC-TS-1 design names. SEC-TS-1.
+	revocationPropagation *prometheus.HistogramVec
 }
 
 // newMiscMetrics constructs, registers, and materializes the misc metric subsystem
@@ -236,6 +248,21 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	if err != nil {
 		return m, err
 	}
+	// §16.1 / §16.5 / §16.7 — token-revocation propagation latency by
+	// outcome. Registered in the gateway process so the §17.6 in-process
+	// admin-credential rotation path can observe its durable-revoke latency
+	// keyed by the §16.7 propagation_mode (`postgres_only` on the gateway
+	// path). Mirrors the Token Service registration in
+	// pkg/tokenservice/promemit; the name, labels, and buckets match so the
+	// two producers write the same histogram family. SEC-TS-1.
+	revocationPropagation, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_token_revocation_propagation_seconds",
+		Help:    "§16.1 token-revocation propagation latency by §16.7 propagation_mode outcome.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"outcome"})
+	if err != nil {
+		return m, err
+	}
 	reg.MustRegister(statelessRequests,
 		statelessConcurrentActive,
 		sessionReuseCount,
@@ -247,7 +274,8 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 		memoryStoreErrors,
 		memoryStoreRecordCount,
 		memoryStoreUserOverThreshold,
-		timeDriftGauge)
+		timeDriftGauge,
+		revocationPropagation)
 	timeDriftChild := timeDriftGauge.WithLabelValues()
 	m.statelessRequests = statelessRequests
 	m.statelessConcurrentActive = statelessConcurrentActive
@@ -261,5 +289,6 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	m.memoryStoreRecordCount = memoryStoreRecordCount
 	m.memoryStoreUserOverThreshold = memoryStoreUserOverThreshold
 	m.timeDrift = timeDriftChild
+	m.revocationPropagation = revocationPropagation
 	return m, nil
 }
