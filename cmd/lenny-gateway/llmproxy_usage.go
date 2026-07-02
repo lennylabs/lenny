@@ -138,6 +138,18 @@ func (r *proxyUsageRecorder) setActivityStamper(s *sessionidle.Stamper) {
 	r.activity = s
 }
 
+// setProxyExtensionWaitTimeout applies the operator-tunable in-path §8.6
+// extension deadline (the --proxy-extension-wait-timeout flag). A
+// non-positive value leaves the recorder's defaultProxyExtensionWaitTimeout
+// in place, so a zeroed flag never collapses the wait window to nothing.
+// Nil-safe on the recorder. spec: §8.6 line 629; proposal 0023.
+func (r *proxyUsageRecorder) setProxyExtensionWaitTimeout(d time.Duration) {
+	if r == nil || d <= 0 {
+		return
+	}
+	r.proxyExtensionWaitTimeout = d
+}
+
 // RecordUsage implements llmproxy.UsageRecorder. It records the
 // proxy-extracted token usage against the lease's owning tenant. A
 // direct-mode lease never reaches the proxy hot path; this recorder

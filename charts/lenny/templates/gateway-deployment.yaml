@@ -1,7 +1,8 @@
 {{- /*
 The lenny-gateway Deployment, its Services, and its RBAC (§4.1, §17.1).
 The gateway is the §4.1 edge: it serves the §15.1 REST surface, the
-§8.6 GatewayControl gRPC listener, and the §4.9 LLM reverse proxy. It
+GatewayControl gRPC listener (the §9.1/§9.3 tool bridge and §5.2
+scrub-report RPCs), and the §4.9 LLM reverse proxy. It
 is stateless and horizontally scaled, so the Deployment carries a
 replica count and the §13.1 Restricted-PSS posture (non-root, all
 capabilities dropped, read-only root filesystem, RuntimeDefault
@@ -171,8 +172,9 @@ rules:
     resources: ["pods"]
     verbs: ["get", "list", "watch", "patch"]
   # §10.2 line 227 — "The gateway validates the signature on every
-  # pod→gateway request." The §8.6 GatewayControl listener submits a
-  # TokenReview for each pod-presented projected SA token; the
+  # pod→gateway request." The GatewayControl listener submits a
+  # TokenReview for each pod-presented projected SA token on the
+  # §9.1/§9.3 tool-bridge and §5.2 scrub-report RPCs; the
   # kube-apiserver verifies the SA-issuer signature, expiry, and the
   # deployment-specific audience. Equivalent to binding the
   # system:auth-delegator ClusterRole.
@@ -397,6 +399,11 @@ spec:
             {{- if gt (int .Values.gateway.leaseExtension.autoModeMaxPerMinute) 0 }}
             - --lease-extension-auto-max-per-min={{ .Values.gateway.leaseExtension.autoModeMaxPerMinute }}
             {{- end }}
+            # §8.6 line 629 — in-path deadline the LLM Proxy waits for a
+            # budget-exhaustion lease extension before falling through to a
+            # recover-on-next-request BUDGET_EXHAUSTED. Operator-tunable
+            # (§8.6 does not fix it); default 5s. Proposal 0023.
+            - --proxy-extension-wait-timeout={{ .Values.gateway.leaseExtension.proxyExtensionWaitTimeout }}
             {{- /* §17.6 line 365 / F-17.6.7: noEnvironmentPolicy is the
                 spec-canonical global.* platform default. */}}
             - --no-environment-policy={{ .Values.global.noEnvironmentPolicy }}

@@ -3088,8 +3088,9 @@ rules:
     resources: ["pods"]
     verbs: ["get", "list", "watch", "patch"]
   # §10.2 line 227 — "The gateway validates the signature on every
-  # pod→gateway request." The §8.6 GatewayControl listener submits a
-  # TokenReview for each pod-presented projected SA token; the
+  # pod→gateway request." The GatewayControl listener submits a
+  # TokenReview for each pod-presented projected SA token on the
+  # §9.1/§9.3 tool-bridge and §5.2 scrub-report RPCs; the
   # kube-apiserver verifies the SA-issuer signature, expiry, and the
   # deployment-specific audience. Equivalent to binding the
   # system:auth-delegator ClusterRole.
@@ -4001,6 +4002,11 @@ spec:
             # §8.6 line 712 — deployment-default auto-mode lease-extension
             # rate limit. Rendered only when set; 0/unset keeps the spec
             # default of no limit. F-8.6.7.
+            # §8.6 line 629 — in-path deadline the LLM Proxy waits for a
+            # budget-exhaustion lease extension before falling through to a
+            # recover-on-next-request BUDGET_EXHAUSTED. Operator-tunable
+            # (§8.6 does not fix it); default 5s. Proposal 0023.
+            - --proxy-extension-wait-timeout=5s
             - --no-environment-policy=deny-all
             # spec: §15.5 item 1; docs/api/index.md line 124 —
             # F-15.5.11. Empty omits the flag so the middleware stays

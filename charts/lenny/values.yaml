@@ -2137,10 +2137,14 @@ gateway:
     csiDriverName: "csi.cert-manager.io"
   # grpcPort is the pod-to-gateway gRPC control-channel port (§13.2),
   # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
-  # The gateway serves the §8.6 GatewayControl listener on this port.
+  # The gateway serves the GatewayControl listener on this port for the
+  # §9.1/§9.3 platform-tool and connector-tool bridge and the §5.2
+  # scrub-report RPCs. (Lease extension is an internal gateway operation
+  # the GatewayControl service no longer hosts; see §8.6.)
   grpcPort: 50051
-  # leaseExtension configures the §8.6 GatewayControl lease-extension
-  # control plane.
+  # leaseExtension configures the §8.6 lease-extension control plane, now
+  # an internal gateway operation the LLM Proxy drives in-process rather
+  # than a GatewayControl RPC.
   leaseExtension:
     # autoModeMaxPerMinute is the §8.6 line 712 deployment-default
     # autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap
@@ -2149,6 +2153,14 @@ gateway:
     # the window. 0 is the spec default (no limit). A registered tenant or
     # runtime override takes precedence over this deployment default.
     autoModeMaxPerMinute: 0
+    # proxyExtensionWaitTimeout is the §8.6 line 629 in-path deadline the
+    # gateway LLM Proxy waits for a budget-exhaustion lease extension to
+    # resolve before falling through to a recover-on-next-request
+    # BUDGET_EXHAUSTED. A fast auto or quick-approval extension resolves
+    # within this window and stays transparent to the runtime; a slower
+    # elicitation continues out-of-band. §8.6 does not fix this value; it
+    # is operator-tunable. Default 5s.
+    proxyExtensionWaitTimeout: 5s
   # metricsPort is the port the gateway serves Prometheus metrics on
   # (§13.2); the monitoring-scrape NetworkPolicy admits it. The gateway
   # binary serves /metrics on the same listener as the REST API

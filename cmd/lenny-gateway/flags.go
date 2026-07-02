@@ -213,6 +213,7 @@ type gatewayFlags struct {
 	leaseDefaultApproval                    *string
 	leaseCoolOffSec                         *int
 	leaseRejectionCoolOffSec                *int
+	proxyExtensionWaitTimeout               *time.Duration
 	spiffeTrustDomain                       *string
 	interceptorNamespaces                   *string
 	saTokenAudience                         *string
@@ -846,6 +847,8 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§8.6 line 675 deployment-default coolOffSeconds: the post-approval window during which further extensions auto-grant without re-elicitation. Zero applies the spec default (5s). F-15.3.5.")
 	f.leaseRejectionCoolOffSec = flag.Int("lease-extension-rejection-cooloff-seconds", 0,
 		"§8.6 line 734 deployment-default rejectionCoolOffSeconds: after a denial, the requesting subtree's extensions auto-reject for this long. Zero applies the spec default (300s). F-15.3.5.")
+	f.proxyExtensionWaitTimeout = flag.Duration("proxy-extension-wait-timeout", envDuration("LENNY_PROXY_EXTENSION_WAIT_TIMEOUT", defaultProxyExtensionWaitTimeout),
+		"§8.6 line 629 proxyExtensionWaitTimeout: how long the gateway LLM Proxy waits in-path for a budget-exhaustion lease extension to resolve before falling through to a recover-on-next-request BUDGET_EXHAUSTED. A fast auto or quick-approval extension resolves within this window and is transparent; a slower elicitation continues out-of-band. §8.6 does not fix this value; it is operator-tunable. Default 5s. Override via LENNY_PROXY_EXTENSION_WAIT_TIMEOUT.")
 	f.spiffeTrustDomain = flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
 	f.interceptorNamespaces = flag.String("interceptor-namespaces", os.Getenv("LENNY_INTERCEPTOR_NAMESPACES"),

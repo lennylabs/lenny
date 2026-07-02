@@ -419,3 +419,37 @@ func TestProxyUsageRecorderRecordsPerSession_spec_8_8_897(t *testing.T) {
 		t.Errorf("direct-mode leaked into per-session accumulator: %+v", got)
 	}
 }
+
+// TestProxyUsageRecorderProxyExtensionWaitTimeoutOverride pins the
+// operator override the --proxy-extension-wait-timeout flag feeds into the
+// recorder's in-path §8.6 extension deadline. A positive value replaces the
+// 5s default; a zero or negative value leaves the default in place so a
+// zeroed flag never collapses the wait window to nothing (which would turn
+// every elicitation-mode extension into an immediate BUDGET_EXHAUSTED).
+// spec: §8.6 line 629; proposal 0023 S5.
+func TestProxyUsageRecorderProxyExtensionWaitTimeoutOverride(t *testing.T) {
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	if rec.proxyExtensionWaitTimeout != defaultProxyExtensionWaitTimeout {
+		t.Fatalf("initial timeout = %v, want default %v", rec.proxyExtensionWaitTimeout, defaultProxyExtensionWaitTimeout)
+	}
+
+	rec.setProxyExtensionWaitTimeout(12 * time.Second)
+	if rec.proxyExtensionWaitTimeout != 12*time.Second {
+		t.Errorf("after override timeout = %v, want 12s", rec.proxyExtensionWaitTimeout)
+	}
+
+	// A non-positive flag value (a zeroed --proxy-extension-wait-timeout)
+	// must not overwrite the resolved deadline with zero.
+	rec.setProxyExtensionWaitTimeout(0)
+	if rec.proxyExtensionWaitTimeout != 12*time.Second {
+		t.Errorf("zero override clobbered timeout = %v, want 12s preserved", rec.proxyExtensionWaitTimeout)
+	}
+	rec.setProxyExtensionWaitTimeout(-3 * time.Second)
+	if rec.proxyExtensionWaitTimeout != 12*time.Second {
+		t.Errorf("negative override clobbered timeout = %v, want 12s preserved", rec.proxyExtensionWaitTimeout)
+	}
+
+	// The setter is nil-safe on the recorder.
+	var nilRec *proxyUsageRecorder
+	nilRec.setProxyExtensionWaitTimeout(5 * time.Second)
+}
