@@ -163,6 +163,22 @@ func New(t Terminator, extend ExtendOnExhaustion, onExceeded func(tenantID, sess
 	}
 }
 
+// SetExtendOnExhaustion wires the §8.6 extension seam after construction.
+// The composition root builds the enforcer in an earlier step than the
+// leasecontrol.Service that satisfies the seam (the service is constructed
+// with the GatewayControl listener, downstream of the session-deps step
+// that builds this enforcer), so the seam cannot be passed to New. This
+// setter closes that construction-order gap: the composition root calls it
+// once the service exists, mapping leasecontrol.Outcome onto Outcome. A nil
+// seam (the no-leasecontrol local-development path) leaves the enforcer on
+// the §11.2 line 44 terminate-immediately behavior. It must run before the
+// enforcer serves its first Record; the composition root wires it during
+// build, before the proxy accepts requests, so no lock guards it against a
+// concurrent Record. spec: §8.6 line 629; proposal 0023 S6.
+func (e *Enforcer) SetExtendOnExhaustion(extend ExtendOnExhaustion) {
+	e.extendOnExhaustion = extend
+}
+
 // Record adds tokens to sessionID's cumulative consumption under the
 // given budget. The first time the session's cumulative consumption
 // reaches or exceeds a positive budget, Record attempts the §8.6 lease
