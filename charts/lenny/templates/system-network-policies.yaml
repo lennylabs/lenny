@@ -25,8 +25,11 @@ two flows the §13.2 default-deny otherwise blocks: kube-apiserver
 ingress so the API server can invoke the webhook callbacks, and
 kube-system CoreDNS egress for name resolution. Without the ingress
 rule every fail-closed webhook silently rejects all admissions. The
-drain-readiness-only gateway-egress sub-rule is rendered with that
-feature-gated webhook.
+per-webhook gateway-egress sub-rules (§13.2 (b) drain-readiness-only and
+(c) sandboxtemplate-deletion-guard-only, each narrowed by an additive
+lenny.dev/webhook-name label) are rendered by those webhooks' own
+templates rather than here, so this shared policy grants no gateway
+reachability to the in-process validators.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

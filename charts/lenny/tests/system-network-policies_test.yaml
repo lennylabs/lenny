@@ -452,6 +452,33 @@ tests:
           path: spec.ingress[0].ports[0].port
           value: 9090
 
+  # spec: §13.2 (admission-webhook NetworkPolicy row, sub-rule (c),
+  # NET-068), §17.2, §10.5. The shared allow-admission-webhooks policy
+  # grants only kube-apiserver ingress and kube-apiserver + CoreDNS
+  # egress; it must NOT grant any admission-webhook pod egress to the
+  # gateway. Gateway reachability is granted only through the per-webhook
+  # narrowed policies (allow-drain-readiness-gateway-egress,
+  # allow-deletion-guard-gateway-egress), each keyed on the additive
+  # lenny.dev/webhook-name label. This pins that the in-process
+  # validators carry no gateway-egress grant, preserving NET-068 least
+  # privilege. F-13.2.24.
+  - it: grants the shared admission-webhook policy no gateway egress (least privilege)
+    documentSelector:
+      path: metadata.name
+      value: allow-admission-webhooks
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      # No egress peer in the shared policy selects the gateway component.
+      - notContains:
+          path: spec.egress[*].to[*].podSelector.matchLabels["lenny.dev/component"]
+          content: gateway
+      # The shared policy keys on the canonical component label alone; it
+      # carries no additive webhook-name narrowing (that lives on the
+      # per-webhook egress policies only).
+      - notExists:
+          path: spec.podSelector.matchLabels["lenny.dev/webhook-name"]
+
   - it: honors a custom ingressControllerNamespace on the gateway-ingress policy
     set:
       ingressControllerNamespace: traefik-system

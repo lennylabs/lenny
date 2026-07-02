@@ -58,6 +58,14 @@ var expectedSystemPolicies = []string{
 	"allow-controller-egress",
 	"allow-token-service",
 	"allow-admission-webhooks",
+	// allow-deletion-guard-gateway-egress is the §13.2 sub-rule (c)
+	// per-webhook egress policy the deletion-guard needs to reach the
+	// gateway GET /internal/runtime-upgrade/active probe. It renders
+	// unconditionally under admissionWebhooks.enabled (unlike
+	// allow-drain-readiness-gateway-egress, which is additionally gated
+	// on features.drainReadiness and so is absent from the dev-mode
+	// install this suite runs). F-13.2.24.
+	"allow-deletion-guard-gateway-egress",
 }
 
 // spec: 13.2
@@ -126,6 +134,109 @@ func TestNetworkPolicyAdversarial(t *testing.T) {
 		}
 		t.Logf("adversarial probe: unlabelled pod blocked reaching the gateway at %s "+
 			"(curl exit 28, connection timed out — default-deny-all enforced)", target)
+	}
+}
+
+// gatewayInternalPort is the gateway's internal HTTP port (§13.2,
+// values.yaml gateway.internalPort default 8080). It serves
+// GET /internal/runtime-upgrade/active, the endpoint the
+// sandboxtemplate-deletion-guard webhook probes before admitting a
+// SandboxTemplate DELETE. The §13.2 sub-rule (c) gateway-egress grant
+// is narrowed to this port for the deletion-guard pods only.
+const gatewayInternalPort = "8080"
+
+// deletionGuardWebhookName is the additive per-webhook label value the
+// §13.2 sub-rule (c) selector pairs with the canonical
+// lenny.dev/component: admission-webhook key to narrow the
+// gateway-internal-port egress to the deletion-guard pods alone
+// (NET-068). It matches the egressLabel the chart stamps via
+// lenny.admissionWebhookWorkload.
+const deletionGuardWebhookName = "sandboxtemplate-deletion-guard"
+
+// spec: 13.2 (NET-068 least-privilege additive-label narrowing, sub-rule (c)),
+// 17.2 (only lenny-drain-readiness and lenny-sandboxtemplate-deletion-guard
+// carry the additive gateway-egress webhook-name label)
+// diagnosis: the §13.2 sub-rule (c) gateway-egress grant is broader than
+// the deletion-guard alone, or the additive-label narrowing is not
+// enforced by the CNI. The test schedules two probe pods in lenny-system,
+// both carrying the canonical lenny.dev/component: admission-webhook label
+// so allow-gateway-ingress admits them on the internal port. The first
+// pod carries ONLY that label — an in-process webhook without the
+// deletion-guard webhook-name — and allow-deletion-guard-gateway-egress
+// must NOT select it, so the lenny-system default-deny drops its egress
+// to the gateway internal port and its curl times out (exit 28). The
+// second pod additionally carries lenny.dev/webhook-name:
+// sandboxtemplate-deletion-guard, so allow-deletion-guard-gateway-egress
+// selects it and its egress to the internal port is permitted (curl exit
+// 0). A failure means sub-rule (c) grants gateway egress to every
+// admission-webhook pod (broadening least privilege past the deletion-
+// guard) or the egress policy is missing entirely, so the deletion-guard
+// itself cannot reach the probe.
+func TestDeletionGuardGatewayEgressLeastPrivilege(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	gatewayIP := serviceClusterIP(t, c, "lenny-gateway")
+	if gatewayIP == "" {
+		t.Fatalf("the lenny-gateway Service has no ClusterIP; cannot probe sub-rule (c) narrowing")
+	}
+	target := fmt.Sprintf("http://%s:%s/internal/runtime-upgrade/active", gatewayIP, gatewayInternalPort)
+
+	// Positive control: a probe pod carrying the paired canonical +
+	// additive labels the deletion-guard pods carry. This is the exact
+	// selector allow-deletion-guard-gateway-egress matches, so its egress
+	// to the gateway internal port must be permitted. Running it first
+	// proves the egress policy, the ingress rule, and the target port are
+	// sound, so the block on the component-only pod below is attributable
+	// to the missing webhook-name label rather than a broken probe or a
+	// wrong port.
+	guardPod := networkProbePod("np-probe-deletion-guard", map[string]string{
+		"lenny.dev/component":    "admission-webhook",
+		"lenny.dev/webhook-name": deletionGuardWebhookName,
+	})
+	createProbePod(t, c, guardPod)
+	res := curlFromPod(t, c, "np-probe-deletion-guard", target, 8*time.Second)
+	if res.exitCode != 0 {
+		t.Fatalf("sub-rule (c) positive control failed: a probe pod carrying the paired "+
+			"lenny.dev/component=admission-webhook + lenny.dev/webhook-name=%s labels could not reach the "+
+			"gateway internal port at %s (curl exit %d). allow-deletion-guard-gateway-egress must permit "+
+			"the deletion-guard's runtime-upgrade probe.\noutput:\n%s",
+			deletionGuardWebhookName, target, res.exitCode, res.output)
+	}
+	t.Logf("sub-rule (c) positive control: deletion-guard-labelled probe reached the gateway internal "+
+		"port at %s (curl exit 0, %s)", target, strings.TrimSpace(res.output))
+
+	// The adversarial probe: a pod carrying ONLY the canonical
+	// lenny.dev/component: admission-webhook label — an in-process webhook
+	// (pod-security, sandboxclaim-guard, etc.) that lacks the deletion-
+	// guard webhook-name. allow-admission-webhooks grants it base egress
+	// (CoreDNS) but NOT gateway egress, and allow-deletion-guard-gateway-
+	// egress does not select it (no matching webhook-name), so the
+	// lenny-system default-deny drops its egress to the gateway internal
+	// port. Its connection must time out at the CNI layer (curl exit 28).
+	componentOnlyPod := networkProbePod("np-probe-webhook-nolabel", map[string]string{
+		"lenny.dev/component": "admission-webhook",
+	})
+	createProbePod(t, c, componentOnlyPod)
+	res = curlFromPod(t, c, "np-probe-webhook-nolabel", target, 8*time.Second)
+	if res.exitCode == 0 {
+		t.Fatalf("§13.2 sub-rule (c) violation: an admission-webhook probe pod WITHOUT the "+
+			"lenny.dev/webhook-name=%s label reached the gateway internal port at %s. sub-rule (c) "+
+			"must narrow gateway-internal-port egress to the deletion-guard pods only; granting it to "+
+			"every admission-webhook pod broadens least privilege (NET-068).\noutput:\n%s",
+			deletionGuardWebhookName, target, res.output)
+	}
+	// curl exit 28 is the timeout this test wants — the CNI dropped the
+	// SYN because no egress policy selected the component-only pod for the
+	// gateway internal port. Exit 7 (connection refused) would mean the
+	// packet reached a host that actively rejected it, which is not a
+	// NetworkPolicy block; flag it.
+	if res.exitCode != 28 {
+		t.Errorf("component-only admission-webhook probe to %s failed with curl exit %d, expected 28 "+
+			"(connection timed out). A non-timeout failure is not a clean CNI egress block.\noutput:\n%s",
+			target, res.exitCode, res.output)
+	} else {
+		t.Logf("sub-rule (c) adversarial probe: component-only admission-webhook pod blocked reaching "+
+			"the gateway internal port at %s (curl exit 28 — least privilege preserved)", target)
 	}
 }
 

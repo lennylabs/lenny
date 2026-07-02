@@ -10,7 +10,51 @@ with a 5s timeout so an unreachable webhook denies the deletion rather
 than admitting a delete it cannot verify against the safety invariant.
 */ -}}
 {{- if .Values.admissionWebhooks.enabled }}
-{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-sandboxtemplate-deletion-guard") }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-sandboxtemplate-deletion-guard" "egressLabel" "sandboxtemplate-deletion-guard") }}
+---
+{{/*
+allow-deletion-guard-gateway-egress re-admits the §10.5 runtime-upgrade
+gateway-probe egress the system-network-policies default-deny otherwise
+blocks. The sandboxtemplate-deletion-guard webhook calls
+GET /internal/runtime-upgrade/active on
+lenny-gateway.<release>.svc:internalPort before admitting a
+SandboxTemplate DELETE that has a referencing SandboxWarmPool; without
+this egress rule the probe times out and the fail-closed webhook rejects
+the deletion in any cluster that runs Lenny with default network
+policies in place.
+
+Per §13.2 sub-rule (c) / NET-068 and §17.2 the podSelector uses the
+canonical lenny.dev/component: admission-webhook key plus the additive
+lenny.dev/webhook-name: sandboxtemplate-deletion-guard key, so this
+gateway-egress grant narrows to the deletion-guard pods only. The other
+in-process webhooks do not inherit reachability to the gateway internal
+port. F-13.2.24.
+
+Unlike drain-readiness, the deletion-guard has no separate feature flag,
+so this policy renders whenever admissionWebhooks.enabled is set,
+matching the webhook's own render condition.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-deletion-guard-gateway-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: admission-webhook
+      lenny.dev/webhook-name: sandboxtemplate-deletion-guard
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+  policyTypes: [Egress]
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
