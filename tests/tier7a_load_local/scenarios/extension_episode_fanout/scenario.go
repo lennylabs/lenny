@@ -32,7 +32,7 @@
 //   - The whole path is -race clean (run under -race with the load_local
 //     tag).
 //
-// TESTING.md §12.7.a regression scenarios; proposal 0023 S2.
+// TESTING.md §12.7.a regression scenarios; proposal 0023 S3.
 package extension_episode_fanout
 
 import (
