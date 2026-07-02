@@ -28,6 +28,13 @@ import (
 	// free and -race clean.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/extension_episode_fanout"
 
+	// Proposal 0023 S3/S4: the §11.2/§8.6 sessionbudget.Enforcer under
+	// concurrent Record/Allow/RaiseBudget/TerminateSession/Forget — the
+	// out-of-band SessionReclaimer fan-out races the in-path record/gate,
+	// with no deadlock, no lost deny-flag clear, and budget monotonicity,
+	// -race clean.
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/raisebudget_enforcer_race"
+
 	// Wave 3: §3.5 component-isolated benches.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/auth_jwt_verify_throughput"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/experiment_bucket_determinism"

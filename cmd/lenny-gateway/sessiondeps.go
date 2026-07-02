@@ -192,7 +192,11 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// terminator's terminal hook is set after the session server exists
 	// (the same deferred wiring sessionAdminAdapter uses).
 	budgetTerminator := &budgetSessionTerminator{store: w.sessions}
-	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator,
+	// The §8.6 extension seam is nil here: with no seam wired the enforcer
+	// denies and terminates immediately on exhaustion, preserving the
+	// §11.2 line 44 behavior. The proxy-mode extension trigger is injected
+	// by the proxy wiring in a later build step (proposal 0023 S3/S6).
+	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator, nil,
 		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
 
 	// §8.6 GatewayControl lease-extension budget state. Created here, when

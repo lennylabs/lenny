@@ -154,7 +154,7 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 		t.Fatalf("sessions.Create: %v", err)
 	}
 	term := &recordTerminator{}
-	enforcer := sessionbudget.New(term, nil)
+	enforcer := sessionbudget.New(term, nil, nil)
 	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	lease := credential.Lease{
@@ -193,7 +193,7 @@ func TestProxyUsageRecorderNoBudgetNoEnforcement_Spec11_2(t *testing.T) {
 		t.Fatalf("sessions.Create: %v", err)
 	}
 	term := &recordTerminator{}
-	enforcer := sessionbudget.New(term, nil)
+	enforcer := sessionbudget.New(term, nil, nil)
 	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 	rec.RecordUsage(credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",

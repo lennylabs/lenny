@@ -213,7 +213,13 @@ func (r *proxyUsageRecorder) RecordUsage(lease credential.Lease, u llmproxy.Usag
 	// it is exhausted. Runs after the metering / quota writes so the
 	// authoritative record lands before the session is torn down.
 	if r.budget != nil {
-		r.budget.Record(lease.TenantID, lease.SessionID, tokenBudget, tokens)
+		// The request context threading (r.Context() -> reqCtx, the derived
+		// proxyExtensionWaitTimeout waitCtx) and the granted-delta budget
+		// input are wired by the proxy record-boundary in a later build step
+		// (proposal 0023 S3/S4). Until then the enforcer's nil seam denies
+		// and terminates immediately on exhaustion, so background contexts
+		// preserve the current §11.2 line 44 behavior.
+		r.budget.Record(context.Background(), context.Background(), lease.TenantID, lease.SessionID, tokenBudget, tokens)
 	}
 }
 
