@@ -242,6 +242,104 @@ func TestLabelImmutability(t *testing.T) {
 		webhook, rule.failurePolicy, rule.resources, rule.operations)
 }
 
+// spec: 13.2 (admission-webhook NetworkPolicy egress sub-rule (c)),
+// 17.2 (deletion-guard HA + additive webhook-name label),
+// 10.5 (runtime-upgrade probe on SandboxTemplate DELETE)
+// diagnosis: the §13.2 allow-deletion-guard-gateway-egress NetworkPolicy
+// is missing or the deletion-guard's gateway probe hop is still blocked
+// by the lenny-system default-deny. The test creates a SandboxTemplate
+// and a referencing SandboxWarmPool (no active RuntimeUpgrade), then
+// deletes the template. The fail-closed lenny-sandboxtemplate-deletion-guard
+// webhook lists the referencing pool and probes
+// GET /internal/runtime-upgrade/active on the gateway internal port; a
+// failure means that probe egress is dropped, so the DELETE times out and
+// the webhook denies it with `context deadline exceeded` / a 503 instead
+// of allowing the deletion. Negative-space check: the template must have a
+// referencing pool, because a template with zero referencing pools is
+// Allowed without any gateway hop and would not exercise the restored
+// egress path.
+func TestSandboxTemplateDeleteReachesGatewayProbe(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	// A §4.9-compliant SandboxTemplate (deliveryMode proxy with the
+	// default spiffeBinding, isolationProfile sandboxed) so the
+	// unconditionally-rendered lenny-direct-mode-isolation webhook admits
+	// the CREATE. This is a real apply: the template must persist so the
+	// DELETE below drives the deletion-guard.
+	const template = `apiVersion: lenny.dev/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: e2e-deletion-guard-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: e2e-nonexistent-runtime
+  deliveryMode: proxy
+  isolationProfile: sandboxed
+`
+
+	// A SandboxWarmPool whose spec.templateRef names the template above,
+	// so the deletion-guard's decider finds a referencing pool and takes
+	// the gateway-probe branch rather than the zero-pool Allow shortcut.
+	// minWarm 0 keeps the poolscaling controller from provisioning agent
+	// pods, and minWarm <= maxWarm satisfies the pool-config-validator.
+	const pool = `apiVersion: lenny.dev/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: e2e-deletion-guard-pool
+  namespace: lenny-agents
+spec:
+  templateRef: e2e-deletion-guard-template
+  minWarm: 0
+  maxWarm: 1
+`
+
+	// Clean up the pool and template regardless of the outcome. The pool
+	// is removed first so its later teardown cannot re-arm the guard, and
+	// both use --ignore-not-found so a successful in-test delete is not a
+	// cleanup error.
+	t.Cleanup(func() { _, _ = c.DeleteStdin(t, pool) })
+	t.Cleanup(func() { _, _ = c.DeleteStdin(t, template) })
+
+	// The lenny-pool-config-validator webhook admits SandboxTemplate and
+	// SandboxWarmPool spec writes only from the PoolScalingController
+	// service account (Postgres-authoritative pool config). Impersonate
+	// that principal to seat the fixtures, as the controller does at
+	// runtime.
+	if out, err := applyAsPoolScalingController(t, c, template); err != nil {
+		t.Fatalf("API server rejected the §4.9-compliant SandboxTemplate fixture: %v\noutput:\n%s", err, out)
+	}
+	if out, err := applyAsPoolScalingController(t, c, pool); err != nil {
+		t.Fatalf("API server rejected the referencing SandboxWarmPool fixture: %v\noutput:\n%s", err, out)
+	}
+
+	// No RuntimeUpgrade is created, so the gateway
+	// GET /internal/runtime-upgrade/active probe reports no active upgrade
+	// for the referencing pool and the guard admits the delete — provided
+	// the probe hop reaches the gateway. Deleting the template drives the
+	// DELETE through the fail-closed deletion-guard.
+	out, err := c.KubectlOut(t, "delete", "sandboxtemplate", "e2e-deletion-guard-template", "-n", "lenny-agents")
+	if err != nil {
+		// A dropped probe egress surfaces as a webhook call timeout. Name
+		// the two signatures so a failure points at the missing NetworkPolicy
+		// rather than an unrelated delete error.
+		for _, blocked := range []string{"context deadline exceeded", "deadline", "timeout", "503"} {
+			if strings.Contains(out, blocked) {
+				t.Fatalf("SandboxTemplate DELETE was denied by the fail-closed deletion-guard: the gateway "+
+					"runtime-upgrade probe hop is blocked (allow-deletion-guard-gateway-egress missing or the "+
+					"lenny-system default-deny still drops it).\noutput:\n%s", out)
+			}
+		}
+		t.Fatalf("kubectl delete sandboxtemplate failed: %v\noutput:\n%s", err, out)
+	}
+	// The webhook must have been the one to admit the delete: confirm the
+	// object is gone.
+	if !strings.Contains(out, "deleted") {
+		t.Fatalf("delete did not report the SandboxTemplate as deleted; the guard may not have run.\noutput:\n%s", out)
+	}
+	t.Logf("deletion-guard admitted the SandboxTemplate DELETE through the restored gateway probe path: %s",
+		strings.TrimSpace(out))
+}
+
 // webhookRuleInfo holds the first rule of a ValidatingWebhookConfiguration
 // together with the configuration's failurePolicy.
 type webhookRuleInfo struct {
@@ -334,4 +432,25 @@ func containsValue(values []string, want string) bool {
 func dryRunApply(t *testing.T, c *kind.Cluster, manifest string) (string, error) {
 	t.Helper()
 	return c.DryRunApplyStdin(t, manifest)
+}
+
+// poolScalingControllerSA is the only principal the
+// lenny-pool-config-validator webhook admits SandboxTemplate and
+// SandboxWarmPool spec writes from; pool configuration is
+// Postgres-authoritative and manual writes are rejected with
+// UNAUTHORIZED_POOL_CONFIG_WRITE. It mirrors
+// pkg/admission/label_immutability.PoolScalingControllerSA.
+const poolScalingControllerSA = "system:serviceaccount:lenny-system:lenny-pool-scaling-controller"
+
+// applyAsPoolScalingController applies manifest with `kubectl apply -f -`
+// impersonating the PoolScalingController service account, so the
+// lenny-pool-config-validator admits the write the way the controller's
+// own reconcile does at runtime. It returns the combined output and
+// error and does not fail the test itself, leaving the caller to assert.
+func applyAsPoolScalingController(t *testing.T, c *kind.Cluster, manifest string) (string, error) {
+	t.Helper()
+	cmd := c.Kubectl("apply", "--as", poolScalingControllerSA, "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
