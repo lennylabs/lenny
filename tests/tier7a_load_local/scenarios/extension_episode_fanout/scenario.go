@@ -10,15 +10,17 @@
 // join the one pending episode (treeConsent.pending / §8.6 line 719
 // batching) rather than opening a second elicitation, then the episode's
 // per-session completion fan-out raises or terminates each joined
-// session. Each joined session runs its own ExtendLease worker so a
-// mid-episode joiner overlaps inside requestConsent and batches onto the
-// live prompt; the last worker to finish runs the fan-out exactly once
-// and exits, so no goroutine outlives a resolved episode.
+// session. A single tracked episode goroutine per tree owns the whole
+// episode; it dispatches each joined member's ExtendLease concurrently so
+// a mid-episode joiner overlaps inside requestConsent and batches onto the
+// live prompt, and once every member has resolved that one goroutine runs
+// the fan-out exactly once and exits, so no goroutine outlives a resolved
+// episode.
 //
 // The invariants this scenario asserts:
-//   - The episode's per-session workers finish and exit and the last one
-//     runs the fan-out exactly once, so no goroutine outlives a resolved
-//     episode and none leaks per pending elicitation.
+//   - The single per-tree episode goroutine runs the fan-out exactly once
+//     and exits, so no goroutine outlives a resolved episode and none
+//     leaks per pending elicitation.
 //   - Every joined session is reclaimed (raised or terminated); no
 //     session is left denied with nothing to clear it.
 //   - Exactly one elicitation opens per tree for a batch of concurrent
@@ -211,9 +213,9 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 		return fmt.Errorf("§8.6 fan-out reclaimed no session despite %d pending detaches: sessions left denied",
 			s.counters.Get("pending"))
 	}
-	// The episode goroutine runs its fan-out and exits; no goroutine leaks
-	// per pending elicitation. Allow a small tolerance for runtime
-	// scheduler slack.
+	// The single per-tree episode goroutine runs its fan-out and exits; no
+	// goroutine leaks per pending elicitation. Allow a small tolerance for
+	// runtime scheduler slack.
 	if delta := postGoro - s.baselineGoro; delta > 8 {
 		return fmt.Errorf("goroutine leak: %d goroutines above baseline after every episode resolved (episode goroutines must exit)", delta)
 	}
