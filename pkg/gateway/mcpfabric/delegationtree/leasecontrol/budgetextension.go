@@ -196,30 +196,62 @@ type sessionResult struct {
 }
 
 // episode is one per-tree §8.6 extension episode. A first exhausting
-// session opens it on a single tracked goroutine; concurrent exhausting
-// sessions in the same tree join it (§8.6 line 719 batching) rather than
-// opening a second elicitation. The episode runs each joined session's
-// own Grant math and fans the resolution out to every member, because a
-// tree holds multiple proxy-mode sessions that resolve independently
-// (one may be GRANTED while another is CEILING_REACHED). spec: §8.6 line
-// 719, line 737-741.
+// session opens it; concurrent exhausting sessions in the same tree join
+// it (§8.6 line 719 batching) rather than opening a second elicitation.
+// Every joined member is dispatched on its OWN worker goroutine at the
+// moment it joins, so a session that exhausts mid-episode overlaps with
+// the in-flight elicitation and its ExtendLease -> requestConsent
+// observes the live tc.pending and batches onto the one prompt. A
+// batch-then-wait design would instead dispatch a mid-episode joiner only
+// after the first batch resolved (which clears tc.pending), so the joiner
+// would open a second prompt — the double-prompt §8.6 line 719 batching
+// exists to prevent. The episode runs each joined session's own Grant
+// math and fans the resolution out to every member, because a tree holds
+// multiple proxy-mode sessions that resolve independently (one may be
+// GRANTED while another is CEILING_REACHED). spec: §8.6 line 719, line
+// 737-741.
 type episode struct {
 	rootSessionID string
 
 	mu sync.Mutex
-	// members maps a joined session to its resolution channel. The
+	// members maps a joined session to its participation record. The
 	// in-path caller reads its own channel; the fan-out writes each
 	// member's channel exactly once. A member that detached at the
 	// in-path deadline stays in the map so the fan-out still reclaims it
 	// through the reclaimer.
 	members map[string]*member
-	// started guards the one-shot dispatch goroutine launch.
-	started bool
-	// closed is set under ep.mu once the run loop has taken its final
-	// member snapshot, so a joiner arriving after that snapshot mints a
-	// fresh episode rather than adding a member this episode will never
+	// outstanding counts worker goroutines that have not yet recorded a
+	// resolution. It gates closing: the episode closes to new joiners and
+	// fans out only when outstanding reaches zero, so a member joining
+	// while any worker is still in ExtendLease is still served by this
+	// episode rather than a fresh one. Guarded by mu.
+	outstanding int
+	// closed is set under ep.mu once the last worker finished and no new
+	// member remained, so a joiner arriving after that mints a fresh
+	// episode rather than adding a member this episode will never
 	// dispatch.
 	closed bool
+	// resolved holds each finished worker's resolution, keyed by session
+	// id, for the single fan-out the closing worker runs. Guarded by mu.
+	resolved map[string]sessionResult
+	// dispatchCtx is the session-scoped context every worker dispatches
+	// its ExtendLease elicitation on, resolved once (lazily) on the first
+	// worker so all workers share one context bounded by the §8.6
+	// elicitation lifecycle. ctxOnce guards the one-time resolution.
+	ctxOnce     sync.Once
+	dispatchCtx context.Context
+}
+
+// dispatchContext returns the episode's shared session-scoped dispatch
+// context, resolving it once from the manager's factory on the first
+// call. Every worker in the episode dispatches its ExtendLease on the
+// same context so the elicitation lifecycle is one episode-wide window
+// decoupled from any caller's in-path wait. spec: §8.6 line 629.
+func (ep *episode) dispatchContext(factory func() context.Context) context.Context {
+	ep.ctxOnce.Do(func() {
+		ep.dispatchCtx = factory()
+	})
+	return ep.dispatchCtx
 }
 
 // member is one session's participation in an episode. Its mutex
@@ -316,26 +348,34 @@ func (m *episodeManager) setReclaimer(r SessionReclaimer) {
 }
 
 // join enrolls sessionID (with its requested dimensions) in the tree's
-// current episode, starting one if none is open, and returns the
-// session's member so the caller can block on its resolution. A session
-// that joins twice before resolution reuses its existing member. join
-// retries against a fresh episode if it lost a race to an episode that
-// closed to new joiners between the manager-lock and the episode-lock.
+// current episode, starting one if none is open, spawns the session's
+// dispatch worker, and returns the session's member so the caller can
+// block on its resolution. A session that joins twice before resolution
+// reuses its existing member and spawns no second worker. join retries
+// against a fresh episode if it lost a race to an episode that closed to
+// new joiners between the manager-lock and the episode-lock. Dispatching
+// per member at join time (rather than in batches on one goroutine) is
+// what makes a mid-episode joiner overlap with the in-flight elicitation
+// and batch onto the one tc.pending prompt (§8.6 line 719).
 func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensions) *member {
 	for {
 		m.mu.Lock()
 		ep := m.trees[rootSessionID]
 		if ep == nil {
-			ep = &episode{rootSessionID: rootSessionID, members: map[string]*member{}}
+			ep = &episode{
+				rootSessionID: rootSessionID,
+				members:       map[string]*member{},
+				resolved:      map[string]sessionResult{},
+			}
 			m.trees[rootSessionID] = ep
 		}
 		m.mu.Unlock()
 
 		ep.mu.Lock()
 		if ep.closed {
-			// This episode stopped accepting joiners between the scans and
-			// setting done; a fresh episode will be minted on the next loop
-			// once run clears the per-tree slot.
+			// This episode stopped accepting joiners after its last worker
+			// finished; a fresh episode will be minted on the next loop once
+			// the closing worker clears the per-tree slot.
 			ep.mu.Unlock()
 			m.mu.Lock()
 			if m.trees[rootSessionID] == ep {
@@ -345,79 +385,80 @@ func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensi
 			continue
 		}
 		mem := ep.members[sessionID]
-		if mem == nil {
+		newMember := mem == nil
+		if newMember {
 			mem = &member{requested: requested, result: make(chan sessionResult, 1)}
 			ep.members[sessionID] = mem
-		}
-		start := !ep.started
-		if start {
-			ep.started = true
+			// Count this worker as outstanding under the same lock hold that
+			// registered the member, so a concurrently-finishing worker never
+			// observes zero outstanding while this member is unresolved and
+			// closes the episode out from under it.
+			ep.outstanding++
 		}
 		ep.mu.Unlock()
 
-		if start {
-			go m.run(ep)
+		if newMember {
+			go m.dispatchMember(ep, sessionID, requested)
 		}
 		return mem
 	}
 }
 
-// run drives one episode to resolution on a single goroutine, then fans
-// the per-session resolution out to every joined member. It dispatches
-// each session's ExtendLease on the session-scoped episode context so
-// the elicitation survives any caller's in-path wait. It exits after the
-// fan-out, so the extension-pending state leaks no goroutine. spec: §8.6
-// line 629, line 719.
-func (m *episodeManager) run(ep *episode) {
-	dispatchCtx := m.episodeCtx()
+// dispatchMember runs one joined session's §8.6 ExtendLease on the
+// session-scoped episode context, records its resolution, and — when it
+// is the last outstanding worker — closes the episode to new joiners and
+// runs the single per-session fan-out. Each member runs on its own
+// goroutine so concurrent and mid-episode joiners overlap inside
+// ExtendLease -> requestConsent and batch onto the one tc.pending prompt
+// (§8.6 line 719). Dispatch uses the episode context, not any caller's
+// in-path wait, so the elicitation survives a caller that detached at its
+// deadline. spec: §8.6 line 629, line 719.
+func (m *episodeManager) dispatchMember(ep *episode, sessionID string, requested Dimensions) {
+	// Resolve the episode's dispatch context once per episode, lazily on
+	// the first worker, so every worker shares the one session-scoped
+	// context bounded by the §8.6 elicitation lifecycle.
+	res := m.dispatchOne(ep.dispatchContext(m.episodeCtx), sessionID, requested)
 
-	// Snapshot the members that joined by the time each is dispatched. A
-	// session that joins mid-run is dispatched too: the loop re-reads the
-	// member set until no new member appears, so a late joiner within the
-	// same elicitation batch is served by this episode rather than a
-	// second one.
-	resolved := map[string]sessionResult{}
-	var members map[string]*member
-	for {
-		ep.mu.Lock()
-		pending := make(map[string]Dimensions)
-		for id, mem := range ep.members {
-			if _, ok := resolved[id]; ok {
-				continue
-			}
-			pending[id] = mem.requested
-		}
-		if len(pending) == 0 {
-			// No unresolved member remains: close the episode to new
-			// joiners under the same lock hold, so a joiner arriving now
-			// mints a fresh episode rather than adding a member this run
-			// never dispatches. Snapshot the members for the fan-out.
-			ep.closed = true
-			members = make(map[string]*member, len(ep.members))
-			for id, mem := range ep.members {
-				members[id] = mem
-			}
-			ep.mu.Unlock()
-			break
-		}
-		ep.mu.Unlock()
-		// Dispatch every session that joined but has not yet resolved. A
-		// session that joins mid-run within the same elicitation batch is
-		// picked up on the next loop, so it is served by this episode
-		// rather than a second one (§8.6 line 719).
-		for id, requested := range pending {
-			resolved[id] = m.dispatchOne(dispatchCtx, id, requested)
-		}
+	ep.mu.Lock()
+	ep.resolved[sessionID] = res
+	ep.outstanding--
+	last := ep.outstanding == 0
+	if last {
+		// No worker remains in flight. Close to new joiners under this lock
+		// hold so a joiner arriving now mints a fresh episode rather than
+		// adding a member this episode never dispatches, then snapshot the
+		// members and resolutions for the one fan-out.
+		ep.closed = true
 	}
+	ep.mu.Unlock()
 
-	// Clear the episode's per-tree slot before the fan-out so a session
-	// exhausting after resolution starts a fresh episode.
+	if !last {
+		return
+	}
+	m.finish(ep)
+}
+
+// finish clears the resolved episode's per-tree slot and runs the single
+// per-session fan-out. It is called exactly once, by the last worker to
+// finish. spec: §8.6 line 719.
+func (m *episodeManager) finish(ep *episode) {
 	m.mu.Lock()
 	if m.trees[ep.rootSessionID] == ep {
 		delete(m.trees, ep.rootSessionID)
 	}
 	reclaimer := m.reclaimer
 	m.mu.Unlock()
+
+	ep.mu.Lock()
+	members := make(map[string]*member, len(ep.members))
+	for id, mem := range ep.members {
+		members[id] = mem
+	}
+	resolved := make(map[string]sessionResult, len(ep.resolved))
+	for id, r := range ep.resolved {
+		resolved[id] = r
+	}
+	ep.mu.Unlock()
 
 	m.fanOut(members, resolved, reclaimer)
 }

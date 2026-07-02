@@ -546,6 +546,169 @@ func TestExtendForBudgetPerTreeEpisodeFanOut_spec_8_6_line_719(t *testing.T) {
 	}
 }
 
+// subtreeDenialSource is a BudgetSource whose extension-denied flag is
+// scoped per requesting subtree, matching the production Postgres source
+// that keys the flag with a per-row subtree id (§8.6 line 729/730). It
+// wraps a MemoryBudgetSource for the budget math and only overrides the
+// denial scope: Deny(requestingSessionID) marks that subtree alone, and
+// TreeBudget(sessionID) reports ExtensionDenied only when that session's
+// own subtree was denied. This is the double the §8.6 line 719 batching
+// regression needs: it lets one session's rejection deny only its own
+// subtree, so a sibling that failed to join the live elicitation batch
+// would re-elicit (a second prompt), which the tree-wide MemoryBudgetSource
+// would silently mask. spec: §8.6 line 719, line 729.
+type subtreeDenialSource struct {
+	inner  *leasecontrol.MemoryBudgetSource
+	clock  func() time.Time
+	mu     sync.Mutex
+	denied map[string]time.Time // requestingSessionID -> cool-off expiry
+}
+
+func newSubtreeDenialSource(clock func() time.Time) *subtreeDenialSource {
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	return &subtreeDenialSource{
+		inner:  leasecontrol.NewMemoryBudgetSource().WithClock(clock),
+		clock:  clock,
+		denied: map[string]time.Time{},
+	}
+}
+
+func (s *subtreeDenialSource) TreeBudget(ctx context.Context, tenantID, sessionID string) (leasecontrol.TreeBudget, error) {
+	tb, err := s.inner.TreeBudget(ctx, tenantID, sessionID)
+	if err != nil {
+		return tb, err
+	}
+	s.mu.Lock()
+	expiry, denied := s.denied[sessionID]
+	s.mu.Unlock()
+	// Only the requesting subtree's own denial applies; a sibling's
+	// rejection leaves this subtree extendable.
+	tb.ExtensionDenied = denied && s.clock().Before(expiry)
+	if denied {
+		tb.CoolOffExpiry = expiry
+	}
+	return tb, nil
+}
+
+func (s *subtreeDenialSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
+	return s.inner.ApplyGrant(ctx, tenantID, rootSessionID, requestingSessionID, granted)
+}
+
+func (s *subtreeDenialSource) RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration {
+	return s.inner.RejectionCoolOff(ctx, tenantID, rootSessionID)
+}
+
+func (s *subtreeDenialSource) Deny(_ context.Context, _ /*tenantID*/, _ /*rootSessionID*/, requestingSessionID string) error {
+	s.mu.Lock()
+	s.denied[requestingSessionID] = s.clock().Add(leasecontrol.DefaultRejectionCoolOff)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *subtreeDenialSource) TenantOf(ctx context.Context, sessionID string) (string, error) {
+	return s.inner.TenantOf(ctx, sessionID)
+}
+
+// TestExtendForBudgetPerTreeEpisodeRejectionSinglePrompt_spec_8_6_line_719:
+// two distinct subtrees in one tree exhaust concurrently, join one
+// per-tree episode, and share a SINGLE elicitation prompt even on the
+// rejection path. The denial source scopes the extension-denied flag per
+// subtree (as production does), so if the second session had NOT joined
+// the live batch through treeConsent.pending, it would open a second
+// prompt (el.callCount() == 2) once the first session's rejection resolved
+// and cleared the batch. Because the episode dispatches its joined members
+// concurrently, the second session observes the live tc.pending and awaits
+// the one prompt, so el.callCount() == 1. This pins the §8.6 line 719
+// "one elicitation at a time, concurrent requests batched" invariant on
+// the rejection path, which the sequential (pre-fix) dispatch broke and
+// the success cool-off could not mask.
+func TestExtendForBudgetPerTreeEpisodeRejectionSinglePrompt_spec_8_6_line_719(t *testing.T) {
+	budgets := newSubtreeDenialSource(nil)
+	budgets.inner.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     1_000_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeElicitation,
+	})
+	budgets.inner.AddSession("child-B", "root-1", "acme")
+
+	// The elicitor rejects, and blocks inside Elicit until released so both
+	// concurrent requests reach requestConsent and the second batches onto
+	// the first's live prompt (§8.6 line 719) rather than opening a second.
+	el := &scriptedElicitor{approve: false, release: make(chan struct{}), started: make(chan struct{})}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets:        budgets,
+		Tenants:        budgets,
+		Elicitor:       el,
+		EpisodeContext: context.Background,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reclaimer := newFakeReclaimer()
+	svc.SetReclaimer(reclaimer)
+
+	type outcomeRes struct {
+		sess    string
+		outcome leasecontrol.Outcome
+		err     error
+	}
+	out := make(chan outcomeRes, 2)
+	call := func(sess string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		defer cancel()
+		o, e := svc.ExtendForBudget(ctx, sess)
+		out <- outcomeRes{sess, o, e}
+	}
+	go call("root-1")
+	<-el.started // the first request opened the one elicitation.
+	go call("child-B")
+
+	// Both in-path callers detach at Pending while the elicitation blocks.
+	for i := 0; i < 2; i++ {
+		r := <-out
+		if r.err != nil {
+			t.Fatalf("ExtendForBudget(%s): %v", r.sess, r.err)
+		}
+		if r.outcome != leasecontrol.OutcomePending {
+			t.Errorf("ExtendForBudget(%s) outcome = %v, want Pending (in-path deadline)", r.sess, r.outcome)
+		}
+	}
+
+	// The batching invariant: exactly one prompt for the whole tree even
+	// though both subtrees exhausted. Under the pre-fix sequential dispatch,
+	// child-B would not have joined the live batch (the episode goroutine
+	// was blocked inside root-1's Elicit), so after root-1's rejection
+	// cleared tc.pending, child-B — a distinct, still-extendable subtree —
+	// would open a SECOND prompt and this assertion would read 2.
+	if el.callCount() != 1 {
+		t.Errorf("elicitations = %d, want 1 (both subtrees batch onto one prompt on the rejection path, §8.6 line 719)", el.callCount())
+	}
+
+	// Release the rejection; the episode fans out and terminates both
+	// sessions (fail closed — a rejected extension is terminal).
+	close(el.release)
+	deadline := time.Now().Add(2 * time.Second)
+	for reclaimer.terminateCount("root-1") < 1 || reclaimer.terminateCount("child-B") < 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("fan-out did not terminate both rejected sessions: root-1=%d child-B=%d",
+				reclaimer.terminateCount("root-1"), reclaimer.terminateCount("child-B"))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// A rejected extension raises no session's budget.
+	if reclaimer.raiseCount() != 0 {
+		t.Errorf("sessions raised = %d, want 0 (a rejected extension grants nothing)", reclaimer.raiseCount())
+	}
+	// Still exactly one prompt after resolution.
+	if el.callCount() != 1 {
+		t.Errorf("elicitations after resolution = %d, want 1 (no second prompt opened)", el.callCount())
+	}
+}
+
 // TestExtendForBudgetAutoModeGrantedInPath_spec_8_6_line_629: in auto
 // mode the extension episode resolves without a human, so it completes
 // within the caller's in-path wait and ExtendForBudget returns Granted
