@@ -5,6 +5,7 @@ package barrier
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -45,36 +46,26 @@ func (f *fakeDispatcher) Send(_ context.Context, t Target, barrierID string) (Ac
 	return f.acks[t.SessionID], nil
 }
 
-type fakeManifest struct {
-	acks map[string]Ack
-}
-
-func (f *fakeManifest) BarrierMeta(_ context.Context, _, sessionID string) (Ack, bool, error) {
-	a, ok := f.acks[sessionID]
-	return a, ok, nil
-}
-
 type fakeMetrics struct {
 	targetSources []string
-	dedup         map[string]int
 }
 
-func newFakeMetrics() *fakeMetrics { return &fakeMetrics{dedup: map[string]int{}} }
+func newFakeMetrics() *fakeMetrics { return &fakeMetrics{} }
 
 func (f *fakeMetrics) IncPreStopBarrierTargetSource(source string) {
 	f.targetSources = append(f.targetSources, source)
 }
-func (f *fakeMetrics) AddResumeDeduplicated(source string, n int) { f.dedup[source] += n }
 
-// spec: §10.1 lines 165-178 — Dispatch sends a barrier to every target,
-// persists each ack into session_checkpoint_meta, and emits the
-// target-source counter once for the pass.
+// spec: §10.1 lines 165-166 — Dispatch sends a barrier to every target,
+// persists each ack's barrier_id and checkpoint_ref into
+// session_checkpoint_meta, and emits the target-source counter once for
+// the pass.
 func TestDispatchHappyPath_spec_10_1(t *testing.T) {
 	ctx := context.Background()
 	meta := sessioncheckpointmeta.NewMemoryStore(nil)
 	disp := newFakeDispatcher()
-	disp.acks["s1"] = Ack{LastToolCallID: "tc-4", LastToolCallSequence: 4, CheckpointRef: "ck1"}
-	disp.acks["s2"] = Ack{LastToolCallID: "tc-7", LastToolCallSequence: 7, CheckpointRef: "ck2"}
+	disp.acks["s1"] = Ack{CheckpointRef: "ck1"}
+	disp.acks["s2"] = Ack{CheckpointRef: "ck2"}
 	mx := newFakeMetrics()
 	c := New(&fakeLister{
 		targets: []Target{
@@ -82,7 +73,7 @@ func TestDispatchHappyPath_spec_10_1(t *testing.T) {
 			{TenantID: "acme", SessionID: "s2", CoordinationGeneration: 2, PodAddr: "10.0.0.2"},
 		},
 		source: SourcePostgres,
-	}, disp, meta, nil, mx)
+	}, disp, meta, mx)
 
 	sum, err := c.Dispatch(ctx)
 	if err != nil {
@@ -103,7 +94,7 @@ func TestDispatchHappyPath_spec_10_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("meta Get s1: %v", err)
 	}
-	if got.LastToolCallSequence != 4 || got.CheckpointRef != "ck1" || got.BarrierID != "1" {
+	if got.CheckpointRef != "ck1" || got.BarrierID != "1" {
 		t.Errorf("s1 meta = %+v", got)
 	}
 }
@@ -115,9 +106,9 @@ func TestDispatchBarrierIDMonotonic_spec_10_1(t *testing.T) {
 	ctx := context.Background()
 	meta := sessioncheckpointmeta.NewMemoryStore(nil)
 	disp := newFakeDispatcher()
-	disp.acks["s1"] = Ack{LastToolCallSequence: 1}
+	disp.acks["s1"] = Ack{CheckpointRef: "ck1"}
 	lister := &fakeLister{targets: []Target{{TenantID: "acme", SessionID: "s1", CoordinationGeneration: 1}}, source: SourcePostgres}
-	c := New(lister, disp, meta, nil, nil)
+	c := New(lister, disp, meta, nil)
 
 	if _, err := c.Dispatch(ctx); err != nil {
 		t.Fatalf("first Dispatch: %v", err)
@@ -142,14 +133,14 @@ func TestDispatchGenerationStaleNonFatal_spec_10_1(t *testing.T) {
 	meta := sessioncheckpointmeta.NewMemoryStore(nil)
 	disp := newFakeDispatcher()
 	disp.errs["s1"] = ErrGenerationStale
-	disp.acks["s2"] = Ack{LastToolCallSequence: 5}
+	disp.acks["s2"] = Ack{CheckpointRef: "ck2"}
 	c := New(&fakeLister{
 		targets: []Target{
 			{TenantID: "acme", SessionID: "s1"},
 			{TenantID: "acme", SessionID: "s2"},
 		},
 		source: SourcePostgres,
-	}, disp, meta, nil, nil)
+	}, disp, meta, nil)
 
 	sum, err := c.Dispatch(ctx)
 	if err != nil {
@@ -177,7 +168,7 @@ func TestDispatchTransportErrorNonFatal_spec_10_1(t *testing.T) {
 	meta := sessioncheckpointmeta.NewMemoryStore(nil)
 	disp := newFakeDispatcher()
 	disp.errs["s1"] = errors.New("deadline exceeded")
-	c := New(&fakeLister{targets: []Target{{TenantID: "acme", SessionID: "s1"}}, source: SourceCacheFallback}, disp, meta, nil, nil)
+	c := New(&fakeLister{targets: []Target{{TenantID: "acme", SessionID: "s1"}}, source: SourceCacheFallback}, disp, meta, nil)
 	sum, err := c.Dispatch(ctx)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -192,7 +183,7 @@ func TestDispatchTransportErrorNonFatal_spec_10_1(t *testing.T) {
 func TestDispatchCacheFallbackSource_spec_10_1(t *testing.T) {
 	mx := newFakeMetrics()
 	c := New(&fakeLister{targets: nil, source: SourceCacheFallback}, newFakeDispatcher(),
-		sessioncheckpointmeta.NewMemoryStore(nil), nil, mx)
+		sessioncheckpointmeta.NewMemoryStore(nil), mx)
 	if _, err := c.Dispatch(context.Background()); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
@@ -203,101 +194,46 @@ func TestDispatchCacheFallbackSource_spec_10_1(t *testing.T) {
 
 func TestDispatchListerError(t *testing.T) {
 	c := New(&fakeLister{err: errors.New("pg down")}, newFakeDispatcher(),
-		sessioncheckpointmeta.NewMemoryStore(nil), nil, nil)
+		sessioncheckpointmeta.NewMemoryStore(nil), nil)
 	if _, err := c.Dispatch(context.Background()); err == nil {
 		t.Error("lister error should propagate")
 	}
 }
 
-// spec: §10.1 line 179 — on handoff the new coordinator reads
-// session_checkpoint_meta and skips every tool call at or below the
-// prior pod's last completed sequence.
-func TestResumeDedupFromPostgres_spec_10_1(t *testing.T) {
-	ctx := context.Background()
-	meta := sessioncheckpointmeta.NewMemoryStore(nil)
-	_ = meta.Upsert(ctx, sessioncheckpointmeta.Record{TenantID: "acme", SessionID: "s1", LastToolCallID: "tc-9", LastToolCallSequence: 9})
-	mx := newFakeMetrics()
-	c := New(nil, nil, meta, nil, mx)
+// TestNoResumeDedupSurface_spec_10_1 pins the §10.1 reconciliation
+// (proposal 0026): the gateway is not in the per-tool-call dispatch
+// path (§4.7) and a coordinator handoff re-adopts the still-running pod
+// without a checkpoint restore (§4.2), so no gateway-side
+// resume-deduplication surface exists. A Coordinator method named
+// ResumeDedup, a DedupDecision or ManifestReader type, a
+// SourceCheckpointManifest const, or an Ack/persisted field carrying a
+// tool-call sequence would all be a resume-dedup consumer this
+// reconciliation removed; each absence would fail against the pre-fix
+// code, which declared them.
+//
+// spec: §10.1 lines 165-166 (no gateway-side resume-deduplication on
+// handoff), §4.2 (handoff re-adopts the live pod), §4.7 (gateway not in
+// the per-tool-call dispatch path).
+func TestNoResumeDedupSurface_spec_10_1(t *testing.T) {
+	coordT := reflect.TypeOf((*Coordinator)(nil))
+	if _, ok := coordT.MethodByName("ResumeDedup"); ok {
+		t.Error("Coordinator.ResumeDedup must not exist: the gateway performs no resume-deduplication on handoff (§10.1, proposal 0026)")
+	}
 
-	d, err := c.ResumeDedup(ctx, "acme", "s1", 0)
-	if err != nil {
-		t.Fatalf("ResumeDedup: %v", err)
+	// Ack is the persisted CheckpointBarrierAck. It must not carry a
+	// tool-call id or sequence: no gateway consumer reads them, and the
+	// always-zero sequence was the dead resume-dedup input.
+	ackT := reflect.TypeOf(Ack{})
+	for _, forbidden := range []string{"LastToolCallID", "LastToolCallSequence"} {
+		if _, ok := ackT.FieldByName(forbidden); ok {
+			t.Errorf("Ack.%s must not exist: no gateway resume-dedup consumer reads it (§10.1, proposal 0026)", forbidden)
+		}
 	}
-	if d.Source != SourcePostgres || d.LastCompletedSequence != 9 || d.SkippedCount != 9 || d.FirstSequenceToRedispatch != 10 {
-		t.Errorf("decision = %+v", d)
-	}
-	if mx.dedup[SourcePostgres] != 9 {
-		t.Errorf("postgres dedup counter = %d, want 9", mx.dedup[SourcePostgres])
-	}
-}
 
-// spec: §10.1 line 178/179 — the skipped count is bounded by the calls
-// this coordinator actually dispatched, so a stale-higher persisted
-// value cannot over-count.
-func TestResumeDedupBoundedByOwnDispatch_spec_10_1(t *testing.T) {
-	ctx := context.Background()
-	meta := sessioncheckpointmeta.NewMemoryStore(nil)
-	_ = meta.Upsert(ctx, sessioncheckpointmeta.Record{TenantID: "acme", SessionID: "s1", LastToolCallSequence: 9})
-	c := New(nil, nil, meta, nil, nil)
-	d, err := c.ResumeDedup(ctx, "acme", "s1", 5)
-	if err != nil {
-		t.Fatalf("ResumeDedup: %v", err)
-	}
-	if d.SkippedCount != 5 {
-		t.Errorf("skipped = %d, want 5 (bounded by own dispatch)", d.SkippedCount)
-	}
-	// FirstSequenceToRedispatch still reflects the prior pod's progress.
-	if d.FirstSequenceToRedispatch != 10 {
-		t.Errorf("first-to-redispatch = %d, want 10", d.FirstSequenceToRedispatch)
-	}
-}
-
-// spec: §10.1 line 179 — when session_checkpoint_meta is absent the
-// resume path falls back to the MinIO checkpoint manifest barrier_meta.
-func TestResumeDedupManifestFallback_spec_10_1(t *testing.T) {
-	ctx := context.Background()
-	meta := sessioncheckpointmeta.NewMemoryStore(nil)
-	man := &fakeManifest{acks: map[string]Ack{"s1": {LastToolCallSequence: 3}}}
-	mx := newFakeMetrics()
-	c := New(nil, nil, meta, man, mx)
-
-	d, err := c.ResumeDedup(ctx, "acme", "s1", 0)
-	if err != nil {
-		t.Fatalf("ResumeDedup: %v", err)
-	}
-	if d.Source != SourceCheckpointManifest || d.SkippedCount != 3 || d.FirstSequenceToRedispatch != 4 {
-		t.Errorf("decision = %+v", d)
-	}
-	if mx.dedup[SourceCheckpointManifest] != 3 {
-		t.Errorf("manifest dedup counter = %d, want 3", mx.dedup[SourceCheckpointManifest])
-	}
-}
-
-// spec: §10.1 line 179 — no durable barrier metadata anywhere means
-// the new coordinator re-dispatches from the first call and skips
-// nothing.
-func TestResumeDedupNoMetaRedispatchesAll_spec_10_1(t *testing.T) {
-	ctx := context.Background()
-	meta := sessioncheckpointmeta.NewMemoryStore(nil)
-	man := &fakeManifest{acks: map[string]Ack{}}
-	c := New(nil, nil, meta, man, nil)
-	d, err := c.ResumeDedup(ctx, "acme", "missing", 4)
-	if err != nil {
-		t.Fatalf("ResumeDedup: %v", err)
-	}
-	if d.Source != "" || d.SkippedCount != 0 || d.FirstSequenceToRedispatch != 1 {
-		t.Errorf("decision = %+v, want re-dispatch from 1 with no source", d)
-	}
-}
-
-func TestResumeDedupNoMetaNoManifest(t *testing.T) {
-	meta := sessioncheckpointmeta.NewMemoryStore(nil)
-	c := New(nil, nil, meta, nil, nil)
-	d, err := c.ResumeDedup(context.Background(), "acme", "missing", 0)
-	if err != nil {
-		t.Fatalf("ResumeDedup: %v", err)
-	}
-	if d.SkippedCount != 0 {
-		t.Errorf("skipped = %d, want 0", d.SkippedCount)
+	// The Metrics interface must not carry the resume-dedup counter
+	// method, whose only increment site was the removed ResumeDedup.
+	metricsT := reflect.TypeOf((*Metrics)(nil)).Elem()
+	if _, ok := metricsT.MethodByName("AddResumeDeduplicated"); ok {
+		t.Error("Metrics.AddResumeDeduplicated must not exist: its only increment site was the removed ResumeDedup (§10.1, proposal 0026)")
 	}
 }

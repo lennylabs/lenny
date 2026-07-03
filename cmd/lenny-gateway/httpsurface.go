@@ -605,7 +605,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 				return b.Adapter, true
 			},
 		}
-		coord := barrier.New(barrierLister, barrierDisp, checkpointMeta, nil, gwMetrics)
+		coord := barrier.New(barrierLister, barrierDisp, checkpointMeta, gwMetrics)
 		barrierDispatch = barrierCoordinatorDispatch{coord}
 	}
 	prestopHook := &prestop.Hook{
