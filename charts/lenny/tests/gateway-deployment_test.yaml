@@ -2402,6 +2402,72 @@ tests:
             name: LENNY_PG_BILLING_AUDIT_DSN
           any: true
 
+  # spec: §15.1, §12.3 — the gateway reads LENNY_PG_BILLING_AUDIT_DDL_DSN
+  # from the datastore Secret when the CREATE-privileged billing/audit DDL
+  # role is configured, so it can provision the per-tenant
+  # billing_seq_/audit_seq_ sequences at tenant creation. F-11.2.10.
+  - it: wires LENNY_PG_BILLING_AUDIT_DDL_DSN from the datastore Secret when postgres.billingAuditDdlDsn is set
+    set:
+      postgres.billingAuditDdlDsn: "postgres://lenny_ddl:secret@billing-db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_BILLING_AUDIT_DDL_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: billing-audit-ddl-postgres-dsn
+
+  - it: omits LENNY_PG_BILLING_AUDIT_DDL_DSN when only postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_BILLING_AUDIT_DDL_DSN
+          any: true
+
+  # spec: §15.1, §12.3 — the gateway reads LENNY_PG_PRIMARY_DDL_DSN from
+  # the datastore Secret when the primary DDL role is configured, so it
+  # can provision the per-tenant audit_seq_ sequence the §13.3
+  # issued-token write-before-issue path seals on the primary. F-11.2.10.
+  - it: wires LENNY_PG_PRIMARY_DDL_DSN from the datastore Secret when postgres.primaryDdlDsn is set
+    set:
+      postgres.primaryDdlDsn: "postgres://lenny_ddl:secret@primary-db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_PRIMARY_DDL_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: primary-ddl-postgres-dsn
+
+  - it: omits LENNY_PG_PRIMARY_DDL_DSN when only postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PG_PRIMARY_DDL_DSN
+          any: true
+
   # spec: §12.3 line 146 — the gateway reads LENNY_PG_READ_DSN from the
   # datastore Secret when a read replica is configured so read-heavy
   # queries route off the primary. F-12.3.16 / F-17.9.13.

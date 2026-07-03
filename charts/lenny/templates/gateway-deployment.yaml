@@ -43,6 +43,11 @@ only the env vars it can satisfy.
 {{- $minio := .Values.minio -}}
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
 {{- $hasBillingAuditPg := and $pg (hasKey $pg "billingAuditDSN") (ne $pg.billingAuditDSN "") -}}
+{{- /* §15.1 / §12.3 — the CREATE-privileged DDL login DSNs the gateway
+   uses to provision the per-tenant billing_seq_/audit_seq_ sequences at
+   tenant creation. F-11.2.10. */ -}}
+{{- $hasBillingAuditDdlPg := and $pg (hasKey $pg "billingAuditDdlDsn") (ne ($pg.billingAuditDdlDsn | toString) "") -}}
+{{- $hasPrimaryDdlPg := and $pg (hasKey $pg "primaryDdlDsn") (ne ($pg.primaryDdlDsn | toString) "") -}}
 {{- $hasReadPg := and $pg (hasKey $pg "readDsn") (ne ($pg.readDsn | toString) "") -}}
 {{- /* §17.9.3 — the effective Redis topology gates which connection env
    block renders so two topologies cannot be wired at once. The helper
@@ -1326,6 +1331,33 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: billing-audit-postgres-dsn
+            {{- end }}
+            {{- if $hasBillingAuditDdlPg }}
+            # §15.1 / §12.3 LENNY_PG_BILLING_AUDIT_DDL_DSN: the
+            # CREATE-privileged DDL login DSN for the billing/audit
+            # instance. The gateway provisions the per-tenant
+            # billing_seq_/audit_seq_ sequences at tenant creation
+            # through this connection, which logs in as the dedicated
+            # DDL role (migration 0173), not lenny_app. F-11.2.10.
+            - name: LENNY_PG_BILLING_AUDIT_DDL_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: billing-audit-ddl-postgres-dsn
+            {{- end }}
+            {{- if $hasPrimaryDdlPg }}
+            # §15.1 / §12.3 LENNY_PG_PRIMARY_DDL_DSN: the
+            # CREATE-privileged DDL login DSN for the primary instance,
+            # used to provision the per-tenant audit_seq_ sequence the
+            # §13.3 issued-token write-before-issue path seals on the
+            # primary. Set alongside billingAuditDSN; falls back to the
+            # billing/audit DDL DSN in the single-instance topology.
+            # F-11.2.10.
+            - name: LENNY_PG_PRIMARY_DDL_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: primary-ddl-postgres-dsn
             {{- end }}
             {{- if $hasReadPg }}
             # §12.3 line 146 LENNY_PG_READ_DSN: the read-replica reader
