@@ -152,6 +152,19 @@ func nextvalAsApp(t *testing.T, ctx context.Context, su *pgxpool.Pool, seqName s
 	return v
 }
 
+// advanceSequenceTo drives a live sequence's issued high-water mark up to
+// target (so the next nextval returns target+1), as a run of nextval draws plus
+// rollback gaps would leave it. It uses setval to reach the target in one step,
+// which is the committed effect of that draw-and-rollback sequence: last_value =
+// target with is_called true. The superuser owns nothing here, so setval runs
+// as the pool's superuser role, which holds UPDATE on the sequence.
+func advanceSequenceTo(t *testing.T, ctx context.Context, su *pgxpool.Pool, seqName string, target int64) {
+	t.Helper()
+	if _, err := su.Exec(ctx, "SELECT setval('"+seqName+"', $1, true)", target); err != nil {
+		t.Fatalf("advance sequence %s to %d: %v", seqName, target, err)
+	}
+}
+
 // sequenceExistsDB reports whether the named sequence exists in schema public.
 func sequenceExistsDB(t *testing.T, ctx context.Context, su *pgxpool.Pool, name string) bool {
 	t.Helper()
@@ -230,12 +243,13 @@ func TestProvisionTenantSequences_CreatesBothSequences_spec_15_1_11_2_1_11_7(t *
 	}
 }
 
-// TestProvisionTenantSequences_Idempotent confirms a retried create is a no-op
-// under CREATE SEQUENCE IF NOT EXISTS: calling the helper twice does not raise
-// and does not reset the sequence, so a client retry of POST /v1/admin/tenants
+// TestProvisionTenantSequences_Idempotent confirms a retried create is a no-op:
+// the existence check finds the sequence already present on the second call and
+// skips both the CREATE and the re-seed, so calling the helper twice does not
+// raise and does not reset the sequence. A client retry of POST /v1/admin/tenants
 // after a partial failure converges rather than erroring.
 //
-// diagnosis: a failure means the provisioning DDL is not idempotent, so a
+// diagnosis: a failure means the provisioning path is not idempotent, so a
 // retried tenant create fails on "relation already exists" or resets a
 // sequence below its issued maximum.
 //
@@ -266,6 +280,75 @@ func TestProvisionTenantSequences_Idempotent_spec_15_1(t *testing.T) {
 	// The retry must not reset the sequence: the next nextval continues from 2.
 	if v := nextvalAsApp(t, ctx, su, billingSeq); v != 2 {
 		t.Errorf("nextval after idempotent re-provision = %d, want 2 (sequence was reset)", v)
+	}
+}
+
+// TestProvisionTenantSequences_RepeatProvisionNeverRegressesAdvancedSequence
+// pins Decision 7's newly-created precondition: once a sequence is live and has
+// been advanced past the committed MAX(sequence_number) — the ordinary state
+// after a transaction rollback leaves a nextval gap above the last committed row
+// (§11.2.1: "Postgres sequences may produce gaps on transaction rollback") — a
+// repeat provisionTenantSequences call must not drag the sequence back down to
+// MAX and reissue a value it already handed out. This constructs exactly that
+// state: a committed row at MAX=42, then the sequence advanced to 100 (a gap
+// above the committed high-water mark), then a repeat provision. The pre-fix
+// code re-seeded unconditionally to MAX=42 on every call, so the next nextval
+// would return 43 and collide with a (tenant_id, sequence_number) primary key
+// the sequence had already issued; the fenced re-seed leaves the advanced
+// sequence untouched, so the next nextval continues at 101.
+//
+// diagnosis: a failure means the re-seed is not fenced to the newly-created
+// sequence, so a repeat or retried provision of an already-advanced sequence
+// regresses it below its issued maximum and reintroduces the (tenant_id,
+// sequence_number) number-reuse hazard the whole per-tenant-sequence change
+// exists to eliminate.
+//
+// spec: §11.2.1, §11.7, §15.1. F-11.2.10
+func TestProvisionTenantSequences_RepeatProvisionNeverRegressesAdvancedSequence_spec_11_2_1(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
+	}
+	su, ddl, _ := startLedgerPostgres(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const tenant = "vandelay"
+	// A committed row tops out at MAX=42 (the pre-Path-A high-water mark the
+	// first re-seed targets).
+	seedLedgerRows(t, ctx, su, tenant, 42)
+
+	billingSeq := seqname.BillingSequenceName(tenant)
+	auditSeq := seqname.AuditSequenceName(tenant)
+
+	r := routerWithDDL(ddl)
+	if err := r.provisionTenantSequences(ctx, tenant); err != nil {
+		t.Fatalf("first provision with pre-existing rows: %v", err)
+	}
+
+	// Advance both sequences well past the committed MAX, as a run of live
+	// writes plus rollback gaps would: the first re-seed set them to 42, so
+	// nextval now returns 43; draw up through 100 so the sequence's issued
+	// high-water mark (100) is far above the committed MAX (42). A rollback
+	// after nextval 100 would leave exactly this state — the sequence at 100
+	// with no committed row above 42.
+	advanceSequenceTo(t, ctx, su, billingSeq, 100)
+	advanceSequenceTo(t, ctx, su, auditSeq, 100)
+
+	// A repeat provision (a retried or duplicate POST /v1/admin/tenants, or a
+	// future caller reaching the same tenant) must not regress the live
+	// sequence. The pre-fix unconditional re-seed dragged it back to MAX=42,
+	// so the next nextval returned 43 — an already-issued value.
+	if err := r.provisionTenantSequences(ctx, tenant); err != nil {
+		t.Fatalf("repeat provision of advanced sequence: %v", err)
+	}
+
+	if v := nextvalAsApp(t, ctx, su, billingSeq); v != 101 {
+		t.Errorf("billing nextval after repeat provision = %d, want 101 "+
+			"(advanced sequence was regressed to MAX=42, reusing an issued value)", v)
+	}
+	if v := nextvalAsApp(t, ctx, su, auditSeq); v != 101 {
+		t.Errorf("audit nextval after repeat provision = %d, want 101 "+
+			"(advanced sequence was regressed to MAX=42, reusing an issued value)", v)
 	}
 }
 
@@ -419,8 +502,8 @@ func TestProvisionTenantSequences_PrimaryDDLPoolDistinct_spec_12_3_11_7(t *testi
 // re-seed MAX(sequence_number) read surfaces as a wrapped error rather than
 // being swallowed: with the DDL role's SELECT on billing_events revoked, the
 // re-seed read raises permission denied and provisionTenantSequences returns a
-// wrapped "re-seed billing sequence" error, which handleCreateTenant turns into
-// a fail-closed 500. This exercises the re-seed error-propagation path (the
+// wrapped "provision billing sequence" error, which handleCreateTenant turns
+// into a fail-closed 500. This exercises the re-seed error-propagation path (the
 // setval re-seed cannot silently no-op when it cannot read the ledger MAX).
 //
 // diagnosis: a failure means a re-seed read error is swallowed, so a tenant
@@ -452,7 +535,10 @@ func TestProvisionTenantSequences_ReseedReadErrorPropagates_spec_11_2_1(t *testi
 	if err == nil {
 		t.Fatal("provisionTenantSequences must return an error when the re-seed read is denied")
 	}
-	if !strings.Contains(err.Error(), "re-seed billing sequence for tenant hooli") {
-		t.Errorf("error must be wrapped with the re-seed context, got: %v", err)
+	if !strings.Contains(err.Error(), "provision billing sequence for tenant hooli") {
+		t.Errorf("error must be wrapped with the provision context, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "read MAX(sequence_number) from billing_events") {
+		t.Errorf("error must name the failed re-seed MAX read, got: %v", err)
 	}
 }

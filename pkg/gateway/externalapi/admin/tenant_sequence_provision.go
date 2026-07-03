@@ -42,14 +42,17 @@ import (
 // (issuedtokenstore.New(w.pgPool)) rather than the billing/audit shard,
 // so its nextval('audit_seq_<tenant-40hex>') must resolve there too. In
 // the single-instance topology primaryDDLPool == billingAuditDDLPool and
-// the primary CREATE SEQUENCE is an idempotent no-op under IF NOT EXISTS.
+// the primary limb is skipped because the shard limb already created the
+// audit sequence on that same instance.
 //
 // A nil billingAuditDDLPool leaves provisioning inactive: the in-memory /
 // SQLite topology uses no Postgres sequence, and the store's own
 // MAX-based assignment stays in effect there.
 //
-// The helper is idempotent: CREATE SEQUENCE IF NOT EXISTS is a no-op on
-// a retried create, and the setval re-seed converges on the same value.
+// The helper is idempotent: a retried create is a no-op because the
+// existence check finds the sequence already present and skips both the
+// CREATE and the re-seed, so a live sequence that has already handed out
+// values is never touched on a repeat call.
 //
 // spec: §15.1, §11.2.1, §11.7, §10.2. F-11.2.10.
 func (r *Router) provisionTenantSequences(ctx context.Context, tenantID string) error {
@@ -67,10 +70,10 @@ func (r *Router) provisionTenantSequences(ctx context.Context, tenantID string) 
 	// fixed literal prefix plus a 40-hex digest, injection-safe by
 	// construction, so no identifier allowlisting is needed before
 	// interpolation. spec: §15.1, §10.2.
-	if err := createSequence(ctx, r.billingAuditDDLPool, billingSeq); err != nil {
+	if err := provisionSequence(ctx, r.billingAuditDDLPool, tenantID, "billing_events", billingSeq); err != nil {
 		return fmt.Errorf("provision billing sequence for tenant %s: %w", tenantID, err)
 	}
-	if err := createSequence(ctx, r.billingAuditDDLPool, auditSeq); err != nil {
+	if err := provisionSequence(ctx, r.billingAuditDDLPool, tenantID, "audit_log", auditSeq); err != nil {
 		return fmt.Errorf("provision audit sequence for tenant %s: %w", tenantID, err)
 	}
 
@@ -78,91 +81,133 @@ func (r *Router) provisionTenantSequences(ctx context.Context, tenantID string) 
 	// audit row on the primary pool, not the billing/audit shard, so the
 	// audit sequence must exist on the primary as well. In the
 	// single-instance topology primaryDDLPool == billingAuditDDLPool and
-	// this is an idempotent no-op. spec: §12.3, §11.7.
+	// this is skipped because the shard limb already provisioned it. The
+	// primary carries its own audit_log sub-chain for the §13.3
+	// issued-token write path, so a newly-created primary audit sequence
+	// re-seeds from that instance's per-tenant MAX independently.
+	// spec: §12.3, §11.7.
 	if r.primaryDDLPool != nil && r.primaryDDLPool != r.billingAuditDDLPool {
-		if err := createSequence(ctx, r.primaryDDLPool, auditSeq); err != nil {
+		if err := provisionSequence(ctx, r.primaryDDLPool, tenantID, "audit_log", auditSeq); err != nil {
 			return fmt.Errorf("provision primary audit sequence for tenant %s: %w", tenantID, err)
 		}
 	}
-
-	// Re-seed each sequence to the tenant's current per-tenant
-	// MAX(sequence_number) when the ledger already holds rows numbered by
-	// the pre-Path-A MAX+1 scheme, so the first nextval does not collide
-	// with an existing (tenant_id, sequence_number) primary key. The
-	// re-seed runs on the DDL connection that owns the sequence (holding
-	// the UPDATE privilege setval needs) and reads the ledger MAX through
-	// the DDL role's SELECT grant inside a SET LOCAL app.current_tenant
-	// tenant-RLS context, which the FORCE ROW LEVEL SECURITY hard-error
-	// policy on both ledger tables requires (an unset GUC raises
-	// configuration_invalid). spec: §11.2.1, §11.7.
-	if err := reseedSequence(ctx, r.billingAuditDDLPool, tenantID, "billing_events", billingSeq); err != nil {
-		return fmt.Errorf("re-seed billing sequence for tenant %s: %w", tenantID, err)
-	}
-	if err := reseedSequence(ctx, r.billingAuditDDLPool, tenantID, "audit_log", auditSeq); err != nil {
-		return fmt.Errorf("re-seed audit sequence for tenant %s: %w", tenantID, err)
-	}
-	if r.primaryDDLPool != nil && r.primaryDDLPool != r.billingAuditDDLPool {
-		// The primary carries its own audit_log sub-chain for the §13.3
-		// issued-token write path; re-seed its audit sequence from that
-		// instance's per-tenant MAX independently.
-		if err := reseedSequence(ctx, r.primaryDDLPool, tenantID, "audit_log", auditSeq); err != nil {
-			return fmt.Errorf("re-seed primary audit sequence for tenant %s: %w", tenantID, err)
-		}
-	}
 	return nil
 }
 
-// createSequence issues CREATE SEQUENCE IF NOT EXISTS for a derived
-// sequence name on the given CREATE-privileged DDL pool. The name is a
-// seqname-derived identifier (literal prefix + 40-hex digest), so it is
-// injection-safe by construction and interpolated directly (DDL cannot
-// bind identifiers).
+// provisionSequence creates the derived per-tenant sequence when it does
+// not yet exist and, only on that newly-created path, re-seeds it to the
+// tenant's current MAX(sequence_number) so the first nextval clears any
+// rows the ledger already held under the pre-Path-A MAX+1 scheme. The
+// existence check, the CREATE, and the re-seed all run in one transaction
+// on the CREATE-privileged DDL connection, so the re-seed decision is
+// atomic with the create: a concurrent or retried provision that observes
+// the sequence already present skips both the CREATE and the re-seed and
+// never disturbs a live sequence.
 //
-// spec: §15.1, §10.2.
-func createSequence(ctx context.Context, pool *pgxpool.Pool, name string) error {
-	stmt := "CREATE SEQUENCE IF NOT EXISTS " + name + " START WITH 1 INCREMENT BY 1 NO CYCLE"
-	if _, err := pool.Exec(ctx, stmt); err != nil {
-		return fmt.Errorf("create sequence %s: %w", name, err)
-	}
-	return nil
-}
-
-// reseedSequence sets seqName's value to the tenant's current
-// MAX(sequence_number) in table when the ledger already holds rows, so
-// the next nextval returns a value strictly greater than the existing
-// per-tenant maximum. It runs inside pgtenant.InTx on the DDL connection
-// so the FORCE ROW LEVEL SECURITY hard-error policy on the ledger admits
-// the tenant's own rows (an unset app.current_tenant would raise
-// configuration_invalid). A tenant with no rows has MAX 0, in which case
-// the sequence is left at its fresh START WITH 1 and the first nextval
-// returns 1.
+// Fencing the re-seed to the newly-created case is the monotonicity
+// guarantee. A Postgres sequence legitimately advances past the committed
+// MAX(sequence_number) after a transaction rollback (§11.2.1: "Postgres
+// sequences may produce gaps on transaction rollback"), so an
+// unconditional setval to MAX would drag an already-live sequence back
+// below a value it had already issued and reuse a (tenant_id,
+// sequence_number) primary key. Running the re-seed only when this call
+// created the sequence, plus clamping the setval target to at least the
+// sequence's current value, guarantees the sequence never moves backward
+// below its issued high-water mark.
 //
-// setval(seq, v, is_called): with is_called true, the next nextval
-// returns v+1. For a tenant whose rows top out at MAX=N the re-seed sets
-// the sequence to N (is_called true) so the next nextval returns N+1,
-// strictly above the existing maximum.
+// The whole operation runs inside pgtenant.InTx so the FORCE ROW LEVEL
+// SECURITY hard-error policy on the ledger admits the tenant's own rows
+// during the MAX read (an unset app.current_tenant would raise
+// configuration_invalid). table is a compile-time-constant ledger name
+// ("billing_events" / "audit_log") and seqName is the seqname-derived
+// identifier, both injection-safe to interpolate (DDL cannot bind
+// identifiers); pgtenant.InTx validates the tenant id before setting the
+// RLS GUC.
 //
-// spec: §11.2.1, §11.7.
-func reseedSequence(ctx context.Context, pool *pgxpool.Pool, tenantID, table, seqName string) error {
-	// table is a compile-time-constant ledger name ("billing_events" /
-	// "audit_log") and seqName is the seqname-derived identifier, both
-	// safe to interpolate; pgtenant.InTx validates the tenant id before
-	// setting the RLS GUC.
+// spec: §15.1, §11.2.1, §11.7, §10.2.
+func provisionSequence(ctx context.Context, pool *pgxpool.Pool, tenantID, table, seqName string) error {
 	return pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
-		var maxSeq int64
-		if err := tx.QueryRow(ctx,
-			"SELECT COALESCE(MAX(sequence_number), 0) FROM "+table+" WHERE tenant_id = $1",
-			tenantID).Scan(&maxSeq); err != nil {
-			return fmt.Errorf("read MAX(sequence_number) from %s: %w", table, err)
+		created, err := createSequenceIfAbsent(ctx, tx, seqName)
+		if err != nil {
+			return err
 		}
-		if maxSeq == 0 {
-			// No pre-existing rows: leave the fresh sequence at START WITH 1.
+		if !created {
+			// A retried or repeat provision of an already-live sequence: leave
+			// it exactly where the previous provision and any subsequent
+			// nextval calls advanced it. Re-seeding here would risk moving the
+			// sequence backward below an already-issued value.
 			return nil
 		}
-		if _, err := tx.Exec(ctx,
-			"SELECT setval('"+seqName+"', $1, true)", maxSeq); err != nil {
-			return fmt.Errorf("setval %s to %d: %w", seqName, maxSeq, err)
-		}
-		return nil
+		return reseedNewSequence(ctx, tx, tenantID, table, seqName)
 	})
+}
+
+// createSequenceIfAbsent creates the derived sequence when it is not
+// already present and reports whether this call created it. It resolves
+// the current existence with to_regclass inside the caller's transaction
+// so the create decision and the subsequent re-seed decision see a
+// consistent view: to_regclass returns NULL for an absent relation, in
+// which case the CREATE runs and created is true; a non-NULL result means
+// another provision already created the sequence and this call leaves it
+// untouched.
+//
+// The name is a seqname-derived identifier (literal prefix + 40-hex
+// digest), injection-safe by construction and interpolated directly
+// because DDL cannot bind identifiers.
+//
+// spec: §15.1, §10.2.
+func createSequenceIfAbsent(ctx context.Context, tx pgx.Tx, seqName string) (bool, error) {
+	var regclass *string
+	if err := tx.QueryRow(ctx, "SELECT to_regclass($1)", seqName).Scan(&regclass); err != nil {
+		return false, fmt.Errorf("check sequence %s existence: %w", seqName, err)
+	}
+	if regclass != nil {
+		return false, nil
+	}
+	stmt := "CREATE SEQUENCE " + seqName + " START WITH 1 INCREMENT BY 1 NO CYCLE"
+	if _, err := tx.Exec(ctx, stmt); err != nil {
+		return false, fmt.Errorf("create sequence %s: %w", seqName, err)
+	}
+	return true, nil
+}
+
+// reseedNewSequence sets a freshly-created seqName to the tenant's current
+// MAX(sequence_number) in table when the ledger already holds rows, so the
+// next nextval returns a value strictly greater than the existing
+// per-tenant maximum and does not collide with an existing (tenant_id,
+// sequence_number) primary key. A tenant with no rows has MAX 0, in which
+// case the sequence is left at its fresh START WITH 1 and the first
+// nextval returns 1.
+//
+// setval(seq, v, is_called): with is_called true, the next nextval returns
+// v+1. For a tenant whose rows top out at MAX=N the re-seed sets the
+// sequence to N (is_called true) so the next nextval returns N+1, strictly
+// above the existing maximum. The target is clamped to at least the
+// sequence's current value with GREATEST, so even under a concurrent
+// nextval on the just-created sequence the setval can never move it
+// backward below a value already issued.
+//
+// spec: §11.2.1, §11.7.
+func reseedNewSequence(ctx context.Context, tx pgx.Tx, tenantID, table, seqName string) error {
+	var maxSeq int64
+	if err := tx.QueryRow(ctx,
+		"SELECT COALESCE(MAX(sequence_number), 0) FROM "+table+" WHERE tenant_id = $1",
+		tenantID).Scan(&maxSeq); err != nil {
+		return fmt.Errorf("read MAX(sequence_number) from %s: %w", table, err)
+	}
+	if maxSeq == 0 {
+		// No pre-existing rows: leave the fresh sequence at START WITH 1.
+		return nil
+	}
+	// Clamp to the sequence's current last_value so the setval is monotonic:
+	// it never regresses the sequence below a value nextval already handed
+	// out on this just-created object. For a fresh sequence with no nextval
+	// draws, last_value is 1 and is_called is false, so GREATEST(maxSeq, 1)
+	// resolves to maxSeq and the next nextval returns maxSeq+1 as required.
+	if _, err := tx.Exec(ctx,
+		"SELECT setval('"+seqName+"', GREATEST($1, (SELECT last_value FROM "+seqName+")), true)",
+		maxSeq); err != nil {
+		return fmt.Errorf("setval %s to %d: %w", seqName, maxSeq, err)
+	}
+	return nil
 }
