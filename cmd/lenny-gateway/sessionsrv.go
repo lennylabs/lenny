@@ -114,8 +114,14 @@ func (w *gatewayWiring) buildSessionServer(
 		ActivityStamper: activityStamper,
 		// spec: §11.2 — drop a settled session's mid-session budget
 		// accounting so the enforcer's per-session map does not grow
-		// unbounded.
-		BudgetForget: sessionBudgetEnforcer.Forget,
+		// unbounded. The closure also clears the §8.6 recorder's accumulated
+		// grant delta for the session (proposal 0023 S3/S4); the recorder is
+		// constructed in a later build step, so w.proxyUsageRec is read at
+		// call time rather than captured now.
+		BudgetForget: func(sessionID string) {
+			sessionBudgetEnforcer.Forget(sessionID)
+			w.proxyUsageRec.forget(sessionID)
+		},
 		// spec: §8.10 line 1103 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
 		// is unset; an override surfaces both on the sessionserver

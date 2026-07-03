@@ -135,14 +135,9 @@ func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID str
 	// Block on this session's resolution up to the caller's in-path wait.
 	select {
 	case res := <-mem.result:
-		// The episode resolved this session within the in-path window.
-		if res.err != nil {
-			return OutcomeTerminal, res.err
-		}
-		if res.granted {
-			return OutcomeGranted, nil
-		}
-		return OutcomeTerminal, nil
+		// The episode resolved this session within the in-path window; the
+		// in-path caller owns and applies the resolution.
+		return s.applyInPathResolution(sessionID, res)
 	case <-waitCtx.Done():
 		// The in-path wait elapsed or the caller's request context was
 		// cancelled. detach hands ownership of this session's resolution to
@@ -157,19 +152,46 @@ func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID str
 		// identifies a genuine parent (request) cancellation.
 		res, resolved := mem.detach()
 		if resolved {
-			if res.err != nil {
-				return OutcomeTerminal, res.err
-			}
-			if res.granted {
-				return OutcomeGranted, nil
-			}
-			return OutcomeTerminal, nil
+			// A same-instant race: the fan-out resolved this member but its
+			// resolve() returned detached=false, so the in-path caller (not
+			// the fan-out) is the single applier and must apply the raise.
+			return s.applyInPathResolution(sessionID, res)
 		}
 		if reqCtx.Err() != nil {
 			return OutcomeTerminal, nil
 		}
 		return OutcomePending, nil
 	}
+}
+
+// applyInPathResolution maps a session's episode resolution that the
+// in-path caller owns onto the tri-state Outcome, applying the §8.6 budget
+// raise on a grant. On a GRANTED/PARTIALLY_GRANTED resolution it raises the
+// session's enforcer budget through the SessionReclaimer with the granted
+// token delta and clears the session's deny/exhausted state, so the session
+// continues under a genuinely raised budget rather than one the enforcer
+// still treats as exhausted; the deferred fan-out applies the identical
+// raise for a session that detached at the in-path deadline (fanOut). The
+// in-path caller (this method) and the fan-out are mutually exclusive
+// appliers per member (member.resolve/detach), so RaiseBudget fires exactly
+// once for a granted session. spec: §8.6 line 629, line 719; proposal 0023
+// S3/S4.
+func (s *Service) applyInPathResolution(sessionID string, res sessionResult) (Outcome, error) {
+	if res.err != nil {
+		return OutcomeTerminal, res.err
+	}
+	if !res.granted {
+		return OutcomeTerminal, nil
+	}
+	// Reflect the leasecontrol grant on the enforcer's per-session budget so
+	// the pre-flight gate admits the session's next request. Without this the
+	// enforcer's c.budget stays at the pre-extension value and c.exhausted
+	// stays set, so the session would be treated as still exhausted after an
+	// in-path grant (the exact gap proposal 0023 S3/S4 close).
+	if r := s.episodes.currentReclaimer(); r != nil {
+		r.RaiseBudget(sessionID, res.grantedTokens)
+	}
+	return OutcomeGranted, nil
 }
 
 // SetReclaimer wires the SessionReclaimer the episode fan-out calls for
@@ -349,6 +371,17 @@ func (m *episodeManager) setReclaimer(r SessionReclaimer) {
 	m.mu.Lock()
 	m.reclaimer = r
 	m.mu.Unlock()
+}
+
+// currentReclaimer returns the wired SessionReclaimer under the manager
+// lock so the in-path Granted path (applyInPathResolution) applies a raise
+// through the same reclaimer the deferred fan-out uses. A nil reclaimer is
+// the pre-wiring posture (tests, or the local-development no-leasecontrol
+// path); the caller no-ops the raise.
+func (m *episodeManager) currentReclaimer() SessionReclaimer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reclaimer
 }
 
 // join enrolls sessionID (with its requested dimensions) in the tree's

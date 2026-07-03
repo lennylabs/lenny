@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -84,6 +85,20 @@ type proxyUsageRecorder struct {
 	// deadline (§8.6 does not fix it); a non-positive value selects
 	// defaultProxyExtensionWaitTimeout. spec: §8.6 line 629; proposal 0023.
 	proxyExtensionWaitTimeout time.Duration
+
+	// grantMu guards grantedDelta.
+	grantMu sync.Mutex
+	// grantedDelta accumulates, per session, the §8.6 granted token deltas the
+	// recorder observes as the SessionReclaimer (RaiseBudget). Enforcer.Record
+	// overwrites c.budget from the budget argument on every call, so a raise
+	// applied through RaiseBudget alone is clobbered the next time RecordUsage
+	// settles a request unless the budget the recorder passes to Record already
+	// carries the accumulated delta. RecordUsage therefore computes the effective
+	// budget as base MaxTokenBudget plus grantedDelta[sessionID] so the raise
+	// survives the next Record (proposal 0023 S3/S4 raise-survival invariant). A
+	// session is cleared from the map when the recorder observes its termination
+	// or when the enforcer forgets it. spec: §8.6 line 629; proposal 0023.
+	grantedDelta map[string]int64
 }
 
 // defaultProxyExtensionWaitTimeout is the recorder's fallback in-path §8.6
@@ -103,7 +118,74 @@ func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, 
 		limits:                    limits,
 		budget:                    budget,
 		proxyExtensionWaitTimeout: defaultProxyExtensionWaitTimeout,
+		grantedDelta:              make(map[string]int64),
 	}
+}
+
+// RaiseBudget records a §8.6 granted token delta for sessionID and raises
+// the enforcer's per-session budget. It is the recorder's SessionReclaimer
+// implementation, wired as the leasecontrol episode fan-out's reclaimer and
+// the in-path Granted applier (proposal 0023 S3/S4). The two responsibilities
+// are inseparable: the enforcer raises c.budget so the pre-flight gate admits
+// the session's next request, but Enforcer.Record overwrites c.budget from the
+// budget argument on the next settlement, so the recorder must also accumulate
+// the delta and add it to the base MaxTokenBudget it passes to Record. Applying
+// both here keeps the two in lockstep for the in-path and deferred grant paths
+// alike. A non-positive delta records nothing and still clears the deny flag
+// through the enforcer. spec: §8.6 line 629, line 719; proposal 0023.
+func (r *proxyUsageRecorder) RaiseBudget(sessionID string, delta int64) {
+	if r == nil || sessionID == "" {
+		return
+	}
+	if delta > 0 {
+		r.grantMu.Lock()
+		r.grantedDelta[sessionID] += delta
+		r.grantMu.Unlock()
+	}
+	if r.budget != nil {
+		r.budget.RaiseBudget(sessionID, delta)
+	}
+}
+
+// TerminateSession terminates sessionID for budget exhaustion (fail closed)
+// and drops its accumulated grant delta, the recorder's SessionReclaimer path
+// for a session whose deferred extension outcome is terminal. Clearing the
+// delta keeps the map from retaining a raised budget for a session that is
+// being torn down. spec: §8.6 line 629, line 719; proposal 0023.
+func (r *proxyUsageRecorder) TerminateSession(sessionID string) {
+	if r == nil || sessionID == "" {
+		return
+	}
+	r.grantMu.Lock()
+	delete(r.grantedDelta, sessionID)
+	r.grantMu.Unlock()
+	if r.budget != nil {
+		r.budget.TerminateSession(sessionID)
+	}
+}
+
+// grantedDeltaFor returns the accumulated §8.6 granted token delta for
+// sessionID, which RecordUsage adds to the base MaxTokenBudget so the
+// enforcer's next Record refreshes c.budget with the raised value rather than
+// the stale pre-extension budget. A session with no recorded grant returns 0.
+func (r *proxyUsageRecorder) grantedDeltaFor(sessionID string) int64 {
+	r.grantMu.Lock()
+	defer r.grantMu.Unlock()
+	return r.grantedDelta[sessionID]
+}
+
+// forget drops sessionID's accumulated grant delta. The gateway calls it from
+// the same terminal-side-effects pipeline that forgets the enforcer counter,
+// so the recorder's per-session delta map does not grow without bound as
+// sessions settle. Nil-safe on the recorder. spec: §8.6 line 629; proposal
+// 0023.
+func (r *proxyUsageRecorder) forget(sessionID string) {
+	if r == nil || sessionID == "" {
+		return
+	}
+	r.grantMu.Lock()
+	delete(r.grantedDelta, sessionID)
+	r.grantMu.Unlock()
 }
 
 // setBudgetTracker selects the §12.4 line 268 in_memory_reconciled quota
@@ -249,9 +331,20 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 	// the authoritative record before the session can be torn down.
 	outcome = llmproxy.OutcomeGranted
 	if r.budget != nil {
+		// spec: §8.6 line 629 / proposal 0023 S3/S4 raise-survival — the base
+		// MaxTokenBudget read from the session store never reflects a prior §8.6
+		// grant (ApplyGrant writes only the leasecontrol view and the Redis tree
+		// counter, never the session-store lease). Add the accumulated granted
+		// delta so Enforcer.Record refreshes c.budget with the raised value
+		// rather than the stale base, which would otherwise re-exhaust and
+		// re-terminate a session that just had its budget raised.
+		effectiveBudget := tokenBudget
+		if lease.SessionID != "" {
+			effectiveBudget += r.grantedDeltaFor(lease.SessionID)
+		}
 		waitCtx, cancel := context.WithTimeout(ctx, r.proxyExtensionWaitTimeout)
 		var budgetOutcome sessionbudget.Outcome
-		exhausted, budgetOutcome = r.budget.Record(ctx, waitCtx, lease.TenantID, lease.SessionID, tokenBudget, tokens)
+		exhausted, budgetOutcome = r.budget.Record(ctx, waitCtx, lease.TenantID, lease.SessionID, effectiveBudget, tokens)
 		cancel()
 		outcome = proxyOutcome(budgetOutcome)
 	}

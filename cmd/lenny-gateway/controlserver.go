@@ -170,15 +170,27 @@ func (w *gatewayWiring) buildControlServer(
 	// construction-order gap. The enforcer's seam calls svc.ExtendForBudget
 	// at the exhaustion boundary, threading both the request context and the
 	// derived in-path wait, and mapping leasecontrol.Outcome onto the
-	// enforcer's own tri-state. The service's per-tree episode fan-out takes
-	// the enforcer as its SessionReclaimer so a session that detached at the
-	// in-path deadline is later raised (RaiseBudget) or terminated
-	// (TerminateSession) out-of-band. A nil leaseControlSvc (no --grpc-addr,
-	// the local-development path) leaves the enforcer's nil seam in place, so
-	// exhaustion still denies and terminates immediately. proposal 0023 S6.
+	// enforcer's own tri-state.
+	//
+	// The SessionReclaimer the episode fan-out (and the in-path Granted path)
+	// applies each grant through is the §4.9 usage recorder, not the enforcer
+	// directly: the recorder both raises the enforcer budget AND accumulates
+	// the granted token delta so RecordUsage adds it to the base
+	// MaxTokenBudget on the next settlement, keeping the raise alive across the
+	// next Enforcer.Record (proposal 0023 S3/S4 raise-survival). When the
+	// recorder is nil (no usagestore wired) the enforcer is the reclaimer
+	// directly, which still clears the deny flag and terminates a detached
+	// session even though no usage settlement will follow to re-exhaust it.
+	// A nil leaseControlSvc (no --grpc-addr, the local-development path)
+	// leaves the enforcer's nil seam in place, so exhaustion still denies and
+	// terminates immediately. proposal 0023 S6.
 	if leaseControlSvc != nil && w.sessionBudgetEnforcer != nil {
 		w.sessionBudgetEnforcer.SetExtendOnExhaustion(leaseExtendSeam(leaseControlSvc))
-		leaseControlSvc.SetReclaimer(w.sessionBudgetEnforcer)
+		if w.proxyUsageRec != nil {
+			leaseControlSvc.SetReclaimer(w.proxyUsageRec)
+		} else {
+			leaseControlSvc.SetReclaimer(w.sessionBudgetEnforcer)
+		}
 	}
 
 	// ----- §6.2 / §11.3 pre-running watchdog -----

@@ -700,10 +700,12 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	adapterv1.RegisterGatewayControlServer(gs, svc)
 	// Return svc so the composition root wires the §8.6 in-process
 	// budget-exhaustion trigger: the proxy's sessionbudget enforcer calls
-	// svc.ExtendForBudget as its extension seam, and svc.SetReclaimer
-	// receives the enforcer so the per-tree episode fan-out can raise or
-	// terminate a session that detached at the in-path deadline. spec: §8.6
-	// line 629; proposal 0023 S6.
+	// svc.ExtendForBudget as its extension seam, and svc.SetReclaimer receives
+	// the §4.9 usage recorder so the per-tree episode fan-out (and the in-path
+	// Granted path) can raise or terminate a session that detached at the
+	// in-path deadline while keeping the raise alive across the next
+	// Enforcer.Record (the recorder accumulates the granted delta). spec: §8.6
+	// line 629; proposal 0023 S3/S4/S6.
 	return gs, lis, svc, nil
 }
 

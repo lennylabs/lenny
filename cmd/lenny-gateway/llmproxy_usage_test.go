@@ -193,6 +193,169 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 	}
 }
 
+// grantingReclaimSeam simulates the production in-path §8.6 grant: on the
+// exhaustion boundary it applies the raise through the recorder (the
+// SessionReclaimer), exactly as leasecontrol.ExtendForBudget's in-path Granted
+// path does through the wired reclaimer, then returns Granted. It records how
+// many times the enforcer consulted it so a test can assert a request under
+// the raised budget does not re-dispatch a second extension.
+type grantingReclaimSeam struct {
+	rec   *proxyUsageRecorder
+	delta int64
+	calls int
+}
+
+func (s *grantingReclaimSeam) fn(_, _ context.Context, _, sessionID string, _, _ int64) sessionbudget.Outcome {
+	s.calls++
+	// The in-path grant raises the enforcer budget AND accumulates the delta
+	// on the recorder (the SessionReclaimer), so the next RecordUsage passes
+	// base + delta to Record.
+	s.rec.RaiseBudget(sessionID, s.delta)
+	return sessionbudget.Granted
+}
+
+// TestProxyUsageRecorderRaiseSurvivesNextRecord_spec_8_6 is the raise-survival
+// regression for proposal 0023 findings 2 and 4. After an in-path §8.6 grant
+// raises the session budget, a subsequent RecordUsage that would exceed the
+// stale base MaxTokenBudget but stays under the raised budget must neither
+// re-terminate the session nor re-consult the extension seam. It fails against
+// the pre-fix recorder, which read tokenBudget straight from the stale
+// sess.DelegationLease.MaxTokenBudget and passed it unchanged to Record, so the
+// enforcer clobbered the raise on the next settlement and immediately
+// re-exhausted the session. The recorder is wired as its own SessionReclaimer,
+// so the grant delta the seam applies is accumulated and added to the base
+// budget by RecordUsage.
+//
+// spec: 8.6 (in-process budget-exhaustion extension and raise-survival), 11.2 (mid-session budget enforcement)
+// diagnosis: the §8.6 granted extension delta is not propagated into the budget the recorder passes to Enforcer.Record, so a raised budget is clobbered on the session's next settlement and the session re-exhausts and re-terminates every request (proposal 0023 S3/S4 raise-survival broken).
+func TestProxyUsageRecorderRaiseSurvivesNextRecord_spec_8_6(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	// Base budget 200. The session store never learns of a §8.6 grant, so the
+	// recorder must add the accumulated delta itself.
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "s_raise", TenantID: "acme", RuntimeRef: "claude-prod", State: session.StateRunning,
+		DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 200},
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	term := &recordTerminator{}
+	enforcer := sessionbudget.New(term, nil, nil)
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	// Wire the granting seam that raises by 1000 through the recorder (the
+	// reclaimer) on exhaustion, mirroring the production in-path Granted path.
+	seam := &grantingReclaimSeam{rec: rec, delta: 1000}
+	enforcer.SetExtendOnExhaustion(seam.fn)
+
+	lease := credential.Lease{
+		LeaseID: "cl-raise", SessionID: "s_raise", TenantID: "acme",
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
+	}
+
+	// First settlement records 250 tokens, crossing the base 200 budget. The
+	// seam grants (raising the budget by 1000 to an effective 1200 and clearing
+	// the exhausted/deny state through the recorder), so the record path reports
+	// Granted and the session is not terminated.
+	exhausted, outcome := rec.RecordUsage(ctx, lease, llmproxy.Usage{InputTokens: 150, OutputTokens: 100}) // 250
+	if !exhausted {
+		t.Fatalf("recording 250 tokens against a 200 budget must cross the exhaustion boundary")
+	}
+	if outcome != llmproxy.OutcomeGranted {
+		t.Fatalf("an in-path grant must surface OutcomeGranted, got %v", outcome)
+	}
+	if !enforcer.Allow("s_raise") {
+		t.Fatalf("a granted-extension session must be admitted by the pre-flight gate")
+	}
+	if len(term.calls) != 0 {
+		t.Fatalf("a granted extension must not terminate the session, got %v", term.calls)
+	}
+
+	// Second settlement records another 300 tokens (cumulative 550). This exceeds
+	// the stale base budget (200) but stays well under the raised budget (1200).
+	// The pre-fix recorder passed the stale 200 to Record, so cumulative 550 >= 200
+	// re-exhausted the session and re-consulted the seam. The fixed recorder passes
+	// base 200 + accumulated delta 1000 = 1200, so 550 < 1200 does not re-exhaust,
+	// the seam is not consulted again, and the session is not terminated.
+	callsBefore := seam.calls
+	exhausted2, _ := rec.RecordUsage(ctx, lease, llmproxy.Usage{InputTokens: 200, OutputTokens: 100}) // +300 = 550
+	if exhausted2 {
+		t.Fatalf("a settlement under the raised budget must not re-exhaust the session (the raise must survive the next Record)")
+	}
+	if seam.calls != callsBefore {
+		t.Fatalf("a settlement under the raised budget must not re-consult the extension seam, calls went %d -> %d", callsBefore, seam.calls)
+	}
+	if !enforcer.Allow("s_raise") {
+		t.Fatalf("a session under the raised budget must stay admitted")
+	}
+	if len(term.calls) != 0 {
+		t.Fatalf("no termination expected after a surviving raise, got %v", term.calls)
+	}
+}
+
+// TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6 proves the recorder's
+// SessionReclaimer clears a session's accumulated grant delta on
+// TerminateSession, so a terminated session does not retain a raised budget in
+// the recorder's per-session map. It pins the fan-out terminal path
+// (TerminateSession) the recorder implements for a detached session whose
+// deferred extension outcome is terminal.
+//
+// spec: 8.6 (SessionReclaimer terminal fan-out), 11.2 (budget accounting cleanup)
+// diagnosis: the recorder's SessionReclaimer does not drop a terminated session's accumulated grant delta, leaking a raised budget entry for a torn-down session (proposal 0023 S3/S4 reclaimer cleanup broken).
+func TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6(t *testing.T) {
+	sessions := memstore.New()
+	term := &recordTerminator{}
+	enforcer := sessionbudget.New(term, nil, nil)
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+
+	rec.RaiseBudget("s_term", 1000)
+	if got := rec.grantedDeltaFor("s_term"); got != 1000 {
+		t.Fatalf("RaiseBudget must accumulate the granted delta, got %d", got)
+	}
+	rec.TerminateSession("s_term")
+	if got := rec.grantedDeltaFor("s_term"); got != 0 {
+		t.Fatalf("TerminateSession must clear the accumulated grant delta, got %d", got)
+	}
+	if len(term.calls) != 1 || term.calls[0] != "s_term" {
+		t.Fatalf("TerminateSession must terminate the session through the enforcer, got %v", term.calls)
+	}
+
+	// The SessionReclaimer methods are nil-safe on the recorder and on an
+	// empty session id: the leasecontrol fan-out or the in-path applier must
+	// never panic against a recorder that is not wired.
+	var nilRec *proxyUsageRecorder
+	nilRec.RaiseBudget("s", 1)
+	nilRec.TerminateSession("s")
+	rec.RaiseBudget("", 1)
+	rec.TerminateSession("")
+}
+
+// TestProxyUsageRecorderForgetDropsGrant_spec_8_6 proves the recorder's
+// forget (wired into the sessionserver BudgetForget closure at session
+// settlement) drops a session's accumulated grant delta, so the per-session
+// map does not grow without bound as sessions settle. It complements the
+// TerminateSession reclaimer path, which clears the same entry on a terminal
+// fan-out.
+//
+// spec: 8.6 (grant-delta accounting cleanup), 11.2 (mid-session budget accounting)
+// diagnosis: the recorder's grant-delta map is never cleared on session settlement, leaking a raised-budget entry per settled session (proposal 0023 S3/S4 accounting cleanup broken).
+func TestProxyUsageRecorderForgetDropsGrant_spec_8_6(t *testing.T) {
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec.RaiseBudget("s_forget", 500)
+	if got := rec.grantedDeltaFor("s_forget"); got != 500 {
+		t.Fatalf("RaiseBudget must accumulate the delta, got %d", got)
+	}
+	rec.forget("s_forget")
+	if got := rec.grantedDeltaFor("s_forget"); got != 0 {
+		t.Fatalf("forget must drop the accumulated delta, got %d", got)
+	}
+	// Nil-safe on a nil recorder and empty session id (the BudgetForget
+	// closure may fire before the recorder is wired or for an anonymous
+	// session).
+	var nilRec *proxyUsageRecorder
+	nilRec.forget("s_forget")
+	rec.forget("")
+}
+
 // TestProxyUsageRecorderNoBudgetNoEnforcement_Spec11_2 confirms a session
 // without a lease token budget is never terminated for budget reasons (an
 // unbounded session is the §8.2 default).

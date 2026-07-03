@@ -262,8 +262,12 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 
 	switch outcome {
 	case Granted:
-		// The seam raised the budget and cleared the deny flag through
-		// RaiseBudget; the session continues. Nothing to deny or terminate.
+		// The extension resolved GRANTED/PARTIALLY_GRANTED within the in-path
+		// wait and the seam's ExtendForBudget already applied the raise
+		// through the SessionReclaimer (RaiseBudget), which raised this
+		// session's c.budget by the granted delta and cleared its
+		// deny/exhausted state. The session continues: nothing to deny or
+		// terminate here. spec: §8.6 line 629; proposal 0023 S3/S4.
 	case Pending:
 		// The in-path deadline elapsed with an elicitation still unresolved.
 		// Deny the session's next request but do NOT terminate it: the

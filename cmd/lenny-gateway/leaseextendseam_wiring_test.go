@@ -97,6 +97,22 @@ func TestLeaseExtendSeamGrantedContinuesSession_spec_8_6_line_629(t *testing.T) 
 	if !enforcer.Allow("s_grant") {
 		t.Fatalf("a granted-extension session must be admitted by the pre-flight gate")
 	}
+
+	// The in-path grant must have actually cleared the enforcer's exhausted
+	// flag through RaiseBudget, not merely left the deny flag unset. Prove it:
+	// a later settlement that crosses the raised budget is a NEW exhaustion
+	// event that re-consults the seam. Against the pre-fix code the in-path
+	// Granted path never raised the enforcer, so c.exhausted stayed true and
+	// this second boundary crossing would never fire (the !c.exhausted guard
+	// suppresses it), leaving the session running under an
+	// effectively-unenforced budget. A fresh exhaustion here (exhausted2 true)
+	// therefore proves the in-path grant cleared the exhausted flag. The second
+	// Record passes a raised budget the recorder would compute (base plus the
+	// granted delta); recording just over it re-crosses the boundary.
+	exhausted2, _ := enforcer.Record(ctx, ctx, "acme", "s_grant", 100_000, 100_001)
+	if !exhausted2 {
+		t.Fatalf("exhausting the raised budget must be a fresh exhaustion event; the in-path grant must have cleared c.exhausted (pre-fix left it set, suppressing this boundary)")
+	}
 }
 
 // TestLeaseExtendSeamTerminalFailsClosed proves the wired seam fails closed:

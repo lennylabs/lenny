@@ -879,6 +879,106 @@ func TestExtendForBudgetAutoModeGrantedInPath_spec_8_6_line_629(t *testing.T) {
 	}
 }
 
+// TestExtendForBudgetInPathGrantRaisesEnforcer_spec_8_6_line_629 is the
+// regression for proposal 0023 findings 1 and 3: an in-path GRANTED extension
+// (the auto-mode fast path that resolves within the caller's in-path wait) must
+// raise the enforcer's per-session budget through the SessionReclaimer, not only
+// the leasecontrol view. Against the pre-fix code the in-path Granted branch
+// returned OutcomeGranted without touching the reclaimer — RaiseBudget fired only
+// on the detached/Pending fan-out path — so the enforcer's c.budget stayed at the
+// pre-extension value and c.exhausted stayed set, leaving the session effectively
+// unenforced. This test wires a fake reclaimer, drives an in-path auto-mode grant,
+// and asserts RaiseBudget was called exactly once for the granting session with a
+// positive delta and TerminateSession never fired. It fails against the pre-fix
+// code because the reclaimer records no in-path raise.
+//
+// spec: 8.6 (in-process budget-exhaustion extension raises the enforcer budget)
+// diagnosis: an in-path GRANTED extension does not raise the enforcer's per-session budget or clear its exhausted flag — RaiseBudget is unreachable on the non-detached path, so the session continues with a stale, effectively-unenforced budget (proposal 0023 S3/S4 in-path raise broken).
+func TestExtendForBudgetInPathGrantRaisesEnforcer_spec_8_6_line_629(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     1_000_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeAuto,
+	})
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Elicitor: autoApproveElicitor{},
+		AutoExtensionCounter: ratelimit.NewMemory(),
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reclaimer := newFakeReclaimer()
+	svc.SetReclaimer(reclaimer)
+
+	reqCtx := context.Background()
+	waitCtx, cancel := context.WithTimeout(reqCtx, 2*time.Second)
+	defer cancel()
+	got, err := svc.ExtendForBudget(reqCtx, waitCtx, "root-1")
+	if err != nil {
+		t.Fatalf("ExtendForBudget: %v", err)
+	}
+	if got != leasecontrol.OutcomeGranted {
+		t.Fatalf("outcome = %v, want Granted (auto-mode extension resolves in-path)", got)
+	}
+	// The in-path Granted path must reflect the grant on the enforcer through
+	// the reclaimer, exactly as the deferred fan-out does for a detached
+	// session. Without this the enforcer's budget is never raised in-path.
+	if reclaimer.raiseCount() != 1 {
+		t.Fatalf("in-path grant must raise exactly one session through the reclaimer, raiseCount=%d", reclaimer.raiseCount())
+	}
+	if reclaimer.raised["root-1"] <= 0 {
+		t.Fatalf("in-path grant must raise root-1 by a positive granted delta, got %d", reclaimer.raised["root-1"])
+	}
+	if reclaimer.terminateCount("root-1") != 0 {
+		t.Fatalf("an in-path grant must not terminate the session, terminations=%d", reclaimer.terminateCount("root-1"))
+	}
+}
+
+// TestExtendForBudgetInPathTerminalNoRaise_spec_8_6_line_712 guards the
+// complementary in-path terminal branch so the raise test above is not
+// trivially satisfied by a reclaimer that always raises: an in-path
+// CEILING_REACHED resolution returns Terminal and must NOT raise the enforcer
+// budget through the reclaimer (fail closed).
+//
+// spec: 8.6 (ceiling-reached in-path outcome is terminal, no raise)
+// diagnosis: an in-path CEILING_REACHED extension incorrectly raised the enforcer budget instead of failing closed, letting a session at its ceiling continue with a fabricated budget increase (proposal 0023 fail-closed in-path posture broken).
+func TestExtendForBudgetInPathTerminalNoRaise_spec_8_6_line_712(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 500_000,
+		DeploymentBase:     500_000, // no headroom: ceiling reached
+		DeploymentMax:      500_000,
+		ApprovalMode:       leasecontrol.ApprovalModeAuto,
+	})
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Elicitor: autoApproveElicitor{},
+		AutoExtensionCounter: ratelimit.NewMemory(),
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reclaimer := newFakeReclaimer()
+	svc.SetReclaimer(reclaimer)
+
+	reqCtx := context.Background()
+	waitCtx, cancel := context.WithTimeout(reqCtx, 2*time.Second)
+	defer cancel()
+	got, err := svc.ExtendForBudget(reqCtx, waitCtx, "root-1")
+	if err != nil {
+		t.Fatalf("ExtendForBudget: %v", err)
+	}
+	if got != leasecontrol.OutcomeTerminal {
+		t.Fatalf("outcome = %v, want Terminal (ceiling reached, fail closed)", got)
+	}
+	if reclaimer.raiseCount() != 0 {
+		t.Fatalf("an in-path ceiling-reached outcome must not raise any session, raiseCount=%d", reclaimer.raiseCount())
+	}
+}
+
 // TestExtendForBudgetCeilingReachedTerminal_spec_8_6_line_712: a session
 // whose tree is already at its token ceiling extends to CEILING_REACHED,
 // which ExtendForBudget maps to Terminal (fail closed): the proxy
