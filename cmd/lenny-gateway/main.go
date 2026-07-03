@@ -1078,9 +1078,14 @@ func hardPrunePartialManifests(ctx context.Context, store partialmanifeststore.S
 // chain-continuity check: it re-verifies the most recent lastN audit
 // rows of every tenant's hash chain, increments
 // lenny_audit_chain_integrity_total per tenant by §11.7 state, and logs
-// the spec WARN message for each detected gap. A broken chain fires the
-// §16.5 AuditChainGap alert through the metric; the gateway does not
-// refuse to start. spec: §12.3 line 101. F-12.3.9.
+// the spec WARN message for each broken chain. Under the §11.7 nextval
+// allocator a benign transaction-rollback gap keeps its prev_hash link
+// intact and verifyChainWindow reports it detected-but-not-broken, so
+// only a non-linking prev_hash across the gap (a committed audit row
+// tampered with or removed) reaches the boundary-populated WARN branch.
+// A broken chain fires the §16.5 AuditChainGap alert through the metric;
+// the gateway does not refuse to start. spec: §12.3 line 101, §11.7.
+// F-12.3.9. F-11.2.10.
 func runStartupChainContinuityCheck(ctx context.Context, db integrity.Querier, lastN int, m *gatewaymetrics.Metrics) {
 	results, err := integrity.CheckChainContinuityRecent(ctx, db, lastN)
 	if err != nil {
@@ -1093,7 +1098,20 @@ func runStartupChainContinuityCheck(ctx context.Context, db integrity.Querier, l
 			continue
 		}
 		if r.GapHighSeq() > 0 {
-			log.Printf("Audit chain gap detected for tenant %s: gap between sequence %d and %d (~%s to %s). This indicates T2 audit events were lost from the in-memory batch buffer during a previous gateway crash. T3/T4 events are synchronous and will not appear in chain gaps.",
+			// After the §11.7 nextval switch the audit sequence_number is
+			// allocated by nextval, so a benign transaction-rollback gap has
+			// an intact prev_hash link and verifyChainWindow classifies it
+			// detected-but-not-broken (no boundaries populated). The only
+			// boundary-populated ChainBroken (GapHighSeq() > 0) is a
+			// non-linking prev_hash across the gap — a committed audit row
+			// tampered with or removed — never buffered-T2 loss, which is the
+			// accepted unsignaled tradeoff of the opt-in audit.batchingEnabled
+			// path and carries no chain-level signal. The message matches the
+			// §12.3 line 101 WARN string verbatim; the surrounding §12.3 prose
+			// directs the operator to reconcile against the independent SIEM
+			// copy and document the break in their compliance records.
+			// spec: §12.3 line 101, §11.7. F-11.2.10.
+			log.Printf("Audit chain broken for tenant %s: prev_hash does not link across sequence %d to %d (~%s to %s). This indicates a committed audit row was tampered with or removed. T3/T4 events are synchronous and will not appear in chain gaps.",
 				r.TenantID, r.GapLowSeq(), r.GapHighSeq(),
 				r.GapStart().Format(time.RFC3339), r.GapEnd().Format(time.RFC3339))
 			continue

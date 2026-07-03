@@ -277,6 +277,33 @@ func TestEventStoreContract(t *testing.T) {
 		if !found {
 			t.Errorf("continuity check did not walk tampered tenant %q", tenant)
 		}
+
+		// The windowed startup check (the §12.3 line 101 path the reworked
+		// runStartupChainContinuityCheck WARN string reads) must report the
+		// same real-Postgres committed-row tamper as broken, so a genuine
+		// tamper reaches the boundary-populated ChainBroken branch that
+		// emits the committed-row-tamper-or-removal WARN. The audit
+		// sequence_number is allocated by nextval (§11.7 Path A), so this
+		// pins that the reconciled verifyChainWindow still breaks on a
+		// non-linking prev_hash against a live chain. spec: 12.3 (startup
+		// chain-continuity check line 101), 11.7 (prev_hash is the tamper
+		// authority). F-11.2.10.
+		recent, err := integrity.CheckChainContinuityRecent(ctx, pg.Pool, 1000)
+		if err != nil {
+			t.Fatalf("CheckChainContinuityRecent: %v", err)
+		}
+		var foundRecent bool
+		for _, r := range recent {
+			if r.TenantID == tenant {
+				foundRecent = true
+				if !r.Broken() {
+					t.Errorf("windowed check: tampered tenant %q chain = %q, want broken", tenant, r.Result.Integrity)
+				}
+			}
+		}
+		if !foundRecent {
+			t.Errorf("windowed continuity check did not walk tampered tenant %q", tenant)
+		}
 	})
 
 	t.Run("RLS isolates each tenant's audit rows", func(t *testing.T) {

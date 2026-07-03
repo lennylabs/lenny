@@ -214,6 +214,108 @@ func TestVerifyRowsDetectsSequenceGap(t *testing.T) {
 	}
 }
 
+// TestVerifyRowsNextvalRollbackGapIsAdvisoryNotAlarming pins the S9
+// invariant that the §25.9 query-API classifier is unchanged under the
+// Path A nextval switch: a sequence-number jump left by a rolled-back
+// nextval is the advisory, non-alarming gap_suspected state, never
+// ChainBroken. The classifier decides a gap by sequence density (the
+// §25.9 temporal-gap signal), and gap_suspected does not fire the §16.5
+// AuditChainGap alert (IsAlarming is true only for ChainBroken). A
+// change that promoted a benign nextval gap to ChainBroken here — the
+// exact misclassification S8/S9 keep out of the alert-driving verifier —
+// would fail this test.
+//
+// spec: §25.9 lines 3676-3679 (temporal-gap signal), §11.7 (nextval
+// leaves benign rollback gaps). F-11.2.10.
+func TestVerifyRowsNextvalRollbackGapIsAdvisoryNotAlarming(t *testing.T) {
+	t.Parallel()
+	r1 := Row{
+		Seq: 1, TenantID: "acme", EventType: "e1", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: GenesisPrevHash,
+	}
+	r1.Hash = ComputeHash(r1)
+	// nextval allocated 2 but its transaction rolled back; the committed
+	// successor is 3 and still links to the committed tail row 1.
+	r3 := Row{
+		Seq: 3, TenantID: "acme", EventType: "e3", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: LinkHash(r1),
+	}
+	r3.Hash = ComputeHash(r3)
+
+	got := ChainFromRows("acme", []Row{r1, r3}, nil).VerifyRows()
+	if got[3] != ChainGapSuspected {
+		t.Fatalf("rolled-back nextval gap = %q, want gap_suspected", got[3])
+	}
+	if got[3].IsAlarming() {
+		t.Errorf("gap_suspected reported alarming; a benign nextval gap must not fire AuditChainGap")
+	}
+}
+
+// TestVerifyRowsPostSweepNon1GenesisIsVerified pins the S9 invariant that
+// the §25.9 classifier accepts a post-sweep chain whose retained head is
+// past sequence 1: the retention/teardown sweep can remove a tenant's
+// early rows, so the first surviving row carries GenesisPrevHash on its
+// own genesis-sentinel branch (i == 0) and verifies rather than breaking.
+// A change that demanded the genesis row be sequence 1 would fail here.
+//
+// spec: §25.9 (per-row chainIntegrity, genesis-sentinel branch), §11.7
+// (nextval retains its counter across a sweep). F-11.2.10.
+func TestVerifyRowsPostSweepNon1GenesisIsVerified(t *testing.T) {
+	t.Parallel()
+	// A swept chain whose earliest surviving row is sequence 42, carrying
+	// the genesis sentinel, followed by a linked successor.
+	r42 := Row{
+		Seq: 42, TenantID: "acme", EventType: "e42", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: GenesisPrevHash,
+	}
+	r42.Hash = ComputeHash(r42)
+	r43 := Row{
+		Seq: 43, TenantID: "acme", EventType: "e43", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: LinkHash(r42),
+	}
+	r43.Hash = ComputeHash(r43)
+
+	got := ChainFromRows("acme", []Row{r42, r43}, nil).VerifyRows()
+	if got[42] != ChainVerified {
+		t.Errorf("post-sweep non-1 genesis row = %q, want verified", got[42])
+	}
+	if got[43] != ChainVerified {
+		t.Errorf("post-sweep successor row = %q, want verified", got[43])
+	}
+}
+
+// TestVerifyRowsNonLinkingPrevHashIsBroken pins the S9 invariant that the
+// §25.9 classifier still reports a genuine tamper: a contiguous-sequence
+// row whose stored prev_hash does not link to its predecessor is
+// ChainBroken (the alarming state), so reworking the startup WARN string
+// and reconciling verifyChainWindow did not weaken tamper detection in
+// the query-API classifier.
+//
+// spec: §25.9 (broken on a non-linking prev_hash), §11.7 (prev_hash is
+// the tamper authority). F-11.2.10.
+func TestVerifyRowsNonLinkingPrevHashIsBroken(t *testing.T) {
+	t.Parallel()
+	r1 := Row{
+		Seq: 1, TenantID: "acme", EventType: "e1", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: GenesisPrevHash,
+	}
+	r1.Hash = ComputeHash(r1)
+	// Contiguous sequence, but row 2's prev_hash does not link to row 1.
+	r2 := Row{
+		Seq: 2, TenantID: "acme", EventType: "e2", EventSchemaVersion: DefaultEventSchemaVersion,
+		Payload: json.RawMessage(`{}`), Timestamp: ts(), PrevHash: "deadbeef",
+	}
+	r2.Hash = ComputeHash(r2)
+
+	got := ChainFromRows("acme", []Row{r1, r2}, nil).VerifyRows()
+	if got[2] != ChainBroken {
+		t.Fatalf("non-linking prev_hash = %q, want broken", got[2])
+	}
+	if !got[2].IsAlarming() {
+		t.Errorf("ChainBroken reported non-alarming; a committed-row tamper must fire AuditChainGap")
+	}
+}
+
 // TestVerifyRowsLawfulRedaction — a redacted row carrying a valid
 // receipt is classified redacted_gdpr, not broken.
 //
