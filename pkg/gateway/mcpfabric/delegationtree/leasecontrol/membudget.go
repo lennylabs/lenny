@@ -540,8 +540,11 @@ func (m *MemoryBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID
 // landed since the TreeBudget read. F-8.6.1; F-8.6.11; F-8.6.12.
 func (m *MemoryBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (NewLimits, error) {
 	m.mu.Lock()
-	t, err := m.lookupLocked(tenantID, rootSessionID)
-	if err != nil {
+	// Only the error matters on this first lookup: the tree pointer is
+	// re-resolved under the lock re-acquired below, after the out-of-lock
+	// durable-store round-trip. Binding it here would leave a value that
+	// is never read (staticcheck SA4006).
+	if _, err := m.lookupLocked(tenantID, rootSessionID); err != nil {
 		m.mu.Unlock()
 		return NewLimits{}, err
 	}
@@ -563,7 +566,7 @@ func (m *MemoryBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessi
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	t, err = m.lookupLocked(tenantID, rootSessionID)
+	t, err := m.lookupLocked(tenantID, rootSessionID)
 	if err != nil {
 		return NewLimits{}, err
 	}

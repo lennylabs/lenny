@@ -323,8 +323,9 @@ type Service struct {
 	// `gateway.delegation.maxActiveChildrenPerUser`. F-11.1.4.
 	maxActiveChildrenPerUser int
 	// leaseRegistrar, when set, registers every admitted child session
-	// with the §8.6 lease-extension budget source so a later ExtendLease
-	// from the child resolves its tree instead of failing
+	// with the §8.6 lease-extension budget source so a later in-process
+	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
+	// trigger) from the child resolves its tree instead of failing
 	// ErrSessionNotFound. The child is added to its root's tree and its
 	// per-extension ceiling is capped at the parent's own granted lease
 	// (§8.6 line 648). Nil leaves extension state unregistered (the
@@ -489,7 +490,8 @@ type Options struct {
 
 	// LeaseRegistrar, when set, registers every admitted child session
 	// with the §8.6 lease-extension budget source (AddSession +
-	// SetParentLease) so an adapter ExtendLease from the child resolves
+	// SetParentLease) so an in-process budget-exhaustion extension (the
+	// gateway LLM Proxy's ExtendForBudget trigger) from the child resolves
 	// its tree instead of failing ErrSessionNotFound. Nil leaves
 	// extension state unregistered. F-15.3.5.
 	LeaseRegistrar LeaseChildRegistrar
@@ -1177,8 +1179,9 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 		return Result{}, err
 	}
 	// §8.6 line 648: register the committed child with the lease-extension
-	// budget source so an adapter ExtendLease from the child resolves its
-	// tree (AddSession) and is capped at the parent's own granted lease
+	// budget source so an in-process budget-exhaustion extension (the
+	// gateway LLM Proxy's ExtendForBudget trigger) from the child resolves
+	// its tree (AddSession) and is capped at the parent's own granted lease
 	// (SetParentLease). Done after the row commits so a registered child
 	// always has a persisted backing row. F-15.3.5.
 	if s.leaseRegistrar != nil {

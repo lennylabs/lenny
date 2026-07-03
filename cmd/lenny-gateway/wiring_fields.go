@@ -222,6 +222,14 @@ type gatewayWiringFields struct {
 	callbackDispatcher    *sessioncallback.Dispatcher
 	budgetTerminator      *budgetSessionTerminator
 	sessionBudgetEnforcer *sessionbudget.Enforcer
+	// proxyUsageRec is the §4.9 usage recorder buildLLMProxy constructs. It
+	// is recorded here so buildControlServer can wire it as the §8.6
+	// leasecontrol SessionReclaimer: the recorder accumulates each granted
+	// token delta and raises the enforcer budget, keeping the raise alive
+	// across the next Enforcer.Record (proposal 0023 S3/S4). Nil when no
+	// usagestore is wired (the recorder is nil), in which case exhaustion
+	// keeps the §11.2 line 44 terminate-immediately posture.
+	proxyUsageRec         *proxyUsageRecorder
 	leaseBudgets          *leasecontrol.MemoryBudgetSource
 	leaseExtDefaults      sessionserver.LeaseExtensionDefaults
 	sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar

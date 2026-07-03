@@ -78,7 +78,6 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 
 | RPC | Description |
 |-----|-------------|
-| `ExtendLease` | Request a lease extension when the LLM proxy rejects a call for budget exhaustion. Response status: `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, or `REJECTED`. The adapter MUST NOT retry on `CEILING_REACHED` or `REJECTED`. |
 | `ReportSessionScrub` | Report the per-slot cleanup outcome (`released` or `leaked`) at each session release on a recycling or concurrent pod. The gateway increments the pod's served-session count and feeds the leak ledger. |
 | `ReportPodScrub` | Report the binary outcome of the whole-pod scrub the adapter runs when occupancy reaches zero on a recycling pod. The gateway computes the recycle disposition from the outcome and `sessionPolicy`. |
 

@@ -69,14 +69,78 @@ type BudgetGate interface {
 	Allow(sessionID string) bool
 }
 
+// Outcome is the tri-state result of a §8.6 budget-exhaustion lease
+// extension the record path attempts at the exhaustion boundary of a
+// proxy-mode session. It is a proxy-local mirror of the leasecontrol
+// tri-state so the proxy stays decoupled from the leasecontrol package; the
+// cmd/lenny-gateway recorder maps leasecontrol.Outcome onto it when it
+// surfaces the enforcer's resolved outcome through RecordUsage (proposal 0023
+// S6). Outcome bounds the proxy's write-path branch: continue the request
+// (deliver the held response), deny it now, or leave the session
+// denying-per-request while the elicitation resolves out-of-band. The proxy
+// does not itself dispatch the extension; it consumes the outcome the record
+// path already computed from its single dispatch.
+//
+// spec: §8.6 line 629 (the gateway LLM Proxy drives the trigger in-process);
+// proposal 0023.
+type Outcome int
+
+const (
+	// OutcomeGranted means the extension resolved GRANTED/PARTIALLY_GRANTED
+	// within the in-path wait window and the session's budget was raised.
+	// The transparent path applies: a non-streaming request delivers its
+	// already-computed response as a normal 200, and a streaming request's
+	// already-committed response stands with the raise applying to the
+	// session's next request.
+	OutcomeGranted Outcome = iota
+	// OutcomePending means the in-path wait deadline elapsed while an
+	// elicitation-mode extension episode was still unresolved. The proxy
+	// does not terminate the session and does not cancel the episode, which
+	// continues out-of-band. For a non-streaming request whose response is
+	// not yet written the current request returns BUDGET_EXHAUSTED; for a
+	// streaming request whose 200/SSE response is already committed that
+	// response stands. In both cases the session's subsequent requests are
+	// denied by the pre-flight BudgetGate until the episode resolves.
+	OutcomePending
+	// OutcomeTerminal means the extension resolved CEILING_REACHED/REJECTED,
+	// the underlying dispatch errored, or the caller's own request context
+	// was cancelled (a client disconnect). The proxy fails closed: a
+	// non-streaming request returns BUDGET_EXHAUSTED, and the session is
+	// terminated so its next request is rejected by the pre-flight gate.
+	OutcomeTerminal
+)
+
+func (o Outcome) String() string {
+	switch o {
+	case OutcomeGranted:
+		return "GRANTED"
+	case OutcomePending:
+		return "PENDING"
+	case OutcomeTerminal:
+		return "TERMINAL"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // UsageRecorder receives the authoritative §4.9 token usage the proxy
 // extracts from each upstream response. §4.9 makes the proxy-extracted
 // counts the record for quota accounting; pod-reported counts are not
 // accepted in proxy mode.
 type UsageRecorder interface {
-	// RecordUsage records the token usage of one request against a
-	// lease.
-	RecordUsage(lease credential.Lease, usage Usage)
+	// RecordUsage records the token usage of one request against a lease and
+	// reports whether recording it exhausted the session's token budget
+	// (cumulative consumption reached the budget) and, when it did, the
+	// tri-state Outcome of the §8.6 lease extension the record path attempts
+	// at the exhaustion boundary. The recorder dispatches that extension
+	// exactly once, inside the enforcement path, and surfaces its resolved
+	// Outcome here so the proxy drives its write-path branch (deliver the
+	// held response on OutcomeGranted, deny it otherwise) without issuing a
+	// second, independent extension call (proposal 0023 S4). When exhausted
+	// is false the Outcome is inert (OutcomeGranted) and the proxy ignores
+	// it. ctx is the caller's request context, threaded so the metering and
+	// the in-path extension wait honor cancellation and deadlines.
+	RecordUsage(ctx context.Context, lease credential.Lease, usage Usage) (exhausted bool, outcome Outcome)
 }
 
 // ProxyCache is the §4.9 semantic-cache seam on the proxy path. It backs
@@ -152,6 +216,14 @@ type Handler struct {
 	// pre-flight: a request for a session that has already exhausted its
 	// token budget is rejected with BUDGET_EXHAUSTED before any upstream
 	// call. A nil gate disables the check.
+	//
+	// The §8.6 budget-exhaustion lease extension is dispatched exactly once
+	// per exhaustion event, inside the record path (Usage.RecordUsage), which
+	// applies the raise / deny / terminate side-effects and surfaces the
+	// resolved Outcome the proxy branches its write path on (proposal 0023
+	// S4). The proxy never issues its own extension call, so the
+	// exhaustion decision and the terminate gate live in the enforcer, not
+	// here.
 	BudgetGate BudgetGate
 	// Cache is the §4.9 semantic cache consulted on the non-streaming
 	// request path. A nil Cache disables caching (the §4.9 default).
@@ -387,7 +459,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.recordUsage(lease, resp.Usage)
+	// spec: §8.6 line 629 / §11.2 line 44 — settle the call's usage against
+	// the session's token budget. Recording is what detects budget
+	// exhaustion and, inside the record path, dispatches the single §8.6
+	// extension and applies its side-effects; it returns the resolved
+	// Outcome. It must precede the write: on a non-streaming request the
+	// response is not yet committed, so an exhausting call whose §8.6
+	// extension is denied, still pending, or has no extender wired returns
+	// BUDGET_EXHAUSTED rather than the held 200.
+	exhausted, outcome := h.recordUsage(r.Context(), lease, resp.Usage)
+	if exhausted && outcome != OutcomeGranted {
+		// The extension was denied, is still pending, or no extender is
+		// wired: fail closed for this request. The exhausting call's usage
+		// is already recorded exactly once above, and the enforcer has
+		// already applied the deny / terminate side-effects; the session's
+		// subsequent requests are gated by the pre-flight BudgetGate.
+		h.writeError(w, http.StatusForbidden, "BUDGET_EXHAUSTED",
+			"the session's token budget is exhausted")
+		return
+	}
+
+	// Not exhausted, or the extension was granted within the in-path wait:
+	// deliver the already-computed response. No second upstream call is
+	// issued and no duplicate usage is recorded, so the runtime sees a
+	// slightly slow LLM response rather than a failure (spec: §8.6 line 629).
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(respBody)
@@ -430,7 +525,17 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 		flush = f.Flush
 	}
 	usage, _ := RelayStream(w, resp.Body, flush)
-	h.recordUsage(lease, usage)
+	// spec: §8.6 line 629 — settle the streamed usage against the session's
+	// token budget. The 200/SSE response is already committed (WriteHeader
+	// and RelayStream have flushed the body to the pod), so a committed
+	// stream cannot be denied. On exhaustion the §8.6 extension still fires
+	// inside the record path: a granted extension raises the session's budget
+	// for its next request (admitted by the pre-flight BudgetGate), and a
+	// terminal or still-pending outcome leaves that gate denying the session's
+	// subsequent requests. The record path applies those side-effects, so the
+	// streaming handler discards the returned outcome: the current request's
+	// committed response stands in every case.
+	_, _ = h.recordUsage(r.Context(), lease, usage)
 }
 
 // runLLMPhase runs the §4.8 interceptor chain for an LLM proxy phase
@@ -501,11 +606,16 @@ func requestWantsStream(body []byte) bool {
 }
 
 // recordUsage forwards the authoritative token usage to the configured
-// recorder. It is a no-op when no recorder is set.
-func (h *Handler) recordUsage(lease credential.Lease, usage Usage) {
-	if h.Usage != nil {
-		h.Usage.RecordUsage(lease, usage)
+// recorder under the request context and reports whether recording it
+// exhausted the session's token budget and, when it did, the tri-state
+// Outcome the record path's single §8.6 extension resolved to. The proxy
+// branches its write path on that Outcome without issuing its own extension
+// call. A nil recorder records nothing and reports not exhausted.
+func (h *Handler) recordUsage(ctx context.Context, lease credential.Lease, usage Usage) (exhausted bool, outcome Outcome) {
+	if h.Usage == nil {
+		return false, OutcomeGranted
 	}
+	return h.Usage.RecordUsage(ctx, lease, usage)
 }
 
 // now returns the handler clock.

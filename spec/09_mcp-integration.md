@@ -9,7 +9,7 @@
 | Parent pod ↔ child (via gateway) | MCP (virtual interface)                             | Delegation, tasks, elicitation forwarding                                                                               |
 | Gateway ↔ external MCP tools     | MCP                                                 | Tool invocation, OAuth flows                                                                                            |
 | Gateway ↔ `type:mcp` runtimes    | MCP (dedicated endpoints at `/mcp/runtimes/{name}`) | Direct MCP server access. Implicit session for audit/billing.                                                           |
-| Gateway ↔ pod runtime control    | Custom gRPC/HTTP+mTLS                               | Lifecycle, uploads, checkpoints, lease extension — not MCP-like                                                         |
+| Gateway ↔ pod runtime control    | Custom gRPC/HTTP+mTLS                               | Lifecycle, uploads, checkpoints — not MCP-like                                                         |
 
 #### Platform MCP Server Tools
 

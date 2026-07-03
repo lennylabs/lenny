@@ -63,6 +63,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 | `gateway.llmProxy.proxyDialects` | string[] | `["openai", "anthropic"]` | Proxy dialects enabled for runtime-facing endpoints. Must cover every `Runtime.credentialCapabilities.proxyDialect` in use. | Subset of `openai`, `anthropic`. |
 | `gateway.llmProxy.anthropicVersion` | string | (latest stable as of each Lenny release) | Default `anthropic-version` header value the translator injects when the runtime does not supply one. | Valid Anthropic API version string. |
 | `gateway.llmProxy.upstreamTLSVerify` | bool | `true` | Verify upstream provider TLS certificates on outbound calls from the gateway process. | -- |
+| `gateway.leaseExtension.proxyExtensionWaitTimeout` | duration | `5s` | For a proxy-mode session that exhausts its token budget, how long the gateway waits in-path for an automatic lease extension to resolve before returning `BUDGET_EXHAUSTED` for the current request. A fast automatic or quick-approval extension resolves within this window and stays transparent to the runtime; a slower human approval continues out of band, and the session recovers on a later request once the extension resolves. Operator-tunable. | Valid Go duration; must be > 0. |
 
 ---
 

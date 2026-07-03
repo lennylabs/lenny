@@ -81,6 +81,17 @@ func (w *gatewayWiring) buildLLMProxy(
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
 	llmProxyUsage := newProxyUsageRecorder(usage, w.sessions, w.sessionUsage, quotaCounter, tenantLimits, sessionBudgetEnforcer)
+	// spec: §8.6 line 629 / proposal 0023 S3/S4 — record the recorder so
+	// buildControlServer can wire it as the leasecontrol SessionReclaimer.
+	// The recorder, not the enforcer directly, is the reclaimer: it
+	// accumulates each granted token delta as it raises the enforcer budget,
+	// so RecordUsage adds that delta to the base MaxTokenBudget and the raise
+	// survives the next Enforcer.Record.
+	w.proxyUsageRec = llmProxyUsage
+	// spec: §8.6 line 629 — apply the operator-tunable in-path extension
+	// deadline (--proxy-extension-wait-timeout). §8.6 does not fix this
+	// value; a zeroed flag leaves the recorder's 5s default in place. 0023.
+	llmProxyUsage.setProxyExtensionWaitTimeout(*f.proxyExtensionWaitTimeout)
 	// spec: §12.4 line 268 — in the in_memory_reconciled mode the
 	// authoritative per-tenant token accounting feeds the per-replica
 	// budget slice rather than the Redis counter; route the recorder's

@@ -537,11 +537,16 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 }
 
 // newGatewayControlServer builds the §8.6 GatewayControl gRPC server
-// and binds its listener. It returns (nil, nil, nil) when addr is
+// and binds its listener. It returns (nil, nil, nil, nil) when addr is
 // empty, which disables the GatewayControl listener. A non-empty addr
 // that cannot be bound returns the error so the gateway fails fast.
 //
-// The server hosts the §8.6 ExtendLease RPC. Its budget state is the
+// The server hosts the surviving §9.1 platform-tool, §9.3
+// connector-tool, and §4.7 scrub-report RPCs; the §8.6 lease-extension
+// dispatch runs in-process (leasecontrol.ExtendForBudget) rather than as a
+// wire RPC here. It returns the constructed leasecontrol.Service so the
+// composition root wires the in-process §8.6 budget-exhaustion trigger onto
+// the proxy's sessionbudget enforcer. Its budget state is the
 // caller-supplied MemoryBudgetSource (shared with the §15.1 admin
 // extension-denial clear endpoint so both mutate one set of per-tree
 // denial flags), which doubles as the TenantResolver; a nil budgets
@@ -562,7 +567,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 //
 // metrics may be nil for the no-metrics test path; in production the
 // gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
-// every ExtendLease decision drives the §16 line 66
+// every extension decision drives the §16 line 66
 // `lenny_delegation_lease_extension_total` counter. F-8.6.13.
 //
 // trustDomain and denyList wire the §10.3 NET-060 inbound peer
@@ -574,9 +579,9 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, treeGranter leasecontrol.TreeBudgetGranter, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
 	if addr == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	if budgets == nil {
 		budgets = leasecontrol.NewMemoryBudgetSource()
@@ -616,11 +621,11 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		ScrubReports: scrubReports,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
+		return nil, nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
 	}
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("bind GatewayControl listener on %s: %w", addr, err)
+		return nil, nil, nil, fmt.Errorf("bind GatewayControl listener on %s: %w", addr, err)
 	}
 	// spec: §4.7 line 616 / §15.3 — the adapter↔gateway channel is mTLS.
 	// The pod adapter is the client of this listener, so the gateway
@@ -660,16 +665,17 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	}
 	tlsOpt, err := adapter.TLSServerOption(tlsCert, tlsKey, clientCA, tlsMods...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("§8.6 GatewayControl mTLS credentials: %w", err)
+		return nil, nil, nil, fmt.Errorf("§8.6 GatewayControl mTLS credentials: %w", err)
 	}
 	var opts []grpc.ServerOption
 	if tlsOpt != nil {
 		opts = append(opts, tlsOpt)
 	}
 	// The interceptor fails closed when client-cert verification is
-	// active (clientCA set): every ExtendLease call must arrive over a
-	// verified mTLS chain, since the handler trusts the session_id in the
-	// request body and has no other proof of the caller's identity.
+	// active (clientCA set): every surviving GatewayControl call
+	// (platform-tool, connector-tool, scrub-report) must arrive over a
+	// verified mTLS chain, since the handlers trust the session_id in the
+	// request body and have no other proof of the caller's identity.
 	// F-8.6.4 / F-15.3.1.
 	//
 	// spec: §10.2 line 227 / §10.3 line 334 — the gateway validates the
@@ -692,7 +698,15 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	opts = append(opts, grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterGatewayControlServer(gs, svc)
-	return gs, lis, nil
+	// Return svc so the composition root wires the §8.6 in-process
+	// budget-exhaustion trigger: the proxy's sessionbudget enforcer calls
+	// svc.ExtendForBudget as its extension seam, and svc.SetReclaimer receives
+	// the §4.9 usage recorder so the per-tree episode fan-out (and the in-path
+	// Granted path) can raise or terminate a session that detached at the
+	// in-path deadline while keeping the raise alive across the next
+	// Enforcer.Record (the recorder accumulates the granted delta). spec: §8.6
+	// line 629; proposal 0023 S3/S4/S6.
+	return gs, lis, svc, nil
 }
 
 // newScrubReportService builds the §4.7 ScrubReporter that backs the

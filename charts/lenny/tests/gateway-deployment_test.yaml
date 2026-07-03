@@ -263,6 +263,32 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --lease-extension-auto-max-per-min=0
 
+  # spec: §8.6 line 629 (proposal 0023) — the gateway LLM Proxy waits
+  # in-path for a budget-exhaustion lease extension up to
+  # proxyExtensionWaitTimeout before falling through to a
+  # recover-on-next-request BUDGET_EXHAUSTED. §8.6 does not fix this
+  # value, so the chart always renders the operator-tunable flag at its
+  # default 5s (unlike autoModeMaxPerMinute, which the spec default omits).
+  - it: renders --proxy-extension-wait-timeout at the default 5s
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --proxy-extension-wait-timeout=5s
+
+  - it: renders --proxy-extension-wait-timeout with an operator override
+    set:
+      gateway.leaseExtension.proxyExtensionWaitTimeout: 12s
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --proxy-extension-wait-timeout=12s
+
   # spec: §11.1 line 8 / line 9 (F-11.1.3 / F-11.1.4) — the global,
   # per-user, per-runtime concurrent-session caps and the per-user
   # active-delegated-children cap render env vars only when configured > 0.
@@ -820,9 +846,10 @@ tests:
             name: LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS
             value: "120"
 
-  # spec: §10.2 line 227 — the §8.6 GatewayControl listener verifies each
-  # pod-presented projected SA token via a TokenReview, so the gateway SA
-  # needs create on authentication.k8s.io/tokenreviews. F-10.2.10.
+  # spec: §10.2 line 227 — the GatewayControl listener verifies each
+  # pod-presented projected SA token via a TokenReview on the §9.1/§9.3
+  # tool-bridge and §5.2 scrub-report RPCs, so the gateway SA needs
+  # create on authentication.k8s.io/tokenreviews. F-10.2.10.
   - it: grants tokenreviews create for pod-to-gateway SA-token signature verification
     documentSelector:
       path: kind

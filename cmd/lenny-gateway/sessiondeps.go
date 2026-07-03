@@ -192,18 +192,24 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// terminator's terminal hook is set after the session server exists
 	// (the same deferred wiring sessionAdminAdapter uses).
 	budgetTerminator := &budgetSessionTerminator{store: w.sessions}
-	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator,
+	// The §8.6 extension seam is nil here: with no seam wired the enforcer
+	// denies and terminates immediately on exhaustion, preserving the
+	// §11.2 line 44 behavior. The proxy-mode extension trigger is injected
+	// by buildControlServer through SetExtendOnExhaustion once the
+	// leasecontrol.Service exists, and that service takes this enforcer as
+	// its episode fan-out SessionReclaimer (proposal 0023 S6).
+	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator, nil,
 		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
 
-	// §8.6 GatewayControl lease-extension budget state. Created here, when
-	// the GatewayControl listener is enabled via --grpc-addr, so the same
-	// per-tree denial flags are shared between the ExtendLease handler and
-	// the §15.1 line 868 admin extension-denial clear endpoint — the admin
-	// handler must mutate the very state the handler reads. The session
-	// server registers each root tree (RegisterTree) and the delegation
-	// Service registers each child (AddSession/SetParentLease), so a later
-	// ExtendLease resolves the tree instead of failing ErrSessionNotFound.
-	// F-8.6.8 / F-15.3.5.
+	// §8.6 lease-extension budget state. Created here, when the
+	// GatewayControl listener is enabled via --grpc-addr, so the same
+	// per-tree denial flags are shared between the in-process
+	// leasecontrol.ExtendLease dispatch and the §15.1 line 868 admin
+	// extension-denial clear endpoint — the admin handler must mutate the
+	// very state the dispatch reads. The session server registers each root
+	// tree (RegisterTree) and the delegation Service registers each child
+	// (AddSession/SetParentLease), so a later in-process extension resolves
+	// the tree instead of failing ErrSessionNotFound. F-8.6.8 / F-15.3.5.
 	var leaseBudgets *leasecontrol.MemoryBudgetSource
 	if *grpcAddr != "" {
 		leaseBudgets = leasecontrol.NewMemoryBudgetSource()

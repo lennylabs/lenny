@@ -5,13 +5,9 @@ package leasecontrol_test
 import (
 	"context"
 	"errors"
-	"net"
+	"reflect"
 	"testing"
 	"time"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -41,10 +37,10 @@ func newService(t *testing.T, budgets *leasecontrol.MemoryBudgetSource, clock fu
 	return svc
 }
 
-func extendReq(sessionID string, tokens int64) *adapterv1.ExtendLeaseRequest {
-	return &adapterv1.ExtendLeaseRequest{
-		SessionId:       &adapterv1.SessionId{Value: sessionID},
-		RequestedTokens: tokens,
+func extendReq(sessionID string, tokens int64) leasecontrol.ExtendRequest {
+	return leasecontrol.ExtendRequest{
+		SessionID: sessionID,
+		Requested: leasecontrol.Dimensions{Tokens: tokens},
 	}
 }
 
@@ -64,11 +60,11 @@ func TestExtendLeaseGranted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Errorf("status = %v, want GRANTED", resp.Status)
 	}
-	if resp.GrantedTokens != 200_000 {
-		t.Errorf("granted = %d, want 200000", resp.GrantedTokens)
+	if resp.Granted.Tokens != 200_000 {
+		t.Errorf("granted = %d, want 200000", resp.Granted.Tokens)
 	}
 
 	// The budget rose by the granted amount; a second look confirms it.
@@ -99,11 +95,11 @@ func TestExtendLeasePartiallyGranted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED {
+	if resp.Status != leasecontrol.StatusPartiallyGranted {
 		t.Errorf("status = %v, want PARTIALLY_GRANTED", resp.Status)
 	}
-	if resp.GrantedTokens != 50_000 {
-		t.Errorf("granted = %d, want 50000", resp.GrantedTokens)
+	if resp.Granted.Tokens != 50_000 {
+		t.Errorf("granted = %d, want 50000", resp.Granted.Tokens)
 	}
 }
 
@@ -123,11 +119,11 @@ func TestExtendLeaseCeilingReached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_CEILING_REACHED {
+	if resp.Status != leasecontrol.StatusCeilingReached {
 		t.Errorf("status = %v, want CEILING_REACHED", resp.Status)
 	}
-	if resp.GrantedTokens != 0 {
-		t.Errorf("granted = %d, want 0", resp.GrantedTokens)
+	if resp.Granted.Tokens != 0 {
+		t.Errorf("granted = %d, want 0", resp.Granted.Tokens)
 	}
 }
 
@@ -154,11 +150,11 @@ func TestExtendLeaseLayeredCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED {
+	if resp.Status != leasecontrol.StatusPartiallyGranted {
 		t.Errorf("status = %v, want PARTIALLY_GRANTED", resp.Status)
 	}
-	if resp.GrantedTokens != 100_000 {
-		t.Errorf("granted = %d, want 100000 (capped by tenant ceiling)", resp.GrantedTokens)
+	if resp.Granted.Tokens != 100_000 {
+		t.Errorf("granted = %d, want 100000 (capped by tenant ceiling)", resp.Granted.Tokens)
 	}
 }
 
@@ -185,11 +181,11 @@ func TestExtendLeaseRejectedDuringCoolOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_REJECTED {
+	if resp.Status != leasecontrol.StatusRejected {
 		t.Errorf("status = %v, want REJECTED", resp.Status)
 	}
-	if resp.GrantedTokens != 0 {
-		t.Errorf("granted = %d, want 0", resp.GrantedTokens)
+	if resp.Granted.Tokens != 0 {
+		t.Errorf("granted = %d, want 0", resp.Granted.Tokens)
 	}
 	wantExpiry := now.Add(leasecontrol.DefaultRejectionCoolOff).UnixMilli()
 	if resp.CoolOffExpiryUnixMs != wantExpiry {
@@ -197,8 +193,8 @@ func TestExtendLeaseRejectedDuringCoolOff(t *testing.T) {
 	}
 	// spec: §15.1 line 1080 — REJECTED carries details.subtreeId and
 	// details.coolOffExpiresAt (UTC RFC 3339) for the denied subtree.
-	if resp.SubtreeId != "root-1" {
-		t.Errorf("subtree_id = %q, want %q", resp.SubtreeId, "root-1")
+	if resp.SubtreeID != "root-1" {
+		t.Errorf("subtree_id = %q, want %q", resp.SubtreeID, "root-1")
 	}
 	wantISO := now.Add(leasecontrol.DefaultRejectionCoolOff).UTC().Format(time.RFC3339)
 	if resp.CoolOffExpiresAt != wantISO {
@@ -240,12 +236,12 @@ func TestExtendLeaseRejectedResponseCarriesSpec15ErrorDetails_spec_15_1_line_108
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_REJECTED {
+	if resp.Status != leasecontrol.StatusRejected {
 		t.Fatalf("status = %v, want REJECTED", resp.Status)
 	}
 	// The subtree id is the requesting session, not the tree root.
-	if resp.SubtreeId != "child-2" {
-		t.Errorf("subtree_id = %q, want %q", resp.SubtreeId, "child-2")
+	if resp.SubtreeID != "child-2" {
+		t.Errorf("subtree_id = %q, want %q", resp.SubtreeID, "child-2")
 	}
 	wantISO := now.Add(90 * time.Second).UTC().Format(time.RFC3339)
 	if resp.CoolOffExpiresAt != wantISO {
@@ -280,7 +276,7 @@ func TestExtendLeaseGrantedAfterCoolOffExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease (in cool-off): %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_REJECTED {
+	if resp.Status != leasecontrol.StatusRejected {
 		t.Fatalf("status = %v, want REJECTED inside cool-off", resp.Status)
 	}
 
@@ -290,11 +286,11 @@ func TestExtendLeaseGrantedAfterCoolOffExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease (after cool-off): %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Errorf("status = %v, want GRANTED after cool-off expiry", resp.Status)
 	}
-	if resp.GrantedTokens != 100_000 {
-		t.Errorf("granted = %d, want 100000", resp.GrantedTokens)
+	if resp.Granted.Tokens != 100_000 {
+		t.Errorf("granted = %d, want 100000", resp.Granted.Tokens)
 	}
 }
 
@@ -320,7 +316,7 @@ func TestExtendLeaseClearDenialEndsCoolOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Errorf("status = %v, want GRANTED after denial cleared", resp.Status)
 	}
 }
@@ -349,7 +345,7 @@ func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Errorf("status = %v, want GRANTED", resp.Status)
 	}
 	childView, _ := budgets.TreeBudget(context.Background(), "acme", "child-7")
@@ -420,7 +416,7 @@ func TestExtendLeaseEmptySessionID(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	svc := newService(t, budgets, nil)
 
-	_, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{})
+	_, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{})
 	if err == nil {
 		t.Fatal("ExtendLease with an empty session id should error")
 	}
@@ -442,11 +438,11 @@ func TestExtendLeaseZeroRequestGranted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Errorf("status = %v, want GRANTED for a zero request", resp.Status)
 	}
-	if resp.GrantedTokens != 0 {
-		t.Errorf("granted = %d, want 0", resp.GrantedTokens)
+	if resp.Granted.Tokens != 0 {
+		t.Errorf("granted = %d, want 0", resp.Granted.Tokens)
 	}
 }
 
@@ -603,11 +599,11 @@ func TestExtendLeaseInFlightDenial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_REJECTED {
+	if resp.Status != leasecontrol.StatusRejected {
 		t.Errorf("status = %v, want REJECTED — an in-flight denial must not grant", resp.Status)
 	}
-	if resp.GrantedTokens != 0 {
-		t.Errorf("granted = %d, want 0", resp.GrantedTokens)
+	if resp.Granted.Tokens != 0 {
+		t.Errorf("granted = %d, want 0", resp.Granted.Tokens)
 	}
 }
 
@@ -640,7 +636,7 @@ func TestExtendLeaseInFlightDenialCustomCoolOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_REJECTED {
+	if resp.Status != leasecontrol.StatusRejected {
 		t.Fatalf("status = %v, want REJECTED", resp.Status)
 	}
 	wantExpiry := now.Add(120 * time.Second).UnixMilli()
@@ -816,50 +812,6 @@ func TestExtendLeaseDefaultBatchIDGenIsChronological_spec_8_6_line_743(t *testin
 	}
 	if a >= b {
 		t.Errorf("BatchIDs not chronologically sortable: a=%q !< b=%q", a, b)
-	}
-}
-
-// TestExtendLeaseOverGRPC exercises the full GatewayControl gRPC path:
-// register the Service on a gRPC server, dial it as a GatewayControl
-// client, and confirm a grant round-trips.
-func TestExtendLeaseOverGRPC(t *testing.T) {
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
-		TenantID:           "acme",
-		CurrentTokenBudget: 100_000,
-		DeploymentBase:     500_000,
-		DeploymentMax:      2_000_000,
-	})
-	svc := newService(t, budgets, nil)
-
-	lis := bufconn.Listen(1 << 20)
-	gs := grpc.NewServer()
-	adapterv1.RegisterGatewayControlServer(gs, svc)
-	go func() { _ = gs.Serve(lis) }()
-	t.Cleanup(gs.Stop)
-
-	conn, err := grpc.NewClient(
-		"passthrough:///bufnet",
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return lis.DialContext(ctx)
-		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatalf("dial bufconn: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-
-	client := adapterv1.NewGatewayControlClient(conn)
-	resp, err := client.ExtendLease(context.Background(), extendReq("root-1", 200_000))
-	if err != nil {
-		t.Fatalf("ExtendLease over gRPC: %v", err)
-	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
-		t.Errorf("status = %v, want GRANTED", resp.Status)
-	}
-	if resp.GrantedTokens != 200_000 {
-		t.Errorf("granted = %d, want 200000", resp.GrantedTokens)
 	}
 }
 
@@ -1089,16 +1041,16 @@ func TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080(t *testing.T)
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.GetError() == nil {
+	if resp.Error == nil {
 		t.Fatal("REJECTED response must carry a §15.1 Error envelope per F-8.6.9")
 	}
-	if got, want := resp.GetError().GetCode(), adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE; got != want {
+	if got, want := resp.Error.GetCode(), adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE; got != want {
 		t.Errorf("Error.Code = %v, want %v", got, want)
 	}
-	if got, want := resp.GetError().GetCategory(), adapterv1.Error_CATEGORY_POLICY; got != want {
+	if got, want := resp.Error.GetCategory(), adapterv1.Error_CATEGORY_POLICY; got != want {
 		t.Errorf("Error.Category = %v, want POLICY", got)
 	}
-	if resp.GetError().GetRetryable() {
+	if resp.Error.GetRetryable() {
 		t.Error("Error.Retryable must be false during cool-off (loop tripper)")
 	}
 }
@@ -1129,10 +1081,10 @@ func TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080(t *test
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.GetError() == nil {
+	if resp.Error == nil {
 		t.Fatal("in-flight REJECTED response must carry a §15.1 Error envelope per F-8.6.9")
 	}
-	if got, want := resp.GetError().GetCode(), adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE; got != want {
+	if got, want := resp.Error.GetCode(), adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE; got != want {
 		t.Errorf("Error.Code = %v, want %v", got, want)
 	}
 }
@@ -1154,8 +1106,8 @@ func TestExtendLeaseGrantedHasNoErrorEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.GetError() != nil {
-		t.Errorf("GRANTED response must not carry Error envelope, got %+v", resp.GetError())
+	if resp.Error != nil {
+		t.Errorf("GRANTED response must not carry Error envelope, got %+v", resp.Error)
 	}
 }
 
@@ -1176,17 +1128,17 @@ func TestExtendLeaseSecondsDimensionGranted_spec_8_6_line_643(t *testing.T) {
 	})
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:        &adapterv1.SessionId{Value: "root-1"},
-		RequestedSeconds: 900,
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{Seconds: 900},
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_GRANTED; got != want {
+	if got, want := resp.Status, leasecontrol.StatusGranted; got != want {
 		t.Errorf("status = %v, want GRANTED for seconds-only grant", got)
 	}
-	if got, want := resp.GetGrantedSeconds(), int32(900); got != want {
+	if got, want := resp.Granted.Seconds, int64(900); got != want {
 		t.Errorf("granted_seconds = %d, want %d", got, want)
 	}
 	tb, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
@@ -1211,17 +1163,17 @@ func TestExtendLeaseSecondsDimensionPartiallyGranted_spec_8_6_line_643(t *testin
 	})
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:        &adapterv1.SessionId{Value: "root-1"},
-		RequestedSeconds: 600, // headroom is 100s.
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{Seconds: 600}, // headroom is 100s.
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+	if got, want := resp.Status, leasecontrol.StatusPartiallyGranted; got != want {
 		t.Errorf("status = %v, want PARTIALLY_GRANTED", got)
 	}
-	if got, want := resp.GetGrantedSeconds(), int32(100); got != want {
+	if got, want := resp.Granted.Seconds, int64(100); got != want {
 		t.Errorf("granted_seconds = %d, want 100", got)
 	}
 }
@@ -1241,19 +1193,21 @@ func TestExtendLeaseTokensAndSecondsCombinedOutcome_spec_8_6_line_643(t *testing
 	})
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:        &adapterv1.SessionId{Value: "root-1"},
-		RequestedTokens:  50_000, // fully under tokens ceiling
-		RequestedSeconds: 600,    // partially capped
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{
+			Tokens:  50_000, // fully under tokens ceiling
+			Seconds: 600,    // partially capped
+		},
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+	if got, want := resp.Status, leasecontrol.StatusPartiallyGranted; got != want {
 		t.Errorf("combined status = %v, want PARTIALLY_GRANTED", got)
 	}
-	if resp.GetGrantedTokens() != 50_000 || resp.GetGrantedSeconds() != 100 {
-		t.Errorf("granted = (%d tokens, %ds), want (50000, 100)", resp.GetGrantedTokens(), resp.GetGrantedSeconds())
+	if resp.Granted.Tokens != 50_000 || resp.Granted.Seconds != 100 {
+		t.Errorf("granted = (%d tokens, %ds), want (50000, 100)", resp.Granted.Tokens, resp.Granted.Seconds)
 	}
 }
 
@@ -1277,10 +1231,9 @@ func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	if _, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:        &adapterv1.SessionId{Value: "root-1"},
-		RequestedTokens:  50_000,
-		RequestedSeconds: 900,
+	if _, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "root-1",
+		Requested: leasecontrol.Dimensions{Tokens: 50_000, Seconds: 900},
 	}); err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
@@ -1379,11 +1332,11 @@ func TestExtendLeaseParentLeaseCeilingCaps_spec_8_6_line_648(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+	if got, want := resp.Status, leasecontrol.StatusPartiallyGranted; got != want {
 		t.Errorf("status = %v, want PARTIALLY_GRANTED capped by parent ceiling", got)
 	}
-	if resp.GetGrantedTokens() != 200_000 {
-		t.Errorf("granted = %d, want 200000 (parent ceiling 300K minus current 100K)", resp.GetGrantedTokens())
+	if resp.Granted.Tokens != 200_000 {
+		t.Errorf("granted = %d, want 200000 (parent ceiling 300K minus current 100K)", resp.Granted.Tokens)
 	}
 }
 
@@ -1406,11 +1359,11 @@ func TestExtendLeaseParentLeaseCeilingHonoursLayeredCap_spec_8_6_line_648(t *tes
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+	if got, want := resp.Status, leasecontrol.StatusPartiallyGranted; got != want {
 		t.Errorf("status = %v, want PARTIALLY_GRANTED", got)
 	}
-	if resp.GetGrantedTokens() != 400_000 {
-		t.Errorf("granted = %d, want 400000 (layered ceiling 500K minus current 100K)", resp.GetGrantedTokens())
+	if resp.Granted.Tokens != 400_000 {
+		t.Errorf("granted = %d, want 400000 (layered ceiling 500K minus current 100K)", resp.Granted.Tokens)
 	}
 }
 
@@ -1432,14 +1385,14 @@ func TestExtendLeaseParentLeaseCeilingMaxAge_spec_8_6_line_648(t *testing.T) {
 	budgets.SetParentLease("child-2", leasecontrol.SessionLease{MaxAgeCeiling: 1800})
 	svc := newService(t, budgets, nil)
 
-	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
-		SessionId:        &adapterv1.SessionId{Value: "child-2"},
-		RequestedSeconds: 5000,
+	resp, err := svc.ExtendLease(context.Background(), leasecontrol.ExtendRequest{
+		SessionID: "child-2",
+		Requested: leasecontrol.Dimensions{Seconds: 5000},
 	})
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if got, want := resp.GetGrantedSeconds(), int32(1200); got != want {
+	if got, want := resp.Granted.Seconds, int64(1200); got != want {
 		t.Errorf("granted_seconds = %d, want 1200 (parent ceiling 1800 minus current 600)", got)
 	}
 }
@@ -1462,39 +1415,51 @@ func TestExtendLeaseRootSessionHasNoParentCeiling_spec_8_6_line_648(t *testing.T
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_GRANTED; got != want {
+	if got, want := resp.Status, leasecontrol.StatusGranted; got != want {
 		t.Errorf("status = %v, want GRANTED for root session with no parent cap", got)
 	}
-	if resp.GetGrantedTokens() != 200_000 {
-		t.Errorf("granted = %d, want 200000", resp.GetGrantedTokens())
+	if resp.Granted.Tokens != 200_000 {
+		t.Errorf("granted = %d, want 200000", resp.Granted.Tokens)
 	}
 }
 
-// TestExtendLeaseRequestRejectsNonExtendableFields_spec_8_6_line_643:
-// the §8.6 line 643 non-extendable fields (maxDepth,
-// minIsolationProfile, delegationPolicyRef, perChildRetryBudget,
-// treeVisibility, allowSelfRecursion) MUST NOT appear on the
-// ExtendLeaseRequest proto. A regression test on the descriptor
-// prevents a future proto bump from accidentally exposing them.
+// TestExtendRequestRejectsNonExtendableFields_spec_8_6_line_643: the §8.6
+// line 643 non-extendable dimensions (maxDepth, minIsolationProfile,
+// delegationPolicyRef, perChildRetryBudget, treeVisibility,
+// allowSelfRecursion) MUST NOT be requestable. The in-process request
+// carries a leasecontrol.Dimensions value, whose field set is exactly the
+// §8.6 extendable set, so a future edit that adds a non-extendable
+// dimension surfaces here. This replaced the proto-descriptor regression
+// after proposal 0023 removed the ExtendLeaseRequest wire message.
 // F-8.6.14.
-func TestExtendLeaseRequestRejectsNonExtendableFields_spec_8_6_line_643(t *testing.T) {
-	descriptor := (&adapterv1.ExtendLeaseRequest{}).ProtoReflect().Descriptor()
-	forbidden := []string{
-		"max_depth",
-		"min_isolation_profile",
-		"delegation_policy_ref",
-		"per_child_retry_budget",
-		"tree_visibility",
-		"allow_self_recursion",
+func TestExtendRequestRejectsNonExtendableFields_spec_8_6_line_643(t *testing.T) {
+	forbidden := map[string]bool{
+		"MaxDepth":            true,
+		"MinIsolationProfile": true,
+		"DelegationPolicyRef": true,
+		"PerChildRetryBudget": true,
+		"TreeVisibility":      true,
+		"AllowSelfRecursion":  true,
 	}
-	fields := descriptor.Fields()
-	present := map[string]bool{}
-	for i := 0; i < fields.Len(); i++ {
-		present[string(fields.Get(i).Name())] = true
+	// The extendable set §8.6 line 643 permits, in the Dimensions struct's
+	// field names (fileExportLimits is decomposed into its two components).
+	allowed := map[string]bool{
+		"Tokens":           true,
+		"Seconds":          true,
+		"Children":         true,
+		"ParallelChildren": true,
+		"TreeSize":         true,
+		"FileExportFiles":  true,
+		"FileExportBytes":  true,
 	}
-	for _, f := range forbidden {
-		if present[f] {
-			t.Errorf("ExtendLeaseRequest schema exposes non-extendable field %q — §8.6 line 643 lists it as not extendable", f)
+	typ := reflect.TypeOf(leasecontrol.Dimensions{})
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Name
+		if forbidden[name] {
+			t.Errorf("Dimensions exposes non-extendable dimension %q — §8.6 line 643 lists it as not extendable", name)
+		}
+		if !allowed[name] {
+			t.Errorf("Dimensions has unexpected field %q; confirm it is a §8.6 line 643 extendable dimension and add it to the allowed set", name)
 		}
 	}
 }
@@ -1559,7 +1524,7 @@ func TestExtendLeaseBridgesTokenGrantToTreeBudget_spec_8_6_643(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Fatalf("status = %v, want GRANTED", resp.Status)
 	}
 	if len(granter.deltas) != 1 || granter.deltas[0] != 200_000 {
@@ -1599,7 +1564,7 @@ func TestExtendLeaseNoTokenGrantNoBridge_spec_8_6_643(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtendLease: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_CEILING_REACHED {
+	if resp.Status != leasecontrol.StatusCeilingReached {
 		t.Fatalf("status = %v, want CEILING_REACHED", resp.Status)
 	}
 	if len(granter.deltas) != 0 {
@@ -1633,7 +1598,7 @@ func TestExtendLeaseTreeGranterFailureDoesNotFailGrant_spec_8_6_643(t *testing.T
 	if err != nil {
 		t.Fatalf("ExtendLease should not surface the bridge fault: %v", err)
 	}
-	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
+	if resp.Status != leasecontrol.StatusGranted {
 		t.Fatalf("status = %v, want GRANTED despite the bridge fault", resp.Status)
 	}
 }

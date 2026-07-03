@@ -4,20 +4,33 @@
 // enforcement fast path. The §4.9 LLM proxy records the authoritative
 // per-request token counts; this package tracks each proxy-mode
 // session's cumulative consumption against the session's token budget,
-// terminates a session the moment its consumption exhausts the budget
-// (rather than waiting for session completion), and rejects further
-// proxied requests for an exhausted session.
+// and gates further proxied requests for an over-budget session.
+//
+// A proxy-mode session that reaches its budget does not terminate
+// unconditionally. At the exhaustion boundary the enforcer consults an
+// injected §8.6 extension seam (extendOnExhaustion): a granted extension
+// raises the session's budget and the session continues; a terminal
+// outcome (ceiling reached, user-rejected, error, or a genuine request
+// cancellation) terminates it; and an elicitation still pending at the
+// caller's in-path deadline leaves the session alive but denying every
+// subsequent request until the extension resolves out-of-band. §11.2's
+// "terminate immediately" is preserved for the non-extendable and
+// nil-seam paths (proposal 0023).
 //
 // spec: §11.2 line 44 ("The gateway enforces budget limits against
 // Redis counters (fast path); if a session exceeds its token budget,
 // the gateway terminates it immediately rather than waiting for session
 // completion ... the gateway tracks usage in-memory per session and
-// enforces the per-session budget locally") and §8.10 line 1108
-// (over-budget proxy requests are rejected with BUDGET_EXHAUSTED in
-// proxy mode).
+// enforces the per-session budget locally"), §8.6 line 629 (the
+// gateway LLM Proxy drives the budget-exhaustion lease-extension trigger
+// in-process), and §8.10 line 1108 (over-budget proxy requests are
+// rejected with BUDGET_EXHAUSTED in proxy mode).
 package sessionbudget
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // ReasonBudgetExhausted is the §8.8 line 867 FailureReason the enforcer
 // stamps on a session it expires for token-budget exhaustion. The §8.8
@@ -26,6 +39,44 @@ import "sync"
 // (§7.1 line 175, "running → expired (lease/budget/deadline
 // exhausted)").
 const ReasonBudgetExhausted = "expired:budget"
+
+// Outcome is the tri-state result of a §8.6 budget-exhaustion extension
+// attempt, mirroring leasecontrol.Outcome but defined locally so this
+// package does not import leasecontrol and no import cycle forms. The
+// cmd/lenny-gateway wiring (proposal 0023 S6) maps leasecontrol.Outcome
+// onto this enum when it constructs the extendOnExhaustion seam.
+// spec: §8.6 line 629; proposal 0023.
+type Outcome int
+
+const (
+	// Granted means the extension resolved GRANTED/PARTIALLY_GRANTED
+	// within the caller's in-path wait and the seam raised the session's
+	// budget. The session continues: no deny flag, no termination.
+	Granted Outcome = iota
+	// Pending means the caller's in-path wait deadline elapsed while an
+	// elicitation-mode extension episode was still unresolved. The session
+	// is not terminated; it denies every subsequent request through the
+	// deny flag until the out-of-band episode later raises its budget
+	// (RaiseBudget) or terminates it.
+	Pending
+	// Terminal means the extension resolved CEILING_REACHED/REJECTED, the
+	// underlying dispatch errored, or the caller's own request context was
+	// cancelled. The session denies and is terminated (fail closed).
+	Terminal
+)
+
+func (o Outcome) String() string {
+	switch o {
+	case Granted:
+		return "GRANTED"
+	case Pending:
+		return "PENDING"
+	case Terminal:
+		return "TERMINAL"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 // Terminator forces an over-budget session to its §7.1 `expired`
 // terminal state. The gateway wires it to the same force-terminate path
@@ -38,6 +89,20 @@ type Terminator interface {
 	// terminal is a no-op.
 	TerminateSession(sessionID, reason string)
 }
+
+// ExtendOnExhaustion is the §8.6 extension seam the enforcer consults at
+// the consumed-over-budget boundary. It carries BOTH the caller's own
+// request context (reqCtx, r.Context()) and the derived in-path wait
+// (waitCtx, context.WithTimeout(reqCtx, proxyExtensionWaitTimeout)) to
+// match the landed two-context leasecontrol.ExtendForBudget: the
+// extension attempt honors reqCtx for the Pending-vs-Terminal
+// discrimination (a genuine request cancellation is Terminal) and waitCtx
+// for the in-path deadline (a still-pending elicitation is Pending). It
+// returns the tri-state Outcome the enforcer branches its
+// deny/terminate/continue decision on. A nil seam is the non-extendable
+// path: the enforcer denies and terminates immediately (§11.2 line 44).
+// spec: §8.6 line 629; proposal 0023 S3/S4.
+type ExtendOnExhaustion func(reqCtx, waitCtx context.Context, tenantID, sessionID string, budget, consumed int64) Outcome
 
 // Enforcer is the §11.2 mid-session token-budget fast path. The
 // per-session counters live in the proxy replica's memory: a session's
@@ -53,6 +118,11 @@ type Enforcer struct {
 	mu        sync.Mutex
 	sessions  map[string]*counter
 	terminate Terminator
+	// extendOnExhaustion is the §8.6 extension seam consulted once per
+	// session the first time it exhausts its budget. Nil disables the
+	// extension attempt (the non-extendable path): the enforcer denies and
+	// terminates immediately.
+	extendOnExhaustion ExtendOnExhaustion
 	// onExceeded fires once per session the first time it exhausts its
 	// budget, under the enforcer lock. Nil disables the hook.
 	onExceeded func(tenantID, sessionID string, budget, consumed int64)
@@ -60,40 +130,97 @@ type Enforcer struct {
 
 // counter is one session's running token accounting.
 type counter struct {
-	budget    int64
-	consumed  int64
+	budget   int64
+	consumed int64
+	// exhausted records that this session has already hit its budget once,
+	// so the §8.6 extension seam is consulted at most once per distinct
+	// exhaustion event and the onExceeded hook fires once. It is cleared by
+	// RaiseBudget so a later exhaustion of the raised budget is a fresh
+	// event that attempts a fresh extension.
 	exhausted bool
+	// deny is the deny-next-request flag Allow reads, decoupled from
+	// termination. It is set on Pending and Terminal (and the
+	// nil-seam/non-extendable path) so Allow rejects the session's next
+	// request, and cleared by RaiseBudget on a grant so the session
+	// continues. A Pending-but-alive session carries deny without ever
+	// being terminated, which the single exhausted flag could not
+	// represent. spec: §8.6 line 629; proposal 0023 S4.
+	deny bool
 }
 
 // New returns an Enforcer that terminates over-budget sessions through
-// t. onExceeded, when non-nil, is called once per session the first
-// time it exhausts its budget (the metric / audit hook); it runs under
-// the enforcer lock and must not block.
-func New(t Terminator, onExceeded func(tenantID, sessionID string, budget, consumed int64)) *Enforcer {
+// t. extend, when non-nil, is the §8.6 extension seam consulted at the
+// exhaustion boundary; a nil seam preserves the §11.2 line 44
+// terminate-immediately behavior. onExceeded, when non-nil, is called
+// once per session the first time it exhausts its budget (the metric /
+// audit hook); it runs under the enforcer lock and must not block.
+func New(t Terminator, extend ExtendOnExhaustion, onExceeded func(tenantID, sessionID string, budget, consumed int64)) *Enforcer {
 	return &Enforcer{
-		sessions:   make(map[string]*counter),
-		terminate:  t,
-		onExceeded: onExceeded,
+		sessions:           make(map[string]*counter),
+		terminate:          t,
+		extendOnExhaustion: extend,
+		onExceeded:         onExceeded,
 	}
+}
+
+// SetExtendOnExhaustion wires the §8.6 extension seam after construction.
+// The composition root builds the enforcer in an earlier step than the
+// leasecontrol.Service that satisfies the seam (the service is constructed
+// with the GatewayControl listener, downstream of the session-deps step
+// that builds this enforcer), so the seam cannot be passed to New. This
+// setter closes that construction-order gap: the composition root calls it
+// once the service exists, mapping leasecontrol.Outcome onto Outcome. A nil
+// seam (the no-leasecontrol local-development path) leaves the enforcer on
+// the §11.2 line 44 terminate-immediately behavior. It must run before the
+// enforcer serves its first Record; the composition root wires it during
+// build, before the proxy accepts requests, so no lock guards it against a
+// concurrent Record. spec: §8.6 line 629; proposal 0023 S6.
+func (e *Enforcer) SetExtendOnExhaustion(extend ExtendOnExhaustion) {
+	e.extendOnExhaustion = extend
 }
 
 // Record adds tokens to sessionID's cumulative consumption under the
 // given budget. The first time the session's cumulative consumption
-// reaches or exceeds a positive budget, Record terminates it through the
-// Terminator — the §11.2 line 44 "terminates it immediately". A
-// budget <= 0 disables enforcement for the session (the running total is
-// still tracked so a later positive budget resolution sees it);
-// tokens <= 0 only refreshes the budget. tenantID is carried for the
-// onExceeded hook. An empty sessionID is ignored.
+// reaches or exceeds a positive budget, Record attempts the §8.6 lease
+// extension through the injected seam before deciding the session's fate:
+// on Granted the session continues, on Pending it is left alive but
+// denying per request, and on Terminal (or a nil seam) it denies and is
+// terminated through the Terminator — the §11.2 line 44 "terminates it
+// immediately" for the non-extendable path. A budget <= 0 disables
+// enforcement for the session (the running total is still tracked so a
+// later positive budget resolution sees it); tokens <= 0 only refreshes
+// the budget. tenantID is carried for the seam and the onExceeded hook.
+// An empty sessionID is ignored.
+//
+// reqCtx is the caller's own request context (r.Context()); waitCtx is
+// the derived in-path wait (context.WithTimeout(reqCtx,
+// proxyExtensionWaitTimeout)). Both are threaded to the seam so the
+// extension honors the request context for the Pending-vs-Terminal
+// discrimination and the derived wait for the in-path deadline (proposal
+// 0023 S3).
 //
 // "Exhausts" is consumed >= budget, matching §8.10 line 1108's
 // "token budget is exhausted": once the cumulative count reaches the
 // budget the allocation is fully spent and the next request would
-// overshoot, so the session is terminated at the boundary rather than
+// overshoot, so the extension is attempted at the boundary rather than
 // after the first over-budget request.
-func (e *Enforcer) Record(tenantID, sessionID string, budget, tokens int64) {
+//
+// Record returns whether recording this usage exhausted the session (the
+// record boundary this call crossed) and, when it did, the seam's resolved
+// tri-state Outcome. The §8.6 extension is dispatched exactly once here,
+// inside the record path: Record consults the injected seam, applies
+// RaiseBudget / setDeny / TerminateSession itself, and surfaces the Outcome
+// so the proxy drives its write-path branch (deliver the held response on
+// Granted, deny it otherwise) WITHOUT re-dispatching the extension. A call
+// that does not cross the boundary, or a repeat exhaustion already seen for
+// this session, returns (false, Granted); the Granted zero value is inert
+// because the caller ignores the Outcome when exhausted is false.
+//
+// spec: §8.6 line 629 (the extension is attempted at most once per distinct
+// exhaustion event, in-path at the record boundary); proposal 0023 S3/S4.
+func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID string, budget, tokens int64) (exhausted bool, outcome Outcome) {
 	if sessionID == "" {
-		return
+		return false, Granted
 	}
 	e.mu.Lock()
 	c := e.sessions[sessionID]
@@ -105,30 +232,129 @@ func (e *Enforcer) Record(tenantID, sessionID string, budget, tokens int64) {
 	if tokens > 0 {
 		c.consumed += tokens
 	}
-	exhausted := false
+	crossedBoundary := false
 	if !c.exhausted && c.budget > 0 && c.consumed >= c.budget {
 		c.exhausted = true
-		exhausted = true
+		crossedBoundary = true
 		if e.onExceeded != nil {
 			e.onExceeded(tenantID, sessionID, c.budget, c.consumed)
 		}
 	}
+	consumed := c.consumed
 	e.mu.Unlock()
 
-	if exhausted && e.terminate != nil {
-		// Run the terminator outside the lock: it resolves the session
-		// store and runs the terminal pipeline, which must not block the
-		// enforcer's per-request fast path or deadlock against a
-		// concurrent Forget driven by that pipeline.
+	if !crossedBoundary {
+		return false, Granted
+	}
+
+	// Attempt the §8.6 extension outside the lock: the seam blocks on the
+	// extension episode's in-path wait and must not pin the enforcer's
+	// per-request fast path or deadlock against a concurrent Forget driven
+	// by the terminal pipeline, mirroring the terminate-outside-the-lock
+	// pattern below. A nil seam is the non-extendable path and terminates
+	// immediately. This is the single §8.6 dispatch for this exhaustion
+	// event; the resolved outcome is returned to the caller rather than
+	// re-derived by a second dispatch. spec: §8.6 line 629.
+	outcome = Terminal
+	if e.extendOnExhaustion != nil {
+		outcome = e.extendOnExhaustion(reqCtx, waitCtx, tenantID, sessionID, budget, consumed)
+	}
+
+	switch outcome {
+	case Granted:
+		// The extension resolved GRANTED/PARTIALLY_GRANTED within the in-path
+		// wait and the seam's ExtendForBudget already applied the raise
+		// through the SessionReclaimer (RaiseBudget), which raised this
+		// session's c.budget by the granted delta and cleared its
+		// deny/exhausted state. The session continues: nothing to deny or
+		// terminate here. spec: §8.6 line 629; proposal 0023 S3/S4.
+	case Pending:
+		// The in-path deadline elapsed with an elicitation still unresolved.
+		// Deny the session's next request but do NOT terminate it: the
+		// out-of-band episode fan-out later raises its budget or terminates
+		// it through the SessionReclaimer. spec: §8.6 line 629.
+		e.setDeny(sessionID)
+	default:
+		// Terminal, or a nil seam / non-extendable path. Deny and terminate.
+		e.setDeny(sessionID)
+		if e.terminate != nil {
+			// Run the terminator outside the lock: it resolves the session
+			// store and runs the terminal pipeline, which must not block the
+			// enforcer's per-request fast path or deadlock against a
+			// concurrent Forget driven by that pipeline.
+			e.terminate.TerminateSession(sessionID, ReasonBudgetExhausted)
+		}
+	}
+	// Recording this usage exhausted the session (the record boundary). The
+	// recorder relays this exhaustion signal and the seam's resolved outcome
+	// to the proxy so the proxy drives its write-path branch (deliver the
+	// held response on Granted, deny otherwise) without re-dispatching the
+	// extension (proposal 0023 S4).
+	return true, outcome
+}
+
+// setDeny sets sessionID's deny-next-request flag under the lock so the
+// pre-flight Allow gate rejects its next request. A session dropped by a
+// concurrent Forget is a no-op.
+func (e *Enforcer) setDeny(sessionID string) {
+	e.mu.Lock()
+	if c := e.sessions[sessionID]; c != nil {
+		c.deny = true
+	}
+	e.mu.Unlock()
+}
+
+// RaiseBudget raises sessionID's budget by delta and clears its deny
+// flag so the pre-flight Allow gate admits its next request. It also
+// clears the exhausted flag so a later exhaustion of the raised budget is
+// a fresh event that attempts a fresh §8.6 extension rather than being
+// suppressed as an already-seen exhaustion. delta is the granted token
+// amount for the session. It is called on a GRANTED/PARTIALLY_GRANTED
+// extension: by the in-path seam on an in-path Granted outcome, and by the
+// per-tree episode's completion fan-out (through the SessionReclaimer)
+// once per joined session on a deferred grant after a Pending outcome.
+// Raising an unknown or already-forgotten session is a no-op. spec: §8.6
+// line 629, line 719; proposal 0023 S4.
+func (e *Enforcer) RaiseBudget(sessionID string, delta int64) {
+	if sessionID == "" {
+		return
+	}
+	e.mu.Lock()
+	if c := e.sessions[sessionID]; c != nil {
+		if delta > 0 {
+			c.budget += delta
+		}
+		c.deny = false
+		c.exhausted = false
+	}
+	e.mu.Unlock()
+}
+
+// TerminateSession terminates sessionID for budget exhaustion (fail
+// closed), the path the per-tree episode's completion fan-out takes for a
+// joined session whose deferred extension outcome is terminal. It sets the
+// deny flag and delegates to the wired Terminator with
+// ReasonBudgetExhausted, so the Enforcer structurally satisfies
+// leasecontrol.SessionReclaimer and can be passed directly to
+// Service.SetReclaimer (proposal 0023 S6). A nil Terminator or an empty
+// sessionID is a no-op on the terminator. spec: §8.6 line 629, line 719.
+func (e *Enforcer) TerminateSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	e.setDeny(sessionID)
+	if e.terminate != nil {
 		e.terminate.TerminateSession(sessionID, ReasonBudgetExhausted)
 	}
 }
 
 // Allow reports whether sessionID may issue another proxied request. A
 // session not yet seen, or one still under its budget, is allowed; a
-// session that has exhausted its budget is denied — the §8.10 line 1108
-// BUDGET_EXHAUSTED rejection. An empty sessionID is allowed (the gate
-// only applies to attributable proxy sessions).
+// session whose deny-next-request flag is set is denied — the §8.10 line
+// 1108 BUDGET_EXHAUSTED rejection, covering both a terminated session and
+// a Pending-but-alive session awaiting an out-of-band extension. An empty
+// sessionID is allowed (the gate only applies to attributable proxy
+// sessions).
 func (e *Enforcer) Allow(sessionID string) bool {
 	if sessionID == "" {
 		return true
@@ -136,7 +362,7 @@ func (e *Enforcer) Allow(sessionID string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	c := e.sessions[sessionID]
-	return c == nil || !c.exhausted
+	return c == nil || !c.deny
 }
 
 // Forget drops sessionID's accounting. The gateway calls it from the

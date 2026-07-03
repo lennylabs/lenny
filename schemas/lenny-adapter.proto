@@ -201,20 +201,18 @@ service Adapter {
 // on this service is initiated by the adapter, in contrast to the
 // Adapter service where the gateway initiates every RPC.
 //
-// The service exists because a few §8 control operations originate at
-// the pod and need a gateway decision. ExtendLease is the first such
-// operation: the adapter cannot resolve a token-budget extension
-// itself because the layered §8.6 ceiling and the per-tree budget
-// state live on the gateway.
+// The service exists because a few pod-originated control operations
+// need a gateway decision the pod cannot make itself. It bridges the
+// §9.1 platform tool catalog and dispatch (ListPlatformTools,
+// CallPlatformTool) and the §9.3 connector catalog and dispatch
+// (ListSessionConnectors, ListConnectorTools, CallConnectorTool) from
+// the adapter's intra-pod MCP servers to the gateway's tool surfaces,
+// and carries the §5.2 per-slot and whole-pod scrub reports
+// (ReportSessionScrub, ReportPodScrub) the adapter emits on release.
+// Lease extension is not on this service: the §8.6 budget-exhaustion
+// trigger is driven by the gateway LLM Proxy in-process, so no adapter
+// RPC requests it.
 service GatewayControl {
-  // ExtendLease is the adapter's request to the gateway for additional
-  // token budget. Per spec §8.6 the adapter issues it when the LLM
-  // proxy rejects a call for budget exhaustion. Response carries one
-  // of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED, REJECTED. On
-  // CEILING_REACHED or REJECTED the adapter MUST NOT retry the
-  // extension; it propagates BUDGET_EXHAUSTED to the runtime.
-  rpc ExtendLease(ExtendLeaseRequest) returns (ExtendLeaseResponse) {}
-
   // ListPlatformTools returns the §9.1 platform tool catalog (lines
   // 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
   // intra-pod platform MCP server advertises to a type:agent runtime on
@@ -1240,79 +1238,6 @@ message ReportUsageResponse {
   int64 input_tokens = 1;
   int64 output_tokens = 2;
   int64 wall_clock_ms = 3;
-}
-
-// FileExportLimitsDelta is the §8.6 line 643 fileExportLimits extension:
-// the additional file-count and total-byte headroom an ExtendLease
-// request asks for, and the amount the gateway granted on the response.
-// fileExportLimits is one of the six extendable dimensions; it carries
-// two scalar components so the wire mirrors the policy field's shape.
-// F-8.6.1.
-message FileExportLimitsDelta {
-  int64 additional_max_files = 1;
-  int64 additional_max_bytes = 2;
-}
-
-message ExtendLeaseRequest {
-  SessionId session_id = 1;
-  int64 requested_tokens = 2;
-  int32 requested_seconds = 3;
-  // §8.6 line 643 extendable dimensions beyond maxTokenBudget (field 2)
-  // and perChildMaxAge (field 3). Zero — or an absent message, for
-  // file_export_limits — requests no change on that dimension. F-8.6.1.
-  int64 requested_children = 4;          // additionalChildren → maxChildrenTotal
-  int64 requested_parallel_children = 5; // maxParallelChildren
-  int64 requested_tree_size = 6;         // maxTreeSize
-  FileExportLimitsDelta requested_file_export_limits = 7; // fileExportLimits
-}
-
-message ExtendLeaseResponse {
-  Status status = 1;
-  int64 granted_tokens = 2;
-  int32 granted_seconds = 3;
-  // When status is REJECTED, the gateway includes the cool-off expiry.
-  int64 cool_off_expiry_unix_ms = 4;
-  // subtree_id is the §8.6 denied subtree (the session whose adapter
-  // issued the ExtendLease request that triggered the user rejection
-  // or, on an in-flight denial, that observed the denial inside the
-  // grant-commit transaction). Set only when status is REJECTED.
-  // spec: §15.1 line 1080
-  string subtree_id = 5;
-  // cool_off_expires_at is the §15.1 line 1080 UTC RFC 3339 timestamp
-  // marking when the rejection cool-off window ends. Mirrors
-  // cool_off_expiry_unix_ms with the spec-named ISO 8601 string. Set
-  // only when status is REJECTED.
-  // spec: §15.1 line 1080
-  string cool_off_expires_at = 6;
-  // error is the §15.1 typed error envelope. Populated when the
-  // gateway auto-rejects a REJECTED outcome with one of the §15.1
-  // delegation error codes (currently EXTENSION_COOL_OFF_ACTIVE on
-  // both the pre-grant rejection-cool-off path and the §8.6 line 731
-  // in-flight atomic re-check). Unset on every non-REJECTED outcome
-  // and on a STATUS_REJECTED outcome that does not map to a §15.1
-  // typed code. Mirrors the REST/MCP error envelope so clients and
-  // admin tooling can distinguish "user just denied" from "the
-  // subtree is inside an existing cool-off window" without parsing
-  // the status field.
-  // spec: §15.1 line 1080; F-8.6.9
-  Error error = 7;
-  // §8.6 granted amounts for the extendable dimensions beyond
-  // granted_tokens (field 2) and granted_seconds (field 3). Each is the
-  // amount actually added to the tree budget after the §8.6 ceilings,
-  // so the adapter knows exactly what it received per dimension.
-  // F-8.6.1.
-  int64 granted_children = 8;
-  int64 granted_parallel_children = 9;
-  int64 granted_tree_size = 10;
-  FileExportLimitsDelta granted_file_export_limits = 11;
-
-  enum Status {
-    STATUS_UNSPECIFIED = 0;
-    STATUS_GRANTED = 1;
-    STATUS_PARTIALLY_GRANTED = 2;
-    STATUS_CEILING_REACHED = 3;
-    STATUS_REJECTED = 4;
-  }
 }
 
 message ShutdownRequest {

@@ -13,22 +13,24 @@ import (
 )
 
 // RequireVerifiedPeerInterceptor returns a unary server interceptor that
-// rejects any §8.6 GatewayControl call whose peer did not present an
+// rejects any GatewayControl call whose peer did not present an
 // mTLS-verified client certificate. §4.7 line 616 declares the
 // adapter↔gateway channel as "internal gRPC/HTTP+mTLS API" and §15.3
 // requires "gRPC + mTLS" for gateway↔pod traffic; the GatewayControl
-// listener that the pod adapter dials for ExtendLease is the inverse
-// direction of that same secured channel.
+// listener that the pod adapter dials for the surviving platform-tool,
+// connector-tool, and scrub-report operations is the inverse direction
+// of that same secured channel.
 //
 // The transport layer already rejects peers without a chain when the
 // listener is built with tls.RequireAndVerifyClientCert (the
 // clientCAFile branch of adapter.TLSServerOption). This interceptor is
 // the in-process auth gate that fails closed if a request ever reaches
-// the handler without a verified peer: the ExtendLease handler resolves
-// the caller's tenant from the session_id in the request body and has
-// no other proof of identity, so an unauthenticated peer must never
-// reach it. Without this gate any process able to reach the
-// GatewayControl port could call ExtendLease for any session id.
+// the handler without a verified peer: each GatewayControl handler
+// resolves the caller's tenant from the session_id in the request body
+// and has no other proof of identity, so an unauthenticated peer must
+// never reach it. Without this gate any process able to reach the
+// GatewayControl port could call the platform-tool, connector-tool, or
+// scrub-report operations for any session id.
 //
 // When enabled is false — the local-development plaintext path where no
 // mTLS material is configured — the interceptor passes every call

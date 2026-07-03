@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
@@ -29,11 +30,14 @@ import (
 
 // buildControlServer is the §4.1 composition-root build step (R1) for the
 // §8.6 GatewayControl gRPC server and the §6.2 / §11.3 pre-running
-// watchdog. It constructs the adapter→gateway control surface (the
-// ExtendLease RPC, the §9.1 platform-tool and §9.3 connector-tool bridges,
-// the §4.7 scrub-report service) and the session-state watchdog, and
-// records the gRPC server, its listener, the watchdog, and the watchdog
-// context (plus its cancel) on the accumulator for the run loop.
+// watchdog. It constructs the adapter→gateway control surface (the §9.1
+// platform-tool and §9.3 connector-tool bridges and the §4.7 scrub-report
+// service) and the session-state watchdog, and records the gRPC server, its
+// listener, the watchdog, and the watchdog context (plus its cancel) on the
+// accumulator for the run loop. It also wires the leasecontrol.Service it
+// builds into the proxy's sessionbudget enforcer as the §8.6 in-process
+// budget-exhaustion extension seam and takes that enforcer as the episode
+// fan-out's SessionReclaimer (proposal 0023 S6).
 //
 // The process-lifetime defers the original inline block registered (the
 // watchdog-context cancel and the §3.2/§3.4 hold and recycle coordinator
@@ -80,14 +84,17 @@ func (w *gatewayWiring) buildControlServer(
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
-	// surface — the inverse direction of the pod-facing Adapter service.
-	// It currently hosts the §8.6 ExtendLease RPC: a pod's adapter calls
-	// it when its LLM proxy rejects a request for budget exhaustion, and
-	// the gateway computes the lease-extension grant. gwMetrics satisfies
+	// surface — the inverse direction of the pod-facing Adapter service. It
+	// hosts the surviving §9.1 platform-tool and §9.3 connector-tool bridges
+	// and the §4.7 scrub-report service; a pod's adapter dials it for those
+	// intra-pod tool forwards and scrub reports. The §8.6 lease-extension
+	// dispatch is no longer a wire RPC on this listener: the gateway LLM
+	// Proxy drives the budget-exhaustion trigger in-process through
+	// leasecontrol.ExtendForBudget, wired below. gwMetrics satisfies
 	// leasecontrol.MetricEmitter so every grant drives the §16
 	// lenny_delegation_lease_extension_total counter. F-8.6.13.
 	// spec: §8.6 line 743 / §11.7 — the leasecontrol auditor adapts the
-	// gateway audit appender so every ExtendLease decision (granted,
+	// gateway audit appender so every extension decision (granted,
 	// capped, denied) lands as a `delegation.lease_extended` row on the
 	// hash-chained §11.7 audit log. The recorder pulls the requesting
 	// session's tenant and the live actor sub from the §10.6
@@ -151,9 +158,39 @@ func (w *gatewayWiring) buildControlServer(
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}
 	}
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny)
+	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, leaseTreeGranter, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
+	}
+
+	// spec: §8.6 line 629 — wire the in-process budget-exhaustion trigger.
+	// buildSessionDeps builds the sessionbudget enforcer in an earlier step
+	// with a nil extension seam (the §11.2 line 44 terminate-immediately
+	// posture); this step, once leasecontrol.Service exists, closes the
+	// construction-order gap. The enforcer's seam calls svc.ExtendForBudget
+	// at the exhaustion boundary, threading both the request context and the
+	// derived in-path wait, and mapping leasecontrol.Outcome onto the
+	// enforcer's own tri-state.
+	//
+	// The SessionReclaimer the episode fan-out (and the in-path Granted path)
+	// applies each grant through is the §4.9 usage recorder, not the enforcer
+	// directly: the recorder both raises the enforcer budget AND accumulates
+	// the granted token delta so RecordUsage adds it to the base
+	// MaxTokenBudget on the next settlement, keeping the raise alive across the
+	// next Enforcer.Record (proposal 0023 S3/S4 raise-survival). When the
+	// recorder is nil (no usagestore wired) the enforcer is the reclaimer
+	// directly, which still clears the deny flag and terminates a detached
+	// session even though no usage settlement will follow to re-exhaust it.
+	// A nil leaseControlSvc (no --grpc-addr, the local-development path)
+	// leaves the enforcer's nil seam in place, so exhaustion still denies and
+	// terminates immediately. proposal 0023 S6.
+	if leaseControlSvc != nil && w.sessionBudgetEnforcer != nil {
+		w.sessionBudgetEnforcer.SetExtendOnExhaustion(leaseExtendSeam(leaseControlSvc))
+		if w.proxyUsageRec != nil {
+			leaseControlSvc.SetReclaimer(w.proxyUsageRec)
+		} else {
+			leaseControlSvc.SetReclaimer(w.sessionBudgetEnforcer)
+		}
 	}
 
 	// ----- §6.2 / §11.3 pre-running watchdog -----
@@ -228,6 +265,40 @@ func (w *gatewayWiring) buildControlServer(
 	w.wd = wd
 	w.watchdogCtx = watchdogCtx
 	w.watchdogCancel = watchdogCancel
+}
+
+// leaseExtendSeam adapts leasecontrol.Service.ExtendForBudget into the
+// sessionbudget.ExtendOnExhaustion the enforcer consults at the
+// exhaustion boundary. It threads both contexts through to the two-context
+// ExtendForBudget (reqCtx for the Pending-vs-Terminal discrimination,
+// waitCtx for the in-path deadline) and maps the returned
+// leasecontrol.Outcome onto the enforcer's own tri-state so the two
+// packages stay decoupled with no import cycle. The extension does not
+// carry a budget/consumed amount: budget exhaustion asks for as much
+// headroom as the §8.6 ceiling allows, which ExtendForBudget derives from
+// the tree budget, so the seam ignores those parameters. A dispatch error
+// fails closed to Terminal: an unresolvable or errored extension denies
+// and terminates the session rather than silently granting tokens. spec:
+// §8.6 line 629; proposal 0023 S6.
+func leaseExtendSeam(svc *leasecontrol.Service) sessionbudget.ExtendOnExhaustion {
+	return func(reqCtx, waitCtx context.Context, _, sessionID string, _, _ int64) sessionbudget.Outcome {
+		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, sessionID)
+		if err != nil {
+			// Fail closed: a transport fault, an unresolvable session, or a
+			// missing tree budget denies and terminates (§8.6 fail-closed
+			// posture), the same as an explicit CEILING_REACHED/REJECTED.
+			return sessionbudget.Terminal
+		}
+		switch outcome {
+		case leasecontrol.OutcomeGranted:
+			return sessionbudget.Granted
+		case leasecontrol.OutcomePending:
+			return sessionbudget.Pending
+		default:
+			// OutcomeTerminal and any unknown value fail closed.
+			return sessionbudget.Terminal
+		}
+	}
 }
 
 // scrubReportServiceWired reports whether the §4.7 scrub-report service is

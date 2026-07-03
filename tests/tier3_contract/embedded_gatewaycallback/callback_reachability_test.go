@@ -73,25 +73,28 @@ import (
 // stamped port are the same value, which the duplication makes explicit.
 const gatewayGRPCPort = 50061
 
-// gatewayControlStub captures the ExtendLease request it receives so the
-// contract test can assert the callback reached the server across the
+// gatewayControlStub captures the ListPlatformTools request it receives so
+// the contract test can assert the callback reached the server across the
 // composed address pair. It is the minimal GatewayControl surface the
-// adapter dials.
+// adapter dials. ListPlatformTools is the §9.1 platform-tool bridge the
+// in-cluster adapter calls live over this same gateway↔adapter channel, so
+// it carries the host/Docker-boundary reachability and §4.7 mTLS contract
+// this probe pins.
 type gatewayControlStub struct {
 	adapterv1.UnimplementedGatewayControlServer
 
-	got *adapterv1.ExtendLeaseRequest
+	got *adapterv1.ListPlatformToolsRequest
 }
 
-func (s *gatewayControlStub) ExtendLease(_ context.Context, req *adapterv1.ExtendLeaseRequest) (*adapterv1.ExtendLeaseResponse, error) {
+func (s *gatewayControlStub) ListPlatformTools(_ context.Context, req *adapterv1.ListPlatformToolsRequest) (*adapterv1.ListPlatformToolsResponse, error) {
 	s.got = req
-	return &adapterv1.ExtendLeaseResponse{Status: adapterv1.ExtendLeaseResponse_STATUS_GRANTED}, nil
+	return &adapterv1.ListPlatformToolsResponse{}, nil
 }
 
 // callbackSessionID is the SessionId the contract test's adapter sends on
-// its ExtendLease callback. The server asserts it received this value, so a
-// passing round-trip confirms the request crossed to the listener rather
-// than to some other server on the bound port.
+// its ListPlatformTools callback. The server asserts it received this value,
+// so a passing round-trip confirms the request crossed to the listener
+// rather than to some other server on the bound port.
 const callbackSessionID = "sess-callback"
 
 // embeddedGatewayListenAddr is the address the embedded stack binds the
@@ -133,9 +136,9 @@ func startGatewayControl(t *testing.T, listenAddr string, creds credentials.Tran
 	return srv, lis.Addr().(*net.TCPAddr).Port
 }
 
-// extendLease dials dialAddr with the given credentials and issues one
-// ExtendLease call, returning the round-trip error.
-func extendLease(t *testing.T, dialAddr string, creds credentials.TransportCredentials) error {
+// listPlatformTools dials dialAddr with the given credentials and issues one
+// ListPlatformTools call, returning the round-trip error.
+func listPlatformTools(t *testing.T, dialAddr string, creds credentials.TransportCredentials) error {
 	t.Helper()
 	conn, err := grpc.NewClient(dialAddr, grpc.WithTransportCredentials(creds))
 	if err != nil {
@@ -144,15 +147,15 @@ func extendLease(t *testing.T, dialAddr string, creds credentials.TransportCrede
 	t.Cleanup(func() { _ = conn.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err = adapterv1.NewGatewayControlClient(conn).ExtendLease(ctx, &adapterv1.ExtendLeaseRequest{
+	_, err = adapterv1.NewGatewayControlClient(conn).ListPlatformTools(ctx, &adapterv1.ListPlatformToolsRequest{
 		SessionId: &adapterv1.SessionId{Value: callbackSessionID},
 	})
 	return err
 }
 
-// receivedCallbackSession reports whether the stub captured the ExtendLease
-// callback carrying the expected SessionId, so the assertion is one check
-// across both the plaintext and mTLS round-trips.
+// receivedCallbackSession reports whether the stub captured the
+// ListPlatformTools callback carrying the expected SessionId, so the
+// assertion is one check across both the plaintext and mTLS round-trips.
 func (s *gatewayControlStub) receivedCallbackSession() bool {
 	return s.got != nil && s.got.GetSessionId().GetValue() == callbackSessionID
 }
@@ -177,8 +180,8 @@ func (s *gatewayControlStub) receivedCallbackSession() bool {
 // address and the controller-stamped pod dial address have diverged — the
 // pod adapter would dial a host or port the gateway does not serve, so the
 // §4.7 gateway↔adapter callback could not traverse the host/Docker boundary
-// and lease extension / platform tool calls from an in-cluster type:agent
-// runtime would fail to reach the host gateway.
+// and the §9.1 platform-tool and §9.3 connector-tool calls an in-cluster
+// type:agent runtime makes would fail to reach the host gateway.
 func TestEmbeddedCallbackAddressPairMatchesAcrossSubstrates_spec_4_7(t *testing.T) {
 	listen := embeddedGatewayListenAddr()
 	_, listenPort, err := net.SplitHostPort(listen)
@@ -214,8 +217,8 @@ func TestEmbeddedCallbackAddressPairMatchesAcrossSubstrates_spec_4_7(t *testing.
 // all-interfaces address the embedded gateway binds; the dial targets the
 // loopback the Linux launcher stamps (the Docker-backed launcher's
 // host.docker.internal alias resolves only inside the Docker VM, exercised
-// by the tier-2 bring-up). A successful ExtendLease round-trip confirms the
-// composed listen/dial pair is reachable.
+// by the tier-2 bring-up). A successful ListPlatformTools round-trip
+// confirms the composed listen/dial pair is reachable.
 //
 // spec: §4.7 (the plaintext path is the documented local-development
 // callback transport), §8.6, §9.1, §17.4.
@@ -223,8 +226,8 @@ func TestEmbeddedCallbackAddressPairMatchesAcrossSubstrates_spec_4_7(t *testing.
 // diagnosis: a failure means the embedded gateway's all-interfaces plaintext
 // GatewayControl bind and the controller-stamped loopback dial address no
 // longer form a reachable pair — an in-cluster adapter could not deliver its
-// ExtendLease / platform tool callback to the host gateway over the
-// local-development plaintext transport.
+// platform tool callback to the host gateway over the local-development
+// plaintext transport.
 func TestEmbeddedCallbackReachablePlaintext_spec_4_7(t *testing.T) {
 	srv, port := startGatewayControl(t, embeddedGatewayListenAddr(), insecure.NewCredentials())
 
@@ -233,11 +236,11 @@ func TestEmbeddedCallbackReachablePlaintext_spec_4_7(t *testing.T) {
 	// of the stamped pod dial address on the host the live round-trip runs
 	// on.
 	dial := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	if err := extendLease(t, dial, insecure.NewCredentials()); err != nil {
-		t.Fatalf("plaintext ExtendLease across the composed listen/dial pair failed: %v", err)
+	if err := listPlatformTools(t, dial, insecure.NewCredentials()); err != nil {
+		t.Fatalf("plaintext ListPlatformTools across the composed listen/dial pair failed: %v", err)
 	}
 	if !srv.receivedCallbackSession() {
-		t.Fatalf("server did not receive the ExtendLease callback (got=%v); the callback did not cross to the listener", srv.got)
+		t.Fatalf("server did not receive the ListPlatformTools callback (got=%v); the callback did not cross to the listener", srv.got)
 	}
 }
 
@@ -280,11 +283,11 @@ func TestEmbeddedCallbackReachableMTLS_spec_4_7(t *testing.T) {
 		MinVersion:   tls.VersionTLS13,
 	})
 	dial := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	if err := extendLease(t, dial, clientCreds); err != nil {
-		t.Fatalf("mTLS ExtendLease across the composed listen/dial pair failed: %v", err)
+	if err := listPlatformTools(t, dial, clientCreds); err != nil {
+		t.Fatalf("mTLS ListPlatformTools across the composed listen/dial pair failed: %v", err)
 	}
 	if !srv.receivedCallbackSession() {
-		t.Fatalf("server did not receive the mTLS ExtendLease callback (got=%v)", srv.got)
+		t.Fatalf("server did not receive the mTLS ListPlatformTools callback (got=%v)", srv.got)
 	}
 }
 
@@ -323,8 +326,8 @@ func TestEmbeddedCallbackMTLSRejectsUnverifiedClient_spec_4_7(t *testing.T) {
 		MinVersion: tls.VersionTLS13,
 	})
 	dial := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	if err := extendLease(t, dial, clientCreds); err == nil {
-		t.Fatal("ExtendLease succeeded without a verified client certificate; the §4.7 mTLS requirement is not enforced")
+	if err := listPlatformTools(t, dial, clientCreds); err == nil {
+		t.Fatal("ListPlatformTools succeeded without a verified client certificate; the §4.7 mTLS requirement is not enforced")
 	}
 }
 

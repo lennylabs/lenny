@@ -169,7 +169,9 @@ func (w *gatewayWiring) buildMCPSurface(
 		ChildTokenMinter:        childTokenMinter,
 		// §8.6 line 648: register each admitted child with the lease-
 		// extension budget source, capped at the parent's own lease, so a
-		// later adapter ExtendLease from the child resolves its tree. F-15.3.5.
+		// later in-process budget-exhaustion extension from the child (the
+		// gateway LLM Proxy's ExtendForBudget trigger) resolves its tree.
+		// F-15.3.5.
 		LeaseRegistrar: childLeaseRegistrar,
 		// §11.1 line 9 — per-user active-delegated-children admission cap.
 		// Zero leaves the scope unlimited. F-11.1.4.

@@ -39,7 +39,8 @@ func defaultsForTest() LeaseExtensionDefaults {
 
 // spec: §8.6 lines 660-678 — a newly created root session registers a
 // lease-extension budget tree seeded with the deployment-level defaults,
-// so the first adapter ExtendLease resolves the tree instead of failing
+// so the first in-process budget-exhaustion extension (the gateway LLM
+// Proxy's ExtendForBudget trigger) resolves the tree instead of failing
 // ErrSessionNotFound. F-15.3.5.
 func TestRegisterLeaseTree_RootSession_spec_8_6_line_660(t *testing.T) {
 	reg := &fakeTreeRegistrar{}

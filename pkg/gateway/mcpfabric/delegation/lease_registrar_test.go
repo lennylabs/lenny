@@ -50,7 +50,8 @@ func registrarService(t *testing.T, store sessionstore.Store, reg delegation.Lea
 
 // spec: §8.6 line 648 — an admitted child is registered with the lease-
 // extension budget source under its root's tree and capped at the
-// parent's own granted lease, so a later adapter ExtendLease from the
+// parent's own granted lease, so a later in-process budget-exhaustion
+// extension (the gateway LLM Proxy's ExtendForBudget trigger) from the
 // child resolves the tree instead of failing ErrSessionNotFound. F-15.3.5.
 func TestDelegate_RegistersChildLeaseTree_spec_8_6_line_648(t *testing.T) {
 	store := memstore.New()
