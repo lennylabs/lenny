@@ -225,8 +225,8 @@ func TestVerifyRowsDetectsSequenceGap(t *testing.T) {
 // exact misclassification S8/S9 keep out of the alert-driving verifier —
 // would fail this test.
 //
-// spec: §25.9 lines 3676-3679 (temporal-gap signal), §11.7 (nextval
-// leaves benign rollback gaps). F-11.2.10.
+// spec: §25.9 (temporal-gap signal), §11.7 (nextval leaves benign
+// rollback gaps). F-11.2.10.
 func TestVerifyRowsNextvalRollbackGapIsAdvisoryNotAlarming(t *testing.T) {
 	t.Parallel()
 	r1 := Row{
