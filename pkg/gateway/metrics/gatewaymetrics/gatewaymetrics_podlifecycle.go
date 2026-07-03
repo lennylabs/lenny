@@ -38,12 +38,6 @@ type podLifecycleMetrics struct {
 	// and `source` (postgres | postgres_null | cache_hit |
 	// cache_miss_max_tier).
 	prestopCapSelection *prometheus.CounterVec
-	// resumeDeduplicated counts the §10.1 line 179 tool calls a new
-	// coordinator skipped at handoff because their sequence number was
-	// at or below the persisted last_tool_call_id. The `source` label
-	// (postgres | checkpoint_manifest) reports whether the dedup state
-	// came from session_checkpoint_meta or the MinIO manifest fallback.
-	resumeDeduplicated *prometheus.CounterVec
 	// barrierTargetSource counts the §10.1 line 165 preStop barrier
 	// target-set reads by source (postgres | cache_fallback) so
 	// operators can detect how often the degraded in-memory lease-cache
@@ -131,18 +125,6 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §10.1 line 179 — `lenny_coordinator_resume_deduplicated_total`
-	// counts tool calls skipped at coordinator handoff. The `source`
-	// label (postgres | checkpoint_manifest) reports whether the dedup
-	// state was read from session_checkpoint_meta or the MinIO manifest
-	// fallback, so operators can detect how often the fallback fires.
-	resumeDeduplicated, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_coordinator_resume_deduplicated_total",
-		Help: "Tool calls skipped at coordinator handoff, labeled by dedup source (§10.1).",
-	}, []string{"source"})
-	if err != nil {
-		return m, err
-	}
 	// §10.1 line 165 — `lenny_prestop_barrier_target_source_total`
 	// counts preStop CheckpointBarrier target-set reads by source
 	// (postgres | cache_fallback) so operators can detect how often the
@@ -205,7 +187,6 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 		checkpointPartialTotal,
 		prestopCapSelection,
 		sigkillStreams,
-		resumeDeduplicated,
 		barrierTargetSource,
 		coordinatorHandoffStale,
 		coordinatorFenceRetry,
@@ -215,7 +196,6 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	m.podRetirement = podRetirement
 	m.checkpointPartialTotal = checkpointPartialTotal
 	m.prestopCapSelection = prestopCapSelection
-	m.resumeDeduplicated = resumeDeduplicated
 	m.barrierTargetSource = barrierTargetSource
 	m.sigkillStreams = sigkillStreams
 	m.coordinatorHandoffStale = coordinatorHandoffStale.WithLabelValues()

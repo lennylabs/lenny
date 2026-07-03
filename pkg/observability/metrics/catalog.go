@@ -116,7 +116,6 @@ var metricCatalog = []MetricSpec{
 	{"lenny_checkpoint_stale_sessions", TypeGauge, "Active sessions whose last checkpoint age exceeds the interval"},
 	{"lenny_checkpoint_barrier_ack_total", TypeCounter, "CheckpointBarrier ack outcomes per pod"},
 	{"lenny_checkpoint_barrier_ack_duration_seconds", TypeHistogram, "CheckpointBarrier send-to-ack duration per pod"},
-	{"lenny_coordinator_resume_deduplicated_total", TypeCounter, "Tool calls skipped at coordinator handoff"},
 	{"lenny_prestop_cap_selection_total", TypeCounter, "preStop tiered checkpoint cap selections by source"},
 	{"lenny_prestop_barrier_target_source_total", TypeCounter, "preStop CheckpointBarrier target-set source"},
 	{"lenny_gateway_sigkill_streams_total", TypeCounter, "In-flight streams forcibly terminated at the SIGKILL deadline"},

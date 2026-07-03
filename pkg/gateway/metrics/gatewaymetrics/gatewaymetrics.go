@@ -1266,21 +1266,6 @@ func (m *Metrics) IncPreStopCapSelection(pool, serviceInstanceID, source string)
 	m.prestopCapSelection.WithLabelValues(pool, serviceInstanceID, source).Inc()
 }
 
-// AddResumeDeduplicated increments the §10.1 line 179
-// `lenny_coordinator_resume_deduplicated_total` counter by n for the
-// tool calls a new coordinator skipped at handoff. The source label is
-// `postgres` when the dedup state came from session_checkpoint_meta or
-// `checkpoint_manifest` when it came from the MinIO barrier_meta
-// fallback. A non-positive n is a no-op so callers can pass the raw
-// skipped count without branching.
-// spec: §10.1 line 179.
-func (m *Metrics) AddResumeDeduplicated(source string, n int) {
-	if m == nil || n <= 0 {
-		return
-	}
-	m.resumeDeduplicated.WithLabelValues(source).Add(float64(n))
-}
-
 // IncPreStopBarrierTargetSource increments the §10.1 line 165
 // `lenny_prestop_barrier_target_source_total` counter for one preStop
 // barrier target-set read. The source label is `postgres` on the
