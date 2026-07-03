@@ -122,6 +122,26 @@ func TestNewRouter_SequenceProvisioningOptionsDefaultNil(t *testing.T) {
 	}
 }
 
+// TestCreateSequenceStmt_IsIfNotExists pins the §15.1-mandated CREATE
+// SEQUENCE IF NOT EXISTS statement form (Decision 7 / S3 "It becomes" text).
+// The IF NOT EXISTS clause is load-bearing: it is what makes a concurrent or
+// retried provision of the same tenant sequence a benign no-op rather than a
+// 42P07 failure that fails the tenant create closed. The pre-fix code emitted
+// a bare `CREATE SEQUENCE <name> ...`, so this deterministic tier-1 assertion
+// fails against it and passes only when the statement carries IF NOT EXISTS.
+//
+// spec: §15.1, §10.2. F-11.2.10
+func TestCreateSequenceStmt_IsIfNotExists(t *testing.T) {
+	stmt := createSequenceStmt("billing_seq_deadbeef")
+	if !strings.Contains(stmt, "CREATE SEQUENCE IF NOT EXISTS billing_seq_deadbeef") {
+		t.Errorf("statement must use the §15.1 CREATE SEQUENCE IF NOT EXISTS form, got: %q", stmt)
+	}
+	// The START/INCREMENT/CYCLE clause the spec text names must survive.
+	if !strings.Contains(stmt, "START WITH 1 INCREMENT BY 1 NO CYCLE") {
+		t.Errorf("statement must carry START WITH 1 INCREMENT BY 1 NO CYCLE, got: %q", stmt)
+	}
+}
+
 // TestProvisionTenantSequences_NilPoolNoOp pins the in-memory / SQLite
 // topology contract: with no CREATE-privileged DDL pool wired,
 // provisionTenantSequences is a no-op that returns nil rather than

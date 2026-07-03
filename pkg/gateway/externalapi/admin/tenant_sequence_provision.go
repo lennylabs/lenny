@@ -49,10 +49,14 @@ import (
 // SQLite topology uses no Postgres sequence, and the store's own
 // MAX-based assignment stays in effect there.
 //
-// The helper is idempotent: a retried create is a no-op because the
-// existence check finds the sequence already present and skips both the
-// CREATE and the re-seed, so a live sequence that has already handed out
-// values is never touched on a repeat call.
+// The helper is idempotent under the §15.1 CREATE SEQUENCE IF NOT EXISTS
+// form: a retried or concurrent create is a no-op for the sequence object
+// itself, and the to_regclass pre-check skips the re-seed when the sequence
+// was already present, so a live sequence that has already handed out values
+// is never dragged backward on a repeat call. A concurrent provision that
+// races past the pre-check does not error on 42P07 (IF NOT EXISTS absorbs
+// it) and its re-seed is GREATEST-clamped so it cannot regress the winner's
+// advance.
 //
 // spec: §15.1, §11.2.1, §11.7, §10.2. F-11.2.10.
 func (r *Router) provisionTenantSequences(ctx context.Context, tenantID string) error {
@@ -94,15 +98,17 @@ func (r *Router) provisionTenantSequences(ctx context.Context, tenantID string) 
 	return nil
 }
 
-// provisionSequence creates the derived per-tenant sequence when it does
-// not yet exist and, only on that newly-created path, re-seeds it to the
-// tenant's current MAX(sequence_number) so the first nextval clears any
-// rows the ledger already held under the pre-Path-A MAX+1 scheme. The
-// existence check, the CREATE, and the re-seed all run in one transaction
-// on the CREATE-privileged DDL connection, so the re-seed decision is
-// atomic with the create: a concurrent or retried provision that observes
-// the sequence already present skips both the CREATE and the re-seed and
-// never disturbs a live sequence.
+// provisionSequence issues the §15.1 CREATE SEQUENCE IF NOT EXISTS for the
+// derived per-tenant sequence and, only on the newly-created path, re-seeds
+// it to the tenant's current MAX(sequence_number) so the first nextval
+// clears any rows the ledger already held under the pre-Path-A MAX+1 scheme.
+// The existence pre-check, the CREATE, and the re-seed all run in one
+// transaction on the CREATE-privileged DDL connection. The IF NOT EXISTS
+// form makes the create itself atomic against a concurrent provision (the
+// loser no-ops instead of raising 42P07), and the to_regclass pre-check
+// fences the re-seed to the case where this call found the sequence absent,
+// so a retried provision that observes the sequence already present skips
+// the re-seed and never drags a live sequence backward.
 //
 // Fencing the re-seed to the newly-created case is the monotonicity
 // guarantee. A Postgres sequence legitimately advances past the committed
@@ -142,14 +148,23 @@ func provisionSequence(ctx context.Context, pool *pgxpool.Pool, tenantID, table,
 	})
 }
 
-// createSequenceIfAbsent creates the derived sequence when it is not
-// already present and reports whether this call created it. It resolves
-// the current existence with to_regclass inside the caller's transaction
-// so the create decision and the subsequent re-seed decision see a
-// consistent view: to_regclass returns NULL for an absent relation, in
-// which case the CREATE runs and created is true; a non-NULL result means
-// another provision already created the sequence and this call leaves it
-// untouched.
+// createSequenceIfAbsent issues the §15.1-mandated CREATE SEQUENCE IF NOT
+// EXISTS for the derived sequence and reports whether this call created a
+// fresh sequence, which fences the re-seed to the newly-created case
+// (Decision 7). It first reads to_regclass to decide re-seed intent: a NULL
+// result means the sequence is absent and this call intends to create and
+// re-seed it, a non-NULL result means another provision already created it
+// and this call leaves it untouched. The CREATE is then issued in the
+// spec-mandated IF NOT EXISTS form so a concurrent provision that raced past
+// the to_regclass check (a create racing the bootstrap seed path, or the
+// same create retried concurrently across two gateway replicas) degrades to
+// a benign no-op rather than a 42P07 "relation already exists" that would
+// fail the tenant create closed. The to_regclass snapshot inside a READ
+// COMMITTED transaction does not serialize against another transaction's
+// in-flight CREATE, so IF NOT EXISTS supplies the atomicity the pre-check
+// alone cannot; the pre-check only chooses whether this call attempts the
+// re-seed, and a lost race there simply skips a re-seed the winning call
+// already performed.
 //
 // The name is a seqname-derived identifier (literal prefix + 40-hex
 // digest), injection-safe by construction and interpolated directly
@@ -161,14 +176,27 @@ func createSequenceIfAbsent(ctx context.Context, tx pgx.Tx, seqName string) (boo
 	if err := tx.QueryRow(ctx, "SELECT to_regclass($1)", seqName).Scan(&regclass); err != nil {
 		return false, fmt.Errorf("check sequence %s existence: %w", seqName, err)
 	}
-	if regclass != nil {
-		return false, nil
-	}
-	stmt := "CREATE SEQUENCE " + seqName + " START WITH 1 INCREMENT BY 1 NO CYCLE"
-	if _, err := tx.Exec(ctx, stmt); err != nil {
+	if _, err := tx.Exec(ctx, createSequenceStmt(seqName)); err != nil {
 		return false, fmt.Errorf("create sequence %s: %w", seqName, err)
 	}
-	return true, nil
+	// regclass == nil is the pre-check's "absent, so this call intends to
+	// create and re-seed" verdict. IF NOT EXISTS makes a concurrent create
+	// race benign; a call that lost that race still reports created=true here
+	// but its re-seed is clamped by GREATEST to the sequence's current value,
+	// so it cannot regress a sequence the winner already advanced.
+	return regclass == nil, nil
+}
+
+// createSequenceStmt builds the §15.1-mandated per-tenant sequence DDL. The
+// IF NOT EXISTS form is load-bearing: it makes the CREATE atomic against a
+// concurrent provision of the same tenant sequence, so a racing loser no-ops
+// instead of raising 42P07. seqName is a seqname-derived identifier (literal
+// prefix + 40-hex digest), injection-safe by construction and interpolated
+// directly because DDL cannot bind identifiers.
+//
+// spec: §15.1, §10.2.
+func createSequenceStmt(seqName string) string {
+	return "CREATE SEQUENCE IF NOT EXISTS " + seqName + " START WITH 1 INCREMENT BY 1 NO CYCLE"
 }
 
 // reseedNewSequence sets a freshly-created seqName to the tenant's current

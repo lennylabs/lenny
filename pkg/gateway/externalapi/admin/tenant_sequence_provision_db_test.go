@@ -26,6 +26,13 @@ import (
 // SET LOCAL app.current_tenant.
 const pgConfigurationInvalid = "42704"
 
+// pgDuplicateTable is the SQLSTATE (42P07, duplicate_table) Postgres raises
+// for a bare CREATE SEQUENCE against a name that already exists. The §15.1
+// CREATE SEQUENCE IF NOT EXISTS form suppresses it, so a concurrent-loser
+// provision no-ops rather than failing the tenant create closed. A test that
+// observes this code has caught a CREATE that omits IF NOT EXISTS.
+const pgDuplicateTable = "42P07"
+
 // startLedgerPostgres brings up an embedded Postgres carrying billing_events,
 // audit_log, the lenny_app / lenny_ddl roles, the hard-error RLS posture, and
 // the migration-0173 DDL machinery. It returns a superuser pool, a pool
@@ -495,6 +502,108 @@ func TestProvisionTenantSequences_PrimaryDDLPoolDistinct_spec_12_3_11_7(t *testi
 	// above the pre-existing row.
 	if v := nextvalAsApp(t, ctx, su, auditSeq); v != 8 {
 		t.Errorf("audit nextval after separate-instance re-seed = %d, want 8", v)
+	}
+}
+
+// TestProvisionTenantSequences_ConcurrentCreateRaceIsBenign pins the §15.1
+// CREATE SEQUENCE IF NOT EXISTS atomicity of createSequenceIfAbsent: when two
+// provisioning transactions both observe the sequence absent in the
+// to_regclass pre-check and then both issue the CREATE, the loser must
+// degrade to a benign no-op rather than fail on 42P07 "relation already
+// exists". This is the race a create racing the bootstrap seed path, or the
+// same create retried concurrently across two gateway replicas, produces:
+// the to_regclass pre-check under READ COMMITTED does not serialize against
+// another transaction's in-flight CREATE, so only the CREATE statement form
+// (IF NOT EXISTS) fences the loser.
+//
+// The test forces the interleave by holding one transaction's to_regclass
+// pre-check open (both read NULL) before letting a concurrent goroutine run
+// createSequenceIfAbsent to completion; the two CREATEs then serialize on
+// Postgres's relation lock and the second — a call whose pre-check saw the
+// sequence absent — issues its CREATE against the now-committed sequence.
+// Against the pre-fix bare CREATE that call raised 42P07; under IF NOT EXISTS
+// it no-ops. Both createSequenceIfAbsent calls return without error.
+//
+// diagnosis: a failure means the CREATE SEQUENCE is not the spec-mandated IF
+// NOT EXISTS form, so a concurrent or retried provision of the same tenant
+// sequence raises 42P07 and fails the tenant create closed instead of
+// converging.
+//
+// spec: §15.1, §10.2, §11.2.1. F-11.2.10
+func TestProvisionTenantSequences_ConcurrentCreateRaceIsBenign_spec_15_1(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
+	}
+	_, ddl, _ := startLedgerPostgres(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const tenant = "raytheon"
+	seqName := seqname.BillingSequenceName(tenant)
+
+	// The winner opens first, runs its to_regclass pre-check (sees NULL), and
+	// holds the transaction open without yet issuing its CREATE.
+	winner, err := ddl.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin winner: %v", err)
+	}
+	defer func() { _ = winner.Rollback(ctx) }()
+	var regW *string
+	if err := winner.QueryRow(ctx, "SELECT to_regclass($1)", seqName).Scan(&regW); err != nil {
+		t.Fatalf("winner to_regclass: %v", err)
+	}
+	if regW != nil {
+		t.Fatalf("winner must see the sequence absent, got %v", regW)
+	}
+
+	// The loser opens its own transaction and runs its to_regclass pre-check
+	// (also NULL) before the winner has created anything, then blocks its CREATE
+	// behind the winner: two calls whose pre-checks both observed the sequence
+	// absent, exactly the racing-creator interleave.
+	loser, err := ddl.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin loser: %v", err)
+	}
+	defer func() { _ = loser.Rollback(ctx) }()
+	var regL *string
+	if err := loser.QueryRow(ctx, "SELECT to_regclass($1)", seqName).Scan(&regL); err != nil {
+		t.Fatalf("loser to_regclass: %v", err)
+	}
+	if regL != nil {
+		t.Fatalf("loser must see the sequence absent, got %v", regL)
+	}
+
+	// Winner issues the production CREATE and commits, so the sequence is
+	// committed before the loser's CREATE runs. createSequenceStmt is the exact
+	// statement builder createSequenceIfAbsent uses, so the test pins the
+	// production DDL form rather than a hand-written copy.
+	if _, err := winner.Exec(ctx, createSequenceStmt(seqName)); err != nil {
+		t.Fatalf("winner CREATE: %v", err)
+	}
+	if err := winner.Commit(ctx); err != nil {
+		t.Fatalf("commit winner: %v", err)
+	}
+
+	// The loser now runs the production CREATE against the committed sequence.
+	// This is the byte-for-byte statement createSequenceIfAbsent emits after
+	// its pre-check; under the pre-fix bare CREATE it raised 42P07, and under
+	// the IF NOT EXISTS form createSequenceStmt now emits it is a benign no-op.
+	if _, err := loser.Exec(ctx, createSequenceStmt(seqName)); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgDuplicateTable {
+			t.Fatalf("concurrent-loser CREATE raised 42P07 duplicate_table; the statement is not IF NOT EXISTS: %v", err)
+		}
+		t.Fatalf("concurrent-loser CREATE must be a benign no-op, got: %v", err)
+	}
+	if err := loser.Commit(ctx); err != nil {
+		t.Fatalf("commit loser: %v", err)
+	}
+
+	// A full provisionTenantSequences call must still converge idempotently and
+	// leave both sequences usable after the concurrent create.
+	r := routerWithDDL(ddl)
+	if err := r.provisionTenantSequences(ctx, tenant); err != nil {
+		t.Fatalf("provisionTenantSequences after concurrent create: %v", err)
 	}
 }
 
