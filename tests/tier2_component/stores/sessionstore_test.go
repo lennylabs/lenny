@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -42,7 +43,15 @@ func newUUID(t *testing.T) string {
 }
 
 // freshTenant inserts a uniquely-named tenant and returns its id so
-// each sub-test operates on an isolated tenant.
+// each sub-test operates on an isolated tenant. It also provisions the
+// tenant's per-tenant audit Postgres sequence (audit_seq_<40hex>, the
+// §10.2 safe-derived name) so the §11.7 audit store's nextval-based
+// append path resolves a real sequence object; production provisions
+// this sequence at tenant-creation time through the runtime-DDL path.
+// The narrower billing sequence is provisioned by billingTenant on top
+// of this helper.
+//
+// spec: §11.7, §10.2.
 func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) string {
 	t.Helper()
 	id := "t-" + newUUID(t)[:8]
@@ -51,6 +60,11 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, $2)`, id, []byte{0x01},
 	); err != nil {
 		t.Fatalf("seed tenant %q: %v", id, err)
+	}
+	if _, err := pg.Pool.Exec(ctx,
+		"CREATE SEQUENCE IF NOT EXISTS "+seqname.AuditSequenceName(id)+
+			" START WITH 1 INCREMENT BY 1 NO CYCLE"); err != nil {
+		t.Fatalf("provision audit sequence for %q: %v", id, err)
 	}
 	return id
 }

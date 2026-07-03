@@ -35,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore/auditbatch"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -386,7 +387,31 @@ func AppendInTx(ctx context.Context, tx pgx.Tx, tenantID, eventType string, payl
 // sealAndInsert reads the chain tail, seals the new row with its
 // prev_hash + content hash, and INSERTs the audit_log row. The caller
 // must already hold the §11.7 per-tenant advisory lock (acquireAuditLock)
-// so the tail read and the insert are serialized against other writers.
+// so the tail read and the prev_hash chaining are serialized against
+// other writers.
+//
+// The sequence_number is drawn by nextval on the dedicated §11.7
+// per-tenant Postgres sequence (the §10.2 length-bounded safe-derived
+// audit_seq_<40hex> name), not from the dense tail ordinal. The
+// sequence's counter is independent of the table rows, so it retains
+// per-tenant monotonicity across the §16.4 retention sweep
+// (PruneRetention) and §12.8 teardown deletes (DeleteByTenant) that a
+// MAX(sequence_number)+1 read cannot survive. Drawing nextval at both
+// the empty-table genesis branch and the non-empty tail branch is
+// required: assigning the literal 1 at genesis while letting the tail
+// branch draw nextval would collide the genesis 1 with a fresh
+// sequence's first nextval on the tenant's second event, and would leave
+// a post-sweep first write at 1 below the SIEM high-water mark. The
+// prev_hash linkage stays the tamper authority (GenesisPrevHash at
+// genesis, LinkHash(tail) otherwise); a nextval gap with an intact
+// prev_hash link is a benign gap, not a broken chain. nextval runs on
+// whichever connection the caller's transaction (tx) holds: the
+// StoreRouter.AuditShard fast path, the §13.3 write-before-issue
+// primary-pool AppendInTx path, and the CMP-058 region-scoped
+// PlatformPostgresForRegion pool the platform chain draws
+// audit_seq_<platform-40hex> from.
+//
+// spec: §11.7, §10.2, §13.3.
 func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
 	if at.IsZero() {
 		at = time.Now()
@@ -400,9 +425,19 @@ func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, p
 	if err != nil {
 		return audit.Row{}, err
 	}
+	// §11.7 / §10.2: draw the authoritative sequence_number from the
+	// dedicated per-tenant Postgres sequence at both the genesis and tail
+	// branches. The name is a seqname-derived identifier (literal prefix
+	// plus 40-hex digest), injection-safe by construction and bound as a
+	// value here because nextval takes a regclass argument.
+	var seq int64
+	if err := tx.QueryRow(ctx,
+		`SELECT nextval($1)`, seqname.AuditSequenceName(tenantID)).Scan(&seq); err != nil {
+		return audit.Row{}, fmt.Errorf("auditstore: nextval audit sequence for tenant %s: %w", tenantID, err)
+	}
 	row := audit.Row{
 		ID:                 uuid.NewString(),
-		Seq:                1,
+		Seq:                uint64(seq),
 		TenantID:           tenantID,
 		EventType:          eventType,
 		EventSchemaVersion: audit.DefaultEventSchemaVersion,
@@ -411,7 +446,6 @@ func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, p
 		PrevHash:           audit.GenesisPrevHash,
 	}
 	if hasTail {
-		row.Seq = tail.Seq + 1
 		row.PrevHash = audit.LinkHash(tail)
 	}
 	row.Hash = audit.ComputeHash(row)

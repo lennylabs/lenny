@@ -47,6 +47,7 @@ func TestRecordWithAuditWritesBothRowsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
+	provisionAuditSequence(t, ctx, pg, "acme")
 
 	store := issuedtokenstore.New(pg.Pool)
 	chain := auditstore.New(pg.Router(t))
@@ -116,6 +117,7 @@ func TestRecordWithAuditChainsAcrossExchanges(t *testing.T) {
 	pg := startPGForWriteBeforeIssue(t)
 	ctx := context.Background()
 	_, _ = pg.Pool.Exec(ctx, `INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, "globex")
+	provisionAuditSequence(t, ctx, pg, "globex")
 	store := issuedtokenstore.New(pg.Pool)
 	chain := auditstore.New(pg.Router(t))
 
@@ -160,6 +162,7 @@ func TestRecordWithAuditRollsBackOnDuplicateJTI(t *testing.T) {
 	pg := startPGForWriteBeforeIssue(t)
 	ctx := context.Background()
 	_, _ = pg.Pool.Exec(ctx, `INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, "initech")
+	provisionAuditSequence(t, ctx, pg, "initech")
 	store := issuedtokenstore.New(pg.Pool)
 	chain := auditstore.New(pg.Router(t))
 
