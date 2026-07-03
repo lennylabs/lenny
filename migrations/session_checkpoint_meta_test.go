@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-// spec: §10.1 lines 178-181, 393. Migration 0148 creates the
+// spec: §10.1 lines 165-166, 393. Migration 0148 creates the
 // session_checkpoint_meta table the gateway writes after receiving a
-// CheckpointBarrierAck during graceful drain. The row is the secondary
-// fast-lookup source for resume-time tool-call deduplication; the
-// primary durable source is barrier_meta in the MinIO checkpoint
-// manifest. One row per session, upserted on every barrier, so the PK
-// is (tenant_id, session_id). The table is tenant-scoped and carries
-// the standard RLS posture.
+// CheckpointBarrierAck during graceful drain. The row persists the
+// barrier_id, the checkpoint_ref the barrier flush produced, and the
+// workspace_recovery_fraction the coordinator-handoff session.resumed
+// event reports. One row per session, upserted on every barrier, so
+// the PK is (tenant_id, session_id). The table is tenant-scoped and
+// carries the standard RLS posture.
 func TestSessionCheckpointMetaMigration_spec_10_1(t *testing.T) {
 	up := mustReadMigration(t, "0148_session_checkpoint_meta.up.sql")
 	for _, want := range []string{
@@ -23,8 +23,6 @@ func TestSessionCheckpointMetaMigration_spec_10_1(t *testing.T) {
 		"session_id                  TEXT        NOT NULL",
 		"coordination_generation     BIGINT      NOT NULL DEFAULT 0",
 		"barrier_id                  TEXT        NOT NULL DEFAULT ''",
-		"last_tool_call_id           TEXT        NOT NULL DEFAULT ''",
-		"last_tool_call_sequence     BIGINT      NOT NULL DEFAULT 0",
 		"checkpoint_ref              TEXT        NOT NULL DEFAULT ''",
 		"workspace_recovery_fraction DOUBLE PRECISION",
 		"PRIMARY KEY (tenant_id, session_id)",

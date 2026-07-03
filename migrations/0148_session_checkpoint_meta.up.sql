@@ -1,16 +1,9 @@
--- §10.1 lines 178-179: the CheckpointBarrier protocol persists the
--- last completed tool call and its idempotency-key sequence so that a
--- new coordinator, after a rolling-update handoff, can deduplicate
--- tool-call re-dispatch and avoid silently re-executing an
--- idempotent-unsafe operation that the prior pod already ran.
---
--- The MinIO checkpoint manifest carries `barrier_meta.last_tool_call_id`
--- as the primary durable source (written by the adapter before it emits
--- CheckpointBarrierAck). This table is the secondary fast-lookup source
--- the gateway writes after receiving the ack (§10.1 line 178 (b)); the
--- resume path reads it first and only falls back to the manifest when
--- the row is absent because the prior gateway could not write it before
--- SIGKILL (§10.1 line 179).
+-- §10.1: the CheckpointBarrier protocol persists per-session barrier
+-- metadata: the barrier_id, the checkpoint_ref the barrier flush
+-- produced, and the workspace_recovery_fraction. The gateway writes a
+-- row after receiving a CheckpointBarrierAck during a graceful drain
+-- (§10.1 line 166 records the barrier_id in the session's checkpoint
+-- metadata).
 --
 -- One row per session holds the latest barrier metadata: the
 -- BarrierAck handler upserts on every barrier, overwriting the prior
@@ -24,7 +17,7 @@
 -- `current_setting('app.current_tenant', false)`, and `lenny_app` gets
 -- the standard grants.
 --
--- spec: §10.1 lines 178-181, 393.
+-- spec: §10.1 lines 165-166, 393.
 
 CREATE TABLE session_checkpoint_meta (
     tenant_id                   TEXT        NOT NULL REFERENCES tenants(id),
@@ -33,23 +26,13 @@ CREATE TABLE session_checkpoint_meta (
     -- the time the BarrierAck was received. A new coordinator that has
     -- already incremented past this value treats the row as authored by
     -- a stale generation when reasoning about (coordination, recovery)
-    -- tuples, but the resume-dedup comparison itself keys on
-    -- last_tool_call_sequence rather than the generation.
+    -- tuples.
     coordination_generation     BIGINT      NOT NULL DEFAULT 0,
     -- barrier_id is the gateway's monotonically-increasing-per-session
     -- correlation id for the barrier that produced this row (§10.1 line
     -- 165). Stored so the next barrier on the same session can advance
     -- the counter across a coordinator handoff.
     barrier_id                  TEXT        NOT NULL DEFAULT '',
-    -- last_tool_call_id is the id of the last tool call the pod
-    -- completed before quiescing, echoed in the CheckpointBarrierAck
-    -- (§10.1 line 166).
-    last_tool_call_id           TEXT        NOT NULL DEFAULT '',
-    -- last_tool_call_sequence is the tool_call_sequence_number component
-    -- of the §10.1 line 178 tool_call_idempotency_key. The resume path
-    -- skips any tool call whose sequence number is <= this value (§10.1
-    -- line 179).
-    last_tool_call_sequence     BIGINT      NOT NULL DEFAULT 0,
     -- checkpoint_ref is the MinIO checkpoint manifest the barrier flush
     -- stored (empty when the best-effort flush produced no checkpoint).
     checkpoint_ref              TEXT        NOT NULL DEFAULT '',

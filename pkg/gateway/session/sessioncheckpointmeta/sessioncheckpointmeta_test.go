@@ -14,10 +14,11 @@ func fixedNow() func() time.Time {
 	return func() time.Time { return t }
 }
 
-// spec: §10.1 line 178 (b) — the gateway writes one row per session
-// after BarrierAck; a later barrier overwrites it. Upsert then Get
-// round-trips every field including the nullable workspace-recovery
-// fraction.
+// spec: §10.1 lines 165-166, 393 — the gateway writes one row per
+// session after BarrierAck; a later barrier overwrites it. Upsert then
+// Get round-trips the retained fields (barrier_id, checkpoint_ref,
+// workspace_recovery_fraction) including the nullable
+// workspace-recovery fraction (§10.1 line 393).
 func TestMemoryStoreUpsertGetRoundTrip_spec_10_1(t *testing.T) {
 	m := NewMemoryStore(fixedNow())
 	ctx := context.Background()
@@ -27,8 +28,6 @@ func TestMemoryStoreUpsertGetRoundTrip_spec_10_1(t *testing.T) {
 		SessionID:                 "sess-1",
 		CoordinationGeneration:    3,
 		BarrierID:                 "1",
-		LastToolCallID:            "tc-9",
-		LastToolCallSequence:      9,
 		CheckpointRef:             "ckpt-abc",
 		WorkspaceRecoveryFraction: &frac,
 	}
@@ -40,7 +39,6 @@ func TestMemoryStoreUpsertGetRoundTrip_spec_10_1(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.CoordinationGeneration != 3 || got.BarrierID != "1" ||
-		got.LastToolCallID != "tc-9" || got.LastToolCallSequence != 9 ||
 		got.CheckpointRef != "ckpt-abc" {
 		t.Errorf("round-trip mismatch: %+v", got)
 	}
@@ -52,20 +50,20 @@ func TestMemoryStoreUpsertGetRoundTrip_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 178 (b) — a barrier on a session that already has a
+// spec: §10.1 lines 165-166 — a barrier on a session that already has a
 // row replaces the prior generation's metadata.
 func TestMemoryStoreUpsertOverwrites_spec_10_1(t *testing.T) {
 	m := NewMemoryStore(fixedNow())
 	ctx := context.Background()
-	_ = m.Upsert(ctx, Record{TenantID: "acme", SessionID: "s", CoordinationGeneration: 1, BarrierID: "1", LastToolCallSequence: 4})
-	if err := m.Upsert(ctx, Record{TenantID: "acme", SessionID: "s", CoordinationGeneration: 2, BarrierID: "2", LastToolCallSequence: 7}); err != nil {
+	_ = m.Upsert(ctx, Record{TenantID: "acme", SessionID: "s", CoordinationGeneration: 1, BarrierID: "1", CheckpointRef: "ck1"})
+	if err := m.Upsert(ctx, Record{TenantID: "acme", SessionID: "s", CoordinationGeneration: 2, BarrierID: "2", CheckpointRef: "ck2"}); err != nil {
 		t.Fatalf("second Upsert: %v", err)
 	}
 	got, err := m.Get(ctx, "acme", "s")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration != 2 || got.BarrierID != "2" || got.LastToolCallSequence != 7 {
+	if got.CoordinationGeneration != 2 || got.BarrierID != "2" || got.CheckpointRef != "ck2" {
 		t.Errorf("overwrite did not take: %+v", got)
 	}
 }
