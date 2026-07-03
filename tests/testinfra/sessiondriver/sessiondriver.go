@@ -346,6 +346,14 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
 		}
 	}
+	// A 503 pool-not-ready envelope that survived the whole retry window
+	// is an environmental warm-pool failure rather than a session-surface
+	// defect. Wrap ErrPoolNotReady so a caller that needs a live session
+	// but does not exercise pool warm-up can errors.Is-detect it and skip.
+	if lastStatus == http.StatusServiceUnavailable && isPoolNotReady(lastBody) {
+		return nil, fmt.Errorf("create-and-start session for tenant %q: status %d, body %s: %w",
+			tenantID, lastStatus, string(lastBody), ErrPoolNotReady)
+	}
 	return nil, fmt.Errorf("create-and-start session for tenant %q: status %d, body %s",
 		tenantID, lastStatus, string(lastBody))
 }
@@ -736,3 +744,15 @@ func (d *Driver) WaitForState(ctx context.Context, tenantID, sessionID string, t
 // has been closed before an event arrived (the server ended the stream
 // or the parent context was cancelled).
 var ErrEventsClosed = errors.New("sessiondriver: events channel closed")
+
+// ErrPoolNotReady is wrapped into the CreateAndStart error when the
+// gateway kept returning a transient §5.2 pool-not-ready 503
+// (POD_CLAIM_FAILED, WARM_POOL_EXHAUSTED, or RUNTIME_UNAVAILABLE) for
+// the full retry window. The condition is environmental: the §4.6
+// WarmPoolController never settled an idle pod (for example the pool's
+// image is in ImagePullBackOff on a degraded cluster), so no session
+// could be placed. A test that requires a live session but not the pool
+// warm-up itself checks errors.Is(err, ErrPoolNotReady) and skips
+// cleanly, matching the Ready-precondition skips the sibling admin-API
+// tier-9 tests already perform.
+var ErrPoolNotReady = errors.New("sessiondriver: warm pool not ready (no idle pod after retries)")
