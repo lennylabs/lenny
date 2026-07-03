@@ -295,6 +295,52 @@ func TestAdminAuditEventsGapWindowReasonNextvalRollback(t *testing.T) {
 	}
 }
 
+// TestAdminAuditEventsGapWindowNonLinkingNotOutage pins the §25.9 line
+// 3668-3669 wire contract for a non-linking sequence gap: a gap whose
+// prev_hash does not link across it is the tamper case, not a Postgres
+// outage, so the handler must not emit an outage window for it. §25.9 line
+// 3669 reserves the reason "postgres_unreachable" for a window computed
+// from ops_postgres_outage_log, a subsystem the gateway does not operate,
+// so the handler never emits that reason and lists no benign window for a
+// non-linking gap. The tamper is carried by the per-row chainIntegrity
+// verdict instead. Against the pre-fix handler (which stamped a
+// non-linking gap "postgres_unreachable", mislabeling a tamper as an
+// outage) this contract assertion fails.
+//
+// spec: §25.9 line 3668 (a non-linking prev_hash gap is tampering, not an
+// outage), §25.9 line 3669 (postgres_unreachable is outage-log-covered).
+// F-11.2.10.
+// diagnosis: a failure means the audit-events API attributes a non-linking
+// (tamper) sequence gap to a Postgres outage window on the wire, so an
+// operator following the runbook classifies a committed-row tamper as a
+// benign outage and takes no remediation.
+func TestAdminAuditEventsGapWindowNonLinkingNotOutage(t *testing.T) {
+	ts1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	ts2 := ts1.Add(time.Hour)
+	row1 := craftGapRow(1, ts1, audit.GenesisPrevHash)
+	// A sequence jump whose prev_hash does not link is the tamper case.
+	row5 := craftGapRow(5, ts2,
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	router := gapRouter(t, []audit.Row{row1, row5})
+
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
+		http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil,
+	)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var env admin.AuditEventEnvelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.AuditMetadata != nil {
+		for _, g := range env.AuditMetadata.SuspectedGaps {
+			t.Errorf("non-linking gap listed as suspectedGaps window %+v; want none (postgres_unreachable is reserved for an ops_postgres_outage_log window this handler does not compute)", g)
+		}
+	}
+}
+
 // Reference the context import so the file compiles even when the
 // suite is reorganised; the explicit use keeps the import live.
 var _ = context.Background

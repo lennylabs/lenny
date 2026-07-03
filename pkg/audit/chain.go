@@ -180,34 +180,6 @@ func ComputeHash(r Row) string { return computeHash(r) }
 // appended row to the persisted tail.
 func LinkHash(prev Row) string { return linkHash(prev) }
 
-// PrevHashLinks reports whether next's prev_hash links to prev in the
-// §11.7 hash chain. It is true when next.PrevHash equals prev's link
-// hash, or when prev was lawfully redacted (its canonical bytes were
-// rewritten in place, so next carries a stale prev_hash the receipt
-// authorizes). It is false when next.PrevHash does not link and prev
-// carries no valid receipt, which is the tamper-or-removal signal.
-//
-// This is the same link decision classifyRow makes; it is exported so
-// the §25.9 audit query API can attribute a sequence-number gap:
-// an intact link across the gap is the benign nextval-rollback case,
-// a non-linking prev_hash is a committed-row tamper or removal. The
-// receipts map keys a lawful redaction by the predecessor's sequence
-// number; a nil map means no redactions are authorized.
-//
-// spec: §11.7 item 3 (prev_hash linkage); §25.9 line 3668 (a gap with
-// a non-linking prev_hash is broken, an intact-link gap is benign).
-func PrevHashLinks(prev, next Row, receipts map[uint64]RedactionReceipt) bool {
-	if prev.Redacted {
-		rcpt, ok := receipts[prev.Seq]
-		if ok && rcpt.OriginalHash == prev.Hash && rcpt.Signature != "" {
-			// The predecessor's canonical bytes were lawfully rewritten,
-			// so next's stale prev_hash is the authorized consequence.
-			return true
-		}
-	}
-	return next.PrevHash == linkHash(prev)
-}
-
 // Chain is a per-tenant append-only audit hash chain. The zero
 // value is not usable; construct with NewChain.
 type Chain struct {
@@ -473,8 +445,16 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 		if row.PrevHash != GenesisPrevHash {
 			return ChainBroken
 		}
-	} else if !PrevHashLinks(c.rows[i-1], row, c.receipts) {
-		return ChainBroken
+	} else {
+		prev := c.rows[i-1]
+		prevRedacted := false
+		if prev.Redacted {
+			rcpt, ok := c.receipts[prev.Seq]
+			prevRedacted = ok && rcpt.OriginalHash == prev.Hash && rcpt.Signature != ""
+		}
+		if !prevRedacted && row.PrevHash != linkHash(prev) {
+			return ChainBroken
+		}
 	}
 	if thisRedacted {
 		return ChainRedactedGDPR
