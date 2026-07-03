@@ -164,10 +164,12 @@ curl -s -X POST http://localhost:8080/v1/admin/tenants \
   }' | jq .
 ```
 
-The handler automatically creates a per-tenant Postgres billing sequence:
+The handler automatically creates two per-tenant Postgres sequences, one for the billing ledger and one for the audit ledger. Each sequence name is a fixed per-ledger prefix (`billing_seq_` or `audit_seq_`) followed by a 40-character hexadecimal digest of the tenant ID. The digest keeps every sequence name within the 63-byte Postgres identifier limit and collision-free across tenants, so a long or prefix-sharing tenant ID cannot collapse two tenants onto the same sequence object:
 
 ```sql
-CREATE SEQUENCE IF NOT EXISTS billing_seq_tn_01J5ACME001
+CREATE SEQUENCE IF NOT EXISTS billing_seq_<40-hex-digest-of-tenant-id>
+    START WITH 1 INCREMENT BY 1 NO CYCLE;
+CREATE SEQUENCE IF NOT EXISTS audit_seq_<40-hex-digest-of-tenant-id>
     START WITH 1 INCREMENT BY 1 NO CYCLE;
 ```
 

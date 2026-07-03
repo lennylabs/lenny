@@ -412,7 +412,7 @@ Tenants use `{id}` (opaque UUID) as the path identifier because tenant names are
 platform-admin
 {: .label .label-red }
 
-Create a tenant. Also creates a per-tenant Postgres billing sequence.
+Create a tenant. Also provisions the tenant's two per-tenant Postgres sequences, one for the billing ledger and one for the audit ledger. Each sequence name is a fixed per-ledger prefix (`billing_seq_` or `audit_seq_`) followed by a 40-character hexadecimal digest of the tenant ID, so every name stays within the Postgres identifier length limit and no two tenants collide.
 
 **Request body:**
 
