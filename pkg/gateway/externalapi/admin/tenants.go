@@ -1126,6 +1126,17 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §15.1 — provision the per-tenant billing_seq_/audit_seq_
+	// sequences before the tenant can bill or audit. §15.1 requires both
+	// sequences exist before any billing or audit event is written, and
+	// the first Append draws nextval on them, so a provisioning failure
+	// fails the create closed rather than returning a tenant whose ledger
+	// writes would fail on a nonexistent relation. F-11.2.10.
+	if err := r.provisionTenantSequences(req.Context(), body.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"tenant created but sequence provisioning failed: "+err.Error(), nil)
+		return
+	}
 	row, _ := r.tenants.Get(req.Context(), body.ID)
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {

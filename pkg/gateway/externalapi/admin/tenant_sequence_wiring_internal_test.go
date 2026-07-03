@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -118,5 +119,46 @@ func TestNewRouter_SequenceProvisioningOptionsDefaultNil(t *testing.T) {
 	}
 	if r.auditShard != nil {
 		t.Error("auditShard should default nil with no Options")
+	}
+}
+
+// TestProvisionTenantSequences_NilPoolNoOp pins the in-memory / SQLite
+// topology contract: with no CREATE-privileged DDL pool wired,
+// provisionTenantSequences is a no-op that returns nil rather than
+// dereferencing a nil pool. This is the branch handleCreateTenant and
+// upsertTenants exercise in every in-memory admin test, so a helper that
+// panicked on a nil pool would break tenant creation on every non-Postgres
+// deployment.
+//
+// spec: §12.3, §15.1. F-11.2.10
+func TestProvisionTenantSequences_NilPoolNoOp(t *testing.T) {
+	r := NewRouter(tenantstore.NewMemory(), Options{})
+	if err := r.provisionTenantSequences(context.Background(), "acme"); err != nil {
+		t.Fatalf("provisionTenantSequences with nil DDL pool must be a no-op, got: %v", err)
+	}
+}
+
+// TestProvisionTenantSequences_CreateFailurePropagates confirms a
+// CREATE SEQUENCE failure on the DDL connection surfaces as a wrapped error
+// from provisionTenantSequences rather than being swallowed, so
+// handleCreateTenant fails the create closed and the operator sees the tenant
+// was not fully provisioned. A closed DDL pool makes the first Exec fail
+// deterministically without a running Postgres (tier 1).
+//
+// spec: §15.1. F-11.2.10
+func TestProvisionTenantSequences_CreateFailurePropagates(t *testing.T) {
+	pool := lazyPool(t, "postgres://ddl@127.0.0.1:1/lenny")
+	pool.Close() // closing makes every subsequent Exec fail
+
+	r := NewRouter(tenantstore.NewMemory(), Options{
+		BillingAuditDDLPool: pool,
+		PrimaryDDLPool:      pool,
+	})
+	err := r.provisionTenantSequences(context.Background(), "acme")
+	if err == nil {
+		t.Fatal("provisionTenantSequences must return an error when the DDL Exec fails")
+	}
+	if !strings.Contains(err.Error(), "provision billing sequence for tenant acme") {
+		t.Errorf("error must be wrapped with the provisioning context, got: %v", err)
 	}
 }
