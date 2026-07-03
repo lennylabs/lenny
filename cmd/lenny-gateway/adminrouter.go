@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/clockinject"
@@ -75,6 +77,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight"
 	preflightinfra "github.com/lennylabs/lenny/pkg/preflight/infra"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
+	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
@@ -257,7 +260,35 @@ func (w *gatewayWiring) buildAdminRouter(
 		runtimeUpgradeMgr = mgr
 	}
 
-	adminRouter := admin.NewRouter(w.tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
+	// spec: §12.3, §15.1 — thread the CREATE-privileged DDL pools and the
+	// §12.3 R-03 billing/audit-shard resolvers into the admin Router so the
+	// tenant-provisioning helper (S4) can create the per-tenant
+	// billing_seq_/audit_seq_ sequences on the instance where billing_events
+	// and audit_log live, plus the primary the §13.3 issued-token
+	// write-before-issue path seals its audit row on. The resolvers adapt the
+	// StoreRouter's storerouter.TenantID methods to the admin ShardResolver's
+	// string signature. All nil in the in-memory / SQLite topology (no
+	// storeRouter, no DDL DSN), where no Postgres sequence is used. F-11.2.10.
+	var billingShardResolver, auditShardResolver admin.ShardResolver
+	if w.storeRouter != nil {
+		sr := w.storeRouter
+		billingShardResolver = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+			return sr.BillingShard(ctx, storerouter.TenantID(tenantID))
+		}
+		auditShardResolver = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+			return sr.AuditShard(ctx, storerouter.TenantID(tenantID))
+		}
+	}
+	adminRouter := admin.NewRouter(w.tenants, admin.Options{
+		Clock:               clockinject.Now,
+		Audit:               auditSink,
+		Metrics:             gwMetrics,
+		DevMode:             *devMode,
+		BillingAuditDDLPool: w.billingAuditDDLPool,
+		PrimaryDDLPool:      w.primaryDDLPool,
+		BillingShard:        billingShardResolver,
+		AuditShard:          auditShardResolver,
+	}).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(w.runtimes).
 		WithRuntimeCapabilityOverrides(w.capOverrides).

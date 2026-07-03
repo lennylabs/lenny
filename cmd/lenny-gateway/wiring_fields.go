@@ -349,10 +349,24 @@ type gatewayWiringFields struct {
 	// dials it; runGateway closes it on exit (the original deferred close is
 	// relocated to the composition root so the connection lives for the
 	// process lifetime rather than only for the build step).
-	tokenServiceConn   *grpc.ClientConn
-	auditSyncPool      *pgxpool.Pool
-	bearerVerifier     jwt.Verifier
-	billingAuditPool   *pgxpool.Pool
+	tokenServiceConn *grpc.ClientConn
+	auditSyncPool    *pgxpool.Pool
+	bearerVerifier   jwt.Verifier
+	billingAuditPool *pgxpool.Pool
+	// billingAuditDDLPool is the CREATE-privileged DDL pool for the
+	// billing/audit instance (LENNY_PG_BILLING_AUDIT_DDL_DSN). It logs in as
+	// the migration-0173 DDL role, distinct from the lenny_app billingAuditPool
+	// the StoreRouter resolves for Append, so the admin tenant-provisioning
+	// helper can issue CREATE SEQUENCE for the per-tenant billing_seq_/audit_seq_
+	// sequences, which lenny_app has no CREATE grant to run. Nil when no DDL DSN
+	// is configured (in-memory / SQLite mode). spec: §12.3, §15.1. F-11.2.10.
+	billingAuditDDLPool *pgxpool.Pool
+	// primaryDDLPool is the CREATE-privileged DDL pool for the primary
+	// instance (LENNY_PG_PRIMARY_DDL_DSN). In the separate-instance topology it
+	// provisions the per-tenant audit sequence the §13.3 issued-token
+	// write-before-issue path seals on the primary. In the single-instance
+	// topology it aliases billingAuditDDLPool. spec: §12.3, §15.1. F-11.2.10.
+	primaryDDLPool     *pgxpool.Pool
 	billingLedger      billingstore.Store
 	blobProbe          drainreadiness.Prober
 	capOverrides       runtimecapoverride.Store

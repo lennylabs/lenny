@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/events"
@@ -235,6 +237,26 @@ type Router struct {
 	audit         AuditSink
 	metrics       RBACConfigMetrics
 
+	// billingAuditDDLPool / primaryDDLPool are the CREATE-privileged DDL
+	// connections the tenant-provisioning helper (S4) issues `CREATE SEQUENCE`
+	// through for the per-tenant billing_seq_/audit_seq_ sequences, because the
+	// lenny_app pool the StoreRouter resolves for Append holds no CREATE ON
+	// SCHEMA grant. billingAuditDDLPool targets the billing/audit instance;
+	// primaryDDLPool targets the primary instance the §13.3 issued-token
+	// write-before-issue path seals its per-tenant audit row on (the same pool
+	// as billingAuditDDLPool in the single-instance topology). Both nil in the
+	// in-memory / SQLite topology, which uses no Postgres sequence.
+	// spec: §12.3, §15.1. F-11.2.10.
+	billingAuditDDLPool *pgxpool.Pool
+	primaryDDLPool      *pgxpool.Pool
+	// billingShard / auditShard resolve the billing/audit instance pool for a
+	// tenant so the provisioning helper's setval re-seed reads the ledger's
+	// per-tenant MAX(sequence_number) on the same instance the sequence is
+	// created on. Nil leaves the re-seed reading nothing (a freshly created
+	// tenant with no rows needs no re-seed). spec: §12.3. F-11.2.10.
+	billingShard ShardResolver
+	auditShard   ShardResolver
+
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
 	platformWired  bool
@@ -406,7 +428,48 @@ type Options struct {
 	// explicit allowStandardIsolation opt-in dev mode supplies on their
 	// behalf. When false the default is the production `sandboxed`.
 	DevMode bool
+
+	// BillingAuditDDLPool is the CREATE-privileged DDL connection for the
+	// billing/audit instance where billing_events and audit_log live. The
+	// tenant-provisioning helper (S4) issues `CREATE SEQUENCE` for the
+	// per-tenant billing_seq_/audit_seq_ sequences through it, because the
+	// lenny_app billing/audit pool holds no CREATE ON SCHEMA grant. The
+	// migration-0173 DDL role also holds SELECT on the ledger tables for the
+	// setval re-seed. Nil leaves runtime sequence provisioning inactive (the
+	// in-memory / SQLite topology, which uses no Postgres sequence).
+	// spec: §12.3, §15.1. F-11.2.10.
+	BillingAuditDDLPool *pgxpool.Pool
+
+	// PrimaryDDLPool is the CREATE-privileged DDL connection for the primary
+	// instance the §13.3 issued-token write-before-issue path seals its
+	// per-tenant audit_seq_ row on. In the single-instance topology it is the
+	// same pool as BillingAuditDDLPool; in the separate-instance topology it
+	// is a distinct connection sourced from LENNY_PG_PRIMARY_DDL_DSN. Nil
+	// leaves the primary-instance audit-sequence provisioning inactive.
+	// spec: §12.3, §15.1. F-11.2.10.
+	PrimaryDDLPool *pgxpool.Pool
+
+	// BillingShard resolves the billing/audit instance pool for a tenant so
+	// the provisioning helper's setval re-seed reads billing_events' per-tenant
+	// MAX(sequence_number) on the same instance the billing sequence is created
+	// on. spec: §12.3 R-03 routing. F-11.2.10.
+	BillingShard ShardResolver
+
+	// AuditShard resolves the billing/audit instance pool for a tenant so the
+	// provisioning helper's setval re-seed reads audit_log's per-tenant
+	// MAX(sequence_number) on the same instance the audit sequence is created
+	// on. spec: §12.3 R-03 routing. F-11.2.10.
+	AuditShard ShardResolver
 }
+
+// ShardResolver resolves the §12.3 R-03 billing/audit-instance pool for a
+// tenant. The admin tenant-provisioning helper uses it to read the ledger's
+// per-tenant MAX(sequence_number) on the same instance the per-tenant
+// sequence is created on. StoreRouter.BillingShard and StoreRouter.AuditShard
+// satisfy it.
+//
+// spec: §12.3, §15.1. F-11.2.10.
+type ShardResolver func(ctx context.Context, tenantID string) (*pgxpool.Pool, error)
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
 func NewRouter(tenants tenantstore.Store, opts Options) *Router {
@@ -414,7 +477,17 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Router{tenants: tenants, clock: clock, audit: opts.Audit, metrics: opts.Metrics, devMode: opts.DevMode}
+	return &Router{
+		tenants:             tenants,
+		clock:               clock,
+		audit:               opts.Audit,
+		metrics:             opts.Metrics,
+		devMode:             opts.DevMode,
+		billingAuditDDLPool: opts.BillingAuditDDLPool,
+		primaryDDLPool:      opts.PrimaryDDLPool,
+		billingShard:        opts.BillingShard,
+		auditShard:          opts.AuditShard,
+	}
 }
 
 // WithKMSProbe wires the §12.5 T4 KMS availability probe onto the

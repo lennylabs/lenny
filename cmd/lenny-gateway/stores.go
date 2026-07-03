@@ -572,12 +572,30 @@ func (w *gatewayWiring) buildStores() {
 // accumulator. It returns the §12.5 checkpoint-retention store, which is
 // consumed only by the §15.1 pod-lifecycle checkpointer.
 //
+// aliasPrimaryDDLToBillingAudit reports whether the primary-instance DDL
+// pool should alias the billing/audit DDL pool rather than open its own
+// connection. This is true only in the single-instance topology: no separate
+// billing/audit instance is configured (billingAuditDSN empty) and no distinct
+// primary DDL DSN is supplied (primaryDDLDSN empty), so the primary and the
+// billing/audit instance are one and the single billing/audit DDL pool
+// addresses both. When a separate billing/audit instance is configured the
+// operator must supply LENNY_PG_PRIMARY_DDL_DSN, because the primary's
+// lenny_app pool holds no CREATE ON SCHEMA and the §13.3 issued-token
+// write-before-issue path seals its per-tenant audit row on the primary.
+//
+// spec: §12.3, §15.1. F-11.2.10.
+func aliasPrimaryDDLToBillingAudit(billingAuditDSN, primaryDDLDSN string) bool {
+	return billingAuditDSN == "" && primaryDDLDSN == ""
+}
+
 // spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 pools;
 // §12.5 catalog.
 func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	f := w.f
 	auditSyncWritePoolSize := f.auditSyncWritePoolSize
 	billingAuditDSN := f.billingAuditDSN
+	billingAuditDDLDSN := f.billingAuditDDLDSN
+	primaryDDLDSN := f.primaryDDLDSN
 	minioAccessKey := f.minioAccessKey
 	minioBucket := f.minioBucket
 	minioEndpoint := f.minioEndpoint
@@ -599,18 +617,20 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// otherwise. The remaining stores are in-memory pending their
 	// Redis (circuit breakers, quota) or Postgres backings.
 	var (
-		sessions         sessionstore.Store
-		tenants          tenantstore.Store
-		runtimes         runtimestore.Store
-		capOverrides     runtimecapoverride.Store
-		transcripts      transcriptstore.Store
-		users            userstore.Store
-		connectors       connectorstore.Store
-		billing          billingstore.Store
-		pgPool           *pgxpool.Pool
-		readPool         *pgxpool.Pool
-		billingAuditPool *pgxpool.Pool
-		auditSyncPool    *pgxpool.Pool
+		sessions            sessionstore.Store
+		tenants             tenantstore.Store
+		runtimes            runtimestore.Store
+		capOverrides        runtimecapoverride.Store
+		transcripts         transcriptstore.Store
+		users               userstore.Store
+		connectors          connectorstore.Store
+		billing             billingstore.Store
+		pgPool              *pgxpool.Pool
+		readPool            *pgxpool.Pool
+		billingAuditPool    *pgxpool.Pool
+		billingAuditDDLPool *pgxpool.Pool
+		primaryDDLPool      *pgxpool.Pool
+		auditSyncPool       *pgxpool.Pool
 		// sqliteDB is the §17.4 line 199 Source-Mode embedded-SQLite
 		// durability layer. Non-nil only when --sqlite-path is set and
 		// --postgres-dsn is empty; the shutdown path stops the flush loop
@@ -677,6 +697,54 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			}
 			billingAuditPool = bapool
 			log.Printf("lenny-gateway: §12.3 routing billing-event and audit-log writes to the separate LENNY_PG_BILLING_AUDIT_DSN instance")
+		}
+		// spec: §12.3, §15.1 — CREATE-privileged DDL pools for per-tenant
+		// sequence provisioning. The per-tenant billing (billing_seq_<40hex>)
+		// and audit (audit_seq_<40hex>) sequences are created at tenant-create
+		// time through a role that holds CREATE ON SCHEMA public, distinct from
+		// the lenny_app billing/audit pool the StoreRouter resolves for Append
+		// (lenny_app holds no CREATE grant). The billing/audit DDL pool targets
+		// the instance where billing_events and audit_log physically live (the
+		// separate LENNY_PG_BILLING_AUDIT_DSN instance when configured, otherwise
+		// the primary). The primary DDL pool targets the primary instance the
+		// §13.3 issued-token write-before-issue path seals its per-tenant audit
+		// row on; when the separate billing/audit instance is not configured the
+		// primary and the billing/audit instance are one, so the primary DDL pool
+		// falls back to the single billing/audit DDL pool. The admin Router
+		// (adminrouter.go) threads both pools into the provisioning helper (S4).
+		// F-11.2.10.
+		if *billingAuditDDLDSN != "" {
+			ddlPool, err := pgxpool.New(context.Background(), *billingAuditDDLDSN)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §12.3 billing/audit DDL postgres: %v", err)
+			}
+			if err := verifyPostgresSchema(context.Background(), ddlPool); err != nil {
+				log.Fatalf("lenny-gateway: §12.3 billing/audit DDL postgres: %v", err)
+			}
+			billingAuditDDLPool = ddlPool
+			log.Printf("lenny-gateway: §15.1 per-tenant billing/audit sequence provisioning uses the CREATE-privileged LENNY_PG_BILLING_AUDIT_DDL_DSN connection")
+		}
+		// The primary DDL pool. When LENNY_PG_BILLING_AUDIT_DSN is unset the
+		// primary and the billing/audit instance are the same instance, so the
+		// single billing/audit DDL pool addresses both and no separate primary
+		// DDL DSN is required. When a separate billing/audit instance is
+		// configured, the primary's lenny_app pool likewise holds no CREATE ON
+		// SCHEMA, so a distinct CREATE-privileged pool for the primary is built
+		// from LENNY_PG_PRIMARY_DDL_DSN. F-11.2.10.
+		if *primaryDDLDSN != "" {
+			pddlPool, err := pgxpool.New(context.Background(), *primaryDDLDSN)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §12.3 primary DDL postgres: %v", err)
+			}
+			if err := verifyPostgresSchema(context.Background(), pddlPool); err != nil {
+				log.Fatalf("lenny-gateway: §12.3 primary DDL postgres: %v", err)
+			}
+			primaryDDLPool = pddlPool
+			log.Printf("lenny-gateway: §15.1 per-tenant primary audit sequence provisioning uses the CREATE-privileged LENNY_PG_PRIMARY_DDL_DSN connection")
+		} else if aliasPrimaryDDLToBillingAudit(*billingAuditDSN, *primaryDDLDSN) {
+			// Single-instance topology: the primary is the billing/audit
+			// instance, so the billing/audit DDL pool addresses the primary too.
+			primaryDDLPool = billingAuditDDLPool
 		}
 		// §12.3 line 79: a dedicated, small audit sync write pool so the
 		// synchronous audit hash-chain writes do not consume the shared
@@ -911,6 +979,8 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	w.pgPool = pgPool
 	w.readPool = readPool
 	w.billingAuditPool = billingAuditPool
+	w.billingAuditDDLPool = billingAuditDDLPool
+	w.primaryDDLPool = primaryDDLPool
 	w.auditSyncPool = auditSyncPool
 	w.sqliteDB = sqliteDB
 	w.sqliteFlushCancel = sqliteFlushCancel
