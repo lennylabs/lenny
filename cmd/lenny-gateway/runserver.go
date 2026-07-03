@@ -213,13 +213,10 @@ func (w *gatewayWiring) runServers() {
 	}
 	// spec: §12.3, §15.1 — release the CREATE-privileged DDL pools opened for
 	// per-tenant sequence provisioning. primaryDDLPool aliases billingAuditDDLPool
-	// in the single-instance topology, so close each distinct pool once.
-	// F-11.2.10.
-	if w.billingAuditDDLPool != nil {
-		w.billingAuditDDLPool.Close()
-	}
-	if w.primaryDDLPool != nil && w.primaryDDLPool != w.billingAuditDDLPool {
-		w.primaryDDLPool.Close()
+	// in the single-instance topology, so distinctDDLPools closes each distinct
+	// pool once. F-11.2.10.
+	for _, pool := range distinctDDLPools(w.billingAuditDDLPool, w.primaryDDLPool) {
+		pool.Close()
 	}
 	// spec: §17.4 line 199 — stop the Source-Mode SQLite flush loop and
 	// snapshot the session/metadata stores one final time so a clean

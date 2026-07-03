@@ -651,3 +651,101 @@ func TestProvisionTenantSequences_ReseedReadErrorPropagates_spec_11_2_1(t *testi
 		t.Errorf("error must name the failed re-seed MAX read, got: %v", err)
 	}
 }
+
+// TestProvisionTenantSequences_CreateDeniedPropagates confirms a CREATE
+// SEQUENCE that the DDL role is not privileged to run surfaces as a wrapped
+// error rather than being swallowed: with CREATE ON SCHEMA public revoked from
+// lenny_ddl, the billing CREATE raises permission denied and
+// provisionTenantSequences returns a wrapped "provision billing sequence"
+// error. This exercises the createSequenceIfAbsent CREATE-error path and the
+// provisionSequence error return, so a mis-privileged DDL role fails the tenant
+// create closed rather than reporting a tenant with no sequence created.
+//
+// diagnosis: a failure means a CREATE SEQUENCE privilege error is swallowed, so
+// a tenant is reported provisioned when its ledger sequence was never created,
+// and its first billing/audit Append rejects on nextval of a nonexistent
+// relation.
+//
+// spec: §15.1, §11.7. F-11.2.10
+func TestProvisionTenantSequences_CreateDeniedPropagates_spec_15_1(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
+	}
+	su, ddl, _ := startLedgerPostgres(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const tenant = "stark"
+	// Revoke CREATE on schema public so the CREATE SEQUENCE itself fails closed
+	// with permission denied, exercising the createSequenceIfAbsent CREATE error
+	// branch rather than the re-seed read branch.
+	if _, err := su.Exec(ctx, "REVOKE CREATE ON SCHEMA public FROM lenny_ddl"); err != nil {
+		t.Fatalf("revoke CREATE: %v", err)
+	}
+
+	r := routerWithDDL(ddl)
+	err := r.provisionTenantSequences(ctx, tenant)
+	if err == nil {
+		t.Fatal("provisionTenantSequences must return an error when the CREATE SEQUENCE is denied")
+	}
+	if !strings.Contains(err.Error(), "provision billing sequence for tenant stark") {
+		t.Errorf("error must be wrapped with the provision context, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "create sequence "+seqname.BillingSequenceName(tenant)) {
+		t.Errorf("error must name the failed CREATE SEQUENCE, got: %v", err)
+	}
+	// No sequence was created: the tenant is not left half-provisioned.
+	if sequenceExistsDB(t, ctx, su, seqname.BillingSequenceName(tenant)) {
+		t.Errorf("billing sequence must not exist after a denied CREATE")
+	}
+}
+
+// TestProvisionTenantSequences_AuditReseedErrorPropagates confirms the audit
+// limb of provisionTenantSequences fails closed independently of billing: with
+// the DDL role's SELECT on audit_log revoked (billing SELECT intact), the
+// billing sequence is created and re-seeded, but the audit sequence's re-seed
+// read raises permission denied and provisionTenantSequences returns a wrapped
+// "provision audit sequence" error. This pins that the audit provisioning error
+// is not swallowed behind a successful billing provision.
+//
+// diagnosis: a failure means an audit-sequence provisioning error is swallowed
+// after billing succeeds, so a tenant is reported provisioned when its audit
+// sequence was mis-seeded and its first audit Append may collide with an
+// existing (tenant_id, sequence_number) primary key.
+//
+// spec: §11.7, §15.1. F-11.2.10
+func TestProvisionTenantSequences_AuditReseedErrorPropagates_spec_11_7(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
+	}
+	su, ddl, _ := startLedgerPostgres(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const tenant = "wayne"
+	// Seed rows on both ledgers so both re-seeds run. Revoke SELECT on audit_log
+	// only: the billing sequence provisions cleanly (billing SELECT intact), and
+	// the audit re-seed read fails closed, surfacing the audit limb's error.
+	seedLedgerRows(t, ctx, su, tenant, 5)
+	if _, err := su.Exec(ctx, "REVOKE SELECT ON audit_log FROM lenny_ddl"); err != nil {
+		t.Fatalf("revoke SELECT on audit_log: %v", err)
+	}
+
+	r := routerWithDDL(ddl)
+	err := r.provisionTenantSequences(ctx, tenant)
+	if err == nil {
+		t.Fatal("provisionTenantSequences must return an error when the audit re-seed read is denied")
+	}
+	if !strings.Contains(err.Error(), "provision audit sequence for tenant wayne") {
+		t.Errorf("error must be wrapped with the audit provision context, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "read MAX(sequence_number) from audit_log") {
+		t.Errorf("error must name the failed audit re-seed MAX read, got: %v", err)
+	}
+	// The billing limb ran to completion before the audit limb failed: the
+	// billing sequence exists, confirming billing provisioning is independent of
+	// the audit failure.
+	if !sequenceExistsDB(t, ctx, su, seqname.BillingSequenceName(tenant)) {
+		t.Errorf("billing sequence must exist: the billing limb precedes the audit failure")
+	}
+}

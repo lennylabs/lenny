@@ -3,13 +3,19 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // lazyPool builds a *pgxpool.Pool that never dials: MinConns=0 keeps the
@@ -180,5 +186,115 @@ func TestProvisionTenantSequences_CreateFailurePropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "provision billing sequence for tenant acme") {
 		t.Errorf("error must be wrapped with the provisioning context, got: %v", err)
+	}
+}
+
+// TestUpsertTenants_SequenceProvisionFailureIsPerEntryError pins the §15.1
+// bootstrap seed-path fail-closed coupling: when a seed-created tenant's
+// per-tenant sequence provisioning fails, upsertTenants records the row as a
+// SEED_STORE_ERROR error rather than reporting it created. The tenant row is
+// persisted by tenants.Create before provisioning runs, but the operator sees
+// the row failed provisioning (it cannot yet bill or audit) instead of a false
+// "created" that hides a tenant with no sequences. A closed DDL pool makes the
+// first CREATE SEQUENCE Exec fail deterministically without a running Postgres
+// (tier 1). Against the pre-fix bootstrap path (which never called
+// provisionTenantSequences) this row would report actionCreated with no error,
+// so this test fails against pre-fix code.
+//
+// spec: §15.1, §11.2.1, §11.7. F-11.2.10
+func TestUpsertTenants_SequenceProvisionFailureIsPerEntryError(t *testing.T) {
+	pool := lazyPool(t, "postgres://ddl@127.0.0.1:1/lenny")
+	pool.Close() // closing makes every subsequent CREATE SEQUENCE Exec fail
+
+	r := NewRouter(tenantstore.NewMemory(), Options{
+		BillingAuditDDLPool: pool,
+		PrimaryDDLPool:      pool,
+	})
+	req := httptest.NewRequest("POST", "/v1/admin/bootstrap", nil)
+
+	section := r.upsertTenants(req, []TenantPayload{{ID: "acme"}}, bootstrapOptions{})
+
+	if section.CreatedCount != 0 {
+		t.Errorf("createdCount=%d, want 0: a provisioning failure must not report the tenant created", section.CreatedCount)
+	}
+	if len(section.Errors) != 1 {
+		t.Fatalf("errors=%d, want 1 (the sequence-provision failure), section=%+v", len(section.Errors), section)
+	}
+	if got := section.Errors[0].Code; got != seedStoreErrorCode {
+		t.Errorf("error code=%q, want %q", got, seedStoreErrorCode)
+	}
+	if got := section.Errors[0].ID; got != "acme" {
+		t.Errorf("error id=%q, want %q", got, "acme")
+	}
+	if !strings.Contains(section.Errors[0].Message, "provision billing sequence for tenant acme") {
+		t.Errorf("error message must carry the provisioning context, got: %q", section.Errors[0].Message)
+	}
+}
+
+// TestUpsertTenants_DryRunSkipsSequenceProvision confirms the §15.1 dryRun seed
+// path does not attempt sequence provisioning: a dry run validates and reports
+// the create action without persisting the tenant or issuing DDL, so a closed
+// DDL pool that would fail a real provision leaves a dry run clean. This fences
+// the provisionTenantSequences call behind the same !opts.dryRun guard as the
+// tenants.Create write.
+//
+// spec: §15.1. F-11.2.10
+func TestUpsertTenants_DryRunSkipsSequenceProvision(t *testing.T) {
+	pool := lazyPool(t, "postgres://ddl@127.0.0.1:1/lenny")
+	pool.Close() // a real provision would fail against this closed pool
+
+	r := NewRouter(tenantstore.NewMemory(), Options{
+		BillingAuditDDLPool: pool,
+		PrimaryDDLPool:      pool,
+	})
+	req := httptest.NewRequest("POST", "/v1/admin/bootstrap?dryRun=true", nil)
+
+	section := r.upsertTenants(req, []TenantPayload{{ID: "acme"}}, bootstrapOptions{dryRun: true})
+
+	if len(section.Errors) != 0 {
+		t.Fatalf("dry run must not attempt provisioning or error, got errors=%+v", section.Errors)
+	}
+	if section.CreatedCount != 1 {
+		t.Errorf("createdCount=%d, want 1: a dry run reports the create action without provisioning", section.CreatedCount)
+	}
+}
+
+// TestHandleCreateTenant_SequenceProvisionFailureReturns500 pins the §15.1
+// live POST /v1/admin/tenants fail-closed coupling: when the per-tenant
+// sequence provisioning fails after the tenant row is persisted, the handler
+// returns 500 INTERNAL_ERROR rather than 201 Created, so an operator sees the
+// tenant is not fully provisioned (it cannot yet bill or audit) instead of a
+// success that hides a tenant whose first ledger write would fail on nextval of
+// a nonexistent relation. A closed DDL pool makes the CREATE SEQUENCE Exec fail
+// deterministically without a running Postgres (tier 1). Against the pre-fix
+// handler (which never provisioned a sequence) this create returned 201, so
+// this test fails against pre-fix code.
+//
+// spec: §15.1, §11.2.1, §11.7. F-11.2.10
+func TestHandleCreateTenant_SequenceProvisionFailureReturns500(t *testing.T) {
+	pool := lazyPool(t, "postgres://ddl@127.0.0.1:1/lenny")
+	pool.Close() // closing makes the CREATE SEQUENCE Exec fail
+
+	store := tenantstore.NewMemory()
+	r := NewRouter(store, Options{
+		BillingAuditDDLPool: pool,
+		PrimaryDDLPool:      pool,
+	}).WithSIEMConfigured(true).WithPgauditConfigured(true)
+
+	body, _ := json.Marshal(TenantPayload{ID: "acme", DisplayName: "Acme Corp"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject:  "admin@acme.com",
+		TenantID: "platform",
+		Roles:    []pkgauth.Role{pkgauth.RolePlatformAdmin},
+	}))
+	rr := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d, want 500: a sequence-provisioning failure must fail the create closed; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "sequence provisioning failed") {
+		t.Errorf("body must name the sequence-provisioning failure, got: %s", rr.Body.String())
 	}
 }

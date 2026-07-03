@@ -81,6 +81,30 @@ import (
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
+// billingAuditShardResolvers adapts a StoreRouter's §12.3 R-03 BillingShard /
+// AuditShard methods (which take a storerouter.TenantID) to the admin
+// ShardResolver signature (which takes a plain string), so the admin
+// tenant-provisioning helper can read the ledger's per-tenant
+// MAX(sequence_number) on the same instance the per-tenant sequence is created
+// on. A nil StoreRouter (the in-memory / SQLite topology, which uses no
+// Postgres sequence) yields nil resolvers, which the provisioning helper treats
+// as "no re-seed read". Extracting the adaptation keeps the nil decision and the
+// TenantID conversion in one tier-1-testable place.
+//
+// spec: §12.3, §15.1. F-11.2.10.
+func billingAuditShardResolvers(sr storerouter.StoreRouter) (billing, audit admin.ShardResolver) {
+	if sr == nil {
+		return nil, nil
+	}
+	billing = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+		return sr.BillingShard(ctx, storerouter.TenantID(tenantID))
+	}
+	audit = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
+		return sr.AuditShard(ctx, storerouter.TenantID(tenantID))
+	}
+	return billing, audit
+}
+
 func (w *gatewayWiring) buildAdminRouter(
 	gwMetrics *gatewaymetrics.Metrics,
 	delegationSvc *delegation.Service,
@@ -265,20 +289,12 @@ func (w *gatewayWiring) buildAdminRouter(
 	// tenant-provisioning helper (S4) can create the per-tenant
 	// billing_seq_/audit_seq_ sequences on the instance where billing_events
 	// and audit_log live, plus the primary the §13.3 issued-token
-	// write-before-issue path seals its audit row on. The resolvers adapt the
-	// StoreRouter's storerouter.TenantID methods to the admin ShardResolver's
-	// string signature. All nil in the in-memory / SQLite topology (no
-	// storeRouter, no DDL DSN), where no Postgres sequence is used. F-11.2.10.
-	var billingShardResolver, auditShardResolver admin.ShardResolver
-	if w.storeRouter != nil {
-		sr := w.storeRouter
-		billingShardResolver = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
-			return sr.BillingShard(ctx, storerouter.TenantID(tenantID))
-		}
-		auditShardResolver = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
-			return sr.AuditShard(ctx, storerouter.TenantID(tenantID))
-		}
-	}
+	// write-before-issue path seals its audit row on. billingAuditShardResolvers
+	// adapts the StoreRouter's storerouter.TenantID methods to the admin
+	// ShardResolver's string signature and returns nil resolvers in the
+	// in-memory / SQLite topology (no storeRouter, no DDL DSN), where no Postgres
+	// sequence is used. F-11.2.10.
+	billingShardResolver, auditShardResolver := billingAuditShardResolvers(w.storeRouter)
 	adminRouter := admin.NewRouter(w.tenants, admin.Options{
 		Clock:               clockinject.Now,
 		Audit:               auditSink,

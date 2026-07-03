@@ -588,6 +588,26 @@ func aliasPrimaryDDLToBillingAudit(billingAuditDSN, primaryDDLDSN string) bool {
 	return billingAuditDSN == "" && primaryDDLDSN == ""
 }
 
+// distinctDDLPools returns the CREATE-privileged DDL pools that must be closed
+// at shutdown, deduplicated by pointer identity. In the single-instance
+// topology primaryDDLPool aliases billingAuditDDLPool (aliasPrimaryDDLToBillingAudit),
+// so closing each distinct pool once avoids a double Close on the shared pool.
+// A nil pool contributes nothing. The shutdown path (runServers) iterates the
+// result and calls Close on each, so the dedup decision has a single canonical
+// implementation the tier-1 test pins.
+//
+// spec: §12.3, §15.1. F-11.2.10.
+func distinctDDLPools(billingAuditDDLPool, primaryDDLPool *pgxpool.Pool) []*pgxpool.Pool {
+	pools := make([]*pgxpool.Pool, 0, 2)
+	if billingAuditDDLPool != nil {
+		pools = append(pools, billingAuditDDLPool)
+	}
+	if primaryDDLPool != nil && primaryDDLPool != billingAuditDDLPool {
+		pools = append(pools, primaryDDLPool)
+	}
+	return pools
+}
+
 // spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 pools;
 // §12.5 catalog.
 func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
