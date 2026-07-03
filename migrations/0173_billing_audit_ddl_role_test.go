@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -20,6 +21,14 @@ import (
 // pgInsufficientPrivilege is the SQLSTATE Postgres returns for a denied
 // privilege (permission denied for schema / sequence / relation).
 const pgInsufficientPrivilege = "42501"
+
+// pgConfigurationInvalid is the SQLSTATE Postgres raises for an unset custom
+// GUC read through current_setting(name, false) — "unrecognized configuration
+// parameter". The §11.7 tenant-isolation policy uses this hard-error form
+// (migration 0051, applied at runtime through the guarded 0057 rewrite), so a
+// ledger read that reaches the policy without app.current_tenant set fails
+// closed with this code rather than returning no rows.
+const pgConfigurationInvalid = "42704"
 
 // platformAuditSeq is the fixed platform-chain audit sequence name the
 // migration embeds. It is the §10.2 derivation applied to the
@@ -163,12 +172,24 @@ func TestBillingAuditDDLRoleMigrationDB_spec_11_7_15_1_10_2(t *testing.T) {
 	defer pool.Close()
 
 	// 0001 defines billing_events and audit_log; 0002 creates lenny_app and
-	// the RLS/immutability posture; 0173 adds the DDL role, the FOR ROLE
-	// default privilege, and the platform sequence.
+	// the RLS/immutability posture with the initial soft-error policy form;
+	// 0057 rewrites the lenny_tenant_isolation policy on both ledgers to the
+	// current_setting('app.current_tenant', false) hard-error form (the same
+	// hard-error form migration 0051 introduced, applied through the guarded
+	// 0057 rewrite so it lands cleanly on this minimal schema without the
+	// intervening tables 0051's unconditional CREATE POLICY assumes); 0173
+	// adds the DDL role, the FOR ROLE default privilege, and the platform
+	// sequence. The hard-error form is the runtime posture the setval re-seed
+	// read must run under: a lenny_ddl SELECT with app.current_tenant unset
+	// raises configuration_invalid (SQLSTATE 42704) rather than returning no
+	// rows, so the re-seed must scope to the tenant through SET LOCAL
+	// app.current_tenant, which is exactly what the runtime pgtenant.InTx
+	// helper does.
 	applyMigrations(
 		t, ctx, pool,
 		"0001_initial_schema.up.sql",
 		"0002_rls_immutability_roles.up.sql",
+		"0057_tenant_guard_pooler_mode.up.sql",
 		"0173_billing_audit_ddl_role_and_sequences.up.sql",
 	)
 
@@ -212,23 +233,49 @@ func TestBillingAuditDDLRoleMigrationDB_spec_11_7_15_1_10_2(t *testing.T) {
 	assertDenied(t, err, "CREATE SEQUENCE as lenny_app")
 	mustExec(t, ctx, pool, "RESET ROLE")
 
-	// lenny_ddl holds SELECT on both ledgers (so the setval re-seed can read
-	// MAX(sequence_number)) but no write privilege: an INSERT into either
-	// ledger as lenny_ddl is denied. The read is exercised inside the
-	// tenant-RLS GUC context both ledgers' FORCE ROW LEVEL SECURITY hard-error
-	// policy requires; without a matching row the SELECT simply returns no
-	// rows, which is the least-privilege read the re-seed performs.
-	mustExec(t, ctx, pool, "SET ROLE lenny_ddl")
+	// The setval re-seed reads MAX(sequence_number) per tenant on the
+	// lenny_ddl connection. Both ledgers carry FORCE ROW LEVEL SECURITY with
+	// the §11.7 hard-error tenant-isolation policy
+	// (current_setting('app.current_tenant', false)), so this read must run
+	// under the tenant-scoped RLS GUC exactly as the runtime pgtenant.InTx
+	// re-seed does. Seed one row per ledger for tenant 'acme' (through the
+	// lenny_app INSERT grant under the tenant GUC) so the re-seed read has a
+	// real row to observe.
+	seedLedgerRow(t, ctx, pool, "acme")
+
+	// Positive re-seed read: inside a transaction that first sets
+	// app.current_tenant = 'acme', the lenny_ddl SELECT returns the tenant's
+	// own row (MAX(sequence_number) = 5). This is the load-bearing RLS
+	// interaction the SELECT grant exists to satisfy: the DDL role is not the
+	// table owner and holds no BYPASSRLS, so the policy admits only the rows of
+	// the tenant named in the GUC.
 	for _, tbl := range []string{"billing_events", "audit_log"} {
-		var cnt int64
-		if err := pool.QueryRow(ctx,
-			"SELECT count(*) FROM "+tbl+" WHERE tenant_id = 'acme'").Scan(&cnt); err != nil {
-			t.Errorf("lenny_ddl SELECT on %s must succeed for the setval re-seed, got: %v", tbl, err)
+		maxSeq := ddlReseedRead(t, ctx, pool, tbl, "acme")
+		if maxSeq != 5 {
+			t.Errorf("lenny_ddl re-seed read of MAX(sequence_number) on %s under the tenant GUC = %d, want 5", tbl, maxSeq)
 		}
 	}
+
+	// Negative re-seed read: the same lenny_ddl SELECT with app.current_tenant
+	// unset fails closed with configuration_invalid (SQLSTATE 42704) rather
+	// than returning no rows. This is why the runtime re-seed must scope to
+	// the tenant through SET LOCAL app.current_tenant: under the hard-error
+	// policy an unset GUC raises, it does not silently read zero rows. Run it
+	// in a transaction so SET LOCAL ROLE is bound to the connection that
+	// executes the read regardless of pool connection reuse.
+	for _, tbl := range []string{"billing_events", "audit_log"} {
+		err = ddlReadWithoutTenantGUC(t, ctx, pg.DSN(), tbl, "acme")
+		assertPgCode(t, err, pgConfigurationInvalid,
+			"lenny_ddl SELECT on "+tbl+" with app.current_tenant unset")
+	}
+
 	// No INSERT: lenny_ddl provisions and reads but never writes the ledger.
+	// The table-level INSERT privilege check fails closed with
+	// insufficient_privilege before RLS policy evaluation, so this holds
+	// whether or not the tenant GUC is set.
+	mustExec(t, ctx, pool, "SET ROLE lenny_ddl")
 	_, err = pool.Exec(ctx,
-		"INSERT INTO billing_events (tenant_id, sequence_number, event_type) VALUES ('acme', 1, 'x')")
+		"INSERT INTO billing_events (tenant_id, sequence_number, event_type) VALUES ('acme', 6, 'x')")
 	assertDenied(t, err, "INSERT into billing_events as lenny_ddl")
 	mustExec(t, ctx, pool, "RESET ROLE")
 
@@ -247,6 +294,117 @@ func mustExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sql string)
 	t.Helper()
 	if _, err := pool.Exec(ctx, sql); err != nil {
 		t.Fatalf("exec %q: %v", sql, err)
+	}
+}
+
+// seedLedgerRow registers a tenant and writes one billing_events and one
+// audit_log row for it at sequence_number 5, through the lenny_app INSERT
+// grant under SET LOCAL app.current_tenant so the tenant-guard trigger and RLS
+// policy admit the write. The seeded rows give the lenny_ddl re-seed read a
+// real MAX(sequence_number) to observe under the tenant GUC.
+func seedLedgerRow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant string) {
+	t.Helper()
+	// tenants is the registry table (not tenant-scoped): lenny_app holds full
+	// DML on it, and billing_events.tenant_id is a foreign key to it.
+	mustExec(t, ctx, pool,
+		"INSERT INTO tenants (id, genesis_nonce) VALUES ('"+tenant+"', '\\x00')")
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// SET LOCAL app.current_tenant scopes the RLS policy and satisfies the
+	// tenant-guard trigger for the ledger inserts, mirroring the runtime write
+	// path. lenny_app holds INSERT on both ledgers.
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE lenny_app"); err != nil {
+		t.Fatalf("set role lenny_app: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "SET LOCAL app.current_tenant = '"+tenant+"'"); err != nil {
+		t.Fatalf("set app.current_tenant: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		"INSERT INTO billing_events (tenant_id, sequence_number, event_type) VALUES ($1, 5, 'usage')",
+		tenant); err != nil {
+		t.Fatalf("seed billing_events row: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO audit_log (tenant_id, sequence_number, event_type, payload, payload_canonical_json)
+		 VALUES ($1, 5, 'test.event', '{}', '{}')`, tenant); err != nil {
+		t.Fatalf("seed audit_log row: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit seed tx: %v", err)
+	}
+}
+
+// ddlReseedRead runs the setval re-seed's MAX(sequence_number) read on the
+// lenny_ddl connection the way the runtime pgtenant.InTx re-seed does: inside a
+// transaction that first sets app.current_tenant so the hard-error RLS policy
+// admits the tenant's own rows. It returns the observed MAX(sequence_number).
+func ddlReseedRead(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table, tenant string) int64 {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin re-seed read tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE lenny_ddl"); err != nil {
+		t.Fatalf("set role lenny_ddl: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "SET LOCAL app.current_tenant = '"+tenant+"'"); err != nil {
+		t.Fatalf("set app.current_tenant: %v", err)
+	}
+	var maxSeq int64
+	if err := tx.QueryRow(ctx,
+		"SELECT COALESCE(MAX(sequence_number), 0) FROM "+table+" WHERE tenant_id = $1",
+		tenant).Scan(&maxSeq); err != nil {
+		t.Fatalf("lenny_ddl re-seed read on %s under the tenant GUC must succeed, got: %v", table, err)
+	}
+	return maxSeq
+}
+
+// ddlReadWithoutTenantGUC runs the lenny_ddl ledger count read on a dedicated
+// fresh connection whose transaction sets the role but deliberately leaves
+// app.current_tenant unset, returning the resulting error. Under the
+// current_setting('app.current_tenant', false) hard-error policy the read must
+// fail closed with configuration_invalid rather than returning rows. The read
+// uses its own connection because a prior SET LOCAL app.current_tenant on a
+// pooled connection registers the app.current_tenant placeholder for that
+// session's lifetime, after which current_setting(..., false) reads it as an
+// empty string rather than raising; the runtime DDL re-seed always opens the
+// tenant context per transaction, so a genuinely-unset read only occurs on a
+// connection that has never set it.
+func ddlReadWithoutTenantGUC(t *testing.T, ctx context.Context, dsn, table, tenant string) error {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect for unset-GUC read: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin unset-GUC read tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE lenny_ddl"); err != nil {
+		t.Fatalf("set role lenny_ddl: %v", err)
+	}
+	var cnt int64
+	return tx.QueryRow(ctx,
+		"SELECT count(*) FROM "+table+" WHERE tenant_id = $1", tenant).Scan(&cnt)
+}
+
+// assertPgCode asserts err is a *pgconn.PgError carrying the given SQLSTATE.
+func assertPgCode(t *testing.T, err error, code, what string) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("%s must raise %s, but succeeded", what, code)
+		return
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != code {
+		t.Errorf("%s: want SQLSTATE %s, got %v", what, code, err)
 	}
 }
 
