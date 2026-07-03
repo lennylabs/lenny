@@ -49,6 +49,44 @@ func TestHashChainLinkInvariant(t *testing.T) {
 	}
 }
 
+// TestPrevHashLinks — the exported linkage helper the §25.9 audit query
+// API uses to attribute a sequence-number gap: a row whose prev_hash
+// carries the predecessor's link hash links (the benign nextval-rollback
+// case across a gap), a garbage prev_hash does not (the tamper-or-removal
+// case), and a lawfully-redacted predecessor with a valid receipt links
+// even though its rewritten canonical bytes leave the successor's
+// prev_hash stale.
+//
+// spec: 11.7 (prev_hash linkage), 25.9 (gap attribution by prev_hash link)
+func TestPrevHashLinks(t *testing.T) {
+	t.Parallel()
+	prev := Row{ID: "acme:1", Seq: 1, TenantID: "acme", EventType: "e1", Timestamp: ts()}
+	prev.Hash = ComputeHash(prev)
+
+	linked := Row{ID: "acme:5", Seq: 5, TenantID: "acme", EventType: "e2", Timestamp: ts(), PrevHash: LinkHash(prev)}
+	if !PrevHashLinks(prev, linked, nil) {
+		t.Error("a row carrying the predecessor's link hash must link")
+	}
+
+	unlinked := Row{ID: "acme:5", Seq: 5, TenantID: "acme", EventType: "e2", Timestamp: ts(), PrevHash: "00"}
+	if PrevHashLinks(prev, unlinked, nil) {
+		t.Error("a garbage prev_hash must not link")
+	}
+
+	// A lawfully-redacted predecessor: the successor carries a stale
+	// prev_hash but a valid receipt authorizes the discontinuity.
+	redPrev := prev
+	redPrev.Redacted = true
+	receipts := map[uint64]RedactionReceipt{redPrev.Seq: {RedactedSeq: redPrev.Seq, OriginalHash: redPrev.Hash, Signature: "sig"}}
+	if !PrevHashLinks(redPrev, unlinked, receipts) {
+		t.Error("a lawfully-redacted predecessor must link across a stale prev_hash")
+	}
+	// The same stale prev_hash without a receipt does not link.
+	if PrevHashLinks(redPrev, unlinked, nil) {
+		t.Error("a redacted predecessor with no receipt must not link")
+	}
+}
+
 // TestHashChainDetectsTamper — flipping a byte in a non-tail row
 // causes Verify to report ChainBroken at that row.
 //

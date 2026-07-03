@@ -251,7 +251,11 @@ func crossTenantGaps(rows []audit.Row) []AuditGapWindow {
 		for j < len(rows) && rows[j].TenantID == rows[i].TenantID {
 			j++
 		}
-		out = append(out, gapWindows(rows[i:j])...)
+		// The cross-tenant page does not load per-tenant redaction
+		// receipts (verdicts above use a nil receipt map for the same
+		// reason), so a lawfully-redacted predecessor across a gap is
+		// treated as non-linking; the per-row verdict flags it.
+		out = append(out, gapWindows(rows[i:j], nil)...)
 		i = j
 	}
 	return out

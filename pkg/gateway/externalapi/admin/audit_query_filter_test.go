@@ -333,11 +333,19 @@ func TestListAuditEventsChainIntegrityReport_spec_25_9_3653(t *testing.T) {
 	}
 }
 
-func TestListAuditEventsGapWindow_spec_25_9_3679(t *testing.T) {
+// TestListAuditEventsGapWindow_spec_25_9_3669 pins the §25.9 line 3669
+// benign nextval-rollback gap window: a sequence-number jump whose
+// prev_hash links across the gap is reported with reason
+// "nextval_rollback", the value the reconciled §25.9 and the
+// audit-chain-gap runbook direct operators to look for. Against the
+// pre-fix gapWindows (which hard-coded reason "sequence_gap" for every
+// window) this assertion fails.
+func TestListAuditEventsGapWindow_spec_25_9_3669(t *testing.T) {
 	ts1 := auditTestClock.Add(-2 * time.Hour)
 	ts2 := auditTestClock.Add(-time.Hour)
 	row1 := craftRow(1, "platform", "admin.tenant.created", `{}`, ts1, audit.GenesisPrevHash)
-	// A sequence jump (1 → 5) is the §25.9 temporal-gap signal.
+	// A sequence jump (1 → 5) whose prev_hash still links across the gap
+	// is the benign §25.9 nextval-rollback signal.
 	row5 := craftRow(5, "platform", "admin.tenant.created", `{}`, ts2, audit.LinkHash(row1))
 	backend := &craftedAuditLog{rows: []audit.Row{row1, row5}}
 	router := newCraftedRouter(backend, &recordingSink{})
@@ -346,8 +354,38 @@ func TestListAuditEventsGapWindow_spec_25_9_3679(t *testing.T) {
 	if env.AuditMetadata == nil || len(env.AuditMetadata.SuspectedGaps) != 1 {
 		t.Fatalf("expected one suspected gap window, got %+v", env.AuditMetadata)
 	}
+	if got := env.AuditMetadata.SuspectedGaps[0].Reason; got != "nextval_rollback" {
+		t.Errorf("gap window reason = %q, want %q", got, "nextval_rollback")
+	}
 	if env.ChainIntegrityReport.GapSuspected != 1 {
 		t.Errorf("report gap_suspected = %d, want 1", env.ChainIntegrityReport.GapSuspected)
+	}
+}
+
+// TestListAuditEventsGapWindowNonLinking_spec_25_9_3668 pins that a
+// sequence-number gap whose prev_hash does NOT link across it is not
+// reported as the benign "nextval_rollback" reason. §25.9 line 3668 makes
+// a non-linking-prev_hash gap the broken-chain case, so the window reason
+// must not claim the benign rollback attribution the runbook treats as
+// no-action. Against the pre-fix gapWindows this window carried the same
+// "sequence_gap" reason as the benign case, erasing the distinction.
+func TestListAuditEventsGapWindowNonLinking_spec_25_9_3668(t *testing.T) {
+	ts1 := auditTestClock.Add(-2 * time.Hour)
+	ts2 := auditTestClock.Add(-time.Hour)
+	row1 := craftRow(1, "platform", "admin.tenant.created", `{}`, ts1, audit.GenesisPrevHash)
+	// A sequence jump whose prev_hash does not link (a garbage prev_hash)
+	// is the tamper-or-removal case, not a benign rollback.
+	row5 := craftRow(5, "platform", "admin.tenant.created", `{}`, ts2,
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	backend := &craftedAuditLog{rows: []audit.Row{row1, row5}}
+	router := newCraftedRouter(backend, &recordingSink{})
+
+	_, env := listAudit(t, router, "since="+ts1.Add(-time.Hour).Format(time.RFC3339))
+	if env.AuditMetadata == nil || len(env.AuditMetadata.SuspectedGaps) != 1 {
+		t.Fatalf("expected one suspected gap window, got %+v", env.AuditMetadata)
+	}
+	if got := env.AuditMetadata.SuspectedGaps[0].Reason; got == "nextval_rollback" {
+		t.Errorf("gap window reason = %q, want a non-benign reason for a non-linking gap", got)
 	}
 }
 
