@@ -1336,6 +1336,33 @@ postgres:
   # value into the lenny-datastore-conn Secret and the gateway reads
   # LENNY_PG_BILLING_AUDIT_DSN from it. F-12.3.5.
   billingAuditDSN: ""
+  # §15.1 / §12.3 billingAuditDdlDsn: optional login DSN for the
+  # CREATE-privileged DDL role (migration 0173) on the billing/audit
+  # instance. The gateway uses this connection to provision the
+  # per-tenant billing_seq_/audit_seq_ Postgres sequences at tenant
+  # creation (POST /v1/admin/tenants and the bootstrap seed path); the
+  # role holds CREATE ON SCHEMA public and SELECT on billing_events /
+  # audit_log but no ledger DML, so lenny_app stays least-privilege and
+  # never gains CREATE. Supply the DDL role's own login credentials
+  # (lenny_app and lenny_erasure are NOLOGIN group roles). Empty (the
+  # default) leaves the DDL pool unconfigured, which is valid only when
+  # no per-tenant sequences are provisioned. When set, the chart renders
+  # the value into the lenny-datastore-conn Secret and the gateway reads
+  # LENNY_PG_BILLING_AUDIT_DDL_DSN from it. F-11.2.10.
+  billingAuditDdlDsn: ""
+  # §15.1 / §12.3 primaryDdlDsn: optional login DSN for the
+  # CREATE-privileged DDL role on the primary instance, used to provision
+  # the per-tenant audit_seq_ sequence the §13.3 issued-token
+  # write-before-issue path seals on the primary. Set this whenever
+  # billingAuditDSN is set (the separate-instance topology), so the
+  # gateway can create the audit sequence on the primary as well as on
+  # the separate billing/audit instance. When billingAuditDSN is unset,
+  # the primary and billing/audit instance are one and the gateway falls
+  # back to LENNY_PG_BILLING_AUDIT_DDL_DSN, so this may be left empty.
+  # When set, the chart renders the value into the lenny-datastore-conn
+  # Secret and the gateway reads LENNY_PG_PRIMARY_DDL_DSN from it.
+  # F-11.2.10.
+  primaryDdlDsn: ""
   # §12.3 line 146 readDsn: optional read-replica reader endpoint
   # (provider reader endpoint). When set, the gateway routes the
   # read-heavy query classes the spec names — session status, task tree,

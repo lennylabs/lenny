@@ -44,7 +44,7 @@ GET /v1/admin/audit-events?tenantId=<tenant>&from=<rfc3339>&to=<rfc3339>&limit=5
 Read the `chainIntegrityReport.summary` counts and the per-row `chainIntegrity` values to determine the verdict:
 
 - **`rechained_post_outage`** — the range was rewritten by the §25.9 reconciliation pass after a Postgres outage. This is an expected, authorized discontinuity. Confirm an outage covered the range by cross-referencing `ops_postgres_outage_log`.
-- **`gap_suspected`** — a `sequence_number` gap was detected. Cross-reference `ops_postgres_outage_log` for an outage boundary that explains the gap before treating it as tampering.
+- **`gap_suspected`** — a `sequence_number` gap was detected. This is an advisory, non-alarming signal with two benign sources, distinguished by the `ops_postgres_outage_log` window and the `prev_hash` linkage across the gap. The first source is a period during which Postgres was unavailable: the gap bounds match an `ops_postgres_outage_log` window, and the deferred events are reconciled and re-stamped `rechained_post_outage`. The second source is a benign `nextval` rollback: an audit-write transaction consumed a per-tenant sequence value and then rolled back without committing a row while Postgres was available, which leaves no `ops_postgres_outage_log` window and an intact `prev_hash` chain across the gap. The audit query API reports the rollback case with `reason: "nextval_rollback"` rather than an outage window. It requires no reconciliation and no operator action, and it is never re-stamped `rechained_post_outage`. Only a gap accompanied by a non-linking `prev_hash` is tampering; treat that as `broken`.
 - **`redacted_gdpr`** — a row was rewritten in place by the §12.8 `DeleteByUser` PII redaction step under GDPR Article 17. This is authorized only when the corresponding signed `RedactionReceipt` is present and its signature verifies; the verifier raises `broken` otherwise.
 - **`broken`** — a mismatch not attributable to a known outage or a receipted redaction. Treat this as a potential tamper event and escalate.
 
@@ -76,14 +76,17 @@ The remediation depends on the verdict identified in diagnosis.
 
 2. **`gap_suspected` matching an outage boundary.** Allow the §25.9 reconciliation pass to complete; it inserts the buffered events and re-stamps the range as `rechained_post_outage`. The reconciliation is idempotent and tolerates partial completion, so a re-run is safe. If `audit_log_deferred_writes` holds rows that have not been reconciled, escalate to audit-pipeline-degraded and do not delete deferred rows manually.
 
-3. **`redacted_gdpr`.** Verify the signed `RedactionReceipt` covering the discontinuity. When the receipt is present and its signature verifies, the discontinuity is authorized and no action is required. When the receipt is absent or its signature fails, treat the row as `broken` and escalate; a missing receipt for a redacted row is the audit-redaction-receipt-missing condition.
+3. **`gap_suspected` with no outage window (benign `nextval` rollback).** No action is required. A gap that no `ops_postgres_outage_log` window covers and whose `prev_hash` chain links across it is a benign `nextval` rollback: a transaction consumed a per-tenant sequence value and rolled back without committing a row, leaving an interior gap that every committed row still links across by `prev_hash`. The audit query API reports it with `reason: "nextval_rollback"`. Do not run the reconciliation pass and do not escalate. This case has no deferred rows to reconcile, so it is never re-stamped `rechained_post_outage`. It is distinct from an outage gap, which carries an `ops_postgres_outage_log` window and deferred events awaiting reconciliation.
 
-4. **`broken` (genuine tamper signal).** Do not attempt to rewrite the chain. Preserve the current state for forensic review, capture the divergence between Postgres and the SIEM copy, and escalate immediately. Chain repair on a confirmed tamper event is a compliance action that requires the on-call security engineer and the data-protection owner. An operator must not re-seal a broken chain, because re-sealing destroys the tamper evidence.
+4. **`redacted_gdpr`.** Verify the signed `RedactionReceipt` covering the discontinuity. When the receipt is present and its signature verifies, the discontinuity is authorized and no action is required. When the receipt is absent or its signature fails, treat the row as `broken` and escalate; a missing receipt for a redacted row is the audit-redaction-receipt-missing condition.
+
+5. **`broken` (genuine tamper signal).** Do not attempt to rewrite the chain. Preserve the current state for forensic review, capture the divergence between Postgres and the SIEM copy, and escalate immediately. Chain repair on a confirmed tamper event is a compliance action that requires the on-call security engineer and the data-protection owner. An operator must not re-seal a broken chain, because re-sealing destroys the tamper evidence.
 
 ## Verification
 
 - A re-query of `GET /v1/admin/audit-events` for the affected range returns a `chainIntegrityReport` with no `broken` rows.
-- A `gap_suspected` or outage-induced range reports `rechained_post_outage` after reconciliation completes.
+- An outage-induced `gap_suspected` range reports `rechained_post_outage` after reconciliation completes.
+- A benign `nextval` rollback gap remains `gap_suspected` with `reason: "nextval_rollback"`, no `ops_postgres_outage_log` window, and an intact `prev_hash` chain across the gap. It is not re-stamped `rechained_post_outage` and requires no further action.
 - `lenny_audit_chain_verification_broken_total` stops advancing.
 - The affected component's health-API row reports `healthy` again.
 

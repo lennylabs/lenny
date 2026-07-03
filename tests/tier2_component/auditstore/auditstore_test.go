@@ -14,11 +14,16 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -30,12 +35,30 @@ func startPG(t *testing.T) *containers.Postgres {
 	})
 }
 
+// provisionAuditSequence creates the tenant's per-tenant audit Postgres
+// sequence (audit_seq_<40hex>, the §10.2 safe-derived name) so the
+// store's nextval-based sealAndInsert resolves a real sequence object.
+// Production provisions this sequence at tenant-creation time through the
+// gateway runtime-DDL path; the store tests provision it directly on the
+// container pool because they only seed the tenants row.
+//
+// spec: §11.7, §10.2.
+func provisionAuditSequence(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx,
+		"CREATE SEQUENCE IF NOT EXISTS "+seqname.AuditSequenceName(id)+
+			" START WITH 1 INCREMENT BY 1 NO CYCLE"); err != nil {
+		t.Fatalf("provision audit sequence for %q: %v", id, err)
+	}
+}
+
 func seedTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) {
 	t.Helper()
 	if _, err := pg.Pool.Exec(ctx,
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, id); err != nil {
 		t.Fatalf("seed tenant %q: %v", id, err)
 	}
+	provisionAuditSequence(t, ctx, pg, id)
 }
 
 // spec: 11.7
@@ -382,4 +405,177 @@ func equalSeqs(a, b []uint64) bool {
 		}
 	}
 	return true
+}
+
+// deleteAuditRows empties tenant's audit_log through a transaction that
+// sets lenny.erasure_mode (the §11.7 lenny_audit_immutability trigger
+// permits a DELETE only under erasure mode) and app.current_tenant (the
+// FORCE ROW LEVEL SECURITY policy). It mirrors the store's DeleteByTenant
+// SQL so the regression test can simulate a §16.4 retention sweep or a
+// §12.8 teardown without wiring the lenny_erasure role. The per-tenant
+// audit_seq_<40hex> sequence is deliberately left intact, as it is in
+// production: the sequence object is not dropped by a retention sweep.
+//
+// spec: §11.7 (immutability), §16.4 (retention sweep), §12.8 (teardown).
+func deleteAuditRows(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string) {
+	t.Helper()
+	err := pgtenant.InTx(ctx, pg.Pool, tenant, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "DELETE FROM audit_log WHERE tenant_id = $1", tenant)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("delete audit rows for %q: %v", tenant, err)
+	}
+}
+
+// spec: 11.7 (authoritative total order), 10.2 (safe-derived name)
+// diagnosis: the §11.7 audit sequence_number must be drawn by nextval on
+// a dedicated per-tenant Postgres sequence whose counter is independent
+// of the table rows, so it retains monotonicity across the §16.4
+// retention sweep and §12.8 teardown deletes. This is the S6 fix: both
+// the empty-table genesis branch and the non-empty tail branch of
+// sealAndInsert must draw nextval. A failure here means the store
+// reverted to a dense tail ordinal (row.Seq = tail.Seq + 1 with a
+// literal 1 at genesis), which restarts at 1 after a full sweep and
+// reuses sequence numbers, placing a reactivated tenant's events at or
+// below the SIEM delivery high-water mark. This test would fail against
+// the pre-S6 code AND against a partial fix that switched only the tail
+// branch (the genesis literal 1 would collide with the fresh sequence's
+// first nextval). F-11.2.10.
+func TestAuditSequenceMonotonicAcrossSweep(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	ctx := context.Background()
+	seedTenant(t, ctx, pg, "swept")
+
+	// Advance the chain past 1 with several appends.
+	var last uint64
+	for i, et := range []string{"session.created", "credential.leased", "session.completed"} {
+		row, err := store.Append(ctx, "swept", et, json.RawMessage(`{"i":`+string(rune('0'+i))+`}`), time.Now())
+		if err != nil {
+			t.Fatalf("Append %s: %v", et, err)
+		}
+		last = row.Seq
+	}
+	if last != 3 {
+		t.Fatalf("pre-sweep high-water sequence: got %d, want 3", last)
+	}
+
+	// Empty the chain, as the §16.4 retention sweep or §12.8 teardown
+	// would. The sequence object survives the delete. With the pre-S6
+	// dense-ordinal code the next Append reads an empty tail and restarts
+	// at the genesis literal 1.
+	deleteAuditRows(t, ctx, pg, "swept")
+	if rows, err := store.Rows(ctx, "swept"); err != nil {
+		t.Fatalf("Rows after sweep: %v", err)
+	} else if len(rows) != 0 {
+		t.Fatalf("chain not emptied: %d rows remain", len(rows))
+	}
+
+	// The post-sweep first write is the genesis row (it links to the
+	// genesis sentinel because the table is empty) yet its sequence_number
+	// continues above the pre-sweep high-water mark rather than restarting
+	// at 1. This is the property the dense ordinal cannot provide.
+	post, err := store.Append(ctx, "swept", "session.created", json.RawMessage(`{"post":1}`), time.Now())
+	if err != nil {
+		t.Fatalf("Append after sweep: %v", err)
+	}
+	if post.PrevHash != audit.GenesisPrevHash {
+		t.Errorf("post-sweep first row prev_hash = %q, want the genesis sentinel", post.PrevHash)
+	}
+	if post.Seq <= last {
+		t.Errorf("audit sequence regressed across a sweep: got %d, want > %d "+
+			"(a dense tail ordinal restarts at the genesis literal 1)", post.Seq, last)
+	}
+	if post.Seq != last+1 {
+		t.Errorf("audit sequence did not continue monotonically across the sweep: got %d, want %d", post.Seq, last+1)
+	}
+
+	// The post-sweep chain of one row still verifies: a non-1 genesis that
+	// links to the sentinel is a benign gap, not a broken chain.
+	res, err := store.Verify(ctx, "swept")
+	if err != nil {
+		t.Fatalf("Verify after sweep: %v", err)
+	}
+	if res.Integrity != audit.ChainVerified {
+		t.Errorf("Verify of a post-sweep non-1 genesis chain = %q (%s), want verified", res.Integrity, res.Detail)
+	}
+}
+
+// spec: 11.7 (concurrency control), 10.2
+// diagnosis: §11.7 draws the audit sequence_number from nextval, which
+// serializes concurrent writers atomically. Under the retained per-tenant
+// prev_hash advisory lock the appends are already serialized, so every
+// concurrent Append must receive a distinct, contiguous sequence value
+// with no duplicate (tenant_id, sequence_number) primary-key collision
+// and no lost write, and the resulting chain must verify. A failure means
+// the nextval assignment or the prev_hash chaining is not atomic under
+// concurrency. This is the tier-7a-class atomicity property at the store
+// tier, exercised here because it needs a real Postgres sequence. This
+// test is race-clean. F-11.2.10.
+func TestAuditSequenceConcurrentAppendNoCollision(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	ctx := context.Background()
+	seedTenant(t, ctx, pg, "concurrent")
+
+	const writers = 16
+	seqs := make(chan uint64, writers)
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			defer wg.Done()
+			row, err := store.Append(ctx, "concurrent", "session.created", json.RawMessage(`{}`), time.Now())
+			if err != nil {
+				errs <- err
+				return
+			}
+			seqs <- row.Seq
+		}()
+	}
+	wg.Wait()
+	close(seqs)
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("concurrent Append: %v", err)
+	}
+
+	seen := make(map[uint64]bool, writers)
+	for s := range seqs {
+		if seen[s] {
+			t.Errorf("duplicate sequence_number %d assigned under concurrency", s)
+		}
+		seen[s] = true
+	}
+	if len(seen) != writers {
+		t.Fatalf("concurrent Append lost writes: got %d distinct sequences, want %d", len(seen), writers)
+	}
+
+	// The retained prev_hash advisory lock keeps the chain contiguous and
+	// linked; the whole chain verifies.
+	rows, err := store.Rows(ctx, "concurrent")
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != writers {
+		t.Fatalf("Rows: got %d, want %d", len(rows), writers)
+	}
+	for i, r := range rows {
+		if r.Seq != uint64(i+1) {
+			t.Errorf("row %d: sequence %d, want %d (contiguous nextval band)", i, r.Seq, i+1)
+		}
+	}
+	if res, err := store.Verify(ctx, "concurrent"); err != nil {
+		t.Fatalf("Verify: %v", err)
+	} else if res.Integrity != audit.ChainVerified {
+		t.Errorf("Verify of the concurrent chain = %q (%s), want verified", res.Integrity, res.Detail)
+	}
 }

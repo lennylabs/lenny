@@ -512,6 +512,14 @@ var prodMigrationSchema = []struct {
 		"elicitation_content_integrity_changed_at",
 		"elicitation_content_integrity_changed_by",
 	}},
+	// 0173 creates the §11.7-item-7 lenny_ddl CREATE-privileged role, the
+	// lenny_app USAGE default on the DDL role's runtime-created per-tenant
+	// billing_seq_/audit_seq_ sequences, and the fixed platform-chain audit
+	// sequence; it adds no column and creates no table (the per-tenant
+	// sequences are provisioned at tenant-create time, §15.1). The role,
+	// grants, and the platform sequence are asserted directly in
+	// migrations/0173_billing_audit_ddl_role_test.go. spec: §11.7, §15.1,
+	// §10.2.
 }
 
 // spec: 12.2, 18.5

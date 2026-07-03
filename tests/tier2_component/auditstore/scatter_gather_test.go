@@ -31,6 +31,7 @@ func startMultiTenantAuditStore(t *testing.T) *auditstore.Store {
 			`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, id); err != nil {
 			t.Fatalf("seed tenant %s: %v", id, err)
 		}
+		provisionAuditSequence(t, context.Background(), pg, id)
 	}
 	return auditstore.New(pg.Router(t))
 }

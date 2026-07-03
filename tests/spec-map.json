@@ -1378,7 +1378,8 @@
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier8_chaos/audit_chain_test.go",
-        "tests/tier2_component/opsaudit/opsaudit_durable_test.go"
+        "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
+        "tests/tier9_security/write_before_issue_failclosed_test.go"
       ],
       "packages": [
         "pkg/audit",
@@ -1741,7 +1742,10 @@
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestWithSubjectLockSerializesSameSubject",
-        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestWithSubjectLockAllowsDistinctSubjects"
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestWithSubjectLockAllowsDistinctSubjects",
+        "tests/tier9_security/write_before_issue_failclosed_test.go::TestRecordWithAuditFailsClosedWithoutAuditSequence_spec_13_3",
+        "tests/tier9_security/write_before_issue_failclosed_test.go::TestRotationWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3",
+        "tests/tier9_security/write_before_issue_failclosed_test.go::TestRevokeWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3"
       ],
       "packages": [
         "pkg/credential",
@@ -1958,7 +1962,8 @@
         "tests/tier9_security/elicitation_integrity_gate_test.go",
         "tests/tier9_security/lease_extension_clear_test.go",
         "tests/tier6_e2e_cloud/session_lifecycle_test.go",
-        "tests/tier3_contract/admin_conflict_codes/admin_conflict_codes_test.go"
+        "tests/tier3_contract/admin_conflict_codes/admin_conflict_codes_test.go",
+        "tests/tier9_security/write_before_issue_failclosed_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",

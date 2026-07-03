@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -39,6 +40,18 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 	if _, err := pg.Pool.Exec(ctx,
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, $2)`, id, []byte{0x01}); err != nil {
 		t.Fatalf("seed tenant %q: %v", id, err)
+	}
+	// §11.7 / §10.2: RecordWithRotationAudit seals its token.exchanged
+	// row through the nextval-based auditstore path, which draws the
+	// sequence_number from the tenant's dedicated audit_seq_<40hex>
+	// Postgres sequence. Production provisions that sequence at
+	// tenant-creation time through the gateway runtime-DDL path; this
+	// test only seeds the tenants row, so it provisions the sequence
+	// directly on the container pool the way the auditstore tests do.
+	if _, err := pg.Pool.Exec(ctx,
+		"CREATE SEQUENCE IF NOT EXISTS "+seqname.AuditSequenceName(id)+
+			" START WITH 1 INCREMENT BY 1 NO CYCLE"); err != nil {
+		t.Fatalf("provision audit sequence for %q: %v", id, err)
 	}
 	return id
 }

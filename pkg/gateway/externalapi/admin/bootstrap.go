@@ -513,6 +513,18 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 					out.add(i, p.ID, actionError, seedStoreErrorCode, err.Error(), nil)
 					continue
 				}
+				// spec: §15.1 — a seed-created tenant is provisioned the same
+				// per-tenant billing_seq_/audit_seq_ sequences as the live
+				// POST /v1/admin/tenants path, so a bootstrap-seeded tenant
+				// (including the Day-1 default tenant) has both sequences
+				// before its first billing or audit event. A provisioning
+				// failure is reported as a seed error for this row rather
+				// than silently leaving the tenant unable to bill or audit.
+				// F-11.2.10.
+				if err := r.provisionTenantSequences(req.Context(), p.ID); err != nil {
+					out.add(i, p.ID, actionError, seedStoreErrorCode, err.Error(), nil)
+					continue
+				}
 			}
 			out.add(i, p.ID, actionCreated, "", "", nil)
 			continue

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
@@ -237,5 +238,22 @@ func seedTenant(t *testing.T, pg *containers.Postgres, id string) {
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')
 		 ON CONFLICT (id) DO NOTHING`, id); err != nil {
 		t.Fatalf("seed tenant %q: %v", id, err)
+	}
+}
+
+// provisionAuditSequence creates a tenant's per-tenant audit Postgres
+// sequence (audit_seq_<40hex>, the §10.2 safe-derived name) so the §11.7
+// audit store's nextval-based append path resolves a real sequence
+// object. Production provisions this sequence at tenant-creation time
+// through the runtime-DDL path; the integration tests provision it
+// directly on the container pool for the tenants they seed by hand.
+//
+// spec: §11.7, §10.2.
+func provisionAuditSequence(t *testing.T, pg *containers.Postgres, id string) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(context.Background(),
+		"CREATE SEQUENCE IF NOT EXISTS "+seqname.AuditSequenceName(id)+
+			" START WITH 1 INCREMENT BY 1 NO CYCLE"); err != nil {
+		t.Fatalf("provision audit sequence for %q: %v", id, err)
 	}
 }

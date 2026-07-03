@@ -78,6 +78,7 @@ func TestSIEMOutboxForwarder(t *testing.T) {
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, tenant); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
+	provisionAuditSequence(t, pg, tenant)
 
 	store := auditstore.New(pg.Router(t))
 	forwarder := siem.NewForwarder(

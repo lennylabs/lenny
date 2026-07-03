@@ -66,6 +66,8 @@ type gatewayFlags struct {
 	postgresDSN                             *string
 	sqlitePath                              *string
 	billingAuditDSN                         *string
+	billingAuditDDLDSN                      *string
+	primaryDDLDSN                           *string
 	readDSN                                 *string
 	scatterMaxConcurrency                   *int
 	scatterPerShardTimeoutSeconds           *int
@@ -413,6 +415,29 @@ func (f *gatewayFlags) registerCoreFlags() {
 	// be applied on the separate instance. F-12.3.5.
 	f.billingAuditDSN = flag.String("postgres-billing-audit-dsn", os.Getenv("LENNY_PG_BILLING_AUDIT_DSN"),
 		"§12.3 line 103 separate Postgres instance for billing/audit writes. When set (requires --postgres-dsn), billing-event and audit-log inserts route to this instance while all other writes stay on the primary. Empty keeps both paths on the primary. Override via LENNY_PG_BILLING_AUDIT_DSN.")
+	// spec: §12.3 / §15.1 — CREATE-privileged DDL login DSN for the
+	// billing/audit instance. The per-tenant billing (billing_seq_<40hex>)
+	// and audit (audit_seq_<40hex>) sequences are provisioned at tenant
+	// creation through this connection, which logs in as a dedicated
+	// CREATE-privileged role (migration 0173) distinct from lenny_app, which
+	// holds no CREATE ON SCHEMA. Points at the same instance the billing/audit
+	// pool addresses (the separate LENNY_PG_BILLING_AUDIT_DSN instance when
+	// configured, otherwise the primary). Without it a Helm-deployed gateway
+	// cannot issue the CREATE SEQUENCE and every tenant's first billing or
+	// audit Append fails on nextval of a nonexistent relation. F-11.2.10.
+	f.billingAuditDDLDSN = flag.String("postgres-billing-audit-ddl-dsn", os.Getenv("LENNY_PG_BILLING_AUDIT_DDL_DSN"),
+		"§12.3 / §15.1 CREATE-privileged DDL login DSN for the billing/audit instance, used to provision the per-tenant billing_seq_/audit_seq_ sequences at tenant creation. Logs in as the dedicated DDL role (migration 0173), not lenny_app. Override via LENNY_PG_BILLING_AUDIT_DDL_DSN.")
+	// spec: §12.3 / §15.1 — CREATE-privileged DDL login DSN for the primary
+	// instance. In the separate-instance topology (LENNY_PG_BILLING_AUDIT_DSN
+	// set) the §13.3 issued-token write-before-issue path seals its real-tenant
+	// audit_seq_<40hex> row on the primary rather than the billing/audit
+	// instance, so the per-tenant audit sequence must be created there too
+	// through a CREATE-privileged connection to the primary. When
+	// LENNY_PG_BILLING_AUDIT_DSN is unset the primary and the billing/audit
+	// instance are one and this falls back to LENNY_PG_BILLING_AUDIT_DDL_DSN.
+	// F-11.2.10.
+	f.primaryDDLDSN = flag.String("postgres-primary-ddl-dsn", os.Getenv("LENNY_PG_PRIMARY_DDL_DSN"),
+		"§12.3 / §15.1 CREATE-privileged DDL login DSN for the primary instance, used to provision the per-tenant audit_seq_ sequence the §13.3 issued-token write-before-issue path seals on the primary. Falls back to LENNY_PG_BILLING_AUDIT_DDL_DSN when LENNY_PG_BILLING_AUDIT_DSN is unset (single-instance topology). Override via LENNY_PG_PRIMARY_DDL_DSN.")
 	// spec: §12.3 line 146 — read-replica reader endpoint. When set, the
 	// read-heavy query classes the spec names (session status, task tree,
 	// audit reads, usage reports) route to this replica while every write

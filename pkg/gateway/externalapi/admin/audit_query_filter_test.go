@@ -333,11 +333,19 @@ func TestListAuditEventsChainIntegrityReport_spec_25_9_3653(t *testing.T) {
 	}
 }
 
-func TestListAuditEventsGapWindow_spec_25_9_3679(t *testing.T) {
+// TestListAuditEventsGapWindow_spec_25_9_3669 pins the §25.9 line 3669
+// benign nextval-rollback gap window: a sequence-number jump whose
+// prev_hash links across the gap is reported with reason
+// "nextval_rollback", the value the reconciled §25.9 and the
+// audit-chain-gap runbook direct operators to look for. Against the
+// pre-fix gapWindows (which hard-coded reason "sequence_gap" for every
+// window) this assertion fails.
+func TestListAuditEventsGapWindow_spec_25_9_3669(t *testing.T) {
 	ts1 := auditTestClock.Add(-2 * time.Hour)
 	ts2 := auditTestClock.Add(-time.Hour)
 	row1 := craftRow(1, "platform", "admin.tenant.created", `{}`, ts1, audit.GenesisPrevHash)
-	// A sequence jump (1 → 5) is the §25.9 temporal-gap signal.
+	// A sequence jump (1 → 5) whose prev_hash still links across the gap
+	// is the benign §25.9 nextval-rollback signal.
 	row5 := craftRow(5, "platform", "admin.tenant.created", `{}`, ts2, audit.LinkHash(row1))
 	backend := &craftedAuditLog{rows: []audit.Row{row1, row5}}
 	router := newCraftedRouter(backend, &recordingSink{})
@@ -346,8 +354,50 @@ func TestListAuditEventsGapWindow_spec_25_9_3679(t *testing.T) {
 	if env.AuditMetadata == nil || len(env.AuditMetadata.SuspectedGaps) != 1 {
 		t.Fatalf("expected one suspected gap window, got %+v", env.AuditMetadata)
 	}
+	if got := env.AuditMetadata.SuspectedGaps[0].Reason; got != "nextval_rollback" {
+		t.Errorf("gap window reason = %q, want %q", got, "nextval_rollback")
+	}
 	if env.ChainIntegrityReport.GapSuspected != 1 {
 		t.Errorf("report gap_suspected = %d, want 1", env.ChainIntegrityReport.GapSuspected)
+	}
+}
+
+// TestListAuditEventsGapWindowNonLinking_spec_25_9_3668 pins that a
+// sequence-number gap whose prev_hash does NOT link across it is not
+// listed as a suspected-gap window at all, and is never labeled the
+// outage reason "postgres_unreachable". §25.9 line 3669 reserves
+// "postgres_unreachable" for a gap an ops_postgres_outage_log window
+// covers; this handler does not operate that subsystem and cannot compute
+// an outage window, so it never emits that reason. §25.9 line 3668 makes
+// a non-linking-prev_hash gap the tamper case rather than an outage, so it
+// is excluded from the benign nextval-rollback window list entirely.
+// Against the pre-fix gapWindows this non-linking gap was emitted as an
+// outage window with reason "postgres_unreachable", mislabeling a tamper
+// as a Postgres outage — the §25.9 line 3668 condition the spec says is
+// tampering, not an outage — so this assertion fails against the pre-fix
+// code.
+//
+// spec: §25.9 line 3668 (a non-linking prev_hash gap is tampering, not an
+// outage), §25.9 line 3669 (postgres_unreachable is outage-log-covered).
+// F-11.2.10.
+func TestListAuditEventsGapWindowNonLinking_spec_25_9_3668(t *testing.T) {
+	ts1 := auditTestClock.Add(-2 * time.Hour)
+	ts2 := auditTestClock.Add(-time.Hour)
+	row1 := craftRow(1, "platform", "admin.tenant.created", `{}`, ts1, audit.GenesisPrevHash)
+	// A sequence jump whose prev_hash does not link (a garbage prev_hash)
+	// is the tamper-or-removal case, not a benign rollback.
+	row5 := craftRow(5, "platform", "admin.tenant.created", `{}`, ts2,
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	backend := &craftedAuditLog{rows: []audit.Row{row1, row5}}
+	router := newCraftedRouter(backend, &recordingSink{})
+
+	_, env := listAudit(t, router, "since="+ts1.Add(-time.Hour).Format(time.RFC3339))
+	// The non-linking gap is not an outage window: it must not appear in
+	// the suspected-gap list at all, and never under "postgres_unreachable".
+	if env.AuditMetadata != nil {
+		for _, g := range env.AuditMetadata.SuspectedGaps {
+			t.Errorf("non-linking gap listed as suspected window %+v; want none (postgres_unreachable is reserved for an ops_postgres_outage_log window this handler does not compute)", g)
+		}
 	}
 }
 

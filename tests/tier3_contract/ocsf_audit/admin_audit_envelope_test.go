@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -203,6 +204,140 @@ func TestAdminAuditEventsListIsOCSFNotCanonicalTuple(t *testing.T) {
 	}
 	if _, regressed := raw["auditEvents"]; regressed {
 		t.Errorf("response carries the legacy `auditEvents` field — this is the §4.4 line 232 OCSF-translation gap")
+	}
+}
+
+// craftedGapAuditLog is a minimal AuditLog whose Rows returns a fixed
+// set of rows with a sequence-number gap, so the audit-query handler
+// computes an auditMetadata.suspectedGaps window on the wire without a
+// live datastore. It is read-only for this contract; Append is unused.
+type craftedGapAuditLog struct{ rows []audit.Row }
+
+func (c *craftedGapAuditLog) Append(context.Context, string, string, json.RawMessage, time.Time) (audit.Row, error) {
+	return audit.Row{}, nil
+}
+
+func (c *craftedGapAuditLog) Rows(context.Context, string) ([]audit.Row, error) {
+	return c.rows, nil
+}
+
+func (c *craftedGapAuditLog) Verify(context.Context, string) (audit.VerifyResult, error) {
+	return audit.VerifyResult{Integrity: audit.ChainGapSuspected}, nil
+}
+
+// craftGapRow builds one sealed audit row with the given seq, timestamp,
+// and prev_hash, mirroring the production seal (§11.7 item 3 hash input).
+func craftGapRow(seq uint64, ts time.Time, prevHash string) audit.Row {
+	r := audit.Row{
+		ID:                 "platform:" + strconv.FormatUint(seq, 10),
+		Seq:                seq,
+		TenantID:           "platform",
+		EventType:          "admin.tenant.created",
+		EventSchemaVersion: audit.DefaultEventSchemaVersion,
+		Payload:            json.RawMessage(`{}`),
+		Timestamp:          ts.UTC(),
+		PrevHash:           prevHash,
+	}
+	r.Hash = audit.ComputeHash(r)
+	return r
+}
+
+// gapRouter builds an admin router backed by a crafted AuditLog whose
+// rows carry a sequence-number gap.
+func gapRouter(t *testing.T, rows []audit.Row) *admin.Router {
+	t.Helper()
+	store := tenantstore.NewMemory()
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	return admin.NewRouter(store, admin.Options{Clock: clock}).
+		WithAuditLog(&craftedGapAuditLog{rows: rows})
+}
+
+// TestAdminAuditEventsGapWindowReasonNextvalRollback pins the §25.9 line
+// 3669 wire contract: a gap_suspected window whose prev_hash links across
+// the gap is reported in auditMetadata.suspectedGaps with
+// reason "nextval_rollback", the value the reconciled §25.9 and the
+// audit-chain-gap runbook direct operators to look for in the API
+// response. Against the pre-fix handler (which emitted "sequence_gap" for
+// every window) this contract assertion fails.
+//
+// spec: §25.9 line 3668-3669 (nextval-rollback gap reason), §11.7
+// (prev_hash tamper authority).
+// diagnosis: a failure means the audit-events API does not emit the
+// nextval_rollback gap reason the spec and runbook promise, so an
+// operator following the runbook to distinguish a benign rollback gap
+// from an outage gap never finds the reason value and cannot resolve the
+// gap's source from the API response alone.
+func TestAdminAuditEventsGapWindowReasonNextvalRollback(t *testing.T) {
+	ts1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	ts2 := ts1.Add(time.Hour)
+	row1 := craftGapRow(1, ts1, audit.GenesisPrevHash)
+	// A sequence jump (1 → 5) whose prev_hash still links across the gap
+	// is the benign nextval-rollback signal.
+	row5 := craftGapRow(5, ts2, audit.LinkHash(row1))
+	router := gapRouter(t, []audit.Row{row1, row5})
+
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
+		http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil,
+	)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var env admin.AuditEventEnvelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.AuditMetadata == nil || len(env.AuditMetadata.SuspectedGaps) != 1 {
+		t.Fatalf("expected one suspected gap window, got %+v", env.AuditMetadata)
+	}
+	if got := env.AuditMetadata.SuspectedGaps[0].Reason; got != "nextval_rollback" {
+		t.Errorf("suspectedGaps[0].reason = %q, want %q (the §25.9 line 3669 wire value)", got, "nextval_rollback")
+	}
+}
+
+// TestAdminAuditEventsGapWindowNonLinkingNotOutage pins the §25.9 line
+// 3668-3669 wire contract for a non-linking sequence gap: a gap whose
+// prev_hash does not link across it is the tamper case, not a Postgres
+// outage, so the handler must not emit an outage window for it. §25.9 line
+// 3669 reserves the reason "postgres_unreachable" for a window computed
+// from ops_postgres_outage_log, a subsystem the gateway does not operate,
+// so the handler never emits that reason and lists no benign window for a
+// non-linking gap. The tamper is carried by the per-row chainIntegrity
+// verdict instead. Against the pre-fix handler (which stamped a
+// non-linking gap "postgres_unreachable", mislabeling a tamper as an
+// outage) this contract assertion fails.
+//
+// spec: §25.9 line 3668 (a non-linking prev_hash gap is tampering, not an
+// outage), §25.9 line 3669 (postgres_unreachable is outage-log-covered).
+// F-11.2.10.
+// diagnosis: a failure means the audit-events API attributes a non-linking
+// (tamper) sequence gap to a Postgres outage window on the wire, so an
+// operator following the runbook classifies a committed-row tamper as a
+// benign outage and takes no remediation.
+func TestAdminAuditEventsGapWindowNonLinkingNotOutage(t *testing.T) {
+	ts1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	ts2 := ts1.Add(time.Hour)
+	row1 := craftGapRow(1, ts1, audit.GenesisPrevHash)
+	// A sequence jump whose prev_hash does not link is the tamper case.
+	row5 := craftGapRow(5, ts2,
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	router := gapRouter(t, []audit.Row{row1, row5})
+
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, adminPrincipal(httptest.NewRequest(
+		http.MethodGet, "/v1/admin/audit-events?tenantId=platform", nil,
+	)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var env admin.AuditEventEnvelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.AuditMetadata != nil {
+		for _, g := range env.AuditMetadata.SuspectedGaps {
+			t.Errorf("non-linking gap listed as suspectedGaps window %+v; want none (postgres_unreachable is reserved for an ops_postgres_outage_log window this handler does not compute)", g)
+		}
 	}
 }
 

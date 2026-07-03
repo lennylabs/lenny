@@ -78,6 +78,25 @@ import (
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
+// sequenceProvisioningAdminOptions threads the CREATE-privileged DDL pools into
+// the admin Router options so the tenant-provisioning helper (S4) can create the
+// per-tenant billing_seq_/audit_seq_ sequences on the instance where
+// billing_events and audit_log live, plus the primary the §13.3 issued-token
+// write-before-issue path seals its audit row on. It takes the caller-built base
+// options (Clock, Audit, Metrics, DevMode) and fills the sequence-provisioning
+// fields from the wiring struct, so the field wiring is a single
+// tier-1-testable statement rather than an assignment buried in the
+// startup-only NewRouter chain. Both DDL pools are nil in the in-memory /
+// SQLite topology (no DDL DSN), where no Postgres sequence is used; the
+// provisioning helper treats a nil billing/audit DDL pool as "no provisioning".
+//
+// spec: §12.3, §15.1. F-11.2.10.
+func (w *gatewayWiring) sequenceProvisioningAdminOptions(base admin.Options) admin.Options {
+	base.BillingAuditDDLPool = w.billingAuditDDLPool
+	base.PrimaryDDLPool = w.primaryDDLPool
+	return base
+}
+
 func (w *gatewayWiring) buildAdminRouter(
 	gwMetrics *gatewaymetrics.Metrics,
 	delegationSvc *delegation.Service,
@@ -257,7 +276,17 @@ func (w *gatewayWiring) buildAdminRouter(
 		runtimeUpgradeMgr = mgr
 	}
 
-	adminRouter := admin.NewRouter(w.tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
+	// spec: §12.3, §15.1 — sequenceProvisioningAdminOptions threads the
+	// CREATE-privileged DDL pools and the §12.3 R-03 billing/audit-shard
+	// resolvers into the admin Router options so the tenant-provisioning helper
+	// creates the per-tenant billing_seq_/audit_seq_ sequences on the right
+	// instance. F-11.2.10.
+	adminRouter := admin.NewRouter(w.tenants, w.sequenceProvisioningAdminOptions(admin.Options{
+		Clock:   clockinject.Now,
+		Audit:   auditSink,
+		Metrics: gwMetrics,
+		DevMode: *devMode,
+	})).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(w.runtimes).
 		WithRuntimeCapabilityOverrides(w.capOverrides).

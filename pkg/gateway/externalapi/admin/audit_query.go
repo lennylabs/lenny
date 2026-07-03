@@ -521,7 +521,7 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 		ChainIntegrityReport: &report,
 		NextCursor:           nextCursor,
 	}
-	if gaps := gapWindows(rows); len(gaps) > 0 {
+	if gaps := gapWindows(rows, r.auditReceipts(req.Context(), tenant)); len(gaps) > 0 {
 		envelope.AuditMetadata = &AuditMetadata{SuspectedGaps: gaps}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -673,22 +673,87 @@ func tallyIntegrity(report *ChainIntegrityReport, integrity audit.ChainIntegrity
 	}
 }
 
-// gapWindows computes the §25.9 line 3679 suspected temporal-gap windows
-// from sequence-number discontinuities in the full ordered chain. The
-// window spans the timestamps of the rows bracketing the gap. The
-// cross-reference against ops_postgres_outage_log for the precise outage
-// reason is a separate subsystem; the reason here records the detection
-// basis (a sequence jump).
-func gapWindows(rows []audit.Row) []AuditGapWindow {
+// prevHashLinks reports whether next's prev_hash links to prev in the
+// §11.7 hash chain, so the §25.9 gap-window attribution can tell a benign
+// nextval-rollback gap from a committed-row tamper. It is true when
+// next.PrevHash carries prev's link hash, or when prev was lawfully
+// redacted (its canonical bytes were rewritten in place, so next carries
+// a stale prev_hash the receipt authorizes). It is false when the
+// prev_hash does not link and prev holds no valid receipt, the
+// tamper-or-removal signal §25.9 line 3668 classifies as broken. The
+// receipts map keys a lawful redaction by the predecessor's sequence
+// number; a nil map means no redaction is authorized.
+//
+// This mirrors the link decision the §25.9 query-API classifier makes in
+// pkg/audit (Chain.classifyRow), kept local to the admin surface so the
+// classifier itself stays unchanged.
+//
+// spec: §11.7 item 3 (prev_hash linkage); §25.9 line 3668 (a gap with a
+// non-linking prev_hash is broken, an intact-link gap is benign).
+func prevHashLinks(prev, next audit.Row, receipts map[uint64]audit.RedactionReceipt) bool {
+	if prev.Redacted {
+		rcpt, ok := receipts[prev.Seq]
+		if ok && rcpt.OriginalHash == prev.Hash && rcpt.Signature != "" {
+			// The predecessor's canonical bytes were lawfully rewritten,
+			// so next's stale prev_hash is the authorized consequence.
+			return true
+		}
+	}
+	return next.PrevHash == audit.LinkHash(prev)
+}
+
+// gapReasonNextvalRollback is the §25.9 line 3669 gap-window reason for a
+// benign nextval transaction rollback: a sequence-number gap whose
+// prev_hash chain links across it. The rollback consumed a per-tenant
+// sequence value without committing a row while Postgres was available,
+// so it carries no ops_postgres_outage_log window, requires no
+// reconciliation, and is never re-stamped rechained_post_outage.
+//
+// §25.9 line 3669 also defines the reason "postgres_unreachable" for an
+// outage-attributed window computed from ops_postgres_outage_log. The
+// gateway does not operate that subsystem (its table is never queried
+// here), so this handler cannot compute an outage window and never emits
+// that reason; the only suspected-gap window it produces is the benign
+// nextval rollback. A non-linking gap is the §25.9 line 3668 tamper case,
+// not an outage: it is excluded from this benign window list, and the
+// per-row chainIntegrity verdict carries the tamper signal instead.
+const gapReasonNextvalRollback = "nextval_rollback"
+
+// gapWindows computes the §25.9 line 3669 suspected temporal-gap windows
+// from sequence-number discontinuities in the full ordered chain. It
+// lists only the benign nextval-rollback window: a gap whose prev_hash
+// links across it (the row after the gap carries the link hash of the row
+// before it), reported with reason "nextval_rollback". A gap whose
+// prev_hash does not link is the §25.9 line 3668 tamper case rather than a
+// benign rollback, and it is not listed here as a suspected outage window;
+// the per-row chainIntegrity verdict carries the tamper signal instead.
+// The receipts map lets a lawful predecessor redaction still count as
+// linked, matching the chain classifier. The window spans the timestamps
+// of the rows bracketing the gap.
+//
+// spec: §25.9 line 3668-3669 (a gap with an intact prev_hash link is the
+// benign nextval rollback reported with reason "nextval_rollback"; only a
+// gap with a non-linking prev_hash is broken, and "postgres_unreachable"
+// is reserved for an ops_postgres_outage_log-covered outage window the
+// gateway does not compute here).
+func gapWindows(rows []audit.Row, receipts map[uint64]audit.RedactionReceipt) []AuditGapWindow {
 	var out []AuditGapWindow
 	for i := 1; i < len(rows); i++ {
-		if rows[i].Seq != rows[i-1].Seq+1 {
-			out = append(out, AuditGapWindow{
-				Start:  rows[i-1].Timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
-				End:    rows[i].Timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
-				Reason: "sequence_gap",
-			})
+		if rows[i].Seq == rows[i-1].Seq+1 {
+			continue
 		}
+		if !prevHashLinks(rows[i-1], rows[i], receipts) {
+			// A non-linking gap is the §25.9 line 3668 tamper case, not a
+			// benign rollback and not an ops_postgres_outage_log outage. It
+			// is not attributed to an outage in the suspected-gap window
+			// list; the per-row chainIntegrity verdict carries the signal.
+			continue
+		}
+		out = append(out, AuditGapWindow{
+			Start:  rows[i-1].Timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
+			End:    rows[i].Timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
+			Reason: gapReasonNextvalRollback,
+		})
 	}
 	return out
 }
