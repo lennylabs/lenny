@@ -492,6 +492,71 @@ func TestPgBouncerPoolSaturatedUsesExporterMetric_spec_12_3_F_12_3_11(t *testing
 	}
 }
 
+// spec: §16.5 line 471, §12.3 line 101, §11.7 audit sequencing — the
+// AuditChainGap catalog Description must classify state="broken" as a
+// committed-row tamper or removal (a non-linking prev_hash), must not
+// equate a benign intact-link sequence gap with the broken-chain
+// trigger, and must state buffered T2 crash-window loss as the
+// accepted unsignaled tradeoff of the opt-in batching path this alert
+// does not cover, with SIEM-replay scoped to the tamper/removal case.
+// This is the Path A reconciliation from proposal 0025 (F-11.2.10):
+// under the retired text a state="broken" event was glossed as
+// "buffered events lost during a prior crash or tampering", which
+// equated a benign nextval gap with a tamper break and pointed the
+// wrong recovery (SIEM-replay) at unrecoverable buffered T2 loss. The
+// assertions below fail against that pre-fix Description.
+func TestAuditChainGapDescriptionScopesBrokenToTamper_spec_16_5_F_11_2_10(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "AuditChainGap" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("AuditChainGap missing from Catalog")
+	}
+	if got.Expr != `increase(lenny_audit_chain_integrity_total{state="broken"}[15m]) > 0` {
+		t.Errorf("expr = %q, want increase(lenny_audit_chain_integrity_total{state=\"broken\"}[15m]) > 0", got.Expr)
+	}
+	desc := got.Description
+	// state="broken" must be tied to a committed-row tamper or removal
+	// (a non-linking prev_hash), the Path A classification.
+	wantFragments := []string{
+		"committed-row tamper or removal",
+		"non-linking prev_hash",
+		// The benign intact-link gap must be named as detected-but-not-the-trigger.
+		"intact-prev_hash-link sequence gap",
+		// Buffered T2 loss must be stated as the accepted unsignaled tradeoff.
+		"audit.batchingEnabled",
+		"never committed",
+		// SIEM-replay must be scoped to the committed-row case.
+		"replay",
+		"outbox",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(desc, frag) {
+			t.Errorf("AuditChainGap Description is missing required fragment %q:\n%s", frag, desc)
+		}
+	}
+	// The retired "gap in audit sequence" gloss that equated a benign
+	// sequence gap with the broken-chain trigger must be gone, and the
+	// pre-fix sentence that attributed state="broken" to buffered loss
+	// or a bare "prior crash" must not reappear.
+	notWant := []string{
+		"gap in audit sequence",
+		"buffered events lost during a prior crash",
+	}
+	for _, frag := range notWant {
+		if strings.Contains(desc, frag) {
+			t.Errorf("AuditChainGap Description still contains retired fragment %q:\n%s", frag, desc)
+		}
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("AuditChainGap does not validate: %v", err)
+	}
+}
+
 // spec: §6.3 line 356, §16.5 line 637 — TTFTBurnRate must reference
 // the lenny_session_time_to_first_token_seconds histogram directly
 // via the le="10" bucket (the 10s TTFT SLO). The earlier

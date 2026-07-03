@@ -881,12 +881,21 @@ func warningAlerts() []Rule {
 			Description: "LENNY_ENV=production and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.",
 			SpecRef:     "§16.5",
 		},
+		// spec: §16.5 line 471; §12.3 line 101; §11.7 audit sequencing.
+		// state="broken" denotes a committed-row tamper or removal (a
+		// non-linking prev_hash). A benign intact-prev_hash-link sequence
+		// gap (the nextval-rollback or post-sweep case) is not the trigger,
+		// so the "gap in audit sequence" gloss must not equate it with the
+		// broken-chain condition. SIEM-replay applies to the tamper/removal
+		// case (the committed row was forwarded by the outbox). Buffered T2
+		// crash-window loss is the accepted unsignaled tradeoff of the
+		// opt-in audit.batchingEnabled path and is not covered here.
 		{
 			Name:        "AuditChainGap",
 			Expr:        `increase(lenny_audit_chain_integrity_total{state="broken"}[15m]) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Audit hash chain gap detected",
-			Description: "The startup chain-continuity check detected a broken hash chain for one or more tenants. Rows classified redacted_gdpr with a verified RedactionReceipt are excluded. Genuine broken events indicate buffered events lost during a prior crash or tampering.",
+			Description: "The startup chain-continuity check set state=\"broken\" for one or more tenants, which denotes a committed-row tamper or removal — a sequence-number gap accompanied by a non-linking prev_hash. A benign intact-prev_hash-link sequence gap (the nextval-rollback or post-sweep case) is detected but is not this trigger. Rows classified redacted_gdpr with a verified RedactionReceipt are excluded. Operators should replay the tampered or removed committed row from SIEM (it was already forwarded by the outbox) or document the gap. Buffered T2 crash-window loss is the accepted, unsignaled data-loss tradeoff of the opt-in audit.batchingEnabled path (disabled by default); those events never committed, leave an intact-prev_hash-link gap that is not state=\"broken\", and cannot be replayed from SIEM, so this alert does not cover them.",
 			SpecRef:     "§16.5",
 		},
 		{

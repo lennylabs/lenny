@@ -585,7 +585,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: The startup chain-continuity check detected a broken hash chain for one or more tenants. Rows classified redacted_gdpr with a verified RedactionReceipt are excluded. Genuine broken events indicate buffered events lost during a prior crash or tampering.
+            description: The startup chain-continuity check set state="broken" for one or more tenants, which denotes a committed-row tamper or removal — a sequence-number gap accompanied by a non-linking prev_hash. A benign intact-prev_hash-link sequence gap (the nextval-rollback or post-sweep case) is detected but is not this trigger. Rows classified redacted_gdpr with a verified RedactionReceipt are excluded. Operators should replay the tampered or removed committed row from SIEM (it was already forwarded by the outbox) or document the gap. Buffered T2 crash-window loss is the accepted, unsignaled data-loss tradeoff of the opt-in audit.batchingEnabled path (disabled by default); those events never committed, leave an intact-prev_hash-link gap that is not state="broken", and cannot be replayed from SIEM, so this alert does not cover them.
             summary: Audit hash chain gap detected
         - alert: CheckpointStorageHigh
           expr: lenny_checkpoint_storage_bytes_total / lenny_tenant_storage_quota_bytes > 0.80 and lenny_tenant_storage_quota_bytes > 0
