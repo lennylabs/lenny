@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
 // TestAliasPrimaryDDLToBillingAudit pins the single-instance vs
@@ -128,82 +127,6 @@ func TestDistinctDDLPools(t *testing.T) {
 			t.Errorf("primary-only = %v, want [primary]", got)
 		}
 	})
-}
-
-// recordingStoreRouter is a partial storerouter.StoreRouter that records the
-// tenantID passed to BillingShard / AuditShard and returns a fixed pool. It
-// embeds the interface so it satisfies the type; the unimplemented methods are
-// never called by billingAuditShardResolvers and would panic if they were,
-// which is the intended tier-1 fence.
-type recordingStoreRouter struct {
-	storerouter.StoreRouter
-	pool          *pgxpool.Pool
-	billingTenant storerouter.TenantID
-	auditTenant   storerouter.TenantID
-}
-
-func (r *recordingStoreRouter) BillingShard(_ context.Context, tenantID storerouter.TenantID) (*pgxpool.Pool, error) {
-	r.billingTenant = tenantID
-	return r.pool, nil
-}
-
-func (r *recordingStoreRouter) AuditShard(_ context.Context, tenantID storerouter.TenantID) (*pgxpool.Pool, error) {
-	r.auditTenant = tenantID
-	return r.pool, nil
-}
-
-// TestBillingAuditShardResolvers_NilRouter pins the in-memory / SQLite topology
-// branch: a nil StoreRouter yields nil resolvers, which the admin provisioning
-// helper treats as "no re-seed read". A regression that returned non-nil
-// resolvers closing over a nil StoreRouter would panic on the first re-seed.
-//
-// spec: §12.3, §15.1. F-11.2.10
-func TestBillingAuditShardResolvers_NilRouter(t *testing.T) {
-	billing, audit := billingAuditShardResolvers(nil)
-	if billing != nil || audit != nil {
-		t.Errorf("nil StoreRouter must yield nil resolvers, got billing=%v audit=%v", billing != nil, audit != nil)
-	}
-}
-
-// TestBillingAuditShardResolvers_AdaptsTenantID pins the Postgres-topology
-// branch: a non-nil StoreRouter yields resolvers that convert the admin
-// ShardResolver's plain string tenantID to a storerouter.TenantID and call
-// through to BillingShard / AuditShard, returning that instance's pool so the
-// re-seed reads the ledger MAX on the correct instance. A regression that
-// dropped the adaptation or crossed billing/audit would route the re-seed to
-// the wrong instance.
-//
-// spec: §12.3, §15.1. F-11.2.10
-func TestBillingAuditShardResolvers_AdaptsTenantID(t *testing.T) {
-	pool := lazyDDLPool(t)
-	sr := &recordingStoreRouter{pool: pool}
-
-	billing, audit := billingAuditShardResolvers(sr)
-	if billing == nil || audit == nil {
-		t.Fatal("a non-nil StoreRouter must yield non-nil resolvers")
-	}
-
-	gotBilling, err := billing(context.Background(), "acme")
-	if err != nil {
-		t.Fatalf("billing resolver: %v", err)
-	}
-	if gotBilling != pool {
-		t.Error("billing resolver must return the StoreRouter's BillingShard pool")
-	}
-	if sr.billingTenant != storerouter.TenantID("acme") {
-		t.Errorf("billing resolver passed tenantID %q, want the converted storerouter.TenantID(\"acme\")", sr.billingTenant)
-	}
-
-	gotAudit, err := audit(context.Background(), "globex")
-	if err != nil {
-		t.Fatalf("audit resolver: %v", err)
-	}
-	if gotAudit != pool {
-		t.Error("audit resolver must return the StoreRouter's AuditShard pool")
-	}
-	if sr.auditTenant != storerouter.TenantID("globex") {
-		t.Errorf("audit resolver passed tenantID %q, want the converted storerouter.TenantID(\"globex\")", sr.auditTenant)
-	}
 }
 
 // TestOpenVerifiedDDLPool_EmptyDSN pins the topology branch that uses no DDL
@@ -532,26 +455,22 @@ func TestCloseDDLPools_SeparateInstancesBothClosed(t *testing.T) {
 	}
 }
 
-// TestSequenceProvisioningAdminOptions_ThreadsPoolsAndResolvers pins the admin
-// Router wiring: sequenceProvisioningAdminOptions fills the DDL pools and the
-// §12.3 R-03 shard resolvers into the admin.Options the tenant-provisioning
-// helper reads, without disturbing the caller-built base fields. A regression
-// that dropped a DDL pool or a resolver would leave the per-tenant sequence
-// provisioning unwired, so the first billing Append would nextval a nonexistent
-// relation.
+// TestSequenceProvisioningAdminOptions_ThreadsPools pins the admin Router
+// wiring: sequenceProvisioningAdminOptions fills the CREATE-privileged DDL
+// pools into the admin.Options the tenant-provisioning helper reads, without
+// disturbing the caller-built base fields. A regression that dropped a DDL pool
+// would leave the per-tenant sequence provisioning unwired, so the first
+// billing Append would nextval a nonexistent relation.
 //
 // spec: §12.3, §15.1. F-11.2.10
-func TestSequenceProvisioningAdminOptions_ThreadsPoolsAndResolvers(t *testing.T) {
+func TestSequenceProvisioningAdminOptions_ThreadsPools(t *testing.T) {
 	ba := lazyDDLPool(t)
 	primary := lazyDDLPool(t)
-	shardPool := lazyDDLPool(t)
-	sr := &recordingStoreRouter{pool: shardPool}
 
 	w := &gatewayWiring{
 		gatewayWiringFields: gatewayWiringFields{
 			billingAuditDDLPool: ba,
 			primaryDDLPool:      primary,
-			storeRouter:         sr,
 		},
 	}
 
@@ -567,32 +486,18 @@ func TestSequenceProvisioningAdminOptions_ThreadsPoolsAndResolvers(t *testing.T)
 	if got.PrimaryDDLPool != primary {
 		t.Error("PrimaryDDLPool must be threaded from the wiring struct")
 	}
-	if got.BillingShard == nil || got.AuditShard == nil {
-		t.Fatal("a non-nil StoreRouter must yield non-nil shard resolvers")
-	}
-	// The resolvers must adapt to the recorded StoreRouter, proving the
-	// §12.3 R-03 instance is reachable from the admin Router.
-	if _, err := got.BillingShard(context.Background(), "acme"); err != nil {
-		t.Fatalf("BillingShard resolver: %v", err)
-	}
-	if sr.billingTenant != storerouter.TenantID("acme") {
-		t.Errorf("BillingShard resolver passed %q, want acme", sr.billingTenant)
-	}
 }
 
-// TestSequenceProvisioningAdminOptions_NilRouterNilResolvers pins the in-memory
-// / SQLite topology: a nil StoreRouter yields nil shard resolvers, which the
-// provisioning helper treats as "no re-seed read". A regression that returned
-// non-nil resolvers over a nil StoreRouter would panic on the first re-seed.
+// TestSequenceProvisioningAdminOptions_NilPools pins the in-memory / SQLite
+// topology: with no DDL DSN wired both DDL pools stay nil, which the
+// provisioning helper treats as "no runtime provisioning". A regression that
+// synthesized a non-nil pool would attempt DDL on a topology with no Postgres.
 //
 // spec: §12.3, §15.1. F-11.2.10
-func TestSequenceProvisioningAdminOptions_NilRouterNilResolvers(t *testing.T) {
-	w := &gatewayWiring{} // no DDL pools, no storeRouter
+func TestSequenceProvisioningAdminOptions_NilPools(t *testing.T) {
+	w := &gatewayWiring{} // no DDL pools
 	got := w.sequenceProvisioningAdminOptions(admin.Options{})
 	if got.BillingAuditDDLPool != nil || got.PrimaryDDLPool != nil {
 		t.Error("nil DDL pools must stay nil in the in-memory topology")
-	}
-	if got.BillingShard != nil || got.AuditShard != nil {
-		t.Error("a nil StoreRouter must yield nil shard resolvers")
 	}
 }

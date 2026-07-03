@@ -249,13 +249,6 @@ type Router struct {
 	// spec: §12.3, §15.1. F-11.2.10.
 	billingAuditDDLPool *pgxpool.Pool
 	primaryDDLPool      *pgxpool.Pool
-	// billingShard / auditShard resolve the billing/audit instance pool for a
-	// tenant so the provisioning helper's setval re-seed reads the ledger's
-	// per-tenant MAX(sequence_number) on the same instance the sequence is
-	// created on. Nil leaves the re-seed reading nothing (a freshly created
-	// tenant with no rows needs no re-seed). spec: §12.3. F-11.2.10.
-	billingShard ShardResolver
-	auditShard   ShardResolver
 
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
@@ -448,28 +441,7 @@ type Options struct {
 	// leaves the primary-instance audit-sequence provisioning inactive.
 	// spec: §12.3, §15.1. F-11.2.10.
 	PrimaryDDLPool *pgxpool.Pool
-
-	// BillingShard resolves the billing/audit instance pool for a tenant so
-	// the provisioning helper's setval re-seed reads billing_events' per-tenant
-	// MAX(sequence_number) on the same instance the billing sequence is created
-	// on. spec: §12.3 R-03 routing. F-11.2.10.
-	BillingShard ShardResolver
-
-	// AuditShard resolves the billing/audit instance pool for a tenant so the
-	// provisioning helper's setval re-seed reads audit_log's per-tenant
-	// MAX(sequence_number) on the same instance the audit sequence is created
-	// on. spec: §12.3 R-03 routing. F-11.2.10.
-	AuditShard ShardResolver
 }
-
-// ShardResolver resolves the §12.3 R-03 billing/audit-instance pool for a
-// tenant. The admin tenant-provisioning helper uses it to read the ledger's
-// per-tenant MAX(sequence_number) on the same instance the per-tenant
-// sequence is created on. StoreRouter.BillingShard and StoreRouter.AuditShard
-// satisfy it.
-//
-// spec: §12.3, §15.1. F-11.2.10.
-type ShardResolver func(ctx context.Context, tenantID string) (*pgxpool.Pool, error)
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
 func NewRouter(tenants tenantstore.Store, opts Options) *Router {
@@ -485,8 +457,6 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 		devMode:             opts.DevMode,
 		billingAuditDDLPool: opts.BillingAuditDDLPool,
 		primaryDDLPool:      opts.PrimaryDDLPool,
-		billingShard:        opts.BillingShard,
-		auditShard:          opts.AuditShard,
 	}
 }
 

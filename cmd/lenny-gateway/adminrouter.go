@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/clockinject"
@@ -77,53 +75,25 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight"
 	preflightinfra "github.com/lennylabs/lenny/pkg/preflight/infra"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
-	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
-// billingAuditShardResolvers adapts a StoreRouter's §12.3 R-03 BillingShard /
-// AuditShard methods (which take a storerouter.TenantID) to the admin
-// ShardResolver signature (which takes a plain string), so the admin
-// tenant-provisioning helper can read the ledger's per-tenant
-// MAX(sequence_number) on the same instance the per-tenant sequence is created
-// on. A nil StoreRouter (the in-memory / SQLite topology, which uses no
-// Postgres sequence) yields nil resolvers, which the provisioning helper treats
-// as "no re-seed read". Extracting the adaptation keeps the nil decision and the
-// TenantID conversion in one tier-1-testable place.
-//
-// spec: §12.3, §15.1. F-11.2.10.
-func billingAuditShardResolvers(sr storerouter.StoreRouter) (billing, audit admin.ShardResolver) {
-	if sr == nil {
-		return nil, nil
-	}
-	billing = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
-		return sr.BillingShard(ctx, storerouter.TenantID(tenantID))
-	}
-	audit = func(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
-		return sr.AuditShard(ctx, storerouter.TenantID(tenantID))
-	}
-	return billing, audit
-}
-
-// sequenceProvisioningAdminOptions threads the CREATE-privileged DDL pools and
-// the §12.3 R-03 billing/audit-shard resolvers into the admin Router options so
-// the tenant-provisioning helper (S4) can create the per-tenant
-// billing_seq_/audit_seq_ sequences on the instance where billing_events and
-// audit_log live, plus the primary the §13.3 issued-token write-before-issue
-// path seals its audit row on. It takes the caller-built base options (Clock,
-// Audit, Metrics, DevMode) and fills the sequence-provisioning fields from the
-// wiring struct, so the field wiring is a single tier-1-testable statement
-// rather than an assignment buried in the startup-only NewRouter chain.
-// billingAuditShardResolvers returns nil resolvers in the in-memory / SQLite
-// topology (no storeRouter, no DDL DSN), where no Postgres sequence is used.
+// sequenceProvisioningAdminOptions threads the CREATE-privileged DDL pools into
+// the admin Router options so the tenant-provisioning helper (S4) can create the
+// per-tenant billing_seq_/audit_seq_ sequences on the instance where
+// billing_events and audit_log live, plus the primary the §13.3 issued-token
+// write-before-issue path seals its audit row on. It takes the caller-built base
+// options (Clock, Audit, Metrics, DevMode) and fills the sequence-provisioning
+// fields from the wiring struct, so the field wiring is a single
+// tier-1-testable statement rather than an assignment buried in the
+// startup-only NewRouter chain. Both DDL pools are nil in the in-memory /
+// SQLite topology (no DDL DSN), where no Postgres sequence is used; the
+// provisioning helper treats a nil billing/audit DDL pool as "no provisioning".
 //
 // spec: §12.3, §15.1. F-11.2.10.
 func (w *gatewayWiring) sequenceProvisioningAdminOptions(base admin.Options) admin.Options {
-	billingShardResolver, auditShardResolver := billingAuditShardResolvers(w.storeRouter)
 	base.BillingAuditDDLPool = w.billingAuditDDLPool
 	base.PrimaryDDLPool = w.primaryDDLPool
-	base.BillingShard = billingShardResolver
-	base.AuditShard = auditShardResolver
 	return base
 }
 
