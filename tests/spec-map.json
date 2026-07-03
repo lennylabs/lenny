@@ -680,7 +680,8 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceWithinBudget",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
-        "tests/tier2_component/stores/delegationpolicystore_test.go"
+        "tests/tier2_component/stores/delegationpolicystore_test.go",
+        "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -719,13 +720,14 @@
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
         "pkg/delegation/lease/...",
-        "tests/tier2_component/leasedenial/leasedenialstore_test.go"
+        "tests/tier2_component/leasedenial/leasedenialstore_test.go",
+        "tests/tier9_security/budget_extension_failclosed_test.go"
       ],
       "packages": [
         "pkg/delegation/lease"
       ],
       "blocked_until_phase": "9",
-      "notes": "Lease extension is the renew-budget path on an in-flight delegate task. Phase 9 ships the Redis Lua script (budget_extend.lua) and the request handler."
+      "notes": "Lease extension is the renew-budget path on an in-flight delegate task. Phase 9 ships the Redis Lua script (budget_extend.lua) and the request handler. The proxy-mode budget-exhaustion trigger's fail-closed contract (proposal 0023, F-8.6.6) is pinned by tests/tier9_security/budget_extension_failclosed_test.go, which also exercises the §8.3 settlement-bounded over-run and §11.2 extension-then-terminate sequencing."
     },
     "8.7": {
       "title": "File Export Model",
@@ -1251,7 +1253,8 @@
         "tests/tier2_component/storagequota/...",
         "tests/tier2_component/stores/billingstore_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport",
-        "tests/tier2_component/stores/delegationbudgetstore_test.go"
+        "tests/tier2_component/stores/delegationbudgetstore_test.go",
+        "tests/tier9_security/budget_extension_failclosed_test.go::TestExhaustionExtensionAtMostOncePerEvent_CeilingTerminates_F866"
       ],
       "packages": [
         "pkg/quota",

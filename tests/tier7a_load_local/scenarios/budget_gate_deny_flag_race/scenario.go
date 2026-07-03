@@ -59,6 +59,17 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )
 
+// loopbackIdleConns bounds the pooled keep-alive connections the scenario
+// reuses to the single loopback upstream. The default transport caps idle
+// connections per host at 2, so at this scenario's admitted-request rate
+// almost every forwarded call would open a fresh TCP connection and leave it
+// in TIME_WAIT, exhausting ephemeral ports on the loopback interface and
+// surfacing PROVIDER_UNAVAILABLE ("can't assign requested address") 503s that
+// have nothing to do with the deny-flag-race invariant under test. Pooling a
+// generous set of keep-alive connections to the one upstream host keeps the
+// transport out of the way of the gate-contention assertion.
+const loopbackIdleConns = 512
+
 const name = "budget_gate_deny_flag_race"
 
 // sessionCount spreads the load over many sessions so the shared enforcer
@@ -140,10 +151,21 @@ func (s *Scenario) Setup(_ context.Context) error {
 		}
 	}
 
+	// Pool keep-alive connections to the single loopback upstream so the
+	// admitted-request forwarding does not exhaust ephemeral ports under the
+	// scenario's request rate. This isolates the deny-flag-race invariant from
+	// a transport-layer artifact; the forwarding path itself is exercised by
+	// the llmproxy forwarder tests, not this concurrency scenario.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = loopbackIdleConns
+	transport.MaxIdleConnsPerHost = loopbackIdleConns
+	transport.IdleConnTimeout = 90 * time.Second
+	upstreamClient := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+
 	s.handler = &llmproxy.Handler{
 		Leases:      s.leases,
 		Translator:  &llmproxy.AnthropicDirectTranslator{BaseURL: s.upstream.URL, DefaultAnthropicVersion: "2023-06-01"},
-		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Forwarder:   &llmproxy.Forwarder{Client: upstreamClient, Breaker: &llmproxy.CircuitBreaker{}},
 		Credentials: fixedKey{},
 		BudgetGate:  s.enforcer,
 	}
@@ -167,8 +189,13 @@ func (s *Scenario) Run(_ context.Context, vu, iter int) error {
 	switch vu % 3 {
 	case 0:
 		// In-path proxy request: the pre-flight gate reads the session's deny
-		// flag. A 200 or a 403 BUDGET_EXHAUSTED is well-formed; anything else
-		// is a torn read or a lease/translation fault under contention.
+		// flag. A 200 or a 403 BUDGET_EXHAUSTED is well-formed. A 503
+		// PROVIDER_UNAVAILABLE is a transport-layer artifact of forwarding a
+		// pooled admitted request to the loopback upstream under extreme rate
+		// (ephemeral-port pressure or a briefly-open circuit breaker); it is
+		// counted apart from errors because it is not a torn read of the deny
+		// flag, which is the invariant under test. Any other status is a torn
+		// read or a lease/translation fault under contention and fails hard.
 		rr := s.serve(j)
 		switch rr.Code {
 		case http.StatusOK:
@@ -179,6 +206,12 @@ func (s *Scenario) Run(_ context.Context, vu, iter int) error {
 				return fmt.Errorf("unexpected 403 code %q", code)
 			}
 			s.counters.Inc("denied")
+		case http.StatusServiceUnavailable:
+			if code := errorCode(rr); code != "PROVIDER_UNAVAILABLE" {
+				s.counters.Inc("errors")
+				return fmt.Errorf("unexpected 503 code %q", code)
+			}
+			s.counters.Inc("upstream_unavailable")
 		default:
 			s.counters.Inc("errors")
 			return fmt.Errorf("unexpected status %d: %s", rr.Code, rr.Body.String())

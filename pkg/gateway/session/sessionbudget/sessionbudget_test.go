@@ -387,6 +387,87 @@ func TestEnforcerSatisfiesSessionReclaimer_spec_8_6(t *testing.T) {
 	var _ sessionReclaimer = New(&recordingTerminator{}, nil, nil)
 }
 
+// spec: §8.6 line 629 — Outcome.String renders each tri-state and the
+// unknown fallback. The enforcer logs and audits the outcome by name, so
+// a wrong or empty rendering mislabels the extension result in operator
+// tooling.
+func TestOutcomeString_spec_8_6(t *testing.T) {
+	cases := []struct {
+		o    Outcome
+		want string
+	}{
+		{Granted, "GRANTED"},
+		{Pending, "PENDING"},
+		{Terminal, "TERMINAL"},
+		{Outcome(99), "UNKNOWN"},
+	}
+	for _, tc := range cases {
+		if got := tc.o.String(); got != tc.want {
+			t.Errorf("Outcome(%d).String() = %q, want %q", int(tc.o), got, tc.want)
+		}
+	}
+}
+
+// spec: §8.6 line 629; proposal 0023 S6 — SetExtendOnExhaustion wires the
+// extension seam after construction. An enforcer built with a nil seam is
+// on the §11.2 line 44 terminate-immediately path; after the setter wires
+// a Granted seam, a fresh exhaustion resolves through it and the session
+// CONTINUES instead of terminating. This asserts the corrected wired
+// behavior: it fails against a setter that does not install the seam
+// (the session would still terminate). diagnosis below.
+//
+// diagnosis: the composition-root seam wiring did not take effect, so a
+// proxy-mode session that exhausted its budget was torn down immediately
+// rather than attempting the §8.6 extension the seam performs.
+func TestSetExtendOnExhaustionWiresSeam_spec_8_6(t *testing.T) {
+	term := &recordingTerminator{}
+	// Nil seam: the enforcer starts on the terminate-immediately path.
+	e := New(term, nil, nil)
+
+	// Wire a Granted seam that raises the budget (as the production seam
+	// does) so the exhaustion boundary continues the session.
+	seam := &recordingSeam{outcome: Granted, e: e, raiseDelta: 1000}
+	e.SetExtendOnExhaustion(seam.fn)
+
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 100, 100) // exhausts, now consults the wired seam
+
+	if seam.count() != 1 {
+		t.Fatalf("wired seam consulted %d times, want 1: SetExtendOnExhaustion did not install the seam", seam.count())
+	}
+	if !e.Allow("s1") {
+		t.Fatalf("session denied after a Granted extension: the wired seam's grant did not clear the deny flag")
+	}
+	if got := term.snapshot(); len(got) != 0 {
+		t.Fatalf("session terminated despite a wired Granted seam: %v — the setter left the terminate-immediately path live", got)
+	}
+}
+
+// spec: §8.6 line 629; proposal 0023 S6 — SetExtendOnExhaustion(nil)
+// returns the enforcer to the terminate-immediately path. A session that
+// exhausts its budget after the seam is cleared is denied and terminated,
+// with no extension attempt.
+func TestSetExtendOnExhaustionNilRestoresTerminateImmediately_spec_8_6(t *testing.T) {
+	term := &recordingTerminator{}
+	seam := &recordingSeam{outcome: Granted}
+	e := New(term, seam.fn, nil)
+
+	e.SetExtendOnExhaustion(nil) // clear the seam
+
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 100, 100) // exhausts
+
+	if seam.count() != 0 {
+		t.Fatalf("cleared seam still consulted %d times, want 0", seam.count())
+	}
+	if e.Allow("s1") {
+		t.Fatalf("session admitted after exhaustion on the nil-seam path: the enforcer failed open")
+	}
+	if got := term.snapshot(); len(got) != 1 {
+		t.Fatalf("nil-seam exhaustion terminated %d times, want exactly 1 (§11.2 line 44)", len(got))
+	}
+}
+
 // The enforcer is safe under concurrent Record/Allow/Forget/RaiseBudget/
 // TerminateSession, mirroring the tier-7a scenario's in-process race
 // coverage at unit scale.

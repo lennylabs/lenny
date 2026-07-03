@@ -547,6 +547,134 @@ func TestExtendForBudgetPerTreeEpisodeFanOut_spec_8_6_line_719(t *testing.T) {
 	}
 }
 
+// TestExtendForBudgetFanOutTerminatesOnDispatchError_spec_8_6_line_719:
+// a session that detaches at the in-path deadline (returning Pending) and
+// whose out-of-band episode dispatch then ERRORS (a non-decision
+// elicitation fault, not a rejection) is terminated by the fan-out, not
+// raised. This pins the fail-closed fan-out branch for a dispatch error:
+// a transport/elicitation fault during the deferred resolution tears the
+// over-budget session down rather than leaving it alive with unraised
+// budget.
+//
+// diagnosis: a §8.6 extension episode that errored out-of-band failed
+// OPEN — the detached over-budget session was neither raised nor
+// terminated, so it kept its deny flag with nothing to clear it, or worse
+// was left admittable. The fan-out must terminate a session whose
+// deferred dispatch errors.
+func TestExtendForBudgetFanOutTerminatesOnDispatchError_spec_8_6_line_719(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     1_000_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeElicitation,
+	})
+	// The elicitor blocks until released, then returns a non-decision error,
+	// so ExtendLease errors and dispatchOne returns sessionResult{err}. The
+	// caller detaches at its short in-path deadline before the release, so
+	// the fan-out (not the in-path caller) applies the terminal resolution.
+	el := &scriptedElicitor{err: errors.New("elicitation stream gone"), release: make(chan struct{}), started: make(chan struct{})}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Elicitor: el, EpisodeContext: context.Background,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reclaimer := newFakeReclaimer()
+	svc.SetReclaimer(reclaimer)
+
+	out := make(chan leasecontrol.Outcome, 1)
+	go func() {
+		reqCtx := context.Background()
+		waitCtx, cancel := context.WithTimeout(reqCtx, 30*time.Millisecond)
+		defer cancel()
+		o, _ := svc.ExtendForBudget(reqCtx, waitCtx, "root-1")
+		out <- o
+	}()
+	<-el.started // the episode opened its elicitation and is blocked in it.
+
+	// The in-path caller detaches at Pending (the elicitation is still
+	// blocked when the 30ms deadline elapses).
+	if got := <-out; got != leasecontrol.OutcomePending {
+		t.Fatalf("in-path outcome = %v, want Pending (deadline elapsed while dispatch blocked)", got)
+	}
+
+	// Release the elicitation; it now returns its non-decision error, the
+	// dispatch resolves to an error, and the fan-out terminates the detached
+	// session out-of-band.
+	close(el.release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for reclaimer.terminateCount("root-1") < 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("fan-out did not terminate the dispatch-errored session (fail OPEN): terminated=%d raised=%d",
+				reclaimer.terminateCount("root-1"), reclaimer.raiseCount())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if reclaimer.raiseCount() != 0 {
+		t.Errorf("dispatch-errored session was raised %d times, want 0 (a dispatch error must not grant budget)", reclaimer.raiseCount())
+	}
+}
+
+// treeBudgetErrSource wraps a MemoryBudgetSource and forces TreeBudget to
+// error after tenant resolution succeeds, so a test can drive the
+// ExtendForBudget budget-load failure branch (a resolvable session whose
+// tree budget cannot be read). Every other method delegates.
+type treeBudgetErrSource struct {
+	inner *leasecontrol.MemoryBudgetSource
+	err   error
+}
+
+func (s treeBudgetErrSource) TreeBudget(context.Context, string, string) (leasecontrol.TreeBudget, error) {
+	return leasecontrol.TreeBudget{}, s.err
+}
+
+func (s treeBudgetErrSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
+	return s.inner.ApplyGrant(ctx, tenantID, rootSessionID, requestingSessionID, granted)
+}
+
+func (s treeBudgetErrSource) RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration {
+	return s.inner.RejectionCoolOff(ctx, tenantID, rootSessionID)
+}
+
+func (s treeBudgetErrSource) Deny(ctx context.Context, tenantID, rootSessionID, requestingSessionID string) error {
+	return s.inner.Deny(ctx, tenantID, rootSessionID, requestingSessionID)
+}
+
+func (s treeBudgetErrSource) TenantOf(ctx context.Context, sessionID string) (string, error) {
+	return s.inner.TenantOf(ctx, sessionID)
+}
+
+// TestExtendForBudgetTreeBudgetErrorIsTerminal_spec_8_6_line_629: a
+// session that resolves to a tenant but whose tree budget cannot be read
+// fails closed with Terminal and a wrapped error rather than proceeding to
+// an extension. The proxy must not extend a session whose ceiling it
+// cannot even load.
+func TestExtendForBudgetTreeBudgetErrorIsTerminal_spec_8_6_line_629(t *testing.T) {
+	inner := leasecontrol.NewMemoryBudgetSource()
+	inner.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID: "acme", CurrentTokenBudget: 100_000,
+		DeploymentBase: 1_000_000, DeploymentMax: 2_000_000,
+		ApprovalMode: leasecontrol.ApprovalModeAuto,
+	})
+	src := treeBudgetErrSource{inner: inner, err: errors.New("budget store down")}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: src, Tenants: src, Elicitor: autoApproveElicitor{},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	got, err := svc.ExtendForBudget(context.Background(), context.Background(), "root-1")
+	if err == nil {
+		t.Fatal("ExtendForBudget should error when the tree budget cannot be loaded (fail closed)")
+	}
+	if got != leasecontrol.OutcomeTerminal {
+		t.Errorf("outcome = %v, want Terminal on a tree-budget load failure", got)
+	}
+}
+
 // subtreeDenialSource is a BudgetSource whose extension-denied flag is
 // scoped per requesting subtree, matching the production Postgres source
 // that keys the flag with a per-row subtree id (§8.6 line 729/730). It
@@ -948,15 +1076,39 @@ func TestExtendForBudgetEmptySessionIsTerminal_spec_8_6_line_629(t *testing.T) {
 
 // TestOutcomeString_spec_8_6_line_629: the tri-state Outcome renders its
 // spec-facing name so logs and diagnostics read the extension decision.
+// An out-of-range value renders UNKNOWN so a corrupted outcome cannot
+// masquerade as a valid one in an operator log.
 func TestOutcomeString_spec_8_6_line_629(t *testing.T) {
 	cases := map[leasecontrol.Outcome]string{
 		leasecontrol.OutcomeGranted:  "GRANTED",
 		leasecontrol.OutcomePending:  "PENDING",
 		leasecontrol.OutcomeTerminal: "TERMINAL",
+		leasecontrol.Outcome(99):     "UNKNOWN",
 	}
 	for o, want := range cases {
 		if got := o.String(); got != want {
 			t.Errorf("Outcome(%d).String() = %q, want %q", o, got, want)
+		}
+	}
+}
+
+// TestExtendStatusString_spec_8_6_line_743: the §8.6 line 743 extension
+// status renders its spec-facing name (GRANTED / PARTIALLY_GRANTED /
+// CEILING_REACHED / REJECTED), and the zero value and any out-of-range
+// value render UNSPECIFIED so a malformed dispatch status cannot be
+// mistaken for a real outcome in a log or audit record.
+func TestExtendStatusString_spec_8_6_line_743(t *testing.T) {
+	cases := map[leasecontrol.ExtendStatus]string{
+		leasecontrol.StatusGranted:          "GRANTED",
+		leasecontrol.StatusPartiallyGranted: "PARTIALLY_GRANTED",
+		leasecontrol.StatusCeilingReached:   "CEILING_REACHED",
+		leasecontrol.StatusRejected:         "REJECTED",
+		leasecontrol.StatusUnspecified:      "UNSPECIFIED",
+		leasecontrol.ExtendStatus(99):       "UNSPECIFIED",
+	}
+	for s, want := range cases {
+		if got := s.String(); got != want {
+			t.Errorf("ExtendStatus(%d).String() = %q, want %q", s, got, want)
 		}
 	}
 }
