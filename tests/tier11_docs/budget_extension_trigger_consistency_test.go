@@ -148,6 +148,14 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 		"adapter issued the `ExtendLease`",
 		"adapter must not retry",
 		"adapter knows exactly what was received",
+		// §18.23:431 previously named the removed "adapter↔gateway
+		// `ExtendLease` gRPC" build deliverable. Ban both the backtick-quoted
+		// and plain forms so a revert of that Phase-9 line to the
+		// adapter-as-trigger construction is caught here. The surviving
+		// dispatch name "leasecontrol.ExtendLease" does not contain the
+		// "adapter↔gateway" prefix, so this does not false-positive on it.
+		"adapter↔gateway `ExtendLease`",
+		"adapter↔gateway ExtendLease",
 	}
 
 	for _, site := range sites {
@@ -174,6 +182,20 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 	if strings.Contains(strings.ToLower(s91), "lease extension") {
 		t.Errorf("§9.1 control-channel row still lists lease extension as a gRPC payload; it is an in-process operation now (F-15.3.6)")
 	}
+
+	// §18.23 Phase-9 lease-extension deliverable must name the gateway LLM
+	// Proxy in-process trigger dispatching leasecontrol.ExtendLease, not the
+	// removed adapter↔gateway ExtendLease gRPC surface. The shared banned
+	// list already rejects the "adapter↔gateway `ExtendLease`" construction
+	// this line carried pre-fix; this positive assertion pins the reworded
+	// deliverable so the site is verified rather than merely enumerated. The
+	// surviving "leasecontrol.ExtendLease" dispatch name is expected here and
+	// is not the banned adapter-attributing form.
+	s1823 := specSection(t, filepath.Join(specDir, "18_build-sequence.md"), "### 18.23 ")
+	requireAllContain(t, "§18.23 Phase-9 lease extension", s1823, []string{
+		"gateway LLM Proxy in-process budget-exhaustion trigger",
+		"leasecontrol.ExtendLease",
+	})
 }
 
 // spec: 8.6, 11.2

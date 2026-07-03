@@ -17,8 +17,12 @@
 //   - transport error (the underlying dispatch cannot run): the tenant
 //     resolver errors, so ExtendForBudget cannot even locate the tree.
 //   - CEILING_REACHED (zero grant against a tree already at its ceiling).
-//   - REJECTED (a user denial persisted, cool-off active).
-//   - cool-off active (a prior rejection still within rejectionCoolOff).
+//   - REJECTED (a fresh in-episode user denial): the elicitor returns
+//     false for the in-flight request, so ExtendLease resolves
+//     StatusRejected and the coordinator marks the subtree denied.
+//   - cool-off active (a prior rejection persisted the extension-denied
+//     flag and is still within rejectionCoolOff, so the request is
+//     auto-rejected before the elicitor is consulted).
 //   - no-session (an unknown session id).
 //
 // Each path is driven through the genuine leasecontrol.Service (its real
@@ -122,22 +126,42 @@ func (e errTenants) TenantOf(context.Context, string) (string, error) { return "
 
 // tier9AutoElicitor approves every elicitation. It exists so an
 // elicitation-mode tree resolves in-path without a human, isolating the
-// deny paths under test (transport, ceiling, rejection, cool-off,
-// no-session) from an elicitation timeout. A silent grant here would
-// still be caught by the ApplyGrant recorder.
+// deny paths under test (transport, ceiling, cool-off, no-session) from
+// an elicitation timeout. A silent grant here would still be caught by
+// the ApplyGrant recorder.
 type tier9AutoElicitor struct{}
 
 func (tier9AutoElicitor) Elicit(context.Context, string, string) (bool, error) { return true, nil }
+
+// tier9RejectElicitor returns (false, nil) for every elicitation: an
+// explicit user rejection of the in-flight request. This drives the
+// fresh in-episode REJECTED deny path (the coordinator marks the subtree
+// extension-denied and ExtendLease resolves StatusRejected), distinct
+// from the pre-persisted cool-off state MarkDenied models. §8.6 line 727.
+type tier9RejectElicitor struct{}
+
+func (tier9RejectElicitor) Elicit(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 
 // newExtendService builds a leasecontrol.Service over the recording
 // source with a background episode context (so no in-path cancellation
 // severs the dispatch) and an auto-approving elicitor.
 func newExtendService(t *testing.T, src *grantRecordingSource, tenants leasecontrol.TenantResolver) *leasecontrol.Service {
 	t.Helper()
+	return newExtendServiceWithElicitor(t, src, tenants, tier9AutoElicitor{})
+}
+
+// newExtendServiceWithElicitor builds a leasecontrol.Service over the
+// recording source with a background episode context and the given
+// elicitor, so a case can inject a rejecting elicitor to exercise the
+// fresh in-episode REJECTED path.
+func newExtendServiceWithElicitor(t *testing.T, src *grantRecordingSource, tenants leasecontrol.TenantResolver, elicitor leasecontrol.Elicitor) *leasecontrol.Service {
+	t.Helper()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:        src,
 		Tenants:        tenants,
-		Elicitor:       tier9AutoElicitor{},
+		Elicitor:       elicitor,
 		EpisodeContext: context.Background,
 	})
 	if err != nil {
@@ -203,7 +227,28 @@ func TestExtensionDenyPathsFailClosed_F866(t *testing.T) {
 			},
 		},
 		{
-			name: "rejected_extension_denied_flag_set",
+			name: "rejected_fresh_user_denial_in_episode",
+			build: func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string) {
+				src := newGrantRecordingSource()
+				// Elicitation mode, headroom available, NO prior denial: the
+				// request enters the elicitation path fresh and the user
+				// rejects it in flight. The coordinator marks the subtree
+				// extension-denied and ExtendLease resolves StatusRejected, the
+				// distinct §8.6 line 727 REJECTED terminal path — separate from
+				// the cool-off-active auto-reject below. A deny here is the
+				// live user rejection, not the ceiling (headroom exists) and
+				// not a persisted cool-off (none set).
+				src.inner.RegisterTree(root, leasecontrol.TreeConfig{
+					TenantID: tenant, CurrentTokenBudget: 100_000,
+					DeploymentBase: 2_000_000, DeploymentMax: 4_000_000,
+					ApprovalMode: leasecontrol.ApprovalModeElicitation,
+				})
+				svc := newExtendServiceWithElicitor(t, src, src, tier9RejectElicitor{})
+				return svc, src, root
+			},
+		},
+		{
+			name: "cool_off_active_prior_rejection_persisted",
 			build: func(t *testing.T) (*leasecontrol.Service, *grantRecordingSource, string) {
 				src := newGrantRecordingSource()
 				src.inner.RegisterTree(root, leasecontrol.TreeConfig{
@@ -212,9 +257,11 @@ func TestExtensionDenyPathsFailClosed_F866(t *testing.T) {
 					ApprovalMode: leasecontrol.ApprovalModeElicitation,
 				})
 				// A prior user rejection persisted the extension-denied flag;
-				// the request is auto-rejected during the cool-off. §8.6 line
-				// 729. The tree HAS headroom, so a deny here is the rejection,
-				// not the ceiling.
+				// the request is auto-rejected during the cool-off before the
+				// elicitor is ever consulted. §8.6 line 729/734. The tree HAS
+				// headroom, so a deny here is the active cool-off, not the
+				// ceiling. The auto-approving elicitor would grant if reached,
+				// so a deny proves the cool-off short-circuits it.
 				src.inner.MarkDenied(root)
 				svc := newExtendService(t, src, src)
 				return svc, src, root
