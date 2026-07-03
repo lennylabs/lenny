@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -564,14 +565,6 @@ func (w *gatewayWiring) buildStores() {
 	w.buildSessionMessaging()
 }
 
-// buildPersistenceStores constructs the §4.2 session and metadata stores
-// (Postgres, §17.4 embedded SQLite, or in-memory), the §12.3 read-replica /
-// billing-audit / audit-sync pools, the §4.4 partial-manifest, session-log,
-// and §12.5 checkpoint-retention stores, the §4.5/§17.9.3 artifact store and
-// its §12.5 catalog, and the §5 pool store, recording each on the
-// accumulator. It returns the §12.5 checkpoint-retention store, which is
-// consumed only by the §15.1 pod-lifecycle checkpointer.
-//
 // aliasPrimaryDDLToBillingAudit reports whether the primary-instance DDL
 // pool should alias the billing/audit DDL pool rather than open its own
 // connection. This is true only in the single-instance topology: no separate
@@ -608,6 +601,133 @@ func distinctDDLPools(billingAuditDDLPool, primaryDDLPool *pgxpool.Pool) []*pgxp
 	return pools
 }
 
+// closeDDLPools closes each CREATE-privileged DDL pool exactly once at
+// shutdown, deduplicating the pool shared between the billing/audit and
+// primary limbs in the single-instance topology through distinctDDLPools. The
+// shutdown path (runServers) delegates here so the close loop is a single
+// canonical implementation the tier-1 test pins, rather than an inline loop
+// that runs only during a real process shutdown.
+//
+// spec: §12.3, §15.1. F-11.2.10.
+func closeDDLPools(billingAuditDDLPool, primaryDDLPool *pgxpool.Pool) {
+	for _, pool := range distinctDDLPools(billingAuditDDLPool, primaryDDLPool) {
+		pool.Close()
+	}
+}
+
+// ddlPoolOpener opens a Postgres connection pool from a DSN. It is the injected
+// seam over pgxpool.New that lets openVerifiedDDLPool be exercised at tier 1
+// without a live Postgres, and lets buildPersistenceStores pass the real
+// pgxpool.New at startup.
+type ddlPoolOpener func(ctx context.Context, dsn string) (*pgxpool.Pool, error)
+
+// ddlSchemaVerifier verifies that an opened pool addresses an instance carrying
+// the migrations/ schema. It is the injected seam over verifyPostgresSchema.
+type ddlSchemaVerifier func(ctx context.Context, pool *pgxpool.Pool) error
+
+// openVerifiedDDLPool opens a CREATE-privileged DDL pool from dsn and verifies
+// its schema, returning the pool for the caller to retain. Both the
+// billing/audit and the primary per-tenant sequence-provisioning pools are
+// opened this way, so the open-then-verify-then-fail-closed sequence has a
+// single canonical implementation the tier-1 test pins rather than two
+// near-identical inline blocks. An empty dsn yields a nil pool and no error
+// (the topology does not use this DDL pool). A verify failure closes the pool
+// it opened before returning the error, so a failed startup leaks no
+// connection pool. The caller escalates a non-nil error to log.Fatalf, keeping
+// the DDL-provisioning path fail-closed at startup: a gateway that cannot open
+// a CREATE-privileged pool cannot provision per-tenant sequences and must not
+// start.
+//
+// spec: §12.3, §15.1. F-11.2.10.
+func openVerifiedDDLPool(
+	ctx context.Context,
+	dsn string,
+	open ddlPoolOpener,
+	verify ddlSchemaVerifier,
+) (*pgxpool.Pool, error) {
+	if dsn == "" {
+		return nil, nil
+	}
+	pool, err := open(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := verify(ctx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
+// ddlPoolDSNs are the three DSNs that determine the §12.3 R-03 per-tenant DDL
+// pool topology: the billing/audit instance DSN (billingAudit, whose emptiness
+// distinguishes the single-instance from the separate-instance topology), and
+// the two CREATE-privileged DDL DSNs (billingAuditDDL, primaryDDL).
+type ddlPoolDSNs struct {
+	billingAudit    string
+	billingAuditDDL string
+	primaryDDL      string
+}
+
+// resolveDDLPools opens the CREATE-privileged per-tenant DDL pools for the
+// configured topology, returning the billing/audit DDL pool and the primary DDL
+// pool. It centralizes the topology decision the two pools share so the alias
+// branch and the separate-instance branch have a single canonical
+// implementation the tier-1 test pins, rather than two inline blocks in the
+// startup path. The rules:
+//
+//   - billingAuditDDL opens the billing/audit DDL pool (empty DSN -> nil).
+//   - primaryDDL, when set, opens a distinct primary DDL pool.
+//   - when primaryDDL is empty and the topology is single-instance
+//     (aliasPrimaryDDLToBillingAudit), the primary DDL pool aliases the
+//     billing/audit DDL pool, because the primary and the billing/audit
+//     instance are one and the single pool addresses both.
+//   - when primaryDDL is empty but a separate billing/audit instance is
+//     configured, the primary DDL pool is nil; the operator must supply
+//     LENNY_PG_PRIMARY_DDL_DSN for the separate-instance topology, and its
+//     absence is surfaced as a nil primary pool the caller acts on.
+//
+// A failed open or schema-verify on either pool closes any pool already opened
+// and returns the error, so a failed startup leaks no connection pool and the
+// caller escalates to log.Fatalf (fail-closed DDL provisioning).
+//
+// spec: §12.3, §15.1. F-11.2.10.
+func resolveDDLPools(
+	ctx context.Context,
+	dsns ddlPoolDSNs,
+	open ddlPoolOpener,
+	verify ddlSchemaVerifier,
+) (billingAuditDDLPool, primaryDDLPool *pgxpool.Pool, err error) {
+	billingAuditDDLPool, err = openVerifiedDDLPool(ctx, dsns.billingAuditDDL, open, verify)
+	if err != nil {
+		return nil, nil, fmt.Errorf("billing/audit DDL pool: %w", err)
+	}
+	if dsns.primaryDDL != "" {
+		primaryDDLPool, err = openVerifiedDDLPool(ctx, dsns.primaryDDL, open, verify)
+		if err != nil {
+			closeDDLPools(billingAuditDDLPool, nil)
+			return nil, nil, fmt.Errorf("primary DDL pool: %w", err)
+		}
+		return billingAuditDDLPool, primaryDDLPool, nil
+	}
+	// No explicit primary DDL DSN. In the single-instance topology the primary
+	// is the billing/audit instance, so the billing/audit DDL pool addresses
+	// the primary too; in the separate-instance topology the primary pool stays
+	// nil until the operator supplies LENNY_PG_PRIMARY_DDL_DSN.
+	if aliasPrimaryDDLToBillingAudit(dsns.billingAudit, dsns.primaryDDL) {
+		primaryDDLPool = billingAuditDDLPool
+	}
+	return billingAuditDDLPool, primaryDDLPool, nil
+}
+
+// buildPersistenceStores constructs the §4.2 session and metadata stores
+// (Postgres, §17.4 embedded SQLite, or in-memory), the §12.3 read-replica /
+// billing-audit / audit-sync pools, the §4.4 partial-manifest, session-log,
+// and §12.5 checkpoint-retention stores, the §4.5/§17.9.3 artifact store and
+// its §12.5 catalog, and the §5 pool store, recording each on the
+// accumulator. It returns the §12.5 checkpoint-retention store, which is
+// consumed only by the §15.1 pod-lifecycle checkpointer.
+//
 // spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 pools;
 // §12.5 catalog.
 func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
@@ -637,20 +757,18 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// otherwise. The remaining stores are in-memory pending their
 	// Redis (circuit breakers, quota) or Postgres backings.
 	var (
-		sessions            sessionstore.Store
-		tenants             tenantstore.Store
-		runtimes            runtimestore.Store
-		capOverrides        runtimecapoverride.Store
-		transcripts         transcriptstore.Store
-		users               userstore.Store
-		connectors          connectorstore.Store
-		billing             billingstore.Store
-		pgPool              *pgxpool.Pool
-		readPool            *pgxpool.Pool
-		billingAuditPool    *pgxpool.Pool
-		billingAuditDDLPool *pgxpool.Pool
-		primaryDDLPool      *pgxpool.Pool
-		auditSyncPool       *pgxpool.Pool
+		sessions         sessionstore.Store
+		tenants          tenantstore.Store
+		runtimes         runtimestore.Store
+		capOverrides     runtimecapoverride.Store
+		transcripts      transcriptstore.Store
+		users            userstore.Store
+		connectors       connectorstore.Store
+		billing          billingstore.Store
+		pgPool           *pgxpool.Pool
+		readPool         *pgxpool.Pool
+		billingAuditPool *pgxpool.Pool
+		auditSyncPool    *pgxpool.Pool
 		// sqliteDB is the §17.4 line 199 Source-Mode embedded-SQLite
 		// durability layer. Non-nil only when --sqlite-path is set and
 		// --postgres-dsn is empty; the shutdown path stops the flush loop
@@ -658,6 +776,10 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		sqliteDB          *sqlitestore.DB
 		sqliteFlushCancel context.CancelFunc
 	)
+	// spec: §12.3, §15.1 — the CREATE-privileged per-tenant DDL pools resolved
+	// by resolveDDLPools below. Declared separately from the store block so the
+	// resolveDDLPools call assigns both in one statement. F-11.2.10.
+	var billingAuditDDLPool, primaryDDLPool *pgxpool.Pool
 	if *postgresDSN != "" {
 		pool, err := pgxpool.New(context.Background(), *postgresDSN)
 		if err != nil {
@@ -733,38 +855,25 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		// falls back to the single billing/audit DDL pool. The admin Router
 		// (adminrouter.go) threads both pools into the provisioning helper (S4).
 		// F-11.2.10.
-		if *billingAuditDDLDSN != "" {
-			ddlPool, err := pgxpool.New(context.Background(), *billingAuditDDLDSN)
-			if err != nil {
-				log.Fatalf("lenny-gateway: §12.3 billing/audit DDL postgres: %v", err)
-			}
-			if err := verifyPostgresSchema(context.Background(), ddlPool); err != nil {
-				log.Fatalf("lenny-gateway: §12.3 billing/audit DDL postgres: %v", err)
-			}
-			billingAuditDDLPool = ddlPool
+		var ddlErr error
+		billingAuditDDLPool, primaryDDLPool, ddlErr = resolveDDLPools(
+			context.Background(),
+			ddlPoolDSNs{
+				billingAudit:    *billingAuditDSN,
+				billingAuditDDL: *billingAuditDDLDSN,
+				primaryDDL:      *primaryDDLDSN,
+			},
+			pgxpool.New,
+			verifyPostgresSchema,
+		)
+		if ddlErr != nil {
+			log.Fatalf("lenny-gateway: §12.3 per-tenant DDL postgres: %v", ddlErr)
+		}
+		if billingAuditDDLPool != nil {
 			log.Printf("lenny-gateway: §15.1 per-tenant billing/audit sequence provisioning uses the CREATE-privileged LENNY_PG_BILLING_AUDIT_DDL_DSN connection")
 		}
-		// The primary DDL pool. When LENNY_PG_BILLING_AUDIT_DSN is unset the
-		// primary and the billing/audit instance are the same instance, so the
-		// single billing/audit DDL pool addresses both and no separate primary
-		// DDL DSN is required. When a separate billing/audit instance is
-		// configured, the primary's lenny_app pool likewise holds no CREATE ON
-		// SCHEMA, so a distinct CREATE-privileged pool for the primary is built
-		// from LENNY_PG_PRIMARY_DDL_DSN. F-11.2.10.
-		if *primaryDDLDSN != "" {
-			pddlPool, err := pgxpool.New(context.Background(), *primaryDDLDSN)
-			if err != nil {
-				log.Fatalf("lenny-gateway: §12.3 primary DDL postgres: %v", err)
-			}
-			if err := verifyPostgresSchema(context.Background(), pddlPool); err != nil {
-				log.Fatalf("lenny-gateway: §12.3 primary DDL postgres: %v", err)
-			}
-			primaryDDLPool = pddlPool
+		if primaryDDLPool != nil && primaryDDLPool != billingAuditDDLPool {
 			log.Printf("lenny-gateway: §15.1 per-tenant primary audit sequence provisioning uses the CREATE-privileged LENNY_PG_PRIMARY_DDL_DSN connection")
-		} else if aliasPrimaryDDLToBillingAudit(*billingAuditDSN, *primaryDDLDSN) {
-			// Single-instance topology: the primary is the billing/audit
-			// instance, so the billing/audit DDL pool addresses the primary too.
-			primaryDDLPool = billingAuditDDLPool
 		}
 		// §12.3 line 79: a dedicated, small audit sync write pool so the
 		// synchronous audit hash-chain writes do not consume the shared
