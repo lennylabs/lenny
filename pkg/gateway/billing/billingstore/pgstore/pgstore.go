@@ -8,9 +8,15 @@
 // runs inside a transaction that sets app.current_tenant for the
 // §12.3 lenny_tenant_guard trigger and the RLS policy, and the
 // lenny_billing_immutability trigger rejects any update or delete.
-// Append serializes the per-tenant sequence_number assignment with a
-// transaction advisory lock so concurrent writers cannot collide on a
-// sequence value.
+// Append assigns the per-tenant sequence_number by nextval on the
+// dedicated §11.2.1 per-tenant Postgres sequence (the §10.2
+// length-bounded safe-derived billing_seq_<40hex> name), which the
+// tenant-create path provisions before the first billing event. The
+// sequence's counter is independent of the table rows, so it retains
+// monotonicity across the retention sweep and §12.8 teardown deletes
+// that a MAX(sequence_number)+1 scheme cannot survive.
+//
+// spec: §11.2.1, §10.2.
 package pgstore
 
 import (
@@ -23,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -65,9 +72,16 @@ const selectList = `sequence_number, schema_version, user_id, session_id,
 	environment_id, conditional_fields, labels, created_at`
 
 // Append commits a billing event to the tenant's ledger and returns
-// the sealed event. The per-tenant advisory lock makes the tail read
-// and the insert atomic with respect to other writers; the
-// (tenant_id, sequence_number) primary key is the hard backstop.
+// the sealed event. The per-tenant sequence_number is drawn by nextval
+// on the dedicated §11.2.1 Postgres sequence inside the INSERT
+// transaction, so concurrent writers each get a distinct value without
+// a per-tenant advisory lock; the (tenant_id, sequence_number) primary
+// key is the hard backstop. A rolled-back INSERT leaves a sequence gap
+// the §11.2.1 replay mechanism tolerates. The sequence retains its
+// counter across the retention sweep and §12.8 teardown deletes, so it
+// never regresses below a value it already issued.
+//
+// spec: §11.2.1, §10.2.
 func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.Event, error) {
 	if err := billingstore.Validate(e); err != nil {
 		return billingstore.Event{}, err
@@ -79,19 +93,22 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 	}
 	var committed billingstore.Event
 	err = pgtenant.InTx(ctx, pool, e.TenantID, func(tx pgx.Tx) error {
-		// Serialize sequence assignment for this tenant; other tenants
-		// proceed in parallel because the lock key is per tenant.
-		if _, err := tx.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtext($1))`, "billing:"+e.TenantID); err != nil {
-			return err
-		}
-		var tail int64
+		// §11.2.1: draw the sequence_number from the dedicated per-tenant
+		// Postgres sequence (the §10.2 length-bounded safe-derived
+		// billing_seq_<40hex> name) inside the INSERT transaction. nextval
+		// serializes across concurrent writers without an advisory lock, and
+		// the sequence retains its counter across the retention and teardown
+		// deletes that a MAX(sequence_number)+1 read cannot survive. A
+		// rolled-back INSERT leaves a gap the §11.2.1 replay mechanism
+		// tolerates. The name is a seqname-derived identifier (literal prefix
+		// plus 40-hex digest), injection-safe by construction and bound as a
+		// value here because nextval takes a regclass argument.
+		var seq int64
 		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(MAX(sequence_number), 0) FROM billing_events WHERE tenant_id = $1`,
-			e.TenantID).Scan(&tail); err != nil {
+			`SELECT nextval($1)`, seqname.BillingSequenceName(e.TenantID)).Scan(&seq); err != nil {
 			return err
 		}
-		e.SequenceNumber = uint64(tail) + 1
+		e.SequenceNumber = uint64(seq)
 		conditional, err := conditionalValue(e)
 		if err != nil {
 			return err
@@ -361,9 +378,13 @@ func correctsSequence(e billingstore.Event) any {
 // the reclaiming consumer can safely acknowledge and delete the entry.
 //
 // The flusher acquires the authoritative per-tenant sequence number at
-// flush time (§11.2.1) — the provisional number stamped during the
-// outage is discarded — so InsertFromStream re-derives the sequence
-// under the per-tenant advisory lock exactly like Append.
+// flush time (§11.2.1: "the flusher acquires the Postgres sequence
+// value at flush time, not at buffer time") — the provisional
+// stream_seq stamped during the outage is discarded — so
+// InsertFromStream draws the sequence_number by nextval on the
+// dedicated per-tenant sequence exactly like Append.
+//
+// spec: §11.2.1, §10.2.
 func (s *Store) InsertFromStream(ctx context.Context, e billingstore.Event, streamEntryID string) error {
 	if err := billingstore.Validate(e); err != nil {
 		return err
@@ -374,30 +395,34 @@ func (s *Store) InsertFromStream(ctx context.Context, e billingstore.Event, stre
 		return err
 	}
 	return pgtenant.InTx(ctx, pool, e.TenantID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtext($1))`, "billing:"+e.TenantID); err != nil {
-			return err
-		}
-		var tail int64
+		// §11.2.1 flush-time acquire: draw the authoritative sequence_number
+		// from the dedicated per-tenant Postgres sequence (the §10.2
+		// billing_seq_<40hex> name), discarding the provisional outage-window
+		// stream_seq, exactly like Append.
+		var seq int64
 		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(MAX(sequence_number), 0) FROM billing_events WHERE tenant_id = $1`,
-			e.TenantID).Scan(&tail); err != nil {
+			`SELECT nextval($1)`, seqname.BillingSequenceName(e.TenantID)).Scan(&seq); err != nil {
 			return err
 		}
-		e.SequenceNumber = uint64(tail) + 1
+		e.SequenceNumber = uint64(seq)
 		conditional, err := conditionalValue(e)
 		if err != nil {
 			return err
 		}
 		// §11.2.1: ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING
-		// makes a redelivered stream entry idempotent.
+		// makes a redelivered stream entry idempotent. The backing unique
+		// index (migration 0043, idx_billing_events_stream_entry) is partial
+		// (WHERE stream_entry_id IS NOT NULL), so the conflict target must
+		// carry the same predicate for Postgres to infer that index; a bare
+		// ON CONFLICT (tenant_id, stream_entry_id) raises 42P10 against a
+		// partial index.
 		_, err = tx.Exec(ctx, `INSERT INTO billing_events (
 			tenant_id, sequence_number, schema_version, user_id, session_id,
 			experiment_id, variant_id, event_type, tokens_input, tokens_output,
 			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
 			environment_id, conditional_fields, stream_entry_id, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-		ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING`,
+		ON CONFLICT (tenant_id, stream_entry_id) WHERE stream_entry_id IS NOT NULL DO NOTHING`,
 			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
 			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
 			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
