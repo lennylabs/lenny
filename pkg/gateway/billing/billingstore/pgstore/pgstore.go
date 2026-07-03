@@ -373,9 +373,13 @@ func correctsSequence(e billingstore.Event) any {
 // InsertFromStream commits a billing event reclaimed from the §11.2.1
 // failover Redis stream, keyed by the Redis stream entry id for
 // idempotency. It is the redisstream.Inserter implementation: the
-// INSERT ... ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING means a
-// reclaimed entry a crashed consumer had already inserted is a no-op, so
-// the reclaiming consumer can safely acknowledge and delete the entry.
+// INSERT ... ON CONFLICT (tenant_id, stream_entry_id)
+// WHERE stream_entry_id IS NOT NULL DO NOTHING means a reclaimed entry a
+// crashed consumer had already inserted is a no-op, so the reclaiming
+// consumer can safely acknowledge and delete the entry. The conflict
+// target carries the partial-index predicate so Postgres infers the
+// migration-0043 idx_billing_events_stream_entry index; see the INSERT
+// below for why a bare conflict target raises 42P10.
 //
 // The flusher acquires the authoritative per-tenant sequence number at
 // flush time (§11.2.1: "the flusher acquires the Postgres sequence
