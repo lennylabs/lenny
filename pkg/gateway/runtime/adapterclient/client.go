@@ -479,14 +479,12 @@ func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time
 
 // CheckpointBarrierResult mirrors the §10.1 CheckpointBarrierAck the
 // pod's adapter emits in response to a graceful-drain barrier: the
-// echoed barrier id, the last completed tool call's id, the
-// best-effort checkpoint ref (empty when the flush produced none), and
-// the wall-clock the adapter spent quiescing.
+// echoed barrier id, the best-effort checkpoint ref (empty when the
+// flush produced none), and the wall-clock the adapter spent quiescing.
 type CheckpointBarrierResult struct {
-	BarrierID      string
-	LastToolCallID string
-	CheckpointRef  string
-	QuiescedMs     int64
+	BarrierID     string
+	CheckpointRef string
+	QuiescedMs    int64
 }
 
 // CheckpointBarrier dispatches the §10.1 lines 163-181 graceful-drain
@@ -495,9 +493,7 @@ type CheckpointBarrierResult struct {
 // when stale), quiesces tool-call dispatch, flushes a best-effort
 // checkpoint, and acknowledges. The synchronous return mirrors the
 // CheckpointBarrierAck the adapter also emits on the LifecycleChannel
-// control stream; the gateway persists last_tool_call_id from the
-// result into session_checkpoint_meta (§10.1 line 178 (b)) for
-// resume-time deduplication.
+// control stream.
 //
 // spec: §10.1 lines 163-181.
 func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordinationGeneration int64, barrierID string) (CheckpointBarrierResult, error) {
@@ -510,10 +506,9 @@ func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordi
 		return CheckpointBarrierResult{}, err
 	}
 	return CheckpointBarrierResult{
-		BarrierID:      resp.GetBarrierId(),
-		LastToolCallID: resp.GetLastToolCallId(),
-		CheckpointRef:  resp.GetCheckpointRef(),
-		QuiescedMs:     resp.GetQuiescedMs(),
+		BarrierID:     resp.GetBarrierId(),
+		CheckpointRef: resp.GetCheckpointRef(),
+		QuiescedMs:    resp.GetQuiescedMs(),
 	}, nil
 }
 

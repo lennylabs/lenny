@@ -39,8 +39,8 @@ const (
 	eventFinalUsageReport = "FINAL_USAGE_REPORT"
 	// eventCheckpointBarrierAck is the §4.7 line 660 CheckpointBarrierAck
 	// event the adapter emits in response to a §10.1 graceful-drain
-	// CheckpointBarrier RPC. Fields: barrier_id, last_tool_call_id,
-	// checkpoint_ref, quiesced_ms (mirrors the synchronous RPC return).
+	// CheckpointBarrier RPC. Fields: barrier_id, checkpoint_ref,
+	// quiesced_ms (mirrors the synchronous RPC return).
 	eventCheckpointBarrierAck = "CheckpointBarrierAck"
 )
 
@@ -62,12 +62,11 @@ type controlEvent struct {
 	LeaseID   string        `json:"leaseId,omitempty"`
 	Reason    string        `json:"reason,omitempty"`
 	Usage     *controlUsage `json:"usage,omitempty"`
-	// CheckpointBarrierAck fields (§4.7 line 660 / §10.1 line 173). Only
-	// set on the eventCheckpointBarrierAck event; omitted otherwise.
-	BarrierID      string `json:"barrierId,omitempty"`
-	LastToolCallID string `json:"lastToolCallId,omitempty"`
-	CheckpointRef  string `json:"checkpointRef,omitempty"`
-	QuiescedMs     int64  `json:"quiescedMs,omitempty"`
+	// CheckpointBarrierAck fields (§4.7 line 660). Only set on the
+	// eventCheckpointBarrierAck event; omitted otherwise.
+	BarrierID     string `json:"barrierId,omitempty"`
+	CheckpointRef string `json:"checkpointRef,omitempty"`
+	QuiescedMs    int64  `json:"quiescedMs,omitempty"`
 }
 
 // controlUsage carries the token and wall-clock totals on a

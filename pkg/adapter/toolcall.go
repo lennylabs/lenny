@@ -26,8 +26,8 @@ type toolResultFrame struct {
 
 // extractToolCallID returns the id field of a JSONL tool_call frame, or
 // the empty string when the frame is not a tool_call or cannot be
-// parsed. Used to record the §10.1 line 173 last_tool_call_id on the
-// adapter so a subsequent CheckpointBarrier ack surfaces it.
+// parsed. Used to stamp the §16.3 `session.tool_call` span with the
+// invoked tool's call id.
 func extractToolCallID(frame []byte) string {
 	var probe struct {
 		Type string `json:"type"`
