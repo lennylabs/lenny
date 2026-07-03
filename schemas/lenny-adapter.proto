@@ -136,8 +136,8 @@ service Adapter {
   // `coordination_generation` against the last fenced generation, quiesces
   // tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
   // via `CheckpointBarrierAck` on the LifecycleChannel control stream
-  // (§4.7 line 660 — fields: `barrier_id`, `last_tool_call_id`,
-  // `checkpoint_ref`). The RPC return value mirrors the ack so a
+  // (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`). The RPC
+  // return value mirrors the ack so a
   // synchronous caller has the same information; the control-stream emit
   // is the canonical surface for the gateway's barrier-target reconciler.
   // The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
@@ -1167,20 +1167,16 @@ message CheckpointBarrierRequest {
 
 // CheckpointBarrierResponse is the synchronous mirror of the
 // CheckpointBarrierAck event emitted on the LifecycleChannel control
-// stream (§4.7 line 660). barrier_id echoes the request. last_tool_call_id
-// is the id of the last tool call the adapter dispatched before
-// quiescing; the gateway uses it to deduplicate replays on resume per
-// §10.1 line 173. checkpoint_ref is the storage reference of the
-// best-effort checkpoint flushed during the barrier (empty when the
-// adapter could not flush one — e.g. checkpoint sink unwired or
-// archive failed). quiesced_ms reports the wall-clock the adapter spent
-// quiescing the runtime; the gateway records it on
-// `lenny_checkpoint_barrier_ack_duration_seconds`.
+// stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
+// is the storage reference of the best-effort checkpoint flushed during
+// the barrier (empty when the adapter could not flush one — e.g.
+// checkpoint sink unwired or archive failed). quiesced_ms reports the
+// wall-clock the adapter spent quiescing the runtime; the gateway records
+// it on `lenny_checkpoint_barrier_ack_duration_seconds`.
 message CheckpointBarrierResponse {
   string barrier_id = 1;
-  string last_tool_call_id = 2;
-  string checkpoint_ref = 3;
-  int64 quiesced_ms = 4;
+  string checkpoint_ref = 2;
+  int64 quiesced_ms = 3;
 }
 
 // ExportSpec is one §8.7 file-export entry: a source glob resolved

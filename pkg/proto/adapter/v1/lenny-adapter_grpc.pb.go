@@ -164,8 +164,8 @@ type AdapterClient interface {
 	// `coordination_generation` against the last fenced generation, quiesces
 	// tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
 	// via `CheckpointBarrierAck` on the LifecycleChannel control stream
-	// (§4.7 line 660 — fields: `barrier_id`, `last_tool_call_id`,
-	// `checkpoint_ref`). The RPC return value mirrors the ack so a
+	// (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`). The RPC
+	// return value mirrors the ack so a
 	// synchronous caller has the same information; the control-stream emit
 	// is the canonical surface for the gateway's barrier-target reconciler.
 	// The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
@@ -567,8 +567,8 @@ type AdapterServer interface {
 	// `coordination_generation` against the last fenced generation, quiesces
 	// tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
 	// via `CheckpointBarrierAck` on the LifecycleChannel control stream
-	// (§4.7 line 660 — fields: `barrier_id`, `last_tool_call_id`,
-	// `checkpoint_ref`). The RPC return value mirrors the ack so a
+	// (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`). The RPC
+	// return value mirrors the ack so a
 	// synchronous caller has the same information; the control-stream emit
 	// is the canonical surface for the gateway's barrier-target reconciler.
 	// The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`

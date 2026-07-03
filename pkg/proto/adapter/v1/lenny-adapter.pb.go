@@ -4274,23 +4274,19 @@ func (x *CheckpointBarrierRequest) GetBarrierId() string {
 
 // CheckpointBarrierResponse is the synchronous mirror of the
 // CheckpointBarrierAck event emitted on the LifecycleChannel control
-// stream (§4.7 line 660). barrier_id echoes the request. last_tool_call_id
-// is the id of the last tool call the adapter dispatched before
-// quiescing; the gateway uses it to deduplicate replays on resume per
-// §10.1 line 173. checkpoint_ref is the storage reference of the
-// best-effort checkpoint flushed during the barrier (empty when the
-// adapter could not flush one — e.g. checkpoint sink unwired or
-// archive failed). quiesced_ms reports the wall-clock the adapter spent
-// quiescing the runtime; the gateway records it on
-// `lenny_checkpoint_barrier_ack_duration_seconds`.
+// stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
+// is the storage reference of the best-effort checkpoint flushed during
+// the barrier (empty when the adapter could not flush one — e.g.
+// checkpoint sink unwired or archive failed). quiesced_ms reports the
+// wall-clock the adapter spent quiescing the runtime; the gateway records
+// it on `lenny_checkpoint_barrier_ack_duration_seconds`.
 type CheckpointBarrierResponse struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	BarrierId      string                 `protobuf:"bytes,1,opt,name=barrier_id,json=barrierId,proto3" json:"barrier_id,omitempty"`
-	LastToolCallId string                 `protobuf:"bytes,2,opt,name=last_tool_call_id,json=lastToolCallId,proto3" json:"last_tool_call_id,omitempty"`
-	CheckpointRef  string                 `protobuf:"bytes,3,opt,name=checkpoint_ref,json=checkpointRef,proto3" json:"checkpoint_ref,omitempty"`
-	QuiescedMs     int64                  `protobuf:"varint,4,opt,name=quiesced_ms,json=quiescedMs,proto3" json:"quiesced_ms,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BarrierId     string                 `protobuf:"bytes,1,opt,name=barrier_id,json=barrierId,proto3" json:"barrier_id,omitempty"`
+	CheckpointRef string                 `protobuf:"bytes,2,opt,name=checkpoint_ref,json=checkpointRef,proto3" json:"checkpoint_ref,omitempty"`
+	QuiescedMs    int64                  `protobuf:"varint,3,opt,name=quiesced_ms,json=quiescedMs,proto3" json:"quiesced_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CheckpointBarrierResponse) Reset() {
@@ -4326,13 +4322,6 @@ func (*CheckpointBarrierResponse) Descriptor() ([]byte, []int) {
 func (x *CheckpointBarrierResponse) GetBarrierId() string {
 	if x != nil {
 		return x.BarrierId
-	}
-	return ""
-}
-
-func (x *CheckpointBarrierResponse) GetLastToolCallId() string {
-	if x != nil {
-		return x.LastToolCallId
 	}
 	return ""
 }
@@ -5716,13 +5705,12 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x127\n" +
 	"\x17coordination_generation\x18\x02 \x01(\x03R\x16coordinationGeneration\x12\x1d\n" +
 	"\n" +
-	"barrier_id\x18\x03 \x01(\tR\tbarrierId\"\xad\x01\n" +
+	"barrier_id\x18\x03 \x01(\tR\tbarrierId\"\x82\x01\n" +
 	"\x19CheckpointBarrierResponse\x12\x1d\n" +
 	"\n" +
-	"barrier_id\x18\x01 \x01(\tR\tbarrierId\x12)\n" +
-	"\x11last_tool_call_id\x18\x02 \x01(\tR\x0elastToolCallId\x12%\n" +
-	"\x0echeckpoint_ref\x18\x03 \x01(\tR\rcheckpointRef\x12\x1f\n" +
-	"\vquiesced_ms\x18\x04 \x01(\x03R\n" +
+	"barrier_id\x18\x01 \x01(\tR\tbarrierId\x12%\n" +
+	"\x0echeckpoint_ref\x18\x02 \x01(\tR\rcheckpointRef\x12\x1f\n" +
+	"\vquiesced_ms\x18\x03 \x01(\x03R\n" +
 	"quiescedMs\"E\n" +
 	"\n" +
 	"ExportSpec\x12\x16\n" +
