@@ -93,12 +93,14 @@ func CheckChainContinuity(ctx context.Context, db Querier) ([]ChainContinuityRes
 //
 // The genesis sentinel is asserted only when the window reaches the
 // chain head (sequence_number 1); a partial window is verified by its
-// per-tenant sequence contiguity and prev_hash links alone. Because the
-// durable store assigns sequence_number = tail+1 transactionally and
-// prev_hash = LinkHash(tail), committed numbers are gap-free in normal
-// operation: a sequence gap or a non-linking prev_hash both signal lost
-// or tampered entries, reported as a broken chain with the boundary
-// sequence numbers and timestamp range the §12.3 WARN message needs.
+// prev_hash links alone. The durable store allocates sequence_number by
+// nextval (§11.7), so a rolled-back transaction consumes a value without
+// committing a row and leaves a benign interior sequence-number gap. The
+// prev_hash linkage is therefore the authoritative tamper signal: an
+// intact-link sequence-number gap is detected but not broken, and only a
+// non-linking prev_hash (a committed-row tamper or removal) is reported
+// as a broken chain with the boundary sequence numbers and timestamp
+// range the §12.3 WARN message needs.
 func CheckChainContinuityRecent(ctx context.Context, db Querier, lastN int) ([]ChainContinuityResult, error) {
 	tenants, err := auditTenants(ctx, db)
 	if err != nil {
@@ -137,6 +139,19 @@ type chainGap struct {
 // asserted only when the window starts at sequence_number 1, so a
 // partial recent-N window is verified by sequence contiguity and
 // prev_hash links. The returned chainGap is populated on a break.
+//
+// The audit sequence_number is allocated by nextval (§11.7), so a
+// transaction rollback consumes a value without committing a row and
+// leaves a benign interior sequence-number gap, and a swept chain that
+// restarts at a non-1 genesis linking to the genesis sentinel is
+// likewise benign. Chain integrity is therefore decided by the prev_hash
+// linkage rather than by sequence density: a sequence-number gap whose
+// prev_hash link is intact (cur.PrevHash == LinkHash(prev)) is detected
+// but not a broken chain, and only a non-linking prev_hash — a
+// committed-row tamper or removal — returns ChainBroken. This keeps a
+// benign nextval-rollback gap and a crash-dropped accepted buffered-T2
+// batch (both intact-link) from firing §16.5 AuditChainGap, while a
+// committed-row tamper still breaks the chain. spec: §11.7, §12.3.
 func verifyChainWindow(tenantID string, rows []audit.Row) (audit.VerifyResult, chainGap) {
 	if len(rows) == 0 {
 		return audit.VerifyResult{Integrity: audit.ChainVerified}, chainGap{}
@@ -150,20 +165,27 @@ func verifyChainWindow(tenantID string, rows []audit.Row) (audit.VerifyResult, c
 	}
 	for i := 1; i < len(rows); i++ {
 		prev, cur := rows[i-1], rows[i]
-		if cur.Seq != prev.Seq+1 {
-			return audit.VerifyResult{
-				Integrity: audit.ChainBroken,
-				BreakSeq:  cur.Seq,
-				Detail:    fmt.Sprintf("sequence gap between %d and %d", prev.Seq, cur.Seq),
-			}, chainGap{lowSeq: prev.Seq, highSeq: cur.Seq, start: prev.Timestamp, end: cur.Timestamp}
-		}
+		// The prev_hash link is the authoritative tamper signal, so it is
+		// evaluated before a sequence-number gap is considered. A
+		// non-linking prev_hash is a broken chain whether or not the
+		// sequence numbers are contiguous (a committed-row tamper leaves a
+		// contiguous non-linking pair; a committed-row removal leaves a
+		// sequence gap across a non-linking pair). spec: §11.7, §12.3.
 		if cur.PrevHash != audit.LinkHash(prev) {
+			detail := fmt.Sprintf("row %d prev_hash does not link to row %d", cur.Seq, prev.Seq)
+			if cur.Seq != prev.Seq+1 {
+				detail = fmt.Sprintf("prev_hash does not link across sequence gap between %d and %d", prev.Seq, cur.Seq)
+			}
 			return audit.VerifyResult{
 				Integrity: audit.ChainBroken,
 				BreakSeq:  cur.Seq,
-				Detail:    fmt.Sprintf("row %d prev_hash does not link to row %d", cur.Seq, prev.Seq),
+				Detail:    detail,
 			}, chainGap{lowSeq: prev.Seq, highSeq: cur.Seq, start: prev.Timestamp, end: cur.Timestamp}
 		}
+		// The prev_hash link is intact. A sequence-number gap here is a
+		// benign nextval-rollback (or a crash-dropped accepted buffered-T2
+		// batch that still linked to the committed tail), detected but not
+		// broken, so the walk continues. spec: §11.7, §12.3.
 	}
 	return audit.VerifyResult{Integrity: audit.ChainVerified}, chainGap{}
 }
