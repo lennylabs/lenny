@@ -269,10 +269,15 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 		}
 	}
 	resp := &RecommendationsResponse{Recommendations: []Recommendation{}}
+	// spec: §25.3 — aggregate whether any rule in the whole catalog
+	// reported data, independent of the ?category= filter, so a filtered
+	// request cannot read the store as wholesale-empty while another rule
+	// holds data. An all-empty window set (for example shortly after a
+	// gateway restart) surfaces below as a degraded §25.2 envelope so an
+	// agent distinguishes a data-starved response from a healthy one.
+	evaluated := 0
+	anyData := false
 	for _, rule := range rules.Catalog() {
-		if category != nil && string(rule.Category) != *category {
-			continue
-		}
 		// spec: §25.3 line 604 — operator-disabled rules never run.
 		if s.disabled[rule.Name] {
 			continue
@@ -282,6 +287,17 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 			continue
 		}
 		e := ev(s.reader, s.windowFor(rule))
+		evaluated++
+		if e.DataAvailable {
+			anyData = true
+		}
+		// spec: §25.3 — the ?category= filter narrows only the emitted
+		// recommendations; data presence is aggregated over the whole
+		// catalog above, so a filtered request for a starved rule cannot
+		// report the store as wholesale-empty while another rule has data.
+		if category != nil && string(rule.Category) != *category {
+			continue
+		}
 		if !e.Triggered {
 			continue
 		}
@@ -307,6 +323,21 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 	resp.Degradation = &conventions.Degradation{
 		Level:           conventions.DegradationHealthy,
 		ThresholdSource: conventions.ThresholdSourceCompiledInDefaults,
+	}
+	// spec: §25.3 (data-starved degradation), §25.2 (canonical envelope)
+	// — when at least one rule was evaluated but no rule in the whole
+	// catalog reported data, every ring buffer is empty (the data-starved
+	// case, for example shortly after a gateway restart). Report the
+	// response-level envelope as degraded with a warning so an agent
+	// distinguishes an empty recommendations array caused by starved
+	// windows from one caused by a healthy platform with no issues. A
+	// literal confidence: 0.0 is not set: Degradation.Confidence is
+	// omitempty, so the level and the warning carry the signal.
+	if evaluated > 0 && !anyData {
+		resp.Degradation.Level = conventions.DegradationDegraded
+		resp.Degradation.Warnings = []string{
+			"recommendation metric windows are empty; no capacity rule had data to evaluate (for example shortly after a gateway restart, or when the source metrics are not present in this gateway's registry)",
+		}
 	}
 	return resp, nil
 }
