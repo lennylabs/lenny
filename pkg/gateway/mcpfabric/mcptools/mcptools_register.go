@@ -1898,8 +1898,16 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			TreeVisibility string `json:"treeVisibility,omitempty"`
 			// IdempotencyKey is read by the MCP idempotency hook
 			// before the handler runs and is intentionally accepted
-			// + ignored here. spec: §11.5 line 277; F-11.5.1,
-			// F-11.5.6.
+			// + ignored here. The hook is wired only on the
+			// client-facing edge /mcp surface, so it collapses
+			// client-facing gateway-failover and retry duplicates. It
+			// does not run on the intra-pod platform-tool path a
+			// restored parent re-issues delegate_task over, so it does
+			// not deduplicate a spawn re-derived across an unplanned
+			// parent restore; that duplicate subtree is the unmitigated
+			// at-least-once residual documented in §8.10 "Duplicate
+			// spawn across parent recovery". spec: §11.5 line 277,
+			// §8.10; F-11.5.1, F-11.5.6.
 			IdempotencyKey string `json:"idempotencyKey,omitempty"`
 			// FileExportLimits is the optional §8.3 line 264 ceiling on
 			// the task.workspaceFiles.export set; omit for the spec
