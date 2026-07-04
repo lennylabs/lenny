@@ -618,7 +618,7 @@ func criticalAlerts() []Rule {
 			Expr:        `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0`,
 			Severity:    SeverityCritical,
 			Summary:     "GDPR redaction receipt missing for a redacted audit row",
-			Description: "A row is classified chainIntegrity=redacted_gdpr by the verifier but the corresponding signed RedactionReceipt is absent, signature-invalid, or mismatches the chain rewrite boundary. Distinguishes an orphaned GDPR redaction from a genuine tamper.",
+			Description: "A row is classified chainIntegrity=redacted_gdpr by the verifier but the corresponding signed RedactionReceipt is absent, signature-invalid, or its original_hash does not match the redacted row's preserved pre-redaction hash. Distinguishes an orphaned GDPR redaction from a genuine tamper.",
 			RunbookURL:  runbook("audit-redaction-receipt-missing"),
 			SpecRef:     "§16.5",
 		},
