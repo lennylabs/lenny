@@ -124,6 +124,7 @@ type scriptQuerier struct {
 	erasureScope [][]any // VerifyErasureRoleScope (table, priv)
 	erasureSrc   string  // VerifyErasureGuard prosrc
 	tenants      [][]any // auditTenants (tenant_id)
+	deleting     [][]any // tenantsInDeletion skip-set (control-plane tenant id)
 	chainRows    [][]any // loadRecentChainRows (seq, type, payload, created, prev_hash, id, schema_version)
 	redaction    [][]any // CheckRedactionReceipts (tenant_id, missing count)
 	queryErr     error   // when set, every Query returns it
@@ -144,6 +145,12 @@ func (q *scriptQuerier) Query(ctx context.Context, sql string, args ...any) (pgx
 			rows = defaultTriggerRows()
 		}
 		return &scriptRows{rows: rows}, nil
+	case strings.Contains(sql, "FROM tenants WHERE state IN"):
+		// tenantsInDeletion reads the §12.8 deletion skip-set from the
+		// control-plane pool; the default is empty (no tenant in
+		// deletion), so the co-located constructions enumerate every
+		// audit tenant exactly as before.
+		return &scriptRows{rows: q.deleting}, nil
 	case strings.Contains(sql, "DISTINCT tenant_id"):
 		return &scriptRows{rows: q.tenants}, nil
 	case strings.Contains(sql, "sequence_number, event_type"):
@@ -176,8 +183,10 @@ func defaultTriggerRows() [][]any {
 // fires no observer. F-11.7.3.
 func TestPeriodicCheckOnceNoDrift(t *testing.T) {
 	var grantHits, chainStates int
+	q := &scriptQuerier{}
 	p := &PeriodicCheck{
-		DB:           &scriptQuerier{},
+		DB:           q,
+		CtrlDB:       q, // co-located topology: one pool serves both
 		Cfg:          PeriodicConfig{ChainSampleN: 1000},
 		OnGrantDrift: func() { grantHits++ },
 		OnChainState: func(string) { chainStates++ },
@@ -198,10 +207,12 @@ func TestPeriodicCheckOnceNoDrift(t *testing.T) {
 // must report drift and increment lenny_audit_grant_drift_total. F-11.7.3.
 func TestPeriodicCheckOnceGrantDrift(t *testing.T) {
 	var grantHits int
+	q := &scriptQuerier{
+		grants: [][]any{{"audit_log", "UPDATE"}},
+	}
 	p := &PeriodicCheck{
-		DB: &scriptQuerier{
-			grants: [][]any{{"audit_log", "UPDATE"}},
-		},
+		DB:           q,
+		CtrlDB:       q, // co-located topology: one pool serves both
 		Cfg:          PeriodicConfig{ChainSampleN: 1000},
 		OnGrantDrift: func() { grantHits++ },
 	}
@@ -218,18 +229,20 @@ func TestPeriodicCheckOnceGrantDrift(t *testing.T) {
 // even when grants are clean. F-11.7.3.
 func TestPeriodicCheckOnceChainBroken(t *testing.T) {
 	var states []string
-	p := &PeriodicCheck{
-		DB: &scriptQuerier{
-			tenants: [][]any{{"acme"}},
-			// A gap between sequence 5 and 7 is a broken chain; the window
-			// does not start at genesis, so contiguity alone is checked.
-			// Columns: seq, event_type, payload, created, prev_hash, id,
-			// event_schema_version (the §11.7 item 3 hash-input set).
-			chainRows: [][]any{
-				{int64(5), "session.created", []byte(`{}`), time.Time{}, []byte("aa"), "00000000-0000-4000-8000-000000000005", "v1"},
-				{int64(7), "session.created", []byte(`{}`), time.Time{}, []byte("bb"), "00000000-0000-4000-8000-000000000007", "v1"},
-			},
+	q := &scriptQuerier{
+		tenants: [][]any{{"acme"}},
+		// A gap between sequence 5 and 7 is a broken chain; the window
+		// does not start at genesis, so contiguity alone is checked.
+		// Columns: seq, event_type, payload, created, prev_hash, id,
+		// event_schema_version (the §11.7 item 3 hash-input set).
+		chainRows: [][]any{
+			{int64(5), "session.created", []byte(`{}`), time.Time{}, []byte("aa"), "00000000-0000-4000-8000-000000000005", "v1"},
+			{int64(7), "session.created", []byte(`{}`), time.Time{}, []byte("bb"), "00000000-0000-4000-8000-000000000007", "v1"},
 		},
+	}
+	p := &PeriodicCheck{
+		DB:           q,
+		CtrlDB:       q, // co-located topology: one pool serves both
 		Cfg:          PeriodicConfig{ChainSampleN: 1000},
 		OnChainState: func(s string) { states = append(states, s) },
 	}
@@ -241,13 +254,88 @@ func TestPeriodicCheckOnceChainBroken(t *testing.T) {
 	}
 }
 
+// spec: §12.8 (post-teardown remnant exempt from chain verification),
+// §12.3 line 103 (split billing/audit Postgres). The periodic check must
+// resolve the §12.8 tenant-deletion skip-set from the control-plane pool
+// (CtrlDB), not the ledger pool (DB): under the split billing/audit-pool
+// topology the retained gdpr.*-only remnant of a deleting tenant lives on
+// the ledger instance while the authoritative tenants.state stays on the
+// primary. A discontinuous remnant of a tenant in state='deleting' must
+// therefore be skipped so no false §16.5 AuditChainGap drift is reported.
+// This pins the C4 CtrlDB wiring: passing the ledger pool for the skip-set
+// (the pre-fix same-pool call) would enumerate the tenant and report the
+// remnant as broken drift. F-12.8.4.
+func TestPeriodicCheckOnceSkipsDeletingTenantFromCtrlDB(t *testing.T) {
+	// Ledger pool: holds the deleting tenant's discontinuous gdpr.*-only
+	// remnant (a sequence gap between 5 and 7, a broken chain) and no
+	// deletion state (the split-pool tenants table on the ledger instance
+	// is unpopulated with deletion state).
+	audit := &scriptQuerier{
+		tenants: [][]any{{"acme"}},
+		chainRows: [][]any{
+			{int64(5), "gdpr.erasure_requested", []byte(`{}`), time.Time{}, []byte("aa"), "00000000-0000-4000-8000-000000000005", "v1"},
+			{int64(7), "gdpr.erasure_completed", []byte(`{}`), time.Time{}, []byte("bb"), "00000000-0000-4000-8000-000000000007", "v1"},
+		},
+	}
+	// Control-plane pool: carries the authoritative tenants.state, marking
+	// acme as in deletion so the continuity check skips its remnant.
+	ctrl := &scriptQuerier{
+		deleting: [][]any{{"acme"}},
+	}
+	var states []string
+	p := &PeriodicCheck{
+		DB:           audit,
+		CtrlDB:       ctrl,
+		Cfg:          PeriodicConfig{ChainSampleN: 1000},
+		OnChainState: func(s string) { states = append(states, s) },
+	}
+	if p.CheckOnce(context.Background()) {
+		t.Fatal("CheckOnce reported drift for a deleting tenant's remnant; the CtrlDB skip-set was not consulted")
+	}
+	if len(states) != 0 {
+		t.Fatalf("OnChainState fired %v for a skipped deleting tenant, want no states", states)
+	}
+}
+
+// spec: §12.8 (post-teardown remnant exempt), §12.3 line 103. The contrast
+// to the skip case: when the control-plane pool reports the tenant as live
+// (not in deletion), the discontinuous remnant is still verified and its
+// broken chain reported. This guards against the skip-set masking a genuine
+// break on a live tenant. F-12.8.4.
+func TestPeriodicCheckOnceVerifiesLiveTenantRemnant(t *testing.T) {
+	audit := &scriptQuerier{
+		tenants: [][]any{{"acme"}},
+		chainRows: [][]any{
+			{int64(5), "session.created", []byte(`{}`), time.Time{}, []byte("aa"), "00000000-0000-4000-8000-000000000005", "v1"},
+			{int64(7), "session.created", []byte(`{}`), time.Time{}, []byte("bb"), "00000000-0000-4000-8000-000000000007", "v1"},
+		},
+	}
+	// Control-plane pool reports no tenant in deletion (empty skip-set).
+	ctrl := &scriptQuerier{}
+	var states []string
+	p := &PeriodicCheck{
+		DB:           audit,
+		CtrlDB:       ctrl,
+		Cfg:          PeriodicConfig{ChainSampleN: 1000},
+		OnChainState: func(s string) { states = append(states, s) },
+	}
+	if !p.CheckOnce(context.Background()) {
+		t.Fatal("CheckOnce did not report drift for a live tenant's broken chain")
+	}
+	if len(states) != 1 || states[0] != "broken" {
+		t.Fatalf("OnChainState states = %v, want [broken]", states)
+	}
+}
+
 // spec: §11.7 item 2 — a transient query failure is logged and treated as
 // no-drift so a flaky database does not trip a hard-fail shutdown.
 // F-11.7.3.
 func TestPeriodicCheckOnceQueryErrorIsNotDrift(t *testing.T) {
+	q := &scriptQuerier{queryErr: errors.New("db down")}
 	p := &PeriodicCheck{
-		DB:  &scriptQuerier{queryErr: errors.New("db down")},
-		Cfg: PeriodicConfig{ChainSampleN: 1000},
+		DB:     q,
+		CtrlDB: q, // co-located topology: one pool serves both
+		Cfg:    PeriodicConfig{ChainSampleN: 1000},
 	}
 	// Verify joins the per-check errors, so a query failure surfaces as a
 	// non-nil Verify error and counts as drift — the conservative posture
@@ -263,10 +351,12 @@ func TestPeriodicRunHardFailOnDrift(t *testing.T) {
 	shutdown := make(chan string, 1)
 	var mu sync.Mutex
 	var grantHits int
+	q := &scriptQuerier{
+		grants: [][]any{{"billing_events", "DELETE"}},
+	}
 	p := &PeriodicCheck{
-		DB: &scriptQuerier{
-			grants: [][]any{{"billing_events", "DELETE"}},
-		},
+		DB:     q,
+		CtrlDB: q, // co-located topology: one pool serves both
 		Cfg: PeriodicConfig{
 			Interval:        time.Millisecond,
 			HardFailOnDrift: true,
@@ -297,9 +387,11 @@ func TestPeriodicRunHardFailOnDrift(t *testing.T) {
 // spec: §11.7 item 2 — without hardFailOnDrift the loop keeps running on
 // drift; with a cancelled context it returns promptly. F-11.7.3.
 func TestPeriodicRunStopsOnContextCancel(t *testing.T) {
+	q := &scriptQuerier{}
 	p := &PeriodicCheck{
-		DB:  &scriptQuerier{},
-		Cfg: PeriodicConfig{Interval: time.Millisecond, ChainSampleN: 1000},
+		DB:     q,
+		CtrlDB: q, // co-located topology: one pool serves both
+		Cfg:    PeriodicConfig{Interval: time.Millisecond, ChainSampleN: 1000},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -315,7 +407,8 @@ func TestPeriodicRunStopsOnContextCancel(t *testing.T) {
 // A zero interval disables the loop (the gateway resolves a positive
 // cadence at startup, but Run must not spin on a misconfiguration).
 func TestPeriodicRunZeroIntervalReturns(t *testing.T) {
-	p := &PeriodicCheck{DB: &scriptQuerier{}, Cfg: PeriodicConfig{Interval: 0}}
+	q := &scriptQuerier{}
+	p := &PeriodicCheck{DB: q, CtrlDB: q, Cfg: PeriodicConfig{Interval: 0}}
 	done := make(chan struct{})
 	go func() { p.Run(context.Background()); close(done) }()
 	select {

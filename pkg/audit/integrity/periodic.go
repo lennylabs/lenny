@@ -76,7 +76,23 @@ type PeriodicConfig struct {
 // startup-path Verify and CheckChainContinuityRecent functions so the
 // runtime control and the startup control share one implementation.
 type PeriodicCheck struct {
-	DB  Querier
+	// DB is the audit ledger instance. It supplies the append-only
+	// ledger enumeration for the grant, trigger, erasure-guard, and
+	// recent-chain checks (the §12.3 billing/audit Postgres when a split
+	// billing/audit instance is configured, otherwise the primary).
+	DB Querier
+
+	// CtrlDB is the control-plane pool where the tenants.state column is
+	// authoritative. The recent-chain continuity check resolves its
+	// §12.8 deletion skip-set (tenants in state='deleting' or
+	// state='deleted', whose retained gdpr.*-only remnant is a
+	// deliberately discontinuous chain) from this pool, because under the
+	// §12.3 split billing/audit-pool topology tenants state stays on the
+	// primary while audit_log routes to the separate ledger instance. In
+	// the co-located topology the wiring site passes the same pool for
+	// both DB and CtrlDB. spec: §12.3 line 103, §12.8.
+	CtrlDB Querier
+
 	Cfg PeriodicConfig
 
 	// OnGrantDrift is invoked once per cycle that detects a grant /
@@ -120,13 +136,14 @@ func (p *PeriodicCheck) CheckOnce(ctx context.Context) bool {
 		}
 	}
 	// §11.7 line 370 — sample recent chain segments; a broken chain
-	// triggers the same critical alert path.
-	// p.DB is passed as both the ledger and the control-plane pool: the
-	// co-located topology where audit_log and tenants share one Postgres.
-	// The dedicated control-plane wiring (a separate CtrlDB field) is
-	// threaded in a later build step; the same-pool call preserves the
-	// current co-located behavior. spec: §12.3 line 103.
-	results, err := CheckChainContinuityRecent(ctx, p.DB, p.DB, p.Cfg.ChainSampleN)
+	// triggers the same critical alert path. The recent-chain check
+	// enumerates audit_log from the ledger pool (p.DB) and resolves the
+	// §12.8 tenant-deletion skip-set from the control-plane pool
+	// (p.CtrlDB), so the retained gdpr.*-only remnant of a tenant in
+	// state='deleting' or state='deleted' does not raise a false §16.5
+	// AuditChainGap alert. In the co-located topology the wiring site
+	// passes the same pool for both. spec: §12.3 line 103, §12.8.
+	results, err := CheckChainContinuityRecent(ctx, p.DB, p.CtrlDB, p.Cfg.ChainSampleN)
 	if err != nil {
 		p.logf("WARNING: §11.7 item 2 periodic chain-continuity sample could not run: %v", err)
 		return drift

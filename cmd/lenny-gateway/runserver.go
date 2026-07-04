@@ -119,6 +119,15 @@ func (w *gatewayWiring) runServers() {
 	if w.pgPool != nil {
 		periodic := &integrity.PeriodicCheck{
 			DB: w.pgPool,
+			// Control-plane pool for the §12.8 tenant-deletion skip-set the
+			// recent-chain continuity check resolves (tenants.state is
+			// authoritative here). w.pgPool is the primary/control-plane
+			// pool; audit_log enumeration also runs against it in the
+			// co-located topology, so DB and CtrlDB are the same pool. The
+			// split billing/audit-pool topology (§12.3) routes audit_log to
+			// w.billingAuditPool for the startup check while tenants state
+			// stays on w.pgPool. spec: §12.3 line 103, §12.8.
+			CtrlDB: w.pgPool,
 			Cfg: integrity.PeriodicConfig{
 				Interval:        w.resolvedGrantCheckInterval,
 				HardFailOnDrift: *auditHardFailOnDrift,
