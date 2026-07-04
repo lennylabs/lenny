@@ -200,6 +200,52 @@ func TestDispatchListerError(t *testing.T) {
 	}
 }
 
+// upsertFailStore embeds a MemoryStore and forces every Upsert to fail,
+// so a test can exercise the best-effort meta-write failure branch in
+// dispatchOne. Get/Delete keep the embedded behaviour.
+type upsertFailStore struct {
+	*sessioncheckpointmeta.MemoryStore
+	err error
+}
+
+func (s *upsertFailStore) Upsert(context.Context, sessioncheckpointmeta.Record) error {
+	return s.err
+}
+
+// spec: §10.1 lines 165-166, 393 — the session_checkpoint_meta write
+// after a barrier ack is best-effort: its only consumer is the
+// coordinator-handoff `session.resumed` workspaceRecoveryFraction, which
+// tolerates an absent row (proposal 0026 removed the resume-dedup
+// consumer). A failed Upsert during a terminating replica's drain
+// records the write error on the Outcome but keeps Acked true, so a
+// degraded barrier still counts as delivered.
+func TestDispatchMetaUpsertErrorKeepsAcked_spec_10_1(t *testing.T) {
+	ctx := context.Background()
+	writeErr := errors.New("session_checkpoint_meta write failed")
+	meta := &upsertFailStore{MemoryStore: sessioncheckpointmeta.NewMemoryStore(nil), err: writeErr}
+	disp := newFakeDispatcher()
+	disp.acks["s1"] = Ack{CheckpointRef: "ck1"}
+	c := New(&fakeLister{
+		targets: []Target{{TenantID: "acme", SessionID: "s1", CoordinationGeneration: 1}},
+		source:  SourcePostgres,
+	}, disp, meta, nil)
+
+	sum, err := c.Dispatch(ctx)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if len(sum.Outcomes) != 1 {
+		t.Fatalf("want one outcome, got %d", len(sum.Outcomes))
+	}
+	o := sum.Outcomes[0]
+	if !o.Acked {
+		t.Error("a best-effort meta-write failure must keep the target Acked (a degraded barrier is better than none)")
+	}
+	if !errors.Is(o.Err, writeErr) {
+		t.Errorf("meta-write error must be recorded on the outcome, got %v", o.Err)
+	}
+}
+
 // TestNoResumeDedupSurface_spec_10_1 pins the §10.1 reconciliation
 // (proposal 0026): the gateway is not in the per-tool-call dispatch
 // path (§4.7) and a coordinator handoff re-adopts the still-running pod
