@@ -72,11 +72,12 @@ func (t EventTopic) IsValid() bool {
 	return t == TopicDelegationTree || t == TopicSessionLifecycle
 }
 
-// Event is a §12.3.7 CloudEvents v1.0.2 envelope. The spec uses the
-// cloudevents go-sdk Event type directly; this struct is the equivalent
-// JSON-mode structured-content envelope (the go-sdk dependency is not
-// vendored, so the envelope is modeled natively here with the exact
-// §12.3.7 context-attribute contract).
+// Event is a §12.3.7 CloudEvents v1.0.2 envelope. §12.6 codifies this
+// native structured-content struct rather than an alias of the go-sdk
+// cloudevents.Event type, because the released go-sdk serializes
+// application/ocsf+json data as an escaped JSON string and would
+// double-wrap the audit record. The struct implements the exact
+// §12.3.7 context-attribute contract and emits `data` inline.
 type Event struct {
 	// SpecVersion is the CloudEvents spec version — always "1.0".
 	SpecVersion string `json:"specversion"`

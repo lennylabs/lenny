@@ -32,13 +32,15 @@ type EventType string
 func (t EventType) CloudEventsType() string { return cloudEventsPrefix + string(t) }
 
 // OperationalEvent is the §25.3 / §12.6 operational event: a
-// CloudEvents v1.0.2 record. The spec illustrates the Go type as
-// `type OperationalEvent = cloudevents.Event`; the CloudEvents go-sdk
-// is deliberately not vendored (see pkg/gateway/eventbus/cloudevents.go
-// for the same decision on the §12.3.7 audit envelope), so the envelope
-// is modeled natively here with the exact CloudEvents context-attribute
-// contract and marshals to the CloudEvents structured-content JSON wire
-// format. spec: §25.3 lines 654-659 / §12.6.
+// CloudEvents v1.0.2 record. §25.3 codifies this native structured-
+// content struct rather than an alias of the go-sdk cloudevents.Event
+// type (see pkg/gateway/eventbus/cloudevents.go for the same decision on
+// the §12.3.7 audit envelope), because the released go-sdk serializes
+// application/ocsf+json data as an escaped JSON string and would
+// double-wrap the audit record. The envelope is modeled natively here
+// with the exact CloudEvents context-attribute contract and marshals to
+// the CloudEvents structured-content JSON wire format. spec: §25.3 /
+// §12.6.
 type OperationalEvent struct {
 	// ID is the CloudEvents id — the canonical eventKey.
 	ID string `json:"id"`
