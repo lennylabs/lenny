@@ -27,6 +27,9 @@ func TestConnectGatewayNoAddrBindsSocketOnly_spec_9_1(t *testing.T) {
 	if s.ConnectorForwarder != nil {
 		t.Errorf("ConnectorForwarder set without a gateway address: %#v", s.ConnectorForwarder)
 	}
+	if s.PodScrubReporter != nil {
+		t.Errorf("PodScrubReporter set without a gateway address: %#v", s.PodScrubReporter)
+	}
 	if closer == nil {
 		t.Fatal("ConnectGateway returned a nil closer; the caller cannot defer Close")
 	}
@@ -66,5 +69,37 @@ func TestConnectGatewayWithAddrWiresForwarders_spec_9_1(t *testing.T) {
 	}
 	if closer == nil {
 		t.Fatal("ConnectGateway returned a nil closer; the caller cannot defer Close")
+	}
+}
+
+// spec: §4.7 (ReportPodScrub), §5.2 (whole-pod scrub) — with a gateway address
+// ConnectGateway retains the dialed GatewayControl client on the Server as the
+// PodScrubReporter, the seam the §5.2 recycle-scrub driver reports through, and
+// it is the same client as the platform and connector forwarders. F-5.2.15.
+//
+// diagnosis: a failure means the recycle-boundary whole-pod scrub has no
+// GatewayControl link to report ReportPodScrub over, so every recycle-eligible
+// pod is retired by the gateway missing-report timeout and pod reuse never
+// happens.
+func TestConnectGatewayWithAddrWiresPodScrubReporter_spec_5_2(t *testing.T) {
+	s := adapter.New("gatewaylink-test")
+	// Empty cert/key/ca selects the plaintext dev dial path, so no live
+	// gateway certificate is required to build the client.
+	closer, err := s.ConnectGateway("@lenny-platform-mcp", "lenny-gateway.lenny-system.svc:50051", "", "", "")
+	if err != nil {
+		t.Fatalf("ConnectGateway: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+	if s.PodScrubReporter == nil {
+		t.Fatal("PodScrubReporter nil after dialing the gateway; the recycle-scrub driver has no report link")
+	}
+	// The recycle-scrub report travels the same GatewayControl client the
+	// platform and connector tool calls forward over, so all three seams point
+	// at one dialed client.
+	if any(s.PodScrubReporter) != any(s.PlatformForwarder) {
+		t.Error("PodScrubReporter is not the same gateway client as PlatformForwarder")
+	}
+	if any(s.PodScrubReporter) != any(s.ConnectorForwarder) {
+		t.Error("PodScrubReporter is not the same gateway client as ConnectorForwarder")
 	}
 }
