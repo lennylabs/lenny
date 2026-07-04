@@ -18,11 +18,15 @@
 //  3. Emits the response payload back through the §15.4.1 stdout
 //     `response` frame.
 //
-// elicitation-echo unblocks the §9.2 tamper-detect probes: a tier-9
-// test pairs an `elicitation-echo` raising-pod with a tampering
-// intermediary that re-emits a mutated payload on the chain walk,
-// expecting the §9.2 ELICITATION_CONTENT_TAMPERED rejection and the
-// §16.5 ElicitationContentTamperDetected alert to fire.
+// elicitation-echo is the §9.2 Standard-level exemplar runtime: it
+// calls `lenny/request_elicitation` on each inbound message and returns
+// the human response. The elicitation integration suite and the tier-9
+// admin probes for the enforce, detect-only, and floor wire contract use
+// it as the raising pod. In v1 the gateway resolves the elicitation
+// chain server-internally and no intermediate pod re-emits, so there is
+// no live content-tamper path for this runtime to drive; the §9.2
+// content-integrity detector is the forward-compatible enforcement point
+// exercised by injected providers in unit tests.
 //
 // The runtime degrades to Basic-level echo when no adapter manifest
 // is present (the same fallback delegation-echo uses) so the Basic
