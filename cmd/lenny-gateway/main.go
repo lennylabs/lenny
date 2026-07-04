@@ -1087,7 +1087,10 @@ func hardPrunePartialManifests(ctx context.Context, store partialmanifeststore.S
 // the gateway does not refuse to start. spec: §12.3 line 101, §11.7.
 // F-12.3.9. F-11.2.10.
 func runStartupChainContinuityCheck(ctx context.Context, db integrity.Querier, lastN int, m *gatewaymetrics.Metrics) {
-	results, err := integrity.CheckChainContinuityRecent(ctx, db, lastN)
+	// db is passed as both the ledger and the control-plane pool: the
+	// co-located topology. A later build step threads the separate §12.3
+	// control-plane pool through this call site. spec: §12.3 line 103.
+	results, err := integrity.CheckChainContinuityRecent(ctx, db, db, lastN)
 	if err != nil {
 		log.Printf("lenny-gateway: WARNING: §12.3 startup audit chain-continuity check could not run: %v", err)
 		return

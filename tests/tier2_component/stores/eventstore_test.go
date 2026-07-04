@@ -215,7 +215,7 @@ func TestEventStoreContract(t *testing.T) {
 				t.Fatalf("Append: %v", err)
 			}
 		}
-		results, err := integrity.CheckChainContinuity(ctx, pg.Pool)
+		results, err := integrity.CheckChainContinuity(ctx, pg.Pool, pg.Pool)
 		if err != nil {
 			t.Fatalf("CheckChainContinuity: %v", err)
 		}
@@ -261,7 +261,7 @@ func TestEventStoreContract(t *testing.T) {
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatalf("commit tamper tx: %v", err)
 		}
-		results, err := integrity.CheckChainContinuity(ctx, pg.Pool)
+		results, err := integrity.CheckChainContinuity(ctx, pg.Pool, pg.Pool)
 		if err != nil {
 			t.Fatalf("CheckChainContinuity: %v", err)
 		}
@@ -288,7 +288,7 @@ func TestEventStoreContract(t *testing.T) {
 		// non-linking prev_hash against a live chain. spec: 12.3 (startup
 		// chain-continuity check line 101), 11.7 (prev_hash is the tamper
 		// authority). F-11.2.10.
-		recent, err := integrity.CheckChainContinuityRecent(ctx, pg.Pool, 1000)
+		recent, err := integrity.CheckChainContinuityRecent(ctx, pg.Pool, pg.Pool, 1000)
 		if err != nil {
 			t.Fatalf("CheckChainContinuityRecent: %v", err)
 		}

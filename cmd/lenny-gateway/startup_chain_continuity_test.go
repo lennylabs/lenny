@@ -32,11 +32,28 @@ type chainRowsQuerier struct {
 }
 
 func (q *chainRowsQuerier) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, error) {
+	// The tenants-in-deletion skip-set query the co-located continuity
+	// check issues against the control-plane pool; this querier serves no
+	// deleting tenant, so the skip-set is empty and every tenant is walked.
+	if strings.Contains(sql, "FROM tenants WHERE state") {
+		return &emptyScanRows{}, nil
+	}
 	if strings.Contains(sql, "SELECT DISTINCT tenant_id") {
 		return &tenantScanRows{tenantID: q.tenantID}, nil
 	}
 	return &chainScanRows{rows: q.rows}, nil
 }
+
+// emptyScanRows is a pgx.Rows that yields no rows, used for the
+// tenants-in-deletion skip-set query when no tenant is being deleted.
+type emptyScanRows struct {
+	pgx.Rows
+}
+
+func (r *emptyScanRows) Next() bool        { return false }
+func (r *emptyScanRows) Scan(...any) error { return nil }
+func (r *emptyScanRows) Close()            {}
+func (r *emptyScanRows) Err() error        { return nil }
 
 func (q *chainRowsQuerier) QueryRow(context.Context, string, ...any) pgx.Row {
 	panic("QueryRow is not used by the startup chain-continuity check")

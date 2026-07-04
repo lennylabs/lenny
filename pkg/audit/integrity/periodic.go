@@ -121,7 +121,12 @@ func (p *PeriodicCheck) CheckOnce(ctx context.Context) bool {
 	}
 	// §11.7 line 370 — sample recent chain segments; a broken chain
 	// triggers the same critical alert path.
-	results, err := CheckChainContinuityRecent(ctx, p.DB, p.Cfg.ChainSampleN)
+	// p.DB is passed as both the ledger and the control-plane pool: the
+	// co-located topology where audit_log and tenants share one Postgres.
+	// The dedicated control-plane wiring (a separate CtrlDB field) is
+	// threaded in a later build step; the same-pool call preserves the
+	// current co-located behavior. spec: §12.3 line 103.
+	results, err := CheckChainContinuityRecent(ctx, p.DB, p.DB, p.Cfg.ChainSampleN)
 	if err != nil {
 		p.logf("WARNING: §11.7 item 2 periodic chain-continuity sample could not run: %v", err)
 		return drift
