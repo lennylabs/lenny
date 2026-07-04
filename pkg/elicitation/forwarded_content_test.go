@@ -66,10 +66,14 @@ func TestDivergentFields_spec_9_2(t *testing.T) {
 }
 
 // TestWalkChainForwardedContentDetectsDivergence_spec_9_2 proves the
-// §9.2 gateway-origin binding: when a forwarding hop re-emits a mutated
-// {message, schema}, the walk aborts with a *ChainError wrapping a
-// *TamperError naming the diverging hop. This is the per-hop check that
-// the removed tautology never actually performed (F-9.2.1).
+// §9.2 gateway-origin binding at the forward-compatible enforcement
+// seam: when a forwarding hop re-emits a mutated {message, schema}, the
+// walk aborts with a *ChainError wrapping a *TamperError naming the
+// diverging hop. In v1 the gateway resolves the chain server-internally
+// and no hop re-emits, so this seam is exercised by the injected
+// provider and activates unchanged if a per-hop re-emission wire
+// mechanism is added. spec: §9.2 (gateway-origin binding; v1 structural
+// enforcement).
 func TestWalkChainForwardedContentDetectsDivergence_spec_9_2(t *testing.T) {
 	original := Content{Message: "approve the deploy?", Schema: map[string]any{"type": "object"}}
 	_, err := WalkChain(ChainInput{
@@ -105,11 +109,13 @@ func TestWalkChainForwardedContentDetectsDivergence_spec_9_2(t *testing.T) {
 
 // TestWalkChainNilForwardedContentForwardsUnverified_spec_9_2 proves the
 // v1 default: with no re-emission provider (intermediate pods forward by
-// elicitation_id only), every hop advances unverified and the chain
-// resolves at the human edge. The old code compared the gateway-held
-// original against its own digest — a tautology that could never catch
-// anything and could never pass anything else; removing it must not
-// regress the no-re-emission happy path. F-9.2.1.
+// elicitation_id only and the gateway resolves the chain
+// server-internally), every hop advances unverified and the chain
+// resolves at the human edge, so the gateway-origin binding holds by
+// construction. The old code compared the gateway-held original against
+// its own digest, a tautology that could never catch or pass anything;
+// removing it must not regress the no-re-emission happy path. spec: §9.2
+// (gateway-origin binding; v1 structural enforcement).
 func TestWalkChainNilForwardedContentForwardsUnverified_spec_9_2(t *testing.T) {
 	res, err := WalkChain(ChainInput{
 		Hops:            twoHopChain(),

@@ -116,10 +116,12 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-# §9.2 tier-9 tamper-detect probe runtime. The elicitation-echo
-# Standard-level runtime calls lenny/request_elicitation on every inbound
-# message so the §9.2 chain walker exercises the tamper-detect path end to
-# end.
+# §9.2 Standard-level elicitation runtime. The elicitation-echo runtime
+# calls lenny/request_elicitation on every inbound message and raises §9.2
+# elicitations that the gateway resolves server-internally. In v1 no
+# intermediate pod re-emits, so this runtime drives no live tamper-detect
+# path end to end; the tier-9 admin probes use it as the raising pod for
+# the enforce, detect-only, and floor wire contract.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:

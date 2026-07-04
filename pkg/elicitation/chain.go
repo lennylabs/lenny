@@ -118,18 +118,18 @@ type ChainInput struct {
 
 	// ForwardedContent, when non-nil, supplies the {message, schema}
 	// pair a forwarding hop re-emitted so the §9.2 gateway-origin
-	// binding can compare it against the origination digest. The spec
-	// forward-hop wire mechanism is the native MCP `elicitation/create`
-	// frame an intermediate pod re-emits; the gateway canonicalizes the
-	// re-emission and rejects a divergence. v1 intermediate pods forward
-	// by `elicitation_id` only and re-emit nothing, so the production
-	// dispatcher leaves this nil and a hop forwards unverified — the
-	// per-hop re-emission wire path is the deferred surface tracked by
-	// F-9.2.1. When the hook returns a content for a hop, that content
-	// is verified; a divergence aborts the walk with a *ChainError
-	// wrapping a *TamperError. The caller's enforcement mode (off →
-	// nil hook) decides whether verification runs at all. spec: §9.2
-	// lines 56–62.
+	// binding can compare it against the origination digest. In v1 the
+	// gateway resolves the elicitation chain server-internally and
+	// intermediate pods re-emit nothing, so the gateway-origin binding
+	// holds by construction and the production dispatcher leaves this
+	// nil. This hook is the forward-compatible enforcement seam: tests
+	// inject it to exercise the enforce and detect-only branches, and it
+	// activates unchanged if a per-hop re-emission wire mechanism is
+	// added. When the hook returns a content for a hop, that content is
+	// verified; a divergence aborts the walk with a *ChainError wrapping
+	// a *TamperError. The caller's enforcement mode (off → nil hook)
+	// decides whether verification runs at all. spec: §9.2 (gateway-origin
+	// binding; v1 structural enforcement).
 	ForwardedContent func(hop Hop) (Content, bool)
 }
 
@@ -158,11 +158,15 @@ func (e *ChainError) Unwrap() error { return e.Cause }
 // WalkChain runs the §9.2 hop-by-hop elicitation chain.
 //
 // The walk starts at the raising session (Hops[0]) and proceeds
-// upward through each parent hop. At every hop the gateway-origin
-// content-integrity digest is re-verified against OriginalContent —
-// an intermediate hop forwards by elicitation_id and MUST NOT alter
-// the rendered {message, schema}; a divergence is a §9.2 tamper and
-// aborts the walk with a *ChainError wrapping a *TamperError.
+// upward through each parent hop. A §9.2 intermediate pod forwards by
+// elicitation_id only and re-emits nothing, so by default a hop
+// advances unverified (the gateway-recorded original remains
+// authoritative for the rendered text) and the gateway-origin binding
+// holds by construction. When the caller supplies a re-emitted frame
+// for a hop via ForwardedContent, the gateway canonicalizes it and
+// compares its digest against the origination digest; a divergence is
+// a §9.2 tamper that aborts the walk with a *ChainError wrapping a
+// *TamperError.
 //
 // The walk terminates when it reaches either:
 //
@@ -237,14 +241,15 @@ func WalkChain(in ChainInput) (ChainResult, error) {
 	// Forward up the task tree hop by hop. A §9.2 intermediate pod
 	// forwards by elicitation_id only and re-emits nothing, so by
 	// default a hop advances unverified (the gateway-recorded original
-	// remains authoritative for the rendered text). When the caller
-	// supplies a re-emitted frame for a hop via ForwardedContent, the
-	// gateway canonicalizes it and compares its digest against the
-	// origination digest; a divergence is a §9.2 tamper that aborts the
-	// walk with a *ChainError wrapping a *TamperError. Comparing the
-	// gateway-held original against its own digest would be a tautology,
-	// so verification runs only against an actual re-emission. spec:
-	// §9.2 lines 56–62; F-9.2.1.
+	// remains authoritative for the rendered text) and the gateway-origin
+	// binding holds by construction. When the caller supplies a re-emitted
+	// frame for a hop via ForwardedContent, the gateway canonicalizes it
+	// and compares its digest against the origination digest; a divergence
+	// is a §9.2 tamper that aborts the walk with a *ChainError wrapping a
+	// *TamperError. Comparing the gateway-held original against its own
+	// digest would be a tautology, so verification runs only against an
+	// actual re-emission. spec: §9.2 (gateway-origin binding; v1 structural
+	// enforcement).
 	for i := 1; i < len(in.Hops); i++ {
 		hop := in.Hops[i]
 		if in.ForwardedContent != nil {

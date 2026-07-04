@@ -235,9 +235,13 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 //     that raises §9.2 elicitations; wired into the e2e overlay
 //     in 3aa580b).
 //
-// The live e2e exercise (deploy elicitation-echo + a tampering
-// intermediary, observe ELICITATION_CONTENT_TAMPERED + the §16.5
-// alert) is on the tier-9 ops backlog.
+// A live per-hop content-tamper e2e (an intermediate pod re-emits a
+// mutated payload on the chain walk, observed as
+// ELICITATION_CONTENT_TAMPERED and the §16.5 alert) is post-v1 work.
+// In v1 the gateway resolves the elicitation chain server-internally
+// and no intermediate pod re-emits, so there is no per-hop re-emission
+// wire path to drive it; it is the post-v1 per-hop re-emission producer
+// bead that proposal 0030 (F-9.2.1) files.
 // §12.9.9 tamper-detect tests are implemented in
 // elicitation_tamper_test.go: they drive the gateway's
 // /v1/admin/tenants/{id}/elicitation-content-integrity surface
