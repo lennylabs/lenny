@@ -22711,6 +22711,24 @@ The audit_log schema (`migrations/0001_initial_schema.up.sql:130-156`) has no `u
 
 **Heading reconciled OPEN → DEFERRED (this batch).** Same blocker as F-12.2.5, re-verified against the spec this batch (see F-12.2.5 for the §12.2-line-16-vs-§12.8-step-14 `user_id` contradiction and the §11.7 `chainIntegrity` enumeration that has no authorized-deletion state). Closed-as-deferred jointly with F-12.2.5; the required spec change is identical.
 
+### - [ ] F-12.8.25 — `audit_redaction_receipts` → `audit_log` FK collides with Phase-4 `DeleteByTenant`, aborting teardown for any tenant with a redacted dead-letter row [High] — OPEN
+
+**Spec:** §12.8 line 840 requires `DeleteByTenant` (Phase 4 of tenant deletion) to delete every non-`gdpr.%` `audit_log` row while skipping `gdpr.*` erasure receipts; §12.8 lines 831 and 842 exempt the `audit_redaction_receipts` rows and require them to outlive "any subsequent tenant deletion". The two requirements collide because a receipt's `audit_event_id` references a non-`gdpr.%` `dead_lettered` row that Phase 4 must purge.
+
+**Gap:** `migrations/0160_audit_redaction_receipts.up.sql` declares `audit_event_id UUID NOT NULL REFERENCES audit_log (id)` with no `ON DELETE` clause, so the FK is `NO ACTION`. Production `RedactDeadLettered` (`pkg/gateway/audit/auditstore/redaction.go`) inserts one `audit_redaction_receipts` row per redacted row whose `audit_event_id` is the redacted `dead_lettered` (non-`gdpr.%`) `audit_log` row it just rewrote. The proposal-0028 C4 `DeleteByTenant` runs `DELETE FROM audit_log WHERE tenant_id = $1 AND event_type NOT LIKE 'gdpr.%'` (`pkg/gateway/audit/auditstore/auditstore.go`), which includes that referenced `dead_lettered` row. Deleting a row a receipt still references violates the `NO ACTION` FK, so the teardown `DELETE` aborts with SQLSTATE 23503 and the whole Phase-4 statement deletes nothing for any tenant that ever had a dead-letter redaction. The non-`gdpr.%` purge therefore fails exactly the tenants that exercised the §12.8 step-14 redaction.
+
+**Evidence:**
+- `migrations/0160_audit_redaction_receipts.up.sql` — `audit_event_id UUID NOT NULL REFERENCES audit_log (id)` (no `ON DELETE`, so `NO ACTION`).
+- `pkg/gateway/audit/auditstore/redaction.go` — `RedactDeadLettered` INSERTs the receipt with `audit_event_id` = the redacted `dead_lettered` row's id.
+- `pkg/gateway/audit/auditstore/auditstore.go` — proposal-0028 C4 `DeleteByTenant` DELETE with `event_type NOT LIKE 'gdpr.%'`.
+- `tests/tier2_component/auditstore/redaction_test.go` — `TestDeleteByTenantFKBlocksReceiptReferencedRow_spec_12_8_line840` pins the current abort (asserts the FK violation) so the fix flips it green.
+
+**Impact:** A tenant that ever had a `dead_lettered` audit row PII-redacted under §12.8 step 14 cannot complete Phase-4 tenant teardown: the audit purge aborts and no non-`gdpr.%` audit rows are deleted. The receipt-survivability guarantee (§12.8 line 842) and the non-`gdpr.%` purge (§12.8 line 840) cannot both hold under the shipped schema.
+
+**Out of proposal-0028 scope:** Proposal 0028 explicitly asserts "no new migration" (C4/§5) and does not address the receipt/row delete ordering, so the FK cannot be changed within 0028. Candidate fixes, each pending a spec decision: (a) exclude receipt-referenced rows from the teardown `DELETE` (retains a small non-`gdpr.%` remnant, contradicting the full-purge wording); (b) delete the `audit_redaction_receipts` rows first (contradicts the §12.8-line-842 receipt-survivability guarantee); (c) alter the FK to `ON DELETE SET NULL` via a new migration so the receipt outlives its referenced row with a null back-reference. Option (c) preserves both §12.8 guarantees but needs a spec statement that a receipt may reference a deleted `audit_event_id`.
+
+**Suggested resolution:** Take the FK-ordering reconciliation (favoring option (c), `ON DELETE SET NULL` via a new migration, so the receipt survives the tenant while the referenced row is purged) through the proposal pipeline, then flip `TestDeleteByTenantFKBlocksReceiptReferencedRow_spec_12_8_line840` to assert the teardown completes and the receipt is retained.
+
 ### - [x] F-12.8.5 — Postgres-backed billing pseudonymization, `erasure_salt` KMS envelope, and rotate-erasure-salt admin endpoint are unimplemented [High] — CLOSED
 
 **Spec:** §12.8 lines 843–858 require (a) the per-tenant `erasure_salt` is KMS-envelope-encrypted at rest, scoped to the erasure job's service account, never plaintext, (b) the immediate-deletion-after-pseudonymization sequence runs inside a single transaction, (c) the verification step re-derives the hash with an in-memory copy and confirms the persistent salt is unrecoverable, (d) `POST /v1/admin/tenants/{id}/rotate-erasure-salt` triggers rotation, (e) the advisory lock `erasure_salt_migration:{tenant_id}` coordinates rotation vs. erasure jobs.

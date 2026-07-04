@@ -269,9 +269,10 @@ func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.
 	// surviving gdpr.% row (seq3) so this test isolates the §12.8 line 840
 	// gdpr.% skip from the separately-tracked FK-ordering defect (a receipt
 	// referencing a to-be-deleted dead_lettered row blocks the teardown
-	// DELETE; see the ...ReceiptReferencedRow subtest below and the recorded
-	// follow-up). DeleteByTenant deletes only audit_log, so the receipt
-	// remnant §12.8 line 831 keeps exempt must survive regardless.
+	// DELETE; see TestDeleteByTenantFKBlocksReceiptReferencedRow below and
+	// BUILD-GAPS.md F-12.8.25). DeleteByTenant deletes only audit_log, so
+	// the receipt remnant §12.8 line 831 keeps exempt must survive
+	// regardless.
 	seedReceipt(t, ctx, pg, "teardown", rowIDBySeq(t, ctx, pg, "teardown", 3), 3)
 	if got := receiptCount(t, ctx, pg, "teardown"); got != 1 {
 		t.Fatalf("pre-teardown receipts = %d, want 1", got)
@@ -313,11 +314,12 @@ func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.
 // aborts with a foreign-key violation (SQLSTATE 23503). §12.8 line 831/842
 // exempt the receipts and require them to outlive the tenant, but they
 // reference a non-gdpr.% dead_lettered row the teardown must purge, so the
-// two requirements collide. Proposal 0028 did not address this ordering; the
-// fix (skip receipt-referenced rows, delete the receipts, or make the FK ON
-// DELETE SET NULL) needs a spec decision and is tracked as a follow-up. This
-// test records the collision so the fix flips it green rather than
-// discovering the abort in production teardown.
+// two requirements collide. Proposal 0028 did not address this ordering and
+// asserts "no new migration", so the fix (skip receipt-referenced rows,
+// delete the receipts first, or make the FK ON DELETE SET NULL) is out of
+// 0028 scope and needs a spec decision; it is tracked as BUILD-GAPS.md
+// F-12.8.25. This test records the collision so that fix flips it green
+// rather than discovering the abort in production teardown.
 func TestDeleteByTenantFKBlocksReceiptReferencedRow_spec_12_8_line840(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -333,11 +335,11 @@ func TestDeleteByTenantFKBlocksReceiptReferencedRow_spec_12_8_line840(t *testing
 
 	// The teardown DELETE of the non-gdpr.% referenced row violates the
 	// audit_redaction_receipts FK, so DeleteByTenant returns an error and
-	// deletes nothing (the transaction aborts). This is the known
-	// collision the recorded follow-up tracks.
+	// deletes nothing (the transaction aborts). This is the known collision
+	// BUILD-GAPS.md F-12.8.25 tracks.
 	_, err := store.DeleteByTenant(ctx, "fk-block")
 	if err == nil {
-		t.Fatalf("DeleteByTenant unexpectedly succeeded; the receipt FK-ordering fix has landed, flip this test to assert receipt retention and remove the follow-up")
+		t.Fatalf("DeleteByTenant unexpectedly succeeded; the F-12.8.25 receipt FK-ordering fix has landed, flip this test to assert receipt retention and close F-12.8.25")
 	}
 	if !strings.Contains(err.Error(), "audit_redaction_receipts") {
 		t.Fatalf("DeleteByTenant error = %v, want a foreign-key violation on audit_redaction_receipts", err)
