@@ -74,6 +74,15 @@ func (s *Server) signalScrubDone() {
 	}
 }
 
+// SetScrubDoneHook installs a callback the recycle-scrub driver fires once its
+// background scrub goroutine returns. It exists so an out-of-package test (the
+// tier-4 recycle-path integration test) can wait for the async scrub
+// deterministically, including the withheld-report path where no ReportPodScrub
+// arrives to observe. It is nil in production. spec: §5.2 (async scrub report).
+func (s *Server) SetScrubDoneHook(f func()) {
+	s.scrubDone = f
+}
+
 // scrubConfig maps the recycle-trigger parameters onto scrub.Config. It leaves
 // Restarter nil for the standard and in-place profiles (which never reach step
 // 7) and only sets MicrovmRestart with the Server's VMRestarter for the
