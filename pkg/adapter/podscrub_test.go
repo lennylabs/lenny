@@ -455,6 +455,50 @@ func TestStartPodScrubWithholdsReportOnErrNoRestarter_spec_5_2(t *testing.T) {
 	}
 }
 
+// TestStartPodScrubWithNilScrubOpsWithholdsReport pins the production
+// fail-closed behavior when ScrubOps is not wired. Before the fix, a nil
+// ScrubOps made scrub.Run return a nil-Ops error the driver mapped to
+// PodScrubFailed and reported; under the default warn policy podscrub.Decide
+// reuses the pod for the next session without any scrub having run (a
+// between-session isolation regression). The driver now withholds the report
+// on a nil ScrubOps, so the gateway missing-report timeout retires the pod.
+// This test emits a report against the pre-fix code and none against the fix,
+// so it fails on the regression.
+//
+// diagnosis: a failure means a production adapter with ScrubOps unwired would
+// report PodScrubFailed and let the gateway reuse the pod under warn without a
+// scrub — the exact fail-open isolation regression this fix closes.
+// spec: 5.2 (whole-pod scrub, fail-closed on a wiring gap), 4.7 (reportpodscrub)
+func TestStartPodScrubWithNilScrubOpsWithholdsReport_spec_5_2(t *testing.T) {
+	reporter := &recordingPodScrubReporter{}
+	done := make(chan struct{})
+	s := New("test")
+	s.WorkspaceRoot = t.TempDir()
+	s.ScrubOps = nil // the pre-fix production state: never wired
+	s.PodScrubReporter = reporter
+	s.scrubDone = func() { close(done) }
+
+	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-nilops", ScrubProfile: "standard"})
+	waitScrubDone(t, done)
+
+	if reports := reporter.snapshot(); len(reports) != 0 {
+		t.Fatalf("startPodScrub emitted %d reports with nil ScrubOps, want 0 (report withheld fail-closed); got %+v",
+			len(reports), reports)
+	}
+}
+
+// TestNewServerLeavesScrubOpsNilForExplicitWiring documents that adapter.New
+// does not default ScrubOps; the production binary (cmd/lenny-adapter) wires it
+// explicitly, and a Server whose ScrubOps was never assigned is the wiring gap
+// the fail-closed guard above protects against.
+//
+// spec: 5.2 (whole-pod scrub)
+func TestNewServerLeavesScrubOpsNilForExplicitWiring_spec_5_2(t *testing.T) {
+	if s := New("test"); s.ScrubOps != nil {
+		t.Fatalf("New() set ScrubOps = %T, want nil (production wires it explicitly)", s.ScrubOps)
+	}
+}
+
 // TestStartPodScrubToleratesReportError asserts a ReportPodScrub transport
 // failure does not crash the driver: the scrub still runs and the goroutine
 // returns. The gateway missing-report timeout is the backstop on a failed

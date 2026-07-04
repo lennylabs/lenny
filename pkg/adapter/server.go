@@ -161,8 +161,10 @@ type Server struct {
 	PodScrubReporter PodScrubReporter
 	// ScrubOps runs the §5.2 whole-pod scrub host operations at the recycle
 	// boundary. cmd/lenny-adapter wires it to a scrub.DefaultOps built from
-	// the pod's credential and workspace paths; tests inject a fake. Nil
-	// leaves the recycle-scrub driver with no host operations to run.
+	// the pod's credential and workspace paths; tests inject a fake. Nil (a
+	// wiring gap rather than a supported mode) makes the recycle-scrub driver
+	// withhold the report fail-closed, so the gateway missing-report timeout
+	// retires the pod rather than reusing it without a scrub having run.
 	// spec: §5.2 (whole-pod scrub).
 	ScrubOps scrub.Ops
 	// VMRestarter performs §5.2 scrub step 7 (guest VM restart) for a

@@ -590,6 +590,73 @@ func TestRecyclePathVMRestartNilRestarterRetires_spec_5_2(t *testing.T) {
 	}
 }
 
+// TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2 pins the
+// production fail-closed behavior when the adapter binary fails to wire
+// ScrubOps. Before the fix, cmd/lenny-adapter never assigned adapterSrv.ScrubOps,
+// so a session-mode recycle ran scrub.Run with nil Ops, which returns a nil-Ops
+// error the driver mapped to PodScrubFailed and REPORTED. Under the default warn
+// policy podscrub.Decide reuses the pod for the next session with no scrub having
+// run (a between-session isolation regression, strictly worse than the pre-change
+// posture where no adapter reported and the timeout always retired). The driver
+// now withholds the report on a nil ScrubOps, so no PodScrubFailed reaches the
+// gateway and the missing-report timeout retires the pod fail-closed. This test
+// wires a reporter but leaves ScrubOps nil: it asserts zero reports and a
+// fail-closed retire, and would see a PodScrubFailed report (and a warn-policy
+// reuse) against the pre-fix code.
+//
+// diagnosis: a failure means a production adapter with ScrubOps unwired reported
+// PodScrubFailed and let the gateway reuse the pod under warn without a scrub —
+// the exact fail-open isolation regression this fix closes.
+// spec: 5.2 (whole-pod scrub, fail-closed on a wiring gap), 3.4 (missing-report
+// timeout), 6.2 (retire on missing report)
+func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) {
+	c := recycleCluster(t)
+	reporter := newRecycleScrubReporter()
+
+	// The pre-fix production state: a real adapter Server whose ScrubOps was
+	// never wired. A reporter IS wired, so a PodScrubFailed would reach the
+	// gateway if the driver emitted one.
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = recycleFakeRuntime{}
+	srv.ScrubOps = nil // never wired: the wiring gap the fix guards against
+	srv.PodScrubReporter = reporter
+	scrubDone := make(chan struct{})
+	var once sync.Once
+	srv.SetScrubDoneHook(func() { once.Do(func() { close(scrubDone) }) })
+
+	coord := newRecycleCoordinator(t, c)
+	binder, _ := recycleBinder(c, recycleAdapterDialer(t, srv))
+	binder.RecycleBoundary = coord
+
+	res := bindRecyclingSession(t, binder, "sess-nilops", "standard", []string{"true"})
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	// The driver withheld the report because ScrubOps is nil; the scrub
+	// goroutine still returns and fires the done hook.
+	<-scrubDone
+	if reps := reporter.snapshot(); len(reps) != 0 {
+		t.Fatalf("nil-ScrubOps recycle emitted %d reports, want 0 (withheld fail-closed); got %+v", len(reps), reps)
+	}
+
+	// No report cancels the missing-report timer, so the §3.4 timeout retires
+	// the pod: the still-`recycling` claim advances to the fail-closed `failed`
+	// terminal rather than being reused without a scrub.
+	deadline := time.Now().Add(6 * time.Second)
+	for {
+		got := claimPhase(t, c, res.SandboxName)
+		if got == string(claimstate.Failed) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("claim phase after nil-ScrubOps recycle = %q, want failed (fail-closed retire, no reuse without scrub)", got)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // TestRecyclePathFailedDispositionRetires_spec_6_2 asserts a failed session on a
 // recycle-enabled pool takes the retire path: Release sends a PLAIN Shutdown
 // (no RecycleScrub), the adapter runs no scrub and emits no ReportPodScrub, the

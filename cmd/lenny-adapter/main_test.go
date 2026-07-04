@@ -2,7 +2,31 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/lennylabs/lenny/pkg/adapter/scrub"
+)
+
+// TestNewScrubOpsWiresRealScrub_spec_5_2 pins the production wiring of the §5.2
+// whole-pod scrub. Before the fix, cmd/lenny-adapter never assigned
+// adapterSrv.ScrubOps, so a session-mode recycle ran scrub.Run with nil Ops,
+// reported PodScrubFailed, and the default warn policy reused the pod for the
+// next session without any scrub having run (a between-session isolation
+// regression). newScrubOps now backs the driver with the real DefaultOps. This
+// asserts the production build supplies a non-nil scrub.Ops, so a recycle runs
+// the real scrub rather than falling into the fail-open report path.
+//
+// spec: 5.2 (whole-pod scrub), 4.7 (reportpodscrub)
+func TestNewScrubOpsWiresRealScrub_spec_5_2(t *testing.T) {
+	var ops scrub.Ops = newScrubOps()
+	if ops == nil {
+		t.Fatal("newScrubOps returned nil; a production recycle would report PodScrubFailed and be reused without a scrub")
+	}
+	if _, isDefault := ops.(scrub.DefaultOps); !isDefault {
+		t.Fatalf("newScrubOps returned %T, want scrub.DefaultOps (the real host operations)", ops)
+	}
+}
 
 // TestResolveRuntimeUID_spec_4_7 covers the §4.7/§13 SO_PEERCRED peer-UID
 // resolution (spec/04_system-components.md lines 866-868): the flag wins,

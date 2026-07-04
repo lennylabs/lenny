@@ -42,6 +42,22 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 		// the report travels the independent GatewayControl link, and the
 		// gateway missing-report timeout bounds the whole operation.
 		ctx := context.Background()
+		if s.ScrubOps == nil {
+			// Fail-closed on a wiring gap. Without host operations the scrub
+			// cannot run: scrub.Run would return a nil-Ops error the driver
+			// would map to PodScrubFailed, which the default warn policy treats
+			// as a reuse (podscrub.Decide returns the pod to the pool up to
+			// maxScrubFailures). That would hand the pod to the next session
+			// with no credential purge, process kill, or workspace scrub having
+			// run, a between-session isolation regression. Withhold the report
+			// so the gateway missing-report timeout retires the pod instead.
+			// Production wires ScrubOps in cmd/lenny-adapter; this guards a
+			// misconfigured build rather than the normal path.
+			// spec: §5.2 (whole-pod scrub); §4.7 (ReportPodScrub).
+			slog.Error("adapter: recycle scrub has no ScrubOps wired; withholding report so the pod is retired",
+				"pod", rc.GetPodId())
+			return
+		}
 		rep, err := scrub.Run(ctx, s.ScrubOps, s.scrubConfig(rc))
 		if errors.Is(err, scrub.ErrNoRestarter) {
 			// Fail-closed: withhold the report so the gateway retires the pod

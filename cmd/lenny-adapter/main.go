@@ -47,6 +47,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
@@ -73,6 +74,21 @@ func resolveRuntimeUID(flagUID uint) uint32 {
 		log.Printf("lenny-adapter: ignoring unparseable LENNY_RUNTIME_UID=%q", env)
 	}
 	return 0
+}
+
+// newScrubOps builds the §5.2 whole-pod scrub host operations the recycle-scrub
+// driver runs at the recycle boundary. It returns the real DefaultOps so a
+// production recycle actually purges the credential file, kills the session's
+// processes, removes the workspace, clears scratch directories, and verifies
+// the scrub. Leaving ScrubOps nil would make the driver report PodScrubFailed
+// on every recycle, which the default warn policy treats as a reuse: the
+// gateway would hand the pod to the next session with no scrub having run (a
+// between-session isolation regression). SandboxUser is left empty, so scrub
+// step 1 (`kill -9 -1`) runs as the adapter's own user; the shared-uid pod
+// layout kills the runtime's processes without an su hop. spec: §5.2 (whole-pod
+// scrub, steps 0-6).
+func newScrubOps() scrub.DefaultOps {
+	return scrub.DefaultOps{}
 }
 
 func main() {
@@ -295,6 +311,11 @@ func main() {
 		log.Printf("lenny-adapter: §9.1 platform tool forwarding to gateway at %s", *gatewayGRPCAddr)
 	}
 	adapterSrv.CredentialsDir = *credentialsDir
+	// §5.2 whole-pod scrub: wire the recycle-scrub driver's host operations so
+	// a session-mode recycle actually scrubs the pod. The scrub reads its
+	// credential and workspace paths from CredentialsDir and WorkspaceRoot set
+	// above.
+	adapterSrv.ScrubOps = newScrubOps()
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.
 	adapterSrv.ManifestDir = *credentialsDir
