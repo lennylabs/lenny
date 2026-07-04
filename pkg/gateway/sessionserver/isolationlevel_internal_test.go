@@ -56,6 +56,11 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		IsolationProfile: isolation.ProfileMicrovm,
 		SessionPolicy: &runtimestore.SessionPolicy{
 			MaxConcurrentSessions: 1,
+			// §5.2 whole-pod scrub cleanup commands and their aggregate cap:
+			// gateway-enforced, so the mirror must surface them for the
+			// recycle-path Shutdown to deliver to the adapter.
+			CleanupCommands:       []string{"rm -rf /workspace/*", "sync"},
+			CleanupTimeoutSeconds: 20,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
@@ -106,6 +111,12 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 	}
 	if !got.AllowCrossTenantReuse || got.MaxPodUptimeSeconds != 86400 {
 		t.Errorf("reuse-pool mirror = %+v, want allowCrossTenantReuse / 86400", got)
+	}
+	// §5.2 whole-pod scrub cleanup config surfaces on the mirror so the
+	// recycle-path Shutdown delivers it to the adapter.
+	if got.CleanupTimeoutSeconds != 20 || len(got.CleanupCommands) != 2 ||
+		got.CleanupCommands[0] != "rm -rf /workspace/*" || got.CleanupCommands[1] != "sync" {
+		t.Errorf("reuse-pool mirror cleanup = %v / %d, want [rm -rf /workspace/* sync] / 20", got.CleanupCommands, got.CleanupTimeoutSeconds)
 	}
 
 	got, found, err = m.PoolPolicy(ctx, "svc-pool")
