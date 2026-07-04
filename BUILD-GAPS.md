@@ -3882,7 +3882,7 @@ Consequence: the §6.1 invariant "all idle pods in a preConnect pool are SDK-war
 
 **Heading reconciled 2026-06-09 (stale-OPEN → DEFERRED; transitively rule-B blocked).** Heading was a stale `— OPEN` despite the body's conclusion. The `scrub_warning` outcome the `task_cleanup → sdk_connecting [scrub_warning]` transition branches on is produced only by the adapter's between-task scrub loop, which runs inside the task-mode reuse cycle. That cycle is F-5.2.30, deferred this batch on a genuine `spec/` gap (§4.7 defines no gateway↔adapter task-control transport and §15 no `/v1/tasks` ingestion). With no scrub `Result` reaching any pod-phase writer in v1, there is nothing to drive this transition; the defer roots in the F-5.2.30 spec change, not infrastructure. Re-attempt when F-5.2.30 unblocks.
 
-### - [ ] F-5.2.15 — Kata/microvm scrub variant (step 7) is not implemented [Medium] — OPEN
+### - [x] F-5.2.15 — Kata/microvm scrub variant (step 7) is not implemented [Medium] — CLOSED (session-mode boundary; follow-ons filed)
 
 Spec §5.2 lines 438–442: cross-tenant microvm pods require a guest VM restart between tenants (`microvmScrubMode: restart`, default) with a 3–8s latency penalty; `in-place` is an opt-in.
 
@@ -3897,6 +3897,19 @@ Consequence: cross-tenant microvm reuse (already gated to require the acknowledg
 **Heading reconciled 2026-06-09 (stale-OPEN → DEFERRED; `NEEDS-OPERATOR`).** §5.2 lines 438-442 require step 7 to call "the Kata runtime's VM lifecycle API" to restart the guest VM between tenants. That concrete restart can only be implemented and exercised against a **Kata-enabled host RuntimeClass** (the same class of resource F-6.3.5/.10/.20/.21 escalate); `kind` provides only the `runc` RuntimeClass, so the `scrub.VMRestarter` seam cannot be backed by a real Kata client or validated here. The driver that would invoke the seam is additionally gated on the F-5.2.30 task-reuse loop (a `spec/` gap). `NEEDS-OPERATOR: Kata-enabled host RuntimeClass` to implement and test the guest-VM-restart step-7 client. Re-attempt with a Kata host once F-5.2.30 unblocks the invoking driver.
 
 **Reconciled 2026-06-15 (F-5.2.30 superseded — invoker is now the recycle disposition, NEEDS-OPERATOR unchanged).** F-5.2.30 is SUPERSEDED: task mode is removed from the spec and `microvmScrubMode` is renamed to `recycle.scrubProfile` (`vm-restart` selects the guest restart). The invoker is no longer the deferred task-execution driver but the session-service recycle disposition built on the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`, `scrubProfile: vm-restart`). The transitive `spec/`-gap block from F-5.2.30 is therefore resolved; the residual blocker is solely the `NEEDS-OPERATOR: Kata-enabled host RuntimeClass` dependency, which `kind` cannot satisfy. The `scrub.VMRestarter` seam is built; the concrete Kata VM-lifecycle client and its test require a Kata host. Marker stays DEFERRED on the operator dependency alone.
+
+**Resolution (proposal 0031, 2026-07-03 — CLOSED for the session-mode boundary; two follow-ons filed).** The finding's "step 7 not implemented" framing was stale. The §5.2 whole-pod scrub orchestration (`pkg/adapter/scrub`, steps 0-7 behind the `scrub.VMRestarter` seam and the fail-closed `ErrNoRestarter` guard) and the gateway consumer side of the report (`leasecontrol` `ReportPodScrub` handler, `podscrub.Decide`, the recycle-boundary missing-report timeout, and their production wiring) already existed and were complete. The genuine residual was that the scrub was entirely unwired on the adapter side (`scrub.Run` and the adapter `ReportPodScrub` emitter had zero production callers) and no Gateway → Adapter RPC carried a recycle disposition or the scrub configuration, so a recycle-eligible pod reaching occupancy zero was retired fail-closed by the missing-report timeout rather than reused. Proposal 0031 closed that spec gap (S-A1 defined the recycle-scrub trigger and scrub-config delivery in §4.7 and §5.2) and wired the adapter side for the **session-mode** (`maxConcurrentSessions: 1`) occupancy-zero boundary through `Binder.Release`:
+
+- **C-A1** extended `ShutdownRequest` with the `RecycleScrub` sub-message (`pod_id`, `cleanup_commands`, `cleanup_timeout_seconds`, `scrub_profile`) and regenerated the adapter proto (commit 54965c52).
+- **C-A2** added the adapter-side scrub driver (`pkg/adapter/podscrub.go`) that runs `scrub.Run` asynchronously on the recycle branch of `Server.Shutdown` and reports the binary outcome via `ReportPodScrub` on the retained GatewayControl link, withholding the report on `scrub.ErrNoRestarter` so a `vm-restart` pool with no concrete restarter stays fail-closed (commits 2a049293, 431a7a57).
+- **C-A3** folded the pool's `cleanupCommands`/`cleanupTimeoutSeconds` onto `PoolMatch`/`BindResult` from the `SessionPolicy` mirror and threaded the recycle disposition (plus `PodId` from `SandboxName`) onto the recycle-path `Shutdown`, with an explicit `recycle bool` on `shutdownAdapter` so a failed/crashed session on a recycling pool takes the retire path with a plain `Shutdown` (commits 0b351923, fb734047).
+
+This restores pod reuse for `standard` and `in-place` profiles. Tests span tier-3 contract, tier-2 component (recycle branch, async report, retire-path fail-open guard), tier-4 integration (recycle path, missing-report timeout, cross-tenant `vm-restart` retire, failed-disposition retire), tier-1 unit (config mapping, outcome conversion), tier-10 conformance (`tests/tier10_conformance/recycle_scrub_conformance_test.go`), and tier-11 doc/spec consistency (`tests/tier11_docs/recycle_scrub_trigger_consistency_test.go`).
+
+Two follow-ons are filed against the same §5.2 whole-pod scrub contract (S-A1) rather than closed here:
+
+- **F-5.2.31** (OPEN) — the concurrent-session (`maxConcurrentSessions > 1`) occupancy-zero whole-pod scrub trigger, a distinct release path (`Binder.ReleaseSlot` → `SlotClaimer.ReleaseSlot`) that proposal 0031 scoped out.
+- **F-5.2.32** (DEFERRED, NEEDS-OPERATOR: Kata-enabled host RuntimeClass) — the concrete Kata `VMRestarter` for scrub step 7, the operator-hardware residual this finding originally named. It stages zero spec change (step 7 is already fully specified) and requires a Kata host `kind` cannot provide.
 
 ### - [x] F-5.2.16 — Mode-adjusted formula `mode_factor` is not derived from observed reuse [Medium] — CLOSED
 
@@ -4033,6 +4046,30 @@ Spec §5.2 line 516: "The `lenny-preflight` Job ... also checks for this conditi
 - `concurrent_stateless_test.go` and `concurrent_workspace_test.go` (Tier 4) provide good admission coverage. The execution-time behaviors they cannot reach are explicitly noted as needing a real cluster (Tier 5 or higher), but no Tier-5 concurrent test was located in the tree.
 - The execution-mode/concurrency-style enum surface is consistent across CRD, poolstore, runtimestore, and podclaim packages.
 - The `microvmScrubMode in-place` admission rule is implemented and tested (`validator.go:313`); the missing piece is only the runtime-side VM restart for `restart` mode (M-4).
+
+### - [ ] F-5.2.31 — Concurrent-session (`maxConcurrentSessions > 1`) occupancy-zero whole-pod scrub trigger is unwired [Medium] — OPEN
+
+**Filed 2026-07-03 by proposal 0031 (§7 follow-on).** Proposal 0031 (F-5.2.15) wired the §5.2 whole-pod scrub adapter trigger for the **session-mode** (`maxConcurrentSessions: 1`) occupancy-zero boundary through `Binder.Release`. The concurrent-session boundary reaches the same §5.2 whole-pod scrub the S-A1 contract covers, but through a different release path that proposal 0031 scoped out.
+
+Spec: §5.2 states the whole-pod scrub "runs whenever occupancy reaches zero on a recycling pod" (`spec/05_runtime-registry-and-pool-model.md`), which spans both session-mode and concurrent pools. A recycling pool with `maxConcurrentSessions > 1` is a valid configuration — the pool controller rejects only `recycle.allowCrossTenantReuse` on it (`pkg/gateway/poolstore/poolstore.go:536-539`).
+
+Implementation gap: the concurrent last-slot-drain edge runs through `Binder.ReleaseSlot`, which sends only a per-slot `ShutdownSlot` and closes the adapter connection (`pkg/gateway/podlifecycle/podsession/slotbinder.go:494-514`), and `SlotClaimer.ReleaseSlot`, which patches the claim `bound → recycling` and arms the missing-report timeout on occupancy zero without triggering the adapter scrub (`pkg/gateway/podclaim/slotclaimer.go:679-704`). The adapter `Shutdown` handler additionally early-returns on any slot-qualified request (`pkg/adapter/session.go:226-227`) before the recycle branch proposal 0031 added.
+
+Consequence: a concurrent recycling pod at occupancy zero is patched to `recycling` with an armed timeout and then always retired by the missing-report timeout — the same fail-closed posture that held before proposal 0031, with no isolation regression. The availability/efficiency gap (pod reuse) remains open for concurrent pools.
+
+Wiring: thread the last-slot/occupancy-zero signal from `SlotClaimer.ReleaseSlot` back to `Binder.ReleaseSlot` so it sends a whole-pod recycle `Shutdown` carrying `podId` plus the scrub parameters before closing the adapter, with the adapter running the scrub outside the early-returning slot branch. This is a self-contained change with its own tier-2 and tier-4 tests (a concurrent recycling pool reusing on a successful report and retiring on a withheld report). Not blocked on operator hardware; testable on the compose stack.
+
+### - [ ] F-5.2.32 — Concrete Kata `VMRestarter` for §5.2 scrub step 7 is not implemented [Medium] — DEFERRED
+
+**Filed 2026-07-03 by proposal 0031 (§7 follow-on); supersedes the operator-hardware residual of F-5.2.15.** Proposal 0031 (F-5.2.15) wired the adapter-side scrub driver and the gateway → adapter recycle trigger, restoring pod reuse for `standard` and `in-place` profiles. The concrete Kata guest-VM-restart client for the `vm-restart` profile's step 7 is the remaining residual, split out as a standalone implementation-only finding.
+
+Spec: §5.2 step 7 (`spec/05_runtime-registry-and-pool-model.md`) requires the `vm-restart` scrub profile to call "the Kata runtime's VM lifecycle API" to restart the guest VM between tenants on a `microvm → kata` RuntimeClass. Step 7 is already fully specified; proposal 0031's spec edit (S-A1) does not touch it, so this finding stages zero spec change and is a pure code implementation against an already-complete spec.
+
+Implementation: the step-7 seam (`scrub.VMRestarter`), its orchestration (`pkg/adapter/scrub/scrub.go`, gated on `cfg.MicrovmRestart`), and the fail-closed `ErrNoRestarter` guard already exist. The adapter scrub driver (`pkg/adapter/podscrub.go`) passes a `nil` restarter for non-`vm-restart` profiles and, for a `vm-restart` profile with no concrete restarter, withholds the `ReportPodScrub` entirely on `scrub.ErrNoRestarter`, so the gateway missing-report timeout retires the pod. The only `VMRestarter` implementer is `fakeRestarter` in `scrub_test.go`; there is no concrete Kata VM-lifecycle client to reuse (the only `kata` references in the tree are node-pool scheduling and isolation labels).
+
+Consequence: no isolation regression. A `vm-restart` pool that reaches step 7 without a concrete restarter is retired fail-closed by the missing-report timeout — the current default — rather than reused across tenants without the guest VM restart. The residual is the concrete Kata client.
+
+`NEEDS-OPERATOR: Kata-enabled host RuntimeClass` to implement and test the guest-VM-restart step-7 client. `kind` provides only the `runc` RuntimeClass, so the seam cannot be backed by a real Kata client or validated here; this is a tier-6 behavior. Re-attempt with a Kata host.
 
 ### Summary
 
