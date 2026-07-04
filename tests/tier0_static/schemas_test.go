@@ -133,11 +133,16 @@ func TestMessagePartExamplesValidate(t *testing.T) {
 	}
 }
 
-// spec: 15.4.3, 15.4.6
+// spec: 15.4.3, 15.4.6, 4.7 (llm_request_completed direct-mode token
+//
+//	fields), 11.2 (direct-mode usage source)
+//
 // diagnosis: a lifecycle-events example failed to validate against
 //
 //	schemas/lifecycle-events.schema.json. Verify the envelope
 //	shape, the `type` discriminator, and the capability enum.
+//	The llm_request_completed.tokens example exercises the
+//	optional §4.7 inputTokens/outputTokens direct-mode source.
 func TestLifecycleEventExamplesValidate(t *testing.T) {
 	t.Parallel()
 	validator := schematest.Compile(t, "schemas/lifecycle-events.schema.json")
@@ -154,6 +159,11 @@ func TestLifecycleEventExamplesValidate(t *testing.T) {
 		"schemas/examples/lifecycle.credentials_rotated.json",
 		"schemas/examples/lifecycle.deadline_approaching.json",
 		"schemas/examples/lifecycle.terminate.json",
+		// spec: §4.7 — llm_request_completed without token counts (a
+		// runtime that cannot extract them omits both fields) and with
+		// the optional direct-mode inputTokens/outputTokens source.
+		"schemas/examples/lifecycle.llm_request_completed.json",
+		"schemas/examples/lifecycle.llm_request_completed.tokens.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {

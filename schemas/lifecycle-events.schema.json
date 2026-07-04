@@ -197,13 +197,15 @@
     },
     "llm_request_completed": {
       "title": "llm_request_completed",
-      "description": "Runtime → adapter. The runtime's outbound LLM request has completed or errored. The adapter decrements the in-flight counter; when it reaches zero and a rotation is pending, the adapter sends credentials_rotated.",
+      "description": "Runtime → adapter. The runtime's outbound LLM request has completed or errored. The adapter decrements the in-flight counter; when it reaches zero and a rotation is pending, the adapter sends credentials_rotated. In direct mode (§11.2) the runtime optionally carries the prompt and completion token counts extracted from the provider response, which the adapter accumulates into a per-session cumulative total internally and reports as the incremental delta since the last read over the §4.7 ReportUsage RPC.",
       "type": "object",
       "properties": {
         "type": { "const": "llm_request_completed" },
         "requestId": { "type": "string", "minLength": 1 },
         "provider": { "type": "string", "minLength": 1 },
-        "status": { "enum": ["ok", "error"] }
+        "status": { "enum": ["ok", "error"] },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 }
       },
       "required": ["type", "requestId", "provider", "status"],
       "additionalProperties": false

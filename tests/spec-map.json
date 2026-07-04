@@ -311,7 +311,8 @@
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
-        "tests/tier10_conformance/recycle_scrub_conformance_test.go"
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go",
+        "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -319,7 +320,8 @@
       ],
       "schemas": [
         "schemas/lenny-adapter.proto",
-        "schemas/lenny-adapter-jsonl.schema.json"
+        "schemas/lenny-adapter-jsonl.schema.json",
+        "schemas/lifecycle-events.schema.json"
       ],
       "blocked_until_phase": "2"
     },

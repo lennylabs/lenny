@@ -1,0 +1,6 @@
+{
+  "type": "llm_request_completed",
+  "requestId": "req_01HX9F0YWXKK0V7QZ7G6P3R5JM",
+  "provider": "anthropic",
+  "status": "ok"
+}
