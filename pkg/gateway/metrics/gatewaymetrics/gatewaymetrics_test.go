@@ -5,6 +5,7 @@ package gatewaymetrics_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -73,6 +74,33 @@ func TestRecycleMetricsExposeSeries_spec_16_1(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics output missing %q", want)
 		}
+	}
+}
+
+// TestResumeDeduplicatedCounterRemoved_spec_16_1 pins the removal of the
+// lenny_coordinator_resume_deduplicated_total counter and its
+// AddResumeDeduplicated increment site. Proposal 0026 reconciled the §10.1
+// resume path to an adapter-assigned model, deleting the dead ResumeDedup
+// consumer (its only increment site); §16.1 no longer defines this metric.
+// The test asserts the concrete method is gone and the series never appears
+// on /metrics. It fails against the pre-0026 code where both existed.
+// spec: 16.1 (metric inventory; lenny_coordinator_resume_deduplicated_total removed)
+func TestResumeDeduplicatedCounterRemoved_spec_16_1(t *testing.T) {
+	if _, ok := reflect.TypeOf(&gatewaymetrics.Metrics{}).MethodByName("AddResumeDeduplicated"); ok {
+		t.Error("Metrics.AddResumeDeduplicated must not exist: proposal 0026 removed its only increment site and dropped the §16.1 metric")
+	}
+
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "lenny_coordinator_resume_deduplicated_total") {
+		t.Errorf("/metrics still exposes the removed lenny_coordinator_resume_deduplicated_total counter\n---\n%s", rr.Body.String())
 	}
 }
 

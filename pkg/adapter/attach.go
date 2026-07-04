@@ -126,13 +126,6 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 				}
 				continue
 			}
-			// spec: §10.1 line 173 — record the most recent tool_call id
-			// so a subsequent CheckpointBarrier ack can carry it for the
-			// gateway's resume-deduplication path. Best-effort: a malformed
-			// frame leaves the prior last_tool_call_id unchanged.
-			if id := extractToolCallID(line); id != "" {
-				s.SetLastToolCallID(id)
-			}
 			if err := stream.Send(&adapterv1.AttachResponse{EnvelopeJson: stripRuntimeFrom(line)}); err != nil {
 				return err
 			}
@@ -159,8 +152,8 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 }
 
 // emitLocalToolCall opens the §16.3 `session.tool_call` span for one
-// adapter-local tool invocation, records the §10.1 last_tool_call_id,
-// writes the tool_result back to the runtime's stdin, and ends the span.
+// adapter-local tool invocation, writes the tool_result back to the
+// runtime's stdin, and ends the span.
 // The span is per invocation per the §16.3 line 343 "(per tool
 // invocation)" annotation. It carries the tool name as a descriptive
 // attribute (a tool identifier, never arguments) and records an UPSTREAM
@@ -177,7 +170,6 @@ func (s *Server) emitLocalToolCall(ctx context.Context, sessionID, slotID string
 	}
 	if id := extractToolCallID(frame); id != "" {
 		span.SetAttributes(attribute.String("tool.call_id", id))
-		s.SetLastToolCallID(id)
 	}
 	// §16.3: a tool that returned isError is the UPSTREAM category — the
 	// failure originates in the tool's execution, not in the adapter

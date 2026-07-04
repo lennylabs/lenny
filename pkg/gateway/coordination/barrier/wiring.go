@@ -57,8 +57,7 @@ func (d *PodDispatcher) Send(ctx context.Context, t Target, barrierID string) (A
 		return Ack{}, err
 	}
 	return Ack{
-		LastToolCallID: res.LastToolCallID,
-		CheckpointRef:  res.CheckpointRef,
+		CheckpointRef: res.CheckpointRef,
 	}, nil
 }
 

@@ -40,14 +40,13 @@ func TestCheckpointBarrierMapsAck_spec_10_1(t *testing.T) {
 	srv, cl := barrierServer(t)
 	ctx := context.Background()
 
-	// Fence the session to generation 9 and record the last completed
-	// tool call directly on the server.
+	// Fence the session to generation 9 so the matched-generation barrier
+	// passes the adapter's generation gate.
 	if _, err := srv.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 9,
 	}); err != nil {
 		t.Fatalf("fence: %v", err)
 	}
-	srv.SetLastToolCallID("tc-last")
 
 	res, err := cl.CheckpointBarrier(ctx, "s1", 9, "b-1")
 	if err != nil {
@@ -55,9 +54,6 @@ func TestCheckpointBarrierMapsAck_spec_10_1(t *testing.T) {
 	}
 	if res.BarrierID != "b-1" {
 		t.Errorf("barrier id = %q, want b-1", res.BarrierID)
-	}
-	if res.LastToolCallID != "tc-last" {
-		t.Errorf("last tool call id = %q, want tc-last", res.LastToolCallID)
 	}
 }
 

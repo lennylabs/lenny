@@ -32,41 +32,12 @@ type coordinationState struct {
 	// initialized reports whether at least one fence has landed; the
 	// first fence is exempt from gap detection.
 	initialized bool
-	// lastToolCallID is the id of the most recent tool_call the adapter
-	// observed on the runtime's stdout. The CheckpointBarrier ack
-	// surfaces it so the gateway can deduplicate replays on resume
-	// (§10.1 line 173 / line 36 reset semantics).
-	lastToolCallID string
 	// quiesced bounces a §10.1 line 631 quiesce signal off the local
 	// state so the adapter can refuse new operational RPCs while a
 	// barrier is in flight. The check is currently advisory — the
 	// quiesce-strict enforcement against StartSession/SendMessage/etc.
 	// lives in the broader §10.1 horizontal-scaling phase (F-10.1.6).
 	quiesced bool
-}
-
-// SetLastToolCallID records the id of the most recent tool_call the
-// adapter observed on the runtime's stdout. The Attach path calls it on
-// every relayed tool_call frame so the CheckpointBarrier ack can carry
-// the §10.1 line 173 last_tool_call_id without re-parsing buffered
-// frames.
-//
-// spec: §10.1 line 173.
-func (s *Server) SetLastToolCallID(id string) {
-	if id == "" {
-		return
-	}
-	s.coord.mu.Lock()
-	s.coord.lastToolCallID = id
-	s.coord.mu.Unlock()
-}
-
-// LastToolCallID returns the id of the most recent tool_call the
-// adapter dispatched. Exposed for tests.
-func (s *Server) LastToolCallID() string {
-	s.coord.mu.Lock()
-	defer s.coord.mu.Unlock()
-	return s.coord.lastToolCallID
 }
 
 // LastFencedGeneration returns the most recent generation the adapter
@@ -87,9 +58,10 @@ func (s *Server) LastFencedGeneration() int64 {
 // value (a replacement pod can be fenced into an existing session's
 // generation); subsequent fences must be strictly greater. Skipping one
 // or more generations triggers the §10.1 line 36 gap-detection path:
-// the adapter resets transient state (`lastToolCallID`) and logs a
-// `coordinator_generation_gap` event before acknowledging the new
-// generation.
+// the adapter logs a `coordinator_generation_gap` event and returns
+// GapDetected: true while still acknowledging the new generation. The
+// §10.1 line 36 in-flight-RPC cancellation is an unimplemented spec
+// requirement the adapter does not currently perform.
 //
 // spec: §4.7 line 632, §10.1 lines 33-37.
 func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.CoordinatorFenceRequest) (*adapterv1.CoordinatorFenceResponse, error) {
@@ -118,12 +90,10 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	}
 	gap := s.coord.initialized && gen > s.coord.lastFenced+1
 	if gap {
-		// §10.1 line 36 — cancel any in-flight RPCs received under the
-		// missing generation(s) and reset transient tool-call state.
-		// The reset narrows the §10.1 line 173 last_tool_call_id to
-		// post-gap state so a deduplication replay does not skip a
-		// tool call the new coordinator must re-dispatch.
-		s.coord.lastToolCallID = ""
+		// §10.1 line 36 — a skipped generation logs
+		// `coordinator_generation_gap` and reports GapDetected so the
+		// caller can react. The spec's in-flight-RPC cancellation is a
+		// requirement the adapter does not currently implement.
 		slog.WarnContext(ctx, "coordinator_generation_gap",
 			"session_id", sessionID,
 			"last_fenced_generation", s.coord.lastFenced,
@@ -153,10 +123,10 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 // generation against the last fenced value, quiesces tool-call
 // dispatch, flushes a best-effort checkpoint, and acknowledges via
 // `CheckpointBarrierAck` on the LifecycleChannel control stream
-// (§4.7 line 660 — fields barrier_id, last_tool_call_id,
-// checkpoint_ref). The RPC return value mirrors the ack so a
-// synchronous caller has the same information; the control-stream emit
-// is the canonical surface for the gateway's barrier-target reconciler.
+// (§4.7 line 660 — fields barrier_id, checkpoint_ref). The RPC return
+// value mirrors the ack so a synchronous caller has the same
+// information; the control-stream emit is the canonical surface for the
+// gateway's barrier-target reconciler.
 //
 // spec: §4.7 line 631, §10.1 lines 163-181.
 func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.CheckpointBarrierRequest) (*adapterv1.CheckpointBarrierResponse, error) {
@@ -183,7 +153,6 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	s.coord.mu.Lock()
 	fenced := s.coord.lastFenced
 	initialized := s.coord.initialized
-	lastToolCallID := s.coord.lastToolCallID
 	s.coord.mu.Unlock()
 	if !initialized || gen != fenced {
 		return nil, status.Errorf(codes.FailedPrecondition,
@@ -207,17 +176,16 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	elapsed := time.Since(startedAt).Milliseconds()
 
 	resp := &adapterv1.CheckpointBarrierResponse{
-		BarrierId:      barrierID,
-		LastToolCallId: lastToolCallID,
-		CheckpointRef:  checkpointRef,
-		QuiescedMs:     elapsed,
+		BarrierId:     barrierID,
+		CheckpointRef: checkpointRef,
+		QuiescedMs:    elapsed,
 	}
 
 	// Mirror the response onto the §4.7 line 660 control stream so the
 	// gateway's barrier-target reconciler sees the ack without holding
 	// the synchronous RPC open. Drop-tolerant: if no control stream is
 	// attached the synchronous return is the gateway's signal.
-	s.EmitCheckpointBarrierAck(barrierID, lastToolCallID, checkpointRef, elapsed)
+	s.EmitCheckpointBarrierAck(barrierID, checkpointRef, elapsed)
 
 	return resp, nil
 }
@@ -226,8 +194,7 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 // barrier dispatch. A checkpoint failure (sink unwired, archive error,
 // quiescence-handshake timeout) does not abort the barrier — the gateway
 // records the empty checkpoint_ref and falls through to its existing
-// resume path. The §10.1 line 173 tool_call_idempotency_key persistence
-// is the gateway-side responsibility, not the adapter's.
+// resume path. The flush produces only the best-effort checkpoint_ref.
 func (s *Server) flushBarrierCheckpoint(ctx context.Context, sessionID string) string {
 	if s.Checkpoints == nil || s.WorkspaceRoot == "" {
 		return ""
@@ -263,12 +230,11 @@ func (s *Server) flushBarrierCheckpoint(ctx context.Context, sessionID string) s
 // gateway's signal.
 //
 // spec: §4.7 line 660.
-func (s *Server) EmitCheckpointBarrierAck(barrierID, lastToolCallID, checkpointRef string, quiescedMs int64) {
+func (s *Server) EmitCheckpointBarrierAck(barrierID, checkpointRef string, quiescedMs int64) {
 	s.emitControlEvent(controlEvent{
-		Type:           eventCheckpointBarrierAck,
-		BarrierID:      barrierID,
-		LastToolCallID: lastToolCallID,
-		CheckpointRef:  checkpointRef,
-		QuiescedMs:     quiescedMs,
+		Type:          eventCheckpointBarrierAck,
+		BarrierID:     barrierID,
+		CheckpointRef: checkpointRef,
+		QuiescedMs:    quiescedMs,
 	})
 }

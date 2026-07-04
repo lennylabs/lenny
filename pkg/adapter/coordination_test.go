@@ -3,10 +3,12 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -122,19 +124,37 @@ func TestCoordinatorFenceStaleGenerationRejected(t *testing.T) {
 }
 
 // TestCoordinatorFenceGapDetected verifies §10.1 line 36 gap detection:
-// a generation that skips one or more values resets transient state and
-// returns gap_detected=true.
+// a generation that skips one or more values still logs
+// `coordinator_generation_gap` and returns gap_detected=true after the
+// dead last_tool_call_id reset was removed (proposal 0026), since gap
+// detection has no dependence on last_tool_call_id. It also pins the
+// proposal-0026 Pass-14 doc reconciliation: the gap path does not cancel
+// in-flight RPCs (the §10.1 line 36 cancellation is an unimplemented
+// requirement), so the fence's own context is left un-cancelled.
+//
+// spec: §10.1 lines 33-37 (CoordinatorFence gap), §4.2 (coordination_generation handoff).
 func TestCoordinatorFenceGapDetected(t *testing.T) {
+	// Redirect the default slog logger so the gap warning line is
+	// observable; CoordinatorFence emits it via slog.WarnContext.
+	logBuf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	s := newFencedServer(t)
-	ctx := context.Background()
-	if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 3,
 	}); err != nil {
 		t.Fatalf("first fence: %v", err)
 	}
-	// Prime a last_tool_call_id; the gap must reset it.
-	s.SetLastToolCallID("tc-pre-gap")
-	resp, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+	// Pass the gap fence a cancellable context so the test can assert the
+	// gap path does not cancel it. A pre-fix implementation matching the
+	// old doc ("cancels any in-flight RPCs received under the missing
+	// generation(s)") would have to cancel through this context, failing
+	// the ctx.Err() check below.
+	gapCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	resp, err := s.CoordinatorFence(gapCtx, &adapterv1.CoordinatorFenceRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 7,
 	})
 	if err != nil {
@@ -143,8 +163,11 @@ func TestCoordinatorFenceGapDetected(t *testing.T) {
 	if !resp.GetAccepted() || !resp.GetGapDetected() {
 		t.Fatalf("gap fence: expected accepted+gap_detected, got %+v", resp)
 	}
-	if got := s.LastToolCallID(); got != "" {
-		t.Fatalf("gap should reset last_tool_call_id, got %q", got)
+	if !strings.Contains(logBuf.String(), "coordinator_generation_gap") {
+		t.Fatalf("gap path should log coordinator_generation_gap, got %q", logBuf.String())
+	}
+	if gapCtx.Err() != nil {
+		t.Fatalf("gap path must not cancel in-flight RPCs (unimplemented §10.1 line 36); ctx.Err()=%v", gapCtx.Err())
 	}
 }
 
@@ -209,7 +232,7 @@ func (s stubCheckpointSink) SaveCheckpoint(_ context.Context, _ string, r io.Rea
 // TestCheckpointBarrierAcksMatchedGeneration verifies the happy path:
 // fence sets generation N, barrier with N quiesces, emits the ack on
 // the control stream, and returns the synchronous mirror. spec:
-// §4.7 line 660, §10.1 line 173.
+// §4.7 line 660, §10.1 lines 163-181.
 func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 	s := newFencedServer(t)
 	// Wire a stub checkpoint sink + workspace so flushBarrierCheckpoint
@@ -223,7 +246,6 @@ func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("fence: %v", err)
 	}
-	s.SetLastToolCallID("tc-last")
 
 	// Attach a fake control-event sink so we can observe the ack emit
 	// without standing up the gRPC LifecycleChannel stream.
@@ -246,9 +268,6 @@ func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 	if resp.GetBarrierId() != "b1" {
 		t.Fatalf("barrier_id: got %q want b1", resp.GetBarrierId())
 	}
-	if resp.GetLastToolCallId() != "tc-last" {
-		t.Fatalf("last_tool_call_id: got %q want tc-last", resp.GetLastToolCallId())
-	}
 	if resp.GetCheckpointRef() != "ck-1" {
 		t.Fatalf("checkpoint_ref: got %q want ck-1", resp.GetCheckpointRef())
 	}
@@ -260,7 +279,7 @@ func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 		if ev.Type != eventCheckpointBarrierAck {
 			t.Fatalf("control event type: got %q", ev.Type)
 		}
-		if ev.BarrierID != "b1" || ev.LastToolCallID != "tc-last" || ev.CheckpointRef != "ck-1" {
+		if ev.BarrierID != "b1" || ev.CheckpointRef != "ck-1" {
 			t.Fatalf("control event fields: %+v", ev)
 		}
 		// Round-trip JSON marshal so we exercise the wire encoding the
@@ -280,7 +299,7 @@ func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 // TestCheckpointBarrierEmptyCheckpointOnSinkError verifies that a
 // checkpoint sink failure does not abort the barrier; the ack carries
 // an empty checkpoint_ref so the gateway falls through to its existing
-// resume path. spec: §10.1 line 173 — best-effort flush.
+// resume path. spec: §10.1 lines 163-181 — best-effort flush.
 func TestCheckpointBarrierEmptyCheckpointOnSinkError(t *testing.T) {
 	s := newFencedServer(t)
 	s.WorkspaceRoot = t.TempDir()
@@ -319,9 +338,8 @@ func TestCheckpointBarrierMissingBarrierID(t *testing.T) {
 	}
 }
 
-// TestExtractToolCallID covers the §10.1 line 173 frame parser used to
-// thread last_tool_call_id from the Attach relay into the coordination
-// state.
+// TestExtractToolCallID covers the tool_call frame parser used to stamp
+// the §16.3 `session.tool_call` span with the invoked tool's call id.
 func TestExtractToolCallID(t *testing.T) {
 	cases := []struct {
 		name  string

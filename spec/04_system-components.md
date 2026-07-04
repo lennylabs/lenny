@@ -683,7 +683,7 @@ The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable
 | `AUTH_EXPIRED`         | Credential lease expired or was rejected by provider                     |
 | `PROVIDER_UNAVAILABLE` | Provider endpoint is unreachable                                         |
 | `LEASE_REJECTED`       | Runtime cannot use the assigned credential (incompatible provider, etc.) |
-| `CheckpointBarrierAck` | Acknowledges `CheckpointBarrier` after quiescence and checkpoint flush. Fields: `barrier_id`, `last_tool_call_id`, `checkpoint_ref`. See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
+| `CheckpointBarrierAck` | Acknowledges `CheckpointBarrier` after quiescence and checkpoint flush. Fields: `barrier_id`, `checkpoint_ref`. See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
 | `AdapterTerminating`   | Adapter's self-initiated terminal notification (e.g., coordinator-loss hold timeout). Fields: `session_id`, `reason` (`coordinator_lost`, etc.). Allows the gateway to transition the session immediately without waiting for the orphan-session reconciler. See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
 | `FINAL_USAGE_REPORT`   | Final lifecycle-stream message sent by the child's adapter after all in-flight `ReportUsage` calls have been flushed, just before the stream closes. Gateway waits for this (or stream close, whichever comes first) before running `budget_return.lua`. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 

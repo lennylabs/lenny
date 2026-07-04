@@ -957,7 +957,8 @@
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
         "tests/tier2_component/coordination/...",
-        "tests/tier2_component/stores/coordleasestore_test.go"
+        "tests/tier2_component/stores/coordleasestore_test.go",
+        "tests/tier3_contract/adapter_checkpointbarrier/..."
       ],
       "packages": [
         "pkg/gateway"

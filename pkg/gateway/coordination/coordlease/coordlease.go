@@ -17,7 +17,7 @@
 // occurred in the seconds before preStop: the in-memory cache can
 // include stale entries for sessions just handed off (false-positive
 // barriers) and miss entries for sessions just handed in (false-negatives
-// that leave a recently-dispatched tool call without barrier dedup). The
+// that leave a recently-dispatched tool call without a barrier). The
 // barrier coordinator falls back to the in-memory lease cache only when
 // this Postgres read fails or exceeds its 2-second deadline.
 //

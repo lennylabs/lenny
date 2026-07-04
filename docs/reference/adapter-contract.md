@@ -93,7 +93,7 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `AUTH_EXPIRED` | Credential lease expired or was rejected by provider |
 | `PROVIDER_UNAVAILABLE` | Provider endpoint is unreachable |
 | `LEASE_REJECTED` | Runtime cannot use the assigned credential |
-| `CheckpointBarrierAck` | Acknowledges a `CheckpointBarrier` after quiescence and checkpoint flush (fields: `barrier_id`, `last_tool_call_id`, `checkpoint_ref`) |
+| `CheckpointBarrierAck` | Acknowledges a `CheckpointBarrier` after quiescence and checkpoint flush (fields: `barrier_id`, `checkpoint_ref`) |
 | `AdapterTerminating` | Self-initiated terminal notification (e.g., coordinator-loss hold timeout); lets the gateway transition the session without waiting for the orphan-session reconciler |
 | `FINAL_USAGE_REPORT` | Final lifecycle-stream message sent before the stream closes, after all in-flight `ReportUsage` calls have been flushed |
 

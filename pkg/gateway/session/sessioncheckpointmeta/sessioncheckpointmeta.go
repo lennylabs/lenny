@@ -1,28 +1,19 @@
 // SPDX-License-Identifier: MIT
 
 // Package sessioncheckpointmeta persists the §10.1 CheckpointBarrier
-// protocol's per-session barrier metadata: the last completed tool
-// call and its idempotency-key sequence number. The gateway writes a
-// row after receiving a CheckpointBarrierAck during a graceful drain
-// (§10.1 line 178 (b)); on a coordinator handoff the new coordinator
-// reads the row before re-dispatching tool calls and skips any call
-// whose sequence number is at or below the recorded value, preventing
-// silent duplicate execution of an idempotent-unsafe operation the
-// prior pod already ran (§10.1 line 179).
-//
-// The row is the secondary, fast-lookup source. The primary durable
-// source is `barrier_meta.last_tool_call_id` embedded in the MinIO
-// checkpoint manifest (written by the adapter before it emits the
-// ack); the resume path falls back to the manifest only when this row
-// is absent because the prior gateway could not write it before
-// SIGKILL (§10.1 line 179).
+// protocol's per-session barrier metadata: the barrier_id, the
+// checkpoint_ref the barrier flush produced, and the
+// workspace_recovery_fraction. The gateway writes a row after
+// receiving a CheckpointBarrierAck during a graceful drain, so a later
+// coordinator handoff can report the workspace-recovery fraction the
+// row records (§10.1 line 393).
 //
 // The in-memory MemoryStore backs unit tests and the developer-mode
 // deployment; the Postgres-backed implementation lives in the pgstore
 // subpackage and writes the migration-0148 session_checkpoint_meta
 // table under the §12.3 tenant-context RLS guard.
 //
-// spec: §10.1 lines 178-181, 393.
+// spec: §10.1 line 393.
 package sessioncheckpointmeta
 
 import (
@@ -49,14 +40,6 @@ type Record struct {
 	// BarrierID is the gateway's monotonically-increasing-per-session
 	// correlation id for the barrier that produced this row.
 	BarrierID string
-	// LastToolCallID is the id of the last tool call the pod completed
-	// before quiescing, echoed in the CheckpointBarrierAck (§10.1 line
-	// 166).
-	LastToolCallID string
-	// LastToolCallSequence is the tool_call_sequence_number component
-	// of the §10.1 line 178 tool_call_idempotency_key. The resume path
-	// skips any tool call whose sequence number is <= this value.
-	LastToolCallSequence int64
 	// CheckpointRef is the MinIO checkpoint manifest the barrier flush
 	// stored; empty when the best-effort flush produced no checkpoint.
 	CheckpointRef string

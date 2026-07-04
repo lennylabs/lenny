@@ -69,11 +69,10 @@ func fencedAdapter(t *testing.T) (*adapter.Server, *adapterclient.Client) {
 }
 
 // spec: §10.1 lines 165-167 — PodDispatcher routes the barrier through the
-// live in-replica connection and returns the ack, including the
-// tool_call_sequence_number for resume dedup.
+// live in-replica connection and returns the ack carrying the
+// best-effort checkpoint_ref.
 func TestPodDispatcherSendThroughLiveConn_spec_10_1_167(t *testing.T) {
-	srv, cl := fencedAdapter(t)
-	srv.SetLastToolCallID("tc-2")
+	_, cl := fencedAdapter(t)
 
 	d := &barrier.PodDispatcher{
 		Conn: func(sessionID string) (*adapterclient.Client, bool) {
@@ -83,14 +82,11 @@ func TestPodDispatcherSendThroughLiveConn_spec_10_1_167(t *testing.T) {
 			return nil, false
 		},
 	}
-	ack, err := d.Send(context.Background(), barrier.Target{
+	_, err := d.Send(context.Background(), barrier.Target{
 		TenantID: "acme", SessionID: "s1", CoordinationGeneration: 9,
 	}, "b-1")
 	if err != nil {
 		t.Fatalf("Send: %v", err)
-	}
-	if ack.LastToolCallID != "tc-2" {
-		t.Errorf("ack last tool call id = %q, want tc-2", ack.LastToolCallID)
 	}
 }
 

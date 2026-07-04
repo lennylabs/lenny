@@ -5,7 +5,7 @@
 // table from migration 0148 and applies the §12.3 tenant-context RLS
 // guard via pgtenant.InTx.
 //
-// spec: §10.1 lines 178-181, 393.
+// spec: §10.1 line 393.
 package pgstore
 
 import (
@@ -49,20 +49,17 @@ func (s *Store) Upsert(ctx context.Context, r sessioncheckpointmeta.Record) erro
 		_, err := tx.Exec(ctx,
 			`INSERT INTO session_checkpoint_meta (
 				tenant_id, session_id, coordination_generation,
-				barrier_id, last_tool_call_id, last_tool_call_sequence,
-				checkpoint_ref, workspace_recovery_fraction, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				barrier_id, checkpoint_ref, workspace_recovery_fraction,
+				updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (tenant_id, session_id) DO UPDATE SET
 				coordination_generation = EXCLUDED.coordination_generation,
 				barrier_id = EXCLUDED.barrier_id,
-				last_tool_call_id = EXCLUDED.last_tool_call_id,
-				last_tool_call_sequence = EXCLUDED.last_tool_call_sequence,
 				checkpoint_ref = EXCLUDED.checkpoint_ref,
 				workspace_recovery_fraction = EXCLUDED.workspace_recovery_fraction,
 				updated_at = EXCLUDED.updated_at`,
 			r.TenantID, r.SessionID, r.CoordinationGeneration,
-			r.BarrierID, r.LastToolCallID, r.LastToolCallSequence,
-			r.CheckpointRef, r.WorkspaceRecoveryFraction, now)
+			r.BarrierID, r.CheckpointRef, r.WorkspaceRecoveryFraction, now)
 		return err
 	})
 }
@@ -74,14 +71,13 @@ func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (sessionche
 		var frac *float64
 		row := tx.QueryRow(ctx,
 			`SELECT tenant_id, session_id, coordination_generation,
-				barrier_id, last_tool_call_id, last_tool_call_sequence,
-				checkpoint_ref, workspace_recovery_fraction, updated_at
+				barrier_id, checkpoint_ref, workspace_recovery_fraction,
+				updated_at
 			FROM session_checkpoint_meta
 			WHERE tenant_id = $1 AND session_id = $2`,
 			tenantID, sessionID)
 		scanErr := row.Scan(&out.TenantID, &out.SessionID, &out.CoordinationGeneration,
-			&out.BarrierID, &out.LastToolCallID, &out.LastToolCallSequence,
-			&out.CheckpointRef, &frac, &out.UpdatedAt)
+			&out.BarrierID, &out.CheckpointRef, &frac, &out.UpdatedAt)
 		if scanErr != nil {
 			return scanErr
 		}

@@ -28,7 +28,7 @@ var spec161Metrics = []string{
 	"lenny_gateway_rejection_rate", "lenny_pdb_blocked_evictions_total", "lenny_policy_denials_total",
 	"lenny_noenvironmentpolicy_allowall_total", "lenny_checkpoint_duration_seconds",
 	"lenny_checkpoint_size_bytes", "lenny_checkpoint_stale_sessions", "lenny_checkpoint_barrier_ack_total",
-	"lenny_checkpoint_barrier_ack_duration_seconds", "lenny_coordinator_resume_deduplicated_total",
+	"lenny_checkpoint_barrier_ack_duration_seconds",
 	"lenny_prestop_cap_selection_total", "lenny_prestop_barrier_target_source_total",
 	"lenny_gateway_sigkill_streams_total", "lenny_checkpoint_eviction_fallback_total",
 	"lenny_postgres_connection_pool_utilization", "lenny_redis_memory_used_bytes",

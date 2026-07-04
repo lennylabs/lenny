@@ -12,7 +12,7 @@
 -- the in-memory cache can both include stale entries for sessions just
 -- handed off to another replica (false-positive barriers) and miss
 -- entries for sessions just handed in (false-negatives that leave a
--- recently-dispatched tool call without barrier deduplication). The
+-- recently-dispatched tool call without a barrier). The
 -- coordination Sweeper mirrors the authoritative Redis lease into this
 -- row on every sweep: it upserts the row with this replica as
 -- coordinator_replica when it holds the lease, so a cross-replica
