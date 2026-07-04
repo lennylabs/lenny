@@ -665,9 +665,24 @@ const (
     TopicSessionLifecycle EventTopic = "session_lifecycle"  // state transitions, coordinator handoff notifications
 )
 
-// Event is a CloudEvents v1.0.2 envelope. The `go-sdk` cloudevents.Event type
-// is used directly; no Lenny-specific wrapper.
-type Event = cloudevents.Event
+// Event is the CloudEvents v1.0.2 structured-content envelope. It is a
+// native struct rather than an alias of the go-sdk cloudevents.Event
+// type: the released go-sdk serializes application/ocsf+json data as an
+// escaped JSON string, which would double-wrap the audit record and
+// violate the single-envelope inline model below. MarshalJSON emits
+// `data` inline and flattens the Lenny extension attributes into the
+// top-level object; UnmarshalJSON reverses both.
+type Event struct {
+    SpecVersion     string            `json:"specversion"`     // "1.0"
+    ID              string            `json:"id"`              // per the envelope-contract table below
+    Source          string            `json:"source"`
+    Type            string            `json:"type"`
+    Time            string            `json:"time"`
+    DataContentType string            `json:"datacontenttype"`
+    Subject         string            `json:"subject"`
+    Data            json.RawMessage   `json:"data,omitempty"`  // inline payload; the OCSF record for an audit-bearing event
+    Extensions      map[string]string `json:"-"`               // lenny* extensions, flattened onto the wire
+}
 
 type EventBus interface {
     Publish(ctx context.Context, tenantID TenantID, topic EventTopic, event Event) error

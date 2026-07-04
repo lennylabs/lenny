@@ -649,8 +649,22 @@ Every emitted event is a [CloudEvents v1.0.2](https://github.com/cloudevents/spe
 **Single-envelope model — no double-wrapping.** Audit-bearing events carry the OCSF record **directly** in the CloudEvents `data` field with `datacontenttype: application/ocsf+json`. The CloudEvents envelope is the transport; the OCSF record is the payload; there is no intermediate container between them. Consumers parse the CloudEvents record first, read `data` as the OCSF v1.1.0 record ([§11.7](11_policy-and-controls.md#117-audit-logging) Wire Format), and apply the Lenny → OCSF field mapping. Non-audit operational events use `datacontenttype: application/json` and carry an event-specific JSON payload in `data` whose schema is documented per `type` in the catalogue ([§16.6](16_observability.md#166-operational-events-catalog)).
 
 ```go
-// OperationalEvent is a CloudEvents v1.0.2 Event — see §12.6.
-type OperationalEvent = cloudevents.Event
+// OperationalEvent is a native CloudEvents v1.0.2 structured-content
+// envelope — see §12.6 for the Event type it mirrors and the reason the
+// go-sdk type is not aliased directly. MarshalJSON emits `data` inline
+// and flattens the Lenny extension attributes into the top-level object.
+type OperationalEvent struct {
+    ID              string            `json:"id"`
+    Source          string            `json:"source,omitempty"`
+    SpecVersion     string            `json:"specversion"`
+    Type            string            `json:"type"`
+    Subject         string            `json:"subject,omitempty"`
+    Time            time.Time         `json:"time"`
+    Severity        string            `json:"severity,omitempty"`        // lenny severity extension the event-buffer query filters on
+    DataContentType string            `json:"datacontenttype,omitempty"`
+    Data            json.RawMessage   `json:"data,omitempty"`            // inline payload; the OCSF record for an audit-bearing event
+    Extensions      map[string]string `json:"-"`                         // remaining lenny* extensions, flattened onto the wire
+}
 
 type EventEmitter interface {
     Emit(ctx context.Context, event OperationalEvent) error
