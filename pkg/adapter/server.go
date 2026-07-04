@@ -171,6 +171,11 @@ type Server struct {
 	// gateway missing-report timeout retires the pod rather than reusing it.
 	// spec: §5.2 step 7.
 	VMRestarter scrub.VMRestarter
+	// scrubDone is a test-only seam the recycle-scrub driver fires once its
+	// background goroutine returns, so a test can wait for the async scrub
+	// deterministically without a sleep. Nil in production. spec: §5.2 (async
+	// scrub report).
+	scrubDone func()
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
 	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP
