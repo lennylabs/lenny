@@ -4590,8 +4590,18 @@ func (x *ExportPathsResponse) GetTotalBytes() int64 {
 }
 
 type ReportUsageRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// cumulative selects the read mode. When false (the default, steady-state
+	// poll), the adapter returns the incremental delta since the previous read
+	// and advances its per-session watermark. When true, the adapter returns
+	// the session's running cumulative total (also advancing the watermark to
+	// it). A reconnected gateway replica sets this so it can seed its restored
+	// quota counter from the pod-reported cumulative total for the §11.2
+	// crash-recovery MAX rule (MAX(postgres_checkpoint, pod-reported cumulative
+	// total)); a delta-only read would under-count after a replica crash.
+	// spec: §4.7 ReportUsage, §11.2 crash recovery for quota counters.
+	Cumulative    bool `protobuf:"varint,2,opt,name=cumulative,proto3" json:"cumulative,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4631,6 +4641,13 @@ func (x *ReportUsageRequest) GetSessionId() *SessionId {
 		return x.SessionId
 	}
 	return nil
+}
+
+func (x *ReportUsageRequest) GetCumulative() bool {
+	if x != nil {
+		return x.Cumulative
+	}
+	return false
 }
 
 type ReportUsageResponse struct {
@@ -5832,10 +5849,13 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x13ExportPathsResponse\x124\n" +
 	"\x05files\x18\x01 \x03(\v2\x1e.lenny.adapter.v1.ExportedFileR\x05files\x12\x1f\n" +
 	"\vtotal_bytes\x18\x02 \x01(\x03R\n" +
-	"totalBytes\"P\n" +
+	"totalBytes\"p\n" +
 	"\x12ReportUsageRequest\x12:\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\"\x81\x01\n" +
+	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x1e\n" +
+	"\n" +
+	"cumulative\x18\x02 \x01(\bR\n" +
+	"cumulative\"\x81\x01\n" +
 	"\x13ReportUsageResponse\x12!\n" +
 	"\finput_tokens\x18\x01 \x01(\x03R\vinputTokens\x12#\n" +
 	"\routput_tokens\x18\x02 \x01(\x03R\foutputTokens\x12\"\n" +

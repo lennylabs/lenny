@@ -1228,6 +1228,16 @@ message ExportPathsResponse {
 
 message ReportUsageRequest {
   SessionId session_id = 1;
+  // cumulative selects the read mode. When false (the default, steady-state
+  // poll), the adapter returns the incremental delta since the previous read
+  // and advances its per-session watermark. When true, the adapter returns
+  // the session's running cumulative total (also advancing the watermark to
+  // it). A reconnected gateway replica sets this so it can seed its restored
+  // quota counter from the pod-reported cumulative total for the §11.2
+  // crash-recovery MAX rule (MAX(postgres_checkpoint, pod-reported cumulative
+  // total)); a delta-only read would under-count after a replica crash.
+  // spec: §4.7 ReportUsage, §11.2 crash recovery for quota counters.
+  bool cumulative = 2;
 }
 
 message ReportUsageResponse {
