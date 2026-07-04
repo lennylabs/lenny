@@ -106,10 +106,14 @@ type elicitationDispatcher struct {
 	// forwardedContentFor, when non-nil, supplies the {message, schema}
 	// pair a forwarding hop re-emitted, so the §9.2 content-integrity
 	// check has something to compare against the origination digest.
-	// v1 has no per-hop re-emission wire mechanism (F-9.2.1), so the
-	// production dispatcher leaves this nil and the check never fires;
-	// tests inject a provider to drive the enforce / detect-only
-	// branches deterministically. spec: §9.2 lines 56–62.
+	// In v1 the gateway resolves the elicitation chain server-internally
+	// and intermediate pods re-emit nothing, so the gateway-origin
+	// binding holds by construction and the production dispatcher leaves
+	// this nil. The field is the forward-compatible enforcement seam:
+	// tests inject a provider to drive the enforce and detect-only
+	// branches deterministically, and it activates unchanged if a per-hop
+	// re-emission wire mechanism is added. spec: §9.2 (gateway-origin
+	// binding; v1 structural enforcement).
 	forwardedContentFor func(hop elicitation.Hop) (elicitation.Content, bool)
 }
 
@@ -409,9 +413,11 @@ func (d *elicitationDispatcher) handleTamper(
 // tampering pod's re-emission diverged on, for the audit event's
 // divergent_fields payload. It locates the tampering hop and re-reads
 // its re-emitted frame via the dispatcher's provider; when no provider
-// is wired (production, where the per-hop re-emission wire mechanism is
-// the deferred F-9.2.1 surface) it returns an empty slice. spec: §9.2
-// line 56; §16.7 line 674.
+// is wired (production, where the gateway resolves the chain
+// server-internally and no hop re-emits) it returns an empty slice. The
+// provider is the forward-compatible enforcement seam. spec: §9.2
+// (gateway-origin binding; v1 structural enforcement); §16.7
+// (elicitation.content_tamper_detected).
 func (d *elicitationDispatcher) divergentFields(original elicitation.Content, tamperingPod string, hops []elicitation.Hop) []string {
 	if d.forwardedContentFor != nil {
 		for _, h := range hops {

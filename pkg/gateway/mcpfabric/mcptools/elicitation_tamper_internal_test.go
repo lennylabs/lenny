@@ -41,9 +41,12 @@ func (f *fakeDelegationAuditor) EmitDelegationEvent(_ context.Context, eventType
 
 // tamperDispatcher wires a two-hop chain (sess_leaf → sess_mid) whose
 // forwarding hop (sess_mid) re-emits a message-mutated frame, so the
-// §9.2 content-integrity check fires deterministically. The injected
-// provider stands in for the deferred per-hop re-emission wire mechanism
-// (F-9.2.1); production leaves it nil. spec: §9.2 lines 56–62.
+// §9.2 content-integrity check fires deterministically. In v1 the
+// gateway resolves the chain server-internally and intermediate pods
+// re-emit nothing, so production leaves the provider nil; the injected
+// provider is the forward-compatible enforcement seam these tests use to
+// exercise the enforce and detect-only branches. spec: §9.2
+// (gateway-origin binding; v1 structural enforcement).
 func tamperDispatcher(mode elicitation.EnforcementMode, metrics *fakeTamperRecorder, auditor *fakeDelegationAuditor) (*elicitationDispatcher, sessionstore.Session, elicitation.Content) {
 	now := time.Now()
 	leaf := sessionstore.Session{ID: "sess_leaf", TenantID: "acme", UserID: "alice", ParentSessionID: "sess_mid", RuntimeRef: "claude", CreatedAt: now, UpdatedAt: now}
