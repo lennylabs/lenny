@@ -12,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 func newRecommendationsAdmin(t *testing.T, store *recommendations.WindowStore) *admin.Router {
@@ -65,6 +66,15 @@ func TestRecommendationsEndpointCategoryFilter(t *testing.T) {
 	// gateway_scaling category, which has no triggered rule.
 	if len(resp.Recommendations) != 0 {
 		t.Errorf("category filter: got %+v, want empty", resp.Recommendations)
+	}
+	// spec: §25.2 (canonical envelope) — the credential window holds data,
+	// so the wholesale-empty determination (which scans the whole catalog)
+	// keeps the envelope healthy even though the filtered gateway_scaling
+	// rule is starved. Without the catalog-wide aggregation this filtered
+	// request would falsely stamp level: degraded.
+	if resp.Degradation == nil || resp.Degradation.Level != conventions.DegradationHealthy {
+		t.Errorf("category filter degradation = %+v, want level %q",
+			resp.Degradation, conventions.DegradationHealthy)
 	}
 }
 

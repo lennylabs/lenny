@@ -12,7 +12,10 @@ import (
 )
 
 func TestGetRecommendationsEmptyWhenNoData(t *testing.T) {
-	// §25.3: with empty sliding windows, no rule triggers.
+	// spec: §25.3 (post-restart degradation), §25.2 (canonical envelope)
+	// — with empty sliding windows every rule is starved, so no rule
+	// triggers and the response reports a degraded §25.2 envelope so an
+	// agent can tell the empty array apart from a healthy platform.
 	svc := recommendations.NewCapacityService(recommendations.NewWindowStore(7 * 24 * time.Hour))
 	resp, err := svc.GetRecommendations(context.Background(), nil)
 	if err != nil {
@@ -20,6 +23,16 @@ func TestGetRecommendationsEmptyWhenNoData(t *testing.T) {
 	}
 	if len(resp.Recommendations) != 0 {
 		t.Errorf("no-data recommendations: got %+v, want empty", resp.Recommendations)
+	}
+	if resp.Degradation == nil {
+		t.Fatal("expected degradation envelope on the empty-window response; got nil")
+	}
+	if resp.Degradation.Level != conventions.DegradationDegraded {
+		t.Errorf("empty-window degradation level = %q, want %q",
+			resp.Degradation.Level, conventions.DegradationDegraded)
+	}
+	if len(resp.Degradation.Warnings) == 0 {
+		t.Error("empty-window response must carry a warning explaining the starved windows")
 	}
 }
 
@@ -153,7 +166,13 @@ func TestGetRecommendationsWarmPoolIncrease(t *testing.T) {
 // 4848. lenny-ops layers operator-customized on top when it serves
 // from the Prometheus rule set. F-25.13.5.
 func TestGetRecommendationsStampsCompiledInDefaults_spec_25_13_4848(t *testing.T) {
-	svc := recommendations.NewCapacityService(recommendations.NewWindowStore(time.Hour))
+	// A below-threshold sample makes at least one rule report DataAvailable,
+	// so the envelope stays healthy and this test isolates the
+	// thresholdSource=compiled-in-defaults assertion from the empty-window
+	// degraded path (spec: §25.13 line 4848, §25.2 canonical envelope).
+	store := recommendations.NewWindowStore(time.Hour)
+	store.Record("lenny_credential_pool_utilization", nil, 0.40)
+	svc := recommendations.NewCapacityService(store)
 	resp, err := svc.GetRecommendations(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("GetRecommendations: %v", err)
@@ -169,6 +188,55 @@ func TestGetRecommendationsStampsCompiledInDefaults_spec_25_13_4848(t *testing.T
 	if resp.Degradation.Level != conventions.DegradationHealthy {
 		t.Errorf("degradation level = %q, want %q",
 			resp.Degradation.Level, conventions.DegradationHealthy)
+	}
+}
+
+// TestGetRecommendationsHealthyEnvelopeWhenBelowThreshold pins that a
+// gateway with data present but below every rule's threshold reports a
+// healthy envelope and an empty recommendations array, so the degraded
+// signal is reserved for the wholesale-empty (post-restart) case and an
+// agent can distinguish "no issue, data present" from "no data".
+// spec: §25.3 (post-restart degradation), §25.2 (canonical envelope).
+func TestGetRecommendationsHealthyEnvelopeWhenBelowThreshold(t *testing.T) {
+	store := recommendations.NewWindowStore(7 * 24 * time.Hour)
+	store.Record("lenny_credential_pool_utilization", nil, 0.40)
+	svc := recommendations.NewCapacityService(store)
+	resp, err := svc.GetRecommendations(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("GetRecommendations: %v", err)
+	}
+	if len(resp.Recommendations) != 0 {
+		t.Errorf("below-threshold recommendations: got %+v, want empty", resp.Recommendations)
+	}
+	if resp.Degradation == nil || resp.Degradation.Level != conventions.DegradationHealthy {
+		t.Errorf("below-threshold degradation = %+v, want level %q",
+			resp.Degradation, conventions.DegradationHealthy)
+	}
+}
+
+// TestGetRecommendationsHealthyWhenCategoryFilterStarvedRuleHasData pins
+// that a ?category= request selecting a starved rule stays healthy when
+// another rule in the catalog holds data. The degraded envelope reflects
+// the whole store's wholesale-empty state, so narrowing the request with
+// a category filter must not report the store as empty while data is
+// present in another category.
+// spec: §25.3 (post-restart degradation), §25.2 (canonical envelope).
+func TestGetRecommendationsHealthyWhenCategoryFilterStarvedRuleHasData(t *testing.T) {
+	store := recommendations.NewWindowStore(7 * 24 * time.Hour)
+	// Credential utilisation is present; the gateway_scaling metric is not.
+	store.Record("lenny_credential_pool_utilization", nil, 0.40)
+	svc := recommendations.NewCapacityService(store)
+	category := "gateway_scaling"
+	resp, err := svc.GetRecommendations(context.Background(), &category)
+	if err != nil {
+		t.Fatalf("GetRecommendations: %v", err)
+	}
+	if len(resp.Recommendations) != 0 {
+		t.Errorf("filtered starved category: got %+v, want empty", resp.Recommendations)
+	}
+	if resp.Degradation == nil || resp.Degradation.Level != conventions.DegradationHealthy {
+		t.Errorf("filtered starved category degradation = %+v, want level %q",
+			resp.Degradation, conventions.DegradationHealthy)
 	}
 }
 
