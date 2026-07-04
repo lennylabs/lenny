@@ -1086,8 +1086,15 @@ func hardPrunePartialManifests(ctx context.Context, store partialmanifeststore.S
 // A broken chain fires the §16.5 AuditChainGap alert through the metric;
 // the gateway does not refuse to start. spec: §12.3 line 101, §11.7.
 // F-12.3.9. F-11.2.10.
-func runStartupChainContinuityCheck(ctx context.Context, db integrity.Querier, lastN int, m *gatewaymetrics.Metrics) {
-	results, err := integrity.CheckChainContinuityRecent(ctx, db, lastN)
+func runStartupChainContinuityCheck(ctx context.Context, db, ctrlDB integrity.Querier, lastN int, m *gatewaymetrics.Metrics) {
+	// db is the ledger instance holding audit_log (the separate §12.3
+	// billing/audit Postgres when configured, otherwise the primary);
+	// ctrlDB is the control-plane pool where the tenants.state deletion
+	// skip-set is authoritative, so the retained gdpr.*-only remnant of a
+	// tenant in state='deleting' or state='deleted' does not raise a false
+	// §16.5 AuditChainGap alert. In the co-located topology the call site
+	// passes the same pool for both. spec: §12.3 line 103, §12.8.
+	results, err := integrity.CheckChainContinuityRecent(ctx, db, ctrlDB, lastN)
 	if err != nil {
 		log.Printf("lenny-gateway: WARNING: §12.3 startup audit chain-continuity check could not run: %v", err)
 		return

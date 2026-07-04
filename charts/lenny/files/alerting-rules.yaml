@@ -286,7 +286,7 @@ groups:
           labels:
             severity: critical
           annotations:
-            description: A row is classified chainIntegrity=redacted_gdpr by the verifier but the corresponding signed RedactionReceipt is absent, signature-invalid, or mismatches the chain rewrite boundary. Distinguishes an orphaned GDPR redaction from a genuine tamper.
+            description: A row is classified chainIntegrity=redacted_gdpr by the verifier but the corresponding signed RedactionReceipt is absent, signature-invalid, or its original_hash does not match the redacted row's preserved pre-redaction hash. Distinguishes an orphaned GDPR redaction from a genuine tamper.
             runbook_url: https://docs.lenny.dev/runbooks/audit-redaction-receipt-missing
             summary: GDPR redaction receipt missing for a redacted audit row
         - alert: LLMUpstreamEgressAnomaly

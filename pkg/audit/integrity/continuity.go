@@ -64,14 +64,20 @@ func (r ChainContinuityResult) GapEnd() time.Time   { return r.gapEnd }
 // the hash links with the shared pkg/audit verification logic. A
 // broken chain does not abort the check; every tenant is walked so the
 // caller sees the full picture.
-func CheckChainContinuity(ctx context.Context, db Querier) ([]ChainContinuityResult, error) {
-	tenants, err := auditTenants(ctx, db)
+//
+// auditDB is the ledger instance holding audit_log (the separate §12.3
+// billing/audit Postgres when configured, otherwise the primary); ctrlDB
+// is the control-plane Postgres where the tenants.state column is
+// authoritative. When no separate billing/audit instance is configured
+// auditDB and ctrlDB are the same pool. spec: §12.3 line 103.
+func CheckChainContinuity(ctx context.Context, auditDB, ctrlDB Querier) ([]ChainContinuityResult, error) {
+	tenants, err := auditTenants(ctx, auditDB, ctrlDB)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ChainContinuityResult, 0, len(tenants))
 	for _, tenantID := range tenants {
-		rows, err := loadChainRows(ctx, db, tenantID)
+		rows, err := loadChainRows(ctx, auditDB, tenantID)
 		if err != nil {
 			return nil, err
 		}
@@ -101,14 +107,20 @@ func CheckChainContinuity(ctx context.Context, db Querier) ([]ChainContinuityRes
 // non-linking prev_hash (a committed-row tamper or removal) is reported
 // as a broken chain with the boundary sequence numbers and timestamp
 // range the §12.3 WARN message needs.
-func CheckChainContinuityRecent(ctx context.Context, db Querier, lastN int) ([]ChainContinuityResult, error) {
-	tenants, err := auditTenants(ctx, db)
+//
+// auditDB is the ledger instance holding audit_log; ctrlDB is the
+// control-plane Postgres where the tenants.state deletion skip-set is
+// authoritative (see auditTenants). When no separate billing/audit
+// instance is configured auditDB and ctrlDB are the same pool. spec:
+// §12.3 line 103.
+func CheckChainContinuityRecent(ctx context.Context, auditDB, ctrlDB Querier, lastN int) ([]ChainContinuityResult, error) {
+	tenants, err := auditTenants(ctx, auditDB, ctrlDB)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ChainContinuityResult, 0, len(tenants))
 	for _, tenantID := range tenants {
-		rows, err := loadRecentChainRows(ctx, db, tenantID, lastN)
+		rows, err := loadRecentChainRows(ctx, auditDB, tenantID, lastN)
 		if err != nil {
 			return nil, err
 		}
@@ -202,10 +214,34 @@ func FirstBroken(results []ChainContinuityResult) *ChainContinuityResult {
 	return nil
 }
 
-// auditTenants returns the distinct tenant ids that have at least one
-// audit_log row, sorted for deterministic iteration.
-func auditTenants(ctx context.Context, db Querier) ([]string, error) {
-	rows, err := db.Query(ctx, `SELECT DISTINCT tenant_id FROM audit_log`)
+// auditTenants returns the distinct tenant ids with at least one
+// audit_log row, sorted, excluding any tenant undergoing or past §12.8
+// deletion. auditDB is the ledger instance (the separate §12.3
+// billing/audit Postgres when configured, otherwise the primary);
+// ctrlDB is the control-plane Postgres where the tenants.state column
+// is authoritative. §12.3 routes audit_log to the separate instance
+// while tenants state stays on the primary, so the deletion skip-set
+// MUST be read from ctrlDB. A join on the ledger connection would read
+// an unpopulated tenants table and exclude nothing. When no separate
+// instance is configured auditDB and ctrlDB are the same pool.
+// spec: §12.3 line 103 (split billing/audit Postgres), §12.8 (post-teardown
+// remnant exempt from chain verification).
+func auditTenants(ctx context.Context, auditDB, ctrlDB Querier) ([]string, error) {
+	// Skip-set: tenants in state='deleting' (Phases 4, 4a, and 5 per
+	// stateForPhase) or state='deleted' (the Phase-6 tombstone). After
+	// Phase-4 DeleteByTenant skips the gdpr.* rows (§12.8), such a tenant
+	// carries a gdpr.*-only remnant whose chain is deliberately
+	// discontinuous; verifying it would report ChainBroken and fire a
+	// false §16.5 AuditChainGap alert. Excluding both states covers the
+	// whole Phase-4-through-Phase-6 teardown window and a deletion that
+	// stalls mid-teardown. A tenant_id with no tenants row (the 'platform'
+	// pseudo-tenant chain) is never in the skip-set, so live chains are
+	// still walked.
+	skip, err := tenantsInDeletion(ctx, ctrlDB)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := auditDB.Query(ctx, `SELECT DISTINCT tenant_id FROM audit_log`)
 	if err != nil {
 		return nil, fmt.Errorf("integrity: query audit tenants: %w", err)
 	}
@@ -216,6 +252,9 @@ func auditTenants(ctx context.Context, db Querier) ([]string, error) {
 		if err := rows.Scan(&t); err != nil {
 			return nil, fmt.Errorf("integrity: scan audit tenant: %w", err)
 		}
+		if _, deleting := skip[t]; deleting {
+			continue
+		}
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -223,6 +262,32 @@ func auditTenants(ctx context.Context, db Querier) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// tenantsInDeletion reads the §12.8 deletion skip-set from the
+// control-plane pool: tenants in state='deleting' or state='deleted'.
+// Their audit chains carry a deliberately discontinuous gdpr.*-only
+// remnant after Phase-4 DeleteByTenant and are excluded from continuity
+// verification so the teardown raises no false §16.5 AuditChainGap alert.
+// spec: §12.8 (post-teardown remnant exempt), §11.7 (chain integrity).
+func tenantsInDeletion(ctx context.Context, ctrlDB Querier) (map[string]struct{}, error) {
+	rows, err := ctrlDB.Query(ctx, `SELECT id FROM tenants WHERE state IN ('deleting', 'deleted')`)
+	if err != nil {
+		return nil, fmt.Errorf("integrity: query tenants in deletion: %w", err)
+	}
+	defer rows.Close()
+	skip := map[string]struct{}{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("integrity: scan tenant in deletion: %w", err)
+		}
+		skip[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("integrity: iterate tenants in deletion: %w", err)
+	}
+	return skip, nil
 }
 
 // loadChainRows reads a tenant's audit rows in sequence order and

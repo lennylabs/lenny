@@ -557,6 +557,51 @@ func TestAuditChainGapDescriptionScopesBrokenToTamper_spec_16_5_F_11_2_10(t *tes
 	}
 }
 
+// spec: §16.5 (AuditRedactionReceiptMissing alert), §12.8 (RedactionReceipt,
+// redacted_gdpr). Proposal 0028 C2 (F-12.8.4): the shipped redaction rewrites
+// only the payload columns and leaves prev_hash untouched, so there is no
+// physical "chain rewrite boundary". A missing-receipt condition is a receipt
+// that is absent, signature-invalid, or whose original_hash does not match the
+// redacted row's preserved pre-redaction hash. This test would fail against the
+// pre-fix catalog, whose Description read "mismatches the chain rewrite
+// boundary".
+func TestAuditRedactionReceiptMissingDescriptionUsesReceiptModel_spec_16_5_F_12_8_4(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "AuditRedactionReceiptMissing" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("AuditRedactionReceiptMissing missing from Catalog")
+	}
+	desc := got.Description
+	// The missing-receipt condition must be stated as the receipt-authorized
+	// discontinuity the shipped verifier reconciles through original_hash.
+	wantFragments := []string{
+		"absent",
+		"signature-invalid",
+		"original_hash does not match the redacted row's preserved pre-redaction hash",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(desc, frag) {
+			t.Errorf("AuditRedactionReceiptMissing Description is missing required fragment %q:\n%s", frag, desc)
+		}
+	}
+	// The retired physical-re-seal model ("chain rewrite boundary") must be
+	// gone; the redaction never writes a hash into any row's prev_hash.
+	if strings.Contains(desc, "chain rewrite boundary") {
+		t.Errorf("AuditRedactionReceiptMissing Description still contains the retired phantom \"chain rewrite boundary\" model:\n%s", desc)
+	}
+	if got.Severity != SeverityCritical {
+		t.Errorf("severity = %q, want %q", got.Severity, SeverityCritical)
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("AuditRedactionReceiptMissing does not validate: %v", err)
+	}
+}
+
 // spec: §6.3 line 356, §16.5 line 637 — TTFTBurnRate must reference
 // the lenny_session_time_to_first_token_seconds histogram directly
 // via the le="10" bucket (the 10s TTFT SLO). The earlier

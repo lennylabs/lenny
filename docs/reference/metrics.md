@@ -364,7 +364,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_pgaudit_grant_events_total` | Counter | `statement_type` | pgaudit events forwarded to sink: `GRANT`, `REVOKE`, `DDL`. | `PgAuditSinkDeliveryFailed` alert. |
 | `lenny_mcp_deprecated_version_active_sessions` | Gauge | -- | Sessions on deprecated MCP protocol versions. | Deprecation monitoring. |
 | `lenny_circuit_breaker_open` | Gauge | `circuit_name` | 1 when breaker is open, 0 when closed. | `CircuitBreakerActive` alert. |
-| `lenny_audit_redaction_receipt_missing_total` | Counter | -- | Rows classified `chainIntegrity=redacted_gdpr` where the corresponding signed `RedactionReceipt` is absent, signature-invalid, or the `(original_hash, new_hash)` pair does not match the observed chain rewrite. Steady-state value is zero. | `AuditRedactionReceiptMissing` alert. |
+| `lenny_audit_redaction_receipt_missing_total` | Counter | -- | Rows classified `chainIntegrity=redacted_gdpr` where the corresponding signed `RedactionReceipt` is absent, signature-invalid, or its `original_hash` does not match the redacted row's preserved pre-redaction hash. Steady-state value is zero. | `AuditRedactionReceiptMissing` alert. |
 | `lenny_playground_dev_tenant_not_seeded_total` | Counter | -- | `/playground/*` requests rejected with `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` because the `authMode=dev` configured `devTenantId` was not yet present in Postgres. Should be non-zero only during the post-install bootstrap window. | Operational monitoring. |
 
 ---

@@ -165,7 +165,7 @@ func TestAuditPipeline(t *testing.T) {
 			t.Errorf("chain integrity after OCSF egress = %q, want verified", res.Integrity)
 		}
 		// The startup chain-continuity check agrees.
-		results, err := integrity.CheckChainContinuity(ctx, pg.Pool)
+		results, err := integrity.CheckChainContinuity(ctx, pg.Pool, pg.Pool)
 		if err != nil {
 			t.Fatalf("CheckChainContinuity: %v", err)
 		}

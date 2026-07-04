@@ -546,7 +546,7 @@ Phase 13 is the consolidation pass that completes the v1 observability surface, 
 _Audit pipeline._
 
 - `pkg/audit` ([§11.7](11_policy-and-controls.md#117-audit-logging) audit-log enums: `ChainIntegrity` with `IsAlarming` mapped to `AuditChainGap`; `ComplianceProfile` with `RequiresSIEM`; `RetentionPreset` with `PresetDays`, `PresetWindow`, `CompatibleProfiles`, and `ValidatePairing`; and `OCSFTranslationState` with `IsTerminal`).
-- Hash-chain verifier and the OCSF translator binary, with the dead-letter PII redaction path that re-seals the chain.
+- Hash-chain verifier and the OCSF translator binary, with the dead-letter PII redaction path that produces the receipt-authorized `redacted_gdpr` chain discontinuity (the redaction rewrites only the payload columns, which feed the content hash, and leaves `prev_hash` and the row's identity columns untouched; the signed `RedactionReceipt` authorizes the resulting content-hash break, so no hash is re-sealed into any row's `prev_hash`).
 - EventBus publish-state machine for audit events; retranscribe worker.
 - Per-tenant advisory lock implementation per [§11.7](11_policy-and-controls.md#117-audit-logging).
 - `audit_redaction_receipts` Postgres table and the `RedactionReceipt` schema (KMS-signed records) per [§12.8](12_storage-architecture.md#128-compliance-interfaces).

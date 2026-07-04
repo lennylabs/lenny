@@ -67,11 +67,13 @@ func TestCheckRedactionReceiptsQueryError(t *testing.T) {
 // so CheckOnce does not report drift for it. F-11.7.15.
 func TestPeriodicCheckRedactionReceiptMissing(t *testing.T) {
 	var calls []RedactionReceiptResult
+	q := &scriptQuerier{
+		redaction: [][]any{{"acme", int64(3)}},
+	}
 	p := &PeriodicCheck{
-		DB: &scriptQuerier{
-			redaction: [][]any{{"acme", int64(3)}},
-		},
-		Cfg: PeriodicConfig{ChainSampleN: 1000},
+		DB:     q,
+		CtrlDB: q, // co-located topology: one pool serves both
+		Cfg:    PeriodicConfig{ChainSampleN: 1000},
 		OnRedactionReceiptMissing: func(tenantID string, n int) {
 			calls = append(calls, RedactionReceiptResult{TenantID: tenantID, Missing: n})
 		},
@@ -89,8 +91,10 @@ func TestPeriodicCheckRedactionReceiptMissing(t *testing.T) {
 // receipt-missing series stays at its steady-state zero. F-11.7.15.
 func TestPeriodicCheckRedactionReceiptClean(t *testing.T) {
 	fired := false
+	q := &scriptQuerier{}
 	p := &PeriodicCheck{
-		DB:                        &scriptQuerier{},
+		DB:                        q,
+		CtrlDB:                    q, // co-located topology: one pool serves both
 		Cfg:                       PeriodicConfig{ChainSampleN: 1000},
 		OnRedactionReceiptMissing: func(string, int) { fired = true },
 	}
