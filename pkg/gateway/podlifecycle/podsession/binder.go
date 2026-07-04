@@ -465,6 +465,16 @@ type BindRequest struct {
 	// ConfigureWorkspace (still SDK-warm) without re-running the blocking-path
 	// match. Meaningful only when PreConnect is true. spec: §6.1 lines 30-40.
 	Demoted bool
+	// CleanupCommands, CleanupTimeoutSeconds, and ScrubProfile are the §5.2
+	// whole-pod scrub parameters resolved from the pool's sessionPolicy at
+	// bind time. Bind carries them onto BindResult so the recycle-path
+	// Shutdown delivers them to the adapter (the §4.7 recycle disposition)
+	// without re-resolving the pool at the release boundary, matching how the
+	// Recycle flag is captured once at bind. Empty/zero on a non-recycling
+	// pool. spec: §5.2 (whole-pod scrub trigger), §4.6.3.
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
+	ScrubProfile          string
 }
 
 // BindResult reports the pod a session was bound to.
@@ -503,6 +513,19 @@ type BindResult struct {
 	// terminates after the session or cohort drains. spec: §3.1, §3.4,
 	// §6.30/§6.41.
 	Recycle bool
+	// CleanupCommands, CleanupTimeoutSeconds, and ScrubProfile are the §5.2
+	// whole-pod scrub parameters carried from the bind request so the
+	// recycle-path Shutdown delivers them to the adapter without re-resolving
+	// the pool. shutdownAdapter builds them into the §4.7 RecycleScrub
+	// sub-message (with PodId == SandboxName) only on the recycle branch; the
+	// retire path sends a plain Shutdown and ignores them. They are populated
+	// only on the session-mode (exclusive) bind result; the concurrent-session
+	// bind result leaves them empty because its occupancy-zero recycle trigger
+	// is a follow-on. Empty/zero on a non-recycling pool. spec: §5.2 (whole-pod
+	// scrub trigger), §4.6.3.
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
+	ScrubProfile          string
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
 	Adapter *adapterclient.Client
@@ -987,14 +1010,20 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	t.AgentSessionStart = time.Since(phaseStart)
 
 	return &BindResult{
-		SessionID:     req.SessionID,
-		TenantID:      req.TenantID,
-		SandboxName:   sandboxName,
-		PodIP:         sb.Status.PodIP,
-		Recycle:       req.Recycle,
-		Adapter:       cl,
-		Timings:       t,
-		WorkspaceRoot: neg.WorkspaceRoot,
+		SessionID:   req.SessionID,
+		TenantID:    req.TenantID,
+		SandboxName: sandboxName,
+		PodIP:       sb.Status.PodIP,
+		Recycle:     req.Recycle,
+		// spec: §5.2 (whole-pod scrub trigger) — carry the pool's scrub
+		// parameters resolved at bind time so the recycle-path Shutdown
+		// delivers them to the adapter without re-resolving the pool.
+		CleanupCommands:       req.CleanupCommands,
+		CleanupTimeoutSeconds: req.CleanupTimeoutSeconds,
+		ScrubProfile:          req.ScrubProfile,
+		Adapter:               cl,
+		Timings:               t,
+		WorkspaceRoot:         neg.WorkspaceRoot,
 	}, nil
 }
 
@@ -1810,17 +1839,21 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 		if b.RecycleBoundary != nil {
 			b.RecycleBoundary.OnRecycling(result.SandboxName)
 		}
-		// The claim now projects `recycling`. This Shutdown is the
-		// occupancy-zero signal that runs the whole-pod scrub the adapter
-		// reports via §4.7 ReportPodScrub, which drives the disposition off the
-		// `recycling` binding state. spec: §3.1, §3.4 (whole-pod scrub on the
-		// occupancy-zero recycle edge).
-		b.shutdownAdapter(ctx, result)
+		// The claim now projects `recycling`. This Shutdown carries the §4.7
+		// recycle disposition plus the pool's whole-pod scrub parameters: it is
+		// the occupancy-zero signal that runs the §5.2 whole-pod scrub the
+		// adapter reports via ReportPodScrub, which drives the disposition off
+		// the `recycling` binding state. spec: §3.1, §3.4, §5.2 (whole-pod scrub
+		// on the occupancy-zero recycle edge).
+		b.shutdownAdapter(ctx, result, true)
 		return nil
 	}
 
-	// Retire path: tear the session's processes down, then drain the pod.
-	b.shutdownAdapter(ctx, result)
+	// Retire path: a failed/crashed session (§6.2) or a non-recycling pool.
+	// Send a plain Shutdown (recycle: false) so a failed session on a recycling
+	// pool retires its pod rather than triggering the scrub-and-reuse path, then
+	// tear the session's processes down and drain the pod.
+	b.shutdownAdapter(ctx, result, false)
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {
 		return fmt.Errorf("podsession: get sandbox %s: %w", result.SandboxName, err)
@@ -1829,15 +1862,41 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 }
 
 // shutdownAdapter shuts the pod's runtime down through the adapter and closes
-// the connection. The Shutdown call is best-effort: on the recycle path it is
-// the occupancy-zero signal that triggers the whole-pod scrub, and on the retire
-// path it tears the session's processes down before the pod drains. A nil
-// Adapter (a BindSlot result or a re-resolved release) is a no-op.
-func (b *Binder) shutdownAdapter(ctx context.Context, result *BindResult) {
+// the connection. recycle carries the effective per-release recycle decision
+// (Release's `result.Recycle && disposition != dispositionFailed`), passed
+// true only from the recycle branch and false from the retire path; it is not
+// re-derived from result.Recycle here, because result.Recycle is the
+// pool-level recycle.enabled flag and a failed/crashed session on a recycling
+// pool takes the retire path with that flag still set. Keying the wire call on
+// result.Recycle would send the recycle disposition on that retire path,
+// telling the adapter to keep the pod alive and run an async whole-pod scrub
+// whose report would race a claim the gateway never patched to recycling, a
+// fail-open regression on the crash path.
+//
+// On the recycle path it sends the §4.7 recycle disposition (ShutdownRecycle)
+// carrying the pod identity (SandboxName) and the pool's whole-pod scrub
+// parameters, which is the occupancy-zero signal that triggers the §5.2 scrub
+// the adapter reports via ReportPodScrub. On the retire path it sends a plain
+// Shutdown that tears the session's processes down before the pod drains. The
+// Shutdown call is best-effort. A nil Adapter (a BindSlot result or a
+// re-resolved release) is a no-op.
+//
+// spec: §5.2 (whole-pod scrub trigger); §4.7 (Shutdown recycle disposition);
+// §6.2 (failed/crashed session always retires).
+func (b *Binder) shutdownAdapter(ctx context.Context, result *BindResult, recycle bool) {
 	if result.Adapter == nil {
 		return
 	}
-	_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
+	if recycle {
+		_, _ = result.Adapter.ShutdownRecycle(ctx, result.SessionID, adapterclient.RecycleScrub{
+			PodID:                 result.SandboxName,
+			CleanupCommands:       result.CleanupCommands,
+			CleanupTimeoutSeconds: int32(result.CleanupTimeoutSeconds),
+			ScrubProfile:          result.ScrubProfile,
+		})
+	} else {
+		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
+	}
 	result.Adapter.Close()
 }
 

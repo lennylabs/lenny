@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1163,6 +1164,170 @@ func TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4(t *testing.T) {
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after failed Release = %v, want NotFound (failed session retires the pod)", gerr)
+	}
+}
+
+// recordingShutdownAdapter is a raw gRPC adapter fake that captures every
+// ShutdownRequest it receives, so a test can assert whether Release routed the
+// occupancy-zero shutdown through the §4.7 recycle disposition (a RecycleScrub
+// sub-message) or a plain terminate Shutdown. It implements only the RPCs
+// Release's shutdownAdapter drives; everything else is the embedded
+// UnimplementedAdapterServer.
+type recordingShutdownAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	mu   sync.Mutex
+	reqs []*adapterv1.ShutdownRequest
+}
+
+func (a *recordingShutdownAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	a.mu.Lock()
+	a.reqs = append(a.reqs, req)
+	a.mu.Unlock()
+	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
+}
+
+func (a *recordingShutdownAdapter) shutdownRequests() []*adapterv1.ShutdownRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]*adapterv1.ShutdownRequest, len(a.reqs))
+	copy(out, a.reqs)
+	return out
+}
+
+// dialRecordingAdapter serves the recording fake over an in-memory connection
+// and returns a live adapterclient.Client wired to it, so a test can attach it
+// to a BindResult and observe the exact ShutdownRequest Release sends.
+func dialRecordingAdapter(t *testing.T, a *recordingShutdownAdapter) *adapterclient.Client {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, a)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial recording adapter: %v", err)
+	}
+	return cl
+}
+
+// TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2 asserts a clean
+// release on a recycling session-mode pool sends the §4.7 recycle-disposition
+// Shutdown (a RecycleScrub sub-message) carrying the folded pod_id
+// (SandboxName) and the pool's whole-pod scrub parameters, so the adapter runs
+// the §5.2 whole-pod scrub. It pins the full C-A3 fold: the scrub-config fields
+// on BindResult reach the wire on the recycle branch.
+// spec: §5.2 (whole-pod scrub trigger, poolstore scrub config delivered on the
+// recycle Shutdown); §4.7 (Shutdown recycle disposition); §3.4.
+func TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	rec := &recordingShutdownAdapter{}
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	binder.RecycleBoundary = &fakeRecycleBoundary{}
+
+	// Bind carries the scrub-config fields (folded through the mirror →
+	// PoolMatch → BindRequest chain) onto the session-mode BindResult.
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+		CleanupCommands:       []string{"rm -rf /workspace/*", "sync"},
+		CleanupTimeoutSeconds: 25,
+		ScrubProfile:          "standard",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if len(res.CleanupCommands) != 2 || res.CleanupTimeoutSeconds != 25 || res.ScrubProfile != "standard" {
+		t.Fatalf("BindResult scrub config = %v / %d / %q, want the bind-request fields carried through",
+			res.CleanupCommands, res.CleanupTimeoutSeconds, res.ScrubProfile)
+	}
+	// Swap the real adapter connection for the recording fake so the exact
+	// ShutdownRequest Release sends is observable on the wire.
+	res.Adapter.Close()
+	res.Adapter = dialRecordingAdapter(t, rec)
+
+	if err := binder.Release(context.Background(), res, "completed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	reqs := rec.shutdownRequests()
+	if len(reqs) != 1 {
+		t.Fatalf("Shutdown calls = %d, want 1", len(reqs))
+	}
+	rc := reqs[0].GetRecycle()
+	if rc == nil {
+		t.Fatal("recycle Release sent a plain Shutdown, want a RecycleScrub sub-message")
+	}
+	if rc.GetPodId() != "sbx-1" {
+		t.Errorf("RecycleScrub.pod_id = %q, want sbx-1 (the folded SandboxName)", rc.GetPodId())
+	}
+	if rc.GetScrubProfile() != "standard" {
+		t.Errorf("RecycleScrub.scrub_profile = %q, want standard", rc.GetScrubProfile())
+	}
+	if rc.GetCleanupTimeoutSeconds() != 25 {
+		t.Errorf("RecycleScrub.cleanup_timeout_seconds = %d, want 25", rc.GetCleanupTimeoutSeconds())
+	}
+	if got := rc.GetCleanupCommands(); len(got) != 2 || got[0] != "rm -rf /workspace/*" || got[1] != "sync" {
+		t.Errorf("RecycleScrub.cleanup_commands = %v, want [rm -rf /workspace/* sync]", got)
+	}
+}
+
+// TestReleaseFailedOnRecyclingPoolSendsPlainShutdown_spec_6_2 is the
+// regression guard for C-A3's recycle-decision threading: a failed disposition
+// on a recycle-enabled pool (BindResult.Recycle still true, the pool-level
+// flag) must take the retire path and send a PLAIN Shutdown with NO
+// RecycleScrub, and must never patch the claim to recycling. Keying the wire
+// call on BindResult.Recycle alone (the pre-fix bug shutdownAdapter's recycle
+// parameter closes) would send the recycle disposition here, telling the
+// adapter to keep the pod alive and run an async scrub against a claim the
+// gateway never patched to recycling — a fail-open crash-path regression that
+// §6.2 (a failed/crashed session always retires) forbids. This test fails
+// against a shutdownAdapter that re-derives recycle from result.Recycle.
+// spec: §6.2 (failed/crashed session always retires); §5.2; §4.7.
+func TestReleaseFailedOnRecyclingPoolSendsPlainShutdown_spec_6_2(t *testing.T) {
+	rec := &recordingShutdownAdapter{}
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, nil)
+	armer := &fakeRecycleBoundary{}
+	binder.RecycleBoundary = armer
+
+	res := &podsession.BindResult{
+		SessionID:   "sess-1",
+		SandboxName: "sbx-1",
+		// Recycle is the pool-level recycle.enabled flag; it stays true on a
+		// failed session, which must still retire (§6.2).
+		Recycle:               true,
+		CleanupCommands:       []string{"rm -rf /workspace/*"},
+		CleanupTimeoutSeconds: 25,
+		ScrubProfile:          "standard",
+		Adapter:               dialRecordingAdapter(t, rec),
+	}
+	if err := binder.Release(context.Background(), res, "failed"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	reqs := rec.shutdownRequests()
+	if len(reqs) != 1 {
+		t.Fatalf("Shutdown calls = %d, want 1", len(reqs))
+	}
+	if rc := reqs[0].GetRecycle(); rc != nil {
+		t.Errorf("failed-disposition Release sent a RecycleScrub %+v, want a plain Shutdown (a failed session always retires, §6.2)", rc)
+	}
+	// The retire path never arms the missing-report timeout (no scrub awaited).
+	if len(armer.armed) != 0 {
+		t.Errorf("failed-disposition Release armed missing-report timeouts %v, want none", armer.armed)
+	}
+	// The retire path deletes the claim; it is never patched to recycling.
+	var claim lennyv1.SandboxClaim
+	if gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); !apierrors.IsNotFound(gerr) {
+		t.Errorf("claim get after failed Release = %v, want NotFound (retire deletes the claim, never patches recycling)", gerr)
 	}
 }
 

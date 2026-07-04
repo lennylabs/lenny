@@ -246,6 +246,16 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	closeErr := s.Runtime.Close(closeCtx, sessionID)
 	cancel()
 	s.releaseSession()
+	// spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition. On the
+	// occupancy-zero recycle boundary the pod process stays alive: after the
+	// ending session's runtime is closed, run the whole-pod scrub and report
+	// its binary outcome asynchronously via ReportPodScrub. The Shutdown
+	// response does not wait for the scrub; the gateway bounds it with the
+	// missing-report timeout it armed before sending this Shutdown. On the
+	// terminate path (recycle unset) the pod is replaced and no scrub runs.
+	if rc := req.GetRecycle(); rc != nil {
+		s.startPodScrub(rc)
+	}
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
 }
 

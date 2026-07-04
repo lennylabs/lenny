@@ -104,6 +104,19 @@ type PoolMatch struct {
 	// poolstore sessionPolicy mirror.
 	AllowCrossTenantReuse bool
 	MicrovmScrubMode      string
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 deployer
+	// cleanup commands and their aggregate cap, run by the adapter's
+	// whole-pod scrub after the credential purge and before the standard
+	// scrub steps. They are gateway-enforced and live on the poolstore
+	// sessionPolicy mirror (not the CRD pair), so foldPoolPolicy copies
+	// them in from the PoolPolicyMirror the way AllowCrossTenantReuse is
+	// folded. The recycle-path Shutdown carries them (plus MicrovmScrubMode
+	// as scrubProfile) to the adapter so the scrub runs against the pool
+	// configuration as it stood at session start. Both are zero on a
+	// non-recycling pool or a pool with no mirror row. spec: §5.2 (whole-pod
+	// scrub, sessionPolicy gateway-enforced subset); §4.6.3.
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the
 	// pool's SandboxTemplate: true while the pool is bootstrapping with
 	// no idle pods. The start path returns a 503 RUNTIME_UNAVAILABLE
@@ -153,6 +166,13 @@ type PoolPolicyMirror struct {
 	MaxConcurrent int32
 	// AllowCrossTenantReuse is sessionPolicy.recycle.allowCrossTenantReuse.
 	AllowCrossTenantReuse bool
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2
+	// sessionPolicy.cleanupCommands and sessionPolicy.cleanupTimeoutSeconds
+	// the adapter's whole-pod scrub runs at the recycle boundary. They are
+	// gateway-enforced and live on the poolstore sessionPolicy mirror, not
+	// the CRD pair. spec: §5.2 (whole-pod scrub trigger).
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
 	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds, the
 	// §6.2 concurrent-workspace pod-uptime retirement cap.
 	MaxPodUptimeSeconds int64
@@ -311,6 +331,13 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	}
 	m.MaxConcurrentSessions = mirror.MaxConcurrentSessions
 	m.AllowCrossTenantReuse = mirror.AllowCrossTenantReuse
+	// §5.2 whole-pod scrub trigger: the deployer cleanup commands and their
+	// aggregate cap are gateway-enforced and live on the mirror, so fold them
+	// onto PoolMatch beside AllowCrossTenantReuse. The recycle-path Shutdown
+	// carries them to the adapter (C-A3); a pool with no mirror row leaves
+	// them empty.
+	m.CleanupCommands = mirror.CleanupCommands
+	m.CleanupTimeoutSeconds = mirror.CleanupTimeoutSeconds
 	m.MaxPodUptimeSeconds = mirror.MaxPodUptimeSeconds
 	// §5.2 / §4.6.1 pool-exhaustion disposition: the queue-vs-reject choice
 	// and its wait bound are gateway-enforced and live on the mirror, not the

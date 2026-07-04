@@ -813,3 +813,57 @@ func (c *Client) Terminate(ctx context.Context, sessionID, reason string, deadli
 	}
 	return resp.GetExitedCleanly(), nil
 }
+
+// RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
+// parameters the gateway delivers on the occupancy-zero recycle-boundary
+// Shutdown. The gateway resolves these from the pod's SandboxName and the
+// resolved pool's sessionPolicy.recycle block, captured once at bind time.
+type RecycleScrub struct {
+	// PodID is the agent_pod_state row key (the Sandbox name) the gateway
+	// keys the missing-report timeout on and the adapter echoes back in
+	// ReportPodScrub so the report matches the armed timer.
+	// spec: §4.7 Shutdown recycle disposition.
+	PodID string
+	// CleanupCommands are the deployer-defined cleanupCommands the scrub runs
+	// after the credential purge and before the standard scrub steps. Empty
+	// runs no cleanup commands. spec: §5.2 whole-pod scrub trigger.
+	CleanupCommands []string
+	// CleanupTimeoutSeconds is the aggregate cap on the cleanup commands; the
+	// gateway-side missing-report timeout is this value plus a grace period.
+	// spec: §5.2 whole-pod scrub trigger.
+	CleanupTimeoutSeconds int32
+	// ScrubProfile is one of "standard", "vm-restart", or "in-place" and
+	// selects the §5.2 scrub variant the adapter runs.
+	// spec: §5.2 whole-pod scrub trigger.
+	ScrubProfile string
+}
+
+// ShutdownRecycle is the §4.7 recycle-disposition variant of the proto
+// Shutdown RPC (the row the §4.7 table names Terminate). It marks the
+// occupancy-zero recycle boundary: the adapter closes the ending session's
+// runtime, keeps the pod process alive across the boundary, runs the §5.2
+// whole-pod scrub with the carried parameters, and reports its binary
+// outcome for rc.PodID asynchronously via ReportPodScrub. The gateway does
+// not block the response on the scrub; the missing-report timeout it armed
+// before this call bounds it. The returned bool reports whether the ending
+// session's runtime exited cleanly.
+//
+// The plain Shutdown, ShutdownSlot, and Terminate helpers leave the recycle
+// sub-message nil (the terminate path, on which the pod is replaced).
+//
+// spec: §4.7 Shutdown recycle disposition; §5.2 whole-pod scrub trigger.
+func (c *Client) ShutdownRecycle(ctx context.Context, sessionID string, rc RecycleScrub) (bool, error) {
+	resp, err := c.rpc.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Recycle: &adapterv1.RecycleScrub{
+			PodId:                 rc.PodID,
+			CleanupCommands:       rc.CleanupCommands,
+			CleanupTimeoutSeconds: rc.CleanupTimeoutSeconds,
+			ScrubProfile:          rc.ScrubProfile,
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.GetExitedCleanly(), nil
+}

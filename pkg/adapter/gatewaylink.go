@@ -61,5 +61,11 @@ func (s *Server) ConnectGateway(mcpSocket, gatewayAddr, certFile, keyFile, clien
 	// @lenny-connector-<id> sockets) to the gateway, which dials the external
 	// endpoint with the gateway-held credential. F-9.1.2.
 	s.ConnectorForwarder = gwClient
+	// §5.2 whole-pod scrub — the same gateway-control channel carries the
+	// recycle-boundary ReportPodScrub the adapter emits after running the
+	// whole-pod scrub. Retain the dialed client as the PodScrubReporter so the
+	// recycle-scrub driver can report the outcome. spec: §4.7 (ReportPodScrub);
+	// §5.2. F-5.2.15.
+	s.PodScrubReporter = gwClient
 	return gwClient, nil
 }

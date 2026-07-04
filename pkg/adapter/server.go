@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -150,6 +151,33 @@ type Server struct {
 	// path with no gateway link). *gatewaycontrol.Client satisfies it.
 	// spec: §9.3 lines 142-164. F-9.1.2.
 	ConnectorForwarder ConnectorToolForwarder
+	// PodScrubReporter emits the §5.2 whole-pod scrub outcome to the gateway
+	// on the recycle boundary via ReportPodScrub. ConnectGateway wires it to
+	// the dialed *gatewaycontrol.Client alongside the platform and connector
+	// forwarders; the recycle-scrub driver reports through it. Nil (the dev
+	// path with no gateway link) leaves the driver unable to report, so the
+	// gateway missing-report timeout retires the pod.
+	// spec: §4.7 (ReportPodScrub); §5.2. F-5.2.15.
+	PodScrubReporter PodScrubReporter
+	// ScrubOps runs the §5.2 whole-pod scrub host operations at the recycle
+	// boundary. cmd/lenny-adapter wires it to a scrub.DefaultOps built from
+	// the pod's credential and workspace paths; tests inject a fake. Nil (a
+	// wiring gap rather than a supported mode) makes the recycle-scrub driver
+	// withhold the report fail-closed, so the gateway missing-report timeout
+	// retires the pod rather than reusing it without a scrub having run.
+	// spec: §5.2 (whole-pod scrub).
+	ScrubOps scrub.Ops
+	// VMRestarter performs §5.2 scrub step 7 (guest VM restart) for a
+	// vm-restart pool. Nil until the concrete Kata client lands: the driver
+	// then withholds the report on a vm-restart profile (fail-closed) so the
+	// gateway missing-report timeout retires the pod rather than reusing it.
+	// spec: §5.2 step 7.
+	VMRestarter scrub.VMRestarter
+	// scrubDone is a test-only seam the recycle-scrub driver fires once its
+	// background goroutine returns, so a test can wait for the async scrub
+	// deterministically without a sleep. Nil in production. spec: §5.2 (async
+	// scrub report).
+	scrubDone func()
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
 	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP

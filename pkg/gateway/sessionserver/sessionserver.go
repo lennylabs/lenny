@@ -2341,6 +2341,12 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		// path's claim queue reads the gateway-enforced values.
 		mirror.OnPoolExhausted = string(sp.OnPoolExhausted)
 		mirror.MaxQueueWaitSeconds = sp.MaxQueueWaitSeconds
+		// §5.2 whole-pod scrub trigger: the deployer cleanup commands and their
+		// aggregate cap live on the poolstore sessionPolicy, not the CRD pair,
+		// so surface them on the mirror for foldPoolPolicy to copy onto
+		// PoolMatch. The recycle-path Shutdown delivers them to the adapter.
+		mirror.CleanupCommands = sp.CleanupCommands
+		mirror.CleanupTimeoutSeconds = sp.CleanupTimeoutSeconds
 		if r := sp.Recycle; r != nil {
 			mirror.AllowCrossTenantReuse = r.AllowCrossTenantReuse
 			mirror.MaxPodUptimeSeconds = int64(r.MaxPodUptimeSeconds)

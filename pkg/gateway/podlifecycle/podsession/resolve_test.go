@@ -70,6 +70,8 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 			MaxConcurrentSessions: 4,
 			AllowCrossTenantReuse: true,
 			MaxPodUptimeSeconds:   86400,
+			CleanupCommands:       []string{"rm -rf /tmp/work", "reset"},
+			CleanupTimeoutSeconds: 30,
 		},
 	}}
 
@@ -85,6 +87,47 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	}
 	if got.MaxPodUptimeSeconds != 86400 {
 		t.Errorf("MaxPodUptimeSeconds = %d, want 86400 (from the mirror)", got.MaxPodUptimeSeconds)
+	}
+	// The §5.2 whole-pod scrub cleanup commands and their cap fold in beside
+	// AllowCrossTenantReuse so the recycle-path Shutdown can deliver them.
+	if got.CleanupTimeoutSeconds != 30 {
+		t.Errorf("CleanupTimeoutSeconds = %d, want 30 (from the mirror)", got.CleanupTimeoutSeconds)
+	}
+	if len(got.CleanupCommands) != 2 || got.CleanupCommands[0] != "rm -rf /tmp/work" || got.CleanupCommands[1] != "reset" {
+		t.Errorf("CleanupCommands = %v, want [rm -rf /tmp/work reset] (from the mirror)", got.CleanupCommands)
+	}
+}
+
+// spec: §5.2 (whole-pod scrub cleanup commands, gateway-enforced subset)
+// TestResolvePoolFoldsCleanupCommands covers the §5.2 whole-pod scrub
+// cleanup commands and their aggregate cap reaching PoolMatch from the
+// poolstore sessionPolicy mirror, which the recycle-path Shutdown delivers to
+// the adapter. A pool with no mirror row leaves both empty rather than
+// erroring, matching how AllowCrossTenantReuse is folded.
+func TestResolvePoolFoldsCleanupCommands(t *testing.T) {
+	tmpl := sandboxTemplate("scrub-tmpl", "scrub-runtime", "microvm")
+	c := k8sClient(t, warmPool("scrub-pool", "scrub-tmpl"), tmpl)
+
+	// A mirror carrying the two cleanup fields folds them onto PoolMatch.
+	withMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"scrub-pool": {CleanupCommands: []string{"purge"}, CleanupTimeoutSeconds: 12},
+	}}
+	got, err := podsession.ResolvePool(context.Background(), c, withMirror, testNS, "scrub-runtime", "microvm", "")
+	if err != nil {
+		t.Fatalf("ResolvePool (mirror): %v", err)
+	}
+	if got.CleanupTimeoutSeconds != 12 || len(got.CleanupCommands) != 1 || got.CleanupCommands[0] != "purge" {
+		t.Errorf("cleanup fields = %v / %d, want [purge] / 12 (from the mirror)", got.CleanupCommands, got.CleanupTimeoutSeconds)
+	}
+
+	// The no-mirror-row case leaves the cleanup fields empty.
+	noMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
+	got, err = podsession.ResolvePool(context.Background(), c, noMirror, testNS, "scrub-runtime", "microvm", "")
+	if err != nil {
+		t.Fatalf("ResolvePool (no mirror): %v", err)
+	}
+	if len(got.CleanupCommands) != 0 || got.CleanupTimeoutSeconds != 0 {
+		t.Errorf("cleanup fields = %v / %d, want empty without a mirror row", got.CleanupCommands, got.CleanupTimeoutSeconds)
 	}
 }
 

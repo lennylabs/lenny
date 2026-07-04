@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -715,6 +716,90 @@ func TestTerminateRejectsAnUnassignedSession(t *testing.T) {
 	}
 	if clean {
 		t.Error("Terminate reported a clean exit on an error")
+	}
+}
+
+// spec: §4.7 (Shutdown recycle disposition), §5.2 (whole-pod scrub trigger).
+// ShutdownRecycle sets the recycle sub-message on the ShutdownRequest,
+// carrying the pod identity and the three scrub parameters so the adapter
+// runs the §5.2 whole-pod scrub for the occupancy-zero recycle boundary.
+func TestShutdownRecyclePopulatesTheRecycleSubMessage(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	clean, err := cl.ShutdownRecycle(context.Background(), "sess-r", adapterclient.RecycleScrub{
+		PodID:                 "sandbox-abc",
+		CleanupCommands:       []string{"rm -rf /tmp/work", "true"},
+		CleanupTimeoutSeconds: 45,
+		ScrubProfile:          "vm-restart",
+	})
+	if err != nil {
+		t.Fatalf("ShutdownRecycle: %v", err)
+	}
+	if !clean {
+		t.Error("ShutdownRecycle reported an unclean exit for a clean runtime close")
+	}
+	if rec.gotShutdown == nil {
+		t.Fatal("the adapter received no Shutdown request")
+	}
+	if got := rec.gotShutdown.GetSessionId().GetValue(); got != "sess-r" {
+		t.Errorf("Shutdown session id = %q, want sess-r", got)
+	}
+	rc := rec.gotShutdown.GetRecycle()
+	if rc == nil {
+		t.Fatal("the recycle sub-message is nil, want it populated on ShutdownRecycle")
+	}
+	if got := rc.GetPodId(); got != "sandbox-abc" {
+		t.Errorf("recycle pod_id = %q, want sandbox-abc", got)
+	}
+	if got := rc.GetCleanupCommands(); !slices.Equal(got, []string{"rm -rf /tmp/work", "true"}) {
+		t.Errorf("recycle cleanup_commands = %v, want [rm -rf /tmp/work true]", got)
+	}
+	if got := rc.GetCleanupTimeoutSeconds(); got != 45 {
+		t.Errorf("recycle cleanup_timeout_seconds = %d, want 45", got)
+	}
+	if got := rc.GetScrubProfile(); got != "vm-restart" {
+		t.Errorf("recycle scrub_profile = %q, want vm-restart", got)
+	}
+}
+
+// spec: §4.7 (Shutdown recycle disposition). The plain Shutdown helper is the
+// terminate path: it leaves the recycle sub-message nil so the adapter
+// replaces the pod rather than running the §5.2 whole-pod scrub. This pins the
+// two dispositions apart on the same proto RPC.
+func TestShutdownLeavesTheRecycleSubMessageNil(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	if _, err := cl.Shutdown(context.Background(), "sess-t"); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if rec.gotShutdown == nil {
+		t.Fatal("the adapter received no Shutdown request")
+	}
+	if rc := rec.gotShutdown.GetRecycle(); rc != nil {
+		t.Errorf("plain Shutdown set the recycle sub-message to %v, want nil for the terminate path", rc)
+	}
+}
+
+// spec: §4.7 (Shutdown recycle disposition). An adapter-side RPC error on the
+// recycle path surfaces to the caller and reports an unclean exit rather than
+// swallowing the failure.
+func TestShutdownRecycleSurfacesRPCError(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	cl := dialAdapter(t, srv)
+
+	clean, err := cl.ShutdownRecycle(context.Background(), "sess-absent", adapterclient.RecycleScrub{
+		PodID:        "sandbox-abc",
+		ScrubProfile: "standard",
+	})
+	if err == nil {
+		t.Error("ShutdownRecycle of an unassigned session succeeded, want a failure")
+	}
+	if clean {
+		t.Error("ShutdownRecycle reported a clean exit on an error")
 	}
 }
 

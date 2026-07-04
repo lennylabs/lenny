@@ -1903,6 +1903,15 @@ func (s *Server) exclusiveBindRequest(ctx context.Context, row sessionstore.Sess
 		// the §3.4 recycle disposition (patch claim bound → recycling, signal
 		// the whole-pod scrub) on a clean release rather than draining the pod.
 		Recycle: match.Recycle,
+		// spec: §5.2 (whole-pod scrub trigger) — carry the pool's scrub
+		// parameters (folded onto PoolMatch from the sessionPolicy mirror) so
+		// the recycle-path Shutdown delivers them to the adapter without
+		// re-resolving the pool at the release boundary. Only the session-mode
+		// bind request carries them; the concurrent slotBindRequest omits them
+		// because its occupancy-zero recycle trigger is a follow-on.
+		CleanupCommands:       match.CleanupCommands,
+		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
+		ScrubProfile:          match.MicrovmScrubMode,
 	}
 }
 
