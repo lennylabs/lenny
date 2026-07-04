@@ -36,11 +36,9 @@ import (
 
 // wiredGatewayPrefix names one literal Redis key or channel prefix emitted
 // by wired gateway code and the documented home it must resolve to. The
-// registry-completeness check asserts each prefix appears in its home
-// exactly where the proposal dispositions it. `home` is the spec substring
-// that must contain the prefix; `notCategory` records why a prefix is a
-// §12.6/owning-section disposition rather than a §12.4 row when it is not
-// in the table.
+// registry-completeness check looks up `prefix` in the §12.4 table body;
+// `home` is a human-readable label for the documented home, used only in
+// the diagnostic message when a prefix is missing from its registry home.
 type wiredGatewayPrefix struct {
 	prefix string // the literal wire prefix the gateway code emits
 	home   string // human label for the documented home (for diagnostics)
