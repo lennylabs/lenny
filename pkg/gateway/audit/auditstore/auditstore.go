@@ -473,19 +473,22 @@ func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, p
 }
 
 // DeleteByUser satisfies the §12.1 mandatory-erasure primitive. The
-// audit ledger is deliberately retained on user erasure: gdpr.* rows
-// (erasure receipts) are exempt and kept for the full audit period,
-// dead-lettered rows are PII-redacted in place rather than deleted,
-// and the audit_log table is keyed only by (tenant_id,
-// sequence_number) with no user_id column, so there is nothing this
-// store can delete keyed by user without breaking the §11.7 hash
-// chain. The substantive §12.8 step-13 selective deletion and step-14
-// OCSF dead-letter redaction are tracked under F-12.2.5; this method
-// satisfies the §12.1 compile-time contract and returns (0, nil) after
-// rejecting empty arguments (§12.8 line 753).
+// audit ledger performs no user-scoped row deletion, which §12.8
+// step 13 sanctions as a no-op: audit_log is an append-only §11.7
+// per-tenant hash chain with no authorized mid-chain deletion state,
+// and it is keyed only by (tenant_id, sequence_number) with no user_id
+// or session_id column, so there is nothing this store can delete keyed
+// by user without breaking the chain. gdpr.* rows (erasure receipts)
+// are exempt and kept for the full audit period, dead-lettered rows are
+// PII-redacted in place by the §12.8 step-14 redaction service rather
+// than deleted, and ordinary rows retain their structured actor/subject
+// identifiers under the §11.7 tamper-evidence basis and age out under
+// audit.retentionDays. This method returns (0, nil) after rejecting an
+// empty scope (§12.8 line 753).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 line 775 (audit
-// retention carve-out for gdpr.* and dead-lettered rows).
+// spec: §12.1 line 5 (mandatory primitive); §12.8 step 13 (no
+// user-scoped audit deletion); §12.8 line 775 (audit retention
+// carve-out for gdpr.* and dead-lettered rows).
 func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, ErrEmptyScope
@@ -494,8 +497,11 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 }
 
 // DeleteByTenant satisfies the §12.1 mandatory-erasure primitive. It
-// removes the tenant's entire audit chain for the §12.8 Phase-4 tenant
-// teardown and returns the count deleted. audit_log is append-only:
+// deletes every non-gdpr.% row of the tenant's audit chain for the
+// §12.8 Phase-4 tenant teardown and retains the gdpr.* erasure-receipt
+// remnant that must outlive the tenant (§12.8 line 840); the returned
+// count is the rows deleted and excludes the retained receipts.
+// audit_log is append-only:
 // the lenny_audit_immutability trigger rejects DELETE unless the
 // transaction sets lenny.erasure_mode = 'true', and the table-level
 // DELETE privilege is held only by the lenny_erasure role, so this
@@ -519,7 +525,19 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `DELETE FROM audit_log WHERE tenant_id = $1`, tenantID)
+		// spec: §12.8 line 840 / Phase 4 — skip gdpr.* erasure-receipt rows
+		// so the tenant teardown retains the compliance receipts that must
+		// outlive the tenant (audit_redaction_receipts are separately
+		// exempt, §12.8 line 831). The retained gdpr.*-only remnant is a
+		// standalone compliance set exempt from §11.7 chain verification;
+		// the continuity check skips any tenant in state='deleting' or
+		// state='deleted' (the states the tenant carries from this Phase-4
+		// delete through the Phase-6 tombstone) so the teardown raises no
+		// false AuditChainGap alert. Reuses the PruneRetention gdpr.%
+		// predicate.
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM audit_log WHERE tenant_id = $1 AND event_type NOT LIKE 'gdpr.%'`,
+			tenantID)
 		if err != nil {
 			return err
 		}

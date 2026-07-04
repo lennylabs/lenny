@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -261,6 +262,58 @@ func TestPruneRetentionWindowsAndSIEMGuard(t *testing.T) {
 	}
 	if seqs := remainingSeqs(t, ctx, store, "retain"); !equalSeqs(seqs, []uint64{4}) {
 		t.Fatalf("after gdpr prune remaining seqs = %v, want [4]", seqs)
+	}
+}
+
+// spec: §12.8 line 840 (Phase-4 gdpr.* skip), §12.8 line 831 (receipt
+// exemption), §12.8 line 842 (receipts outlive tenant deletion) — the
+// Phase-4 DeleteByTenant deletes every non-gdpr.% audit row and retains
+// the gdpr.* erasure-receipt remnant that must outlive the tenant, and
+// the returned count is the rows deleted (excluding the retained
+// receipts). F-12.8.4.
+// diagnosis: a failure means DeleteByTenant deleted the tenant's gdpr.*
+// erasure receipts along with the ordinary rows, destroying the
+// compliance record §12.8 requires to outlive the tenant. This test
+// would fail against the pre-fix DELETE FROM audit_log WHERE tenant_id
+// = $1, which deleted every row and returned the full count.
+func TestDeleteByTenantRetainsGDPRReceipts_spec_12_8_line840(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	ctx := context.Background()
+	seedTenant(t, ctx, pg, "teardown")
+
+	at := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+	// seq 1,2: ordinary rows; seq 3,4: gdpr.* erasure receipts; seq 5:
+	// another ordinary row. The teardown must delete the three ordinary
+	// rows and retain the two gdpr.* receipts.
+	mustAppend(t, ctx, store, "teardown", "session.created", at)
+	mustAppend(t, ctx, store, "teardown", "admin.user.created", at)
+	mustAppend(t, ctx, store, "teardown", "gdpr.erasure_completed", at)
+	mustAppend(t, ctx, store, "teardown", "gdpr.erasure_deadletter_redacted", at)
+	mustAppend(t, ctx, store, "teardown", "session.completed", at)
+
+	deleted, err := store.DeleteByTenant(ctx, "teardown")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	// The returned count is the rows deleted and excludes the two retained
+	// gdpr.* receipts. Against the pre-fix DELETE this would be 5.
+	if deleted != 3 {
+		t.Fatalf("DeleteByTenant deleted %d rows, want 3 (the retained gdpr.* receipts are excluded from the count)", deleted)
+	}
+	// Only the two gdpr.* erasure receipts survive the teardown.
+	if seqs := remainingSeqs(t, ctx, store, "teardown"); !equalSeqs(seqs, []uint64{3, 4}) {
+		t.Fatalf("after teardown remaining seqs = %v, want [3 4] (the gdpr.* receipts)", seqs)
+	}
+	rows, err := store.Rows(ctx, "teardown")
+	if err != nil {
+		t.Fatalf("Rows after teardown: %v", err)
+	}
+	for _, r := range rows {
+		if !strings.HasPrefix(r.EventType, "gdpr.") {
+			t.Errorf("non-gdpr.* row %q (seq %d) survived the teardown", r.EventType, r.Seq)
+		}
 	}
 }
 
