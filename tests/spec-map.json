@@ -309,7 +309,9 @@
         "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
         "tests/tier8_chaos/nonce_only_degradation_test.go",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
-        "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go"
+        "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
+        "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -421,7 +423,9 @@
         "tests/tier2_component/poolresume/concurrent_uptime_test.go",
         "tests/tier12_load_cloud/session_mode_test.go",
         "tests/tier9_security/concurrent_slot_isolation_test.go::TestConcurrentCrossTenantReuseRejected_spec_6_28",
-        "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
+        "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance",
+        "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
