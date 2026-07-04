@@ -55,7 +55,8 @@ func TestSessionCheckpointMetaPgStore_spec_10_1(t *testing.T) {
 	// The tenant anchor + RLS roles + lenny_tenant_guard() (0001, 0002)
 	// and the session_checkpoint_meta table itself (0148). 0148 references
 	// only tenants(id), so no later migration is needed.
-	applyMigrations(t, ctx, pool,
+	applyMigrations(
+		t, ctx, pool,
 		"0001_initial_schema.up.sql",
 		"0002_rls_immutability_roles.up.sql",
 		"0148_session_checkpoint_meta.up.sql",
