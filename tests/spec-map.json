@@ -1527,11 +1527,14 @@
       "tests": [
         "pkg/gateway/storage/eventbus/cloudevents_test.go",
         "pkg/gateway/storage/eventbus/eventbus_test.go",
+        "pkg/events/auditbearing_test.go::TestOperationalEventInlineOCSFWireForm",
+        "pkg/events/auditbearing_test.go::TestOperationalEventEmptyExtensionsRoundTrip",
         "pkg/storerouter/storerouter_test.go",
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier2_component/stores/storerouter_test.go",
         "tests/tier3_contract/cloudevents/cloudevents_test.go",
-        "tests/tier2_component/stores/postgrespodregistry_test.go"
+        "tests/tier2_component/stores/postgrespodregistry_test.go",
+        "tests/tier11_docs/cloudevents_alias_reconciliation_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -2920,7 +2923,10 @@
       "title": "Gateway-Side Ops Endpoints",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "pkg/events/auditbearing_test.go::TestOperationalEventInlineOCSFWireForm",
+        "pkg/events/auditbearing_test.go::TestOperationalEventEmptyExtensionsRoundTrip",
         "tests/tier2_component/healthchecks/...",
+        "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
       ],
       "packages": [

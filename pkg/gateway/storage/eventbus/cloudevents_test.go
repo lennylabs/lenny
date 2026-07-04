@@ -3,6 +3,7 @@
 package eventbus
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -155,6 +156,93 @@ func TestEventJSONRoundTrip(t *testing.T) {
 	}
 	if back.Extensions[ExtTenantID] != "acme" || back.Extensions[ExtRootSessionID] != "root-1" {
 		t.Errorf("round trip lost extensions: %v", back.Extensions)
+	}
+	if string(back.Data) != `{"state":"running"}` {
+		t.Errorf("round trip lost data: %s", back.Data)
+	}
+}
+
+// spec: 12.6 (retranscribe byte-identical re-serialization)
+// diagnosis: §12.6 requires the retranscribe worker to re-serialize the
+// CloudEvents envelope from the canonical Postgres tuple byte-identically
+// to the original publish, so downstream de-duplication by CloudEvents
+// `id` continues to work. That obligation reduces to a marshaler
+// determinism property: equal input yields equal bytes. If MarshalJSON
+// were non-deterministic (an unstable key or extension ordering), a
+// re-published envelope would differ byte-for-byte from the original and
+// de-dup by `id` would fail. Marshaling the same Event twice must produce
+// identical bytes, exercised with a multi-extension event so unstable
+// extension ordering would surface.
+func TestEventMarshalIsDeterministic(t *testing.T) {
+	ev, err := NewEvent(NewEventInput{
+		TenantID: "acme", PublisherID: "gw-1", ShortName: "delegation_tree_completed",
+		Subject: "tree/root-1", RootSessionID: "root-1", OperationID: "op-42",
+		Data: json.RawMessage(`{"class_uid":3002}`), OCSF: true,
+		Now: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatalf("NewEvent: %v", err)
+	}
+	first, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("first Marshal: %v", err)
+	}
+	second, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("second Marshal: %v", err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Errorf("marshaler is non-deterministic — retranscribe would break de-dup by id:\n first=%s\nsecond=%s", first, second)
+	}
+}
+
+// spec: 12.6 (structured-content envelope)
+// diagnosis: §12.6's structured-content envelope flattens the lenny
+// extension attributes into the top-level object. The empty-extension
+// boundary — an Event with no extensions — must still flatten to bare
+// top-level context attributes with no nested "extensions" key and parse
+// back without loss, complementing the populated-extension round trip in
+// TestEventJSONRoundTrip. A marshaler that leaked the json:"-" Extensions
+// field under a nested key, or an unmarshaler that mishandled the empty
+// map, would fail here.
+func TestEventEmptyExtensionsRoundTrip(t *testing.T) {
+	ev := Event{
+		SpecVersion:     SpecVersion,
+		ID:              "acme:gw-1:1700000000:0000000000000001",
+		Source:          "//lenny.dev/gateway/gw-1",
+		Type:            "dev.lenny.session_state_changed",
+		Time:            time.Unix(1_700_000_000, 0).UTC().Format(time.RFC3339),
+		DataContentType: ContentTypeJSON,
+		Subject:         "session/s-1",
+		Data:            json.RawMessage(`{"state":"running"}`),
+		// Extensions deliberately nil — the empty-extension boundary.
+	}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	// The json:"-" Extensions field must never serialize under a nested
+	// key, even when empty.
+	if strings.Contains(string(b), `"extensions"`) {
+		t.Errorf("empty Extensions must not serialize under a nested key: %s", b)
+	}
+	// The top-level context attributes flatten directly onto the object.
+	var flat map[string]json.RawMessage
+	if err := json.Unmarshal(b, &flat); err != nil {
+		t.Fatalf("Unmarshal flat: %v", err)
+	}
+	if _, ok := flat["specversion"]; !ok {
+		t.Errorf("specversion missing from flat wire form: %s", b)
+	}
+	var back Event
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(back.Extensions) != 0 {
+		t.Errorf("empty Extensions must round-trip empty, got %v", back.Extensions)
+	}
+	if back.ID != ev.ID || back.Type != ev.Type || back.Subject != ev.Subject {
+		t.Errorf("round trip lost a context attribute: %+v vs %+v", back, ev)
 	}
 	if string(back.Data) != `{"state":"running"}` {
 		t.Errorf("round trip lost data: %s", back.Data)

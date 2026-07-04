@@ -184,3 +184,53 @@ func TestCloudEventsAuditBearingContentType(t *testing.T) {
 		t.Error("an OCSF event must report audit-bearing")
 	}
 }
+
+// spec: 12.6 (single-envelope inline model)
+// diagnosis: §12.6's single-envelope model requires the OCSF record to
+// sit inline under the top-level `data` key as a JSON object; nothing is
+// double-wrapped. A failure here means the envelope double-wraps the OCSF
+// record — the SDK-alias serialization (application/ocsf+json data written
+// as an escaped JSON string) the native struct exists to avoid — so `data`
+// surfaces on the wire as a quoted string rather than an object.
+func TestCloudEventsInlineOCSFWireForm(t *testing.T) {
+	ev, err := eventbus.NewEvent(eventbus.NewEventInput{
+		TenantID: "acme", PublisherID: "gw-1", ShortName: "session_state_changed", Subject: "session/s",
+		Data: json.RawMessage(`{"class_uid":3002,"metadata":{"version":"1.1.0"}}`), OCSF: true,
+	})
+	if err != nil {
+		t.Fatalf("NewEvent ocsf: %v", err)
+	}
+	if ev.DataContentType != eventbus.ContentTypeOCSF {
+		t.Fatalf("test precondition: datacontenttype = %q, want application/ocsf+json", ev.DataContentType)
+	}
+
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	// The wire form is a single flat CloudEvents object; `data` must
+	// carry the OCSF record inline. Parsing into json.RawMessage keeps
+	// the byte form of `data` intact so the object-versus-string
+	// discriminator below is exact.
+	var flat map[string]json.RawMessage
+	if err := json.Unmarshal(b, &flat); err != nil {
+		t.Fatalf("Unmarshal flat: %v", err)
+	}
+	raw, ok := flat["data"]
+	if !ok {
+		t.Fatalf("wire JSON has no top-level `data` key: %s", b)
+	}
+
+	// A double-wrapped payload surfaces `data` as a quoted JSON string;
+	// the single-envelope inline model requires a JSON object. Decoding
+	// into map[string]any succeeds only when `data` is an object, so it
+	// fails against a string-wrapped regression.
+	var asObject map[string]any
+	if err := json.Unmarshal(raw, &asObject); err != nil {
+		t.Fatalf("top-level `data` is not a JSON object (double-wrapped OCSF record): %v; data=%s", err, raw)
+	}
+	if got := asObject["class_uid"]; got == nil {
+		t.Errorf("inline OCSF record lost its class_uid field on the wire: %s", raw)
+	}
+}
