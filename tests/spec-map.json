@@ -822,7 +822,8 @@
         "tests/tier2_component/stores/interactionstore_test.go",
         "tests/tier4_integration/elicitation_test.go",
         "tests/tier9_security/elicitation_tamper_test.go",
-        "tests/tier9_security/elicitation_integrity_gate_test.go"
+        "tests/tier9_security/elicitation_integrity_gate_test.go",
+        "tests/tier11_docs/elicitation_content_integrity_consistency_test.go"
       ],
       "packages": [
         "pkg/elicitation"
