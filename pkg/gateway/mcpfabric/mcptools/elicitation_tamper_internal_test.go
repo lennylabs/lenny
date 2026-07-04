@@ -319,10 +319,13 @@ func TestDispatchNilResolverDefaultsToEnforce_spec_9_2_60(t *testing.T) {
 	}
 }
 
-// TestDispatchNoProviderNeverDetects_spec_9_2 proves the production
-// default (no per-hop re-emission provider, F-9.2.1) advances the chain
-// unverified even under enforce: with nothing re-emitted there is no
-// divergence to catch, so the elicitation forwards normally.
+// TestDispatchNoProviderNeverDetects_spec_9_2 pins the v1 production
+// behavior: the gateway resolves the elicitation chain server-internally
+// and no intermediate pod re-emits, so the dispatcher advances the chain
+// unverified even under enforce and the gateway-origin binding holds by
+// construction. With nothing re-emitted there is no divergence to catch,
+// so the elicitation forwards normally and no metric or audit event is
+// emitted. spec: §9.2 (gateway-origin binding; v1 structural enforcement).
 func TestDispatchNoProviderNeverDetects_spec_9_2(t *testing.T) {
 	metrics := &fakeTamperRecorder{}
 	auditor := &fakeDelegationAuditor{}
