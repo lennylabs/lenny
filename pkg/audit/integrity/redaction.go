@@ -36,8 +36,9 @@ type RedactionReceiptResult struct {
 // A receipt counts as missing when the row exists but has no receipt, or
 // the receipt carries no signature (the absent / signature-invalid cases
 // the §16.5 alert enumerates). The full KMS signature verification and the
-// (original_hash, new_hash) boundary match are performed by external
-// verifiers that hold the audit public key; this in-process detector
+// match of the receipt's original_hash against the redacted row's
+// preserved pre-redaction hash are performed by external verifiers that
+// hold the audit public key; this in-process detector
 // covers the absent-receipt and unsigned-receipt cases that a gateway can
 // observe without the signing key.
 //
