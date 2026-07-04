@@ -202,7 +202,7 @@ To avoid ambiguity across the rest of this section:
 
 #### Canonical Degradation Envelope
 
-Any response whose data quality depends on the availability of an external dependency includes a top-level `degradation` object with a uniform schema:
+Any response whose data quality depends on the availability of an external dependency, or on in-process history having accumulated (for example the capacity-recommendation ring buffers, which start empty after a gateway restart, Section 25.3), includes a top-level `degradation` object with a uniform schema:
 
 ```json
 {
@@ -230,7 +230,7 @@ The envelope is the canonical response-level signal for every endpoint whose dat
 
 These resource-attribute fields complement the response-level `degradation` envelope — the envelope says "this response was served from a fallback source," while the resource attribute says "this specific record exists in tier X." Both pieces of information are useful and distinct.
 
-**Omitted when healthy.** Endpoints serving from their primary source omit `degradation` entirely (or return `"level": "healthy"` with no other fields set). Agents should treat an absent envelope as equivalent to healthy.
+**Omitted when healthy.** Endpoints serving from their primary source omit `degradation` entirely (or return `"level": "healthy"` with no other fields set), except that an endpoint whose data quality also depends on in-process history reports `"level": "degraded"` while it holds no history at all and returns to `"level": "healthy"` once any of its rules records a sample (the capacity-recommendation ring buffers immediately after a gateway restart, before any rule has recorded a sample, Section 25.3). Agents should treat an absent envelope as equivalent to healthy.
 
 #### Pagination
 
@@ -583,7 +583,7 @@ Rules are deterministic heuristics, not AI. Each rule reads metric values from t
 | `retention_tuning` | Storage utilization > 80% | "Reduce artifact retention TTL" |
 | `quota_adjustment` | Quota rejection rate > 5% over 24h | "Increase tenant session quota" |
 
-**Sliding window aggregation.** The rules engine maintains in-memory ring buffers per metric (no Postgres, no Redis). Window sizes are configurable per rule (default: 24h for pool sizing, 7d for credential sizing). After a gateway restart, windows are empty and recommendations include `"confidence": 0.0` and `"dataAvailable": false`.
+**Sliding window aggregation.** The rules engine maintains in-memory ring buffers per metric (no Postgres, no Redis). Window sizes are configurable per rule (default: 24h for pool sizing, 7d for credential sizing). After a gateway restart the ring buffers start empty. While every ring buffer is empty, no per-category recommendations are generated and the response's `degradation` envelope reports `"level": "degraded"` with a warning that no rule has data yet (see **Degradation** below). The envelope returns to `"level": "healthy"` as soon as any rule records a sample; it stays `"degraded"` only for as long as no source metric appears in the gateway's registry.
 
 **Memory budget at Tier 3.** Ring buffers store one sample per emission for the configured window. Sample size is ~64 bytes (timestamp + value + labels). At Tier 3 with ~50 distinct metrics tracked and 7-day max windows:
 
@@ -602,7 +602,7 @@ Deployers disable specific rules via `platform.recommendations.disabledRules` He
 
 #### Degradation
 
-If metrics are stale (gateway recently restarted): recommendations include `"confidence": 0.0`. No recommendations are generated for categories with insufficient data.
+When no evaluated rule has samples (for example shortly after a gateway restart, when every ring buffer is empty), no per-category recommendations are generated and the response's canonical [Section 25.2](#canonical-degradation-envelope) `degradation` envelope reports `"level": "degraded"` (with `"thresholdSource": "compiled-in-defaults"` and a warning that no rule has data yet). An agent therefore distinguishes an empty `recommendations` array caused by starved windows from one caused by a healthy platform with no capacity issues. When at least one rule has samples the envelope reports `"level": "healthy"` and a rule whose own metric is still absent simply produces no entry; the response-level envelope signals the wholesale-empty (post-restart) case rather than per-rule starvation. The `recommendations` array always carries triggered, actionable entries only.
 
 #### Storage
 
@@ -1429,7 +1429,7 @@ For clusters without internet access:
 
 `lenny-ops` has fallback paths for short Prometheus outages (per-replica fan-out via headless Service for health and recommendations, gateway `/metrics` scrape for diagnostics — see Section 25.4, Metrics Source). These fallbacks let the platform survive a transient Prometheus failure. They do not substitute for a permanently absent Prometheus, because several features depend on persistent time-series storage:
 
-- **Capacity recommendations.** Many rules use multi-day sliding windows ("pool exhausted 3+ times in 24h", "credential utilization > 70% over 7d"). These require historical data. Per-replica in-memory ring buffers reset on every gateway restart and capture only ~1/N of total traffic per replica. Without Prometheus, recommendations return `confidence: 0.0` for hours after any restart and are based on partial samples between restarts.
+- **Capacity recommendations.** Many rules use multi-day sliding windows ("pool exhausted 3+ times in 24h", "credential utilization > 70% over 7d"). These require historical data. Per-replica in-memory ring buffers reset on every gateway restart and capture only ~1/N of total traffic per replica. Without Prometheus, the recommendations response reports a `degradation` envelope with `"level": "degraded"` immediately after a restart while every ring buffer is empty, and returns to `"level": "healthy"` as soon as any rule records a sample. The recommendations that generate before the windows are fully populated are based on partial samples between restarts and carry reduced per-item confidence.
 - **Cross-replica health aggregation.** The fan-out fallback works for "what is firing right now" but cannot evaluate alert rules with `for: "15m"` clauses correctly — those need historical time-series, not point-in-time samples.
 - **Historical diagnostics.** Investigating a session or pool issue from two hours ago requires metric values from that time. The gateway's in-process registry only holds current values; without Prometheus, the data is gone.
 - **Bundled alerting rules (Section 25.13).** The rules are useless without something to load them into. If no Prometheus is present, the rules are rendered into Helm manifests but never evaluated. Human operators lose alerting entirely.
@@ -1467,7 +1467,7 @@ Tier 2/3 deployers who intentionally run without Prometheus must set `monitoring
 | Capability | With Prometheus | Without Prometheus (transient) | Without Prometheus (permanent) |
 |---|---|---|---|
 | Cross-replica health aggregation | Aggregate alert state from `GET /api/v1/alerts` | Fan-out via headless Service, worst-of merge | Same as transient — works, but `for: "15m"` alerts misfire because no history exists |
-| Capacity recommendations | Aggregate metrics from PromQL, full window data | Fan-out, highest-confidence merge | `confidence: 0.0` after every restart; ring buffers only have ~1/N replica's worth of recent data |
+| Capacity recommendations | Aggregate metrics from PromQL, full window data | Fan-out, highest-confidence merge | `degradation.level: "degraded"` immediately after a restart until the first rule records a sample, then `"healthy"`; ring buffers only have ~1/N replica's worth of recent data |
 | Pool bottleneck diagnostics | Range queries against historical data | Per-replica `/metrics` scrape, point-in-time only | Same as transient — works, but no trend analysis |
 | Bundled alerting rules → human alerts | Loaded by Prometheus, fired via Alertmanager | Same (rules already loaded) | Not loaded; humans receive no alerts |
 | Historical session/pool investigation | Range queries against historical data | Falls back to in-process metric values, current-only | No historical data available |
@@ -4986,7 +4986,7 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 | **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, drift, backup, and upgrade APIs are unavailable. The audit query API stays available because it is gateway-resident (Section 25.9). Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
 | **`lenny-ops` + gateway both down** | Total platform outage. Watchdog detects both unreachable. |
 | **Prometheus transiently down** | Gateway health and recommendations endpoints still work per-replica (in-process metrics). `lenny-ops` aggregation falls back to per-replica fan-out via headless Service: health uses worst-of merge, recommendations use highest-confidence merge. Pool diagnostics fall back to scraping individual replicas' `/metrics` — point-in-time values only. See Section 25.13 for fallback behavior of bundled vs. operator-customized alerting rules. |
-| **Prometheus permanently absent** | Acceptable at Tier 1; **strongly discouraged at Tier 2/3** (preflight emits a WARN). Beyond the transient-down behavior above, the long-term degradations described in Section 25.4, Prometheus Requirement, apply: capacity recommendations return `confidence: 0.0` after every restart; alert rules with `for: "15m"` clauses misfire because no historical data exists; humans receive no Alertmanager pages because bundled rules are never loaded; agents cannot investigate sessions/pools from past time windows. |
+| **Prometheus permanently absent** | Acceptable at Tier 1; **strongly discouraged at Tier 2/3** (preflight emits a WARN). Beyond the transient-down behavior above, the long-term degradations described in Section 25.4, Prometheus Requirement, apply: the capacity-recommendations response reports `degradation.level: "degraded"` immediately after a restart while every ring buffer is empty and returns to `"healthy"` once any rule records a sample; alert rules with `for: "15m"` clauses misfire because no historical data exists; humans receive no Alertmanager pages because bundled rules are never loaded; agents cannot investigate sessions/pools from past time windows. |
 
 The key property of this architecture: `lenny-ops` being up while the gateway is down is the high-value scenario — the ops surface remains available precisely when it's most needed. The reverse (ops down, gateway up) is low-impact — client traffic is fine, only ops tooling is unavailable. The degraded-mode design ensures that even during storage outages (Postgres and/or Redis down), the core operational loop — detect, diagnose, coordinate, escalate — continues to function, because these are exactly the scenarios where DevOps agents need the ops surface most.
 
