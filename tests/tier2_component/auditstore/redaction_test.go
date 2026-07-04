@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -377,4 +378,220 @@ func TestDeleteByTenantGDPROnlyRemnantUntouched_spec_12_8_line840(t *testing.T) 
 	if seqs := remainingSeqs(t, ctx, store, "receipts-only"); !equalSeqs(seqs, []uint64{1, 2, 3}) {
 		t.Fatalf("after teardown remaining seqs = %v, want [1 2 3] (all gdpr.%% receipts intact)", seqs)
 	}
+}
+
+// setTenantState advances tenant's tenants.state column on the container
+// pool (superuser, RLS-exempt), standing in for the §12.8 deletion
+// controller that drives the state machine. The continuity verifier reads
+// this column from the control-plane pool to build its deletion skip-set.
+func setTenantState(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, state string) {
+	t.Helper()
+	tag, err := pg.Pool.Exec(ctx, `UPDATE tenants SET state = $2 WHERE id = $1`, tenant, state)
+	if err != nil {
+		t.Fatalf("set tenant %q state=%q: %v", tenant, state, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("set tenant %q state=%q affected %d rows, want 1", tenant, state, tag.RowsAffected())
+	}
+}
+
+// tamperRow rewrites tenant's row at seq in place under the erasure-mode
+// guard (the only path the §11.7 lenny_audit_immutability trigger permits
+// an UPDATE), breaking the chain's content hash for that row. The
+// continuity verifier must report the resulting break as ChainBroken.
+func tamperRow(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string, seq uint64) {
+	t.Helper()
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tamper tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenant); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('lenny.erasure_mode', 'true', true)"); err != nil {
+		t.Fatalf("set erasure mode: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE audit_log SET payload = '{"v":999}'::jsonb
+		 WHERE tenant_id = $1 AND sequence_number = $2`, tenant, int64(seq)); err != nil {
+		t.Fatalf("tamper UPDATE: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit tamper tx: %v", err)
+	}
+}
+
+// resultFor returns the continuity result for tenant, or nil when the
+// tenant was not enumerated (the expected outcome for a tenant in the
+// §12.8 deletion skip-set).
+func resultFor(results []integrity.ChainContinuityResult, tenant string) *integrity.ChainContinuityResult {
+	for i := range results {
+		if results[i].TenantID == tenant {
+			return &results[i]
+		}
+	}
+	return nil
+}
+
+// spec: 12.8 (post-teardown remnant exempt from chain verification, line
+// 840), 11.7 (chain integrity)
+// diagnosis: a failure means either tenant teardown fires a false
+// AuditChainGap on the retained gdpr.* remnant during the
+// deleting-or-deleted window, or the deletion-state scoping masks a real
+// chain break.
+//
+// This is the one proposal §6 tier-2 behavior with no other real-Postgres
+// coverage: after DeleteByTenant leaves a tenant with only its gdpr.*
+// remnant (a deliberately discontinuous chain), both the full-walk
+// integrity.CheckChainContinuity and the windowed
+// integrity.CheckChainContinuityRecent must exclude that tenant while it
+// is state='deleting' (the Phase-4-through-Phase-5 state) and while it is
+// state='deleted' (the Phase-6 tombstone), so the whole teardown window,
+// and a deletion that stalls mid-way, raises no §16.5 AuditChainGap. The
+// broken-state metric is driven by OnChainState("broken") once per
+// enumerated result (periodic.go); an excluded tenant is never passed to
+// that hook, and a PeriodicCheck.CheckOnce co-located run confirms no
+// "broken" state is emitted. Contrast cases pin that the exclusion does
+// not mask a live break: a live tenant (state='active') with an intact
+// chain still verifies, the 'platform' pseudo-tenant with no tenants row
+// is never skipped and still verifies, and a live tenant with a genuinely
+// tampered chain still reports Broken(). It would pass trivially against a
+// verifier that skipped every tenant, so the live contrast cases are the
+// negative control that keeps the exclusion honest. It uses the co-located
+// topology (the same pool for auditDB and ctrlDB); the split billing/audit
+// pool resolution is separately pinned at tier-1 in
+// pkg/audit/integrity/continuity_skipset_test.go.
+func TestPostTeardownRemnantExemptFromContinuity_spec_12_8_line840(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	ctx := context.Background()
+
+	at := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+
+	// deleted: a torn-down tenant. Seed an ordinary chain plus two gdpr.%
+	// receipts, run the Phase-4 DeleteByTenant so only the gdpr.*-only
+	// remnant survives (a chain that no longer starts at genesis and whose
+	// first surviving prev_hash links to a purged predecessor), then park
+	// it in the deletion state machine.
+	seedTenant(t, ctx, pg, "deleted-tenant")
+	mustAppend(t, ctx, store, "deleted-tenant", "session.created", at)
+	mustAppend(t, ctx, store, "deleted-tenant", "tool.called", at)
+	mustAppend(t, ctx, store, "deleted-tenant", "gdpr.erasure_completed", at)
+	mustAppend(t, ctx, store, "deleted-tenant", "session.completed", at)
+	mustAppend(t, ctx, store, "deleted-tenant", "gdpr.erasure_deadletter_redacted", at)
+	if _, err := store.DeleteByTenant(ctx, "deleted-tenant"); err != nil {
+		t.Fatalf("DeleteByTenant(deleted-tenant): %v", err)
+	}
+	// The remnant is a genuinely discontinuous chain: only the gdpr.% rows
+	// (seq3, seq5) survive, so it would verify as ChainBroken if walked.
+	if seqs := remainingSeqs(t, ctx, store, "deleted-tenant"); !equalSeqs(seqs, []uint64{3, 5}) {
+		t.Fatalf("remnant seqs = %v, want [3 5]", seqs)
+	}
+
+	// live: a healthy tenant that must still be walked and verify.
+	seedTenant(t, ctx, pg, "live-tenant")
+	mustAppend(t, ctx, store, "live-tenant", "session.created", at)
+	mustAppend(t, ctx, store, "live-tenant", "session.completed", at)
+
+	// platform: the pseudo-tenant with no tenants row (never in the
+	// deletion skip-set, 0001_initial_schema.up.sql). It has an audit
+	// sequence but no tenants row, so its chain must still be walked and
+	// verify.
+	provisionAuditSequence(t, ctx, pg, "platform")
+	mustAppend(t, ctx, store, "platform", "admin.tenant.created", at)
+	mustAppend(t, ctx, store, "platform", "admin.user.created", at)
+
+	// broken: a live tenant with a genuinely tampered chain — the negative
+	// control the deletion exclusion must not mask.
+	seedTenant(t, ctx, pg, "broken-tenant")
+	mustAppend(t, ctx, store, "broken-tenant", "e1", at)
+	mustAppend(t, ctx, store, "broken-tenant", "e2", at)
+	mustAppend(t, ctx, store, "broken-tenant", "e3", at)
+	tamperRow(t, ctx, pg, "broken-tenant", 2)
+
+	// assertWindow runs both verifier entry points (co-located: the same
+	// pool for auditDB and ctrlDB) and asserts the four tenants' outcomes.
+	assertWindow := func(t *testing.T, phase string) {
+		full, err := integrity.CheckChainContinuity(ctx, pg.Pool, pg.Pool)
+		if err != nil {
+			t.Fatalf("[%s] CheckChainContinuity: %v", phase, err)
+		}
+		recent, err := integrity.CheckChainContinuityRecent(ctx, pg.Pool, pg.Pool, 1000)
+		if err != nil {
+			t.Fatalf("[%s] CheckChainContinuityRecent: %v", phase, err)
+		}
+		for _, tc := range []struct {
+			label   string
+			results []integrity.ChainContinuityResult
+		}{{"full", full}, {"recent", recent}} {
+			// The torn-down tenant is excluded from both walks, so it can
+			// never reach OnChainState and can never increment the broken
+			// metric or fire AuditChainGap.
+			if got := resultFor(tc.results, "deleted-tenant"); got != nil {
+				t.Errorf("[%s/%s] torn-down tenant enumerated (result=%q); the deletion skip-set must exclude it",
+					phase, tc.label, got.Result.Integrity)
+			}
+			// The genuine break is still reported: the exclusion must not
+			// mask a live tampered chain.
+			if got := resultFor(tc.results, "broken-tenant"); got == nil {
+				t.Errorf("[%s/%s] live tampered tenant not enumerated; the exclusion must not drop live chains", phase, tc.label)
+			} else if !got.Broken() {
+				t.Errorf("[%s/%s] live tampered tenant = %q, want broken", phase, tc.label, got.Result.Integrity)
+			}
+			// The healthy live tenant and the platform pseudo-tenant are
+			// walked and verify.
+			for _, live := range []string{"live-tenant", "platform"} {
+				got := resultFor(tc.results, live)
+				if got == nil {
+					t.Errorf("[%s/%s] live tenant %q not enumerated; only deleting/deleted tenants are skipped", phase, tc.label, live)
+					continue
+				}
+				if got.Broken() {
+					t.Errorf("[%s/%s] live tenant %q reported broken: %s", phase, tc.label, live, got.Result.Detail)
+				}
+			}
+			// No result in the walk is broken except the deliberately
+			// tampered live tenant, so FirstBroken points at broken-tenant
+			// rather than the excluded remnant.
+			if fb := integrity.FirstBroken(tc.results); fb != nil && fb.TenantID != "broken-tenant" {
+				t.Errorf("[%s/%s] FirstBroken = %q, want broken-tenant (the remnant must not surface as broken)",
+					phase, tc.label, fb.TenantID)
+			}
+		}
+
+		// The broken-state metric is emitted by OnChainState("broken") once
+		// per enumerated result on the periodic path. Drive a co-located
+		// PeriodicCheck.CheckOnce and assert "broken" is never emitted for
+		// the excluded remnant (only for the live tampered tenant), so the
+		// teardown fires no false AuditChainGap.
+		var brokenStates int
+		pc := &integrity.PeriodicCheck{
+			DB:     pg.Pool,
+			CtrlDB: pg.Pool,
+			Cfg:    integrity.PeriodicConfig{ChainSampleN: 1000},
+			OnChainState: func(state string) {
+				if state == string(audit.ChainBroken) {
+					brokenStates++
+				}
+			},
+		}
+		pc.CheckOnce(ctx)
+		// Exactly one broken state: the deliberately tampered live tenant.
+		// The excluded remnant must not contribute a second.
+		if brokenStates != 1 {
+			t.Errorf("[%s] OnChainState reported %d broken states, want 1 (only broken-tenant; the excluded remnant must not add one)", phase, brokenStates)
+		}
+	}
+
+	// state='deleting' covers Phases 4, 4a, and 5; the tenant carries it
+	// from the Phase-4 audit delete above.
+	setTenantState(t, ctx, pg, "deleted-tenant", "deleting")
+	assertWindow(t, "deleting")
+
+	// state='deleted' is the Phase-6 tombstone; the exclusion must hold
+	// across the whole teardown window.
+	setTenantState(t, ctx, pg, "deleted-tenant", "deleted")
+	assertWindow(t, "deleted")
 }
