@@ -375,14 +375,18 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	// emits lenny_audit_chain_integrity_total per tenant, and logs a WARN
 	// per detected gap. It never refuses to start — a gap is a compliance
 	// signal. The check reads audit_log from the instance it lives on —
-	// the separate §12.3 billing/audit pool when configured. F-12.3.9 /
+	// the separate §12.3 billing/audit pool when configured — and resolves
+	// the §12.8 tenant-deletion skip-set from the control-plane pool
+	// (w.pgPool), where tenants.state is authoritative, so a tenant torn
+	// down under the split billing/audit-pool topology raises no false
+	// §16.5 AuditChainGap on its retained gdpr.*-only remnant. F-12.3.9 /
 	// F-12.3.5.
 	if w.pgPool != nil {
 		chainPool := w.pgPool
 		if w.billingAuditPool != nil {
 			chainPool = w.billingAuditPool
 		}
-		runStartupChainContinuityCheck(context.Background(), chainPool, *auditStartupChainCheckEntries, gwMetrics)
+		runStartupChainContinuityCheck(context.Background(), chainPool, w.pgPool, *auditStartupChainCheckEntries, gwMetrics)
 	}
 
 	// spec: §25.13 line 4737 / §16.5 — emit the configured Tier preset
