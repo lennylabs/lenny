@@ -1916,8 +1916,9 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 }
 
 // buildSessionMessaging constructs the §7.3 session-event bus (with its
-// §12.3.7 cross-replica relay and §7.3 durable last_seq hooks), the §7.2
-// session inbox and DLQ coordinator, the §8.10 tree archive, the §8.2 tree
+// §12.4 (lenny:events: relay row) cross-replica relay and §7.3 durable
+// last_seq hooks), the §7.2 session inbox and DLQ coordinator, the §8.10
+// tree archive, the §8.2 tree
 // budget reserver, the §9.2 interaction store, the §7.2 tool-approval gate
 // registry, the §10.7 eval store, the §10.7 experiment store, and the §9.4
 // memory store, recording each on the accumulator.
@@ -1948,11 +1949,11 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	// spec: §10.4 line 389 — replay buffer depth is operator-tunable
 	// via gateway.sessionEventReplayBufferDepth. F-10.4.5.
 	eventBus := sessionevents.NewBus(*sessionEventReplayBufferDepth)
-	// §4.4 line 225 / §12.3.7: when Redis is wired, attach the
-	// cross-replica relay so a client reconnecting via Last-Event-ID
-	// to a different replica sees prior events (the §15.1 streaming-
-	// reconnect contract). Single-replica dev mode keeps the Bus's
-	// in-memory-only behaviour.
+	// §4.4 line 225 / §12.4 (lenny:events: relay row): when Redis is
+	// wired, attach the cross-replica relay so a client reconnecting via
+	// Last-Event-ID to a different replica sees prior events (the §15.1
+	// streaming-reconnect contract). Single-replica dev mode keeps the
+	// Bus's in-memory-only behaviour.
 	if redisClient != nil {
 		// §12.4 Cache/Pub-Sub concern: session-event relay.
 		eventBus = eventBus.WithRedisRelay(sessionevents.NewRedisRelay(concernRedis.For(storerouter.RedisConcernCachePubSub)))

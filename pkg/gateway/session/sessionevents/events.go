@@ -10,10 +10,10 @@
 //
 // In single-replica deployments the Bus uses its in-memory state
 // alone. In multi-replica deployments the Bus pairs with the §4.4
-// line 225 / §12.3.7 RedisRelay (see redisrelay.go): every Publish
-// fans out to Redis Streams via `XADD`, and every Subscribe pulls
-// the cross-replica history via `XRANGE` so a client that reconnects
-// to a different replica sees the prior events.
+// line 225 / §12.4 (lenny:events: relay row) RedisRelay (see
+// redisrelay.go): every Publish fans out to Redis Streams via `XADD`,
+// and every Subscribe pulls the cross-replica history via `XRANGE` so a
+// client that reconnects to a different replica sees the prior events.
 //
 // spec: §4.4 line 225 — durable event cursors / stream offsets across
 // replicas.
@@ -72,8 +72,9 @@ type Bus struct {
 	tenant map[string]string
 	// maxHistory bounds the per-session retained event count.
 	maxHistory int
-	// relay is the §4.4 / §12.3.7 cross-replica Redis fan-out. A nil
-	// relay reduces the Bus to the single-replica path.
+	// relay is the §4.4 / §12.4 (lenny:events: relay row) cross-replica
+	// Redis fan-out. A nil relay reduces the Bus to the single-replica
+	// path.
 	relay *RedisRelay
 	// lastSeqPersister, when set, durably advances the session row's
 	// last_seq counter on every Publish. The persister is best-effort
@@ -167,10 +168,11 @@ func (b *Bus) WithLastSeqLoader(l LastSeqLoader) *Bus {
 // is the §7.2 tenant-isolation defense-in-depth.
 var ErrTenantMismatch = errors.New("sessionevents: session belongs to a different tenant")
 
-// WithRedisRelay attaches the §4.4 / §12.3.7 cross-replica relay so
-// every Publish fans out to Redis Streams and every Subscribe
-// consults the cross-replica history. A nil relay disables the
-// cross-replica path (the default single-replica behaviour).
+// WithRedisRelay attaches the §4.4 / §12.4 (lenny:events: relay row)
+// cross-replica relay so every Publish fans out to Redis Streams and
+// every Subscribe consults the cross-replica history. A nil relay
+// disables the cross-replica path (the default single-replica
+// behaviour).
 //
 // The relay attaches at construction time; later changes require a
 // fresh Bus so the publish path and history path stay consistent.
@@ -380,10 +382,10 @@ func (b *Bus) Subscribe(sessionID string, afterSeq uint64, bufferSize int) *Subs
 // defense-in-depth: even if a future caller skips the store.Get tenant
 // precheck the bus refuses to deliver foreign-tenant events.
 //
-// When the §4.4 / §12.3.7 RedisRelay is wired the Backlog merges the
-// local in-memory history with the Redis stream history so a client
-// reconnecting to this replica also sees events originally published
-// on a sibling replica.
+// When the §4.4 / §12.4 (lenny:events: relay row) RedisRelay is wired
+// the Backlog merges the local in-memory history with the Redis stream
+// history so a client reconnecting to this replica also sees events
+// originally published on a sibling replica.
 func (b *Bus) SubscribeForTenant(tenantID, sessionID string, afterSeq uint64, bufferSize int) (*Subscription, error) {
 	return b.subscribe(tenantID, sessionID, afterSeq, bufferSize)
 }
