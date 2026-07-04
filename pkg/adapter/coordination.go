@@ -58,9 +58,10 @@ func (s *Server) LastFencedGeneration() int64 {
 // value (a replacement pod can be fenced into an existing session's
 // generation); subsequent fences must be strictly greater. Skipping one
 // or more generations triggers the §10.1 line 36 gap-detection path:
-// the adapter cancels any in-flight RPCs received under the missing
-// generation(s) and logs a `coordinator_generation_gap` event before
-// acknowledging the new generation.
+// the adapter logs a `coordinator_generation_gap` event and returns
+// GapDetected: true while still acknowledging the new generation. The
+// §10.1 line 36 in-flight-RPC cancellation is an unimplemented spec
+// requirement the adapter does not currently perform.
 //
 // spec: §4.7 line 632, §10.1 lines 33-37.
 func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.CoordinatorFenceRequest) (*adapterv1.CoordinatorFenceResponse, error) {
@@ -89,9 +90,10 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	}
 	gap := s.coord.initialized && gen > s.coord.lastFenced+1
 	if gap {
-		// §10.1 line 36 — a skipped generation cancels any in-flight RPCs
-		// received under the missing generation(s); the gateway re-issues
-		// under the new generation. Record the gap so the caller can react.
+		// §10.1 line 36 — a skipped generation logs
+		// `coordinator_generation_gap` and reports GapDetected so the
+		// caller can react. The spec's in-flight-RPC cancellation is a
+		// requirement the adapter does not currently implement.
 		slog.WarnContext(ctx, "coordinator_generation_gap",
 			"session_id", sessionID,
 			"last_fenced_generation", s.coord.lastFenced,

@@ -127,7 +127,10 @@ func TestCoordinatorFenceStaleGenerationRejected(t *testing.T) {
 // a generation that skips one or more values still logs
 // `coordinator_generation_gap` and returns gap_detected=true after the
 // dead last_tool_call_id reset was removed (proposal 0026), since gap
-// detection has no dependence on last_tool_call_id.
+// detection has no dependence on last_tool_call_id. It also pins the
+// proposal-0026 Pass-14 doc reconciliation: the gap path does not cancel
+// in-flight RPCs (the §10.1 line 36 cancellation is an unimplemented
+// requirement), so the fence's own context is left un-cancelled.
 //
 // spec: §10.1 lines 33-37 (CoordinatorFence gap), §4.2 (coordination_generation handoff).
 func TestCoordinatorFenceGapDetected(t *testing.T) {
@@ -139,13 +142,19 @@ func TestCoordinatorFenceGapDetected(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	s := newFencedServer(t)
-	ctx := context.Background()
-	if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 3,
 	}); err != nil {
 		t.Fatalf("first fence: %v", err)
 	}
-	resp, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+	// Pass the gap fence a cancellable context so the test can assert the
+	// gap path does not cancel it. A pre-fix implementation matching the
+	// old doc ("cancels any in-flight RPCs received under the missing
+	// generation(s)") would have to cancel through this context, failing
+	// the ctx.Err() check below.
+	gapCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	resp, err := s.CoordinatorFence(gapCtx, &adapterv1.CoordinatorFenceRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 7,
 	})
 	if err != nil {
@@ -156,6 +165,9 @@ func TestCoordinatorFenceGapDetected(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "coordinator_generation_gap") {
 		t.Fatalf("gap path should log coordinator_generation_gap, got %q", logBuf.String())
+	}
+	if gapCtx.Err() != nil {
+		t.Fatalf("gap path must not cancel in-flight RPCs (unimplemented §10.1 line 36); ctx.Err()=%v", gapCtx.Err())
 	}
 }
 
