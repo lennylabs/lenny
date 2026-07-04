@@ -13,8 +13,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 )
 
-// spec §12.4 line 177-195: every key leads with `t:{tenant_id}:` or one of
-// the three documented exception prefixes.
+// spec §12.4 (tenant key isolation, enforcement clause): a key the wrapper
+// admits leads with `t:{tenant_id}:` or one of the recognized exception
+// prefixes (`lenny:pod:`, `cb:`, or `{root_session_id}:dlg:`); every other
+// key is rejected with ErrNoPrefix.
 func TestValidateKey_spec_12_4(t *testing.T) {
 	acme := rediskeys.TenantScope("acme")
 	dlgScope := rediskeys.DelegationScope("acme", "root-1")
@@ -66,8 +68,9 @@ func guardedClient(t *testing.T) redis.UniversalClient {
 	return cl
 }
 
-// spec §12.4 line 195: no raw Redis command may be issued without the
-// tenant prefix. The Guard rejects a cross-tenant SET before it reaches
+// spec §12.4 (enforcement clause): a scoped command whose key leads with a
+// different tenant's `t:{tenant_id}:` prefix is rejected in the Redis
+// wrapper layer. The Guard rejects a cross-tenant SET before it reaches
 // Redis when the calling context is scoped to a different tenant.
 func TestGuard_CrossTenantWriteRejected_spec_12_4(t *testing.T) {
 	cl := guardedClient(t)

@@ -22,13 +22,13 @@
 // race where two post-restart requests both observe counter=0 and
 // over-commit a pod that already hosts live slots.
 //
-// The lenny:pod: prefix is one of §12.4's three key-prefix exception
-// classes (pod-scoped keys are not tenant-scoped): a concurrent-mode
-// pod is shared infrastructure pinned to one tenant by §5.2 tenant
-// pinning rather than a per-tenant key, so its slot counter and
-// rehydration sentinels carry no {tenant_id} segment. The breaker
-// store (pkg/gateway/breakerstore/redisstore) documents the same
-// exception class for its cb: prefix.
+// The lenny:pod: prefix is one of §12.4's key-prefix exception classes
+// (pod-scoped keys are not tenant-scoped): a concurrent-mode pod is
+// shared infrastructure pinned to one tenant by §5.2 tenant pinning
+// rather than a per-tenant key, so its slot counter and rehydration
+// sentinels carry no {tenant_id} segment. The breaker store
+// (pkg/gateway/breakerstore/redisstore) is another such exception, for
+// its cb: prefix.
 //
 // The §6.57 / §12.4 Redis-outage Postgres fallback (the FallbackSource gate,
 // the bounded fail-closed window, and the Redis-connectivity detection) lives

@@ -249,7 +249,7 @@ type Config struct {
 	// dedicated client. A concern absent from the map falls back to
 	// Redis. When the map is nil every concern resolves to Redis (the
 	// single-instance Tier 1/2 topology). NewSingleShardRouter installs
-	// the §12.4 line 195 tenant-key Guard hook on every distinct client.
+	// the §12.4 tenant-key Guard hook on every distinct client.
 	//
 	// spec: §12.4 lines 237-245 — "separate connection strings per store
 	// role — no code changes are required because each store role already
@@ -300,8 +300,8 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 	if id == "" {
 		id = "default"
 	}
-	// spec §12.4 line 195: tenant-key isolation is enforced in the Redis
-	// wrapper layer. Installing the Guard hook on each distinct client
+	// spec §12.4 (enforcement clause): tenant-key isolation is enforced in
+	// the Redis wrapper layer. Installing the Guard hook on each distinct client
 	// makes every concern returned by RedisShard validate keys against the
 	// per-request scope (rediskeys.WithScope) before the command is issued.
 	// When concerns are split across separate instances each instance gets
