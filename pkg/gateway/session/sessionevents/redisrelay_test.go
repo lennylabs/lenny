@@ -14,7 +14,8 @@ import (
 )
 
 // spec: §4.4 line 225 — durable event cursors across replicas.
-// spec: §12.3.7 — Redis-backed event bus substrate.
+// spec: §12.4 — the lenny:events: cross-replica relay stream row in the
+// canonical key-prefix table.
 
 func newMiniRedis(t *testing.T) (*miniredis.Miniredis, redis.UniversalClient) {
 	t.Helper()

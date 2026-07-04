@@ -3,7 +3,10 @@
 // Package rediskeys is the §12.4 Redis wrapper layer that enforces the
 // tenant-key isolation convention at the point every command leaves the
 // gateway. The §12.4 key table mandates that all Redis keys lead with the
-// `t:{tenant_id}:` prefix, with three documented exception classes:
+// `t:{tenant_id}:` prefix. §12.4 groups the remaining keys into two
+// exception categories: keys that carry no tenant component by design, and
+// keys that are tenant-scoped but not tenant-leading. The wrapper enforces
+// the leading prefix only for the exception prefixes it recognizes:
 //
 //   - `lenny:pod:{pod_id}:*` slot-counter keys (pod-scoped; pod IDs are
 //     cluster-globally unique).
@@ -13,12 +16,17 @@
 //     tag); the wrapper validates the calling tenant owns the
 //     `root_session_id` before permitting the operation.
 //
-// spec §12.4 line 195: "This convention is enforced in the Redis wrapper
-// layer; no raw Redis command may be issued without the tenant prefix (or
-// pod prefix for slot counters, or `cb:` prefix for circuit breakers, or
-// `{root_session_id}:dlg:` prefix for delegation budget keys — the wrapper
-// validates the calling tenant owns the `root_session_id` before permitting
-// the operation)."
+// spec §12.4 (enforcement clause): the tenant-leading convention is enforced
+// in the Redis wrapper layer. A command that attaches a Scope via WithScope
+// is validated, and its keys must lead with the scope's `t:{tenant_id}:`
+// prefix or with one of the recognized exception prefixes (`lenny:pod:`,
+// `cb:`, or `{root_session_id}:dlg:`, where the wrapper additionally
+// validates the calling tenant owns the `root_session_id`). Keys that carry
+// no leading prefix the wrapper recognizes (`rl:`, `sq:`, `pg:sess-tenant:`,
+// `conn:oauth:state:`, `derive_lock:`, `lenny:events:`) are issued on
+// unscoped or platform-scoped command paths the wrapper passes through
+// unvalidated; their isolation is structural rather than leading-prefix
+// enforcement.
 //
 // Enforcement is a go-redis Hook (Guard) installed on the shared client.
 // The hook validates the key arguments of every command against the Scope
@@ -43,7 +51,8 @@ var (
 	// for a tenant other than the one in the calling scope.
 	ErrCrossTenant = errors.New("rediskeys: key belongs to a different tenant")
 	// ErrNoPrefix reports that a key leads with neither the tenant prefix
-	// nor any of the three documented exception prefixes.
+	// nor any of the recognized §12.4 exception prefixes (`lenny:pod:`,
+	// `cb:`, or `{root_session_id}:dlg:`).
 	ErrNoPrefix = errors.New("rediskeys: key has no tenant or exception prefix")
 	// ErrDelegationOwnership reports that a `{root_session_id}:dlg:` key
 	// names a root session the calling tenant does not own.
@@ -69,7 +78,7 @@ func TenantScope(tenantID string) Scope {
 // DelegationScope returns a Scope bound to tenantID that additionally
 // authorizes `{root}:dlg:*` keys for each root session id in
 // ownedRootSessionIDs. The gateway resolves ownership via SessionStore
-// under RLS before constructing the scope (spec §12.4 line 195;
+// under RLS before constructing the scope (spec §12.4 enforcement clause;
 // §8.3 R-04).
 func DelegationScope(tenantID string, ownedRootSessionIDs ...string) Scope {
 	owned := make(map[string]struct{}, len(ownedRootSessionIDs))

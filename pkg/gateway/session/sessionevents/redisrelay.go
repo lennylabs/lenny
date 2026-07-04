@@ -13,26 +13,27 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DefaultStreamMaxLen is the §4.4 line 225 / §12.3.7 Redis Streams
-// retention cap. Each session's stream is trimmed to this many entries
-// via `XADD ... MAXLEN ~ {cap}` so the cross-replica replay buffer is
-// bounded. The cap matches the default per-session in-memory history
-// (`NewBus(maxHistory)` default 256) so a reconnecting client whose
-// cursor falls within the cap is served from either store
+// DefaultStreamMaxLen is the §4.4 line 225 / §12.4 (lenny:events: relay
+// row) Redis Streams retention cap. Each session's stream is trimmed to
+// this many entries via `XADD ... MAXLEN ~ {cap}` so the cross-replica
+// replay buffer is bounded. The cap matches the default per-session
+// in-memory history (`NewBus(maxHistory)` default 256) so a reconnecting
+// client whose cursor falls within the cap is served from either store
 // equivalently.
 const DefaultStreamMaxLen = 256
 
-// streamKey returns the §4.4 / §12.3.7 Redis Streams key for a
-// session. The prefix scopes the stream to the gateway namespace so
-// cross-product key collisions are impossible.
+// streamKey returns the §4.4 / §12.4 (lenny:events: relay row) Redis
+// Streams key for a session. The prefix scopes the stream to the gateway
+// namespace so cross-product key collisions are impossible.
 func streamKey(sessionID string) string {
 	return "lenny:events:" + sessionID
 }
 
-// RedisRelay is the §4.4 line 225 / §12.3.7 Redis-backed cross-replica
-// event relay. It pairs with an in-memory Bus: every Publish on the
-// Bus fans out to the relay's `XADD` so reading replicas can replay
-// the stream via `XRANGE` (history) or `XREAD BLOCK ...` (live).
+// RedisRelay is the §4.4 line 225 / §12.4 (lenny:events: relay row)
+// Redis-backed cross-replica event relay. It pairs with an in-memory
+// Bus: every Publish on the Bus fans out to the relay's `XADD` so
+// reading replicas can replay the stream via `XRANGE` (history) or
+// `XREAD BLOCK ...` (live).
 //
 // The relay is a stateless wrapper over the redis.UniversalClient.
 // Single-replica deployments leave the relay nil; the Bus keeps its
@@ -40,8 +41,8 @@ func streamKey(sessionID string) string {
 // non-nil relay and gain cross-replica history + live delivery.
 //
 // spec: §4.4 line 225 — "Event cursors / stream offsets" durable
-// across replicas. spec: §12.3.7 — Redis pub/sub for the EventBus
-// substrate.
+// across replicas. spec: §12.4 — the lenny:events: cross-replica relay
+// stream row in the canonical key-prefix table.
 type RedisRelay struct {
 	// Client is the Redis universal client. A nil client makes every
 	// method a no-op so the gateway can wire the relay unconditionally.
