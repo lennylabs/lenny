@@ -222,6 +222,34 @@ func NewSessionTokenSink(meter *SessionUsageMeter, currentSession func() string)
 	return sessionTokenSink{meter: meter, currentSession: currentSession}
 }
 
+// WireDirectModeUsage installs the §4.7 direct-mode usage path on the
+// adapter server: it constructs the concrete SessionUsageMeter, assigns
+// it to s.Usage so ReportUsage stops returning codes.Unimplemented in
+// production (F-15.3.7), and, when a lifecycle channel is present, wires
+// the token sink that folds each llm_request_completed frame's
+// direct-mode token counts (§4.7, §11.2) into the meter under the pod's
+// current session. It returns the meter so a caller that needs the
+// concrete type (a test asserting the wired path, or a future
+// gateway-pull integration) can reach it.
+//
+// cmd/lenny-adapter calls this once during server assembly. Extracting it
+// keeps the production wiring in one place and directly testable over the
+// real gRPC transport rather than re-derived in main. A nil lifecycle
+// channel leaves the meter installed with no frame source (the
+// Basic/Standard path), which is a valid state: ReportUsage then reports
+// a zero delta the §11.2 anomaly detector observes.
+//
+// spec: §4.7 (ReportUsage, llm_request_completed token fields), §11.2
+// (direct-mode usage).
+func WireDirectModeUsage(s *Server, lc *LifecycleChannel) *SessionUsageMeter {
+	meter := NewSessionUsageMeter(nil)
+	s.Usage = meter
+	if lc != nil {
+		lc.SetUsageSink(NewSessionTokenSink(meter, s.CurrentSessionID))
+	}
+	return meter
+}
+
 // ReportUsage implements the §4.7 ReportUsage RPC. The gateway calls it
 // to pull a session's token and time accounting for §11.2 budget
 // enforcement and billing. The default read is incremental — each call

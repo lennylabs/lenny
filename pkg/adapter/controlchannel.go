@@ -172,6 +172,15 @@ func (s *Server) currentSession() string {
 	return s.sessionID
 }
 
+// CurrentSessionID returns the id of the session the pod currently holds,
+// empty when the pod is idle. It is the exported accessor cmd/lenny-adapter
+// hands to NewSessionTokenSink so the session-less §4.7 lifecycle frame's
+// direct-mode token counts fold into the right session's cumulative total
+// (§6.1 one session per pod). spec: §4.7 (direct-mode usage), §11.2.
+func (s *Server) CurrentSessionID() string {
+	return s.currentSession()
+}
+
 // EmitRateLimited reports that provider's current credential is
 // rate-limited so the gateway promotes a §4.9 fallback credential.
 func (s *Server) EmitRateLimited(provider string) {

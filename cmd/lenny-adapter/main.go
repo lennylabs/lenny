@@ -359,6 +359,17 @@ func main() {
 		}()
 	}
 
+	// spec: §4.7 (ReportUsage), §11.2 (direct-mode usage) — install the
+	// direct-mode usage path: construct the UsageMeter, assign it to
+	// adapterSrv.Usage so ReportUsage stops returning Unimplemented in
+	// production (F-15.3.7), and, when a lifecycle channel is configured,
+	// wire the token sink that folds each llm_request_completed frame's
+	// direct-mode token counts into it. The sink resolves the pod's active
+	// session (§6.1 one session per pod) at fold time via CurrentSessionID.
+	// Wired before the gRPC server starts serving so it does not race a
+	// ReportUsage pull or the lifecycle read loop.
+	adapter.WireDirectModeUsage(adapterSrv, lifecycle)
+
 	srv := adapter.NewGRPCServer(adapterSrv, opts...)
 
 	lis, err := net.Listen("tcp", *addr)
