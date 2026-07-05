@@ -314,7 +314,9 @@
         "tests/tier10_conformance/recycle_scrub_conformance_test.go",
         "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go",
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
-        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go"
+        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
+        "tests/tier7a_load_local/usagemeter_contention/usagemeter_contention_test.go",
+        "tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -1267,7 +1269,9 @@
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExhaustionExtensionAtMostOncePerEvent_CeilingTerminates_F866",
         "tests/tier9_security/token_usage_anomaly_test.go",
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
-        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go"
+        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
+        "tests/tier7a_load_local/usagemeter_contention/usagemeter_contention_test.go",
+        "tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go"
       ],
       "packages": [
         "pkg/quota",
