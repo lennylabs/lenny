@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
@@ -319,6 +320,43 @@ func TestSessionStoreSubjectResolver_spec_11_2_line46(t *testing.T) {
 	var nilResolver sessionStoreSubjectResolver
 	if got := nilResolver.ResolveUser(ctx, "acme", "s1"); got != "" {
 		t.Errorf("ResolveUser with nil store = %q, want \"\"", got)
+	}
+}
+
+// TestBuildDirectUsageRecoveryReaderCapsPullTimeout_spec_4_7 proves the
+// crash-recovery reader inherits the steady-state loop's capped per-session
+// pull deadline, min(interval/2, 5s), rather than a bare interval/2. With the
+// default 30s poll interval the capped deadline is 5s; a bare interval/2 would
+// let a wedged direct-mode pod pin a recovery reconcile pass for 15s, three
+// times the deadline the steady-state loop tolerates. This test would fail
+// against the pre-fix wiring that computed interval/2 inline (15s) without the
+// directUsagePullTimeout cap.
+//
+// spec: 4.7 (ReportUsage cumulative read; the recovery pull is the same
+// session-scoped adapterclient pull the steady-state loop bounds), 11.2 (line
+// 46 crash-recovery MAX rule).
+// diagnosis: the crash-recovery reader used a per-session pull timeout of interval/2 with no ceiling, so a wedged direct-mode adapter pinned a recovery reconcile pass for 15s at the default poll interval instead of the steady-state loop's 5s cap (proposal 0024 S15 recovery-timeout reuse divergence).
+func TestBuildDirectUsageRecoveryReaderCapsPullTimeout_spec_4_7(t *testing.T) {
+	interval := defaultDirectUsagePollIntervalSeconds
+	w := &gatewayWiring{
+		f: &gatewayFlags{directUsagePollIntervalSeconds: &interval},
+	}
+	w.podRegistry = podsession.NewRegistry()
+	w.llmLeases = credleasestore.New()
+	w.sessions = memstore.New()
+
+	got := w.buildDirectUsageRecoveryReader(stubPeriods{})
+	reader, ok := got.(*directUsageRecoveryReader)
+	if !ok || reader == nil {
+		t.Fatalf("buildDirectUsageRecoveryReader = %T, want a live *directUsageRecoveryReader with all seams present", got)
+	}
+	want := directUsagePullTimeout(time.Duration(interval) * time.Second)
+	if want != 5*time.Second {
+		t.Fatalf("test precondition: capped timeout for %ds interval = %s, want 5s", interval, want)
+	}
+	if reader.pullTimeout != want {
+		t.Errorf("recovery reader pullTimeout = %s, want %s (min(interval/2, 5s); a bare interval/2 would be %s)",
+			reader.pullTimeout, want, time.Duration(interval)*time.Second/2)
 	}
 }
 

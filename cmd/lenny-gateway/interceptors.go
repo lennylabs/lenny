@@ -95,12 +95,18 @@ func (w *gatewayWiring) buildDirectUsageRecoveryReader(periods quotacheckpoint.P
 	if w.podRegistry == nil || w.llmLeases == nil || w.sessions == nil {
 		return nil
 	}
+	// Reuse the steady-state loop's per-session pull deadline, min(interval/2,
+	// 5s), so a wedged direct-mode pod's adapter bounds a recovery reconcile
+	// pass the same way it bounds the poll loop (direct_usage.go), rather than
+	// pinning it for a full interval/2. spec: §4.7 (ReportUsage cumulative
+	// read).
+	pollInterval := time.Duration(clampDirectUsagePollIntervalSeconds(*w.f.directUsagePollIntervalSeconds)) * time.Second
 	reader := newDirectUsageRecoveryReader(
 		w.podRegistry,
 		w.llmLeases,
 		sessionStoreSubjectResolver{sessions: w.sessions},
 		periods,
-		time.Duration(clampDirectUsagePollIntervalSeconds(*w.f.directUsagePollIntervalSeconds))*time.Second/2,
+		directUsagePullTimeout(pollInterval),
 		slog.Default(),
 	)
 	if reader == nil {
