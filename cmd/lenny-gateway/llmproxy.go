@@ -3,6 +3,8 @@
 package main
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 )
 
 func (w *gatewayWiring) buildLLMProxy(
@@ -105,6 +108,23 @@ func (w *gatewayWiring) buildLLMProxy(
 	// active agent work; reset the session's idle clock so a long-running
 	// streaming generation is not reaped by the §11.3 idle watchdog. F-11.3.7.
 	llmProxyUsage.setActivityStamper(activityStamper)
+	// spec: §11.2 (direct-mode usage integrity) — wire the direct-mode
+	// under-reporting anomaly detector. It observes every direct-mode
+	// ReportUsage delta the recorder fans in and raises
+	// lenny_gateway_token_usage_anomaly_total (zero_delta / implausibly_small)
+	// with a per-session structured log. The label set is a compile-time
+	// constant, so New fails only on a coding-time §16.1.1 violation
+	// (a forbidden label); that is a programming error, so it panics rather
+	// than shipping a mislabeled counter. The proxy hot path never feeds it.
+	// F-11.2.20.
+	tokenAnomaly, err := tokenanomaly.New(w.gwMetrics.Registerer(), tokenanomaly.Config{
+		ZeroTokenWindow:       *f.tokenAnomalyZeroWindow,
+		ImplausiblySmallRatio: *f.tokenAnomalyImplausibleRatio,
+	}, slog.Default())
+	if err != nil {
+		panic(fmt.Sprintf("wire token-usage anomaly detector: %v", err))
+	}
+	llmProxyUsage.setAnomalyObserver(tokenAnomaly)
 	// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's
