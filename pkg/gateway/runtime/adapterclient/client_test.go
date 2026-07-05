@@ -999,7 +999,7 @@ func TestReportUsageReturnsAccounting(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	rep, err := cl.ReportUsage(ctx, "sess-x")
+	rep, err := cl.ReportUsage(ctx, "sess-x", false)
 	if err != nil {
 		t.Fatalf("ReportUsage: %v", err)
 	}
@@ -1016,7 +1016,7 @@ func TestReportUsageRejectsAnUnassignedSession(t *testing.T) {
 	cl := dialAdapter(t, srv)
 
 	// No StartSession ran, so the pod holds no session.
-	if _, err := cl.ReportUsage(context.Background(), "sess-absent"); err == nil {
+	if _, err := cl.ReportUsage(context.Background(), "sess-absent", false); err == nil {
 		t.Error("ReportUsage on an unassigned session succeeded, want a failure")
 	}
 }
@@ -1032,7 +1032,7 @@ func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	if _, err := cl.ReportUsage(ctx, "sess-x"); err == nil {
+	if _, err := cl.ReportUsage(ctx, "sess-x", false); err == nil {
 		t.Error("ReportUsage with no usage meter succeeded, want a failure")
 	}
 }
@@ -1052,7 +1052,7 @@ func TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 
-	if _, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryProxy); !errors.Is(err, adapterclient.ErrUsageReportProxyMode) {
+	if _, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryProxy, false); !errors.Is(err, adapterclient.ErrUsageReportProxyMode) {
 		t.Errorf("ReportUsageForLease proxy-mode err = %v, want ErrUsageReportProxyMode", err)
 	}
 }
@@ -1071,12 +1071,105 @@ func TestReportUsageForLeaseAcceptsDirectMode_Spec4_9_1468(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 
-	rep, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryDirect)
+	rep, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryDirect, false)
 	if err != nil {
 		t.Fatalf("ReportUsageForLease direct-mode: %v", err)
 	}
 	if rep.InputTokens != 11 || rep.OutputTokens != 22 {
 		t.Errorf("ReportUsageForLease direct usage = %+v, want input=11 output=22", rep)
+	}
+}
+
+// splitUsageMeter is an adapter.UsageMeter that returns distinct
+// accountings for the incremental delta read and the cumulative read, so
+// a test can prove the ReportUsageRequest.cumulative flag reached the
+// adapter and selected the intended read rather than defaulting to the
+// delta path.
+type splitUsageMeter struct {
+	delta      adapter.Usage
+	cumulative adapter.Usage
+}
+
+func (m splitUsageMeter) Usage(context.Context, string) (adapter.Usage, error) {
+	return m.delta, nil
+}
+
+func (m splitUsageMeter) Cumulative(context.Context, string) (adapter.Usage, error) {
+	return m.cumulative, nil
+}
+
+// TestReportUsageThreadsCumulativeFlag_Spec4_7 pins that the cumulative
+// argument on Client.ReportUsage rides ReportUsageRequest.cumulative to
+// the adapter and selects the cumulative read; the false argument leaves
+// it unset for the steady-state incremental delta. Against pre-S5 code
+// the wrapper never set the flag, so the cumulative call would return the
+// delta accounting and this test would fail.
+// spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (crash-recovery MAX rule).
+func TestReportUsageThreadsCumulativeFlag_Spec4_7(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Usage = splitUsageMeter{
+		delta:      adapter.Usage{InputTokens: 5, OutputTokens: 3, WallClockMS: 100},
+		cumulative: adapter.Usage{InputTokens: 900, OutputTokens: 700, WallClockMS: 9000},
+	}
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	// Steady-state poll: cumulative=false pulls the incremental delta.
+	delta, err := cl.ReportUsage(ctx, "sess-x", false)
+	if err != nil {
+		t.Fatalf("ReportUsage delta: %v", err)
+	}
+	if delta.InputTokens != 5 || delta.OutputTokens != 3 || delta.WallClockMS != 100 {
+		t.Errorf("delta read = %+v, want input=5 output=3 wall=100", delta)
+	}
+
+	// Crash-recovery pull: cumulative=true pulls the running total.
+	total, err := cl.ReportUsage(ctx, "sess-x", true)
+	if err != nil {
+		t.Fatalf("ReportUsage cumulative: %v", err)
+	}
+	if total.InputTokens != 900 || total.OutputTokens != 700 || total.WallClockMS != 9000 {
+		t.Errorf("cumulative read = %+v, want input=900 output=700 wall=9000", total)
+	}
+}
+
+// TestReportUsageForLeaseThreadsCumulativeFlag_Spec4_7 pins that the
+// proxy-mode-safe wrapper carries the cumulative argument through to the
+// adapter for a direct-mode lease, and that the proxy-mode filter still
+// short-circuits before the RPC for a cumulative pull so a proxy lease is
+// never double-counted regardless of which read the caller requests.
+// spec: §4.7 (ReportUsageRequest.cumulative), §4.9 line 1468 (proxy filter).
+func TestReportUsageForLeaseThreadsCumulativeFlag_Spec4_7(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Usage = splitUsageMeter{
+		delta:      adapter.Usage{InputTokens: 1, OutputTokens: 1},
+		cumulative: adapter.Usage{InputTokens: 4242, OutputTokens: 1717},
+	}
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	// Direct-mode cumulative pull falls through and reads the running total.
+	total, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryDirect, true)
+	if err != nil {
+		t.Fatalf("ReportUsageForLease direct cumulative: %v", err)
+	}
+	if total.InputTokens != 4242 || total.OutputTokens != 1717 {
+		t.Errorf("direct cumulative usage = %+v, want input=4242 output=1717", total)
+	}
+
+	// Proxy-mode is refused before the RPC even for a cumulative pull.
+	if _, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryProxy, true); !errors.Is(err, adapterclient.ErrUsageReportProxyMode) {
+		t.Errorf("ReportUsageForLease proxy-mode cumulative err = %v, want ErrUsageReportProxyMode", err)
 	}
 }
 
