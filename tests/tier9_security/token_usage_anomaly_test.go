@@ -149,6 +149,56 @@ func TestAnomalyCounterLabelSetIsCompliant_spec_16_1_1(t *testing.T) {
 	}
 }
 
+// diagnosis: the §11.2 zero_delta window-reset evasion guard is broken —
+// a non-zero pull interspersed in a longer zero-token run did not reset the
+// consecutive-zero counter, so the detector fired zero_delta on a session
+// that never had more than three zeros in a row. As a security control this
+// is a false positive that lets a healthy-but-bursty direct-mode session
+// raise a spurious integrity alert, and it inverts the detector's semantics:
+// the guard exists so an attacker cannot be missed by counting only
+// consecutive zeros, not so a legitimate interspersed non-zero is
+// mis-flagged. A failure means the consecutiveness boundary drifted from the
+// window-reset semantics §11.2 fixes.
+//
+// spec: §11.2 (direct-mode zero_delta consecutiveness/window-reset boundary).
+func TestDirectModeInterspersedNonZeroResetsZeroRun_spec_11_2(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	det, err := tokenanomaly.New(reg, tokenanomaly.Config{}, nil)
+	if err != nil {
+		t.Fatalf("construct detector: %v", err)
+	}
+
+	// A bursty-but-honest runtime: three zero-token pulls (an idle stretch),
+	// then a real non-zero call, then three more zeros. The non-zero pull is
+	// direct evidence of work, so it must reset the consecutive-zero run: at
+	// no point does the session reach four zeros in a row, so zero_delta must
+	// NOT fire. An implementation that counted non-consecutive zeros (or that
+	// failed to reset on a non-zero delta) would count seven zeros across the
+	// window and fire — the exact evasion-guard boundary this pins.
+	pulls := []struct{ in, out int64 }{
+		{0, 0}, {0, 0}, {0, 0}, // three zeros: at the window boundary
+		{800, 200},             // real work: resets the consecutive-zero run
+		{0, 0}, {0, 0}, {0, 0}, // three more zeros: again only at the boundary
+	}
+	for _, p := range pulls {
+		det.Observe("acme", "s_bursty", p.in, p.out)
+	}
+	if got := anomalyCount(t, reg, "acme", "zero_delta"); got != 0 {
+		t.Fatalf("zero_delta fired on a session that never had 4 consecutive zeros "+
+			"(the interspersed non-zero must reset the run): got %v, want 0", got)
+	}
+
+	// Control: without the reset, a straight run past the window does fire, so
+	// the detector is not simply inert. Four consecutive zeros on a fresh
+	// session exceed the window and raise exactly one anomaly.
+	for i := 0; i < 4; i++ {
+		det.Observe("acme", "s_straight", 0, 0)
+	}
+	if got := anomalyCount(t, reg, "acme", "zero_delta"); got != 1 {
+		t.Fatalf("control: 4 consecutive zeros on a fresh session must fire once, got %v", got)
+	}
+}
+
 // diagnosis: the §11.2 detector leaked one tenant's under-reporting into
 // another tenant's anomaly series, breaking per-tenant attribution of the
 // integrity signal.
