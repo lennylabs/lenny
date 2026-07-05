@@ -4815,16 +4815,16 @@ type RecycleScrub struct {
 	CleanupCommands []string `protobuf:"bytes,2,rep,name=cleanup_commands,json=cleanupCommands,proto3" json:"cleanup_commands,omitempty"`
 	// cleanup_timeout_seconds is the aggregate cap on cleanup_commands; the
 	// gateway-side missing-report timeout is this value plus a grace period.
+	// There is no cleanup shell field: the pool configuration carries none, so
+	// cleanup commands run in the default argv mode. There is no scrub_profile
+	// field: the gateway resolves the §5.2 recycle disposition (reuse for
+	// standard/in-place, retire-and-reprovision for vm-restart) from the
+	// recycle policy in its own runtime store, so the wire request carries only
+	// the pod identity and the scrub parameters the adapter runs. spec: §5.2
+	// step 7 (fresh-guest reprovision); §4.7 delivered-parameter enumeration.
 	CleanupTimeoutSeconds int32 `protobuf:"varint,3,opt,name=cleanup_timeout_seconds,json=cleanupTimeoutSeconds,proto3" json:"cleanup_timeout_seconds,omitempty"`
-	// scrub_profile is one of "standard", "vm-restart", or "in-place" and
-	// selects the §5.2 scrub variant. "vm-restart" adds step 7 (guest VM
-	// restart); with no concrete VMRestarter the adapter withholds the report
-	// (fail-closed) so the missing-report timeout retires the pod. spec: §5.2
-	// scrub profiles. There is no cleanup shell field: the pool configuration
-	// carries none, so cleanup commands run in the default argv mode.
-	ScrubProfile  string `protobuf:"bytes,4,opt,name=scrub_profile,json=scrubProfile,proto3" json:"scrub_profile,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *RecycleScrub) Reset() {
@@ -4876,13 +4876,6 @@ func (x *RecycleScrub) GetCleanupTimeoutSeconds() int32 {
 		return x.CleanupTimeoutSeconds
 	}
 	return 0
-}
-
-func (x *RecycleScrub) GetScrubProfile() string {
-	if x != nil {
-		return x.ScrubProfile
-	}
-	return ""
 }
 
 type ShutdownResponse struct {
@@ -5867,12 +5860,11 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\vdeadline_ms\x18\x03 \x01(\x05R\n" +
 	"deadlineMs\x121\n" +
 	"\aslot_id\x18\x04 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x128\n" +
-	"\arecycle\x18\x05 \x01(\v2\x1e.lenny.adapter.v1.RecycleScrubR\arecycle\"\xad\x01\n" +
+	"\arecycle\x18\x05 \x01(\v2\x1e.lenny.adapter.v1.RecycleScrubR\arecycle\"\x88\x01\n" +
 	"\fRecycleScrub\x12\x15\n" +
 	"\x06pod_id\x18\x01 \x01(\tR\x05podId\x12)\n" +
 	"\x10cleanup_commands\x18\x02 \x03(\tR\x0fcleanupCommands\x126\n" +
-	"\x17cleanup_timeout_seconds\x18\x03 \x01(\x05R\x15cleanupTimeoutSeconds\x12#\n" +
-	"\rscrub_profile\x18\x04 \x01(\tR\fscrubProfile\"V\n" +
+	"\x17cleanup_timeout_seconds\x18\x03 \x01(\x05R\x15cleanupTimeoutSeconds\"V\n" +
 	"\x10ShutdownResponse\x12%\n" +
 	"\x0eexited_cleanly\x18\x01 \x01(\bR\rexitedCleanly\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\"\xea\x02\n" +

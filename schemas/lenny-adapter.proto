@@ -1283,14 +1283,14 @@ message RecycleScrub {
   repeated string cleanup_commands = 2;
   // cleanup_timeout_seconds is the aggregate cap on cleanup_commands; the
   // gateway-side missing-report timeout is this value plus a grace period.
+  // There is no cleanup shell field: the pool configuration carries none, so
+  // cleanup commands run in the default argv mode. There is no scrub_profile
+  // field: the gateway resolves the §5.2 recycle disposition (reuse for
+  // standard/in-place, retire-and-reprovision for vm-restart) from the
+  // recycle policy in its own runtime store, so the wire request carries only
+  // the pod identity and the scrub parameters the adapter runs. spec: §5.2
+  // step 7 (fresh-guest reprovision); §4.7 delivered-parameter enumeration.
   int32 cleanup_timeout_seconds = 3;
-  // scrub_profile is one of "standard", "vm-restart", or "in-place" and
-  // selects the §5.2 scrub variant. "vm-restart" adds step 7 (guest VM
-  // restart); with no concrete VMRestarter the adapter withholds the report
-  // (fail-closed) so the missing-report timeout retires the pod. spec: §5.2
-  // scrub profiles. There is no cleanup shell field: the pool configuration
-  // carries none, so cleanup commands run in the default argv mode.
-  string scrub_profile = 4;
 }
 
 message ShutdownResponse {
