@@ -1265,6 +1265,7 @@
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport",
         "tests/tier2_component/stores/delegationbudgetstore_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExhaustionExtensionAtMostOncePerEvent_CeilingTerminates_F866",
+        "tests/tier9_security/token_usage_anomaly_test.go",
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
         "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go"
       ],

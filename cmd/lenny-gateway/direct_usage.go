@@ -144,12 +144,30 @@ func adapterPuller(b *podsession.BindResult) directUsagePuller {
 	return b.Adapter
 }
 
+// directUsageRecorderOrNil normalizes a *proxyUsageRecorder to the
+// directUsageRecorder interface, returning a genuinely nil interface when rec
+// is a nil pointer. newProxyUsageRecorder returns a nil *proxyUsageRecorder on
+// a usagestore-less gateway; assigning that concrete typed nil straight into
+// the interface would yield a non-nil interface value (Go wraps the type into
+// the interface even when the pointer is nil), so newDirectUsageLoop's
+// recorder==nil short-circuit would not trip and the loop would run an empty
+// ticker instead of being a no-op. Passing the result of this helper trips the
+// guard so the loop is not constructed on a minimal gateway.
+func directUsageRecorderOrNil(rec *proxyUsageRecorder) directUsageRecorder {
+	if rec == nil {
+		return nil
+	}
+	return rec
+}
+
 // newDirectUsageLoop constructs the direct-mode usage-pull loop. It returns
 // nil when any dependency the pull needs is absent (no pod registry, no
 // lease store, or no recorder — the recorder is nil when the gateway has no
 // usagestore), so the caller can start it unconditionally and the loop is a
-// no-op on a minimal gateway that records no usage. intervalSeconds is
-// clamped to the §11.2 bounds (default 30s, minimum 10s).
+// no-op on a minimal gateway that records no usage. Callers pass the recorder
+// through directUsageRecorderOrNil so a nil *proxyUsageRecorder arrives as a
+// genuinely nil interface and trips the guard. intervalSeconds is clamped to
+// the §11.2 bounds (default 30s, minimum 10s).
 func newDirectUsageLoop(registry *podsession.Registry, leases directUsageLeaseLookup, recorder directUsageRecorder, intervalSeconds int, log *slog.Logger) *directUsageLoop {
 	if registry == nil || leases == nil || recorder == nil {
 		return nil

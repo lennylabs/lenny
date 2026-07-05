@@ -541,7 +541,13 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	// recorder is absent (a minimal gateway that records no usage), and Run is a
 	// no-op on a nil loop, so the launch is unconditional. The loop's only exit is
 	// watchdogCtx.Done, so it leaks no goroutine at shutdown. F-15.3.7, F-11.2.20.
-	directUsage := newDirectUsageLoop(w.podRegistry, w.llmLeases, w.proxyUsageRec, *f.directUsagePollIntervalSeconds, slog.Default())
+	//
+	// directUsageRecorderOrNil normalizes the recorder before the interface
+	// conversion: on a usagestore-less gateway newProxyUsageRecorder returns a
+	// nil *proxyUsageRecorder, and passing that concrete typed nil directly would
+	// wrap into a non-nil interface, defeating newDirectUsageLoop's recorder==nil
+	// short-circuit and running an empty ticker.
+	directUsage := newDirectUsageLoop(w.podRegistry, w.llmLeases, directUsageRecorderOrNil(w.proxyUsageRec), *f.directUsagePollIntervalSeconds, slog.Default())
 	if directUsage != nil {
 		log.Printf("lenny-gateway: §11.2 direct-mode ReportUsage poll loop interval=%s", directUsage.interval)
 		go directUsage.Run(w.watchdogCtx)

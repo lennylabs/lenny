@@ -316,6 +316,53 @@ func TestNewDirectUsageLoopNilOnMissingDeps(t *testing.T) {
 	}
 }
 
+// TestDirectUsageRecorderOrNil_TypedNilRecorderYieldsNilLoop proves the
+// typed-nil normalization at the loop's construction site: a nil
+// *proxyUsageRecorder (what newProxyUsageRecorder returns on a usagestore-less
+// gateway) is normalized to a genuinely nil directUsageRecorder interface, so
+// newDirectUsageLoop's recorder==nil guard trips and the loop is not
+// constructed on a minimal gateway. It would fail against the pre-fix code that
+// passed the concrete *proxyUsageRecorder straight into the interface parameter:
+// Go wraps a typed nil into a non-nil interface, so newDirectUsageLoop would
+// return a live loop and run an empty ticker every tick instead of a no-op.
+//
+// spec: §11.2 line 42 (direct-mode usage loop; a minimal gateway records no
+// usage and runs no pull), §4.1 (background subsystems are constructed only
+// when their dependencies are present).
+// diagnosis: the direct-mode poll loop was constructed and ran a live ticker on a usagestore-less gateway because a nil *proxyUsageRecorder wrapped into a non-nil directUsageRecorder interface, defeating the recorder==nil short-circuit (proposal 0024 S9 typed-nil no-op contract broken).
+func TestDirectUsageRecorderOrNil_TypedNilRecorderYieldsNilLoop(t *testing.T) {
+	registry := podsession.NewRegistry()
+	leases := stubLeaseLookup{}
+
+	// A usagestore-less gateway: newProxyUsageRecorder returns a nil
+	// *proxyUsageRecorder. This is exactly the value workers.go passes as
+	// w.proxyUsageRec on a minimal gateway.
+	nilRec := newProxyUsageRecorder(nil, nil, nil, nil, nil, nil)
+	if nilRec != nil {
+		t.Fatal("newProxyUsageRecorder(nil, ...) must return a nil *proxyUsageRecorder")
+	}
+
+	// Reproduce the pre-fix defect: passing the concrete typed nil straight
+	// into the interface parameter wraps it into a non-nil interface, so the
+	// guard does not trip and the loop is constructed.
+	if loop := newDirectUsageLoop(registry, leases, nilRec, 30, nil); loop == nil {
+		t.Fatal("guard sanity: a concrete typed-nil recorder wraps into a non-nil interface, so this pre-fix path yields a live loop")
+	}
+
+	// The fix: normalizing through directUsageRecorderOrNil yields a genuinely
+	// nil interface, so the guard trips and no loop (and no live ticker) is
+	// constructed.
+	if loop := newDirectUsageLoop(registry, leases, directUsageRecorderOrNil(nilRec), 30, nil); loop != nil {
+		t.Fatal("directUsageRecorderOrNil must normalize a nil *proxyUsageRecorder so the loop is not constructed on a minimal gateway")
+	}
+
+	// A non-nil recorder passes through unchanged and yields a live loop.
+	realRec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	if loop := newDirectUsageLoop(registry, leases, directUsageRecorderOrNil(realRec), 30, nil); loop == nil {
+		t.Fatal("a present recorder must yield a live loop through directUsageRecorderOrNil")
+	}
+}
+
 // TestClampDirectUsagePollIntervalSeconds pins the §11.2 poll-interval bounds:
 // a non-positive value selects the 30s default, a value below the 10s minimum
 // is clamped up, and a value at or above the minimum is unchanged.
