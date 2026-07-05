@@ -604,6 +604,69 @@ func TestInspectForRecycleAgainstApiserver_spec_6_39(t *testing.T) {
 	}
 }
 
+// TestInspectForRecycleVMRestartAgainstApiserver verifies the §5.2 step 7 C3
+// wiring against a real API server: the inspector resolves a
+// recycle.scrubProfile: vm-restart pool to PodRecyclePolicy.VMRestart true so
+// the recycle disposition retires the pod at the occupancy-zero boundary rather
+// than reusing it without a fresh guest. The standard-profile pool resolves to
+// VMRestart false. This pins F-5.2.32 at the tier that owns the apiserver read
+// path.
+// spec: 5.2 (vm-restart step 7 fresh-guest reprovision), 4.6.1 (recycle disposition), 6.2 (occupancy projection)
+//
+// diagnosis: a failure means the gateway's recycle pod read does not surface the
+// vm-restart scrub profile against a real apiserver, so the disposition reuses a
+// vm-restart pod after a clean scrub instead of retiring it, returning a
+// persisted guest VM to the next tenant.
+func TestInspectForRecycleVMRestartAgainstApiserver_spec_5_2(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		profile runtimestore.MicrovmScrubMode
+		want    bool
+	}{
+		{"vm-restart", runtimestore.MicrovmScrubVMRestart, true},
+		{"standard", runtimestore.MicrovmScrubStandard, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod-1",
+					Namespace: testNS,
+					Labels: map[string]string{
+						warmpool.LabelPool:            "agents",
+						warmpool.LabelHostSchedulable: "true",
+					},
+				},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
+			}
+			c := newEnvtestClient(t, pod)
+			seedRecyclingClaim(t, c, "pod-1")
+			insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
+				Client:    c,
+				Namespace: testNS,
+				Pools: fakePoolReader{pools: map[string]poolstore.Pool{
+					"agents": recyclingPool("agents", "rt", isolation.ProfileMicrovm, &runtimestore.RecyclePolicy{
+						Enabled: true, MaxSessionsPerPod: 50,
+						ScrubProfile: tc.profile,
+					}),
+				}},
+				Runtimes: fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{"rt": {Name: "rt"}}},
+				Now:      func() time.Time { return now },
+			})
+			if err != nil {
+				t.Fatalf("NewPodInspector: %v", err)
+			}
+			policy, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
+			if err != nil || !found {
+				t.Fatalf("InspectForRecycle = (found=%v, err=%v), want (true, nil)", found, err)
+			}
+			if policy.VMRestart != tc.want {
+				t.Errorf("VMRestart = %v, want %v for scrubProfile %q", policy.VMRestart, tc.want, tc.profile)
+			}
+		})
+	}
+}
+
 // deleteClaim removes the per-pod SandboxClaim, simulating a concurrent
 // reclaim (a racing hold-expiry DELETE or the §4.6.1 orphan GC) that removes
 // the claim while the agent Pod object survives.

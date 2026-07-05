@@ -212,6 +212,14 @@ type PodRecyclePolicy struct {
 	MaxSessionsPerPod int
 	// MaxPodUptimeSeconds is recycle.maxPodUptimeSeconds (0 = no cap).
 	MaxPodUptimeSeconds int64
+	// VMRestart is true when recycle.scrubProfile is vm-restart. On such a pool
+	// the recycle disposition retires the pod at the occupancy-zero boundary
+	// after the whole-pod scrub reports rather than reusing it, and the warm
+	// pool provisions a fresh replacement pod (a fresh guest VM). The
+	// PodInspector resolves it from the pool's runtime-store scrub profile so
+	// the gateway routes on the profile it already holds; the wire report stays
+	// binary. spec: spec/05 §5.2 step 7 (fresh-guest reprovision).
+	VMRestart bool
 	// HostSchedulable is the lenny.dev/host-schedulable pod label read at the
 	// recycle boundary: true only when the label reads "true". An absent or
 	// "false" label is fail-safe-unschedulable. spec: §6.39.
@@ -434,6 +442,7 @@ func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed
 
 	d := podscrub.Decide(podscrub.Inputs{
 		PreConnect:          policy.PreConnect,
+		VMRestart:           policy.VMRestart,
 		Scrub:               scrubInput(failed),
 		OnCleanupFailure:    policy.OnScrubFailure,
 		ScrubFailureCount:   scrubFailureCount,

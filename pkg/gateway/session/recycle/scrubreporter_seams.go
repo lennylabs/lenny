@@ -385,7 +385,13 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 	}
 
 	return leasecontrol.PodRecyclePolicy{
-		PreConnect:          preConnect,
+		PreConnect: preConnect,
+		// spec: spec/05 §5.2 step 7 — a vm-restart pool retires the pod at the
+		// recycle boundary and the warm pool provisions a fresh replacement (a
+		// fresh guest VM). The gateway routes on the profile it already holds in
+		// its runtime store, so the disposition retires rather than reusing the
+		// pod without a fresh guest (fail-open); the wire report stays binary.
+		VMRestart:           recycle.ScrubProfile == runtimestore.MicrovmScrubVMRestart,
 		OnScrubFailure:      onScrubFailure(recycle.OnScrubFailure),
 		MaxScrubFailures:    recycle.MaxScrubFailures,
 		MaxSessionsPerPod:   recycle.MaxSessionsPerPod,

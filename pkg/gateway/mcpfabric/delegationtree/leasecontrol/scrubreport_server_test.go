@@ -652,6 +652,174 @@ func TestReporterPodScrubUnschedulableHostRetiresBothPools_spec_6_39(t *testing.
 	}
 }
 
+// TestReporterPodScrubVMRestartCleanScrubRetiresNotReserves verifies the §5.2
+// step 7 fresh-guest reprovision: a clean whole-pod scrub on a vm-restart pool
+// retires the pod (drain to `released` with the non-counting
+// vm_restart_reprovision reason) rather than reserving or re-warming it, so it
+// is never returned to cross-tenant service without a fresh guest. This pins
+// F-5.2.32: without the VMRestart signal threaded from the recycle boundary
+// into podscrub.Inputs, Decide would take the reuse branch (reserve on a
+// non-preConnect pool, re-warm on a preConnect pool), a fail-open isolation
+// regression. The test drives both pool types to confirm the retire preempts
+// both reuse paths.
+// spec: 5.2 (vm-restart step 7 fresh-guest reprovision), 4.6.1 (recycle disposition), 6.2 (occupancy projection)
+//
+// diagnosis: a failure means a vm-restart pod is reused after a clean scrub —
+// reserved on a non-preConnect pool or re-warmed on a preConnect pool — so the
+// next tenant is handed a pod whose guest VM persisted across the tenant
+// boundary, the exact cross-tenant residual-state leak the vm-restart profile
+// exists to prevent.
+func TestReporterPodScrubVMRestartCleanScrubRetiresNotReserves_spec_5_2(t *testing.T) {
+	for _, preConnect := range []bool{false, true} {
+		c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+		c.served["pod-1"] = 1
+		i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+			PreConnect: preConnect, VMRestart: true,
+			OnScrubFailure:   podscrub.OnCleanupWarn,
+			MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
+		}}
+		r := newReporter(t, c, l, i, d)
+		if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+			t.Fatalf("preConnect=%v: RecordPodScrub: %v", preConnect, err)
+		}
+		if len(d.recycles) != 0 {
+			t.Errorf("preConnect=%v: recycles = %+v, want none (vm-restart retires, does not reuse)", preConnect, d.recycles)
+		}
+		if len(d.retires) != 1 {
+			t.Fatalf("preConnect=%v: retires = %+v, want one vm-restart reprovision retire", preConnect, d.retires)
+		}
+		got := d.retires[0]
+		if got.failed {
+			t.Errorf("preConnect=%v: retire failed = true, want false (vm_restart_reprovision drains to `released`)", preConnect)
+		}
+		if got.reason != podscrub.ReasonVMRestartReprovision {
+			t.Errorf("preConnect=%v: retire reason = %q, want %q", preConnect, got.reason, podscrub.ReasonVMRestartReprovision)
+		}
+		if got.scrubWarning {
+			t.Errorf("preConnect=%v: retire scrubWarning = true, want false (clean scrub stamps no warning)", preConnect)
+		}
+	}
+}
+
+// TestReporterPodScrubStandardCleanScrubReserves verifies the vm-restart retire
+// is scoped to vm-restart pools: an otherwise-identical `standard`-profile pool
+// (VMRestart false) still reserves the pod on a clean scrub. This is the
+// counterpart of TestReporterPodScrubVMRestartCleanScrubRetiresNotReserves and
+// confirms the new retire branch does not regress the standard reuse path.
+// spec: 5.2 (recycle lifecycle standard profile), 4.6.1 (recycle disposition)
+//
+// diagnosis: a failure means the vm-restart retire branch over-fires and
+// retires a standard-profile recycling pod that should have been held for its
+// tenant, collapsing the sequential-reuse path the recycle model provides.
+func TestReporterPodScrubStandardCleanScrubReserves_spec_5_2(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		PreConnect: false, VMRestart: false,
+		OnScrubFailure:   podscrub.OnCleanupWarn,
+		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
+	}}
+	r := newReporter(t, c, l, i, d)
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	if len(d.retires) != 0 {
+		t.Errorf("retires = %+v, want none (standard profile reuses)", d.retires)
+	}
+	if len(d.recycles) != 1 || d.recycles[0].preConnect {
+		t.Errorf("recycles = %+v, want one non-preConnect reserve", d.recycles)
+	}
+}
+
+// TestReporterPodScrubVMRestartWarnFailedRetiresWithWarning verifies the S2
+// item 6 carve: a warn-policy scrub FAILURE that has NOT exhausted
+// maxScrubFailures on a vm-restart pool retires the pod (rather than returning
+// it to the pool and serving the next session as a standard warn-policy pool
+// would) and stamps the scrub_warning annotation on the drain so the retired
+// pod's audit trail records the residual-state marker. The retire uses the
+// non-counting vm_restart_reprovision reason, and the adapter detail is
+// threaded to the audit trail.
+// spec: 5.2 (vm-restart step 7; onScrubFailure warn marker persists), 4.6.1 (recycle disposition), 6.2 (occupancy projection)
+//
+// diagnosis: a failure means a warn-policy scrub failure on a vm-restart pool
+// returns the pod to the available pool and serves the next session (a
+// cross-tenant reuse without a fresh guest), or retires it without stamping the
+// scrub_warning marker, losing the residual-state audit signal the warn policy
+// records.
+func TestReporterPodScrubVMRestartWarnFailedRetiresWithWarning_spec_5_2(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		PreConnect: false, VMRestart: true,
+		OnScrubFailure:   podscrub.OnCleanupWarn,
+		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
+	}}
+	r := newReporter(t, c, l, i, d)
+	// A single failure (scrub_failure_count reaches 1) is well under
+	// maxScrubFailures: 3, so the scrub-exhaustion branch does not fire and the
+	// vm-restart retire is the disposition under test.
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "in-place residue"); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	if len(d.recycles) != 0 {
+		t.Errorf("recycles = %+v, want none (vm-restart warn-failed retires, does not reuse)", d.recycles)
+	}
+	if len(d.retires) != 1 {
+		t.Fatalf("retires = %+v, want one vm-restart reprovision retire", d.retires)
+	}
+	got := d.retires[0]
+	if got.failed {
+		t.Errorf("retire failed = true, want false (vm_restart_reprovision drains to `released`)")
+	}
+	if got.reason != podscrub.ReasonVMRestartReprovision {
+		t.Errorf("retire reason = %q, want %q", got.reason, podscrub.ReasonVMRestartReprovision)
+	}
+	if !got.scrubWarning {
+		t.Errorf("retire scrubWarning = false, want true (warn-policy failure stamps the marker on the drain)")
+	}
+	if got.detail != "in-place residue" {
+		t.Errorf("retire detail = %q, want the adapter failure description threaded through", got.detail)
+	}
+}
+
+// TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter verifies the
+// vm-restart reprovision drains the pod without incrementing
+// lenny_pod_retirement_total: the counter's reason label is frozen to the three
+// §16.1 limit triggers and vm_restart_reprovision is outside that vocabulary
+// (like host_unschedulable and scrub_report_timeout), so the routine
+// per-recycle-boundary reprovision does not widen the frozen label set.
+// spec: 16.1 (lenny_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 5.2 (vm-restart reprovision)
+//
+// diagnosis: a failure means the vm-restart reprovision emits
+// lenny_pod_retirement_total{reason="vm_restart_reprovision"}, a reason value
+// the §16.1 inventory does not declare, breaking the frozen-vocabulary contract
+// on every recycle boundary of a vm-restart pool.
+func TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter_spec_16_1(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		VMRestart: true, OnScrubFailure: podscrub.OnCleanupWarn,
+		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
+		Pool: "agents-pool", RuntimeClass: "gvisor",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonVMRestartReprovision {
+		t.Fatalf("retires = %+v, want one vm_restart_reprovision retire", d.retires)
+	}
+	if len(m.retirements) != 0 {
+		t.Errorf("retirements = %+v, want none (vm_restart_reprovision is outside the §16.1 vocabulary)", m.retirements)
+	}
+}
+
 // TestReporterPodScrubMissingPodIsNoOp verifies a whole-pod scrub for a pod
 // whose claim is gone is a no-op (nothing left to recycle), not an error.
 // spec: 3.4 (recycle disposition)
