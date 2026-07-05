@@ -1239,14 +1239,13 @@ func TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2(t *testing.T) {
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
 		CleanupCommands:       []string{"rm -rf /workspace/*", "sync"},
 		CleanupTimeoutSeconds: 25,
-		ScrubProfile:          "standard",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if len(res.CleanupCommands) != 2 || res.CleanupTimeoutSeconds != 25 || res.ScrubProfile != "standard" {
-		t.Fatalf("BindResult scrub config = %v / %d / %q, want the bind-request fields carried through",
-			res.CleanupCommands, res.CleanupTimeoutSeconds, res.ScrubProfile)
+	if len(res.CleanupCommands) != 2 || res.CleanupTimeoutSeconds != 25 {
+		t.Fatalf("BindResult scrub config = %v / %d, want the bind-request fields carried through",
+			res.CleanupCommands, res.CleanupTimeoutSeconds)
 	}
 	// Swap the real adapter connection for the recording fake so the exact
 	// ShutdownRequest Release sends is observable on the wire.
@@ -1267,9 +1266,6 @@ func TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2(t *testing.T) {
 	}
 	if rc.GetPodId() != "sbx-1" {
 		t.Errorf("RecycleScrub.pod_id = %q, want sbx-1 (the folded SandboxName)", rc.GetPodId())
-	}
-	if rc.GetScrubProfile() != "standard" {
-		t.Errorf("RecycleScrub.scrub_profile = %q, want standard", rc.GetScrubProfile())
 	}
 	if rc.GetCleanupTimeoutSeconds() != 25 {
 		t.Errorf("RecycleScrub.cleanup_timeout_seconds = %d, want 25", rc.GetCleanupTimeoutSeconds())
@@ -1306,7 +1302,6 @@ func TestReleaseFailedOnRecyclingPoolSendsPlainShutdown_spec_6_2(t *testing.T) {
 		Recycle:               true,
 		CleanupCommands:       []string{"rm -rf /workspace/*"},
 		CleanupTimeoutSeconds: 25,
-		ScrubProfile:          "standard",
 		Adapter:               dialRecordingAdapter(t, rec),
 	}
 	if err := binder.Release(context.Background(), res, "failed"); err != nil {

@@ -851,10 +851,6 @@ type RecycleScrub struct {
 	// gateway-side missing-report timeout is this value plus a grace period.
 	// spec: §5.2 whole-pod scrub trigger.
 	CleanupTimeoutSeconds int32
-	// ScrubProfile is one of "standard", "vm-restart", or "in-place" and
-	// selects the §5.2 scrub variant the adapter runs.
-	// spec: §5.2 whole-pod scrub trigger.
-	ScrubProfile string
 }
 
 // ShutdownRecycle is the §4.7 recycle-disposition variant of the proto
@@ -878,7 +874,6 @@ func (c *Client) ShutdownRecycle(ctx context.Context, sessionID string, rc Recyc
 			PodId:                 rc.PodID,
 			CleanupCommands:       rc.CleanupCommands,
 			CleanupTimeoutSeconds: rc.CleanupTimeoutSeconds,
-			ScrubProfile:          rc.ScrubProfile,
 		},
 	})
 	if err != nil {

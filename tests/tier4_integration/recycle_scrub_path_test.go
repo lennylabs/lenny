@@ -345,8 +345,12 @@ func bindRecyclingSession(t *testing.T, binder *podsession.Binder, sessionID, pr
 		Recycle:               true,
 		CleanupCommands:       cleanup,
 		CleanupTimeoutSeconds: 30,
-		ScrubProfile:          profile,
 	})
+	// The scrub profile is not carried on the BindRequest wire echo (C4); the
+	// gateway routes the §5.2 step-7 vm-restart retire on the recycle policy in
+	// its runtime store. profile is retained on the helper signature to keep
+	// each call site documenting the profile the pool under test runs.
+	_ = profile
 	if err != nil {
 		t.Fatalf("Bind recycling session: %v", err)
 	}
@@ -510,34 +514,44 @@ func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
 	}
 }
 
-// TestRecyclePathVMRestartNilRestarterRetires_spec_5_2 asserts the fail-closed
-// posture for a vm-restart pool with no concrete VMRestarter (allowCrossTenant
-// reuse under the default warn policy): the adapter runs the scrub, hits
-// scrub.ErrNoRestarter at step 7, and WITHHOLDS the ReportPodScrub. No report
-// arrives, so the missing-report timeout retires the pod rather than
-// podscrub.Decide reusing it across tenants without the guest VM restart the
-// profile exists to perform. This pins that the withheld report is fail-closed:
-// emitting any outcome under warn would cross-tenant-reuse the pod.
+// TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2 asserts the §5.2
+// step-7 retire-and-reprovision reconciliation end to end on the runc stack. A
+// vm-restart cross-tenant recycle boundary runs the same whole-pod scrub as
+// every other profile and reports its binary outcome exactly once (no
+// withhold), and the gateway routes the retire deliberately: podscrub.Decide
+// with VMRestart set returns a Draining retire tagged ReasonVMRestartReprovision
+// even on a clean scrub under the default warn policy. The warm pool then
+// provisions a fresh replacement pod (a fresh guest VM), so a pod is never
+// returned to cross-tenant service without a fresh guest.
 //
-// diagnosis: a failure means a vm-restart pool without a concrete restarter
-// either emitted a report (which the default warn policy would reuse, a
-// cross-tenant fail-open regression) or the disposition reused a pod whose scrub
-// never reported.
-// spec: 5.2 (vm-restart step 7, cross-tenant reuse, withheld report is
-// fail-closed), 6.2 (retire on missing report)
-func TestRecyclePathVMRestartNilRestarterRetires_spec_5_2(t *testing.T) {
+// This inverts the pre-reconciliation premise. The prior test asserted the
+// adapter WITHHELD the report (relying on the removed in-guest VMRestarter seam
+// and scrub.ErrNoRestarter) so the emergent missing-report timeout retired the
+// pod. Under the reconciliation the report is emitted and the retire is the
+// explicit C3 disposition. This test would fail against the pre-fix code two
+// ways: the pre-fix adapter withholds the report (asserting exactly one report
+// here fails), and the pre-fix podscrub.Decide has no VMRestart branch, so a
+// clean scrub under warn REUSES the pod (asserting a ReasonVMRestartReprovision
+// retire here fails). Both pin the corrected fail-closed outcome.
+//
+// diagnosis: a failure means a vm-restart recycle boundary either withheld or
+// duplicated its scrub report (falling back to the emergent missing-report
+// timeout) or reused the pod across tenants without a fresh guest — the
+// fail-open the explicit retire closes.
+// spec: 5.2 step 7 (fresh-guest reprovision), 4.7 (ReportPodScrub binary
+// outcome), 6.2 (retire disposition)
+func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
 	srv, scrubDone := newRecycleAdapter(t, ops, reporter)
-	// No VMRestarter is wired: scrub.Run returns ErrNoRestarter and the driver
-	// withholds the report.
 	binder, armer := recycleBinder(c, recycleAdapterDialer(t, srv))
 
+	// The cleanup command is a real argv-mode executable that exits zero, so the
+	// whole-pod scrub runs it and reports success. No VMRestarter seam exists:
+	// the vm-restart fresh-guest requirement is met by the gateway retire, not an
+	// in-guest restart step.
 	res := bindRecyclingSession(t, binder, "sess-vmrestart", "vm-restart", []string{"true"})
-	if res.ScrubProfile != "vm-restart" {
-		t.Fatalf("BindResult.ScrubProfile = %q, want vm-restart", res.ScrubProfile)
-	}
 	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
@@ -548,45 +562,56 @@ func TestRecyclePathVMRestartNilRestarterRetires_spec_5_2(t *testing.T) {
 		t.Fatalf("armed timers = %v, want exactly one", armed)
 	}
 
-	// The scrub goroutine finishes; the driver withheld the report on
-	// ErrNoRestarter.
+	// The adapter emits exactly one binary report for the pod (no withhold). The
+	// pre-fix withhold-and-timeout path emitted zero reports here.
+	select {
+	case <-reporter.reported:
+	case <-time.After(5 * time.Second):
+		t.Fatal("vm-restart adapter did not emit ReportPodScrub within 5s (a withheld report is the pre-fix regression)")
+	}
 	<-scrubDone
-	if reps := reporter.snapshot(); len(reps) != 0 {
-		t.Fatalf("vm-restart nil-restarter emitted %d reports, want 0 (withheld, fail-closed)", len(reps))
+	killed, verified, _ := ops.ranScrub()
+	if !killed || !verified {
+		t.Errorf("vm-restart whole-pod scrub host ops ran killed=%v verified=%v, want both true", killed, verified)
+	}
+	reps := reporter.snapshot()
+	if len(reps) != 1 {
+		t.Fatalf("vm-restart ReportPodScrub count = %d, want exactly 1 (no withhold); got %+v", len(reps), reps)
+	}
+	if reps[0].podID != res.SandboxName {
+		t.Errorf("reported pod_id = %q, want %q (the folded SandboxName the timer keys on)", reps[0].podID, res.SandboxName)
+	}
+	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
+		t.Errorf("reported outcome = %v, want PodScrubSucceeded (uniform binary outcome)", reps[0].outcome)
 	}
 
-	// This is why the report is withheld: under the DEFAULT warn policy a
-	// REPORTED failed scrub REUSES the pod (returns it to the pool), which on an
-	// allowCrossTenantReuse pool hands the pod to the next tenant without the
-	// guest VM restart the vm-restart profile exists to perform — a fail-open
-	// cross-tenant regression. Pin that the warn-policy reuse is exactly the
-	// disposition the withhold avoids.
-	failOpen := podscrub.Decide(podscrub.Inputs{
-		Scrub:             podscrub.ScrubFailed,
-		OnCleanupFailure:  podscrub.OnCleanupWarn, // the default policy
+	// The gateway consumer side routes the retire on the profile it holds in its
+	// runtime store (VMRestart), not the wire echo. A clean scrub under the
+	// default warn policy retires with ReasonVMRestartReprovision rather than
+	// reusing the pod. Against the pre-fix Decide (no VMRestart branch) this same
+	// input reuses the pod (ReasonReuse, Reserved) — the fail-open the C3 retire
+	// closes.
+	disp := podscrub.Decide(podscrub.Inputs{
+		VMRestart:         true,
+		Scrub:             scrubResultFor(reps[0].outcome),
+		OnCleanupFailure:  podscrub.OnCleanupWarn, // the default policy that would otherwise reuse
 		MaxSessionsPerPod: 25,
 		SessionsServed:    1,
 		HostSchedulable:   true,
 	})
-	if failOpen.Retire {
-		t.Fatal("test premise broken: a warn-policy failed scrub retired; the withhold must be what prevents reuse")
+	if !disp.Retire {
+		t.Fatalf("clean vm-restart scrub did not retire (reason %q), want a fresh-guest reprovision retire", disp.Reason)
 	}
-	if failOpen.Reason != podscrub.ReasonReuse {
-		t.Fatalf("warn-policy failed scrub disposition = %q, want reuse (the fail-open the withhold avoids)", failOpen.Reason)
+	if disp.NextPhase != state.Draining {
+		t.Errorf("disposition NextPhase = %v, want Draining (retire-and-reprovision)", disp.NextPhase)
 	}
-
-	// The actual path: no report cancels the missing-report timer, so the §3.4
-	// timeout retires the pod (the fail-closed terminal), rather than the
-	// warn-policy reuse above.
-	timeoutRetire := podscrub.Decide(podscrub.Inputs{
-		Scrub:             podscrub.ScrubFailed, // the timeout's fail-closed terminal
-		OnCleanupFailure:  podscrub.OnCleanupFail,
-		MaxSessionsPerPod: 25,
-		SessionsServed:    1,
-		HostSchedulable:   true,
-	})
-	if !timeoutRetire.Retire {
-		t.Fatal("vm-restart nil-restarter pod was not retired, want a fail-closed retire (no cross-tenant reuse)")
+	if disp.Reason != podscrub.ReasonVMRestartReprovision {
+		t.Errorf("disposition reason = %q, want vm_restart_reprovision", disp.Reason)
+	}
+	// The reprovision reason is a routine per-recycle-boundary retire, not a
+	// §16.1 limit trigger, so it is not counted on lenny_pod_retirement_total.
+	if disp.Reason.CountsOnRetirementTotal() {
+		t.Error("ReasonVMRestartReprovision counts on lenny_pod_retirement_total, want a non-counting audit-only reason")
 	}
 }
 

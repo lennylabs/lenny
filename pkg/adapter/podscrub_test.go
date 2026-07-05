@@ -191,8 +191,7 @@ func TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2(t *testing.T
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
-			PodId:        "pod-abc",
-			ScrubProfile: "standard",
+			PodId: "pod-abc",
 		},
 	})
 	if err != nil {
@@ -239,8 +238,7 @@ func TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2(t *test
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
-			PodId:        "pod-empty",
-			ScrubProfile: "standard",
+			PodId: "pod-empty",
 			// CleanupCommands intentionally empty.
 		},
 	}); err != nil {
@@ -278,8 +276,7 @@ func TestShutdownRecycleVMRestartReportsSuccessNoWithhold_spec_5_2(t *testing.T)
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
-			PodId:        "pod-vm",
-			ScrubProfile: "vm-restart",
+			PodId: "pod-vm",
 		},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -318,8 +315,7 @@ func TestShutdownRecycleVMRestartReportsFailedOnDirtyScrub_spec_5_2(t *testing.T
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
-			PodId:        "pod-vm-dirty",
-			ScrubProfile: "vm-restart",
+			PodId: "pod-vm-dirty",
 		},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -383,9 +379,14 @@ func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing
 	s.CredentialsDir = "/run/lenny"
 
 	var first scrub.Config
+	// The loop still iterates the three §5.2 scrub-profile names to document
+	// that the config is byte-identical across profiles. The name is no longer
+	// threaded through the removed scrub_profile wire field: scrubConfig does
+	// not read the profile (the vm-restart fresh-guest requirement is met by
+	// the gateway retire, not an in-guest branch), so the request carries only
+	// the cleanup parameters. spec: 5.2 (whole-pod scrub parameters).
 	for i, profile := range []string{"standard", "in-place", "vm-restart"} {
 		cfg := s.scrubConfig(&adapterv1.RecycleScrub{
-			ScrubProfile:          profile,
 			CleanupCommands:       []string{"echo cleanup"},
 			CleanupTimeoutSeconds: 12,
 		})
@@ -487,7 +488,7 @@ func TestStartPodScrubWithNilScrubOpsWithholdsReport_spec_5_2(t *testing.T) {
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
 
-	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-nilops", ScrubProfile: "standard"})
+	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-nilops"})
 	waitScrubDone(t, done)
 
 	if reports := reporter.snapshot(); len(reports) != 0 {
@@ -523,7 +524,7 @@ func TestStartPodScrubToleratesReportError_spec_5_2(t *testing.T) {
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
 
-	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-err", ScrubProfile: "standard"})
+	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-err"})
 	waitScrubDone(t, done)
 
 	// The driver attempted exactly one report and returned despite the error.
@@ -545,7 +546,7 @@ func TestStartPodScrubWithoutReporterDoesNotPanic_spec_5_2(t *testing.T) {
 	s.PodScrubReporter = nil
 	s.scrubDone = func() { close(done) }
 
-	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-dev", ScrubProfile: "standard"})
+	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-dev"})
 	waitScrubDone(t, done)
 }
 
@@ -590,7 +591,7 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	// the unreleased gate and the test would time out.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-async", ScrubProfile: "standard"},
+		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-async"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}

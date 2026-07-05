@@ -163,9 +163,6 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 	if !bind.Recycle {
 		t.Error("BindResult.Recycle = false, want true (recycling pool)")
 	}
-	if bind.ScrubProfile != string(runtimestore.MicrovmScrubVMRestart) {
-		t.Errorf("BindResult.ScrubProfile = %q, want vm-restart (from the recycle block)", bind.ScrubProfile)
-	}
 	if bind.CleanupTimeoutSeconds != 45 {
 		t.Errorf("BindResult.CleanupTimeoutSeconds = %d, want 45 (from the poolstore sessionPolicy)", bind.CleanupTimeoutSeconds)
 	}
@@ -195,9 +192,6 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 	}
 	if rc.GetPodId() != "sbx-r" {
 		t.Errorf("RecycleScrub.pod_id = %q, want sbx-r (the folded SandboxName the missing-report timeout keys on)", rc.GetPodId())
-	}
-	if rc.GetScrubProfile() != string(runtimestore.MicrovmScrubVMRestart) {
-		t.Errorf("RecycleScrub.scrub_profile = %q, want vm-restart", rc.GetScrubProfile())
 	}
 	if rc.GetCleanupTimeoutSeconds() != 45 {
 		t.Errorf("RecycleScrub.cleanup_timeout_seconds = %d, want 45", rc.GetCleanupTimeoutSeconds())
