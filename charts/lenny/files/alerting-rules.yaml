@@ -1089,7 +1089,7 @@ groups:
             description: The experiment targeting circuit breaker has been open for more than 60s. Experiment assignments are falling back to the control variant.
             summary: Experiment targeting circuit breaker open
         - alert: TokenUsageAnomaly
-          expr: sum by (tenant_id)(rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0
+          expr: sum by (tenant_id) (rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0
           for: 5m
           labels:
             severity: warning

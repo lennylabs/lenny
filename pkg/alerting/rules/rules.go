@@ -1483,7 +1483,7 @@ func warningAlerts() []Rule {
 			// is the sole observer of provider token counts and the gateway
 			// cannot re-derive them; a sustained anomaly rate is the accepted
 			// residual-risk signal for direct-mode token integrity.
-			Expr:        `sum by (tenant_id)(rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0`,
+			Expr:        `sum by (tenant_id) (rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0`,
 			For:         5 * time.Minute,
 			Severity:    SeverityWarning,
 			Summary:     "Direct-mode token usage anomaly",
