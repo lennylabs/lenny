@@ -21,6 +21,8 @@
 // is genuinely keyed on the profile.
 //
 // TESTING.md §12.7.a regression scenarios.
+//
+// spec: 5.2 step 7.
 package vm_restart_recycle_disposition
 
 import (
@@ -89,6 +91,9 @@ func (s *Scenario) Teardown(ctx context.Context) error { return nil }
 // pool reuses. A vm-restart pod reused (or retired under any other
 // reason) is the fail-open this branch closes; a standard pod retired
 // under the vm-restart reason is the branch firing on the wrong profile.
+//
+// spec: 5.2 step 7.
+// diagnosis: a failure means concurrent recycle reports raced the vm-restart retire decision.
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	vmRestart := vu%2 == 0
 	podID := fmt.Sprintf("std-%d", vu%3)
