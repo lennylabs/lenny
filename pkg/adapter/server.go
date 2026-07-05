@@ -167,12 +167,6 @@ type Server struct {
 	// retires the pod rather than reusing it without a scrub having run.
 	// spec: §5.2 (whole-pod scrub).
 	ScrubOps scrub.Ops
-	// VMRestarter performs §5.2 scrub step 7 (guest VM restart) for a
-	// vm-restart pool. Nil until the concrete Kata client lands: the driver
-	// then withholds the report on a vm-restart profile (fail-closed) so the
-	// gateway missing-report timeout retires the pod rather than reusing it.
-	// spec: §5.2 step 7.
-	VMRestarter scrub.VMRestarter
 	// scrubDone is a test-only seam the recycle-scrub driver fires once its
 	// background goroutine returns, so a test can wait for the async scrub
 	// deterministically without a sleep. Nil in production. spec: §5.2 (async

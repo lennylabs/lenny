@@ -4,7 +4,6 @@ package adapter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -24,16 +23,16 @@ import (
 // its missing-report timeout, so a scrub that hangs or crashes here retires
 // the pod rather than leaving it stuck in `recycling`.
 //
-// A vm-restart pool with no concrete VMRestarter cannot perform the step-7
-// guest VM restart, so scrub.Run returns ErrNoRestarter; the driver withholds
-// the report entirely on that error so the gateway missing-report timeout
-// retires the pod. Emitting any report would let podscrub.Decide reuse the pod
-// under the default warn policy, and on an allowCrossTenantReuse pool reuse it
-// across tenants without the VM restart the profile exists to perform (a
-// fail-open isolation regression). Withholding reproduces the fail-closed
-// posture that holds today until the concrete Kata client lands.
+// The adapter runs the same steps 0-6 for every profile and maps the result to
+// a binary SUCCEEDED/FAILED PodScrubOutcome. A vm-restart pool needs no
+// profile-specific step here: the gateway retires the pod and provisions a
+// fresh replacement (a fresh guest VM) at the recycle boundary from the profile
+// it already holds in its runtime store, so the fresh-guest requirement is met
+// by retire-and-reprovision rather than by an in-guest restart the pod cannot
+// perform.
 //
-// spec: §5.2 whole-pod scrub; §4.7 ReportPodScrub.
+// spec: §5.2 (whole-pod scrub, retire-and-reprovision at the gateway); §4.7
+// (ReportPodScrub).
 func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 	go func() {
 		defer s.signalScrubDone()
@@ -59,13 +58,6 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 			return
 		}
 		rep, err := scrub.Run(ctx, s.ScrubOps, s.scrubConfig(rc))
-		if errors.Is(err, scrub.ErrNoRestarter) {
-			// Fail-closed: withhold the report so the gateway retires the pod
-			// rather than reusing it without the guest VM restart.
-			slog.Warn("adapter: vm-restart scrub without a concrete restarter; withholding report so the pod is retired",
-				"pod", rc.GetPodId())
-			return
-		}
 		outcome, detail := scrubOutcome(rep, err)
 		if s.PodScrubReporter == nil {
 			// The dev path has no gateway link; the missing-report timeout is
@@ -99,33 +91,24 @@ func (s *Server) SetScrubDoneHook(f func()) {
 	s.scrubDone = f
 }
 
-// scrubConfig maps the recycle-trigger parameters onto scrub.Config. It leaves
-// Restarter nil for the standard and in-place profiles (which never reach step
-// 7) and only sets MicrovmRestart with the Server's VMRestarter for the
-// vm-restart profile. A vm-restart profile with no concrete restarter leaves
-// MicrovmRestart set with a nil Restarter, so scrub.Run returns ErrNoRestarter
-// and the driver withholds the report (fail-closed). ShellMode is left at its
-// false default because the pool configuration carries no cleanup shell field,
-// so cleanup commands run in the default argv mode.
+// scrubConfig maps the recycle-trigger parameters onto scrub.Config. The
+// adapter runs the same steps 0-6 for every profile: the fresh-guest
+// requirement of a vm-restart pool is met by retire-and-reprovision at the
+// gateway (§5.2 step 7) rather than by an in-guest restart step here, so
+// scrubConfig threads the cleanup, credential, and workspace parameters
+// uniformly with no per-profile divergence. ShellMode is left at its false
+// default because the pool configuration carries no cleanup shell field, so
+// cleanup commands run in the default argv mode.
 //
-// spec: §5.2 (scrub profile selection, lines 473-477); scrub.ErrNoRestarter.
+// spec: §5.2 (whole-pod scrub parameters).
 func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) scrub.Config {
-	cfg := scrub.Config{
+	return scrub.Config{
 		CredentialFile:  s.credentialFilePath(),
 		WorkspaceDir:    s.WorkspaceRoot,
 		CleanupCommands: rc.GetCleanupCommands(),
 		CleanupTimeout:  time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
 	}
-	if rc.GetScrubProfile() == scrubProfileVMRestart {
-		cfg.MicrovmRestart = true
-		cfg.Restarter = s.VMRestarter // nil until the concrete Kata client lands.
-	}
-	return cfg
 }
-
-// scrubProfileVMRestart is the §5.2 scrubProfile that adds step 7 (guest VM
-// restart). standard and in-place never reach step 7. spec: §5.2 lines 473-477.
-const scrubProfileVMRestart = "vm-restart"
 
 // credentialFilePath is the §4.7 credential file the scrub purges in step 0 and
 // re-verifies absent in step 6. It is empty when the adapter has no credentials
@@ -138,11 +121,10 @@ func (s *Server) credentialFilePath() string {
 }
 
 // scrubOutcome converts a completed scrub Report (or a start error) into the
-// ReportPodScrub outcome and an audit detail string. The ErrNoRestarter start
-// error is intercepted by startPodScrub before this is called and never
-// produces a report. A start error or a Failed report maps to PodScrubFailed
-// with a non-empty detail; a succeeded report maps to PodScrubSucceeded with an
-// empty detail. spec: §5.2 (whole-pod scrub outcome); §4.7 (ReportPodScrub).
+// ReportPodScrub outcome and an audit detail string. A start error (for example
+// a nil-Ops error) or a Failed report maps to PodScrubFailed with a non-empty
+// detail; a succeeded report maps to PodScrubSucceeded with an empty detail.
+// spec: §5.2 (whole-pod scrub outcome); §4.7 (ReportPodScrub).
 func scrubOutcome(rep *scrub.Report, err error) (gatewaycontrol.PodScrubOutcome, string) {
 	if err != nil {
 		return gatewaycontrol.PodScrubFailed, err.Error()
