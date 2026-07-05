@@ -348,6 +348,15 @@ runbooks:
     test: TestAgentToLLMProviderPartition
     severity: P1
     coverage: extended
+  # Direct-mode token under-reporting: the runtime adapter is the sole
+  # in-pod observer of provider token counts, and a disrupted agent-to-
+  # provider path is what perturbs the counts the gateway pulls over
+  # ReportUsage, so the agent-to-LLM-provider partition is the closest
+  # chaos scenario for the integrity signal this runbook responds to.
+  token-usage-anomaly:
+    test: TestAgentToLLMProviderPartition
+    severity: P2
+    coverage: extended
   minio-failure:
     test: TestMinIOUnavailable
     severity: P0
