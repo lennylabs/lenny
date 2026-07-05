@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -190,8 +191,7 @@ func TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2(t *testing.T
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
-			PodId:        "pod-abc",
-			ScrubProfile: "standard",
+			PodId: "pod-abc",
 		},
 	})
 	if err != nil {
@@ -238,8 +238,7 @@ func TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2(t *test
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
-			PodId:        "pod-empty",
-			ScrubProfile: "standard",
+			PodId: "pod-empty",
 			// CleanupCommands intentionally empty.
 		},
 	}); err != nil {
@@ -256,33 +255,82 @@ func TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2(t *test
 	}
 }
 
-// TestShutdownRecycleVMRestartWithoutRestarterWithholdsReport asserts the
-// fail-closed posture: a vm-restart profile with no concrete VMRestarter emits
-// no ReportPodScrub at all, leaving the gateway missing-report timeout to
-// retire the pod. Emitting a report would let podscrub.Decide reuse the pod
-// under the default warn policy without the guest VM restart.
+// TestShutdownRecycleVMRestartReportsSuccessNoWithhold asserts the §5.2
+// retire-and-reprovision reconciliation: a vm-restart pool now runs the same
+// whole-pod scrub as every other profile and, on a clean scrub, emits exactly
+// one PodScrubSucceeded report rather than withholding it. Withholding was the
+// pre-reconciliation fail-closed stopgap for the impossible in-guest restart;
+// the cross-tenant retire now happens at the gateway, which routes on the
+// profile it already holds. A withheld report here would fail this test,
+// pinning the corrected outcome against the pre-fix withhold-and-timeout code.
 //
-// diagnosis: a failure means a vm-restart pod without a restarter would emit a
-// report the gateway could reuse under warn — a fail-open isolation regression.
-// spec: 5.2 (whole-pod scrub, vm-restart fail-closed), 4.7 (reportpodscrub)
-func TestShutdownRecycleVMRestartWithoutRestarterWithholdsReport_spec_5_2(t *testing.T) {
-	s, reporter, _, done := recycleServer(t)
+// diagnosis: a failure means a vm-restart recycle boundary withheld its scrub
+// report again, forcing the emergent missing-report timeout instead of the
+// deliberate gateway retire and leaving the report the gateway retire needs
+// unsent.
+// spec: 5.2 (whole-pod scrub, retire-and-reprovision), 4.7 (reportpodscrub)
+func TestShutdownRecycleVMRestartReportsSuccessNoWithhold_spec_5_2(t *testing.T) {
+	s, reporter, ops, done := recycleServer(t)
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
-			PodId:        "pod-vm",
-			ScrubProfile: "vm-restart",
+			PodId: "pod-vm",
 		},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
 	waitScrubDone(t, done)
 
-	if reports := reporter.snapshot(); len(reports) != 0 {
-		t.Fatalf("ReportPodScrub calls = %d, want 0 (report withheld on ErrNoRestarter); got %+v",
-			len(reports), reports)
+	if !ops.killed || !ops.verified {
+		t.Errorf("vm-restart whole-pod scrub did not run: killed=%v verified=%v", ops.killed, ops.verified)
+	}
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("ReportPodScrub calls = %d, want exactly 1 (no withhold); got %+v", len(reports), reports)
+	}
+	if reports[0].podID != "pod-vm" {
+		t.Errorf("reported pod id = %q, want %q", reports[0].podID, "pod-vm")
+	}
+	if reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
+		t.Errorf("outcome = %v, want PodScrubSucceeded", reports[0].outcome)
+	}
+}
+
+// TestShutdownRecycleVMRestartReportsFailedOnDirtyScrub asserts a vm-restart
+// pool whose whole-pod scrub fails a step reports PodScrubFailed rather than
+// withholding. The gateway routes the failed report to the same retire path it
+// routes a clean vm-restart report to; either way the adapter reports its
+// binary outcome and the gateway decides the disposition.
+//
+// diagnosis: a failure means a failed vm-restart scrub stopped reporting
+// PodScrubFailed, hiding a scrub failure the gateway retire audits.
+// spec: 5.2 (whole-pod scrub outcome), 4.7 (reportpodscrub)
+func TestShutdownRecycleVMRestartReportsFailedOnDirtyScrub_spec_5_2(t *testing.T) {
+	s, reporter, ops, done := recycleServer(t)
+	ops.killErr = errors.New("kill -9 -1 failed") // step 1 fails → Failed scrub
+	startRecycleSession(t, s, "sess-1")
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Recycle: &adapterv1.RecycleScrub{
+			PodId: "pod-vm-dirty",
+		},
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	waitScrubDone(t, done)
+
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("ReportPodScrub calls = %d, want exactly 1 (no withhold on failure); got %+v", len(reports), reports)
+	}
+	if reports[0].outcome != gatewaycontrol.PodScrubFailed {
+		t.Errorf("outcome = %v, want PodScrubFailed", reports[0].outcome)
+	}
+	if reports[0].detail == "" {
+		t.Error("failed vm-restart scrub reported an empty detail, want a non-empty audit detail")
 	}
 }
 
@@ -314,75 +362,58 @@ func TestShutdownTerminatePathRunsNoScrub_spec_4_7(t *testing.T) {
 	}
 }
 
-// TestScrubConfigProfileSelection asserts scrubConfig sets MicrovmRestart only
-// for the vm-restart profile, leaves Restarter nil when the Server has no
-// concrete VMRestarter, leaves it unset for standard/in-place, threads the
-// cleanup parameters, and leaves ShellMode false (no cleanup shell field
-// exists in the pool configuration).
+// TestScrubConfigThreadsParametersUniformlyAcrossProfiles asserts scrubConfig
+// threads the cleanup, credential, and workspace parameters identically for
+// every profile and leaves ShellMode false, with no per-profile restart
+// divergence. After the §5.2 retire-and-reprovision reconciliation the adapter
+// no longer sets a per-profile restart field: the fresh-guest requirement of a
+// vm-restart pool is met by the gateway retiring the pod, so standard,
+// in-place, and vm-restart yield byte-identical scrub configs.
 //
-// spec: 5.2 (scrub profile selection)
-func TestScrubConfigProfileSelection_spec_5_2(t *testing.T) {
+// diagnosis: a failure means scrubConfig diverged the config on the scrub
+// profile again, reintroducing the removed in-guest restart seam.
+// spec: 5.2 (whole-pod scrub parameters, retire-and-reprovision)
+func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing.T) {
 	s := New("test")
 	s.WorkspaceRoot = "/workspace/current"
 	s.CredentialsDir = "/run/lenny"
 
-	cases := []struct {
-		profile       string
-		wantMicrovm   bool
-		wantRestarter bool
-	}{
-		{"standard", false, false},
-		{"in-place", false, false},
-		{"vm-restart", true, false}, // no concrete restarter wired
-	}
-	for _, tc := range cases {
+	var first scrub.Config
+	// The loop still iterates the three §5.2 scrub-profile names to document
+	// that the config is byte-identical across profiles. The name is no longer
+	// threaded through the removed scrub_profile wire field: scrubConfig does
+	// not read the profile (the vm-restart fresh-guest requirement is met by
+	// the gateway retire, not an in-guest branch), so the request carries only
+	// the cleanup parameters. spec: 5.2 (whole-pod scrub parameters).
+	for i, profile := range []string{"standard", "in-place", "vm-restart"} {
 		cfg := s.scrubConfig(&adapterv1.RecycleScrub{
-			ScrubProfile:          tc.profile,
 			CleanupCommands:       []string{"echo cleanup"},
 			CleanupTimeoutSeconds: 12,
 		})
-		if cfg.MicrovmRestart != tc.wantMicrovm {
-			t.Errorf("profile %q: MicrovmRestart = %v, want %v", tc.profile, cfg.MicrovmRestart, tc.wantMicrovm)
-		}
-		if (cfg.Restarter != nil) != tc.wantRestarter {
-			t.Errorf("profile %q: Restarter set = %v, want %v", tc.profile, cfg.Restarter != nil, tc.wantRestarter)
-		}
 		if cfg.ShellMode {
-			t.Errorf("profile %q: ShellMode = true, want false (no cleanup shell field)", tc.profile)
+			t.Errorf("profile %q: ShellMode = true, want false (no cleanup shell field)", profile)
 		}
 		if len(cfg.CleanupCommands) != 1 || cfg.CleanupCommands[0] != "echo cleanup" {
-			t.Errorf("profile %q: CleanupCommands = %v, want [echo cleanup]", tc.profile, cfg.CleanupCommands)
+			t.Errorf("profile %q: CleanupCommands = %v, want [echo cleanup]", profile, cfg.CleanupCommands)
 		}
 		if cfg.CleanupTimeout != 12*time.Second {
-			t.Errorf("profile %q: CleanupTimeout = %v, want 12s", tc.profile, cfg.CleanupTimeout)
+			t.Errorf("profile %q: CleanupTimeout = %v, want 12s", profile, cfg.CleanupTimeout)
 		}
 		if cfg.CredentialFile != "/run/lenny/credentials.json" {
-			t.Errorf("profile %q: CredentialFile = %q, want /run/lenny/credentials.json", tc.profile, cfg.CredentialFile)
+			t.Errorf("profile %q: CredentialFile = %q, want /run/lenny/credentials.json", profile, cfg.CredentialFile)
 		}
 		if cfg.WorkspaceDir != "/workspace/current" {
-			t.Errorf("profile %q: WorkspaceDir = %q, want /workspace/current", tc.profile, cfg.WorkspaceDir)
+			t.Errorf("profile %q: WorkspaceDir = %q, want /workspace/current", profile, cfg.WorkspaceDir)
+		}
+		// Every profile yields an identical config: no per-profile restart
+		// divergence survives the retire-and-reprovision reconciliation.
+		if i == 0 {
+			first = cfg
+		} else if !reflect.DeepEqual(cfg, first) {
+			t.Errorf("profile %q: config diverged from standard (%+v vs %+v)", profile, cfg, first)
 		}
 	}
 }
-
-// TestScrubConfigVMRestartUsesServerRestarter asserts that a vm-restart
-// profile wires the Server's concrete VMRestarter when one is present, so the
-// scrub reaches step 7 rather than returning ErrNoRestarter.
-//
-// spec: 5.2 (scrub step 7)
-func TestScrubConfigVMRestartUsesServerRestarter_spec_5_2(t *testing.T) {
-	s := New("test")
-	s.VMRestarter = stubVMRestarter{}
-	cfg := s.scrubConfig(&adapterv1.RecycleScrub{ScrubProfile: "vm-restart"})
-	if !cfg.MicrovmRestart || cfg.Restarter == nil {
-		t.Fatalf("vm-restart with a wired restarter: MicrovmRestart=%v Restarter=%v, want true/non-nil",
-			cfg.MicrovmRestart, cfg.Restarter)
-	}
-}
-
-type stubVMRestarter struct{}
-
-func (stubVMRestarter) RestartGuest(context.Context) error { return nil }
 
 // TestScrubOutcomeMapping asserts scrubOutcome maps a start error and a Failed
 // report to PodScrubFailed with a non-empty detail, and a succeeded report to
@@ -434,27 +465,6 @@ func TestScrubOutcomeMapping_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestStartPodScrubWithholdsReportOnErrNoRestarter asserts the driver's
-// ErrNoRestarter interception directly: a vm-restart config with a nil
-// restarter emits no report through the reporter.
-//
-// spec: 5.2 (vm-restart fail-closed)
-func TestStartPodScrubWithholdsReportOnErrNoRestarter_spec_5_2(t *testing.T) {
-	reporter := &recordingPodScrubReporter{}
-	done := make(chan struct{})
-	s := New("test")
-	s.ScrubOps = newFakePodScrubOps()
-	s.PodScrubReporter = reporter
-	s.scrubDone = func() { close(done) }
-
-	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-vm", ScrubProfile: "vm-restart"})
-	waitScrubDone(t, done)
-
-	if reports := reporter.snapshot(); len(reports) != 0 {
-		t.Fatalf("startPodScrub emitted %d reports on ErrNoRestarter, want 0", len(reports))
-	}
-}
-
 // TestStartPodScrubWithNilScrubOpsWithholdsReport pins the production
 // fail-closed behavior when ScrubOps is not wired. Before the fix, a nil
 // ScrubOps made scrub.Run return a nil-Ops error the driver mapped to
@@ -478,7 +488,7 @@ func TestStartPodScrubWithNilScrubOpsWithholdsReport_spec_5_2(t *testing.T) {
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
 
-	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-nilops", ScrubProfile: "standard"})
+	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-nilops"})
 	waitScrubDone(t, done)
 
 	if reports := reporter.snapshot(); len(reports) != 0 {
@@ -514,7 +524,7 @@ func TestStartPodScrubToleratesReportError_spec_5_2(t *testing.T) {
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
 
-	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-err", ScrubProfile: "standard"})
+	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-err"})
 	waitScrubDone(t, done)
 
 	// The driver attempted exactly one report and returned despite the error.
@@ -536,7 +546,7 @@ func TestStartPodScrubWithoutReporterDoesNotPanic_spec_5_2(t *testing.T) {
 	s.PodScrubReporter = nil
 	s.scrubDone = func() { close(done) }
 
-	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-dev", ScrubProfile: "standard"})
+	s.startPodScrub(&adapterv1.RecycleScrub{PodId: "pod-dev"})
 	waitScrubDone(t, done)
 }
 
@@ -581,7 +591,7 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	// the unreleased gate and the test would time out.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-async", ScrubProfile: "standard"},
+		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-async"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}

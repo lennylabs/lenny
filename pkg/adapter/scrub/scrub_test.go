@@ -135,7 +135,7 @@ func TestRun_StepOrdering_spec_5_2_424(t *testing.T) {
 	kill := stepIndex(rep, StepKillProcesses)
 	rmWs := stepIndex(rep, StepRemoveWorkspace)
 	verify := stepIndex(rep, StepVerify)
-	if !(purge < cleanup && cleanup < kill && kill < rmWs && rmWs < verify) {
+	if purge >= cleanup || cleanup >= kill || kill >= rmWs || rmWs >= verify {
 		t.Fatalf("bad order purge=%d cleanup=%d kill=%d rmWs=%d verify=%d", purge, cleanup, kill, rmWs, verify)
 	}
 }
@@ -324,68 +324,90 @@ func TestRun_CallbackErrorFails_spec_5_2_steps3_5(t *testing.T) {
 	}
 }
 
-type fakeRestarter struct {
-	calls int
-	err   error
+// stepSequence returns the ordered list of step names recorded in a report,
+// so two scrub runs can be compared for an identical step-0-6 sequence.
+func stepSequence(rep *Report) []StepName {
+	seq := make([]StepName, len(rep.Steps))
+	for i, s := range rep.Steps {
+		seq[i] = s.Step
+	}
+	return seq
 }
 
-func (r *fakeRestarter) RestartGuest(context.Context) error {
-	r.calls++
-	return r.err
-}
+// spec: §5.2 step 7 (F-5.2.32) — the vm-restart profile no longer runs an
+// in-guest guest-VM restart; scrub.Run executes the identical whole-pod scrub
+// steps 0-6 for every profile and records no step-7 guest_restart record. The
+// retire-and-reprovision that step 7 mandates for a vm-restart pool happens at
+// the gateway recycle boundary, not in this engine. The scrub Config carries
+// no scrub-profile input, so a vm-restart pool and a standard pool drive Run
+// with identical configs; this test pins that Run produces the identical
+// step-0-6 sequence with no guest_restart step, which is the corrected
+// behavior the pre-fix code violated (it appended a guest_restart step and a
+// second verify for a MicrovmRestart config).
+func TestRun_VMRestartRunsIdenticalSteps0To6AsStandard_spec_5_2_step7(t *testing.T) {
+	cfg := Config{
+		CredentialFile: "/run/lenny/credentials.json",
+		WorkspaceDir:   "/workspace/current",
+		ScratchDirs:    []string{"/var/adapter-scratch"},
+	}
 
-// spec: §5.2 lines 459-461 — microvm restart mode runs step 7 and re-runs
-// the step 6 verification afterward.
-func TestRun_MicrovmRestartRunsStep7AndReverifies_spec_5_2_459(t *testing.T) {
-	ops := newFakeOps()
-	r := &fakeRestarter{}
-	rep, err := Run(context.Background(), ops, Config{
-		MicrovmRestart: true,
-		Restarter:      r,
-	})
+	// A standard pool and a vm-restart pool both drive Run with the same
+	// profile-agnostic config, because the scrub engine no longer branches on
+	// the profile.
+	standardRep, err := Run(context.Background(), newFakeOps(), cfg)
 	if err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("Run (standard): %v", err)
 	}
-	if r.calls != 1 {
-		t.Fatalf("RestartGuest called %d times, want 1", r.calls)
+	vmRestartRep, err := Run(context.Background(), newFakeOps(), cfg)
+	if err != nil {
+		t.Fatalf("Run (vm-restart): %v", err)
 	}
-	if stepIndex(rep, StepGuestRestart) < 0 {
-		t.Fatalf("guest-restart step not recorded")
+
+	standardSeq := stepSequence(standardRep)
+	vmRestartSeq := stepSequence(vmRestartRep)
+	if len(standardSeq) != len(vmRestartSeq) {
+		t.Fatalf("step count differs: standard=%v vm-restart=%v", standardSeq, vmRestartSeq)
 	}
-	// Two verify records: one before step 7, one after.
+	for i := range standardSeq {
+		if standardSeq[i] != vmRestartSeq[i] {
+			t.Fatalf("step %d differs: standard=%q vm-restart=%q (standard=%v vm-restart=%v)",
+				i, standardSeq[i], vmRestartSeq[i], standardSeq, vmRestartSeq)
+		}
+	}
+
+	// The scrub records exactly steps 0-6 (one verify, no guest_restart) for
+	// both profiles.
+	wantSteps := []StepName{
+		StepCredentialPurge, StepCleanupCommands, StepKillProcesses, StepPurgeIPCShm,
+		StepRemoveWorkspace, StepResetEnv, StepClearScratch, StepTruncateLogs, StepVerify,
+	}
+	for i, want := range wantSteps {
+		if i >= len(vmRestartSeq) || vmRestartSeq[i] != want {
+			t.Fatalf("vm-restart step %d = %v, want %q (seq=%v)", i, stepAt(vmRestartSeq, i), want, vmRestartSeq)
+		}
+	}
+	if len(vmRestartSeq) != len(wantSteps) {
+		t.Fatalf("vm-restart recorded %d steps, want exactly %d (steps 0-6, no step 7): %v",
+			len(vmRestartSeq), len(wantSteps), vmRestartSeq)
+	}
 	verifies := 0
-	for _, s := range rep.Steps {
-		if s.Step == StepVerify {
+	for _, s := range vmRestartSeq {
+		if s == StepVerify {
 			verifies++
 		}
 	}
-	if verifies != 2 {
-		t.Fatalf("verify steps = %d, want 2 (pre- and post-restart)", verifies)
-	}
-	if rep.Result != Succeeded {
-		t.Fatalf("Result = %v, want Succeeded", rep.Result)
+	if verifies != 1 {
+		t.Fatalf("vm-restart recorded %d verify steps, want 1 (no re-verify after a removed step 7)", verifies)
 	}
 }
 
-// spec: §5.2 line 459 — a guest-restart failure fails the scrub.
-func TestRun_GuestRestartErrorFails_spec_5_2_459(t *testing.T) {
-	ops := newFakeOps()
-	r := &fakeRestarter{err: errors.New("kata api down")}
-	rep, err := Run(context.Background(), ops, Config{MicrovmRestart: true, Restarter: r})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
+// stepAt returns the step name at i, or a sentinel when i is out of range, so
+// a failure message does not panic on a short sequence.
+func stepAt(seq []StepName, i int) StepName {
+	if i < 0 || i >= len(seq) {
+		return "<out-of-range>"
 	}
-	if rep.Result != Failed {
-		t.Fatalf("Result = %v, want Failed", rep.Result)
-	}
-}
-
-// MicrovmRestart without a Restarter is a configuration error.
-func TestRun_MicrovmRestartWithoutRestarter(t *testing.T) {
-	_, err := Run(context.Background(), newFakeOps(), Config{MicrovmRestart: true})
-	if !errors.Is(err, ErrNoRestarter) {
-		t.Fatalf("err = %v, want ErrNoRestarter", err)
-	}
+	return seq[i]
 }
 
 // A nil Ops is a programming error surfaced as a returned error, not a panic.

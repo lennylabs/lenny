@@ -43,6 +43,14 @@ import (
 	// admitted after its session terminated, -race clean.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/budget_gate_deny_flag_race"
 
+	// Proposal 0034 (F-5.2.32): the §5.2 step 7 recycle boundary under
+	// concurrent scrub reports — a clean scrub on a vm-restart pool must
+	// retire-and-reprovision (draining, ReasonVMRestartReprovision) rather
+	// than reuse the pod (a fail-open that returns it to cross-tenant service
+	// without a fresh guest), and a standard pool reuses, with the shared
+	// per-pod occupancy state raced across reports, -race clean.
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition"
+
 	// Wave 3: §3.5 component-isolated benches.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/auth_jwt_verify_throughput"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/experiment_bucket_determinism"

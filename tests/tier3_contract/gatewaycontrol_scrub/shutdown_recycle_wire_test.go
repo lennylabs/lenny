@@ -7,16 +7,21 @@
 // ShutdownRequest. It pins two properties of the wire contract: a
 // ShutdownRequest with `recycle` unset (the terminate path) encodes
 // byte-identically to the pre-change form so the recycle field is a
-// backward-compatible addition, and a populated RecycleScrub carries all
-// four scrub parameters (pod_id, cleanup_commands, cleanup_timeout_seconds,
-// scrub_profile) through a binary encode/decode. spec: §4.7 (Shutdown
-// recycle disposition); §5.2 (whole-pod scrub trigger).
+// backward-compatible addition, and a populated RecycleScrub carries its
+// scrub parameters (pod_id, cleanup_commands, cleanup_timeout_seconds)
+// through a binary encode/decode. The recycle request no longer carries a
+// scrub_profile: the gateway resolves the §5.2 recycle disposition
+// (reuse for standard/in-place, retire-and-reprovision for vm-restart) from
+// its own runtime store rather than echoing the profile on the wire. spec:
+// §4.7 (Shutdown recycle disposition); §5.2 (whole-pod scrub trigger,
+// fresh-guest reprovision).
 package gatewaycontrol_scrub_test
 
 import (
 	"testing"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -81,16 +86,20 @@ func TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7(t *testing.T) {
 
 // TestShutdownRequestRecycleScrubRoundTrip pins that a ShutdownRequest
 // carrying a populated RecycleScrub survives a proto binary
-// marshal/unmarshal with all four scrub parameters intact (pod_id,
-// cleanup_commands, cleanup_timeout_seconds, scrub_profile), so the gateway
-// and the adapter agree on the recycle-scrub trigger.
-// spec: 4.7 (Shutdown recycle disposition), 5.2 (whole-pod scrub trigger)
+// marshal/unmarshal with its scrub parameters intact (pod_id,
+// cleanup_commands, cleanup_timeout_seconds), so the gateway and the adapter
+// agree on the recycle-scrub trigger. The message carries no scrub_profile:
+// proposal 0034 removed the write-only wire field, so the gateway resolves
+// the §5.2 recycle disposition from its own runtime store rather than
+// echoing the profile on the wire.
+// spec: 4.7 (Shutdown recycle disposition), 5.2 (whole-pod scrub trigger,
+// fresh-guest reprovision)
 //
 // diagnosis: a failure means a field of RecycleScrub was renumbered,
 // retyped, or dropped in schemas/lenny-adapter.proto without regenerating
 // the Go, so the recycle-scrub parameters no longer round-trip and the
 // adapter would run the §5.2 whole-pod scrub with truncated or misread
-// cleanup commands, timeout, or profile.
+// cleanup commands or timeout.
 func TestShutdownRequestRecycleScrubRoundTrip_spec_5_2(t *testing.T) {
 	in := &adapterv1.ShutdownRequest{
 		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
@@ -100,7 +109,6 @@ func TestShutdownRequestRecycleScrubRoundTrip_spec_5_2(t *testing.T) {
 			PodId:                 "sandbox-42",
 			CleanupCommands:       []string{"rm -rf /tmp/scratch", "truncate --size 0 /var/log/agent.log"},
 			CleanupTimeoutSeconds: 30,
-			ScrubProfile:          "vm-restart",
 		},
 	}
 	raw, err := proto.Marshal(in)
@@ -115,7 +123,7 @@ func TestShutdownRequestRecycleScrubRoundTrip_spec_5_2(t *testing.T) {
 		t.Fatalf("round-trip mismatch:\n got %v\nwant %v", &out, in)
 	}
 
-	// Assert each of the four RecycleScrub fields explicitly so a silent
+	// Assert each surviving RecycleScrub field explicitly so a silent
 	// drop of one field (that still round-trips because both sides drop it)
 	// is caught.
 	rc := out.GetRecycle()
@@ -133,7 +141,50 @@ func TestShutdownRequestRecycleScrubRoundTrip_spec_5_2(t *testing.T) {
 	if rc.GetCleanupTimeoutSeconds() != 30 {
 		t.Errorf("cleanup_timeout_seconds = %d, want 30", rc.GetCleanupTimeoutSeconds())
 	}
-	if rc.GetScrubProfile() != "vm-restart" {
-		t.Errorf("scrub_profile = %q, want %q", rc.GetScrubProfile(), "vm-restart")
+}
+
+// TestRecycleScrubHasNoScrubProfileField pins that proposal 0034 removed the
+// write-only scrub_profile wire field (field 4) from RecycleScrub, so the
+// gateway no longer echoes the recycle scrub profile on the wire and resolves
+// the §5.2 recycle disposition from its own runtime store instead. It asserts
+// the message descriptor carries exactly the three surviving scrub-parameter
+// fields (pod_id=1, cleanup_commands=2, cleanup_timeout_seconds=3) and that
+// no field is numbered 4 or named scrub_profile. This assertion fails against
+// the pre-0034 proto that still declared `string scrub_profile = 4;`.
+// spec: 5.2 (fresh-guest reprovision, delivered-parameter enumeration),
+// 4.7 (Shutdown recycle disposition)
+//
+// diagnosis: a failure means the scrub_profile wire field was reintroduced (or
+// never removed) on RecycleScrub, so the gateway would ship a dead write-only
+// profile echo the adapter no longer reads, contradicting the retire-and-
+// reprovision reconciliation.
+func TestRecycleScrubHasNoScrubProfileField_spec_5_2(t *testing.T) {
+	fields := (&adapterv1.RecycleScrub{}).ProtoReflect().Descriptor().Fields()
+
+	// The surviving field set, keyed by field number, must be exactly these
+	// three scrub parameters. A fourth field or a scrub_profile name is the
+	// removed wire echo resurfacing.
+	want := map[protoreflect.FieldNumber]protoreflect.Name{
+		1: "pod_id",
+		2: "cleanup_commands",
+		3: "cleanup_timeout_seconds",
+	}
+	if got := fields.Len(); got != len(want) {
+		t.Fatalf("RecycleScrub field count = %d, want %d (the removal of scrub_profile leaves three fields)", got, len(want))
+	}
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Get(i)
+		if f.Name() == "scrub_profile" {
+			t.Fatalf("RecycleScrub still declares a scrub_profile field (number %d); proposal 0034 removed the write-only wire echo", f.Number())
+		}
+		if wantName, ok := want[f.Number()]; !ok || wantName != f.Name() {
+			t.Errorf("unexpected RecycleScrub field %d = %q; the surviving set is pod_id=1, cleanup_commands=2, cleanup_timeout_seconds=3", f.Number(), f.Name())
+		}
+	}
+	if f := fields.ByNumber(4); f != nil {
+		t.Errorf("RecycleScrub declares field 4 = %q; field 4 (scrub_profile) was removed", f.Name())
+	}
+	if f := fields.ByName("scrub_profile"); f != nil {
+		t.Errorf("RecycleScrub still resolves a scrub_profile field by name (number %d)", f.Number())
 	}
 }

@@ -51,6 +51,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -182,9 +184,14 @@ func poolAdmissionGateCases(suffix string) []poolAdmissionGate {
 				name: ctlXtenantMicrovm, runtimeRef: poolAdmissionRuntime,
 				isolationProfile: "microvm", executionMode: "session",
 				// §5.2: a cross-tenant-reuse microvm pool must set
-				// scrubProfile vm-restart or in-place; the standard in-guest
-				// scrub is insufficient for the cross-tenant residual-state
-				// boundary. The control pool sets vm-restart so it is
+				// scrubProfile vm-restart or in-place; the standard scrub
+				// (steps 0-6) is insufficient for the cross-tenant
+				// residual-state boundary because the guest VM persists
+				// across sessions. scrubProfile vm-restart retires the pod at
+				// the occupancy-zero recycle boundary and the gateway
+				// provisions a fresh replacement pod (a fresh guest VM), which
+				// structurally eliminates the guest-kernel residual state the
+				// scrub cannot reach. The control pool sets vm-restart so it is
 				// admitted, isolating the isolationProfile gate the bad pool
 				// trips (sandboxed) from the scrubProfile requirement.
 				sessionPolicy: recycleCrossTenantScrubbed(),
@@ -267,7 +274,13 @@ func recycleCrossTenant() string {
 // cross-tenant gate. §5.2 rejects cross-tenant reuse on a microvm pool
 // unless scrubProfile is vm-restart or in-place, so the admitted control
 // pool must carry it (vm-restart avoids the in-place
-// acknowledgeMicrovmResidualState requirement).
+// acknowledgeMicrovmResidualState requirement). scrubProfile vm-restart is
+// the retire-and-reprovision mechanism: at the occupancy-zero recycle
+// boundary the pod is retired and the gateway provisions a fresh
+// replacement pod from the warm pool (a fresh guest VM), so no vm-restart
+// pod is rebound to a second tenant's session without a fresh guest. The
+// profile name is unchanged; only the mechanism it selects is
+// retire-and-reprovision rather than an in-guest guest reboot.
 func recycleCrossTenantScrubbed() string {
 	return `"sessionPolicy":{"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,` +
 		`"maxSessionsPerPod":10,"allowCrossTenantReuse":true,"scrubProfile":"vm-restart"}}`
@@ -347,6 +360,164 @@ func seedPoolAdmissionRuntimes(t *testing.T, c *kind.Cluster, probe, gatewayIP s
 func cleanupPool(t *testing.T, c *kind.Cluster, probe, gatewayIP string, admin gwRole, name string) {
 	t.Helper()
 	_ = gatewayRequest(t, c, probe, gatewayIP, "DELETE", "/v1/admin/pools/"+name, admin, "")
+}
+
+// --- §5.2 step 7 vm-restart cross-tenant recycle-boundary retire ---
+//
+// The microvm cross-tenant gate above admits a scrubProfile: vm-restart
+// pool as the corrected control. Admission is only half the boundary: it
+// permits the pool, but the residual-state isolation the deployer opts into
+// with vm-restart is enforced at the recycle boundary, where the gateway
+// decides whether to reuse the scrubbed pod for the next session or retire
+// it. On a vm-restart pool that decision must be a retire-and-reprovision:
+// the standard whole-pod scrub (steps 0-6) cannot reach guest-kernel
+// residual state (DNS cache, TCP TIME_WAIT, page cache, inotify
+// registrations, kernel module state), so returning the pod to the pool
+// would hand the next session a pod whose guest VM persists across the
+// tenant boundary. The fail-closed disposition is to retire the pod at the
+// occupancy-zero boundary and let the warm pool provision a fresh
+// replacement pod, which is a fresh guest VM.
+//
+// This drives podscrub.Decide, the gateway recycle-boundary decision, at a
+// vm-restart cross-tenant boundary in-process (no Kind cluster) so it fails
+// closed wherever the suite runs, mirroring the in-process style of
+// concurrent_slot_isolation_test.go. It is the security-tier regression for
+// the C3 retire branch: before that branch existed, Decide had no
+// scrub-profile input and a clean vm-restart scrub took the reuse path
+// (Reserved or SDKConnecting), returning the pod to cross-tenant service
+// without a fresh guest. The assertions below fail against that pre-fix
+// disposition.
+
+// diagnosis: a vm-restart pod crossed the tenant boundary without a fresh
+// guest. The recycle-boundary disposition (podscrub.Decide) reused a
+// vm-restart pod (Reserved/SDKConnecting/idle) on a clean scrub instead of
+// retiring it, so the next tenant's session would rebind a pod whose guest
+// VM persists across the boundary and carries the previous tenant's
+// guest-kernel residual state (DNS cache, TCP TIME_WAIT, page cache). The
+// fail-closed disposition is a Draining retire; the warm pool then
+// provisions a fresh replacement pod (a fresh guest VM).
+// spec: 5.2 step 7 (fresh-guest reprovision), 13.1, 13.2 (cross-tenant
+// residual-state boundary)
+func TestVMRestartCrossTenantRecycleRetires_spec_5_2_step_7(t *testing.T) {
+	// A vm-restart pool is eligible for cross-tenant sequential reuse
+	// (maxConcurrentSessions: 1, allowCrossTenantReuse: true, microvm).
+	// At the occupancy-zero recycle boundary the pool has served its
+	// session and the whole-pod scrub reported. The recycle-boundary
+	// decision must be a retire, not a reuse, so the pod never rebinds to a
+	// second tenant's session without a fresh guest.
+	//
+	// Each case covers a preConnect / non-preConnect and clean / warn-failed
+	// combination: on a vm-restart pool the retire preempts both reuse paths
+	// (the non-preConnect reserved hold and the preConnect sdk_connecting
+	// re-warm) and both scrub outcomes (a clean scrub and a warn-policy
+	// failure that has not exhausted maxScrubFailures), so no vm-restart pod
+	// reaches the pool for the next tenant regardless of these axes.
+	cases := []struct {
+		name         string
+		preConnect   bool
+		scrub        podscrub.ScrubResult
+		wantWarnAnno bool
+	}{
+		{name: "non-preConnect-clean-scrub", preConnect: false, scrub: podscrub.ScrubSucceeded, wantWarnAnno: false},
+		{name: "preConnect-clean-scrub", preConnect: true, scrub: podscrub.ScrubSucceeded, wantWarnAnno: false},
+		{name: "non-preConnect-warn-failed-scrub", preConnect: false, scrub: podscrub.ScrubFailed, wantWarnAnno: true},
+		{name: "preConnect-warn-failed-scrub", preConnect: true, scrub: podscrub.ScrubFailed, wantWarnAnno: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := podscrub.Decide(podscrub.Inputs{
+				// The cross-tenant residual-state control the microvm gate
+				// admits: scrubProfile vm-restart.
+				VMRestart: true,
+				// The recycle boundary reached occupancy zero after the
+				// pod served one session on a sequential (maxConcurrentSessions:
+				// 1) cross-tenant pool. maxSessionsPerPod: 10 is not yet reached,
+				// so any retire here is the vm-restart reprovision rather than
+				// the session-count limit.
+				SessionsServed:    1,
+				MaxSessionsPerPod: 10,
+				PreConnect:        tc.preConnect,
+				Scrub:             tc.scrub,
+				// A warn-policy scrub failure (below maxScrubFailures) would
+				// otherwise return the pod to the pool with a scrub_warning; on
+				// a vm-restart pool it retires instead.
+				OnCleanupFailure:  podscrub.OnCleanupWarn,
+				ScrubFailureCount: 1,
+				MaxScrubFailures:  3,
+				// The host node is schedulable, so a reuse (not a cordon-drain)
+				// is the disposition the retire must preempt. If Decide reused
+				// the pod, the host-schedulability gate would not mask it.
+				HostSchedulable: true,
+			})
+
+			if !d.Ready {
+				t.Fatalf("§5.2 step 7: the vm-restart recycle disposition is not Ready; the boundary produced no decision")
+			}
+			// The fail-closed disposition: retire and drain. A reuse
+			// (Reserved or SDKConnecting) would return the pod to
+			// cross-tenant service without a fresh guest.
+			if !d.Retire || d.NextPhase != state.Draining {
+				t.Fatalf("§5.2/§13.1 cross-tenant boundary: a vm-restart pod was NOT retired at the recycle "+
+					"boundary (Retire=%v, NextPhase=%q); it would rebind to a second tenant's session without a "+
+					"fresh guest, so the guest-kernel residual state crosses the tenant boundary", d.Retire, d.NextPhase)
+			}
+			if d.NextPhase == state.Reserved || d.NextPhase == state.SDKConnecting {
+				t.Fatalf("§5.2/§13.1: a vm-restart pod took the reuse path (%q); the pod is held for reuse across "+
+					"the tenant boundary without a fresh guest", d.NextPhase)
+			}
+			// The retire is the non-counting vm_restart_reprovision reason: a
+			// routine per-boundary reprovision, not a §16.1 retirement-limit
+			// trigger, so it is audit-trail-only and does not widen the frozen
+			// lenny_pod_retirement_total{reason} vocabulary.
+			if d.Reason != podscrub.ReasonVMRestartReprovision {
+				t.Errorf("§5.2 step 7: the vm-restart retire carries reason %q, want %q",
+					d.Reason, podscrub.ReasonVMRestartReprovision)
+			}
+			if d.Reason.CountsOnRetirementTotal() {
+				t.Errorf("§16.1: the vm-restart reprovision reason %q must not count on lenny_pod_retirement_total; "+
+					"it is a routine per-boundary reprovision, not a retirement-limit trigger", d.Reason)
+			}
+			// A warn-policy scrub failure stamps scrub_warning onto the drain
+			// so the degraded-state marker reaches the retired pod's audit
+			// trail; a clean scrub carries no annotation.
+			if d.ScrubWarning != tc.wantWarnAnno {
+				t.Errorf("§5.2 onScrubFailure: warn: the vm-restart retire ScrubWarning=%v, want %v",
+					d.ScrubWarning, tc.wantWarnAnno)
+			}
+		})
+	}
+}
+
+// diagnosis: a same-tenant (standard/in-place) microvm recycle boundary was
+// retired as if it were a vm-restart pool, or the vm-restart retire fired
+// on the wrong scrub-profile signal. This control asserts that a non-vm-restart
+// pool reuses the pod on a clean scrub, so the vm-restart retire above is
+// specific to the scrubProfile: vm-restart residual-state opt-in and is not a
+// blanket retire that would defeat same-tenant reuse.
+// spec: 5.2 step 7 (fresh-guest reprovision), 5.2 (recycle lifecycle reuse)
+func TestNonVMRestartRecycleReusesControl_spec_5_2(t *testing.T) {
+	// The identical recycle boundary WITHOUT the vm-restart opt-in: a
+	// standard/in-place pool reuses the scrubbed pod for the next session
+	// (Reserved on a non-preConnect pool), so the retire above is driven by
+	// the vm-restart signal rather than a blanket retire.
+	d := podscrub.Decide(podscrub.Inputs{
+		VMRestart:         false,
+		SessionsServed:    1,
+		MaxSessionsPerPod: 10,
+		PreConnect:        false,
+		Scrub:             podscrub.ScrubSucceeded,
+		OnCleanupFailure:  podscrub.OnCleanupWarn,
+		MaxScrubFailures:  3,
+		HostSchedulable:   true,
+	})
+	if !d.Ready {
+		t.Fatalf("control: the standard recycle disposition is not Ready")
+	}
+	if d.Retire || d.NextPhase != state.Reserved {
+		t.Fatalf("control: a standard (non-vm-restart) pool did NOT reuse the pod on a clean scrub "+
+			"(Retire=%v, NextPhase=%q, want Reserved); the vm-restart retire is over-broad and would defeat "+
+			"same-tenant reuse", d.Retire, d.NextPhase)
+	}
 }
 
 // --- §4.7 / §5.3 nonce-only acknowledgment gate ---

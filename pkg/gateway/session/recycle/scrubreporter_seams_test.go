@@ -215,6 +215,61 @@ func TestInspectForRecyclePreConnectRecyclingPool_spec_5_2(t *testing.T) {
 	}
 }
 
+// TestInspectForRecycleVMRestartProfileSetsSignal verifies the inspector maps a
+// recycle.scrubProfile: vm-restart pool to PodRecyclePolicy.VMRestart true, and
+// leaves it false for the standard profile. This is the C3 wiring that threads
+// the scrub-profile signal from the gateway's own runtime store into the
+// recycle disposition so a clean vm-restart scrub retires rather than reuses.
+// Without it VMRestart stays false and Decide reuses the pod, a fail-open
+// cross-tenant residual-state leak.
+// spec: 5.2 (vm-restart step 7 fresh-guest reprovision), 4.6.1 (recycle disposition)
+//
+// diagnosis: a failure means the gateway resolves a vm-restart pool without the
+// VMRestart signal, so the recycle disposition reuses the pod after a clean
+// scrub instead of retiring it, returning a persisted guest VM to the next
+// tenant.
+func TestInspectForRecycleVMRestartProfileSetsSignal_spec_5_2(t *testing.T) {
+	cases := []struct {
+		name    string
+		profile runtimestore.MicrovmScrubMode
+		want    bool
+	}{
+		{"vm-restart", runtimestore.MicrovmScrubVMRestart, true},
+		{"standard", runtimestore.MicrovmScrubStandard, false},
+		{"unset", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+			cl := inspectorClient(t, agentPod("pod-1", "agents", "true", now.Add(-time.Minute)), recyclingClaim("pod-1"))
+			pools := fakePoolReader{pools: map[string]poolstore.Pool{
+				"agents": recyclingPool("agents", "rt", isolation.ProfileMicrovm, &runtimestore.RecyclePolicy{
+					Enabled: true, OnScrubFailure: runtimestore.CleanupFailureWarn,
+					MaxScrubFailures: 3, MaxSessionsPerPod: 50,
+					ScrubProfile: tc.profile,
+				}),
+			}}
+			runtimes := fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{
+				"rt": {Name: "rt"},
+			}}
+			insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
+				Client: cl, Namespace: testNS, Pools: pools, Runtimes: runtimes,
+				Now: func() time.Time { return now },
+			})
+			if err != nil {
+				t.Fatalf("NewPodInspector: %v", err)
+			}
+			policy, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
+			if err != nil || !found {
+				t.Fatalf("InspectForRecycle = (found=%v, err=%v), want (true, nil)", found, err)
+			}
+			if policy.VMRestart != tc.want {
+				t.Errorf("VMRestart = %v, want %v for scrubProfile %q", policy.VMRestart, tc.want, tc.profile)
+			}
+		})
+	}
+}
+
 // TestInspectForRecycleRuntimeDefaultProfile verifies the §16.1 runtime_class
 // label falls back to the pool runtime's default §5.3 profile when the pool
 // carries no IsolationProfile override. A recycling pool with an empty

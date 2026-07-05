@@ -175,14 +175,15 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 	}
 
 	// The recycle-disposition Shutdown: the §5.2 occupancy-zero whole-pod
-	// scrub trigger carrying the podId and the standard scrub profile.
+	// scrub trigger carrying the podId and the cleanup parameters. The scrub
+	// profile is not carried on the wire (C4); the gateway routes the §5.2
+	// step-7 vm-restart retire on its own runtime store.
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId:                 podID,
 			CleanupCommands:       []string{},
 			CleanupTimeoutSeconds: 30,
-			ScrubProfile:          "standard",
 		},
 	})
 	if err != nil {
@@ -230,5 +231,75 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 		Runtime:   "echo",
 	}); err != nil {
 		t.Fatalf("replacement StartSession after recycle: %v (pod did not survive the recycle boundary)", err)
+	}
+}
+
+// spec: 5.2 (ReportPodScrub binary outcome, retire-and-reprovision), 4.7
+// (runtime adapter recycle disposition).
+//
+// diagnosis: a failure means a conforming adapter withheld or duplicated the
+// whole-pod scrub report for a vm-restart pool. Under the §5.2 step-7
+// retire-and-reprovision reconciliation the profile is no longer carried on the
+// wire and the adapter runs the same whole-pod scrub for every profile, so a
+// vm-restart recycle Shutdown must emit exactly one binary ReportPodScrub for
+// its podId with no withhold. The removed in-guest VMRestarter seam once made a
+// vm-restart pod withhold its report (relying on scrub.ErrNoRestarter); a
+// conforming adapter no longer does, and the gateway routes the retire from its
+// own runtime store. A withheld report here would force the emergent
+// missing-report timeout instead of the deliberate gateway retire.
+func TestRecycleScrubVMRestartReportsUniformlyConformance(t *testing.T) {
+	const podID = "pod-recycle-vm"
+	rt := &scrubConformanceRuntime{}
+	ops := &scrubConformanceOps{}
+	reporter := &scrubConformanceReporter{}
+	done := make(chan struct{})
+
+	s := adapter.New("conformance")
+	s.WorkspaceRoot = t.TempDir()
+	s.Runtime = rt
+	s.ScrubOps = ops
+	s.PodScrubReporter = reporter
+	s.SetScrubDoneHook(func() { close(done) })
+
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-vm"},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	// A vm-restart pool's recycle Shutdown carries the same recycle sub-message
+	// as any other profile (the profile is not on the wire). The adapter must
+	// run the whole-pod scrub and report its binary outcome once, with no
+	// per-profile withhold.
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-vm"},
+		Recycle: &adapterv1.RecycleScrub{
+			PodId:                 podID,
+			CleanupCommands:       []string{},
+			CleanupTimeoutSeconds: 30,
+		},
+	}); err != nil {
+		t.Fatalf("recycle Shutdown: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("vm-restart recycle scrub did not finish within 5s")
+	}
+
+	if killed, verified := ops.ran(); !killed || !verified {
+		t.Errorf("vm-restart whole-pod scrub did not run: killed=%v verified=%v", killed, verified)
+	}
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("vm-restart ReportPodScrub calls = %d, want exactly 1 (no withhold): %+v", len(reports), reports)
+	}
+	if reports[0].podID != podID {
+		t.Errorf("reported podId = %q, want %q", reports[0].podID, podID)
+	}
+	if reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
+		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reports[0].outcome)
 	}
 }

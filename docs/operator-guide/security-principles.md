@@ -34,7 +34,7 @@ When a deployer opts into pod reuse, the trust boundary relaxes by acknowledgmen
 
 - `recycle.enabled: true` requires `recycle.acknowledgeBestEffortScrub: true`. A whole-pod scrub runs when occupancy reaches zero (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup, residual-process kill), but it is best-effort: DNS cache, TCP `TIME_WAIT`, and page cache may persist.
 - `maxConcurrentSessions > 1` requires `acknowledgeProcessLevelIsolation: true` and runs a per-slot cleanup at each session release plus a whole-pod scrub at occupancy zero. Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack.
-- `recycle.scrubProfile: in-place` (cross-tenant microvm reuse without a guest restart) requires `recycle.acknowledgeMicrovmResidualState: true`, because guest-kernel residual state crosses the tenant boundary.
+- `recycle.scrubProfile: in-place` reuses the continuing microvm guest across the tenant boundary without provisioning a fresh guest, and requires `recycle.acknowledgeMicrovmResidualState: true`, because guest-kernel residual state crosses the tenant boundary. The `vm-restart` profile instead retires the pod at the recycle boundary and provisions a fresh replacement pod, which is a fresh guest VM, from the warm pool, so it carries no residual-state acknowledgment.
 
 Each acknowledgment is fail-closed: the pool controller rejects a pool that opts into the reuse mode without the corresponding acknowledgment. The session creation response carries `sessionIsolationLevel.residualStateWarning: true` whenever a session runs on a pod that serves more than one session, so a client that requires strict isolation can reject it.
 

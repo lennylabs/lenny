@@ -13,7 +13,15 @@
 //	  → cleanupCommands (deployer code, with LENNY_PREV_* env, no cred file)
 //	  → steps 1-6: kill user procs, ipcrm shm, rm -rf workspace, env reset,
 //	    clear /tmp + /dev/shm + scratch, truncate log buffers, stat-verify
-//	  → step 7 (microvm + restart mode only): guest VM restart, re-verify
+//
+// Steps 0-6 run uniformly for every profile. §5.2 step 7 (the vm-restart
+// profile's fresh-guest reprovision) is not an in-guest operation: an
+// in-guest adapter holds zero RBAC with default-deny egress and host sharing
+// forbidden, so it can neither reach a host-side VM lifecycle API nor survive
+// a restart that destroys its own process. A vm-restart pool instead runs
+// this whole-pod scrub, reports its binary outcome, and is retired and
+// reprovisioned from the warm pool at the gateway recycle boundary, which is
+// a fresh guest VM (spec/06_warm-pod-model.md occupancy-zero disposition).
 //
 // Run is the orchestrator. It reports a Result the §6.2 disposition decider
 // (pkg/sandbox/podscrub) consumes to choose the next pod phase. The host
@@ -92,14 +100,6 @@ type Ops interface {
 	PathState(path string) (exists bool, empty bool, err error)
 }
 
-// VMRestarter performs scrub step 7 for microvm pools with
-// allowCrossTenantReuse and microvmScrubMode: restart: it requests a full
-// guest VM restart through the Kata runtime's VM lifecycle API. A nil
-// restarter on a Config that sets MicrovmRestart is a configuration error.
-type VMRestarter interface {
-	RestartGuest(ctx context.Context) error
-}
-
 // Config carries everything one scrub cycle needs. The zero value runs no
 // cleanup commands and verifies no paths; callers populate it per pool.
 type Config struct {
@@ -149,14 +149,6 @@ type Config struct {
 	// records the step as skipped; a non-nil callback that errors fails the
 	// scrub.
 	TruncateLogs func() error
-
-	// MicrovmRestart requests scrub step 7 (guest VM restart) after steps
-	// 1-6, for a microvm pool running microvmScrubMode: restart. When set,
-	// Restarter must be non-nil.
-	MicrovmRestart bool
-
-	// Restarter performs step 7 when MicrovmRestart is set.
-	Restarter VMRestarter
 }
 
 // StepName labels one scrub step in a Report for observability and tests.
@@ -172,7 +164,6 @@ const (
 	StepClearScratch    StepName = "clear_scratch"    // step 4
 	StepTruncateLogs    StepName = "truncate_logs"    // step 5
 	StepVerify          StepName = "verify"           // step 6
-	StepGuestRestart    StepName = "guest_restart"    // step 7
 )
 
 // StepRecord is one step's outcome in a Report.
@@ -215,26 +206,22 @@ func (r *Report) failed() bool {
 	return false
 }
 
-// ErrNoRestarter is returned when Config.MicrovmRestart is set but
-// Config.Restarter is nil.
-var ErrNoRestarter = errors.New("scrub: MicrovmRestart set without a Restarter")
-
 // Run executes the §5.2 Lenny scrub for one task cycle and returns a
 // Report. Every step runs best-effort: a step that errors is recorded and
 // the scrub continues to the next step so the workspace is cleaned as much
-// as possible, then the overall Result is Failed. Run returns an error only
-// for a misconfiguration that prevents the scrub from starting (a nil Ops,
-// or MicrovmRestart without a Restarter); a step failure is reported in the
-// Report, not as a returned error, because the §6.2 disposition (warn vs
-// fail) is decided downstream.
+// as possible, then the overall Result is Failed. Run runs the whole-pod
+// scrub steps 0-6 uniformly for every profile, including vm-restart: a
+// vm-restart pool is retired and reprovisioned at the gateway recycle
+// boundary rather than restarted in-guest (spec: §5.2 step 7 — fresh-guest
+// reprovision). Run returns an error only for a misconfiguration that
+// prevents the scrub from starting (a nil Ops); a step failure is reported
+// in the Report, not as a returned error, because the §6.2 disposition
+// (warn vs fail) is decided downstream.
 //
 // spec: §5.2 lines 422-437 — scrub procedure; line 438 — best-effort.
 func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	if ops == nil {
 		return nil, errors.New("scrub: nil Ops")
-	}
-	if cfg.MicrovmRestart && cfg.Restarter == nil {
-		return nil, ErrNoRestarter
 	}
 
 	rep := &Report{Result: Succeeded}
@@ -271,13 +258,6 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 
 	// Step 6: verify the scrub. spec line 436.
 	rep.verify(ops, cfg)
-
-	// Step 7 (microvm restart mode): full guest restart, then re-verify.
-	// spec lines 459-461.
-	if cfg.MicrovmRestart {
-		rep.record(StepGuestRestart, false, cfg.Restarter.RestartGuest(ctx))
-		rep.verify(ops, cfg)
-	}
 
 	if rep.failed() {
 		rep.Result = Failed
@@ -360,10 +340,9 @@ func scratchTargets(cfg Config) []string {
 
 // verify runs step 6: stat the workspace, /tmp, /dev/shm, the scratch
 // dirs, and the credential file. A non-empty directory, or a credential
-// file still present, fails the scrub. A re-run (after step 7) overwrites
-// the prior VerifyDirty list and appends a fresh verify StepRecord.
+// file still present, fails the scrub. Run calls verify exactly once, so it
+// starts from a fresh Report with an empty VerifyDirty list.
 func (r *Report) verify(ops Ops, cfg Config) {
-	r.VerifyDirty = nil
 	var verifyErr error
 
 	checkEmpty := func(path string) {

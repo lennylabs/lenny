@@ -6,7 +6,7 @@
 // Gateway → Adapter `Terminate` (proto `Shutdown`) RPC row, and the §5.2
 // "Lenny scrub procedure" trigger paragraph. These two normative sites must
 // agree on the recycle disposition and the parameters the recycle Shutdown
-// carries (podId, cleanupCommands, cleanupTimeoutSeconds, scrubProfile), and
+// carries (podId, cleanupCommands, cleanupTimeoutSeconds), and
 // their bidirectional cross-references must resolve to live headings. This
 // test pins that agreement so a later spec edit cannot silently drift the two
 // sites apart or orphan the cross-reference.
@@ -25,15 +25,17 @@ import (
 	"testing"
 )
 
-// recycleScrubParams are the four parameters the recycle-disposition Shutdown
+// recycleScrubParams are the parameters the recycle-disposition Shutdown
 // carries. Both the §4.7 `Terminate` row and the §5.2 scrub-procedure trigger
-// paragraph must name all four, so an adapter implementer reading either site
-// learns the same contract. spec: §4.7, §5.2.
+// paragraph must name each one, so an adapter implementer reading either site
+// learns the same contract. Proposal 0034 removed the `scrub_profile` wire
+// field (the gateway holds the recycle scrub profile in its own runtime store
+// for the vm-restart retire decision), so `scrubProfile` is no longer a
+// delivered wire parameter and is not in this set. spec: §4.7, §5.2.
 var recycleScrubParams = []string{
 	"podId",
 	"cleanupCommands",
 	"cleanupTimeoutSeconds",
-	"scrubProfile",
 }
 
 // spec: 4.7, 5.2
@@ -42,8 +44,10 @@ var recycleScrubParams = []string{
 //	scrub procedure" trigger paragraph disagree on the recycle disposition or
 //	the parameters it carries. Proposal 0031 (S-A1) defined the same contract
 //	in both sites: the recycle disposition carries podId, cleanupCommands,
-//	cleanupTimeoutSeconds, and scrubProfile, and the adapter reports the
-//	outcome via ReportPodScrub. A failure here means one site dropped the
+//	and cleanupTimeoutSeconds, and the adapter reports the outcome via
+//	ReportPodScrub. Proposal 0034 removed the `scrub_profile` wire field, so
+//	the delivered request no longer carries scrubProfile. A failure here means
+//	one site dropped the
 //	recycle disposition, dropped one of the carried parameters, or stopped
 //	naming ReportPodScrub, leaving an adapter implementer with two different
 //	contracts depending on which section they read.
@@ -65,8 +69,8 @@ func TestRecycleTriggerConsistentAcrossSpec47And52_F5215(t *testing.T) {
 	// procedure paragraph that carries the trigger text.
 	triggerParagraph := requireLine(t, s52, "The gateway triggers the whole-pod scrub")
 
-	// Both sites name the recycle disposition and carry all four scrub
-	// parameters.
+	// Both sites name the recycle disposition and carry every delivered scrub
+	// parameter.
 	requireAllContain(t, "§4.7 Terminate (proto Shutdown) row", terminateRow, []string{
 		"recycle disposition",
 		"ReportPodScrub",
@@ -79,10 +83,10 @@ func TestRecycleTriggerConsistentAcrossSpec47And52_F5215(t *testing.T) {
 	})
 	for _, param := range recycleScrubParams {
 		if !strings.Contains(terminateRow, "`"+param+"`") {
-			t.Errorf("§4.7 Terminate (proto Shutdown) row does not carry the recycle parameter %q; §4.7 and §5.2 must agree on all four (podId, cleanupCommands, cleanupTimeoutSeconds, scrubProfile)", param)
+			t.Errorf("§4.7 Terminate (proto Shutdown) row does not carry the recycle parameter %q; §4.7 and §5.2 must agree on all three (podId, cleanupCommands, cleanupTimeoutSeconds)", param)
 		}
 		if !strings.Contains(triggerParagraph, "`"+param+"`") {
-			t.Errorf("§5.2 scrub-procedure trigger paragraph does not carry the recycle parameter %q; §4.7 and §5.2 must agree on all four (podId, cleanupCommands, cleanupTimeoutSeconds, scrubProfile)", param)
+			t.Errorf("§5.2 scrub-procedure trigger paragraph does not carry the recycle parameter %q; §4.7 and §5.2 must agree on all three (podId, cleanupCommands, cleanupTimeoutSeconds)", param)
 		}
 	}
 

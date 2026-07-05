@@ -721,8 +721,11 @@ func TestTerminateRejectsAnUnassignedSession(t *testing.T) {
 
 // spec: §4.7 (Shutdown recycle disposition), §5.2 (whole-pod scrub trigger).
 // ShutdownRecycle sets the recycle sub-message on the ShutdownRequest,
-// carrying the pod identity and the three scrub parameters so the adapter
-// runs the §5.2 whole-pod scrub for the occupancy-zero recycle boundary.
+// carrying the pod identity and the whole-pod scrub parameters so the adapter
+// runs the §5.2 whole-pod scrub for the occupancy-zero recycle boundary. The
+// scrub profile is not carried on the wire; the gateway routes the §5.2 step-7
+// vm-restart retire on its own runtime store (C4), so the recycle sub-message
+// carries only podId, cleanupCommands, and cleanupTimeoutSeconds.
 func TestShutdownRecyclePopulatesTheRecycleSubMessage(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
@@ -731,7 +734,6 @@ func TestShutdownRecyclePopulatesTheRecycleSubMessage(t *testing.T) {
 		PodID:                 "sandbox-abc",
 		CleanupCommands:       []string{"rm -rf /tmp/work", "true"},
 		CleanupTimeoutSeconds: 45,
-		ScrubProfile:          "vm-restart",
 	})
 	if err != nil {
 		t.Fatalf("ShutdownRecycle: %v", err)
@@ -757,9 +759,6 @@ func TestShutdownRecyclePopulatesTheRecycleSubMessage(t *testing.T) {
 	}
 	if got := rc.GetCleanupTimeoutSeconds(); got != 45 {
 		t.Errorf("recycle cleanup_timeout_seconds = %d, want 45", got)
-	}
-	if got := rc.GetScrubProfile(); got != "vm-restart" {
-		t.Errorf("recycle scrub_profile = %q, want vm-restart", got)
 	}
 }
 
@@ -792,8 +791,7 @@ func TestShutdownRecycleSurfacesRPCError(t *testing.T) {
 	cl := dialAdapter(t, srv)
 
 	clean, err := cl.ShutdownRecycle(context.Background(), "sess-absent", adapterclient.RecycleScrub{
-		PodID:        "sandbox-abc",
-		ScrubProfile: "standard",
+		PodID: "sandbox-abc",
 	})
 	if err == nil {
 		t.Error("ShutdownRecycle of an unassigned session succeeded, want a failure")

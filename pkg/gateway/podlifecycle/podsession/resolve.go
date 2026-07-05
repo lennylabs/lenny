@@ -110,11 +110,13 @@ type PoolMatch struct {
 	// scrub steps. They are gateway-enforced and live on the poolstore
 	// sessionPolicy mirror (not the CRD pair), so foldPoolPolicy copies
 	// them in from the PoolPolicyMirror the way AllowCrossTenantReuse is
-	// folded. The recycle-path Shutdown carries them (plus MicrovmScrubMode
-	// as scrubProfile) to the adapter so the scrub runs against the pool
-	// configuration as it stood at session start. Both are zero on a
-	// non-recycling pool or a pool with no mirror row. spec: §5.2 (whole-pod
-	// scrub, sessionPolicy gateway-enforced subset); §4.6.3.
+	// folded. The recycle-path Shutdown carries them to the adapter so the
+	// scrub runs against the pool configuration as it stood at session start.
+	// The scrub profile is not carried on the wire; the gateway routes the
+	// §5.2 step-7 vm-restart retire on the recycle policy in its own runtime
+	// store (C4). Both are zero on a non-recycling pool or a pool with no
+	// mirror row. spec: §5.2 (whole-pod scrub, sessionPolicy gateway-enforced
+	// subset); §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the

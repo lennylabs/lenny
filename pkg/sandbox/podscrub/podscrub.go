@@ -83,6 +83,19 @@ type Inputs struct {
 	// pod re-warms through sdk_connecting between tasks. spec: §6.2 line 76.
 	PreConnect bool
 
+	// VMRestart is true when the pool's recycle policy sets
+	// recycle.scrubProfile: vm-restart. On such a pool a pod is retired at the
+	// occupancy-zero recycle boundary after the whole-pod scrub reports, and
+	// the warm pool provisions a fresh replacement pod (a fresh guest VM). The
+	// in-place guest restart the profile name once implied is unimplementable
+	// under the agent-pod isolation model, so the achievable mechanism is
+	// retire-and-reprovision: the gateway holds the scrub profile in its
+	// runtime store and sets this flag so Decide takes the retire branch rather
+	// than reusing the pod (which would return it to cross-tenant service
+	// without a fresh guest, a fail-open). spec: spec/05 §5.2 step 7
+	// (fresh-guest reprovision).
+	VMRestart bool
+
 	// Scrub is the reported outcome of this task's Lenny scrub.
 	Scrub ScrubResult
 
@@ -185,6 +198,21 @@ const (
 	// spec/16 §16.1.1 (retirement-reason vocabulary is the three limit triggers
 	// only).
 	ReasonScrubReportTimeout RetireReason = "scrub_report_timeout"
+	// ReasonVMRestartReprovision: the pod ran on a recycle.scrubProfile:
+	// vm-restart pool, so the recycle disposition retires it at the
+	// occupancy-zero boundary and the warm pool provisions a fresh replacement
+	// pod (a fresh guest VM). A fresh microvm pod structurally eliminates every
+	// guest-kernel-level residual-state vector the in-guest scrub cannot reach,
+	// so this retire, rather than a reuse, is the fail-closed disposition for a
+	// vm-restart pool. This is a routine per-recycle-boundary reprovision rather
+	// than one of the three retirement-limit triggers, so it is NOT a member of
+	// the lenny_pod_retirement_total{reason} vocabulary and
+	// CountsOnRetirementTotal reports false for it (like ReasonHostUnschedulable
+	// and ReasonScrubReportTimeout); the disposition still drives the drain and
+	// records the reason in the audit trail. spec: spec/05 §5.2 step 7
+	// (retire-and-reprovision), spec/16 §16.1.1 (retirement-reason vocabulary is
+	// the three limit triggers only).
+	ReasonVMRestartReprovision RetireReason = "vm_restart_reprovision"
 )
 
 // CountsOnRetirementTotal reports whether this reason is a member of the
@@ -242,15 +270,20 @@ type Disposition struct {
 
 // Decide maps the recycle-disposition inputs to the single §6.2
 // disposition. The precedence is: pending (wait) → fail-policy
-// termination → scrub exhaustion → count/uptime retirement →
-// host-schedulability retire gate → reuse (preConnect re-warm or
-// non-preConnect reserve). Higher-precedence retirement reasons
-// short-circuit lower ones, so a pod that has both failed its scrub
-// (under warn, not exhausted) and reached recycle.maxSessionsPerPod
-// retires on session_count_limit rather than re-entering the pool. The
-// host-schedulability retire (§6.39) sits below the limit retirements but
-// above every reuse path, so it preempts both the preConnect re-warm and
-// the non-preConnect reserve when the host node is cordoned.
+// termination → scrub exhaustion → vm-restart reprovision retire →
+// count/uptime retirement → host-schedulability retire gate → reuse
+// (preConnect re-warm or non-preConnect reserve). Higher-precedence
+// retirement reasons short-circuit lower ones, so a pod that has both
+// failed its scrub (under warn, not exhausted) and reached
+// recycle.maxSessionsPerPod retires on session_count_limit rather than
+// re-entering the pool. The vm-restart reprovision retire (§5.2 step 7)
+// sits below the fail-policy and scrub-exhaustion retirements but above the
+// session-count, uptime, and host-schedulability branches, so every
+// occupancy-zero retire on a vm-restart pool uses the non-counting
+// vm_restart_reprovision reason. The host-schedulability retire (§6.39)
+// sits below the limit retirements but above every reuse path, so it
+// preempts both the preConnect re-warm and the non-preConnect reserve when
+// the host node is cordoned.
 func Decide(in Inputs) Disposition {
 	if in.Scrub == ScrubPending {
 		return Disposition{} // Ready == false; the driver waits.
@@ -288,6 +321,36 @@ func Decide(in Inputs) Disposition {
 			NextPhase: state.Draining,
 			Retire:    true,
 			Reason:    ReasonScrubFailuresExhausted,
+		}
+	}
+
+	// spec: spec/05 §5.2 step 7 — a vm-restart pool retires the pod at the
+	// occupancy-zero recycle boundary and the warm pool provisions a fresh
+	// replacement (a fresh guest VM). Reusing the pod here would return it to
+	// cross-tenant service without a fresh guest (fail-open), which this branch
+	// closes. The branch sits after the fail-policy and scrub-exhausted retire
+	// branches so a genuine onScrubFailure: fail failure keeps its fail-closed
+	// Failed disposition and a cumulative scrub-failure-limit retire keeps its
+	// counting ReasonScrubFailuresExhausted reason (a scrub-failure limit is a
+	// genuine limit trigger even on a vm-restart pool). It sits BEFORE the
+	// session-count, uptime, and host-unschedulable branches so every
+	// occupancy-zero vm-restart retire uses the non-counting
+	// ReasonVMRestartReprovision uniformly, including a maxSessionsPerPod: 1 pool
+	// whose read-back served-session count equals maxSessionsPerPod at the
+	// recycle boundary: placing the branch after the session-count branch would
+	// retire that pod with the counting ReasonSessionCountLimit and diverge the
+	// retire reason between two otherwise-identical one-session-per-pod pools on
+	// whether maxSessionsPerPod is 1 or >= 2. ScrubWarning carries the
+	// scrub_warning annotation onto the drain when this task's scrub failed under
+	// the warn policy, mirroring the cordon-drain retire below; on a clean scrub
+	// warned is false and no annotation is stamped.
+	if in.VMRestart {
+		return Disposition{
+			Ready:        true,
+			NextPhase:    state.Draining,
+			ScrubWarning: warned,
+			Retire:       true,
+			Reason:       ReasonVMRestartReprovision,
 		}
 	}
 

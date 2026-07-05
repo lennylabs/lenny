@@ -465,16 +465,17 @@ type BindRequest struct {
 	// ConfigureWorkspace (still SDK-warm) without re-running the blocking-path
 	// match. Meaningful only when PreConnect is true. spec: §6.1 lines 30-40.
 	Demoted bool
-	// CleanupCommands, CleanupTimeoutSeconds, and ScrubProfile are the §5.2
-	// whole-pod scrub parameters resolved from the pool's sessionPolicy at
-	// bind time. Bind carries them onto BindResult so the recycle-path
-	// Shutdown delivers them to the adapter (the §4.7 recycle disposition)
-	// without re-resolving the pool at the release boundary, matching how the
-	// Recycle flag is captured once at bind. Empty/zero on a non-recycling
-	// pool. spec: §5.2 (whole-pod scrub trigger), §4.6.3.
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
+	// parameters resolved from the pool's sessionPolicy at bind time. Bind
+	// carries them onto BindResult so the recycle-path Shutdown delivers them
+	// to the adapter (the §4.7 recycle disposition) without re-resolving the
+	// pool at the release boundary, matching how the Recycle flag is captured
+	// once at bind. Empty/zero on a non-recycling pool. The scrub profile is
+	// not carried on the wire; the gateway routes the §5.2 step-7 vm-restart
+	// retire on the recycle policy in its own runtime store (C4). spec: §5.2
+	// (whole-pod scrub trigger), §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
-	ScrubProfile          string
 }
 
 // BindResult reports the pod a session was bound to.
@@ -513,19 +514,20 @@ type BindResult struct {
 	// terminates after the session or cohort drains. spec: §3.1, §3.4,
 	// §6.30/§6.41.
 	Recycle bool
-	// CleanupCommands, CleanupTimeoutSeconds, and ScrubProfile are the §5.2
-	// whole-pod scrub parameters carried from the bind request so the
-	// recycle-path Shutdown delivers them to the adapter without re-resolving
-	// the pool. shutdownAdapter builds them into the §4.7 RecycleScrub
-	// sub-message (with PodId == SandboxName) only on the recycle branch; the
-	// retire path sends a plain Shutdown and ignores them. They are populated
-	// only on the session-mode (exclusive) bind result; the concurrent-session
-	// bind result leaves them empty because its occupancy-zero recycle trigger
-	// is a follow-on. Empty/zero on a non-recycling pool. spec: §5.2 (whole-pod
-	// scrub trigger), §4.6.3.
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
+	// parameters carried from the bind request so the recycle-path Shutdown
+	// delivers them to the adapter without re-resolving the pool.
+	// shutdownAdapter builds them into the §4.7 RecycleScrub sub-message (with
+	// PodId == SandboxName) only on the recycle branch; the retire path sends a
+	// plain Shutdown and ignores them. They are populated only on the
+	// session-mode (exclusive) bind result; the concurrent-session bind result
+	// leaves them empty because its occupancy-zero recycle trigger is a
+	// follow-on. Empty/zero on a non-recycling pool. The scrub profile is not
+	// carried on the wire; the gateway routes the §5.2 step-7 vm-restart retire
+	// on the recycle policy in its own runtime store (C4). spec: §5.2
+	// (whole-pod scrub trigger), §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
-	ScrubProfile          string
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
 	Adapter *adapterclient.Client
@@ -1020,7 +1022,6 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		// delivers them to the adapter without re-resolving the pool.
 		CleanupCommands:       req.CleanupCommands,
 		CleanupTimeoutSeconds: req.CleanupTimeoutSeconds,
-		ScrubProfile:          req.ScrubProfile,
 		Adapter:               cl,
 		Timings:               t,
 		WorkspaceRoot:         neg.WorkspaceRoot,
@@ -1892,7 +1893,6 @@ func (b *Binder) shutdownAdapter(ctx context.Context, result *BindResult, recycl
 			PodID:                 result.SandboxName,
 			CleanupCommands:       result.CleanupCommands,
 			CleanupTimeoutSeconds: int32(result.CleanupTimeoutSeconds),
-			ScrubProfile:          result.ScrubProfile,
 		})
 	} else {
 		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
