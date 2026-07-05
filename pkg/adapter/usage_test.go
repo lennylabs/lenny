@@ -207,6 +207,57 @@ func TestReportUsageWithMeterIsImplemented_spec_4_7(t *testing.T) {
 	}
 }
 
+// spec: §4.7 (ReportUsage), §11.2 (direct-mode usage)
+// WireDirectModeUsage is the single production wiring point
+// cmd/lenny-adapter calls during server assembly (F-15.3.7). It must
+// install the meter on the server so ReportUsage stops returning
+// Unimplemented, and, when a lifecycle channel is present, wire the token
+// sink onto that channel so llm_request_completed frames fold. This pins
+// both effects; a nil-channel call still installs the meter (the
+// Basic/Standard path).
+func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
+	// Nil lifecycle channel: the meter is still installed so ReportUsage is
+	// implemented, and no sink is wired (the Basic/Standard path).
+	sNoLC := New("served")
+	meter := WireDirectModeUsage(sNoLC, nil)
+	if meter == nil {
+		t.Fatal("WireDirectModeUsage returned a nil meter")
+	}
+	if sNoLC.Usage == nil {
+		t.Fatal("WireDirectModeUsage did not install the meter on s.Usage; ReportUsage would return Unimplemented")
+	}
+
+	// With a lifecycle channel, the sink is wired onto it before Run, and a
+	// completed-LLM frame folds its tokens into the wired meter under the
+	// pod's current session.
+	s := New("served")
+	s.mu.Lock()
+	s.sessionID = "sess-wire"
+	s.mu.Unlock()
+	lc, err := NewLifecycleChannel(shortSocketName(t, "wire.sock"))
+	if err != nil {
+		t.Fatalf("NewLifecycleChannel: %v", err)
+	}
+	t.Cleanup(func() { _ = lc.Close() })
+	m := WireDirectModeUsage(s, lc)
+	if s.Usage == nil {
+		t.Fatal("WireDirectModeUsage did not install the meter with a lifecycle channel present")
+	}
+	if lc.usage == nil {
+		t.Fatal("WireDirectModeUsage did not wire the token sink onto the lifecycle channel")
+	}
+
+	// The wired sink folds into the returned meter under the current session.
+	lc.usage.AddTokens(11, 4)
+	u, err := m.Cumulative(context.Background(), "sess-wire")
+	if err != nil {
+		t.Fatalf("Cumulative: %v", err)
+	}
+	if u.InputTokens != 11 || u.OutputTokens != 4 {
+		t.Fatalf("wired-sink fold = (%d,%d), want (11,4)", u.InputTokens, u.OutputTokens)
+	}
+}
+
 // spec: §4.7 (ReportUsage)
 // Without a meter the handler still returns Unimplemented (the nil-meter
 // fail path), so the Basic/Standard adapter reports the capability absent
