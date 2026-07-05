@@ -314,6 +314,150 @@ func TestDecideHostUnschedulableRetiresBothPoolTypes(t *testing.T) {
 	}
 }
 
+// TestDecideVMRestartRetiresAndReprovisions pins the §5.2 step 7 vm-restart
+// disposition: a vm-restart pool retires the pod at the occupancy-zero recycle
+// boundary (draining) with the non-counting ReasonVMRestartReprovision on a
+// clean scrub, rather than reusing it (reserve or re-warm). Reusing the pod
+// would return it to cross-tenant service without a fresh guest, the fail-open
+// this branch closes, so the non-happy path is a Reserved/SDKConnecting reuse
+// disposition on a vm-restart pool. standard and in-place pools keep their
+// reuse dispositions.
+// spec: spec/05 §5.2 step 7 (retire-and-reprovision), §16.1 (retirement reason vocabulary).
+func TestDecideVMRestartRetiresAndReprovisions(t *testing.T) {
+	// A clean scrub on a vm-restart pool retires (draining, non-counting).
+	in := base()
+	in.VMRestart = true
+	got := Decide(in)
+	if got.NextPhase != state.Draining || !got.Retire || got.Reason != ReasonVMRestartReprovision {
+		t.Fatalf("vm-restart clean scrub: got %q retire=%v reason=%q, want draining/true/vm_restart_reprovision",
+			got.NextPhase, got.Retire, got.Reason)
+	}
+	if got.ScrubWarning {
+		t.Errorf("vm-restart clean scrub: ScrubWarning = true, want false (no scrub failure)")
+	}
+
+	// A preConnect vm-restart pool also retires (no SDK re-warm leg).
+	pre := base()
+	pre.VMRestart = true
+	pre.PreConnect = true
+	if got := Decide(pre); got.NextPhase != state.Draining || got.Reason != ReasonVMRestartReprovision {
+		t.Errorf("vm-restart preConnect clean scrub: got %q/%q, want draining/vm_restart_reprovision",
+			got.NextPhase, got.Reason)
+	}
+
+	// A standard (non-vm-restart) pool still reuses (reserve), so the branch is
+	// keyed on the profile flag rather than firing for every pool.
+	std := base()
+	if got := Decide(std); got.NextPhase != state.Reserved || got.Retire {
+		t.Errorf("standard pool: got %q retire=%v, want reserved reuse", got.NextPhase, got.Retire)
+	}
+	// An in-place (non-vm-restart) preConnect pool re-warms.
+	inPlace := base()
+	inPlace.PreConnect = true
+	if got := Decide(inPlace); got.NextPhase != state.SDKConnecting || got.Retire {
+		t.Errorf("in-place preConnect pool: got %q retire=%v, want sdk_connecting reuse", got.NextPhase, got.Retire)
+	}
+
+	// The vm-restart reprovision is a routine per-recycle-boundary retire, not a
+	// §16.1 limit trigger, so it does not count on lenny_pod_retirement_total.
+	if ReasonVMRestartReprovision.CountsOnRetirementTotal() {
+		t.Errorf("ReasonVMRestartReprovision counts on the retirement total; it is outside the §16.1 vocabulary")
+	}
+}
+
+// TestDecideVMRestartWarnFailedRetiresWithWarning pins that a warn-policy scrub
+// failure that has NOT exhausted maxScrubFailures on a vm-restart pool still
+// retires with ReasonVMRestartReprovision and carries ScrubWarning: true, so
+// the scrub_warning annotation reaches the retired pod's audit trail (S2 item
+// 6). The non-happy path is a warn-failed vm-restart retire that drops
+// ScrubWarning, losing the degraded-state marker.
+// spec: spec/05 §5.2 step 7 (retire-and-reprovision), §5.2 (onScrubFailure warn).
+func TestDecideVMRestartWarnFailedRetiresWithWarning(t *testing.T) {
+	in := base()
+	in.VMRestart = true
+	in.Scrub = ScrubFailed
+	in.OnCleanupFailure = OnCleanupWarn
+	in.ScrubFailureCount = 1 // below the default limit of 3: not exhausted.
+	in.MaxScrubFailures = 3
+	got := Decide(in)
+	if got.NextPhase != state.Draining || got.Reason != ReasonVMRestartReprovision {
+		t.Fatalf("vm-restart warn-failed: got %q/%q, want draining/vm_restart_reprovision", got.NextPhase, got.Reason)
+	}
+	if !got.ScrubWarning {
+		t.Errorf("vm-restart warn-failed: ScrubWarning = false, want true (annotation carried onto retire)")
+	}
+}
+
+// TestDecideVMRestartSessionCountOnePrecedence pins the C3 branch ordering at
+// the maxSessionsPerPod: 1 boundary. A sequential vm-restart pod's served count
+// read back at the occupancy-zero boundary equals maxSessionsPerPod (1), so the
+// session-count predicate (SessionsServed >= MaxSessionsPerPod) is true, but the
+// preceding vm-restart branch retires first with the non-counting
+// ReasonVMRestartReprovision. The non-happy path is a maxSessionsPerPod: 1
+// vm-restart pool retiring with the counting ReasonSessionCountLimit, which
+// would diverge the retire reason and the lenny_pod_retirement_total increment
+// from an otherwise-identical maxSessionsPerPod >= 2 pool. A mis-ordered branch
+// (session-count before vm-restart) fails this test.
+// spec: spec/05 §5.2 step 7 (retire-and-reprovision precedes session-count), §16.1.
+func TestDecideVMRestartSessionCountOnePrecedence(t *testing.T) {
+	in := base()
+	in.VMRestart = true
+	in.SessionsServed = 1
+	in.MaxSessionsPerPod = 1
+	got := Decide(in)
+	if got.NextPhase != state.Draining {
+		t.Fatalf("vm-restart maxSessionsPerPod:1: NextPhase = %q, want draining", got.NextPhase)
+	}
+	if got.Reason != ReasonVMRestartReprovision {
+		t.Fatalf("vm-restart maxSessionsPerPod:1: Reason = %q, want vm_restart_reprovision (non-counting), got the session-count limit means the branch is mis-ordered", got.Reason)
+	}
+	if got.Reason.CountsOnRetirementTotal() {
+		t.Errorf("vm-restart maxSessionsPerPod:1 retire counts on the retirement total; the reason diverged to a limit trigger")
+	}
+}
+
+// TestDecideVMRestartFailPolicyPrecedence pins that a genuine onScrubFailure:
+// fail failure on a vm-restart pool keeps its fail-closed Failed terminal with
+// ReasonCleanupFailPolicy rather than being masked as the non-counting
+// vm-restart Draining reprovision. The fail-policy branch precedes the
+// vm-restart branch. The non-happy path is a fail-policy failure masked as the
+// vm-restart reprovision, which would drop the fail-closed terminal.
+// spec: spec/05 §5.2 (onScrubFailure fail), spec/06 §6.2 line 156.
+func TestDecideVMRestartFailPolicyPrecedence(t *testing.T) {
+	in := base()
+	in.VMRestart = true
+	in.Scrub = ScrubFailed
+	in.OnCleanupFailure = OnCleanupFail
+	got := Decide(in)
+	if got.NextPhase != state.Failed || got.Reason != ReasonCleanupFailPolicy {
+		t.Fatalf("vm-restart fail-policy: got %q/%q, want failed/cleanup_fail_policy", got.NextPhase, got.Reason)
+	}
+}
+
+// TestDecideVMRestartScrubExhaustedPrecedence pins that a cumulative
+// scrub-failure-limit retire on a vm-restart pool keeps its counting
+// ReasonScrubFailuresExhausted reason rather than being undercounted as the
+// non-counting vm-restart reprovision. A scrub-failure limit is a genuine limit
+// trigger even on a vm-restart pool, so the scrub-exhausted branch precedes the
+// vm-restart branch. The non-happy path is a scrub-failure-limit retire
+// undercounted as ReasonVMRestartReprovision.
+// spec: spec/06 §6.2 line 149 (scrub-failure limit retire), §16.1 (scrub_failure_limit counts).
+func TestDecideVMRestartScrubExhaustedPrecedence(t *testing.T) {
+	in := base()
+	in.VMRestart = true
+	in.Scrub = ScrubFailed
+	in.OnCleanupFailure = OnCleanupWarn
+	in.ScrubFailureCount = 3
+	in.MaxScrubFailures = 3
+	got := Decide(in)
+	if got.NextPhase != state.Draining || got.Reason != ReasonScrubFailuresExhausted {
+		t.Fatalf("vm-restart scrub-exhausted: got %q/%q, want draining/scrub_failure_limit", got.NextPhase, got.Reason)
+	}
+	if !got.Reason.CountsOnRetirementTotal() {
+		t.Errorf("vm-restart scrub-exhausted retire does not count; a scrub-failure limit is a genuine §16.1 trigger")
+	}
+}
+
 // TestDecideMaxScrubFailuresDefault verifies an unset (<=0)
 // MaxScrubFailures applies the §5.2 default of 3.
 func TestDecideMaxScrubFailuresDefault(t *testing.T) {
@@ -371,6 +515,8 @@ func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 		ReasonMaxUptimeExceeded:      true,
 		ReasonScrubFailuresExhausted: true,
 		ReasonHostUnschedulable:      false,
+		ReasonScrubReportTimeout:     false,
+		ReasonVMRestartReprovision:   false,
 		ReasonCleanupFailPolicy:      false,
 		ReasonReuse:                  false,
 	}
