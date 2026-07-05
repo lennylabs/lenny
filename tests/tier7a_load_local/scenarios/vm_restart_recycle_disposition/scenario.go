@@ -105,13 +105,6 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	// modelling RecordPodScrub reading the already-advanced served-session
 	// count at the occupancy-zero boundary. The read-back snapshot feeds
 	// Decide; concurrent reports for the same pod race here.
-	s.mu.Lock()
-	p, ok := s.pods[podID]
-	if !ok {
-		p = &podState{vmRestart: vmRestart}
-		s.pods[podID] = p
-	}
-	p.sessionsServed++
 	// A vm-restart pool uses maxSessionsPerPod: 1, the boundary case the
 	// proposal pins: the read-back served count equals the cap when the
 	// scrub reports, so a misordered vm-restart branch would emit the
@@ -123,11 +116,42 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	if vmRestart {
 		maxSessions = 1
 	}
+
+	s.mu.Lock()
+	p, ok := s.pods[podID]
+	if !ok {
+		p = &podState{vmRestart: vmRestart}
+		s.pods[podID] = p
+	}
+	p.sessionsServed++
+	// The read-back models the served-session count for the pod's current
+	// occupancy cycle, which a real recycle boundary retires or reuses at
+	// each pass, so it stays bounded by the pool cap. Clamp the shared
+	// counter so the load-gen iteration count (millions per pod) does not
+	// push the standard control's read-back to or past its high cap and fire
+	// the legitimate ReasonSessionCountLimit retire, which is a real retire
+	// under production logic rather than a scenario invariant break. A
+	// vm-restart pod clamps to exactly maxSessionsPerPod (1) so the read-back
+	// hits the boundary case the proposal pins (SessionsServed ==
+	// MaxSessionsPerPod, where a misordered vm-restart branch would emit the
+	// counting ReasonSessionCountLimit). The standard control clamps one
+	// below its cap so the session-count branch never fires and a clean scrub
+	// genuinely reuses. The increment-then-read race on the shared counter
+	// under the lock is the concurrency this scenario exercises; clamping the
+	// value fed to Decide does not weaken it.
+	readBackCap := maxSessions
+	if !vmRestart {
+		readBackCap = maxSessions - 1
+	}
+	sessionsServed := p.sessionsServed
+	if sessionsServed > readBackCap {
+		sessionsServed = readBackCap
+	}
 	in := podscrub.Inputs{
 		VMRestart:         p.vmRestart,
 		Scrub:             podscrub.ScrubSucceeded,
 		OnCleanupFailure:  podscrub.OnCleanupWarn,
-		SessionsServed:    p.sessionsServed,
+		SessionsServed:    sessionsServed,
 		MaxSessionsPerPod: maxSessions,
 		HostSchedulable:   true,
 		PreConnect:        vu%4 == 0, // exercise both reuse legs on standard pools.
