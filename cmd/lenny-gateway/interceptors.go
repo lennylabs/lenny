@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -40,21 +42,31 @@ func (w *gatewayWiring) buildQuotaCheckpoint() {
 
 	if quotaCounter != nil && w.pgPool != nil && w.sessions != nil {
 		limitLookup := tenantLimits
+		periods := quotacheckpoint.PeriodResolverFunc(func(ctx context.Context, tenantID string) (quota.ResetPeriod, error) {
+			lim, err := limitLookup.LookupLimits(ctx, tenantID)
+			if err != nil {
+				return "", err
+			}
+			return lim.Period, nil
+		})
 		w.quotaCheckpointSvc = &quotacheckpoint.Service{
 			Store:    quotacheckpointpg.New(w.pgPool),
 			Subjects: quotacheckpoint.SessionSubjectLister{Sessions: w.sessions, Tenants: (tenantsLister{w.tenants}).ListTenants},
-			Periods: quotacheckpoint.PeriodResolverFunc(func(ctx context.Context, tenantID string) (quota.ResetPeriod, error) {
-				lim, err := limitLookup.LookupLimits(ctx, tenantID)
-				if err != nil {
-					return "", err
-				}
-				return lim.Period, nil
-			}),
+			Periods:  periods,
 			Reader:   quotaCounter,
 			Restorer: quotaCounter,
 			// §12.4 source (2): fold the in-memory fail-open accumulator into
 			// the MAX rule on the Redis-recovery edge. F-12.4.20.
 			FailOpen: quotaFailOpenAccum,
+			// §11.2 line 46 source: fold each bound direct-mode session's
+			// pod-reported cumulative total into the MAX rule on the
+			// Redis-recovery edge so a reconnected replica reconstructs a
+			// direct-mode counter as MAX(redis, postgres, failopen,
+			// pod_reported_cumulative) rather than under-counting a session whose
+			// Redis usage was lost. Active only when the pod registry, the lease
+			// store, and the SessionStore are all present; otherwise a nil reader
+			// leaves the MAX at MAX(redis, postgres, failopen). F-15.3.7.
+			PodUsage: w.buildDirectUsageRecoveryReader(periods),
 			Tenants: quotacheckpoint.TenantExistsFunc(func(ctx context.Context, tenantID string) (bool, error) {
 				if _, err := w.tenants.Get(ctx, tenantID); err != nil {
 					if errors.Is(err, tenantstore.ErrNotFound) {
@@ -69,6 +81,32 @@ func (w *gatewayWiring) buildQuotaCheckpoint() {
 			Logf:    log.Printf,
 		}
 	}
+}
+
+// buildDirectUsageRecoveryReader constructs the §11.2 line 46 crash-recovery
+// pod-usage source for the quota checkpoint Service. It is active only when
+// the pod registry, the §4.9 credential-lease store, and the SessionStore are
+// all wired; otherwise it returns a genuinely nil quotacheckpoint.PodUsageReader
+// so a minimal gateway degrades to the MAX(redis, postgres, failopen) rule.
+// Returning the concrete typed nil directly would wrap into a non-nil
+// interface, so the guard returns the untyped nil explicitly. spec: §11.2 line
+// 46; §4.7 (ReportUsage cumulative read).
+func (w *gatewayWiring) buildDirectUsageRecoveryReader(periods quotacheckpoint.PeriodResolver) quotacheckpoint.PodUsageReader {
+	if w.podRegistry == nil || w.llmLeases == nil || w.sessions == nil {
+		return nil
+	}
+	reader := newDirectUsageRecoveryReader(
+		w.podRegistry,
+		w.llmLeases,
+		sessionStoreSubjectResolver{sessions: w.sessions},
+		periods,
+		time.Duration(clampDirectUsagePollIntervalSeconds(*w.f.directUsagePollIntervalSeconds))*time.Second/2,
+		slog.Default(),
+	)
+	if reader == nil {
+		return nil
+	}
+	return reader
 }
 
 // buildInterceptorRegistration is the §4.1 composition-root build step (R1)

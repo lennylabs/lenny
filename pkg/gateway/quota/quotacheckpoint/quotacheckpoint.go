@@ -149,3 +149,52 @@ type TenantExister interface {
 type MetricEmitter interface {
 	IncQuotaCheckpointReconcile(outcome string)
 }
+
+// PodUsageReader is the §11.2 line 46 crash-recovery MAX-rule source: the
+// pod-reported cumulative token total each bound direct-mode session's
+// runtime adapter retains and re-reports on reconnection to a new gateway
+// replica. §11.2 line 46 reconstructs a direct-mode quota counter after a
+// gateway crash as MAX(postgres_checkpoint, pod-reported cumulative total);
+// this seam supplies that third source so the recovery reconcile writes
+// MAX(redis_current, postgres_checkpoint, in_memory_failopen,
+// pod_reported_cumulative). A gateway-side implementation pulls each bound
+// direct-mode session's cumulative total over the §4.7 ReportUsage RPC
+// (cumulative=true) and aggregates the per-window totals; a proxy-mode,
+// missing, errored, or timed-out session contributes nothing (it never
+// fabricates a total, so the seam is fail-closed to the other MAX sources).
+// The read shape mirrors quotafailopen.Accumulator's source-(2) seam so the
+// fold sites are symmetric.
+//
+// A nil reader on Service.PodUsage preserves the exact prior behaviour
+// (guarded like FailOpen==nil), so a gateway without the pod registry, the
+// adapter-client accessor, or the lease store degrades to the
+// MAX(redis, postgres, failopen) rule.
+//
+// spec: §11.2 line 46 (crash-recovery MAX rule; pod-reported cumulative
+// total); §4.7 (ReportUsage cumulative read).
+type PodUsageReader interface {
+	// UserWindow returns the pod-reported cumulative token total for the
+	// per-user window of period containing at, or 0 when no bound direct-mode
+	// session contributes a total for that window.
+	UserWindow(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time) int64
+	// TenantRollup returns the pod-reported cumulative token total for the
+	// per-tenant rollup window of period containing at, or 0 when no bound
+	// direct-mode session contributes a total for that window.
+	TenantRollup(ctx context.Context, tenantID string, period quota.ResetPeriod, at time.Time) int64
+	// Snapshot returns every (tenant, user, period)-window the reader can
+	// attribute a pod-reported cumulative total to as of now, so the recovery
+	// reconcile can also restore a window that opened during the outage with
+	// no checkpoint row. An empty UserID addresses the per-tenant rollup
+	// window.
+	Snapshot(ctx context.Context, now time.Time) []PodUsageSample
+}
+
+// PodUsageSample is one (tenant, user, period)-window pod-reported
+// cumulative total the recovery reconcile can restore. An empty UserID
+// addresses the per-tenant rollup window. spec: §11.2 line 46.
+type PodUsageSample struct {
+	TenantID string
+	UserID   string
+	Period   quota.ResetPeriod
+	Tokens   int64
+}
