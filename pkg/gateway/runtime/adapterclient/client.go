@@ -652,9 +652,20 @@ type UsageReport struct {
 }
 
 // ReportUsage pulls the session's token and time accounting from the
-// pod's adapter (§4.7). The accounting is incremental — each call
-// returns usage accumulated since the previous one — so the gateway
-// sums it for §11.2 budget enforcement and billing.
+// pod's adapter (§4.7). When cumulative is false the accounting is
+// incremental — each call returns usage accumulated since the previous
+// one — so the gateway sums it for §11.2 budget enforcement and billing;
+// the steady-state direct-mode poll uses this path. When cumulative is
+// true the adapter returns the session's running cumulative total
+// instead, which a reconnected gateway replica pulls to seed its
+// restored counter for the §11.2 crash-recovery MAX rule
+// (MAX(postgres_checkpoint, pod-reported cumulative total)). The adapter
+// advances its last-read watermark on either read, so a cumulative
+// recovery read followed by a steady-state delta read reports zero
+// rather than re-adding the already-recovered tokens.
+//
+// spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (pod-reported
+// cumulative-usage re-report on reconnection).
 //
 // spec: spec/04_system-components.md line 1468 — for sessions in proxy
 // mode the gateway is the sole counter of record (the §4.9 LLM proxy
@@ -663,9 +674,10 @@ type UsageReport struct {
 // pod-reported counts are not accepted for them. ErrUsageReportProxyMode
 // surfaces a misrouted proxy-mode call so a regression is observable
 // rather than silently double-counting.
-func (c *Client) ReportUsage(ctx context.Context, sessionID string) (UsageReport, error) {
+func (c *Client) ReportUsage(ctx context.Context, sessionID string, cumulative bool) (UsageReport, error) {
 	resp, err := c.rpc.ReportUsage(ctx, &adapterv1.ReportUsageRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
+		SessionId:  &adapterv1.SessionId{Value: sessionID},
+		Cumulative: cumulative,
 	})
 	if err != nil {
 		return UsageReport{}, err
@@ -688,12 +700,19 @@ var ErrUsageReportProxyMode = errors.New("adapterclient: ReportUsage is not acce
 // A direct-mode lease, or an empty lease (the session has no §4.9
 // credential pool), falls through to the underlying RPC.
 //
-// spec: spec/04_system-components.md line 1468.
-func (c *Client) ReportUsageForLease(ctx context.Context, sessionID string, deliveryMode credential.DeliveryMode) (UsageReport, error) {
+// cumulative selects the read: the steady-state direct-mode poll passes
+// false for the incremental delta, and the §11.2 crash-recovery path
+// passes true for the session's running cumulative total. The proxy-mode
+// filter runs first for both reads, so a proxy lease is never
+// double-counted regardless of which read a caller requests.
+//
+// spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (direct-mode usage,
+// crash-recovery MAX rule); spec/04_system-components.md line 1468.
+func (c *Client) ReportUsageForLease(ctx context.Context, sessionID string, deliveryMode credential.DeliveryMode, cumulative bool) (UsageReport, error) {
 	if deliveryMode == credential.DeliveryProxy {
 		return UsageReport{}, ErrUsageReportProxyMode
 	}
-	return c.ReportUsage(ctx, sessionID)
+	return c.ReportUsage(ctx, sessionID, cumulative)
 }
 
 // AttachStream is a live §4.7 bidirectional content stream to a pod's

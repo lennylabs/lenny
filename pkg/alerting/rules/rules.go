@@ -1473,6 +1473,25 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
+			Name: "TokenUsageAnomaly",
+			// spec: §16.5 — the §16.5 spec-table PromQL, transcribed
+			// exactly. The direct-mode integrity detector (§11.2) increments
+			// lenny_gateway_token_usage_anomaly_total, labeled by tenant_id
+			// and reason, when a direct-mode session under-reports usage
+			// (reason="zero_delta" or reason="implausibly_small"). In direct
+			// mode the pod egresses to the provider directly, so the runtime
+			// is the sole observer of provider token counts and the gateway
+			// cannot re-derive them; a sustained anomaly rate is the accepted
+			// residual-risk signal for direct-mode token integrity.
+			Expr:        `sum by (tenant_id) (rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0`,
+			For:         5 * time.Minute,
+			Severity:    SeverityWarning,
+			Summary:     "Direct-mode token usage anomaly",
+			Description: "A direct-mode session's ReportUsage deltas are being under-reported — more than the operator-tunable count of zero-token deltas for a session (reason=\"zero_delta\") or a token-per-call ratio below the operator-tunable implausibly-small threshold (reason=\"implausibly_small\"). In direct mode the pod egresses to the provider directly, so the runtime is the sole observer of provider token counts; a sustained anomaly rate signals a runtime that under-reports direct-mode usage. The counter is labeled by tenant_id and reason; per-session attribution is in structured logs. Operator response is to review the affected runtime image.",
+			RunbookURL:  runbook("token-usage-anomaly"),
+			SpecRef:     "§16.5",
+		},
+		{
 			Name:        "InterceptorMTLSHandshakeFailure",
 			Expr:        `rate(lenny_interceptor_mtls_handshake_duration_seconds_count{result!="success"}[5m]) > 0`,
 			For:         2 * time.Minute,

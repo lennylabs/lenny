@@ -311,7 +311,14 @@
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
-        "tests/tier10_conformance/recycle_scrub_conformance_test.go"
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go",
+        "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go",
+        "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
+        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
+        "cmd/lenny-gateway/direct_usage_quota_integration_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
+        "tests/tier7a_load_local/usagemeter_contention/usagemeter_contention_test.go",
+        "tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go",
+        "cmd/lenny-gateway/direct_usage_recovery_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -319,7 +326,8 @@
       ],
       "schemas": [
         "schemas/lenny-adapter.proto",
-        "schemas/lenny-adapter-jsonl.schema.json"
+        "schemas/lenny-adapter-jsonl.schema.json",
+        "schemas/lifecycle-events.schema.json"
       ],
       "blocked_until_phase": "2"
     },
@@ -1260,7 +1268,20 @@
         "tests/tier2_component/stores/billingstore_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport",
         "tests/tier2_component/stores/delegationbudgetstore_test.go",
-        "tests/tier9_security/budget_extension_failclosed_test.go::TestExhaustionExtensionAtMostOncePerEvent_CeilingTerminates_F866"
+        "tests/tier9_security/budget_extension_failclosed_test.go::TestExhaustionExtensionAtMostOncePerEvent_CeilingTerminates_F866",
+        "tests/tier9_security/token_usage_anomaly_test.go",
+        "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
+        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
+        "tests/tier7a_load_local/usagemeter_contention/usagemeter_contention_test.go",
+        "tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go",
+        "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go",
+        "cmd/lenny-gateway/direct_usage_recovery_test.go",
+        "tests/tier8_chaos/direct_usage_crash_recovery_test.go::TestDirectModeGatewayCrashRecoveryReconstructsMaxWithoutDoubleCount",
+        "cmd/lenny-gateway/direct_usage_quota_integration_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
+        "tests/tier9_security/token_usage_anomaly_test.go::TestDirectModeInterspersedNonZeroResetsZeroRun_spec_11_2",
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecReportUsageDirectionIsGatewayPull_F15_3_7",
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecPodReportedCumulativeCitesSection47_F11_2_20",
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecAnomalyMetricNotLabeledBySessionID_F11_2_20"
       ],
       "packages": [
         "pkg/quota",
@@ -1497,7 +1518,8 @@
         "pkg/redisconn/redisconn_test.go",
         "tests/tier8_chaos/redis_sentinel_failover_test.go",
         "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReserveSlotUnderLock",
-        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers"
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers",
+        "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go"
       ],
       "packages": [
         "pkg/store/lease",
@@ -2197,6 +2219,7 @@
         "pkg/observability/metrics/catalog_test.go::TestLookupMetric",
         "pkg/gateway/metrics/gatewaymetrics/retry_resume_test.go::TestSessionExpiryTotalExposes_F_11_3_7",
         "tests/tier2_component/watchdog/expiry_counter_test.go::TestWatchdogSessionExpiryCounter_spec_16_1",
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestMetricsReferenceCarriesAnomalyPair_F11_2_20",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability"
       ],
       "packages": [
@@ -2272,7 +2295,8 @@
         "pkg/tokenservice/revocation_propagation_metric_test.go::TestRevocationPropagationObservesPostgresOnlyOutcome_SEC_TS_1",
         "pkg/tokenservice/promemit/promemit_test.go::TestEmitterRegistersAndServesCatalog",
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertFires_SEC_TS_1",
-        "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertQuietWhenFast_SEC_TS_1"
+        "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertQuietWhenFast_SEC_TS_1",
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestTokenUsageAnomalyResolvesToRunbook_spec_16_5"
       ],
       "packages": [
         "pkg/alerting/rules",

@@ -40,6 +40,19 @@ type Service struct {
 	// during the outage (no checkpoint row). Optional; a nil accumulator
 	// reduces the rule to MAX(redis_current, postgres_checkpoint).
 	FailOpen *quotafailopen.Accumulator
+	// PodUsage is the §11.2 line 46 crash-recovery MAX-rule source: the
+	// pod-reported cumulative token total each bound direct-mode session's
+	// adapter re-reports on reconnection to a new gateway replica. When set,
+	// Reconcile folds each window's pod-reported cumulative total into the
+	// MAX — both for windows that carry a Postgres checkpoint row and for
+	// windows that opened during the outage with no checkpoint row — so a
+	// reconnected replica reconstructs a direct-mode counter as
+	// MAX(redis_current, postgres_checkpoint, in_memory_failopen,
+	// pod_reported_cumulative) per §11.2 line 46 rather than silently
+	// under-counting a direct-mode session whose Redis usage was lost.
+	// Optional; a nil reader preserves the exact prior behaviour (the MAX
+	// omits the pod-reported source), guarded like FailOpen==nil.
+	PodUsage PodUsageReader
 	// Metrics records reconcile outcomes. Optional.
 	Metrics MetricEmitter
 	// Now is the injectable clock. Nil selects time.Now().UTC().
@@ -79,6 +92,10 @@ type CounterResult struct {
 	// value folded into the MAX. Zero when no fail-open reader is wired or
 	// the window accumulated nothing during an outage.
 	FailOpenValue int64
+	// PodUsageValue is the §11.2 line 46 pod-reported cumulative token total
+	// folded into the MAX. Zero when no pod-usage reader is wired or no bound
+	// direct-mode session contributed a total for the window.
+	PodUsageValue int64
 	WrittenValue  int64
 }
 
@@ -237,7 +254,7 @@ func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (Reconcil
 			s.inc(OutcomeSkipped)
 			continue
 		}
-		live, failOpen, written, restoreErr := s.restoreRow(ctx, row, period, now)
+		rv, restoreErr := s.restoreRow(ctx, row, period, now)
 		if restoreErr != nil {
 			s.logf("quotacheckpoint: reconcile: restore %s/%s tenant=%q: %v",
 				row.Scope, row.SubjectID, row.TenantID, restoreErr)
@@ -252,60 +269,109 @@ func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (Reconcil
 			SubjectID:       row.SubjectID,
 			Period:          row.Period,
 			CheckpointValue: row.TokenTotal,
-			InMemoryValue:   live,
-			FailOpenValue:   failOpen,
-			WrittenValue:    written,
+			InMemoryValue:   rv.live,
+			FailOpenValue:   rv.failOpen,
+			PodUsageValue:   rv.podUsage,
+			WrittenValue:    rv.written,
 		})
 		s.inc(OutcomeRestored)
 	}
-	// §12.4 source (2) fail-open-only windows: a window that opened entirely
-	// during the outage has no checkpoint row above, so the row pass never
-	// restores its accumulated usage. Restore each such window directly from
-	// the in-memory accumulator (MAX(redis_current, in_memory_failopen)).
-	s.reconcileFailOpenOnly(ctx, scope, now, restored, tenants, &res)
+	// §12.4 source (2) / §11.2 line 46 no-checkpoint windows: a window that
+	// opened entirely during the outage has no checkpoint row above, so the
+	// row pass never restores it. Restore each such window directly from the
+	// in-memory fail-open accumulator and the pod-reported cumulative total
+	// (MAX(redis_current, in_memory_failopen, pod_reported_cumulative)).
+	s.reconcileNoCheckpointWindows(ctx, scope, now, restored, tenants, &res)
 	res.TenantsReconciled = len(tenants)
 	s.logf("quotacheckpoint: reconciled %d counter(s) across %d tenant(s)", res.CountersWritten, res.TenantsReconciled)
 	return res, nil
 }
 
-// reconcileFailOpenOnly restores every still-current fail-open accumulator
-// window that the checkpoint-row pass did not already handle. A per-tenant
-// reconcile is scoped to its tenant. spec: §12.4 source (2); §11.2 line 48.
-func (s *Service) reconcileFailOpenOnly(ctx context.Context, scope ReconcileScope, now time.Time, restored, tenants map[string]struct{}, res *ReconcileResult) {
-	if s.FailOpen == nil || s.Restorer == nil {
+// noCheckpointWindow accumulates the fail-open and pod-reported cumulative
+// inputs for one (scope, tenant, subject, period) window that carries no
+// Postgres checkpoint row, so the pass restores each such window once from
+// the union of the two source snapshots.
+type noCheckpointWindow struct {
+	scope     string
+	tenantID  string
+	subjectID string
+	period    quota.ResetPeriod
+	failOpen  int64
+	podUsage  int64
+}
+
+// reconcileNoCheckpointWindows restores every still-current window that the
+// checkpoint-row pass did not already handle but for which a fail-open
+// accumulator entry (§12.4 source (2)) or a pod-reported cumulative total
+// (§11.2 line 46 source) exists. The two source snapshots are unioned so a
+// window carried by both is restored once from MAX(fail_open,
+// pod_reported_cumulative); a per-tenant reconcile is scoped to its tenant.
+// spec: §12.4 source (2); §11.2 line 46; §11.2 line 48.
+func (s *Service) reconcileNoCheckpointWindows(ctx context.Context, scope ReconcileScope, now time.Time, restored, tenants map[string]struct{}, res *ReconcileResult) {
+	if s.Restorer == nil {
 		return
 	}
-	for _, samp := range s.FailOpen.Snapshot(now) {
-		if !scope.AllTenants && samp.TenantID != scope.TenantID {
-			continue
+	windows := make(map[string]*noCheckpointWindow)
+	// key builds the union key and records the window; the empty user id
+	// addresses the per-tenant rollup scope, matching the row pass.
+	key := func(tenantID, userID string, period quota.ResetPeriod) (*noCheckpointWindow, bool) {
+		if !scope.AllTenants && tenantID != scope.TenantID {
+			return nil, false
 		}
 		scopeName := ScopeUser
-		if samp.UserID == "" {
+		if userID == "" {
 			scopeName = ScopeTenant
 		}
-		if _, done := restored[windowKey(scopeName, samp.TenantID, samp.UserID, string(samp.Period))]; done {
-			continue
+		if _, done := restored[windowKey(scopeName, tenantID, userID, string(period))]; done {
+			// The checkpoint-row pass already restored this window (folding both
+			// sources in), so it must not be restored a second time.
+			return nil, false
 		}
+		k := windowKey(scopeName, tenantID, userID, string(period))
+		w := windows[k]
+		if w == nil {
+			w = &noCheckpointWindow{scope: scopeName, tenantID: tenantID, subjectID: userID, period: period}
+			windows[k] = w
+		}
+		return w, true
+	}
+	if s.FailOpen != nil {
+		for _, samp := range s.FailOpen.Snapshot(now) {
+			if w, ok := key(samp.TenantID, samp.UserID, samp.Period); ok {
+				w.failOpen = samp.Tokens
+			}
+		}
+	}
+	if s.PodUsage != nil {
+		for _, samp := range s.PodUsage.Snapshot(ctx, now) {
+			if w, ok := key(samp.TenantID, samp.UserID, samp.Period); ok {
+				w.podUsage = samp.Tokens
+			}
+		}
+	}
+	for _, w := range windows {
+		seed := maxInt64(w.failOpen, w.podUsage)
 		var written int64
 		var err error
-		if scopeName == ScopeUser {
-			written, err = s.Restorer.RestoreUserWindow(ctx, samp.TenantID, samp.UserID, samp.Period, now, samp.Tokens)
+		if w.scope == ScopeUser {
+			written, err = s.Restorer.RestoreUserWindow(ctx, w.tenantID, w.subjectID, w.period, now, seed)
 		} else {
-			written, err = s.Restorer.RestoreTenantRollupWindow(ctx, samp.TenantID, samp.Period, now, samp.Tokens)
+			written, err = s.Restorer.RestoreTenantRollupWindow(ctx, w.tenantID, w.period, now, seed)
 		}
 		if err != nil {
-			s.logf("quotacheckpoint: reconcile: fail-open-only restore %s/%s tenant=%q: %v",
-				scopeName, samp.UserID, samp.TenantID, err)
+			s.logf("quotacheckpoint: reconcile: no-checkpoint restore %s/%s tenant=%q: %v",
+				w.scope, w.subjectID, w.tenantID, err)
 			continue
 		}
 		res.CountersWritten++
-		tenants[samp.TenantID] = struct{}{}
+		tenants[w.tenantID] = struct{}{}
 		res.Counters = append(res.Counters, CounterResult{
-			TenantID:      samp.TenantID,
-			Scope:         scopeName,
-			SubjectID:     samp.UserID,
-			Period:        string(samp.Period),
-			FailOpenValue: samp.Tokens,
+			TenantID:      w.tenantID,
+			Scope:         w.scope,
+			SubjectID:     w.subjectID,
+			Period:        string(w.period),
+			FailOpenValue: w.failOpen,
+			PodUsageValue: w.podUsage,
 			WrittenValue:  written,
 		})
 		s.inc(OutcomeRestored)
@@ -318,37 +384,58 @@ func windowKey(scope, tenantID, subjectID, period string) string {
 	return scope + "\x00" + tenantID + "\x00" + subjectID + "\x00" + period
 }
 
+// restoreValues carries the MAX-rule inputs and result for one restored
+// window so the caller can populate the CounterResult without a long return
+// tuple.
+type restoreValues struct {
+	live     int64
+	failOpen int64
+	podUsage int64
+	written  int64
+}
+
 // restoreRow reads the live Redis value (the §11.2 line 48 redis_current
-// input) and applies the MAX rule for one row, returning
-// (live, failOpen, written). The §12.4 source (2) in-memory fail-open
-// accumulator is folded into the checkpoint seed so the Restorer writes
-// MAX(redis_current, postgres_checkpoint, in_memory_failopen).
-func (s *Service) restoreRow(ctx context.Context, row Row, period quota.ResetPeriod, now time.Time) (int64, int64, int64, error) {
+// input) and applies the MAX rule for one row. The §12.4 source (2)
+// in-memory fail-open accumulator and the §11.2 line 46 source pod-reported
+// cumulative total are folded into the checkpoint seed so the Restorer
+// writes MAX(redis_current, postgres_checkpoint, in_memory_failopen,
+// pod_reported_cumulative). spec: §11.2 line 46; §12.4 source (2).
+func (s *Service) restoreRow(ctx context.Context, row Row, period quota.ResetPeriod, now time.Time) (restoreValues, error) {
 	switch row.Scope {
 	case ScopeUser:
 		live, err := s.Reader.Usage(ctx, row.TenantID, row.SubjectID, period, now)
 		if err != nil {
-			return 0, 0, 0, err
+			return restoreValues{}, err
 		}
 		failOpen := int64(0)
 		if s.FailOpen != nil {
 			failOpen = s.FailOpen.UserWindow(row.TenantID, row.SubjectID, period, now)
 		}
-		written, err := s.Restorer.RestoreUserWindow(ctx, row.TenantID, row.SubjectID, period, now, maxInt64(row.TokenTotal, failOpen))
-		return live, failOpen, written, err
+		podUsage := int64(0)
+		if s.PodUsage != nil {
+			podUsage = s.PodUsage.UserWindow(ctx, row.TenantID, row.SubjectID, period, now)
+		}
+		seed := maxInt64(maxInt64(row.TokenTotal, failOpen), podUsage)
+		written, err := s.Restorer.RestoreUserWindow(ctx, row.TenantID, row.SubjectID, period, now, seed)
+		return restoreValues{live: live, failOpen: failOpen, podUsage: podUsage, written: written}, err
 	case ScopeTenant:
 		live, err := s.Reader.TenantRollupUsage(ctx, row.TenantID, period, now)
 		if err != nil {
-			return 0, 0, 0, err
+			return restoreValues{}, err
 		}
 		failOpen := int64(0)
 		if s.FailOpen != nil {
 			failOpen = s.FailOpen.TenantRollup(row.TenantID, period, now)
 		}
-		written, err := s.Restorer.RestoreTenantRollupWindow(ctx, row.TenantID, period, now, maxInt64(row.TokenTotal, failOpen))
-		return live, failOpen, written, err
+		podUsage := int64(0)
+		if s.PodUsage != nil {
+			podUsage = s.PodUsage.TenantRollup(ctx, row.TenantID, period, now)
+		}
+		seed := maxInt64(maxInt64(row.TokenTotal, failOpen), podUsage)
+		written, err := s.Restorer.RestoreTenantRollupWindow(ctx, row.TenantID, period, now, seed)
+		return restoreValues{live: live, failOpen: failOpen, podUsage: podUsage, written: written}, err
 	default:
-		return 0, 0, 0, nil
+		return restoreValues{}, nil
 	}
 }
 

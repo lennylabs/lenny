@@ -71,6 +71,15 @@ type lifecycleFrame struct {
 	LeaseID         string   `json:"leaseId,omitempty"`
 	Trigger         string   `json:"trigger,omitempty"`
 	RequestID       string   `json:"requestId,omitempty"`
+	// InputTokens and OutputTokens are the §4.7 direct-mode token counts
+	// the runtime optionally carries on an llm_request_completed frame,
+	// extracted from the completed provider response. The adapter folds
+	// them into the session's cumulative usage total (§11.2 direct-mode
+	// usage). A runtime that cannot extract counts omits both, so the
+	// session has no direct-mode token source. Zero-valued so an absent
+	// field reads as a zero delta rather than a decode error.
+	InputTokens  int64 `json:"inputTokens,omitempty"`
+	OutputTokens int64 `json:"outputTokens,omitempty"`
 }
 
 // LifecycleChannel is the adapter side of the §4.7 lifecycle channel:
@@ -97,6 +106,26 @@ type LifecycleChannel struct {
 	// gate reads it through InflightCount.
 	inflight map[string]int
 	closed   bool
+
+	// usage receives the §4.7 direct-mode token counts an
+	// llm_request_completed frame carries. Nil (the Basic/Standard path
+	// and the dev path with no meter) makes token folding a no-op. Set
+	// once at wiring time via SetUsageSink and read in readLoop; not
+	// mutated per connection, so it needs no lock beyond the pointer
+	// itself being assigned before Run starts.
+	usage tokenSink
+}
+
+// tokenSink folds one llm_request_completed frame's direct-mode token
+// counts into the session's cumulative usage total. The adapter wires it
+// to the concrete SessionUsageMeter, resolving the pod's current session
+// id; the lifecycle frame itself carries no session id (§6.1 one session
+// per pod). Defined at the consumer (the lifecycle channel) per the
+// accept-interfaces convention.
+type tokenSink interface {
+	// AddTokens folds the counts from one completed direct-mode LLM call
+	// into the current session's cumulative total.
+	AddTokens(inputTokens, outputTokens int64)
 }
 
 // NewLifecycleChannel listens on socketPath for the runtime's lifecycle
@@ -119,6 +148,15 @@ func NewLifecycleChannel(socketPath string) (*LifecycleChannel, error) {
 // SocketPath is the address the runtime dials to reach the channel.
 func (lc *LifecycleChannel) SocketPath() string {
 	return lc.listener.Addr().String()
+}
+
+// SetUsageSink wires the token sink readLoop folds each
+// llm_request_completed frame's §4.7 direct-mode token counts into. It
+// is set once before Run starts (the adapter wiring in
+// cmd/lenny-adapter), so it does not race with the read loop. A nil sink
+// leaves token folding a no-op (the Basic/Standard and dev paths).
+func (lc *LifecycleChannel) SetUsageSink(sink tokenSink) {
+	lc.usage = sink
 }
 
 // Run serves the lifecycle channel until ctx is cancelled or the channel
@@ -328,6 +366,16 @@ func (lc *LifecycleChannel) readLoop(r *bufio.Reader) error {
 			lc.adjustInflight(frame.Provider, 1)
 		case "llm_request_completed":
 			lc.adjustInflight(frame.Provider, -1)
+			// spec: §4.7 (llm_request_completed token fields), §11.2
+			// (direct-mode usage) — a direct-mode runtime carries the
+			// prompt and completion token counts extracted from the
+			// completed provider response; fold them into the session's
+			// cumulative total for the gateway ReportUsage pull. A runtime
+			// that cannot extract counts omits both fields (a zero delta),
+			// which the §11.2 anomaly detector observes.
+			if lc.usage != nil && (frame.InputTokens != 0 || frame.OutputTokens != 0) {
+				lc.usage.AddTokens(frame.InputTokens, frame.OutputTokens)
+			}
 		}
 	}
 }

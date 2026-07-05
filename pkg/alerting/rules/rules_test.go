@@ -277,7 +277,8 @@ var spec165WarningAlerts = []string{
 	"InboxDrainFailure", "DurableInboxRedisUnavailable", "FinalizerStuck", "DedicatedDNSDegraded",
 	"AuditSIEMDeliveryLag", "AuditPartitionDropBlocked", "WarmPoolBootstrapping", "PoolSecurityDegraded",
 	"CRDSSAConflictStuck",
-	"ExperimentTargetingCircuitOpen", "LLMUpstreamEgressAnomaly", "InterceptorMTLSHandshakeFailure",
+	"ExperimentTargetingCircuitOpen", "LLMUpstreamEgressAnomaly", "TokenUsageAnomaly",
+	"InterceptorMTLSHandshakeFailure",
 	"PgAuditSinkDeliveryFailed", "OCSFTranslationBacklog", "AuditLockContention",
 	"EventBusPublishDropped", "EventBusPublishFinalFailure", "TokenStoreUnavailable",
 	"TokenRevocationPropagationLag", "GatewayClockDrift", "GatewayRateLimitStorm",
@@ -437,6 +438,51 @@ func TestOpsClockSkewExceededRule_spec_16_5(t *testing.T) {
 	}
 	if err := got.Validate(); err != nil {
 		t.Errorf("OpsClockSkewExceeded does not validate: %v", err)
+	}
+}
+
+// TestTokenUsageAnomalyRule_spec_16_5 pins the §16.5 TokenUsageAnomaly
+// warning alert. Its Expr must transcribe the §16.5 spec-table PromQL
+// exactly, including the space between the `sum by (tenant_id)` grouping
+// clause and the `rate(...)` selector, because the §16.5 alert table is
+// the human-facing mirror rendered from Catalog(). Pre-fix the Expr
+// dropped that space (`sum by (tenant_id)(rate(...`), diverging from the
+// spec surface it mirrors and from every sibling
+// `sum by (tenant_id) (rate(...))` alert in the catalog; this test fails
+// against that form. The rule is Warning severity (a residual-risk
+// signal, not a page) and resolves to the token-usage-anomaly runbook.
+//
+// spec: §16.5 (TokenUsageAnomaly warning-alert row); §11.2 (direct-mode
+// token-integrity residual-risk detector).
+func TestTokenUsageAnomalyRule_spec_16_5(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "TokenUsageAnomaly" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("TokenUsageAnomaly missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning (direct-mode integrity is a residual-risk signal, not a page)", got.Severity)
+	}
+	// The exact §16.5 spec-table PromQL at spec/16_observability.md, with
+	// the space between the grouping clause and rate() that the spec table
+	// and every sibling per-tenant rate alert carry.
+	const wantExpr = `sum by (tenant_id) (rate(lenny_gateway_token_usage_anomaly_total[5m])) > 0`
+	if got.Expr != wantExpr {
+		t.Errorf("expr = %q, want the §16.5 spec-table PromQL %q byte-for-byte", got.Expr, wantExpr)
+	}
+	if got.For != 5*time.Minute {
+		t.Errorf("for = %v, want 5m per the §16.5 row", got.For)
+	}
+	if got.RunbookSlug() != "token-usage-anomaly" {
+		t.Errorf("runbook slug = %q, want token-usage-anomaly", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("TokenUsageAnomaly does not validate: %v", err)
 	}
 }
 

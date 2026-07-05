@@ -18,11 +18,42 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	"github.com/lennylabs/lenny/pkg/quota"
 )
+
+// recordAnomalyObserver captures the direct-mode ReportUsage deltas the
+// recorder fans into the §11.2 integrity detector so a test can assert the
+// direct-mode path reaches the S5 observer. It stands in for the detector the
+// later build step registers through setAnomalyObserver.
+type recordAnomalyObserver struct {
+	calls     []anomalyCall
+	forgotten []string
+}
+
+type anomalyCall struct {
+	tenantID, sessionID string
+	input, output       int64
+}
+
+func (o *recordAnomalyObserver) Observe(tenantID, sessionID string, input, output int64) {
+	o.calls = append(o.calls, anomalyCall{tenantID, sessionID, input, output})
+}
+
+func (o *recordAnomalyObserver) Forget(sessionID string) {
+	o.forgotten = append(o.forgotten, sessionID)
+}
+
+// directUsage is a §11.2 direct-mode lease the RecordDirectUsage tests share.
+func directUsage(sessionID, tenantID string) credential.Lease {
+	return credential.Lease{
+		LeaseID: "cl-direct", SessionID: sessionID, TenantID: tenantID,
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryDirect,
+	}
+}
 
 // fakeQuotaLimits is a policy.TenantLimitLookup test double returning a
 // fixed reset period for every tenant.
@@ -356,6 +387,34 @@ func TestProxyUsageRecorderForgetDropsGrant_spec_8_6(t *testing.T) {
 	rec.forget("")
 }
 
+// TestProxyUsageRecorderForgetDropsAnomalyState_spec_11_2 proves the recorder's
+// forget forwards to the §11.2 direct-mode anomaly detector, so the detector's
+// per-session accumulator is dropped by the same terminal-side-effects pipeline
+// (the sessionserver BudgetForget closure) that forgets the grant delta. Before
+// this fix the detector's per-session map grew unbounded on the long-lived
+// gateway process because nothing in production called Detector.Forget: the
+// direct-mode observer seam declared only Observe. This test fails against the
+// pre-fix code, where forget touched only the grant delta.
+//
+// spec: 11.2 (direct-mode anomaly per-session state cleanup), 16.1.1 (per-session attribution)
+// diagnosis: the direct-mode anomaly detector's per-session map is never cleared on session settlement, leaking a *sessionState entry per direct-mode session for the life of the gateway process (proposal 0024 S8 Forget wiring unhooked).
+func TestProxyUsageRecorderForgetDropsAnomalyState_spec_11_2(t *testing.T) {
+	obs := &recordAnomalyObserver{}
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec.setAnomalyObserver(obs)
+
+	rec.forget("s_direct")
+	if len(obs.forgotten) != 1 || obs.forgotten[0] != "s_direct" {
+		t.Fatalf("forget must forward to the anomaly detector's Forget, got %v", obs.forgotten)
+	}
+
+	// An empty session id and a recorder with no observer wired are both
+	// no-ops so the terminal pipeline never panics.
+	rec.forget("")
+	noObs := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	noObs.forget("s_direct")
+}
+
 // TestProxyUsageRecorderNoBudgetNoEnforcement_Spec11_2 confirms a session
 // without a lease token budget is never terminated for budget reasons (an
 // unbounded session is the §8.2 default).
@@ -615,4 +674,201 @@ func TestProxyUsageRecorderProxyExtensionWaitTimeoutOverride(t *testing.T) {
 	// The setter is nil-safe on the recorder.
 	var nilRec *proxyUsageRecorder
 	nilRec.setProxyExtensionWaitTimeout(5 * time.Second)
+}
+
+// TestRecordDirectUsageReachesAccountingSinks_spec_11_2 proves the direct-mode
+// path fans a pulled ReportUsage delta into the same accounting sinks the
+// proxy recorder writes — the §15.1 metering store, the §8.8 per-session
+// accumulator, the §11.2 quota counter, and the §12.4 fail-open accumulator —
+// plus the S5 anomaly detector. It is the F-15.3.7 regression: before this
+// step no gateway code recorded direct-mode usage, so every sink read zero for
+// a direct-mode session.
+//
+// spec: §11.2 (direct-mode usage recording), §15.1 (metering), §8.8 lines
+// 897-917 (per-session rollup), §12.4 source (2) (fail-open accumulator).
+func TestRecordDirectUsageReachesAccountingSinks_spec_11_2(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "s_d", TenantID: "acme", UserID: "alice", RuntimeRef: "claude-prod", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	usage := usagestore.NewMemory()
+	sessUsage := sessionusage.NewMemory()
+	quotaCounter := newTestQuotaCounter(t)
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	rec := newProxyUsageRecorder(usage, sessions, sessUsage, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
+	rec.now = func() time.Time { return now }
+	acc := quotafailopen.New()
+	rec.setFailOpenAccumulator(acc)
+	obs := &recordAnomalyObserver{}
+	rec.setAnomalyObserver(obs)
+
+	rec.RecordDirectUsage(ctx, directUsage("s_d", "acme"), llmproxy.Usage{InputTokens: 100, OutputTokens: 30})
+
+	report, err := usage.Aggregate(ctx, "acme", nil)
+	if err != nil {
+		t.Fatalf("usage.Aggregate: %v", err)
+	}
+	if report.TotalTokens.Input != 100 || report.TotalTokens.Output != 30 {
+		t.Errorf("metering store not written: got %+v want input=100 output=30", report.TotalTokens)
+	}
+	if len(report.ByRuntime) != 1 || report.ByRuntime[0].Runtime != "claude-prod" {
+		t.Errorf("runtime rollup absent from direct-mode record: %+v", report.ByRuntime)
+	}
+
+	got, _ := sessUsage.Get(ctx, "acme", "s_d")
+	if got.Input != 100 || got.Output != 30 {
+		t.Errorf("per-session accumulator = %+v, want {Input:100 Output:30}", got)
+	}
+
+	q, err := quotaCounter.UsageHierarchical(ctx, "acme", "alice", quota.ResetHourly, now)
+	if err != nil {
+		t.Fatalf("UsageHierarchical: %v", err)
+	}
+	if q.User != 130 || q.Tenant != 130 || q.Global != 130 {
+		t.Errorf("quota counters = %+v, want all 130", q)
+	}
+	if got := acc.UserWindow("acme", "alice", quota.ResetHourly, now); got != 130 {
+		t.Errorf("fail-open accumulator user window = %d, want 130", got)
+	}
+
+	if len(obs.calls) != 1 || obs.calls[0] != (anomalyCall{"acme", "s_d", 100, 30}) {
+		t.Errorf("anomaly observer calls = %+v, want one {acme s_d 100 30}", obs.calls)
+	}
+}
+
+// TestRecordDirectUsageExcludesEnforcer_spec_11_2_44 proves the direct-mode
+// path never routes through the mid-session sessionbudget.Enforcer, so a
+// direct-mode session is neither terminated in-path on budget breach nor
+// offered an in-path extension. §11.2 line 44 and §8.3 line 631 forbid both
+// for a direct-mode session. It is the Pass-5 regression: a delta far exceeding
+// the session's lease budget must not terminate the session or consult the
+// §8.6 extension seam. It would fail against a design that shared the proxy
+// RecordUsage fan-out wholesale (which drives Enforcer.Record).
+//
+// spec: §11.2 line 44 (no in-path termination), §8.3 line 631 (no in-path
+// extension), §8.3 line 435 (settlement-time reconciliation).
+// diagnosis: the direct-mode usage path fed the mid-session budget enforcer, terminating a direct-mode session in-path or offering it a forbidden in-path extension (proposal 0024 S4/Pass-5 exclusion broken).
+func TestRecordDirectUsageExcludesEnforcer_spec_11_2_44(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "s_d", TenantID: "acme", RuntimeRef: "claude-prod", State: session.StateRunning,
+		DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 100},
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	term := &recordTerminator{}
+	enforcer := sessionbudget.New(term, nil, nil)
+	// A seam that fails the test if the enforcer ever consults it: a direct-mode
+	// session must never reach the in-path §8.6 extension.
+	extended := false
+	enforcer.SetExtendOnExhaustion(func(_, _ context.Context, _, _ string, _, _ int64) sessionbudget.Outcome {
+		extended = true
+		return sessionbudget.Terminal
+	})
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+
+	// A delta of 500 tokens is 5× the 100-token lease budget. On the proxy
+	// path this would terminate the session; on the direct-mode path it must
+	// not touch the enforcer at all.
+	rec.RecordDirectUsage(ctx, directUsage("s_d", "acme"), llmproxy.Usage{InputTokens: 400, OutputTokens: 100})
+
+	if !enforcer.Allow("s_d") {
+		t.Errorf("direct-mode session must not be denied by the enforcer pre-flight gate")
+	}
+	if len(term.calls) != 0 {
+		t.Errorf("direct-mode session must not be terminated in-path, got %v", term.calls)
+	}
+	if extended {
+		t.Errorf("direct-mode session must not be offered an in-path §8.6 extension")
+	}
+}
+
+// TestRecordDirectUsageDropsProxyLease_spec_4_9_1468 proves the direct-mode
+// path drops a proxy-mode (or tenantless) lease so proxy-extracted counts are
+// not double-counted: RecordUsage on the §4.9 path already records them
+// authoritatively. spec: §4.9 line 1468.
+func TestRecordDirectUsageDropsProxyLease_spec_4_9_1468(t *testing.T) {
+	ctx := context.Background()
+	usage := usagestore.NewMemory()
+	obs := &recordAnomalyObserver{}
+	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
+	rec.setAnomalyObserver(obs)
+
+	// A proxy lease routed to the direct-mode path is dropped.
+	rec.RecordDirectUsage(ctx, credential.Lease{
+		LeaseID: "cl-p", SessionID: "s_p", TenantID: "acme",
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
+	}, llmproxy.Usage{InputTokens: 99, OutputTokens: 1})
+	// A direct lease without a tenant is dropped.
+	rec.RecordDirectUsage(ctx, directUsage("s_t", ""), llmproxy.Usage{InputTokens: 5, OutputTokens: 5})
+
+	report, _ := usage.Aggregate(ctx, "acme", nil)
+	if report.TotalTokens.Input != 0 || report.TotalTokens.Output != 0 {
+		t.Errorf("proxy lease leaked into direct-mode sinks: %+v", report.TotalTokens)
+	}
+	if len(obs.calls) != 0 {
+		t.Errorf("a dropped lease must not reach the anomaly observer, got %+v", obs.calls)
+	}
+
+	// Nil-safe on the recorder and setter.
+	var nilRec *proxyUsageRecorder
+	nilRec.RecordDirectUsage(ctx, directUsage("s", "acme"), llmproxy.Usage{})
+	nilRec.setAnomalyObserver(obs)
+}
+
+// TestRecordDirectUsageIdleClockGate_spec_6_2_253 proves the §6.2 line 253
+// direct-mode idle reconciliation under the gateway pull: a zero-token delta
+// leaves the idle clock untouched (a bare timer tick is not evidence of agent
+// work, so a hung pod still idle-terminates), while a non-zero delta resets it
+// (direct evidence the agent issued LLM work). It would fail against a design
+// that reused the proxy recorder's unconditional per-chunk idle stamp.
+//
+// spec: §6.2 line 253 (direct-mode idle reset on non-zero delta), §11.2
+// (direct-mode usage).
+// diagnosis: the direct-mode usage path stamped the §6.2 idle clock on every gateway ReportUsage poll rather than only on a non-zero delta, so a hung direct-mode pod that emits no tokens never idle-terminates and its pod, lease, and session leak (proposal 0024 S4 idle-gate broken).
+func TestRecordDirectUsageIdleClockGate_spec_6_2_253(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	t0 := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: "s_idle", TenantID: "acme", State: session.StateRunning, CreatedAt: t0, UpdatedAt: t0,
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), store, nil, nil, nil, nil)
+	stamper := sessionidle.NewStamper(store, func() time.Time { return t0 })
+	rec.setActivityStamper(stamper)
+
+	// A zero-delta poll must not stamp: the anchor stays zero after a bounded
+	// wait for any background persist that must not happen.
+	rec.RecordDirectUsage(ctx, directUsage("s_idle", "acme"), llmproxy.Usage{InputTokens: 0, OutputTokens: 0})
+	time.Sleep(50 * time.Millisecond)
+	row, _ := store.Get(ctx, "acme", "s_idle")
+	if !row.LastAgentActivityAt.IsZero() {
+		t.Fatalf("zero-delta pull must not reset the §6.2 idle clock, got %v", row.LastAgentActivityAt)
+	}
+
+	// A non-zero delta resets the idle clock (evidence of real LLM work).
+	rec.RecordDirectUsage(ctx, directUsage("s_idle", "acme"), llmproxy.Usage{InputTokens: 1, OutputTokens: 0})
+	waitForActivity(t, store, "acme", "s_idle", t0)
+}
+
+// waitForActivity polls until the session's LastAgentActivityAt reaches at
+// least want, accommodating the stamper's background persist goroutine.
+func waitForActivity(t *testing.T, store sessionstore.Store, tenant, id string, want time.Time) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		row, err := store.Get(context.Background(), tenant, id)
+		if err == nil && !row.LastAgentActivityAt.Before(want) && !row.LastAgentActivityAt.IsZero() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	row, _ := store.Get(context.Background(), tenant, id)
+	t.Fatalf("LastAgentActivityAt did not reach %v: got %v", want, row.LastAgentActivityAt)
 }

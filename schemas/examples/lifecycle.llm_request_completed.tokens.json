@@ -1,0 +1,8 @@
+{
+  "type": "llm_request_completed",
+  "requestId": "req_01HX9F0YWXKK0V7QZ7G6P3R5JN",
+  "provider": "anthropic",
+  "status": "ok",
+  "inputTokens": 1200,
+  "outputTokens": 340
+}

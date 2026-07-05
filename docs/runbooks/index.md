@@ -84,6 +84,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `GatewaySubsystemCircuitOpen` | [circuit-breaker-open](circuit-breaker-open.html) | `gateway` |
 | `LLMTranslationLatencyHigh` | [llm-translation-degraded](llm-translation-degraded.html) | `gateway` |
 | `LLMTranslationSchemaDrift` | [llm-translation-degraded](llm-translation-degraded.html) | `gateway` |
+| `TokenUsageAnomaly` | [token-usage-anomaly](token-usage-anomaly.html) | `gateway` |
 | `PoolConfigDrift` | [pool-config-drift](pool-config-drift.html) | `warmPools` |
 | `WarmPoolReplenishmentSlow` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
 | `WarmPoolReplenishmentFailing` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
@@ -269,6 +270,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [gateway-subsystem-extraction](gateway-subsystem-extraction.html)
 - [llm-egress-anomaly](llm-egress-anomaly.html)
 - [llm-translation-degraded](llm-translation-degraded.html)
+- [token-usage-anomaly](token-usage-anomaly.html)
 - [workspace-seal-stuck](workspace-seal-stuck.html)
 
 **Credentials and tokens**

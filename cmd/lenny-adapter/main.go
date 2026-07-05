@@ -352,6 +352,25 @@ func main() {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
 		adapterSrv.Lifecycle = lifecycle
+	}
+
+	// spec: §4.7 (ReportUsage), §11.2 (direct-mode usage) — install the
+	// direct-mode usage path: construct the UsageMeter, assign it to
+	// adapterSrv.Usage so ReportUsage stops returning Unimplemented in
+	// production (F-15.3.7), and, when a lifecycle channel is configured,
+	// wire the token sink that folds each llm_request_completed frame's
+	// direct-mode token counts into it. The sink resolves the pod's active
+	// session (§6.1 one session per pod) at fold time via CurrentSessionID.
+	//
+	// This runs before the lifecycle Run goroutine is launched below, so
+	// the sink is assigned to the lock-free LifecycleChannel.usage field
+	// before the read loop that reads it starts. That ordering is the
+	// invariant the field relies on in place of a lock (see
+	// LifecycleChannel.SetUsageSink); wiring after the Run goroutine would
+	// race the read loop and violate it.
+	adapter.WireDirectModeUsage(adapterSrv, lifecycle)
+
+	if lifecycle != nil {
 		go func() {
 			if err := lifecycle.Run(context.Background()); err != nil {
 				log.Printf("lenny-adapter: lifecycle channel stopped: %v", err)

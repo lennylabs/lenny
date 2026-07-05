@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -82,11 +83,25 @@ func shortSocketName(t *testing.T, name string) string {
 // connection are torn down on test cleanup.
 func startLifecycleChannel(t *testing.T) (*LifecycleChannel, *fakeRuntime) {
 	t.Helper()
+	return startLifecycleChannelWithSink(t, nil)
+}
+
+// startLifecycleChannelWithSink is startLifecycleChannel with the usage
+// sink wired before Run is launched. This mirrors the production
+// ordering in cmd/lenny-adapter, where the sink is assigned to the
+// lock-free LifecycleChannel.usage field before the read-loop goroutine
+// starts (the invariant SetUsageSink documents in place of a lock). A nil
+// sink leaves token folding a no-op.
+func startLifecycleChannelWithSink(t *testing.T, sink tokenSink) (*LifecycleChannel, *fakeRuntime) {
+	t.Helper()
 	sock := shortSocketName(t, "lifecycle.sock")
 
 	lc, err := NewLifecycleChannel(sock)
 	if err != nil {
 		t.Fatalf("NewLifecycleChannel: %v", err)
+	}
+	if sink != nil {
+		lc.SetUsageSink(sink)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -287,6 +302,121 @@ func TestLifecycleChannelInflightCounter_spec_4_7(t *testing.T) {
 	fr.write(lifecycleFrame{Type: "llm_request_completed", RequestID: "r2", Provider: "anthropic", Status: "ok"})
 	fr.write(lifecycleFrame{Type: "llm_request_completed", RequestID: "rx", Provider: "anthropic", Status: "error"})
 	waitInflight("anthropic", 0)
+}
+
+// recordingSink is a tokenSink that sums the folded token counts.
+type recordingSink struct {
+	mu     sync.Mutex
+	input  int64
+	output int64
+	calls  int
+}
+
+func (r *recordingSink) AddTokens(input, output int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.input += input
+	r.output += output
+	r.calls++
+}
+
+func (r *recordingSink) totals() (int64, int64, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.input, r.output, r.calls
+}
+
+// spec: §4.7 (llm_request_completed token fields), §11.2 (direct-mode usage)
+// An llm_request_completed frame carrying inputTokens/outputTokens folds
+// those counts into the wired usage sink, and a frame without token fields
+// folds nothing (the runtime that cannot extract counts, a zero delta).
+// This pins the S3 fold that did not exist before this step.
+func TestLifecycleChannelFoldsCompletedTokens_spec_11_2(t *testing.T) {
+	sink := &recordingSink{}
+	// Wire the sink before Run starts, matching the production ordering
+	// (cmd/lenny-adapter): the lock-free usage field must be set before the
+	// read-loop goroutine reads it.
+	_, fr := startLifecycleChannelWithSink(t, sink)
+	fr.handshake()
+
+	waitCalls := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, _, calls := sink.totals(); calls == want {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		_, _, calls := sink.totals()
+		t.Fatalf("sink calls = %d, want %d", calls, want)
+	}
+
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", RequestID: "r1", Provider: "anthropic",
+		Status: "ok", InputTokens: 40, OutputTokens: 12,
+	})
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", RequestID: "r2", Provider: "anthropic",
+		Status: "ok", InputTokens: 10, OutputTokens: 3,
+	})
+	waitCalls(2)
+
+	// A frame with no token fields folds nothing (no extra sink call).
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", RequestID: "r3", Provider: "anthropic", Status: "ok",
+	})
+	// Give the read loop a moment; the call count must stay at 2.
+	time.Sleep(20 * time.Millisecond)
+
+	input, output, calls := sink.totals()
+	if input != 50 || output != 15 {
+		t.Fatalf("folded totals = (%d,%d), want (50,15)", input, output)
+	}
+	if calls != 2 {
+		t.Fatalf("sink calls = %d, want 2 (a token-less frame must not fold)", calls)
+	}
+}
+
+// spec: §4.7 (llm_request_completed token fields), §11.2 (direct-mode usage)
+// The usage sink must be wired before Run starts. The lock-free
+// LifecycleChannel.usage field carries no mutex; its safety rests entirely
+// on being assigned before the read-loop goroutine that reads it. Before
+// this step's fix, cmd/lenny-adapter wired the sink after launching the
+// Run goroutine, so a frame arriving between Run's launch and the wiring
+// call would read lc.usage with no happens-before edge to the write, a
+// data race the -race detector flags and that could drop token folding for
+// the first frames. This pins the corrected ordering: with the sink wired
+// before Run (startLifecycleChannelWithSink), a completed-LLM frame that
+// arrives immediately after the handshake folds its tokens with no race.
+// Run under -race (tier 7a) it fails against the pre-fix after-Run wiring.
+func TestLifecycleChannelSinkWiredBeforeRun_spec_11_2(t *testing.T) {
+	sink := &recordingSink{}
+	_, fr := startLifecycleChannelWithSink(t, sink)
+	fr.handshake()
+
+	// The very first post-handshake frame carries tokens. With the sink
+	// wired before Run it folds deterministically; the read loop already
+	// held the sink pointer when it started.
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", RequestID: "r1", Provider: "anthropic",
+		Status: "ok", InputTokens: 64, OutputTokens: 21,
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, _, calls := sink.totals(); calls == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	input, output, calls := sink.totals()
+	if calls != 1 {
+		t.Fatalf("sink calls = %d, want 1 (first post-handshake frame must fold)", calls)
+	}
+	if input != 64 || output != 21 {
+		t.Fatalf("folded totals = (%d,%d), want (64,21)", input, output)
+	}
 }
 
 func TestLifecycleChannelCloseFailsPendingRequest(t *testing.T) {

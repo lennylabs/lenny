@@ -56,7 +56,8 @@ var spec161Metrics = []string{
 	"lenny_token_service_secret_reloads_total", "lenny_gateway_subsystem_request_duration_seconds",
 	"lenny_gateway_subsystem_errors_total", "lenny_gateway_subsystem_queue_depth",
 	"lenny_gateway_subsystem_circuit_state", "lenny_gateway_llm_proxy_active_connections",
-	"lenny_gateway_llm_upstream_egress_anomaly_total", "lenny_gateway_llm_translation_duration_seconds",
+	"lenny_gateway_llm_upstream_egress_anomaly_total", "lenny_gateway_token_usage_anomaly_total",
+	"lenny_gateway_llm_translation_duration_seconds",
 	"lenny_gateway_llm_translation_errors_total", "lenny_gateway_max_sessions_per_replica",
 	"lenny_gateway_gc_pause_p99_ms", "lenny_gateway_gc_pause_fleet_p99_ms",
 	"lenny_stream_proxy_queue_depth", "lenny_stream_proxy_goroutines",
@@ -219,6 +220,28 @@ func TestLookupMetric(t *testing.T) {
 	}
 	if _, ok := LookupMetric("lenny_not_a_real_metric"); ok {
 		t.Error("an uncatalogued metric must not be found")
+	}
+}
+
+// TestTokenUsageAnomalyMetricLabelsAreCompliant pins the §16.1.1-compliant
+// label set for the direct-mode integrity metric lenny_gateway_token_usage_anomaly_total.
+// §11.2 originally labeled it by session_id, which §16.1.1 forbids; the applied
+// spec (§16.1 row) labels it by {tenant_id, reason} instead. This asserts the
+// compliant label set validates and the pre-reconciliation session_id label
+// does not, so a regression to the forbidden label fails here.
+//
+// spec: §11.2 (direct-mode usage integrity), §16.1 (metric row), §16.1.1 (forbidden labels).
+func TestTokenUsageAnomalyMetricLabelsAreCompliant(t *testing.T) {
+	const name = "lenny_gateway_token_usage_anomaly_total"
+	if _, ok := LookupMetric(name); !ok {
+		t.Fatalf("%s must be registered in the §16.1 catalog", name)
+	}
+	if err := Validate(name, []string{"tenant_id", "reason"}); err != nil {
+		t.Errorf("Validate(%s, [tenant_id, reason]) = %v, want nil", name, err)
+	}
+	// session_id is the pre-reconciliation label §16.1.1 forbids; it must fail.
+	if err := Validate(name, []string{"tenant_id", "session_id"}); err == nil {
+		t.Errorf("Validate(%s, [tenant_id, session_id]) = nil, want a §16.1.1 forbidden-label error", name)
 	}
 }
 

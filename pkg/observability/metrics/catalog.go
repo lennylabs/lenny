@@ -173,6 +173,15 @@ var metricCatalog = []MetricSpec{
 	{"lenny_gateway_subsystem_circuit_state", TypeGauge, "Per-subsystem circuit breaker state by subsystem"},
 	{"lenny_gateway_llm_proxy_active_connections", TypeGauge, "LLM Proxy active connections"},
 	{"lenny_gateway_llm_upstream_egress_anomaly_total", TypeCounter, "Outbound connections to non-allowlisted LLM destinations"},
+	// lenny_gateway_token_usage_anomaly_total is the §11.2 direct-mode
+	// token-usage integrity signal: a counter labeled by {tenant_id, reason}
+	// that increments when a direct-mode session's per-session ReportUsage
+	// deltas are under-reported (a zero-token-delta window or an
+	// implausibly-small token-per-call ratio). session_id is intentionally
+	// excluded because §16.1.1 forbids it as a Prometheus label; per-session
+	// attribution moves to structured logs. spec: §11.2 (direct-mode usage
+	// integrity), §16.1 (metric row), §16.1.1 (forbidden labels).
+	{"lenny_gateway_token_usage_anomaly_total", TypeCounter, "Direct-mode ReportUsage under-reporting anomalies"},
 	{"lenny_gateway_llm_translation_duration_seconds", TypeHistogram, "Native LLM translator CPU time per leg"},
 	{"lenny_gateway_llm_translation_errors_total", TypeCounter, "LLM translator failures by error type"},
 	{"lenny_gateway_max_sessions_per_replica", TypeGauge, "Maximum concurrent sessions a replica can serve by delivery mode"},
