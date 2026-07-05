@@ -219,6 +219,7 @@ type gatewayFlags struct {
 	proxyExtensionWaitTimeout               *time.Duration
 	tokenAnomalyZeroWindow                  *int
 	tokenAnomalyImplausibleRatio            *float64
+	directUsagePollIntervalSeconds          *int
 	spiffeTrustDomain                       *string
 	interceptorNamespaces                   *string
 	saTokenAudience                         *string
@@ -881,6 +882,8 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§11.2 direct-mode token-usage integrity: the count of consecutive zero-token direct-mode ReportUsage pulls a session must exceed before the gateway raises lenny_gateway_token_usage_anomaly_total{reason=\"zero_delta\"}. A non-zero pull resets the run. §11.2 fixes the default at greater than 3; a non-positive value falls back to the default so the primary under-reporting signal is never disabled. Override via LENNY_TOKEN_ANOMALY_ZERO_WINDOW.")
 	f.tokenAnomalyImplausibleRatio = flag.Float64("token-anomaly-implausible-ratio", envFloat("LENNY_TOKEN_ANOMALY_IMPLAUSIBLE_RATIO", tokenanomaly.DefaultImplausiblySmallRatio),
 		"§11.2 direct-mode token-usage integrity: the cumulative tokens-per-LLM-call ratio below which the gateway raises lenny_gateway_token_usage_anomaly_total{reason=\"implausibly_small\"} for a direct-mode session. §11.2 leaves the numeric value operator-tunable; the default flags a session averaging fewer than one token per call. A non-positive value disables the ratio branch (the zero-token window still fires). Override via LENNY_TOKEN_ANOMALY_IMPLAUSIBLE_RATIO.")
+	f.directUsagePollIntervalSeconds = flag.Int("direct-usage-poll-interval-seconds", envInt("LENNY_DIRECT_USAGE_POLL_INTERVAL_SECONDS", defaultDirectUsagePollIntervalSeconds),
+		"§11.2 direct-mode usage: cadence (seconds) at which the gateway pulls each direct-delivery session's incremental token delta over the §4.7 ReportUsage RPC and fans it into the usage/quota accounting sinks and the §11.2 under-reporting anomaly detector. §8.3 line 435 bounds direct-mode over-run against this interval, and §6.2 line 253 idle detection resets a session's idle clock only on a non-zero pulled delta, so a hung pod still idle-terminates. A value below the 10s minimum is clamped up; a non-positive value selects the 30s default. Override via LENNY_DIRECT_USAGE_POLL_INTERVAL_SECONDS.")
 	f.spiffeTrustDomain = flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
 	f.interceptorNamespaces = flag.String("interceptor-namespaces", os.Getenv("LENNY_INTERCEPTOR_NAMESPACES"),

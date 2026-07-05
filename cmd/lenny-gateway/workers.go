@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -528,6 +529,23 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 			}
 		}
 	}()
+
+	// spec: §11.2 line 42 / §4.7 / §8.3 line 435 / §6.2 line 253 — the single
+	// global direct-mode ReportUsage poll loop. It iterates the replica's live
+	// pod bindings on the direct-usage poll interval, filters to direct-delivery
+	// sessions by their credential lease, pulls each session's incremental §4.7
+	// ReportUsage delta from its adapter, and fans it into the direct-mode usage
+	// recorder (the accounting sinks plus the §11.2 anomaly detector, gating the
+	// §6.2 idle stamp on a non-zero delta and excluding the mid-session enforcer).
+	// newDirectUsageLoop returns nil when the registry, the lease store, or the
+	// recorder is absent (a minimal gateway that records no usage), and Run is a
+	// no-op on a nil loop, so the launch is unconditional. The loop's only exit is
+	// watchdogCtx.Done, so it leaks no goroutine at shutdown. F-15.3.7, F-11.2.20.
+	directUsage := newDirectUsageLoop(w.podRegistry, w.llmLeases, w.proxyUsageRec, *f.directUsagePollIntervalSeconds, slog.Default())
+	if directUsage != nil {
+		log.Printf("lenny-gateway: §11.2 direct-mode ReportUsage poll loop interval=%s", directUsage.interval)
+		go directUsage.Run(w.watchdogCtx)
+	}
 }
 
 // buildLLMProxy builds the §4.9 LLM reverse-proxy HTTP server for
