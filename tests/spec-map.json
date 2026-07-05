@@ -315,7 +315,7 @@
         "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go",
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
         "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
-        "tests/tier4_integration/direct_usage_quota_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
+        "cmd/lenny-gateway/direct_usage_quota_integration_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
         "tests/tier7a_load_local/usagemeter_contention/usagemeter_contention_test.go",
         "tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go",
         "cmd/lenny-gateway/direct_usage_recovery_test.go"
@@ -1277,7 +1277,7 @@
         "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go",
         "cmd/lenny-gateway/direct_usage_recovery_test.go",
         "tests/tier8_chaos/direct_usage_crash_recovery_test.go::TestDirectModeGatewayCrashRecoveryReconstructsMaxWithoutDoubleCount",
-        "tests/tier4_integration/direct_usage_quota_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
+        "cmd/lenny-gateway/direct_usage_quota_integration_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
         "tests/tier9_security/token_usage_anomaly_test.go::TestDirectModeInterspersedNonZeroResetsZeroRun_spec_11_2",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecReportUsageDirectionIsGatewayPull_F15_3_7",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecPodReportedCumulativeCitesSection47_F11_2_20",

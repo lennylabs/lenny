@@ -4,8 +4,9 @@
 
 // Tier-4 integration test for the §11.2 direct-mode usage flow end to end
 // across the components proposal 0024 couples (F-15.3.7, F-11.2.20). It
-// drives the full adapter-meter → gateway ReportUsage pull → quota-counter
-// path as one flow over real transports:
+// drives the full adapter-meter → gateway ReportUsage pull → gateway usage
+// sink → quota-counter path as one flow over real transports and the
+// production gateway sink:
 //
 //   - a production-wired adapter (adapter.WireDirectModeUsage) running over
 //     a real gRPC connection and a real §4.7 lifecycle-channel Unix socket,
@@ -14,23 +15,37 @@
 //   - the gateway's session-scoped ReportUsage pull
 //     (adapterclient.Client.ReportUsageForLease), the same pull the
 //     directUsageLoop issues each tick, reading the incremental delta;
+//   - the production gateway usage sink (*proxyUsageRecorder.RecordDirectUsage
+//     → recordAccounting → recordQuota → AddHierarchical), the fan-out the
+//     direct-mode poll loop hands each pulled delta to; and
 //   - a Redis-container-backed §11.2 hierarchical quota counter
-//     (quotastore.Counter), the accounting sink the direct-mode recorder
-//     folds each pulled delta into, read back over the live Redis window.
+//     (quotastore.Counter), the accounting sink the recorder folds each
+//     pulled delta into, read back over the live Redis window.
 //
-// Tier-1 covers the recorder fan-out with an in-process miniredis, and
-// tier-3 covers the adapter pull over a bufconn transport; neither pins the
-// whole path against a real gRPC adapter and a real Redis container at once.
-// This test does, so a regression that breaks the wire between any two of
-// the three components surfaces here.
+// The final gateway-sink → quota-counter hop this tier exists to verify runs
+// against the production recorder rather than a test-local copy of the sink:
+// the test constructs newProxyUsageRecorder and calls RecordDirectUsage with
+// each pulled delta, so recordQuota's period resolution and AddHierarchical
+// window write are exercised by the shipped code. Tier-1 covers the recorder
+// fan-out with an in-process miniredis, and tier-3 covers the adapter pull
+// over a bufconn transport; neither pins the whole path against a real gRPC
+// adapter, the production recorder, and a real Redis container at once. This
+// test does, so a regression that breaks the wire between any two of the
+// components surfaces here.
+//
+// This test lives in package main because the production sink
+// (*proxyUsageRecorder) is unexported; the tier-4 flow the proposal names
+// reaches the quota counter through that recorder, so the test is colocated
+// with it rather than reimplementing the sink from an external package.
 //
 // It would fail against the pre-0024 code: the production adapter carried no
 // UsageMeter, so ReportUsage returned codes.Unimplemented, the pull read
-// nothing, and the quota counter never advanced for a direct-mode session.
+// nothing, and RecordDirectUsage never advanced the quota counter for a
+// direct-mode session.
 //
 // spec: §4.7 (ReportUsage pull, llm_request_completed token fields), §11.2
 // (direct-mode usage recording into the quota counter).
-package tier4_integration_test
+package main
 
 import (
 	"bufio"
@@ -48,13 +63,19 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
 // directUsageEchoLoop is a minimal §15.4.1 runtime loop for the
@@ -242,19 +263,28 @@ func pullDeltaUntilFolded(t *testing.T, client *adapterclient.Client, lease cred
 	return adapterclient.UsageReport{}
 }
 
+// directQuotaLimits is a policy.TenantLimitLookup returning a fixed hourly
+// reset period for every tenant, so the production recorder's recordQuota
+// resolves the same §11.2 window UsageHierarchical reads back.
+type directQuotaLimits struct{}
+
+func (directQuotaLimits) LookupLimits(_ context.Context, _ string) (policy.TenantLimits, error) {
+	return policy.TenantLimits{Period: quota.ResetHourly}, nil
+}
+
 // spec: 4.7 (ReportUsage pull, llm_request_completed token counts), 11.2
-// (direct-mode usage folded into the quota counter)
+// (direct-mode usage folded into the quota counter through the production
+// gateway sink)
 // diagnosis: the §11.2 direct-mode usage flow did not complete end to end —
 // a direct-mode session's token consumption, reported by the runtime on the
 // enriched llm_request_completed frame and accumulated by the adapter meter,
-// did not reach the Redis quota counter through the gateway ReportUsage pull.
-// Either the production adapter served no UsageMeter (ReportUsage
-// Unimplemented, F-15.3.7), the gateway pull read no delta, or the recorder
-// fan-out did not increment the quota window, so a direct-mode tenant's
-// budget went unenforceable end to end.
+// did not reach the Redis quota counter through the gateway ReportUsage pull
+// and the production RecordDirectUsage fan-out. Either the production adapter
+// served no UsageMeter (ReportUsage Unimplemented, F-15.3.7), the gateway pull
+// read no delta, or the recorder's recordQuota/AddHierarchical write did not
+// increment the quota window, so a direct-mode tenant's budget went
+// unenforceable end to end.
 func TestDirectModeUsageFlowsToQuotaCounter_spec_11_2(t *testing.T) {
-	gateway.SkipUnlessAvailable(t)
-
 	const (
 		tenant    = "acme"
 		user      = "alice@acme.com"
@@ -270,41 +300,67 @@ func TestDirectModeUsageFlowsToQuotaCounter_spec_11_2(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	counter := quotastore.New(rd.Client)
 
+	// The production gateway usage sink: the recorder the direct-mode poll
+	// loop hands each pulled delta to. Its session store resolves the per-user
+	// quota attribution; its limit lookup resolves the §11.2 reset period; its
+	// quota counter is the same live Redis counter the test reads back. The
+	// idle stamper, session-usage accumulator, and enforcer are left nil (this
+	// flow verifies the metering-to-quota hop, not idle reset or budget breach).
+	sessions := memstore.New()
+	if err := sessions.Create(context.Background(), sessionstore.Session{
+		ID: sessionID, TenantID: tenant, UserID: user, RuntimeRef: "echo", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+	var usageStore usagestore.Store = usagestore.NewMemory()
+	sessUsage := sessionusage.NewMemory()
+	now := time.Now().UTC()
+	rec := newProxyUsageRecorder(usageStore, sessions, sessUsage, counter, directQuotaLimits{}, nil)
+	if rec == nil {
+		t.Fatal("newProxyUsageRecorder returned nil with a usage store set")
+	}
+	// Pin the recorder's quota-window clock so recordQuota keys the same hourly
+	// window UsageHierarchical reads back below.
+	rec.now = func() time.Time { return now }
+
 	// Real wired adapter over gRPC + a real lifecycle socket: the adapter the
 	// production cmd/lenny-adapter assembles for a direct-mode pod.
 	client, sock := wiredAdapterClient(t, sessionID)
 	enc := dialDirectRuntime(t, sock)
 
-	// A direct-mode runtime reports two completed provider calls on the
-	// enriched frame; the adapter meter accumulates them per session.
-	sendCompletedCall(t, enc, "req-1", 1200, 340)
-
 	ctx := context.Background()
-	now := time.Now().UTC()
 
-	// The gateway steady-state pull reads the folded delta and the recorder
-	// fans it into the quota counter's per-tenant and per-user windows. Fold
-	// the pulled delta the way proxyUsageRecorder.recordQuota does for an
-	// hourly period (AddHierarchical), so the window read reflects the
-	// end-to-end path.
+	// A direct-mode runtime reports a completed provider call on the enriched
+	// frame; the adapter meter accumulates it per session. The gateway
+	// steady-state pull reads the folded delta and the production recorder fans
+	// it into the quota counter's per-tenant and per-user windows through
+	// RecordDirectUsage → recordQuota → AddHierarchical.
+	sendCompletedCall(t, enc, "req-1", 1200, 340)
 	first := pullDeltaUntilFolded(t, client, lease)
 	if first.InputTokens != 1200 || first.OutputTokens != 340 {
 		t.Fatalf("first pull delta = (%d,%d), want (1200,340)", first.InputTokens, first.OutputTokens)
 	}
-	foldIntoQuota(t, counter, tenant, user, now, first)
+	rec.RecordDirectUsage(ctx, lease, llmproxy.Usage{
+		InputTokens:  int(first.InputTokens),
+		OutputTokens: int(first.OutputTokens),
+	})
 
-	// A second completed call: its delta must accumulate on top of the first
-	// in the same tenant window (the counter is additive, matching the
-	// recorder fan-out).
+	// A second completed call: its delta must accumulate on top of the first in
+	// the same tenant window (the counter is additive, matching the recorder
+	// fan-out).
 	sendCompletedCall(t, enc, "req-2", 500, 120)
 	second := pullDeltaUntilFolded(t, client, lease)
 	if second.InputTokens != 500 || second.OutputTokens != 120 {
 		t.Fatalf("second pull delta = (%d,%d), want (500,120)", second.InputTokens, second.OutputTokens)
 	}
-	foldIntoQuota(t, counter, tenant, user, now, second)
+	rec.RecordDirectUsage(ctx, lease, llmproxy.Usage{
+		InputTokens:  int(second.InputTokens),
+		OutputTokens: int(second.OutputTokens),
+	})
 
 	// Read the live Redis window back: the tenant rollup and the per-user
-	// window both carry the sum of both calls' total tokens (input+output).
+	// window both carry the sum of both calls' total tokens (input+output),
+	// written by the production recorder rather than a test-local copy.
 	const wantTotal = int64(1200 + 340 + 500 + 120) // 2160
 	scoped, err := counter.UsageHierarchical(ctx, tenant, user, quota.ResetHourly, now)
 	if err != nil {
@@ -317,9 +373,20 @@ func TestDirectModeUsageFlowsToQuotaCounter_spec_11_2(t *testing.T) {
 		t.Errorf("user quota window = %d, want %d", scoped.User, wantTotal)
 	}
 
-	// The delta reads drained the accumulation: a final steady-state pull
-	// with no further calls reports zero (the §4.7 incremental contract),
-	// which is what the §11.2 anomaly detector observes as a zero delta.
+	// The production recorder also lands the counts in the §15.1 metering store:
+	// the same fan-out that fed the quota counter fed the billing rollup, so a
+	// direct-mode tenant's usage is both enforceable and billable.
+	metered, err := usageStore.Aggregate(ctx, tenant, nil)
+	if err != nil {
+		t.Fatalf("usage.Aggregate: %v", err)
+	}
+	if metered.TotalTokens.Input != 1700 || metered.TotalTokens.Output != 460 {
+		t.Errorf("metered tokens = %+v, want input=1700 output=460", metered.TotalTokens)
+	}
+
+	// The delta reads drained the accumulation: a final steady-state pull with
+	// no further calls reports zero (the §4.7 incremental contract), which is
+	// what the §11.2 anomaly detector observes as a zero delta.
 	drainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	drained, err := client.ReportUsageForLease(drainCtx, sessionID, lease.DeliveryMode, false)
@@ -328,23 +395,5 @@ func TestDirectModeUsageFlowsToQuotaCounter_spec_11_2(t *testing.T) {
 	}
 	if drained.InputTokens != 0 || drained.OutputTokens != 0 {
 		t.Errorf("drained delta = (%d,%d), want (0,0) after both deltas were pulled", drained.InputTokens, drained.OutputTokens)
-	}
-}
-
-// foldIntoQuota folds one pulled ReportUsage delta into the §11.2 hierarchical
-// quota counter the way proxyUsageRecorder.recordQuota does for an hourly
-// period: the total tokens (input+output) advance the per-user, per-tenant,
-// and global windows. This mirrors the gateway recorder's accounting sink so
-// the window read reflects the end-to-end direct-mode path.
-func foldIntoQuota(t *testing.T, counter *quotastore.Counter, tenant, user string, now time.Time, report adapterclient.UsageReport) {
-	t.Helper()
-	tokens := report.InputTokens + report.OutputTokens
-	if tokens <= 0 {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := counter.AddHierarchical(ctx, tenant, user, quota.ResetHourly, now, tokens); err != nil {
-		t.Fatalf("AddHierarchical: %v", err)
 	}
 }
