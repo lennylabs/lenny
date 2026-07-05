@@ -135,7 +135,7 @@ func TestRun_StepOrdering_spec_5_2_424(t *testing.T) {
 	kill := stepIndex(rep, StepKillProcesses)
 	rmWs := stepIndex(rep, StepRemoveWorkspace)
 	verify := stepIndex(rep, StepVerify)
-	if !(purge < cleanup && cleanup < kill && kill < rmWs && rmWs < verify) {
+	if purge >= cleanup || cleanup >= kill || kill >= rmWs || rmWs >= verify {
 		t.Fatalf("bad order purge=%d cleanup=%d kill=%d rmWs=%d verify=%d", purge, cleanup, kill, rmWs, verify)
 	}
 }

@@ -340,10 +340,9 @@ func scratchTargets(cfg Config) []string {
 
 // verify runs step 6: stat the workspace, /tmp, /dev/shm, the scratch
 // dirs, and the credential file. A non-empty directory, or a credential
-// file still present, fails the scrub. A re-run (after step 7) overwrites
-// the prior VerifyDirty list and appends a fresh verify StepRecord.
+// file still present, fails the scrub. Run calls verify exactly once, so it
+// starts from a fresh Report with an empty VerifyDirty list.
 func (r *Report) verify(ops Ops, cfg Config) {
-	r.VerifyDirty = nil
 	var verifyErr error
 
 	checkEmpty := func(path string) {
