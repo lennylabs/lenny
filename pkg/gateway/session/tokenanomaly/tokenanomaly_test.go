@@ -153,6 +153,34 @@ func TestImplausiblySmallFiresAtThreshold_spec_11_2(t *testing.T) {
 	}
 }
 
+// spec: §11.2 — the implausibly_small evidence floor tracks the operator-tuned
+// ZeroTokenWindow (window + 1) rather than a hard-coded non-spec constant, so
+// raising the window raises the floor in lockstep. With a window of 6 the floor
+// is 7: the branch must not fire on the 4th call (the pre-fix hard-coded floor
+// of DefaultZeroTokenWindow+1 = 4), only on the 7th. A regression to the pinned
+// constant would fire early and fail this test. F-11.2.20 (proposal 0024 §4
+// Non-goals: no new hard-coded non-spec threshold).
+func TestImplausibleFloorTracksConfiguredWindow_spec_11_2(t *testing.T) {
+	// Window 6 -> evidence floor 7. Ratio threshold 10; each pull reports 1
+	// token, so the average is below the threshold the moment the floor is met.
+	d, reg := newDetector(t, tokenanomaly.Config{ZeroTokenWindow: 6, ImplausiblySmallRatio: 10})
+
+	// Six 1-token calls: below the window-derived floor of 7, so no fire even
+	// though the average is already 1 token/call (< 10). The pre-fix code, with
+	// a floor pinned at DefaultZeroTokenWindow+1 = 4, would have fired on the
+	// 4th call here.
+	observe(d, "acme", "s_floor", []int64{1, 1, 1, 1, 1, 1})
+	if got := anomalyCount(t, reg, "acme", "implausibly_small"); got != 0 {
+		t.Fatalf("implausibly_small fired before the window-derived floor (7): got %v, want 0", got)
+	}
+
+	// The 7th call meets the floor and fires exactly once.
+	d.Observe("acme", "s_floor", 1, 0)
+	if got := anomalyCount(t, reg, "acme", "implausibly_small"); got != 1 {
+		t.Fatalf("implausibly_small did not fire at the window-derived floor (7): got %v, want 1", got)
+	}
+}
+
 // spec: §11.2 — a non-positive implausibly-small threshold disables the ratio
 // branch; the zero-token window still fires.
 func TestImplausibleRatioDisabled_spec_11_2(t *testing.T) {

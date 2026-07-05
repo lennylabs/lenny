@@ -128,6 +128,11 @@ type directUsageObserver interface {
 	// since the previous poll; a zero-token delta is the primary
 	// under-reporting signal.
 	Observe(tenantID, sessionID string, input, output int64)
+	// Forget drops a settled session's accumulated per-session state so the
+	// detector's per-session map does not grow without bound on the long-lived
+	// gateway process. The recorder forwards it from the same terminal
+	// pipeline that forgets the other per-session accumulators.
+	Forget(sessionID string)
 }
 
 func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, sessUsage sessionusage.Store, quotaCounter *quotastore.Counter, limits policy.TenantLimitLookup, budget *sessionbudget.Enforcer) *proxyUsageRecorder {
@@ -198,11 +203,13 @@ func (r *proxyUsageRecorder) grantedDeltaFor(sessionID string) int64 {
 	return r.grantedDelta[sessionID]
 }
 
-// forget drops sessionID's accumulated grant delta. The gateway calls it from
-// the same terminal-side-effects pipeline that forgets the enforcer counter,
-// so the recorder's per-session delta map does not grow without bound as
-// sessions settle. Nil-safe on the recorder. spec: §8.6 line 629; proposal
-// 0023.
+// forget drops sessionID's accumulated grant delta and the §11.2 direct-mode
+// anomaly detector's per-session accumulator. The gateway calls it from the
+// same terminal-side-effects pipeline that forgets the enforcer counter, so
+// neither the recorder's per-session delta map nor the detector's per-session
+// map grows without bound as sessions settle. Nil-safe on the recorder and on
+// the anomaly observer. spec: §8.6 line 629 (grant delta); §11.2 line 42
+// (direct-mode anomaly per-session state). proposal 0023, 0024.
 func (r *proxyUsageRecorder) forget(sessionID string) {
 	if r == nil || sessionID == "" {
 		return
@@ -210,6 +217,12 @@ func (r *proxyUsageRecorder) forget(sessionID string) {
 	r.grantMu.Lock()
 	delete(r.grantedDelta, sessionID)
 	r.grantMu.Unlock()
+	// spec: §11.2 — drop the detector's per-session zero-run and ratio
+	// accumulator when the session settles so the direct-mode anomaly map does
+	// not leak on the long-lived gateway process. F-11.2.20.
+	if r.anomaly != nil {
+		r.anomaly.Forget(sessionID)
+	}
 }
 
 // setBudgetTracker selects the §12.4 line 268 in_memory_reconciled quota

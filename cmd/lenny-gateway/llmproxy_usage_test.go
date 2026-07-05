@@ -30,7 +30,8 @@ import (
 // direct-mode path reaches the S5 observer. It stands in for the detector the
 // later build step registers through setAnomalyObserver.
 type recordAnomalyObserver struct {
-	calls []anomalyCall
+	calls     []anomalyCall
+	forgotten []string
 }
 
 type anomalyCall struct {
@@ -40,6 +41,10 @@ type anomalyCall struct {
 
 func (o *recordAnomalyObserver) Observe(tenantID, sessionID string, input, output int64) {
 	o.calls = append(o.calls, anomalyCall{tenantID, sessionID, input, output})
+}
+
+func (o *recordAnomalyObserver) Forget(sessionID string) {
+	o.forgotten = append(o.forgotten, sessionID)
 }
 
 // directUsage is a §11.2 direct-mode lease the RecordDirectUsage tests share.
@@ -380,6 +385,34 @@ func TestProxyUsageRecorderForgetDropsGrant_spec_8_6(t *testing.T) {
 	var nilRec *proxyUsageRecorder
 	nilRec.forget("s_forget")
 	rec.forget("")
+}
+
+// TestProxyUsageRecorderForgetDropsAnomalyState_spec_11_2 proves the recorder's
+// forget forwards to the §11.2 direct-mode anomaly detector, so the detector's
+// per-session accumulator is dropped by the same terminal-side-effects pipeline
+// (the sessionserver BudgetForget closure) that forgets the grant delta. Before
+// this fix the detector's per-session map grew unbounded on the long-lived
+// gateway process because nothing in production called Detector.Forget: the
+// direct-mode observer seam declared only Observe. This test fails against the
+// pre-fix code, where forget touched only the grant delta.
+//
+// spec: 11.2 (direct-mode anomaly per-session state cleanup), 16.1.1 (per-session attribution)
+// diagnosis: the direct-mode anomaly detector's per-session map is never cleared on session settlement, leaking a *sessionState entry per direct-mode session for the life of the gateway process (proposal 0024 S8 Forget wiring unhooked).
+func TestProxyUsageRecorderForgetDropsAnomalyState_spec_11_2(t *testing.T) {
+	obs := &recordAnomalyObserver{}
+	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec.setAnomalyObserver(obs)
+
+	rec.forget("s_direct")
+	if len(obs.forgotten) != 1 || obs.forgotten[0] != "s_direct" {
+		t.Fatalf("forget must forward to the anomaly detector's Forget, got %v", obs.forgotten)
+	}
+
+	// An empty session id and a recorder with no observer wired are both
+	// no-ops so the terminal pipeline never panics.
+	rec.forget("")
+	noObs := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	noObs.forget("s_direct")
 }
 
 // TestProxyUsageRecorderNoBudgetNoEnforcement_Spec11_2 confirms a session

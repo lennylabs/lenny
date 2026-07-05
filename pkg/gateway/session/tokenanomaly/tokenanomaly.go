@@ -74,12 +74,6 @@ const (
 	// no real provider response produces. A non-positive configured value
 	// disables the `implausibly_small` branch. spec: §11.2.
 	DefaultImplausiblySmallRatio = 1.0
-
-	// implausibleMinCalls is the minimum number of observed calls before the
-	// ratio branch evaluates, so a single early low-token pull does not fire
-	// before a stable average forms. The detector needs the same evidence base
-	// the zero-token window uses.
-	implausibleMinCalls = DefaultZeroTokenWindow + 1
 )
 
 // Config carries the operator-tunable §11.2 firing thresholds. Both are
@@ -90,6 +84,14 @@ type Config struct {
 	// exceed before `zero_delta` fires. A non-positive value falls back to
 	// DefaultZeroTokenWindow so a zeroed flag never disables the primary
 	// under-reporting signal.
+	//
+	// ZeroTokenWindow also sets the implausibly_small evidence floor via
+	// implausibleMinCalls: a session is not evaluated for the ratio branch
+	// until it has accumulated more calls than the configured window, so the
+	// consecutiveness/window semantics the operator tunes govern both branches
+	// (proposal 0024 §4 Non-goals: no new hard-coded non-spec threshold; the
+	// window semantics are operator-tunable). Raising the window via flag
+	// raises the evidence floor in lockstep. spec: §11.2.
 	ZeroTokenWindow int
 	// ImplausiblySmallRatio is the tokens-per-call ratio below which
 	// `implausibly_small` fires. A non-positive value disables the ratio
@@ -103,6 +105,16 @@ func (c Config) withDefaults() Config {
 		c.ZeroTokenWindow = DefaultZeroTokenWindow
 	}
 	return c
+}
+
+// implausibleMinCalls is the minimum number of observed calls before the
+// implausibly_small ratio branch evaluates, so a single early low-token pull
+// does not fire before a stable average forms. It is derived from the
+// operator-configured ZeroTokenWindow (window + 1) rather than a hard-coded
+// non-spec constant, so it is tunable through the same knob and moves with the
+// window the operator sets (proposal 0024 §4 Non-goals). spec: §11.2.
+func (c Config) implausibleMinCalls() int64 {
+	return int64(c.ZeroTokenWindow) + 1
 }
 
 // sessionState is the per-session accumulator the detector keys on. It tracks
@@ -204,7 +216,7 @@ func (d *Detector) Observe(tenantID, sessionID string, input, output int64) {
 	// that reason rather than double-flagged as implausibly small.
 	fireImplausible := false
 	if d.cfg.ImplausiblySmallRatio > 0 && !st.firedImplausible && !st.firedZeroDelta &&
-		st.calls >= implausibleMinCalls {
+		st.calls >= d.cfg.implausibleMinCalls() {
 		ratio := float64(st.totalTokens) / float64(st.calls)
 		if ratio < d.cfg.ImplausiblySmallRatio {
 			fireImplausible = true
