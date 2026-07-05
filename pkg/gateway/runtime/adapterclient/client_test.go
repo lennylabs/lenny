@@ -984,6 +984,10 @@ func (m fakeUsageMeter) Usage(context.Context, string) (adapter.Usage, error) {
 	return m.usage, m.err
 }
 
+func (m fakeUsageMeter) Cumulative(context.Context, string) (adapter.Usage, error) {
+	return m.usage, m.err
+}
+
 func TestReportUsageReturnsAccounting(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceRoot = t.TempDir()

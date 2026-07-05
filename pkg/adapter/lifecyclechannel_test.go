@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -287,6 +288,78 @@ func TestLifecycleChannelInflightCounter_spec_4_7(t *testing.T) {
 	fr.write(lifecycleFrame{Type: "llm_request_completed", RequestID: "r2", Provider: "anthropic", Status: "ok"})
 	fr.write(lifecycleFrame{Type: "llm_request_completed", RequestID: "rx", Provider: "anthropic", Status: "error"})
 	waitInflight("anthropic", 0)
+}
+
+// recordingSink is a tokenSink that sums the folded token counts.
+type recordingSink struct {
+	mu     sync.Mutex
+	input  int64
+	output int64
+	calls  int
+}
+
+func (r *recordingSink) AddTokens(input, output int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.input += input
+	r.output += output
+	r.calls++
+}
+
+func (r *recordingSink) totals() (int64, int64, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.input, r.output, r.calls
+}
+
+// spec: §4.7 (llm_request_completed token fields), §11.2 (direct-mode usage)
+// An llm_request_completed frame carrying inputTokens/outputTokens folds
+// those counts into the wired usage sink, and a frame without token fields
+// folds nothing (the runtime that cannot extract counts, a zero delta).
+// This pins the S3 fold that did not exist before this step.
+func TestLifecycleChannelFoldsCompletedTokens_spec_11_2(t *testing.T) {
+	lc, fr := startLifecycleChannel(t)
+	sink := &recordingSink{}
+	lc.SetUsageSink(sink)
+	fr.handshake()
+
+	waitCalls := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, _, calls := sink.totals(); calls == want {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		_, _, calls := sink.totals()
+		t.Fatalf("sink calls = %d, want %d", calls, want)
+	}
+
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", RequestID: "r1", Provider: "anthropic",
+		Status: "ok", InputTokens: 40, OutputTokens: 12,
+	})
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", RequestID: "r2", Provider: "anthropic",
+		Status: "ok", InputTokens: 10, OutputTokens: 3,
+	})
+	waitCalls(2)
+
+	// A frame with no token fields folds nothing (no extra sink call).
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", RequestID: "r3", Provider: "anthropic", Status: "ok",
+	})
+	// Give the read loop a moment; the call count must stay at 2.
+	time.Sleep(20 * time.Millisecond)
+
+	input, output, calls := sink.totals()
+	if input != 50 || output != 15 {
+		t.Fatalf("folded totals = (%d,%d), want (50,15)", input, output)
+	}
+	if calls != 2 {
+		t.Fatalf("sink calls = %d, want 2 (a token-less frame must not fold)", calls)
+	}
 }
 
 func TestLifecycleChannelCloseFailsPendingRequest(t *testing.T) {

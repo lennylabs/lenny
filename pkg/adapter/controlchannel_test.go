@@ -175,7 +175,8 @@ type stubUsage struct {
 	err error
 }
 
-func (s stubUsage) Usage(context.Context, string) (Usage, error) { return s.u, s.err }
+func (s stubUsage) Usage(context.Context, string) (Usage, error)      { return s.u, s.err }
+func (s stubUsage) Cumulative(context.Context, string) (Usage, error) { return s.u, s.err }
 
 // spec: §4.7 lines 661-662 — Shutdown flushes a FINAL_USAGE_REPORT with
 // the session's totals before the stream closes (§8.3 budget return).
