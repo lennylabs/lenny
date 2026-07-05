@@ -26,10 +26,11 @@ import (
 // pod_reported_cumulative) rather than silently under-counting.
 //
 // The reader enumerates the replica's bound direct-delivery sessions
-// (podRegistry.Snapshot), resolves each session's credential lease and
-// (tenant, user) subject and reset-period window, pulls each session's
-// cumulative total over the §4.7 ReportUsage RPC (cumulative=true), and
-// aggregates the per-window totals. A proxy-mode lease
+// (podRegistry.Snapshot), re-reads each binding through podRegistry.Get at
+// pull time so a session torn down since the snapshot is skipped, resolves
+// each session's credential lease and (tenant, user) subject and reset-period
+// window, pulls each session's cumulative total over the §4.7 ReportUsage RPC
+// (cumulative=true), and aggregates the per-window totals. A proxy-mode lease
 // (ErrUsageReportProxyMode), a missing lease, a missing session row, a
 // transport error, or a timeout contributes nothing to that window: the
 // reader is fail-closed to the other MAX sources and never fabricates a
@@ -46,7 +47,7 @@ import (
 // spec: §11.2 line 46 (crash-recovery MAX rule; pod-reported cumulative
 // total), §4.7 (ReportUsage cumulative read). F-15.3.7.
 type directUsageRecoveryReader struct {
-	registry    podBindingSnapshotter
+	registry    podBindingRegistry
 	leases      directUsageLeaseLookup
 	subjects    directUsageSubjectResolver
 	periods     quotacheckpoint.PeriodResolver
@@ -59,11 +60,18 @@ type directUsageRecoveryReader struct {
 	cache    map[podUsageWindowKey]int64
 }
 
-// podBindingSnapshotter enumerates the live pod bindings the replica holds.
-// *podsession.Registry satisfies it via Snapshot; it is defined at the
-// consumer so a test can substitute a fixed binding set.
-type podBindingSnapshotter interface {
+// podBindingRegistry enumerates the live pod bindings the replica holds and
+// re-resolves a single binding by session id. *podsession.Registry satisfies
+// it via Snapshot and Get; it is defined at the consumer so a test can
+// substitute a fixed binding set. The recovery reader enumerates candidate
+// sessions with Snapshot, then re-reads each binding with Get at pull time so
+// a session torn down between the snapshot and the pull is skipped and the
+// caller-owned, teardown-closed adapter is never dialed — the same
+// registry-keyed teardown guard the steady-state directUsageLoop uses
+// (direct_usage.go pullSession).
+type podBindingRegistry interface {
 	Snapshot() []*podsession.BindResult
+	Get(sessionID string) (*podsession.BindResult, bool)
 }
 
 // directUsageSubjectResolver resolves a bound session's (tenant, user)
@@ -94,7 +102,7 @@ type podUsageWindowKey struct {
 // gateway degrades to the MAX(redis, postgres, failopen) rule with a nil
 // PodUsage seam.
 func newDirectUsageRecoveryReader(
-	registry podBindingSnapshotter,
+	registry podBindingRegistry,
 	leases directUsageLeaseLookup,
 	subjects directUsageSubjectResolver,
 	periods quotacheckpoint.PeriodResolver,
@@ -174,6 +182,9 @@ func (r *directUsageRecoveryReader) aggregate(ctx context.Context, at time.Time)
 // cumulative total, folding it into both the per-user window and the
 // per-tenant rollup for the window containing `at`. A rolling-period tenant
 // (no single restorable window) is skipped, matching the checkpoint path.
+// Snapshot supplies only the candidate session ids; pullSession re-reads each
+// binding through registry.Get at pull time so a session torn down since the
+// snapshot is skipped.
 func (r *directUsageRecoveryReader) pull(ctx context.Context, at time.Time) map[podUsageWindowKey]int64 {
 	bindings := r.registry.Snapshot()
 	agg := make(map[podUsageWindowKey]int64)
@@ -188,15 +199,15 @@ func (r *directUsageRecoveryReader) pull(ctx context.Context, at time.Time) map[
 	for _, lease := range r.leases.LeasesBySession(sessionIDs) {
 		leasesByID[lease.SessionID] = lease
 	}
-	for _, b := range bindings {
-		lease, ok := leasesByID[b.SessionID]
+	for _, sessionID := range sessionIDs {
+		lease, ok := leasesByID[sessionID]
 		if !ok || lease.DeliveryMode != credential.DeliveryDirect {
 			// No lease resolved, or a proxy-mode session: proxy-extracted counts
 			// are already authoritative and recorded on the §4.9 path, so pulling
 			// here would double-count. Skip. spec: §4.9 line 1468.
 			continue
 		}
-		r.pullSession(ctx, b, lease, at, agg)
+		r.pullSession(ctx, sessionID, lease, at, agg)
 	}
 	return agg
 }
@@ -204,9 +215,12 @@ func (r *directUsageRecoveryReader) pull(ctx context.Context, at time.Time) map[
 // pullSession pulls one direct-mode session's cumulative total and folds it
 // into the aggregation. A resolve error, a proxy-mode misroute, a missing
 // session, a transport error, or a timeout contributes nothing (fail-closed
-// to the other MAX sources). It re-reads the binding through the puller seam
-// so a torn-down session's closed adapter is never dialed.
-func (r *directUsageRecoveryReader) pullSession(ctx context.Context, b *podsession.BindResult, lease credential.Lease, at time.Time, agg map[podUsageWindowKey]int64) {
+// to the other MAX sources). It re-reads the binding through registry.Get at
+// pull time — not the transient Snapshot BindResult — so a session torn down
+// between the snapshot and the pull is skipped and the caller-owned,
+// teardown-closed adapter is never dialed, mirroring the steady-state
+// directUsageLoop.pullSession teardown guard (direct_usage.go).
+func (r *directUsageRecoveryReader) pullSession(ctx context.Context, sessionID string, lease credential.Lease, at time.Time, agg map[podUsageWindowKey]int64) {
 	period, err := r.periods.ResolvePeriod(ctx, lease.TenantID)
 	if err != nil {
 		return
@@ -214,6 +228,13 @@ func (r *directUsageRecoveryReader) pullSession(ctx context.Context, b *podsessi
 	if _, err := quotastore.WindowLabel(period, at); err != nil {
 		// Rolling period: no single restorable window, so a pod-reported
 		// cumulative total has nowhere to land. The checkpoint path skips it too.
+		return
+	}
+	b, ok := r.registry.Get(sessionID)
+	if !ok {
+		// The session unbound between the snapshot and this pull; re-reading
+		// through the registry (rather than the snapshot's BindResult) is what
+		// stops the reader from dialing a torn-down session's closed adapter.
 		return
 	}
 	puller := r.pullerFor(b)
@@ -225,10 +246,10 @@ func (r *directUsageRecoveryReader) pullSession(ctx context.Context, b *podsessi
 	defer cancel()
 	// spec: §4.7 — the crash-recovery read pulls the cumulative total
 	// (cumulative=true), distinct from the steady-state incremental poll.
-	report, err := puller.ReportUsageForLease(pullCtx, b.SessionID, lease.DeliveryMode, true)
+	report, err := puller.ReportUsageForLease(pullCtx, sessionID, lease.DeliveryMode, true)
 	if err != nil {
 		r.log.Debug("direct-mode crash-recovery cumulative pull failed",
-			slog.String("session_id", b.SessionID),
+			slog.String("session_id", sessionID),
 			slog.String("tenant_id", lease.TenantID),
 			slog.Any("error", err))
 		return
@@ -237,7 +258,7 @@ func (r *directUsageRecoveryReader) pullSession(ctx context.Context, b *podsessi
 	if tokens <= 0 {
 		return
 	}
-	userID := r.subjects.ResolveUser(ctx, lease.TenantID, b.SessionID)
+	userID := r.subjects.ResolveUser(ctx, lease.TenantID, sessionID)
 	if userID != "" {
 		agg[podUsageWindowKey{scope: quotacheckpoint.ScopeUser, tenantID: lease.TenantID, subjectID: userID, period: period}] += tokens
 	}

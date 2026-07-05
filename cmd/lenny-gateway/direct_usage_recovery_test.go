@@ -52,6 +52,26 @@ func (p *recoveryPuller) pullCount() int {
 	return len(p.pulls)
 }
 
+// tornDownRegistry is a podBindingRegistry test double that simulates a
+// session torn down between the recovery reader's Snapshot enumeration and its
+// per-session Get re-read: Snapshot returns the binding, but Get reports the
+// session as unbound. It exercises the exact race the registry re-read guards
+// against, which a real registry cannot reproduce deterministically because
+// Snapshot and Get run back-to-back under the reader's own lock.
+type tornDownRegistry struct {
+	binding *podsession.BindResult
+}
+
+func (r *tornDownRegistry) Snapshot() []*podsession.BindResult {
+	return []*podsession.BindResult{r.binding}
+}
+
+func (r *tornDownRegistry) Get(string) (*podsession.BindResult, bool) {
+	// The session unbound since the snapshot: the bind owner has removed it and
+	// closed its adapter.
+	return nil, false
+}
+
 // stubSubjectResolver resolves session→user from a fixed map; an absent
 // session resolves to "" (the pod-reported total still counts against the
 // rollup), matching the SessionStore-backed resolver's missing-row behaviour.
@@ -207,6 +227,48 @@ func TestRecoveryReaderSkipsProxyLease_spec_4_9_1468(t *testing.T) {
 	defer puller.mu.Unlock()
 	if len(puller.pulls) != 1 || puller.pulls[0] != "s_direct" {
 		t.Fatalf("only the direct-mode session must be pulled, got %v", puller.pulls)
+	}
+}
+
+// TestRecoveryReaderSkipsSessionTornDownMidPass_spec_11_2_line46 proves the
+// crash-recovery reader re-reads each binding through registry.Get at pull
+// time — not the transient Snapshot BindResult — so a session torn down
+// between the snapshot enumeration and the per-session pull is skipped and its
+// caller-owned, teardown-closed adapter is never dialed. The registry double
+// returns the binding from Snapshot but reports it unbound from Get,
+// reproducing the exact snapshot-then-teardown race. It would FAIL against the
+// pre-fix reader that passed the retained Snapshot BindResult straight into the
+// puller (dialing the closed adapter), which the proposal's S4 ownership design
+// forbids: BindResult.Adapter is caller-owned and closed at session teardown.
+//
+// spec: 11.2 (line 46 crash-recovery pull keyed off the session-scoped
+// registry), 4.7 (ReportUsage; a torn-down session's adapter must not be
+// dialed).
+// diagnosis: the crash-recovery reader dialed a session's adapter after its binding was removed at teardown, because it pulled from the stale Snapshot BindResult instead of re-reading the session-scoped registry with Get (proposal 0024 S15 registry-keyed teardown guard broken).
+func TestRecoveryReaderSkipsSessionTornDownMidPass_spec_11_2_line46(t *testing.T) {
+	leases := stubLeaseLookup{leases: map[string]credential.Lease{
+		"s_gone": directUsage("s_gone", "acme"),
+	}}
+	subjects := stubSubjectResolver{users: map[string]string{"s_gone": "alice@acme.com"}}
+	puller := &recoveryPuller{reports: map[string]adapterclient.UsageReport{
+		"s_gone": {InputTokens: 999, OutputTokens: 999}, // would be folded if dialed
+	}}
+	registry := &tornDownRegistry{binding: &podsession.BindResult{SessionID: "s_gone", TenantID: "acme"}}
+	reader := newDirectUsageRecoveryReader(registry, leases, subjects, stubPeriods{}, time.Second, nil)
+	reader.pullerFor = func(*podsession.BindResult) directUsagePuller { return puller }
+
+	ctx := context.Background()
+	// The torn-down session's window carries nothing: Get reported it unbound,
+	// so pullSession returned before dialing the puller.
+	if got := reader.UserWindow(ctx, "acme", "alice@acme.com", quota.ResetHourly, recoveryNow); got != 0 {
+		t.Errorf("torn-down session user window = %d, want 0 (Get re-read skips it)", got)
+	}
+	if got := reader.TenantRollup(ctx, "acme", quota.ResetHourly, recoveryNow); got != 0 {
+		t.Errorf("torn-down session tenant rollup = %d, want 0 (Get re-read skips it)", got)
+	}
+	// The adapter for the torn-down session must never be dialed.
+	if puller.pullCount() != 0 {
+		t.Fatalf("a session unbound before its per-session pull must not be dialed, got pulls=%v", puller.pulls)
 	}
 }
 
