@@ -1274,7 +1274,8 @@
         "tests/tier7a_load_local/usagemeter_contention/usagemeter_contention_test.go",
         "tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go",
         "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go",
-        "cmd/lenny-gateway/direct_usage_recovery_test.go"
+        "cmd/lenny-gateway/direct_usage_recovery_test.go",
+        "tests/tier8_chaos/direct_usage_crash_recovery_test.go::TestDirectModeGatewayCrashRecoveryReconstructsMaxWithoutDoubleCount"
       ],
       "packages": [
         "pkg/quota",
