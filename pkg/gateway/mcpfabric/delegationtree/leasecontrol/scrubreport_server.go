@@ -194,6 +194,38 @@ type DrainLedger interface {
 	RecordLeak(ctx context.Context, podID string) error
 }
 
+// SessionCountRetirer is the §5.2 per-release maxSessionsPerPod retirement
+// seam for a concurrent non-vm-restart pool. On every session release the
+// ScrubReporter reports the atomic post-increment served-session count so the
+// retirer can drive the per-release drain decoupled from the whole-pod scrub:
+// a persistently `leaked` slot can hold total occupancy above zero
+// indefinitely, so the occupancy-zero podscrub.Decide maxSessionsPerPod check
+// never fires on such a pool. The retirer resolves the pod's pool per release
+// (mirroring DrainLedger's maxConcurrentSessions resolution), gates on
+// maxConcurrentSessions > 1 && scrubProfile != vm-restart, stamps
+// lenny.dev/drain-request on the level predicate count >= maxSessionsPerPod
+// (idempotent, re-issued on every qualifying release), and increments
+// lenny_gateway_pod_retirement_total{reason=session_count_limit} once on the
+// exact-equality crossing count == maxSessionsPerPod, additionally suppressed
+// when the pod is already over its maxPodUptimeSeconds cap (the controller
+// owns that count as uptime_limit).
+//
+// A single-session pool and a concurrent vm-restart pool take no per-release
+// action: they retire through the occupancy-zero podscrub.Decide path. The
+// concrete implementation lives in the recycle package so leasecontrol stays
+// free of the Kubernetes client and poolstore. spec: §5.2 (per-release
+// maxSessionsPerPod drain on a concurrent non-vm-restart pool), §16.1
+// (session_count_limit counted once on the per-release path), §12
+// (sessions_served evaluated per release on a concurrent pool).
+type SessionCountRetirer interface {
+	// RetireOnSessionCount evaluates the served-session count for podID at a
+	// session release. count is the atomic post-increment sessions_served
+	// value the release advanced. The retirer stamps the drain-request and
+	// increments the retirement counter per the gating above; a gateway-side
+	// failure is returned as an error the handler maps to a gRPC status.
+	RetireOnSessionCount(ctx context.Context, podID string, count int) error
+}
+
 // PodRecyclePolicy is the resolved §5.2 sessionPolicy.recycle the recycle
 // disposition reads, plus the pod facts the disposition needs that do not
 // live on the agent_pod_state recycle counters. The ScrubReporter resolves
@@ -210,6 +242,15 @@ type PodRecyclePolicy struct {
 	MaxScrubFailures int
 	// MaxSessionsPerPod is recycle.maxSessionsPerPod (required, >= 1).
 	MaxSessionsPerPod int
+	// MaxConcurrentSessions is the pool's §5.2
+	// sessionPolicy.maxConcurrentSessions (default 1 when unset). A value > 1
+	// on a non-vm-restart pool routes the maxSessionsPerPod retirement onto
+	// the per-release path (SessionCountRetirer), so applyDisposition
+	// suppresses the occupancy-zero session_count_limit counter emission for
+	// that pod class to keep the retirement counted exactly once. spec: §5.2
+	// (per-release maxSessionsPerPod drain), §16.1 (session_count_limit
+	// counted once).
+	MaxConcurrentSessions int
 	// MaxPodUptimeSeconds is recycle.maxPodUptimeSeconds (0 = no cap).
 	MaxPodUptimeSeconds int64
 	// VMRestart is true when recycle.scrubProfile is vm-restart. On such a pool
@@ -338,11 +379,12 @@ var ErrPodNotInMirror = errors.New("leasecontrol: pod not found in agent_pod_sta
 //
 // spec: §4.7, §3.4, §5.2, §6.39.
 type ScrubReporter struct {
-	counters RecycleCounterStore
-	ledger   DrainLedger
-	inspect  PodInspector
-	driver   ClaimDispositionDriver
-	metrics  RetirementMetrics
+	counters  RecycleCounterStore
+	ledger    DrainLedger
+	sessionRt SessionCountRetirer
+	inspect   PodInspector
+	driver    ClaimDispositionDriver
+	metrics   RetirementMetrics
 }
 
 // ScrubReporterOptions configures a ScrubReporter.
@@ -352,6 +394,9 @@ type ScrubReporterOptions struct {
 	// Ledger records leaked session-scrub outcomes for the drain trigger.
 	// Required.
 	Ledger DrainLedger
+	// SessionRetirer drives the §5.2 per-release maxSessionsPerPod retirement
+	// on a concurrent non-vm-restart pool. Required.
+	SessionRetirer SessionCountRetirer
 	// Inspector resolves the recycle policy and host-node schedulability.
 	// Required.
 	Inspector PodInspector
@@ -373,6 +418,9 @@ func NewScrubReporter(opts ScrubReporterOptions) (*ScrubReporter, error) {
 	if opts.Ledger == nil {
 		return nil, errors.New("leasecontrol: ScrubReporter Ledger is required")
 	}
+	if opts.SessionRetirer == nil {
+		return nil, errors.New("leasecontrol: ScrubReporter SessionRetirer is required")
+	}
 	if opts.Inspector == nil {
 		return nil, errors.New("leasecontrol: ScrubReporter Inspector is required")
 	}
@@ -384,20 +432,32 @@ func NewScrubReporter(opts ScrubReporterOptions) (*ScrubReporter, error) {
 		metrics = noopRetirementMetrics{}
 	}
 	return &ScrubReporter{
-		counters: opts.Counters,
-		ledger:   opts.Ledger,
-		inspect:  opts.Inspector,
-		driver:   opts.Driver,
-		metrics:  metrics,
+		counters:  opts.Counters,
+		ledger:    opts.Ledger,
+		sessionRt: opts.SessionRetirer,
+		inspect:   opts.Inspector,
+		driver:    opts.Driver,
+		metrics:   metrics,
 	}, nil
 }
 
 // RecordSessionScrub increments sessionsServed on the pod's agent_pod_state
 // row and, on a leaked outcome, records the leak in the unhealthy-threshold
-// drain ledger. A pod absent from the mirror returns ErrPodNotInMirror so a
-// stale report does not silently no-op. spec: §4.7; §5.2.
+// drain ledger. It then drives the §5.2 per-release maxSessionsPerPod
+// retirement from the atomic post-increment served-session count: on a
+// concurrent non-vm-restart pool the SessionCountRetirer stamps
+// lenny.dev/drain-request once the count reaches maxSessionsPerPod and counts
+// the retirement, decoupled from the whole-pod scrub because a persistently
+// leaked slot can hold total occupancy above zero indefinitely. A pod absent
+// from the mirror returns ErrPodNotInMirror so a stale report does not
+// silently no-op. spec: §4.7; §5.2 (per-release maxSessionsPerPod drain).
 func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ string, leaked bool) error {
-	_, found, err := r.counters.IncrementSessionsServed(ctx, podID)
+	// Capture the atomic post-increment served-session count: the per-release
+	// retirement gates its exact-equality counter emit on this exact value, so
+	// re-reading the counter (which a concurrent release could have advanced)
+	// would break the count == maxSessionsPerPod crossing. spec: §5.2, §12
+	// (RETURNING sessions_served).
+	count, found, err := r.counters.IncrementSessionsServed(ctx, podID)
 	if err != nil {
 		return fmt.Errorf("increment sessions_served for pod %s: %w", podID, err)
 	}
@@ -411,6 +471,15 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ stri
 		if err := r.ledger.RecordLeak(ctx, podID); err != nil {
 			return fmt.Errorf("record leak for pod %s: %w", podID, err)
 		}
+	}
+	// §5.2: evaluate the served-session count on every release so a concurrent
+	// non-vm-restart pool drains within maxSessionsPerPod even while a
+	// persistently leaked slot holds total occupancy above zero and the
+	// occupancy-zero podscrub.Decide check never fires. The retirer gates
+	// internally on maxConcurrentSessions > 1 && scrubProfile != vm-restart;
+	// a single-session or vm-restart pool is a no-op there.
+	if err := r.sessionRt.RetireOnSessionCount(ctx, podID, count); err != nil {
+		return fmt.Errorf("evaluate per-release session-count retirement for pod %s: %w", podID, err)
 	}
 	return nil
 }
@@ -455,7 +524,7 @@ func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed
 		MaxPodUptimeSeconds: policy.MaxPodUptimeSeconds,
 		HostSchedulable:     policy.HostSchedulable,
 	})
-	return r.applyDisposition(ctx, podID, policy.Pool, policy.RuntimeClass, detail, policy.PreConnect, d)
+	return r.applyDisposition(ctx, podID, policy, detail, d)
 }
 
 // advanceScrubCounters increments the scrub-failure counter on a failed
@@ -503,13 +572,18 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 // the §16.1 vocabulary. A retire writes the terminal disposition (failed vs
 // released), carrying the scrub_warning the §6.39 cordon-drain-under-warn path
 // computes and the adapter-supplied failure detail for the audit trail; a reuse
-// drives the recycle path. pool and runtimeClass label
+// drives the recycle path. policy.Pool and policy.RuntimeClass label
 // lenny_gateway_pod_retirement_total, which is incremented only for a
 // gateway-owned reason the §16.1 inventory declares (session_count_limit,
 // scrub_failure_limit; the uptime_limit count is controller-owned); the §6.39
 // cordon-drain and the fail-policy termination drain without a counter
-// increment. spec: §3.4, §6.39, §16.1.
-func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runtimeClass, detail string, preConnect bool, d podscrub.Disposition) error {
+// increment. On a concurrent non-vm-restart pool the session_count_limit
+// counter is additionally suppressed here because the per-release
+// SessionCountRetirer owns that emission for that pod class; the occupancy-zero
+// disposition still retires the pod as the state backstop. spec: §3.4, §6.39,
+// §16.1, §5.2 (per-release maxSessionsPerPod drain).
+func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, policy PodRecyclePolicy, detail string, d podscrub.Disposition) error {
+	pool, runtimeClass := policy.Pool, policy.RuntimeClass
 	if d.Retire {
 		// lenny_gateway_pod_retirement_total{reason} carries only the
 		// gateway-owned members of the frozen §16.1 vocabulary
@@ -528,10 +602,16 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runti
 		// members of the vocabulary, so the counter is incremented only for a
 		// gateway-owned reason; emitting d.Reason for a non-vocabulary or
 		// controller-owned retire would widen or double-report the frozen label
-		// set. The audit trail below still receives the full reason. spec:
-		// spec/16 §16.1 (retirement counter label set), §16.1.1 (reason
-		// vocabulary).
-		if d.Reason.CountsOnGatewayRetirementTotal() {
+		// set. On a concurrent non-vm-restart pool the per-release
+		// SessionCountRetirer (RecordSessionScrub) is the sole session_count_limit
+		// emitter, so this occupancy-zero path suppresses its own
+		// session_count_limit increment for that pod class to keep the retirement
+		// counted exactly once; the disposition still drives the drain as the
+		// state backstop. The audit trail below still receives the full reason.
+		// spec: spec/16 §16.1 (retirement counter label set; session_count_limit
+		// counted once on the per-release path for a concurrent non-vm-restart
+		// pool), §16.1.1 (reason vocabulary), §5.2 (per-release drain).
+		if d.Reason.CountsOnGatewayRetirementTotal() && !r.perReleaseOwnsSessionCount(policy, d.Reason) {
 			r.metrics.IncRetirement(d.Reason, pool, runtimeClass)
 		}
 		// state.Failed is the onScrubFailure: fail termination → claim
@@ -555,10 +635,33 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runti
 		}
 		return nil
 	}
-	if err := r.driver.Recycle(ctx, podID, preConnect, d.ScrubWarning); err != nil {
+	if err := r.driver.Recycle(ctx, podID, policy.PreConnect, d.ScrubWarning); err != nil {
 		return fmt.Errorf("recycle pod %s: %w", podID, err)
 	}
 	return nil
+}
+
+// perReleaseOwnsSessionCount reports whether the per-release
+// SessionCountRetirer, rather than this occupancy-zero applyDisposition, owns
+// the session_count_limit counter emission for the pod under disposition. It
+// is true only for a session_count_limit retire on a concurrent
+// (maxConcurrentSessions > 1) non-vm-restart pool: on that pod class the
+// per-release path (RecordSessionScrub → SessionCountRetirer) increments
+// lenny_gateway_pod_retirement_total exactly once on the count ==
+// maxSessionsPerPod crossing, so the occupancy-zero path suppresses its own
+// increment to avoid a second count for the same retirement. A single-session
+// pool takes no per-release action and a concurrent vm-restart pool retires
+// with the non-counting vm_restart_reprovision reason (which is not
+// session_count_limit), so both keep this occupancy-zero path as the sole
+// session_count_limit emitter. The predicate names the same conjuncts as the
+// per-release gate and the §5.2 amendment ("a concurrent pool
+// (maxConcurrentSessions > 1) whose scrubProfile is not vm-restart"). spec:
+// §5.2 (per-release maxSessionsPerPod drain), §16.1 (session_count_limit
+// counted once).
+func (r *ScrubReporter) perReleaseOwnsSessionCount(policy PodRecyclePolicy, reason podscrub.RetireReason) bool {
+	return reason == podscrub.ReasonSessionCountLimit &&
+		policy.MaxConcurrentSessions > 1 &&
+		!policy.VMRestart
 }
 
 // scrubInput maps the binary failed flag to the podscrub scrub result

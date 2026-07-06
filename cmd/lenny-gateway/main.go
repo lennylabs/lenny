@@ -737,6 +737,17 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 	if err != nil {
 		return nil, fmt.Errorf("build drain ledger: %w", err)
 	}
+	sessionRetirer, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{
+		Client:    cl,
+		Namespace: agentNamespace,
+		Pools:     pools,
+		Runtimes:  runtimes,
+		Metrics:   metrics,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build session-count retirer: %w", err)
+	}
 	inspector, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
 		Client:    cl,
 		Namespace: agentNamespace,
@@ -768,11 +779,12 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 		return nil, fmt.Errorf("build claim disposition driver: %w", err)
 	}
 	reporter, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters:  recycle.NewRecycleCounterStore(counters),
-		Ledger:    ledger,
-		Inspector: inspector,
-		Driver:    driver,
-		Metrics:   recycle.NewRetirementMetrics(metrics),
+		Counters:       recycle.NewRecycleCounterStore(counters),
+		Ledger:         ledger,
+		SessionRetirer: sessionRetirer,
+		Inspector:      inspector,
+		Driver:         driver,
+		Metrics:        recycle.NewRetirementMetrics(metrics),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build scrub reporter: %w", err)

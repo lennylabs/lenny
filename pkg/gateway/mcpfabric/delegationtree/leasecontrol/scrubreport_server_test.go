@@ -289,6 +289,26 @@ func (f *fakeLedger) RecordLeak(_ context.Context, podID string) error {
 	return nil
 }
 
+// sessionRetireCall records one per-release maxSessionsPerPod evaluation with
+// the post-increment served-session count the release reported.
+type sessionRetireCall struct {
+	podID string
+	count int
+}
+
+// fakeSessionRetirer is a SessionCountRetirer double that records every
+// per-release evaluation and can inject an error to exercise the handler's
+// error path.
+type fakeSessionRetirer struct {
+	calls []sessionRetireCall
+	err   error
+}
+
+func (f *fakeSessionRetirer) RetireOnSessionCount(_ context.Context, podID string, count int) error {
+	f.calls = append(f.calls, sessionRetireCall{podID, count})
+	return f.err
+}
+
 type fakeInspector struct {
 	policy leasecontrol.PodRecyclePolicy
 	found  bool
@@ -380,13 +400,23 @@ func (m *recordingRetireMetrics) IncRetirement(r podscrub.RetireReason, pool, ru
 
 func newReporter(t *testing.T, c *fakeCounters, l *fakeLedger, i *fakeInspector, d *fakeDriver) *leasecontrol.ScrubReporter {
 	t.Helper()
+	r, _ := newReporterWithRetirer(t, c, l, i, d)
+	return r
+}
+
+// newReporterWithRetirer builds a ScrubReporter over the supplied fakes plus a
+// fresh fakeSessionRetirer the caller can inspect, for the per-release
+// maxSessionsPerPod tests.
+func newReporterWithRetirer(t *testing.T, c *fakeCounters, l *fakeLedger, i *fakeInspector, d *fakeDriver) (*leasecontrol.ScrubReporter, *fakeSessionRetirer) {
+	t.Helper()
+	sr := &fakeSessionRetirer{}
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters: c, Ledger: l, Inspector: i, Driver: d,
+		Counters: c, Ledger: l, SessionRetirer: sr, Inspector: i, Driver: d,
 	})
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	return r
+	return r, sr
 }
 
 // TestReporterSessionScrubIncrementsAndLeaks verifies the orchestrator
@@ -399,7 +429,7 @@ func newReporter(t *testing.T, c *fakeCounters, l *fakeLedger, i *fakeInspector,
 // not feed the unhealthy-threshold drain ledger.
 func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
-	r := newReporter(t, c, l, i, d)
+	r, sr := newReporterWithRetirer(t, c, l, i, d)
 	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", "", false); err != nil {
 		t.Fatalf("released: %v", err)
 	}
@@ -411,6 +441,64 @@ func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 	}
 	if len(l.leaks) != 1 || l.leaks[0] != "pod-1" {
 		t.Errorf("leaks = %v, want one pod-1", l.leaks)
+	}
+	// The per-release maxSessionsPerPod retirement runs on every release,
+	// carrying the atomic post-increment served-session count (1 then 2). The
+	// pre-fix RecordSessionScrub discarded the count and never called the
+	// retirer, so this assertion pins the wired per-release path.
+	if len(sr.calls) != 2 || sr.calls[0] != (sessionRetireCall{"pod-1", 1}) || sr.calls[1] != (sessionRetireCall{"pod-1", 2}) {
+		t.Errorf("per-release retirer calls = %+v, want pod-1 counts 1 then 2", sr.calls)
+	}
+}
+
+// TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount
+// verifies RecordSessionScrub reports the atomic post-increment served-session
+// count to the per-release maxSessionsPerPod retirer on every release, in both
+// session modes (CODE-B emits on the base recycle path too). It pins the S11
+// wiring that captures the IncrementSessionsServed return value the pre-fix
+// handler discarded, so a concurrent non-vm-restart pool can drain per release
+// decoupled from the whole-pod scrub.
+// spec: 5.2 (per-release maxSessionsPerPod drain), 12 (sessions_served evaluated per release), 4.7 (ReportSessionScrub increments sessionsServed)
+//
+// diagnosis: a failure means the gateway no longer threads the post-increment
+// served-session count into the per-release retirement, so a concurrent pool
+// holding a persistently leaked slot serves sessions unboundedly past
+// maxSessionsPerPod because the occupancy-zero check never fires.
+func TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount_spec_5_2(t *testing.T) {
+	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
+	c.served["pod-7"] = 4 // three prior releases; this release makes 5
+	r, sr := newReporterWithRetirer(t, c, l, i, d)
+	if err := r.RecordSessionScrub(context.Background(), "pod-7", "s5", "slot-2", false); err != nil {
+		t.Fatalf("RecordSessionScrub: %v", err)
+	}
+	if len(sr.calls) != 1 {
+		t.Fatalf("per-release retirer calls = %d, want 1", len(sr.calls))
+	}
+	if got := sr.calls[0]; got.podID != "pod-7" || got.count != 5 {
+		t.Errorf("per-release retirer call = %+v, want pod-7 count 5 (the post-increment value)", got)
+	}
+}
+
+// TestReporterSessionScrubPropagatesRetirerError verifies a per-release
+// retirement failure surfaces as an error rather than being swallowed after the
+// counter increment: an at-least-once redelivery can drop a stamp, so the
+// handler must return the error so the RPC is retried.
+// spec: 5.2 (per-release maxSessionsPerPod drain), 4.7 (gateway-side failure returned as an error)
+//
+// diagnosis: a failure means a per-release drain-request stamp failure is
+// silently dropped, so a concurrent pool over maxSessionsPerPod is never
+// drained and serves sessions unboundedly.
+func TestReporterSessionScrubPropagatesRetirerError_spec_5_2(t *testing.T) {
+	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
+	sr := &fakeSessionRetirer{err: errors.New("stamp drain-request: conflict")}
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, SessionRetirer: sr, Inspector: i, Driver: d,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", "", false); err == nil {
+		t.Error("RecordSessionScrub with a failing per-release retirer: err = nil, want non-nil")
 	}
 }
 
@@ -806,7 +894,7 @@ func TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter_spec_16_1(t *te
 	}}
 	m := newRecordingRetireMetrics()
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
 	})
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
@@ -853,7 +941,7 @@ func TestReporterPodScrubUptimeExceededSuppressesGatewayCounter_spec_16_1(t *tes
 	}}
 	m := newRecordingRetireMetrics()
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
 	})
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
@@ -903,13 +991,15 @@ func TestReporterPodScrubMissingPodIsNoOp_spec_3_4(t *testing.T) {
 func TestNewScrubReporterRequiresDeps_spec_4_7(t *testing.T) {
 	full := leasecontrol.ScrubReporterOptions{
 		Counters: newFakeCounters(), Ledger: &fakeLedger{},
-		Inspector: &fakeInspector{}, Driver: &fakeDriver{},
+		SessionRetirer: &fakeSessionRetirer{},
+		Inspector:      &fakeInspector{}, Driver: &fakeDriver{},
 	}
 	cases := map[string]func(*leasecontrol.ScrubReporterOptions){
-		"no counters":  func(o *leasecontrol.ScrubReporterOptions) { o.Counters = nil },
-		"no ledger":    func(o *leasecontrol.ScrubReporterOptions) { o.Ledger = nil },
-		"no inspector": func(o *leasecontrol.ScrubReporterOptions) { o.Inspector = nil },
-		"no driver":    func(o *leasecontrol.ScrubReporterOptions) { o.Driver = nil },
+		"no counters":        func(o *leasecontrol.ScrubReporterOptions) { o.Counters = nil },
+		"no ledger":          func(o *leasecontrol.ScrubReporterOptions) { o.Ledger = nil },
+		"no session retirer": func(o *leasecontrol.ScrubReporterOptions) { o.SessionRetirer = nil },
+		"no inspector":       func(o *leasecontrol.ScrubReporterOptions) { o.Inspector = nil },
+		"no driver":          func(o *leasecontrol.ScrubReporterOptions) { o.Driver = nil },
 	}
 	for name, mutate := range cases {
 		opts := full
@@ -943,7 +1033,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	}}
 	m := newRecordingRetireMetrics()
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
 	})
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
@@ -991,7 +1081,7 @@ func TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1(t *testin
 	}}
 	m := newRecordingRetireMetrics()
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
 	})
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
@@ -1030,7 +1120,7 @@ func TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1(t *testing
 	}}
 	m := newRecordingRetireMetrics()
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
 	})
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
@@ -1047,6 +1137,129 @@ func TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1(t *testing
 	// The aggregate scrub-failure series still increments on the failed scrub.
 	if len(m.totals) != 1 {
 		t.Errorf("scrub-failure totals = %+v, want one (the failed scrub still counts on the aggregate)", m.totals)
+	}
+}
+
+// TestReporterPodScrubSessionCountLimitSingleSessionCounts verifies the
+// occupancy-zero session_count_limit disposition on a single-session pool
+// (maxConcurrentSessions defaulting to 1) increments
+// lenny_gateway_pod_retirement_total once: a single-session pool retires through
+// this occupancy-zero path, which is its sole session_count_limit emitter.
+// spec: 16.1 (session_count_limit counted at the recycle disposition on a single-session pool), 5.2 (session count limit)
+//
+// diagnosis: a failure means a single-session pool that reaches
+// maxSessionsPerPod is no longer counted at the recycle disposition, so
+// lenny_gateway_pod_retirement_total undercounts single-session retirements.
+func TestReporterPodScrubSessionCountLimitSingleSessionCounts_spec_16_1(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 50 // reached maxSessionsPerPod
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxScrubFailures: 3,
+		MaxSessionsPerPod: 50, MaxConcurrentSessions: 1, HostSchedulable: true,
+		Pool: "agents-pool", RuntimeClass: "gvisor",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonSessionCountLimit {
+		t.Fatalf("retires = %+v, want one session_count_limit retire", d.retires)
+	}
+	if len(m.retirements) != 1 || m.retirements[0].reason != podscrub.ReasonSessionCountLimit {
+		t.Errorf("retirements = %+v, want one session_count_limit (single-session pool counts at the recycle disposition)", m.retirements)
+	}
+}
+
+// TestReporterPodScrubSessionCountLimitConcurrentPoolSuppressesCounter is the
+// S11 suppression regression: on a concurrent (maxConcurrentSessions > 1)
+// non-vm-restart pool the occupancy-zero session_count_limit disposition still
+// drives the drain (as the state backstop) but does NOT increment
+// lenny_gateway_pod_retirement_total, because the per-release
+// SessionCountRetirer owns that emission for that pod class and counts it once
+// on the count == maxSessionsPerPod crossing. Without the suppression the pod
+// would be counted twice (once here, once on the per-release path). This test
+// fails against the pre-fix applyDisposition, which incremented the counter for
+// every session_count_limit retire regardless of pool class.
+// spec: 5.2 (per-release maxSessionsPerPod drain on a concurrent non-vm-restart pool), 16.1 (session_count_limit counted once on the per-release path)
+//
+// diagnosis: a failure means a concurrent non-vm-restart pool is double-counted
+// on lenny_gateway_pod_retirement_total — once at the occupancy-zero disposition
+// and once on the per-release path — over-reporting session_count_limit
+// retirements.
+func TestReporterPodScrubSessionCountLimitConcurrentPoolSuppressesCounter_spec_5_2(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 50 // reached maxSessionsPerPod
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxScrubFailures: 3,
+		MaxSessionsPerPod: 50, MaxConcurrentSessions: 4, HostSchedulable: true,
+		Pool: "agents-pool", RuntimeClass: "gvisor",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	// The disposition still drives the drain as the state backstop.
+	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonSessionCountLimit {
+		t.Fatalf("retires = %+v, want one session_count_limit retire (the state backstop)", d.retires)
+	}
+	// But the occupancy-zero path does NOT emit the counter: the per-release
+	// path owns it for a concurrent non-vm-restart pool.
+	if len(m.retirements) != 0 {
+		t.Errorf("retirements = %+v, want none (the per-release path owns session_count_limit on a concurrent non-vm-restart pool)", m.retirements)
+	}
+}
+
+// TestReporterPodScrubSessionCountLimitConcurrentVMRestartCounts verifies a
+// concurrent vm-restart pool is NOT suppressed on the occupancy-zero path.
+// Decide ranks the vm_restart_reprovision retire above the session-count
+// branch, so such a pool never reaches ReasonSessionCountLimit here; the
+// suppression predicate is scoped to a NON-vm-restart concurrent pool so the
+// vm-restart carve-out keeps the occupancy-zero path as its sole counting
+// emitter. This pins that the suppression does not leak onto a vm-restart pool.
+// spec: 5.2 (vm-restart pool retires at the occupancy-zero boundary), 16.1 (retirement counting)
+//
+// diagnosis: a failure means the per-release suppression wrongly extends to a
+// concurrent vm-restart pool, which the per-release path never drains, so a
+// vm-restart retirement is zero-counted.
+func TestReporterPodScrubSessionCountLimitConcurrentVMRestartCounts_spec_5_2(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 50
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxScrubFailures: 3,
+		MaxSessionsPerPod: 50, MaxConcurrentSessions: 4, VMRestart: true, HostSchedulable: true,
+		Pool: "agents-pool", RuntimeClass: "gvisor",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	// A vm-restart pool retires with the non-counting vm_restart_reprovision
+	// reason, which is outside the gateway counter vocabulary, so no counter is
+	// emitted and the suppression predicate (scoped to session_count_limit)
+	// never applies to it.
+	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonVMRestartReprovision {
+		t.Fatalf("retires = %+v, want one vm_restart_reprovision retire", d.retires)
+	}
+	if len(m.retirements) != 0 {
+		t.Errorf("retirements = %+v, want none (vm_restart_reprovision is outside the gateway counter vocabulary)", m.retirements)
 	}
 }
 
@@ -1068,7 +1281,7 @@ func TestReporterPodScrubSuccessEmitsNoScrubFailureMetrics_spec_5_2(t *testing.T
 	}}
 	m := newRecordingRetireMetrics()
 	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
-		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
 	})
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
