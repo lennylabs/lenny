@@ -405,7 +405,7 @@ if (plan.specEdits.length === 0) {
       relProposal +
       " on the current branch, message in the repository's convention (read `git log --oneline -5`), e.g. 'spec: apply " +
       relProposal +
-      "'. Spec lands as its own commit before any code.",
+      "'. Spec lands as its own commit before any code. The commit message references durable sources only: it may name the proposal file path (above) or a BUILD-GAPS finding id for traceability, but must NOT carry the proposal's internal scaffolding labels — its change/section ids (`S1`, `SPEC-D`), decision ids (`D8`, `RES-1`), review pass numbers, or a step that exists only in the proposal — even if `git log` shows prior commits that used them.",
     { label: "mark-and-commit-spec", phase: "Apply spec" },
   );
   log("Spec applied, status recorded, and committed");
@@ -476,7 +476,7 @@ if (plan.findingIds.length > 0) {
         (build.commits || []).join(", ") +
         ".\nFindings to close: " +
         plan.findingIds.join(", ") +
-        ".\n\nFor each finding: re-read it, confirm the landed implementation resolves it (the proposal's spec edits are applied and its code blast radius is implemented and green), flip the heading checkbox to [x] and the trailing marker to CLOSED, and add a one or two sentence Resolution note citing the proposal path and the implementing commit SHA(s). Do not open or re-open any finding. Then commit BUILD-GAPS.md on the current branch following the repository's commit conventions. Return the IDs you closed.",
+        ".\n\nFor each finding: re-read it, confirm the landed implementation resolves it (the proposal's spec edits are applied and its code blast radius is implemented and green), flip the heading checkbox to [x] and the trailing marker to CLOSED, and add a one or two sentence Resolution note citing the proposal path and the implementing commit SHA(s). Do not open or re-open any finding. Then commit BUILD-GAPS.md on the current branch following the repository's commit conventions; the commit message and the Resolution note reference durable sources only (the proposal file path, the finding id, the spec section, the commit SHA), never the proposal's internal change/section/decision/pass/step labels. Return the IDs you closed.",
       { schema: CLOSE, label: "close-findings", phase: "Close findings" },
     );
   }
