@@ -2112,18 +2112,25 @@ func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindR
 //
 //   - A reservation-exhaustion sentinel (no slot was reserved) is returned
 //     unchanged so the handler maps it to WARM_POOL_EXHAUSTED.
-//   - A slot failure after reservation is released (so the retry lands on a
-//     genuinely fresh slot and the pod's active_slots is not leaked) and
-//     recorded against the pod's rolling fail/leak window. When the pod
-//     crosses the ceil(maxConcurrent/2) unhealthy threshold it is drained
-//     as a whole and the replacement counter is incremented.
+//   - A slot failure after reservation is released so the retry lands on a
+//     genuinely fresh slot and the pod's active_slots is not leaked. How the
+//     failure counts toward the ceil(maxConcurrent/2) unhealthy threshold
+//     depends on the release outcome: a slot that released cleanly is a
+//     transient failure counted in the rolling 5-minute window
+//     (RecordFailure), and a slot whose release errored is leaked
+//     permanently and counted persistently (RecordLeak) so it does not age
+//     out of the window before the threshold is reached. When the pod
+//     crosses the threshold it is drained as a whole and the replacement
+//     counter is incremented.
 //   - A non-retryable reason (oom, workspace_validation, policy_rejection)
 //     or an exhausted retry returns the §5.2 structured SlotFailedError.
 //   - A transient reason retries once on a fresh slot.
 //
-// spec: §5.2 "Concurrent-workspace slot retry policy"; §6.2
-// (claimed → draining on the unhealthy-slot threshold); §6.2
-// (a slot whose cleanup does not reclaim it is leaked and feeds the per-pod
+// spec: §5.2 "Concurrent-workspace slot retry policy" (whole-pod
+// replacement trigger); §6.2 (claimed → draining on the unhealthy-slot
+// threshold); §6.2 "`leaked` slot semantics" (a failed slot is counted
+// within the rolling window while a leaked slot, whose cleanup does not
+// reclaim it, is counted persistently and feeds the per-pod
 // lenny_adapter_leaked_slots gauge).
 func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothealth.Tracker, slots *slotstate.Registry, replacement func(pool string), leakGauge func(pod, pool string, leaked int), req podsession.SlotBindRequest) (*podsession.BindResult, error) {
 	var lastErr error
@@ -2148,24 +2155,34 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		lastErr = err
 		reason := sbe.Reason()
 		// Release the failed slot so a retry re-reserves a fresh one and the
-		// pod's active_slots is not leaked by the failed attempt.
+		// pod's active_slots is not leaked by the failed attempt. The release
+		// outcome fixes how the slot is counted toward the ceil(maxConcurrent/2)
+		// unhealthy threshold: a clean release makes the failure transient, and
+		// a failed release leaks the slot permanently.
 		if relErr := binder.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID); relErr != nil {
 			log.Printf("sessionserver: §5.2 release failed slot %s on pod %s: %v", sbe.SlotID, sbe.Pod, relErr)
-			// spec: §6.2 line 176/179 — the reservation could not be reclaimed,
-			// so the slot is leaked: it remains counted in active_slots until
-			// the pod terminates. Record it for the per-pod
-			// lenny_adapter_leaked_slots gauge. The slot is already counted
-			// toward the ceil(maxConcurrent/2) unhealthy threshold via
-			// RecordFailure below, so it is not also recorded in the rolling
-			// fail/leak window — a single bad slot counts once.
+			// spec: §6.2 "`leaked` slot semantics" — the reservation could not be
+			// reclaimed, so the slot is leaked: it remains counted in active_slots
+			// (the lenny_adapter_leaked_slots gauge / the Redis slot-counter
+			// occupancy) until the pod terminates. A leaked slot persists rather
+			// than aging out, so it is counted once toward the threshold through
+			// the persistent RecordLeak below rather than the windowed
+			// RecordFailure, matching the failed_slots (windowed) plus
+			// leaked_slots (persistent) count the trigger evaluates.
 			leaked := slots.MarkLeaked(sbe.SlotID, sbe.Pod, req.Pool)
 			if leakGauge != nil {
 				leakGauge(sbe.Pod, req.Pool, leaked)
 			}
+			health.RecordLeak(sbe.Pod)
+		} else {
+			// spec: §6.2 "`leaked` slot semantics" — the slot released cleanly,
+			// so this is a transient failure counted once in the rolling
+			// 5-minute window. A single bad slot counts once toward the
+			// threshold, here through the windowed RecordFailure.
+			health.RecordFailure(sbe.Pod)
 		}
-		// Account the failure toward the pod's §5.2 rolling fail/leak window
-		// and retire the whole pod when it crosses the unhealthy threshold.
-		health.RecordFailure(sbe.Pod)
+		// Retire the whole pod when the combined windowed-failure plus
+		// persistent-leak count crosses the §5.2 unhealthy threshold.
 		if health.Unhealthy(sbe.Pod, req.MaxConcurrentSessions) {
 			if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
 				log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)

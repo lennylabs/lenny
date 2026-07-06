@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -174,11 +175,12 @@ func TestSlotRetryDrainsUnhealthyPod_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 176/179 — when the failed slot's reservation cannot be
-// reclaimed, the slot is leaked: it is recorded in the per-slot registry and
-// the per-pod lenny_adapter_leaked_slots gauge is published. The leak is not
-// double-counted toward the unhealthy threshold (the slot is already a
-// failed slot), so a single failure below threshold does not drain.
+// spec: §6.2 "`leaked` slot semantics" — when the failed slot's reservation
+// cannot be reclaimed, the slot is leaked: it is recorded in the per-slot
+// registry and the per-pod lenny_adapter_leaked_slots gauge is published. The
+// slot is counted once toward the unhealthy threshold through the persistent
+// RecordLeak (not also the windowed RecordFailure), so a single leak below
+// threshold does not drain.
 func TestSlotRetryLeakOnReleaseFailure_spec_6_2(t *testing.T) {
 	// One transient failure, then a success on retry — but the failed slot's
 	// release errors so it is leaked. maxConcurrent=4 → threshold 2, so the
@@ -258,6 +260,102 @@ func TestSlotRetryDrainClearsLeakGauge_spec_6_2(t *testing.T) {
 	}
 	if lastGauge != 0 {
 		t.Errorf("gauge must be zeroed on drain, last value = %d", lastGauge)
+	}
+}
+
+// spec: §6.2 "`leaked` slot semantics" — a leaked slot (its reservation
+// could not be reclaimed) is counted persistently rather than in the rolling
+// 5-minute window, so leaks that accumulate slowly (more than one window
+// apart) still reach the ceil(maxConcurrent/2) unhealthy threshold instead of
+// aging out. This is the SPEC-D bind-time leaked-slot producer fix (CODE-D/D1
+// extension): the pre-fix path recorded a bind-time leak through the windowed
+// RecordFailure, so two permanent leaks arriving more than five minutes apart
+// each aged out and never combined to trip the threshold. This test drives a
+// second bind-time leak more than a window after the first and asserts the pod
+// is drained on the persistent leaked count; it fails against the pre-fix
+// RecordFailure path where the first leak has aged out.
+func TestSlotRetryBindLeakCountedPersistently_spec_6_2(t *testing.T) {
+	// maxConcurrent=3 → threshold ceil(3/2)=2: two leaked slots trip it. A
+	// monotonic clock lets us place the two leaks more than a window apart so a
+	// windowed count would prune the first before the second lands.
+	now := time.Unix(0, 0)
+	health := slothealth.New(slothealth.WithClock(func() time.Time { return now }))
+	slots := slotstate.NewRegistry()
+
+	// A non-retryable reason so the single failing attempt leaks (release errors)
+	// and returns without re-binding a fresh slot; the leak is the only recorded
+	// event.
+	binderOne := &fakeSlotBinder{
+		errs:       []error{slotBindErr("pod-a", "slot-1", "workspace_prep", codes.InvalidArgument)},
+		releaseErr: errors.New("slot cleanup timed out"),
+	}
+	_, _ = applySlotRetryPolicy(context.Background(), binderOne, health, slots, func(string) {}, nil, req("pool-x", 3))
+	if len(binderOne.drained) != 0 {
+		t.Fatalf("first leak alone must not drain (below threshold 2), drained=%v", binderOne.drained)
+	}
+
+	// Advance well past the 5-minute rolling window. A windowed leak count (the
+	// pre-fix RecordFailure path) prunes the first leak here; a persistent count
+	// (RecordLeak) retains it.
+	now = now.Add(6 * time.Minute)
+
+	binder := &fakeSlotBinder{
+		errs:       []error{slotBindErr("pod-a", "slot-2", "workspace_prep", codes.InvalidArgument)},
+		releaseErr: errors.New("slot cleanup timed out"),
+	}
+	var replacements []string
+	repl := func(pool string) { replacements = append(replacements, pool) }
+	_, err := applySlotRetryPolicy(context.Background(), binder, health, slots, repl, nil, req("pool-x", 3))
+	var sf *podsession.SlotFailedError
+	if !errors.As(err, &sf) {
+		t.Fatalf("expected *SlotFailedError, got %v", err)
+	}
+	// Two permanent leaks a window apart reach threshold 2 only if the first was
+	// counted persistently. The pre-fix windowed RecordFailure would have pruned
+	// leak one, leaving the count at 1 and the pod undrained.
+	if len(binder.drained) != 1 || binder.drained[0] != "pod-a" {
+		t.Errorf("drained = %v, want pod-a drained on two persistent leaks reaching the threshold", binder.drained)
+	}
+	if len(replacements) != 1 {
+		t.Errorf("replacement counter fired %d times, want 1 (one drain of pod-a)", len(replacements))
+	}
+}
+
+// spec: §6.2 "`leaked` slot semantics" — a transient failure (the failed
+// slot's reservation released cleanly) stays counted in the rolling 5-minute
+// window, so two transient failures more than a window apart age the first out
+// and never combine to trip the threshold. This confirms the release-outcome
+// branch split records a cleanly-released failure through the windowed
+// RecordFailure rather than the persistent RecordLeak.
+func TestSlotRetryTransientFailureAgesOutOfWindow_spec_6_2(t *testing.T) {
+	// maxConcurrent=3 → threshold 2. Two transient failures a window apart must
+	// NOT drain, because a cleanly-released failure is windowed.
+	now := time.Unix(0, 0)
+	health := slothealth.New(slothealth.WithClock(func() time.Time { return now }))
+
+	failOnce := func(slotID string) []string {
+		binder := &fakeSlotBinder{
+			// Non-retryable, clean release (releaseErr nil) → transient windowed
+			// failure, no leak.
+			errs: []error{slotBindErr("pod-b", slotID, "workspace_prep", codes.InvalidArgument)},
+		}
+		_, _ = applySlotRetryPolicy(context.Background(), binder, health, slotstate.NewRegistry(), func(string) {}, nil, req("pool-x", 3))
+		return binder.drained
+	}
+	if d := failOnce("slot-1"); len(d) != 0 {
+		t.Fatalf("first transient failure alone must not drain, drained=%v", d)
+	}
+	now = now.Add(6 * time.Minute)
+	if d := failOnce("slot-2"); len(d) != 0 {
+		t.Errorf("two transient failures a window apart must not drain (first aged out), drained=%v", d)
+	}
+	// Counts confirms the split: no leaks recorded, one windowed failure survives.
+	failed, leaked := health.Counts("pod-b")
+	if leaked != 0 {
+		t.Errorf("leaked count = %d, want 0 (clean releases are not leaks)", leaked)
+	}
+	if failed != 1 {
+		t.Errorf("windowed failed count = %d, want 1 (only the most recent survives the window)", failed)
 	}
 }
 
