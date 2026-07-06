@@ -147,6 +147,24 @@ type PodReconciler struct {
 	// Nil disables the gauge; the reconciler still drains expiring pods.
 	CertMetrics CertExpiryMetric
 
+	// OnUptimeRetirement, when set, is invoked once per pod on the
+	// claimed→draining edge the level-triggered maxPodUptimeSeconds drain
+	// flips (reconcileUptime). It is the seam the controller-owned
+	// lenny_controller_pod_retirement_total{reason="uptime_limit"} counter
+	// hooks: the gateway suppresses its uptime_limit counter emission (§4.6.1
+	// uptime drains are WarmPoolController-owned), so this arm is the sole
+	// counter for that reason. It fires only on the transition edge (not the
+	// already-draining no-op re-run) so a repeated reconcile of a draining
+	// over-uptime pod does not re-count it. Nil is a no-op.
+	//
+	// The drain-request consumer path deliberately does not invoke this seam:
+	// a drain-requested pod was already counted by whichever gateway path
+	// stamped lenny.dev/drain-request (the ceil-threshold or per-release
+	// maxSessionsPerPod stamp), so counting it here would double-count it.
+	//
+	// spec: §4.6.1 (uptime drains are WarmPoolController-written).
+	OnUptimeRetirement func(pool string)
+
 	// MaxConcurrentReconciles is the §4.6.1 worker count
 	// (--max-concurrent-reconciles). Zero or negative selects the
 	// controller-runtime default of 1.
@@ -246,9 +264,45 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{RequeueAfter: issueRequeue}, nil
 	}
 
+	// §4.6.1/§4.6.3 — level-triggered maxPodUptimeSeconds drain. Evaluated
+	// before the drain-request consumer so an over-uptime pod is transitioned
+	// (and counted uptime_limit) by this arm before the non-counting
+	// drain-request consumer can claim the claimed→draining edge; both drive
+	// patchSandboxDraining(requireIdle=false), which is a no-op once the
+	// Sandbox is already draining, so only the first arm to run reports the
+	// transition. This keeps a both-caps pod (over uptime and past
+	// maxSessionsPerPod during its drain) counted exactly once as uptime_limit
+	// (§9 D9). It reclaims a claimed/active leaked over-uptime pod regardless
+	// of session activity, which the idle-gated cert arms cannot.
+	uptimeRequeue, drained, err := r.reconcileUptime(ctx, &pod)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if drained {
+		return ctrl.Result{}, nil
+	}
+
+	// §4.6.1/§4.6.3 — unhealthy-threshold drain: a gateway-stamped
+	// lenny.dev/drain-request annotation drives the claimed→draining
+	// transition the WarmPoolController alone writes. Not gated on the idle
+	// state label: a drain-requested concurrent pod carries a leaked slot that
+	// holds its Redis-counter occupancy above zero, so it projects claimed/
+	// active rather than idle, and the idle-gated arms would skip exactly the
+	// pod the drain targets.
+	requested, err := r.reconcileDrainRequest(ctx, &pod)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if requested {
+		return ctrl.Result{}, nil
+	}
+
 	requeue, err := r.reconcileCertExpiry(ctx, &pod)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if uptimeRequeue > 0 && (requeue == 0 || uptimeRequeue < requeue) {
+		requeue = uptimeRequeue
 	}
 	return ctrl.Result{RequeueAfter: requeue}, nil
 }
@@ -334,7 +388,8 @@ func (r *PodReconciler) reconcileCertExpiry(ctx context.Context, pod *corev1.Pod
 	// The Sandbox shares the pod's name and namespace (the Sandbox-to-Pod
 	// reconciler builds the pod from the Sandbox name).
 	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}
-	return 0, patchSandboxDraining(ctx, r.Client, key, true)
+	_, err := patchSandboxDraining(ctx, r.Client, key, true)
+	return 0, err
 }
 
 // publishCertExpiry sets the §10.3 lenny_cert_expiry_seconds gauge for the
@@ -396,7 +451,7 @@ func (r *PodReconciler) reconcileCertIssuance(ctx context.Context, pod *corev1.P
 	// issue. Drain the backing Sandbox for replacement (idle is not
 	// required — the pod never reached idle). spec: §10.3 line 342.
 	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}
-	if err := patchSandboxDraining(ctx, r.Client, key, false); err != nil {
+	if _, err := patchSandboxDraining(ctx, r.Client, key, false); err != nil {
 		return 0, false, err
 	}
 	return 0, true, nil
@@ -437,6 +492,114 @@ func (r *PodReconciler) certExpiry(pod *corev1.Pod) (time.Time, bool) {
 	return created.Add(r.certTTL()), true
 }
 
+// reconcileUptime level-triggers the §4.6.1/§4.6.3 maxPodUptimeSeconds drain.
+// The cap lives only in the gateway poolstore and is absent from every CRD the
+// controller reconciles, so the gateway delivers it on the pod as
+// AnnotationMaxPodUptimeSeconds (StampMaxPodUptime) and this arm reads it, the
+// way the cert arms read AnnotationCertNotAfter. The deadline is the pod
+// CreationTimestamp plus the annotation cap (§4.6.1: uptime drains derive from
+// CreationTimestamp). Once the deadline has passed the arm drives the
+// claimed→draining transition through patchSandboxDraining(requireIdle=false),
+// reclaiming an over-uptime pod regardless of session activity: a leaked
+// over-uptime pod projects claimed/active and its placement is frozen by the
+// gateway's expiredByUptime, so it never sees another session release and a
+// session-release-gated check could never reclaim it.
+//
+// The arm is level-triggered: a draining Sandbox does not delete the pod
+// immediately (its in-flight sessions drain gracefully first, so the pod
+// persists with a nil DeletionTimestamp across the drain window), so the arm
+// re-reaches the drain branch on every requeue. patchSandboxDraining reports
+// the transition edge, and OnUptimeRetirement fires only on that edge, so the
+// retirement is counted once per pod rather than once per reconcile. It
+// returns drained=true when it flipped the pod to draining, or a positive
+// requeue to re-check a pod still inside its uptime window. A zero or absent
+// cap (a pool that sets no maxPodUptimeSeconds) disables the check.
+//
+// spec: spec/04 §4.6.1, §4.6.3 (CreationTimestamp-derived uptime drain,
+// WarmPoolController-written); spec/06 §6.2 (concurrent-occupancy uptime edge).
+func (r *PodReconciler) reconcileUptime(ctx context.Context, pod *corev1.Pod) (time.Duration, bool, error) {
+	deadline, ok := r.podUptimeDeadline(pod)
+	if !ok {
+		return 0, false, nil
+	}
+	remaining := deadline.Sub(r.now())
+	if remaining > 0 {
+		// Re-check right as the deadline passes so an idle or placement-frozen
+		// over-uptime pod with no further events is still reclaimed on time.
+		return remaining, false, nil
+	}
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}
+	transitioned, err := patchSandboxDraining(ctx, r.Client, key, false)
+	if err != nil {
+		return 0, false, err
+	}
+	if transitioned && r.OnUptimeRetirement != nil {
+		r.OnUptimeRetirement(pod.Labels[LabelPool])
+	}
+	return 0, true, nil
+}
+
+// podUptimeDeadline resolves a pod's §4.6.1 uptime-drain deadline: the pod
+// CreationTimestamp plus the AnnotationMaxPodUptimeSeconds cap the gateway
+// stamped. It reports ok=false when the annotation is absent, unparseable, or
+// non-positive (the gateway stamps it only for a pool that sets
+// maxPodUptimeSeconds), or when the creation timestamp is zero, so the caller
+// leaves the pod untouched. The non-positive guard mirrors the gateway-side
+// expiredByUptime and podscrub.Decide `maxPodUptimeSeconds > 0` checks so both
+// processes agree a no-cap pool is never drained for uptime.
+func (r *PodReconciler) podUptimeDeadline(pod *corev1.Pod) (time.Time, bool) {
+	v := pod.Annotations[lennyv1.AnnotationMaxPodUptimeSeconds]
+	if v == "" {
+		return time.Time{}, false
+	}
+	seconds, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}, false
+	}
+	created := pod.CreationTimestamp.Time
+	if created.IsZero() {
+		return time.Time{}, false
+	}
+	return created.Add(time.Duration(seconds) * time.Second), true
+}
+
+// reconcileDrainRequest consumes the §4.6.3 lenny.dev/drain-request annotation
+// the gateway stamps when a pod crosses the §5.2 unhealthy-slot threshold (the
+// ceil-threshold fail-or-leak drain or the per-release maxSessionsPerPod
+// drain). It writes the claimed→draining transition the WarmPoolController
+// alone owns (§4.6.3), so the gateway never writes Sandbox.status itself. The
+// read is not gated on the idle state label: a drain-requested concurrent pod
+// carries a leaked slot that holds its Redis-counter occupancy above zero, so
+// its per-pod claim stays bound and the pod projects claimed/active; the legal
+// §6.2 edge is claimed→draining, and the idle-gated arms would skip it. It
+// returns requested=true when the annotation was present and the transition was
+// applied (or was a no-op because the Sandbox was already draining), so the
+// caller stops the reconcile short of the idle-gated cert-expiry check.
+//
+// The controller uptime counter is deliberately not incremented here: a
+// drain-requested pod was already counted by whichever gateway path stamped
+// the annotation, so counting it again would double-count it (see
+// OnUptimeRetirement).
+//
+// spec: spec/04 §4.6.1, §4.6.3 (gateway stamps drain-request;
+// WarmPoolController writes the drain); spec/05 §5.2 (unhealthy-slot trigger).
+func (r *PodReconciler) reconcileDrainRequest(ctx context.Context, pod *corev1.Pod) (bool, error) {
+	v := pod.Annotations[lennyv1.AnnotationDrainRequest]
+	if v == "" {
+		return false, nil
+	}
+	// The stamp value is the RFC3339Nano request instant (StampDrainRequest);
+	// an unparseable value is a corrupt stamp the controller must not act on.
+	if _, err := time.Parse(time.RFC3339Nano, v); err != nil {
+		return false, nil
+	}
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}
+	if _, err := patchSandboxDraining(ctx, r.Client, key, false); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // patchSandboxDraining transitions a Sandbox to the draining phase via
 // SSA under the WPC field manager, re-applying the live WPC-owned status
 // fields so the partial apply does not clobber PodName/NodeName/PodIP.
@@ -444,16 +607,28 @@ func (r *PodReconciler) certExpiry(pod *corev1.Pod) (time.Time, bool) {
 // requireIdle is true the transition is skipped unless the live phase is
 // idle, so a pod claimed between observation and apply is never disrupted
 // (the idle→draining edge is the only legal one for proactive retirement).
-func patchSandboxDraining(ctx context.Context, c client.Client, key client.ObjectKey, requireIdle bool) error {
-	return retryOnConflictSSA(ctx, func(int) error {
+//
+// It returns transitioned=true only on the edge that flips a non-draining
+// Sandbox to draining, and false on the already-draining no-op and the
+// requireIdle skip. A level-triggered caller (reconcileUptime) uses the edge
+// to count a retirement once per pod rather than once per reconcile, since a
+// draining Sandbox persists with a nil DeletionTimestamp while its in-flight
+// sessions drain and the arm re-reaches this call on every requeue. The
+// idle-gated cert callers (reconcileCertIssuance, reconcileCertExpiry) ignore
+// the bool.
+func patchSandboxDraining(ctx context.Context, c client.Client, key client.ObjectKey, requireIdle bool) (transitioned bool, err error) {
+	err = retryOnConflictSSA(ctx, func(int) error {
 		var live lennyv1.Sandbox
 		if err := c.Get(ctx, key, &live); err != nil {
+			transitioned = false
 			return client.IgnoreNotFound(err)
 		}
 		if live.Status.Phase == string(state.Draining) {
+			transitioned = false
 			return nil
 		}
 		if requireIdle && live.Status.Phase != string(state.Idle) {
+			transitioned = false
 			return nil
 		}
 		patch := &lennyv1.Sandbox{
@@ -471,8 +646,17 @@ func patchSandboxDraining(ctx context.Context, c client.Client, key client.Objec
 		patch.Status.NodeName = live.Status.NodeName
 		patch.Status.PodIP = live.Status.PodIP
 		patch.Status.ObservedGeneration = live.Generation
-		return c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+		if err := c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+			transitioned = false
+			return err
+		}
+		transitioned = true
+		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	return transitioned, nil
 }
 
 // podsOnNode maps a Node event to a reconcile request for every managed

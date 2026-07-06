@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -136,6 +137,48 @@ func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName
 	}
 	if err != nil {
 		return fmt.Errorf("podclaim: stamp scrub-warning on pod %s: %w", podName, err)
+	}
+	return nil
+}
+
+// StampMaxPodUptime stamps the §4.6.1 lenny.dev/max-pod-uptime-seconds
+// annotation on the agent Pod named podName (the §4.6.1 reconciler names the
+// pod identically to its Sandbox). The gateway holds the pool's
+// sessionPolicy.recycle.maxPodUptimeSeconds cap in its poolstore, but that cap
+// is absent from every CRD the WarmPoolController reconciles, so the gateway
+// delivers it on the pod as this annotation and the controller's
+// reconcileUptime arm reads it to level-trigger the CreationTimestamp-derived
+// uptime drain. The annotation carries the cap as a decimal integer number of
+// seconds. A non-positive cap (a pool that sets no maxPodUptimeSeconds) stamps
+// nothing: the annotation's absence disables the controller's uptime check,
+// matching the field's optional status and mirroring the expiredByUptime and
+// podscrub.Decide `maxPodUptimeSeconds > 0` guards.
+//
+// A JSON-merge patch is used (matching stampPodTenant and StampDrainRequest) so
+// a missing pod returns NotFound rather than being created annotation-only; an
+// absent or terminating pod is tolerated because a pod that is already gone
+// needs no cap. The gateway's `get`/`patch` on agent Pods grant covers this
+// write alongside the lenny.dev/drain-request stamp and the lenny.dev/tenant-id
+// pin; the gateway never writes Sandbox.status itself (§4.6.3 ownership
+// decomposition).
+//
+// spec: §4.6.1 (uptime drains derive from the pod CreationTimestamp against
+// recycle.maxPodUptimeSeconds and are WarmPoolController-written); §4.6.3 (the
+// gateway delivers the cap the controller reads).
+func StampMaxPodUptime(ctx context.Context, cl client.Client, namespace, podName string, maxPodUptimeSeconds int64) error {
+	if maxPodUptimeSeconds <= 0 {
+		return nil
+	}
+	body := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
+		lennyv1.AnnotationMaxPodUptimeSeconds, strconv.FormatInt(maxPodUptimeSeconds, 10))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace}}
+	err := cl.Patch(ctx, pod, client.RawPatch(types.MergePatchType, []byte(body)),
+		client.FieldOwner(string(ownership.Gateway)))
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("podclaim: stamp max-pod-uptime on pod %s: %w", podName, err)
 	}
 	return nil
 }
