@@ -651,8 +651,22 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // The counter decrement is clamped at zero so a double release cannot drive
 // the count negative; a release that reaches zero disposes of the claim
 // idempotently (a NotFound from either the recycling patch or the DELETE is a
-// no-op). spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.30/§6.41.
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle bool) error {
+// no-op).
+//
+// leaked reports that the slot's adapter cleanup did not complete cleanly (§6.2
+// leaked-slot semantics). A leaked slot's resources are not reclaimed until pod
+// termination, so its occupancy must remain counted: ReleaseSlot skips the
+// Redis-counter decrement and the occupancy-zero disposition entirely, leaving
+// the counter at its current value so the gateway does not over-assign a new
+// slot into the leaked slot's unreleased resources. A pod carrying a leaked
+// slot is by definition not at occupancy zero, so it takes neither the recycle
+// patch nor the claim DELETE; it is retired by the §5.2/§6.2 liveness paths
+// (the ceil-threshold drain, the per-release maxSessionsPerPod drain, or the
+// WarmPoolController uptime drain) rather than at this release.
+//
+// spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.2 (leaked slot
+// remains counted); §6.30/§6.41.
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) error {
 	if c.Counter == nil {
 		// The Redis counter (with its §12.4 Postgres fallback) is the only
 		// intra-pod occupancy record now that the gateway does not mirror the
@@ -663,6 +677,14 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// Redis-backed role has a durable fallback; the gate fails closed when
 		// it cannot decide).
 		return errors.New("podclaim: slot counter is required for concurrent-session slot release")
+	}
+	if leaked {
+		// §6.2: a leaked slot remains counted in the pod's Redis slot-counter
+		// occupancy until pod termination, so the gateway does not over-assign
+		// a new slot into its unreleased resources. Skip the decrement and the
+		// occupancy-zero disposition: the slot's occupancy stays, and the pod is
+		// not at occupancy zero while the leak persists.
+		return nil
 	}
 	// §5.2 atomic slot release. The Redis counter is the source of truth —
 	// DECR clamped at zero.

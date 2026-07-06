@@ -15,6 +15,12 @@ import (
 	// Wave 2: first scenario end-to-end.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/slot_counter_race"
 
+	// Proposal 0035 CODE-C: the §6.2 leaked-slot occupancy invariant on
+	// SlotClaimer.ReleaseSlot — a leaked release must not decrement the pod's
+	// Redis slot counter, so occupancy never falls below the leaked-slot floor
+	// under concurrent clean releases, -race clean.
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/slot_leaked_counted_race"
+
 	// Wave 3: §3.4 regression scenarios.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/audit_chain_concurrent"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/circuit_breaker_state_machine"

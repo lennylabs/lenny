@@ -474,9 +474,11 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
 	// recycle=false: a released reservation after a failed bind is a slot-count
 	// rollback, not the occupancy-zero recycle edge, so it never patches the
-	// claim to `recycling` or arms the missing-report timeout. spec: §5.2 (slot
-	// retry releases the reservation), §3.4.
-	return claimer.ReleaseSlot(ctx, sandboxName, slotID, false)
+	// claim to `recycling` or arms the missing-report timeout. leaked=false: a
+	// reservation rollback frees a slot that never held runtime resources, so
+	// the counter must decrement (the slot is not leaked). spec: §5.2 (slot
+	// retry releases the reservation), §3.4, §6.2 (leaked slot remains counted).
+	return claimer.ReleaseSlot(ctx, sandboxName, slotID, false, false)
 }
 
 // ReleaseSlot tears down a concurrent-session slot when its session ends.
@@ -492,10 +494,19 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 // claim-delete-on-last edge are handled by podclaim.SlotClaimer.ReleaseSlot.
 // The adapter Shutdown is best-effort.
 func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
+	// spec: §6.2 (leaked slot remains counted) — a slot whose adapter cleanup
+	// did not complete cleanly is leaked: its resources are not reclaimed until
+	// pod termination, so the Redis slot counter must keep counting it and the
+	// gateway must not over-assign a new slot into the leaked slot's occupancy.
+	// A transport error on ShutdownSlot is treated as leaked too (fail closed:
+	// on doubt the slot stays counted rather than freeing occupancy the adapter
+	// may still hold).
+	leaked := false
 	if result.Adapter != nil {
 		// spec: §6.4 lines 401-405 — tear down just this slot (its runtime
 		// and per-slot tree); sibling slots on the pod keep running.
-		_, _ = result.Adapter.ShutdownSlot(ctx, result.SessionID, result.SlotID)
+		cleanly, err := result.Adapter.ShutdownSlot(ctx, result.SessionID, result.SlotID)
+		leaked = err != nil || !cleanly
 		result.Adapter.Close()
 	}
 	// spec: §7.1 line 52 (step 23) — release the slot session's §4.9
@@ -511,7 +522,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		// gateway-side timeout session-mode Release arms.
 		RecycleBoundary: b.RecycleBoundary,
 	}
-	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID, result.Recycle)
+	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID, result.Recycle, leaked)
 }
 
 // DrainSandbox requests the whole-pod retirement of a concurrent-session

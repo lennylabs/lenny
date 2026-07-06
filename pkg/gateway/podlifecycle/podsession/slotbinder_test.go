@@ -81,10 +81,23 @@ type concurrentAdapter struct {
 	// startErr, when non-nil, makes StartSession fail so a test can drive
 	// the §5.2 slot-failure path.
 	startErr error
+	// shutdownExitedCleanly reports whether a slot's Shutdown RPC returns
+	// exitedCleanly. It defaults to true (a clean slot teardown); a test sets
+	// it false to drive the §6.2 leaked-slot path, where the gateway keeps the
+	// slot counted rather than decrementing it.
+	shutdownExitedCleanly bool
+	// shutdownErr, when non-nil, makes the Shutdown RPC fail so a test can
+	// drive the fail-closed leaked path (a transport error keeps the slot
+	// counted).
+	shutdownErr error
 }
 
 func newConcurrentAdapter() *concurrentAdapter {
-	return &concurrentAdapter{started: map[string]bool{}, finalized: map[string]bool{}}
+	return &concurrentAdapter{
+		started:               map[string]bool{},
+		finalized:             map[string]bool{},
+		shutdownExitedCleanly: true,
+	}
 }
 
 func (a *concurrentAdapter) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVersionRequest) (*adapterv1.NegotiateVersionResponse, error) {
@@ -127,7 +140,14 @@ func (a *concurrentAdapter) StartSession(_ context.Context, req *adapterv1.Start
 }
 
 func (a *concurrentAdapter) Shutdown(context.Context, *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
-	return &adapterv1.ShutdownResponse{}, nil
+	a.mu.Lock()
+	cleanly := a.shutdownExitedCleanly
+	shutdownErr := a.shutdownErr
+	a.mu.Unlock()
+	if shutdownErr != nil {
+		return nil, shutdownErr
+	}
+	return &adapterv1.ShutdownResponse{ExitedCleanly: cleanly}, nil
 }
 
 func (a *concurrentAdapter) startedSet() map[string]bool {
@@ -472,6 +492,91 @@ func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 	}
 	if podClaimExists(t, c, "sbx-1") {
 		t.Error("after releasing the last slot the per-pod claim must be deleted")
+	}
+}
+
+// spec: §6.2 (leaked slot remains counted), §5.2 (slot assignment atomicity)
+// diagnosis: Binder.ReleaseSlot discarded the ShutdownSlot exitedCleanly
+// result and decremented the pod's Redis slot counter for a leaked slot, so
+// the pod's occupancy dropped and the per-pod claim was deleted (or the pod
+// was over-assigned). §6.2 requires a leaked slot to stay counted until pod
+// termination: the last slot of a two-slot pod leaking must keep the pod above
+// occupancy zero, so the per-pod claim survives and no new slot is
+// over-assigned into the leaked slot's resources. Pre-fix code (the discarded
+// `_, _ = ShutdownSlot(...)`) fails this test: it would decrement the counter
+// to zero and delete the claim.
+func TestReleaseSlotLeakedKeepsPodCounted(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+
+	r1, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err != nil {
+		t.Fatalf("BindSlot sess-1: %v", err)
+	}
+	r2, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-2", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err != nil {
+		t.Fatalf("BindSlot sess-2: %v", err)
+	}
+
+	// Release the first slot cleanly: occupancy drops from 2 to 1, the claim
+	// stays while sess-2 runs.
+	if err := binder.ReleaseSlot(context.Background(), r1); err != nil {
+		t.Fatalf("ReleaseSlot sess-1 (clean): %v", err)
+	}
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Fatal("after a clean release of one of two slots the claim must remain")
+	}
+
+	// Now leak the last slot's cleanup. §6.2: the leaked slot stays counted, so
+	// occupancy does not reach zero and the per-pod claim is NOT deleted. The
+	// pod is retired later by a liveness path, not by this release.
+	a.mu.Lock()
+	a.shutdownExitedCleanly = false
+	a.mu.Unlock()
+	if err := binder.ReleaseSlot(context.Background(), r2); err != nil {
+		t.Fatalf("ReleaseSlot sess-2 (leaked): %v", err)
+	}
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("a leaked last-slot release must keep the per-pod claim (the leaked slot stays counted, §6.2)")
+	}
+}
+
+// spec: §6.2 (leaked slot remains counted), §5.2 (slot assignment atomicity)
+// diagnosis: a ShutdownSlot transport error was treated as a clean release, so
+// a slot whose adapter never confirmed cleanup was decremented from the pod's
+// occupancy. §6.2 fail-closed: on doubt the slot stays counted rather than
+// freeing occupancy the adapter may still hold. Pre-fix code discarded the
+// error and decremented, over-releasing the pod.
+func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+
+	r1, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err != nil {
+		t.Fatalf("BindSlot sess-1: %v", err)
+	}
+
+	// A transport error on the slot Shutdown: fail closed, keep the slot
+	// counted so the pod does not reach occupancy zero and the claim survives.
+	a.mu.Lock()
+	a.shutdownErr = errors.New("adapter connection reset")
+	a.mu.Unlock()
+	if err := binder.ReleaseSlot(context.Background(), r1); err != nil {
+		t.Fatalf("ReleaseSlot with a shutdown transport error: %v", err)
+	}
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("a ShutdownSlot transport error must keep the slot counted (fail closed, §6.2); the claim must survive")
 	}
 }
 
