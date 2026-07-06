@@ -208,7 +208,7 @@ if (mode === "new") {
 
   phase("Validate");
   log("Decomposing the problem into testable premises");
-  const decomposition = await agent(
+  const decomposition = await robustAgent(
     "Decompose a reported spec problem into individually testable premises.\n\n" +
       "Problem:\n" +
       problem +
@@ -222,6 +222,18 @@ if (mode === "new") {
       "Mark loadBearing: true when refuting the premise would invalidate or materially redirect the problem. Cap the list at the ten most consequential premises.",
     { schema: PREMISES, label: "decompose" },
   );
+  // robustAgent returns null when every retry is exhausted (a hard account
+  // "session limit" is not rescued by the model fallback). Return a clean
+  // interrupted status rather than dereferencing null, so the run can be
+  // resumed after the reset instead of crashing before the proposal is written.
+  if (!decomposition) {
+    return {
+      mode,
+      status: "interrupted",
+      phase: "decompose",
+      reason: "premise decomposition failed after retries (likely session limit)",
+    };
+  }
   const premises = decomposition.premises.slice(0, 10);
   log(
     premises.length +
@@ -232,7 +244,7 @@ if (mode === "new") {
     await parallel(
       premises.map(
         (p) => () =>
-          agent(
+          robustAgent(
             "Try to REFUTE this premise about the spec or implementation.\n\n" +
               "Premise (" +
               p.kind +
@@ -297,7 +309,7 @@ if (mode === "new") {
     )
     .join("\n");
 
-  const draft = await agent(
+  const draft = await robustAgent(
     "Draft a change proposal.\n\n" +
       "Problem:\n" +
       problem +
@@ -320,6 +332,17 @@ if (mode === "new") {
     { schema: DRAFT, label: "draft" },
   );
 
+  // Same guard as the decompose phase: a null draft (retries exhausted, likely a
+  // session limit) must not crash on draft.viable — return a resumable status.
+  if (!draft) {
+    return {
+      mode,
+      status: "interrupted",
+      phase: "draft",
+      reason: "draft failed after retries (likely session limit)",
+      verdicts,
+    };
+  }
   if (!draft.viable) {
     return { mode, status: "not-viable", reason: draft.whyNotViable, verdicts };
   }
@@ -333,7 +356,7 @@ if (mode === "new") {
     await parallel(
       draft.changes.map(
         (c) => () =>
-          agent(
+          robustAgent(
             "Adversarially challenge one proposed change. Your default posture is that the change is unnecessary.\n\n" +
               "Full draft for context:\n" +
               JSON.stringify(draft, null, 2) +
@@ -410,7 +433,7 @@ if (mode === "new") {
     .slice(0, 60);
   path = repo + "/proposals/" + num + "_" + draft.kind + "_" + slug + ".md";
 
-  await agent(
+  await robustAgent(
     "Write a change proposal file.\n\n" +
       "HARD CONSTRAINT: the only file you may create or edit is " +
       path +
@@ -443,7 +466,7 @@ if (mode === "new") {
 // ---- Conventions pass (shared, one-shot, outside the error loop) ----
 
 phase("Conventions");
-await agent(
+await robustAgent(
   "Check one proposal file against the written conventions and fix only violations.\n\n" +
     "HARD CONSTRAINT: the only file you may edit is " +
     path +
@@ -637,6 +660,51 @@ function fixPrompt(confirmed, round) {
 }
 
 phase("Review");
+
+// robustAgent wraps agent() with script-level retries so a transient API failure
+// (529 "Overloaded", "Server is temporarily limiting requests", rate limit) does
+// not silently drop the call. agent() returns null when the runtime's own retries
+// are exhausted under a sustained overload; a dropped review lens or verifier then
+// makes a round look "clean" because a failed reviewer contributes zero findings,
+// indistinguishable from a reviewer that genuinely found nothing, which can
+// FALSELY certify convergence and force the whole (expensive) run to be redone.
+// Each retry is a fresh agent() with its own internal backoff, so attempts are
+// naturally spaced without a script-level timer (sleep/Date.now/Math.random are
+// unavailable in workflow scripts). A genuine thrown exception (e.g. the token
+// budget is exhausted) propagates immediately and is not retried, since retrying
+// cannot help it.
+async function robustAgent(prompt, opts, attempts = 4) {
+  // Model fallback: the first two attempts use the primary model (Opus, inherited
+  // from the session); attempts 3+ fall back to Sonnet. A 529 "Overloaded" is
+  // usually capacity-pool-specific, so when Opus is saturated Sonnet often still
+  // has headroom, and a lens completing on Sonnet is far better than a lens
+  // dropped for the round (which corrupts the clean-streak). Opus is tried first
+  // so its quality is preserved whenever it is available; only a sustained Opus
+  // outage degrades an agent to Sonnet, and every fallback is logged so a round
+  // certified clean partly on Sonnet is visible in the transcript. This does NOT
+  // rescue a hard account-level "session limit" (the whole account is capped) —
+  // that still requires the account switch or waiting for the reset.
+  const fallbackAt = 3;
+  for (let i = 1; i <= attempts; i++) {
+    const callOpts =
+      i >= fallbackAt ? { ...opts, model: "sonnet" } : opts;
+    const r = await agent(prompt, callOpts);
+    if (r !== null && r !== undefined) return r;
+    if (i < attempts) {
+      log(
+        "  " +
+          (opts && opts.label ? opts.label : "agent") +
+          ": transient API failure, retry " +
+          i +
+          "/" +
+          (attempts - 1) +
+          (i + 1 >= fallbackAt ? " (falling back to sonnet)" : ""),
+      );
+    }
+  }
+  return null;
+}
+
 const fixedTitles = [];
 const rejected = [];
 const history = [];
@@ -660,36 +728,66 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
   );
 
   // Barrier: the dedup step needs every reviewer's findings at once.
-  const results = (
-    await parallel(
-      lenses.map(
-        (l) => () =>
-          agent(reviewPrompt(l, round, fixedTitles, rejected), {
-            label: "r" + round + ":review:" + l.key,
-            phase: "Round " + round + ": review",
-            schema: FINDINGS,
-          }),
-      ),
-    )
-  ).filter(Boolean);
+  const lensResults = await parallel(
+    lenses.map(
+      (l) => () =>
+        robustAgent(reviewPrompt(l, round, fixedTitles, rejected), {
+          label: "r" + round + ":review:" + l.key,
+          phase: "Round " + round + ": review",
+          schema: FINDINGS,
+        }),
+    ),
+  );
+  const failedLenses = lensResults.filter((r) => !r).length;
+  const results = lensResults.filter(Boolean);
 
   if (results.length === 0) {
     log("Round " + round + ": every reviewer failed; stopping");
     reviewersFailed = true;
     break;
   }
+  // A round may certify "clean" (advance the convergence streak) ONLY when every
+  // lens and every verifier actually ran. If any lens failed after robustAgent's
+  // retries, the round is INCONCLUSIVE: a partial reviewer set finding nothing is
+  // not evidence of convergence. Counting it would reproduce the 529-driven
+  // false-convergence bug. verifyComplete (below) extends the same guard to the
+  // two-skeptic verification of each finding.
+  let roundComplete = failedLenses === 0;
+  if (failedLenses > 0) {
+    log(
+      "Round " +
+        round +
+        ": " +
+        failedLenses +
+        "/" +
+        lenses.length +
+        " lenses failed after retries; round INCONCLUSIVE (will not count toward convergence)",
+    );
+  }
   const raw = results.flatMap((r) => r.findings);
   log("Round " + round + ": " + raw.length + " raw findings");
 
   if (raw.length === 0) {
-    cleanStreak++;
-    history.push({ round, raw: 0, deduped: 0, confirmed: 0 });
+    if (roundComplete) cleanStreak++;
+    else
+      log(
+        "Round " +
+          round +
+          ": zero findings but round incomplete; NOT counting as clean",
+      );
+    history.push({
+      round,
+      raw: 0,
+      deduped: 0,
+      confirmed: 0,
+      complete: roundComplete,
+    });
     continue;
   }
 
   let deduped = raw;
   if (raw.length > 1) {
-    const d = await agent(dedupPrompt(raw), {
+    const d = await robustAgent(dedupPrompt(raw), {
       label: "r" + round + ":dedup",
       phase: "Round " + round + ": review",
       schema: FINDINGS,
@@ -709,13 +807,13 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
       (f) => () =>
         parallel([
           () =>
-            agent(evidencePrompt(f), {
+            robustAgent(evidencePrompt(f), {
               label: "r" + round + ":verify-evidence",
               phase: "Round " + round + ": verify",
               schema: VERDICT,
             }),
           () =>
-            agent(materialityPrompt(f), {
+            robustAgent(materialityPrompt(f), {
               label: "r" + round + ":verify-material",
               phase: "Round " + round + ": verify",
               schema: VERDICT,
@@ -725,6 +823,19 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
   );
 
   const live = verdicts.filter(Boolean);
+  // Extend the completeness guard to verification: a verifier that failed after
+  // retries leaves a finding with fewer than two verdicts, so it is neither
+  // confirmed nor safely dismissed. Such a round cannot certify convergence.
+  const verifyComplete =
+    live.length === deduped.length && live.every((v) => v.vs.length === 2);
+  if (!verifyComplete) {
+    roundComplete = false;
+    log(
+      "Round " +
+        round +
+        ": some verifiers failed after retries; round INCONCLUSIVE",
+    );
+  }
   const confirmed = live
     .filter((v) => v.vs.length === 2 && v.vs.every((x) => x.confirmed))
     .map((v) => v.f);
@@ -755,15 +866,22 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
     deduped: deduped.length,
     confirmed: confirmed.length,
     confirmedTitles: confirmed.map((f) => f.title),
+    complete: roundComplete,
   });
 
   if (confirmed.length === 0) {
-    cleanStreak++;
+    if (roundComplete) cleanStreak++;
+    else
+      log(
+        "Round " +
+          round +
+          ": zero confirmed findings but round incomplete (reviewer/verifier failures); NOT counting as clean",
+      );
     continue;
   }
   cleanStreak = 0;
 
-  const fixSummary = await agent(fixPrompt(confirmed, round), {
+  const fixSummary = await robustAgent(fixPrompt(confirmed, round), {
     label: "r" + round + ":fix",
     phase: "Round " + round + ": fix",
   });
@@ -773,7 +891,7 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
 
 const converged = cleanStreak >= CLEAN_TARGET && !reviewersFailed;
 if (converged) {
-  await agent(
+  await robustAgent(
     "Update one proposal's Status bullet to record verification.\n\n" +
       "HARD CONSTRAINT: the only file you may edit is " +
       path +
