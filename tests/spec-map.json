@@ -461,7 +461,11 @@
         "pkg/adapter/sessionscrub_emit_test.go::TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2",
         "pkg/sandbox/podscrub/podscrub_test.go",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
-        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2"
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -538,7 +542,10 @@
         "pkg/gateway/runtime/slothealth/slothealth_test.go::TestForgetClearsPersistentLeaks_spec_6_2",
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotLeakedKeepsSlotCounted",
         "pkg/gateway/sessionserver/slotretry_load_test.go::TestSlotRetryConcurrentLeaksReachThreshold_spec_6_2",
-        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2"
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1007,7 +1014,8 @@
       "tests": [
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
-        "tests/tier3_contract/adapter_checkpointbarrier/..."
+        "tests/tier3_contract/adapter_checkpointbarrier/...",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231"
       ],
       "packages": [
         "pkg/gateway"
@@ -1494,7 +1502,9 @@
     "12.1": {
       "title": "Storage Design Principle",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
+      "tests": [
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231"
+      ],
       "packages": [],
       "blocked_until_phase": "1.5",
       "notes": "Non-normative principles. Enforced by §12.2 and §12.3 tests."
@@ -2261,7 +2271,9 @@
         "pkg/controller/warmpool/pod_retirement_meter_test.go::TestIncControllerUptimeRetirementSeparatesRuntimeClass_spec_16_1",
         "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestSessionRetirerCountsRuntimeClassLabel_spec_16_1",
         "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestRetirementMetricsMapsReasonToLabel_spec_16_1",
-        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePassesRuntimeClass_spec_16_1"
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePassesRuntimeClass_spec_16_1",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
       ],
       "packages": [
         "pkg/observability/metrics",
