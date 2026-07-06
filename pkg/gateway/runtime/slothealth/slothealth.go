@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
 
 // Package slothealth tracks concurrent-workspace (§5.2) slot failures and
-// leaks per pod over a rolling window so the gateway can apply the §5.2
-// whole-pod replacement trigger: when ceil(maxConcurrent/2) or more slots
-// on the same pod fail or leak within a 5-minute window, the pod is
-// unhealthy and §6.2 drains it as a whole.
+// leaks per pod so the gateway can apply the §5.2 whole-pod replacement
+// trigger. Because a failure is transient while a leak persists until pod
+// termination, the two are counted with different lifetimes: a slot failure
+// is counted within a rolling 5-minute window and ages out, while a leaked
+// slot is counted persistently until the pod terminates. When the
+// rolling-window failures plus the persistent leaks reach
+// ceil(maxConcurrent/2) on the same pod, the pod is unhealthy and §6.2 drains
+// it as a whole.
 //
 // spec: §5.2 "Concurrent-workspace slot retry policy" (whole-pod
 // replacement trigger); §6.2 (claimed → draining on the
-// unhealthy-slot threshold), §6.2 (failed_slots + leaked_slots
-// >= ceil(maxConcurrent/2) within the rolling window).
+// unhealthy-slot threshold), §6.2 "`leaked` slot semantics"
+// (rolling-window failed_slots plus persistent leaked_slots
+// >= ceil(maxConcurrent/2)).
 package slothealth
 
 import (
@@ -203,8 +208,9 @@ func (t *Tracker) pruneLocked(pod string, now time.Time) []event {
 	return out
 }
 
-// UnhealthyThreshold is the §5.2 ceil(maxConcurrent/2) count of
-// failed-or-leaked slots within the window that marks a pod unhealthy. A
+// UnhealthyThreshold is the §5.2 ceil(maxConcurrent/2) count that marks a
+// pod unhealthy: the rolling-window failed slots plus the persistent leaked
+// slots reaching this bound trips the whole-pod replacement trigger. A
 // maxConcurrent below 1 is clamped to 1 (a single failure trips it).
 func UnhealthyThreshold(maxConcurrent int32) int {
 	if maxConcurrent < 1 {
