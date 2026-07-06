@@ -34,6 +34,8 @@ package tier10_conformance_test
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -47,10 +49,13 @@ import (
 // the recycle-scrub conformance case. It records the sessions Close was called
 // for so the case can assert the ending session's runtime was torn down. The
 // guard keeps it -race clean when the async scrub goroutine and the test read
-// concurrently.
+// concurrently. closeErr, when set, is returned from Close so the per-slot
+// leaked-outcome case can drive a cleanup failure through the concurrent-slot
+// release path.
 type scrubConformanceRuntime struct {
-	mu     sync.Mutex
-	closed []string
+	mu       sync.Mutex
+	closed   []string
+	closeErr error
 }
 
 func (r *scrubConformanceRuntime) Start(context.Context, string) error           { return nil }
@@ -67,7 +72,7 @@ func (r *scrubConformanceRuntime) Close(_ context.Context, sessionID string) err
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = append(r.closed, sessionID)
-	return nil
+	return r.closeErr
 }
 
 func (r *scrubConformanceRuntime) closedSnapshot() []string {
@@ -295,6 +300,119 @@ func TestRecycleScrubConcurrentModeConformance(t *testing.T) {
 	}
 	if reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reports[0].outcome)
+	}
+}
+
+// scrubConformanceSessionReporter is a SessionScrubReporter double capturing
+// every ReportSessionScrub the adapter emits, so the per-session leaked-outcome
+// conformance case can assert the adapter emits exactly one report carrying the
+// cached pod id, the released session, the slot id, and the §5.2 per-slot
+// cleanup outcome. The mutex keeps it -race clean.
+type scrubConformanceSessionReporter struct {
+	mu      sync.Mutex
+	reports []scrubConformanceSessionReport
+}
+
+type scrubConformanceSessionReport struct {
+	podID     string
+	sessionID string
+	slotID    string
+	outcome   gatewaycontrol.SessionScrubOutcome
+}
+
+func (r *scrubConformanceSessionReporter) ReportSessionScrub(_ context.Context, podID, sessionID, slotID string, outcome gatewaycontrol.SessionScrubOutcome) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reports = append(r.reports, scrubConformanceSessionReport{podID: podID, sessionID: sessionID, slotID: slotID, outcome: outcome})
+	return nil
+}
+
+func (r *scrubConformanceSessionReporter) snapshot() []scrubConformanceSessionReport {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]scrubConformanceSessionReport, len(r.reports))
+	copy(out, r.reports)
+	return out
+}
+
+// spec: 5.2 (per-slot cleanup outcome reporting, maxSessionsPerPod), 4.7
+// (runtime adapter leaked determination).
+//
+// diagnosis: a failure means a conforming adapter mis-reports a failed per-slot
+//
+//	cleanup on the §6.4 concurrent-slot release. The adapter derives the
+//	per-slot outcome from the same runtime-Close error that sets
+//	ShutdownResponse.ExitedCleanly, so a Close that could not reclaim the
+//	slot's resources must yield exactly one ReportSessionScrub carrying
+//	SESSION_SCRUB_OUTCOME_LEAKED with the pod/session/slot ids, and a clean
+//	Close must yield SESSION_SCRUB_OUTCOME_RELEASED. The leaked outcome is the
+//	sole feeder of the gateway leak ledger, the persistent leaked-slot count,
+//	and the maxSessionsPerPod drain chain, so an adapter that always emits
+//	released (or drops the report) silently disables the entire leaked-pod
+//	liveness path and a permanently leaked concurrent pod is never reclaimed.
+func TestRecycleSessionScrubLeakedOutcomeConformance(t *testing.T) {
+	const podID = "pod-slot-leaked"
+	// The adapter reads its own pod identity once from the Downward API
+	// POD_NAME env at construction and keys every ReportSessionScrub on it.
+	t.Setenv("POD_NAME", podID)
+
+	// A concurrent-slot release whose runtime Close FAILS to reclaim the slot's
+	// resources: the adapter must derive the leaked outcome from that error.
+	rt := &scrubConformanceRuntime{closeErr: errors.New("shred timed out reclaiming slot tree")}
+	reporter := &scrubConformanceSessionReporter{}
+
+	base := t.TempDir()
+	s := adapter.New("conformance")
+	// The §6.4 concurrent-slot roots the slot path materializes a per-slot
+	// workspace under. The pod-global WorkspaceRoot is not on the slot path.
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	s.Runtime = rt
+	s.SessionScrubReporter = reporter
+
+	// Start one slot (maxConcurrentSessions > 1 routes StartSession through the
+	// per-slot path when a slot id is carried), then release it. A concurrent
+	// pod sets only per-slot session state.
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		Runtime:   "echo",
+		SlotId:    &adapterv1.SlotId{Value: "slot-1"},
+	}); err != nil {
+		t.Fatalf("StartSession(slot-1): %v", err)
+	}
+
+	// The slot-qualified Shutdown tears down the one slot. The runtime Close
+	// returns an error, so the cleanup leaked.
+	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		SlotId:    &adapterv1.SlotId{Value: "slot-1"},
+	})
+	if err != nil {
+		t.Fatalf("Shutdown(slot-1): %v", err)
+	}
+	// The outcome and the ExitedCleanly flag derive from the same Close error.
+	if resp.GetExitedCleanly() {
+		t.Error("ExitedCleanly = true for a failed slot cleanup; outcome and flag must agree")
+	}
+
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("ReportSessionScrub calls = %d, want exactly 1 per slot release: %+v", len(reports), reports)
+	}
+	got := reports[0]
+	if got.outcome != gatewaycontrol.SessionScrubLeaked {
+		t.Errorf("reported outcome = %v, want SESSION_SCRUB_OUTCOME_LEAKED for a failed per-slot cleanup", got.outcome)
+	}
+	if got.podID != podID {
+		t.Errorf("reported podId = %q, want the cached pod identity %q", got.podID, podID)
+	}
+	if got.sessionID != "slot-sess" {
+		t.Errorf("reported sessionId = %q, want slot-sess", got.sessionID)
+	}
+	if got.slotID != "slot-1" {
+		t.Errorf("reported slotId = %q, want slot-1", got.slotID)
 	}
 }
 

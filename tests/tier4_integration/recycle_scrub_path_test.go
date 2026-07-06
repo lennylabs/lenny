@@ -31,6 +31,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
@@ -854,6 +856,298 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reps[0].outcome)
 	}
+}
+
+// perReleaseCounterStore is an in-memory RecycleCounterStore that models the
+// agent_pod_state sessions_served column the §5.2 per-release drain reads. It
+// returns the monotonic post-increment count on IncrementSessionsServed the
+// way the Postgres RETURNING clause does, so the retirer sees the exact
+// crossing value. The scrub-failure and read-back methods are unused on the
+// per-release path but satisfy the RecycleCounterStore interface.
+type perReleaseCounterStore struct {
+	mu             sync.Mutex
+	sessionsServed map[string]int
+}
+
+func newPerReleaseCounterStore() *perReleaseCounterStore {
+	return &perReleaseCounterStore{sessionsServed: map[string]int{}}
+}
+
+func (s *perReleaseCounterStore) IncrementSessionsServed(_ context.Context, podID string) (int, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionsServed[podID]++
+	return s.sessionsServed[podID], true, nil
+}
+
+func (s *perReleaseCounterStore) IncrementScrubFailureCount(_ context.Context, _ string) (int, bool, error) {
+	return 0, true, nil
+}
+
+func (s *perReleaseCounterStore) RecycleCounters(_ context.Context, podID string) (int, int, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionsServed[podID], 0, true, nil
+}
+
+// perReleaseRecordingSink records every IncRetirement so the flow can assert
+// the §16.1 lenny_gateway_pod_retirement_total{reason=session_count_limit}
+// increments exactly once on the crossing release.
+type perReleaseRecordingSink struct {
+	mu          sync.Mutex
+	retirements []string
+}
+
+func (s *perReleaseRecordingSink) IncRetirement(reason, pool, _ string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retirements = append(s.retirements, reason+"/"+pool)
+}
+
+// IncScrubFailureTotal and SetScrubFailureCount satisfy RetirementMetricsSink;
+// the per-release maxSessionsPerPod drain never emits a scrub-failure metric.
+func (s *perReleaseRecordingSink) IncScrubFailureTotal(string, string)              {}
+func (s *perReleaseRecordingSink) SetScrubFailureCount(string, string, string, int) {}
+
+func (s *perReleaseRecordingSink) count(reason string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, r := range s.retirements {
+		if strings.HasPrefix(r, reason+"/") {
+			n++
+		}
+	}
+	return n
+}
+
+// perReleaseNoopLedger is a DrainLedger double: the per-release maxSessionsPerPod
+// flow drives only clean releases, so RecordLeak is never called, but the
+// ScrubReporter requires a non-nil ledger.
+type perReleaseNoopLedger struct{}
+
+func (perReleaseNoopLedger) RecordLeak(context.Context, string) error { return nil }
+
+// perReleaseNoopInspector and perReleaseNoopDriver satisfy the ScrubReporter's
+// RecordPodScrub seams, which the per-release RecordSessionScrub path never
+// reaches. The whole-pod scrub is deliberately NOT driven in this flow: the
+// leaked slot holds Redis occupancy above zero throughout, so the occupancy-zero
+// recycle boundary (and thus RecordPodScrub) never fires, which is exactly the
+// decoupling the per-release drain closes.
+type perReleaseNoopInspector struct{}
+
+func (perReleaseNoopInspector) InspectForRecycle(context.Context, string) (leasecontrol.PodRecyclePolicy, bool, error) {
+	return leasecontrol.PodRecyclePolicy{}, false, nil
+}
+
+type perReleaseNoopDriver struct{}
+
+func (perReleaseNoopDriver) Recycle(context.Context, string, bool, bool) error { return nil }
+func (perReleaseNoopDriver) Retire(context.Context, string, bool, bool, podscrub.RetireReason, string) error {
+	return nil
+}
+
+// TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2 drives the
+// §5.2 per-release maxSessionsPerPod drain (CODE-D/D2) end to end across the
+// gateway RecordSessionScrub handler, the real SessionCountRetirer, a real
+// kube-apiserver (envtest, where the drain-request PATCH lands and is read
+// back), a real poolstore, and a real Redis slot counter that holds a sub-ceil
+// leaked slot's occupancy above zero for the whole flow.
+//
+// A concurrent (maxConcurrentSessions 4), non-vm-restart recycling pool with
+// maxSessionsPerPod 3 carries one persistently leaked slot: the Redis counter
+// is seeded above zero by that leaked slot and never released, so total
+// occupancy never reaches zero and the occupancy-zero whole-pod scrub
+// (podscrub.Decide via RecordPodScrub) never fires. Under sustained overlapping
+// load the pod's live slots keep cycling (a clean Reserve/Release pair per
+// release), which the flow models by claiming and releasing a live slot around
+// each RecordSessionScrub call. The served-session count advances one per
+// release. On the crossing release where the count reaches maxSessionsPerPod the
+// per-release path stamps lenny.dev/drain-request on the real pod and increments
+// lenny_gateway_pod_retirement_total{reason=session_count_limit} exactly once,
+// decoupled from occupancy zero. Later releases past the crossing re-stamp
+// idempotently but do not re-increment the counter.
+//
+// This flow only tier-1 seam tests pin today; no tier-4 integration flow drove
+// the per-release drain across the real handler, kube-apiserver, poolstore, and
+// slot counter. It would fail against pre-CODE-D code (the handler discarded the
+// post-increment count and never drove the retirer), where a leaked concurrent
+// pool serves unboundedly past maxSessionsPerPod because occupancy never reaches
+// zero.
+//
+// diagnosis: a failure means a concurrent pool holding a persistently leaked
+// slot is never drained per session release — either the drain-request is never
+// stamped (so the pod serves past maxSessionsPerPod unboundedly because the
+// occupancy-zero scrub cannot fire) or the retirement counter is mis-counted
+// (absent, or emitted more than once), so the §5.2 concurrent-pool retirement
+// bound is unenforced or the §16.1 operator accounting is wrong.
+// spec: 5.2 (per-release maxSessionsPerPod drain on a concurrent non-vm-restart
+// pool, decoupled from occupancy zero; level stamp on >=, counter once on ==),
+// 16.1 (session_count_limit counted once on the per-release path), 6.2
+// (leaked slot remains counted so occupancy stays above zero), 4.6.3 (gateway
+// stamps drain-request)
+func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T) {
+	c := recycleCluster(t)
+	ctx := context.Background()
+	const podName = "sbx-perrelease"
+	const poolName = "perrelease-pool"
+
+	// A real agent Pod carrying the pool label: the retirer reads the pool
+	// label and the CreationTimestamp off it and patches the drain-request
+	// annotation onto it.
+	if err := c.Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: podName, Namespace: recycleNS,
+			Labels: map[string]string{warmpool.LabelPool: poolName},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "echo"}}},
+	}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create agent pod: %v", err)
+	}
+
+	// A real poolstore holding the concurrent (4) non-vm-restart recycling pool
+	// with maxSessionsPerPod 3 and no uptime cap (the common no-cap concurrent
+	// pool, so the D9 uptime suppression never applies and the crossing counts).
+	pools := poolstore.NewMemory()
+	if err := pools.Create(ctx, poolstore.Pool{
+		Name:          poolName,
+		RuntimeRef:    "echo",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions:            4,
+			AcknowledgeProcessLevelIsolation: true,
+			// The per-slot cleanup-timeout floor is maxConcurrentSessions * 5s
+			// (§5.2); the per-release drain does not exercise cleanup, so set
+			// the minimum that clears poolstore validation.
+			CleanupTimeoutSeconds: 20,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				ScrubProfile:               runtimestore.MicrovmScrubStandard,
+				MaxSessionsPerPod:          3,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create poolstore pool: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo"}); err != nil {
+		t.Fatalf("create runtimestore runtime: %v", err)
+	}
+
+	// The real per-release retirer over the real kube client, poolstore, and a
+	// recording metrics sink.
+	sink := &perReleaseRecordingSink{}
+	retirer, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{
+		Client:    c,
+		Namespace: recycleNS,
+		Pools:     pools,
+		Runtimes:  runtimes,
+		Metrics:   sink,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionCountRetirer: %v", err)
+	}
+
+	// The real RecordSessionScrub handler over the in-memory counter store and
+	// the real retirer. Ledger/Inspector/Driver are inert no-ops: the flow
+	// drives only clean per-slot releases (no leaked report), and the whole-pod
+	// scrub never fires because occupancy stays above zero.
+	counters := newPerReleaseCounterStore()
+	reporter, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters:       counters,
+		Ledger:         perReleaseNoopLedger{},
+		SessionRetirer: retirer,
+		Inspector:      perReleaseNoopInspector{},
+		Driver:         perReleaseNoopDriver{},
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+
+	// A real Redis slot counter holding the sub-ceil leaked slot: one Reserve is
+	// never released, so occupancy rests at the leaked-slot floor (1) and never
+	// reaches zero for the whole flow, proving the per-release drain is
+	// decoupled from the occupancy-zero whole-pod scrub.
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	counter := slotcounter.New(rc)
+	if _, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+		t.Fatalf("reserve leaked slot: %v", err)
+	}
+
+	// Drive three clean per-slot releases. Around each, a live slot cycles: a
+	// clean Reserve/Release pair models the sustained overlapping load that keeps
+	// total occupancy above the leaked-slot floor and never at zero. Each
+	// release reports the per-slot cleanup outcome through the real handler,
+	// which advances sessions_served and drives the per-release retirement.
+	for i := 1; i <= 3; i++ {
+		if _, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+			t.Fatalf("reserve live slot %d: %v", i, err)
+		}
+		if _, err := counter.Release(ctx, podName); err != nil {
+			t.Fatalf("release live slot %d: %v", i, err)
+		}
+		if err := reporter.RecordSessionScrub(ctx, podName, "sess", "slot", false); err != nil {
+			t.Fatalf("RecordSessionScrub release %d: %v", i, err)
+		}
+
+		switch {
+		case i < 3:
+			// Below maxSessionsPerPod: no stamp, no counter.
+			if perReleaseDrainRequested(t, c, podName) {
+				t.Fatalf("drain-request stamped after release %d, below maxSessionsPerPod 3", i)
+			}
+			if n := sink.count("session_count_limit"); n != 0 {
+				t.Fatalf("session_count_limit retirements = %d after release %d, want 0 below the bound", n, i)
+			}
+		case i == 3:
+			// The crossing release (count == maxSessionsPerPod): stamp AND
+			// exactly one counter increment, even though the Redis counter never
+			// reached zero (the leaked slot floor holds it at 1).
+			if !perReleaseDrainRequested(t, c, podName) {
+				t.Fatal("drain-request NOT stamped at the maxSessionsPerPod crossing release")
+			}
+			if n := sink.count("session_count_limit"); n != 1 {
+				t.Fatalf("session_count_limit retirements = %d at the crossing, want exactly 1", n)
+			}
+		}
+	}
+
+	// The leaked slot still holds occupancy above zero: total occupancy never
+	// reached zero, so no whole-pod scrub fired. The drain came purely from the
+	// per-release path.
+	if occ, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+		t.Fatalf("probe occupancy: %v", err)
+	} else if occ < 2 {
+		t.Fatalf("post-flow occupancy = %d, want >= 2 (the leaked slot never released, so occupancy never hit zero)", occ)
+	}
+
+	// A fourth release past the crossing (count 4 > 3) re-stamps the
+	// drain-request idempotently but does NOT re-increment the retirement
+	// counter: the exact-equality gate holds it to one per retirement while the
+	// stamp stays retry-safe.
+	if err := reporter.RecordSessionScrub(ctx, podName, "sess", "slot", false); err != nil {
+		t.Fatalf("RecordSessionScrub release 4: %v", err)
+	}
+	if !perReleaseDrainRequested(t, c, podName) {
+		t.Fatal("drain-request cleared on the post-crossing release, want it still stamped (level predicate count >= bound)")
+	}
+	if n := sink.count("session_count_limit"); n != 1 {
+		t.Fatalf("session_count_limit retirements = %d after the post-crossing release, want still 1 (exact-equality gate)", n)
+	}
+}
+
+// perReleaseDrainRequested reports whether the agent pod carries the
+// lenny.dev/drain-request annotation the per-release drain stamps.
+func perReleaseDrainRequested(t *testing.T, c client.Client, podName string) bool {
+	t.Helper()
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: recycleNS, Name: podName}, &pod); err != nil {
+		t.Fatalf("get pod %s for drain-request check: %v", podName, err)
+	}
+	return pod.Annotations[lennyv1.AnnotationDrainRequest] != ""
 }
 
 // scrubResultFor maps the adapter's reported PodScrubOutcome onto the §6.2
