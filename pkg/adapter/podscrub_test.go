@@ -75,8 +75,9 @@ func (f *fakePodScrubOps) PathState(path string) (bool, bool, error) {
 // assert the ending session's runtime was torn down. The guard keeps it
 // -race clean when the async scrub goroutine and the test read concurrently.
 type recycleRuntime struct {
-	mu     sync.Mutex
-	closed []string
+	mu       sync.Mutex
+	closed   []string
+	closeErr error // when set, Close returns it (a failed/timed-out teardown)
 }
 
 func (r *recycleRuntime) Start(context.Context, string) error           { return nil }
@@ -93,7 +94,7 @@ func (r *recycleRuntime) Close(_ context.Context, sessionID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = append(r.closed, sessionID)
-	return nil
+	return r.closeErr
 }
 
 func (r *recycleRuntime) closedSnapshot() []string {

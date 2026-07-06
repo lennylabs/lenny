@@ -254,6 +254,16 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	// missing-report timeout it armed before sending this Shutdown. On the
 	// terminate path (recycle unset) the pod is replaced and no scrub runs.
 	if rc := req.GetRecycle(); rc != nil {
+		// spec: §5.2 (ReportSessionScrub, maxSessionsPerPod both modes). A base
+		// (maxConcurrentSessions == 1) recycling pod has no slot, so it advances
+		// sessions_served on its own recycle boundary: emit ReportSessionScrub
+		// with an empty slot id for the ending session before the whole-pod
+		// scrub, so advanceScrubCounters reads back a non-zero count and the
+		// maxSessionsPerPod retirement becomes functional in base mode too.
+		// The outcome derives from the same closeErr that set ExitedCleanly.
+		// This runs only on the recycle boundary; the terminate path replaces
+		// the pod and needs no session-scrub report. F-5.2.31.
+		s.reportSessionScrub(ctx, sessionID, "", closeErr)
 		s.startPodScrub(rc)
 	}
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil

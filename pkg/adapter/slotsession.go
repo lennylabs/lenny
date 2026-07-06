@@ -84,6 +84,14 @@ func (s *Server) shutdownSlot(ctx context.Context, sessionID, slotID string, dea
 		cancel()
 	}
 	s.releaseSlot(ctx, slotID)
+	// spec: §5.2 (per-slot cleanup outcome), §4.7 (ReportSessionScrub). After
+	// the per-slot teardown, report the cleanup outcome to the gateway so it
+	// advances sessions_served (feeding the maxSessionsPerPod retirement) and,
+	// on a leaked outcome, feeds the unhealthy-threshold ledger. The outcome
+	// derives from the same closeErr that sets ExitedCleanly below: a clean
+	// close is `released`, a close failure or grace-deadline overrun is
+	// `leaked`. F-5.2.31.
+	s.reportSessionScrub(ctx, sessionID, slotID, closeErr)
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
 }
 

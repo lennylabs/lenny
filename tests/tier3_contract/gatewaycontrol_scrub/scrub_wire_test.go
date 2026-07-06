@@ -13,7 +13,9 @@ package gatewaycontrol_scrub_test
 
 import (
 	"context"
+	"errors"
 	"net"
+	"path/filepath"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -21,6 +23,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -30,12 +34,14 @@ import (
 type scrubServer struct {
 	adapterv1.UnimplementedGatewayControlServer
 
-	gotSession *adapterv1.ReportSessionScrubRequest
-	gotPod     *adapterv1.ReportPodScrubRequest
+	gotSession     *adapterv1.ReportSessionScrubRequest
+	sessionReports []*adapterv1.ReportSessionScrubRequest
+	gotPod         *adapterv1.ReportPodScrubRequest
 }
 
 func (s *scrubServer) ReportSessionScrub(_ context.Context, req *adapterv1.ReportSessionScrubRequest) (*adapterv1.ReportSessionScrubResponse, error) {
 	s.gotSession = req
+	s.sessionReports = append(s.sessionReports, req)
 	return &adapterv1.ReportSessionScrubResponse{}, nil
 }
 
@@ -44,7 +50,11 @@ func (s *scrubServer) ReportPodScrub(_ context.Context, req *adapterv1.ReportPod
 	return &adapterv1.ReportPodScrubResponse{}, nil
 }
 
-func dialScrub(t *testing.T, srv *scrubServer) adapterv1.GatewayControlClient {
+// bufconnScrub stands up the scrub server over a bufconn and returns a raw
+// gRPC connection to it. The two dial helpers wrap it: dialScrub for the
+// generated client contract tests, dialScrubClient for the adapter-server
+// emission test that wires a real gatewaycontrol.Client.
+func bufconnScrub(t *testing.T, srv *scrubServer) *grpc.ClientConn {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer()
@@ -63,7 +73,84 @@ func dialScrub(t *testing.T, srv *scrubServer) adapterv1.GatewayControlClient {
 		t.Fatalf("dial bufconn: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return adapterv1.NewGatewayControlClient(conn)
+	return conn
+}
+
+func dialScrub(t *testing.T, srv *scrubServer) adapterv1.GatewayControlClient {
+	t.Helper()
+	return adapterv1.NewGatewayControlClient(bufconnScrub(t, srv))
+}
+
+// dialScrubClient returns the production adapter-side gatewaycontrol.Client
+// bound to the bufconn scrub server, the exact SessionScrubReporter
+// ConnectGateway wires onto the adapter Server.
+func dialScrubClient(t *testing.T, srv *scrubServer) *gatewaycontrol.Client {
+	t.Helper()
+	return gatewaycontrol.New(bufconnScrub(t, srv))
+}
+
+// closeStubRuntime is a minimal adapter.RuntimeProcess double whose Close
+// returns a programmed error, so the adapter's per-slot teardown observes a
+// clean or failed runtime close and derives the ReportSessionScrub outcome
+// from it. Start/WriteEnvelope/Interrupt/Output are no-ops the slot path needs
+// only to accept a StartSession and reach the slot shutdown.
+type closeStubRuntime struct {
+	closeErr error
+}
+
+func (r *closeStubRuntime) Start(context.Context, string) error           { return nil }
+func (r *closeStubRuntime) WriteEnvelope(string, []byte) error            { return nil }
+func (r *closeStubRuntime) Interrupt(context.Context, string, bool) error { return nil }
+
+func (r *closeStubRuntime) Output(context.Context, string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	close(ch)
+	return ch, nil
+}
+
+func (r *closeStubRuntime) Close(context.Context, string) error { return r.closeErr }
+
+// slotShutdownServer builds a production adapter.Server for the concurrent
+// (slot) path wired to the bufconn scrub server as its SessionScrubReporter,
+// a runtime whose Close returns closeErr, and a POD_NAME env so the cached pod
+// identity is non-empty. It returns the server and the scrub server the
+// adapter reports to.
+func slotShutdownServer(t *testing.T, closeErr error) (*adapter.Server, *scrubServer) {
+	t.Helper()
+	t.Setenv("POD_NAME", "claude-code-pool-xyz")
+	srv := &scrubServer{}
+	base := t.TempDir()
+	s := adapter.New("contract-test")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	s.Runtime = &closeStubRuntime{closeErr: closeErr}
+	s.SessionScrubReporter = dialScrubClient(t, srv)
+	return s, srv
+}
+
+// startAndShutdownSlot starts one concurrent-workspace slot then shuts it down,
+// returning the ShutdownResponse so the caller can correlate the wire outcome
+// with the ExitedCleanly flag the same closeErr sets.
+func startAndShutdownSlot(t *testing.T, s *adapter.Server, sessionID, slotID string) *adapterv1.ShutdownResponse {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Runtime:   "echo",
+		SlotId:    &adapterv1.SlotId{Value: slotID},
+	}); err != nil {
+		t.Fatalf("StartSession(slot %s): %v", slotID, err)
+	}
+	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		SlotId:    &adapterv1.SlotId{Value: slotID},
+	})
+	if err != nil {
+		t.Fatalf("Shutdown(slot %s): %v", slotID, err)
+	}
+	return resp
 }
 
 // TestReportSessionScrubRequestRoundTrip pins that every field of the
@@ -173,6 +260,78 @@ func TestReportPodScrubGRPCContract_spec_3_4(t *testing.T) {
 	}
 	if !proto.Equal(sent, srv.gotPod) {
 		t.Errorf("server received %v, want %v", srv.gotPod, sent)
+	}
+}
+
+// TestAdapterSlotShutdownEmitsLeakedOnFailedClose drives the production
+// adapter Server through a concurrent-slot Shutdown whose runtime Close
+// returns an error, and asserts the adapter emits exactly one
+// ReportSessionScrub for the slot carrying outcome=LEAKED and the cached
+// pod id, session id, and slot id. The leaked outcome is the sole feeder of
+// the gateway leak ledger, the persistent leaked count, and the drain chain,
+// so this pins the adapter's leaked-vs-released determination at the wire.
+// spec: 5.2 (per-slot cleanup outcome reporting), 4.7 (runtime adapter leaked
+// determination)
+//
+// diagnosis: a failure means the adapter mis-reports a failed per-slot cleanup
+// as released or drops the report, so the leak ledger, the persistent leaked
+// count, and the maxSessionsPerPod/drain liveness chain never fire; it would
+// pass against the pre-fix code only if that code had emitted ReportSessionScrub
+// at all, which it did not.
+func TestAdapterSlotShutdownEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
+	s, srv := slotShutdownServer(t, errors.New("runtime close timed out reclaiming slot resources"))
+
+	resp := startAndShutdownSlot(t, s, "sess-a", "slot-a")
+
+	// The wire outcome derives from the same closeErr that sets ExitedCleanly:
+	// a failed close is an unclean exit and a leaked cleanup.
+	if resp.GetExitedCleanly() {
+		t.Error("ExitedCleanly = true for a failed runtime close; the outcome and the flag must agree")
+	}
+	if len(srv.sessionReports) != 1 {
+		t.Fatalf("ReportSessionScrub calls = %d, want exactly 1 per slot release", len(srv.sessionReports))
+	}
+	got := srv.sessionReports[0]
+	if got.GetOutcome() != adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED {
+		t.Errorf("outcome = %v, want LEAKED for a failed slot cleanup", got.GetOutcome())
+	}
+	if got.GetPodId() != "claude-code-pool-xyz" {
+		t.Errorf("pod id = %q, want the cached POD_NAME identity", got.GetPodId())
+	}
+	if got.GetSessionId().GetValue() != "sess-a" {
+		t.Errorf("session id = %q, want sess-a", got.GetSessionId().GetValue())
+	}
+	if got.GetSlotId().GetValue() != "slot-a" {
+		t.Errorf("slot id = %q, want slot-a", got.GetSlotId().GetValue())
+	}
+}
+
+// TestAdapterSlotShutdownEmitsReleasedOnCleanClose is the released-outcome
+// counterpart: a clean runtime Close yields exactly one ReportSessionScrub
+// with outcome=RELEASED, so the two branches of the closeErr-derived outcome
+// are both pinned at the wire.
+// spec: 5.2 (per-slot cleanup outcome reporting), 4.7 (runtime adapter leaked
+// determination)
+//
+// diagnosis: a failure means the adapter drops the release report or reports
+// the wrong outcome on a clean slot teardown, so sessions_served never advances
+// and the maxSessionsPerPod retirement stays inert on a healthy concurrent pool.
+func TestAdapterSlotShutdownEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
+	s, srv := slotShutdownServer(t, nil)
+
+	resp := startAndShutdownSlot(t, s, "sess-a", "slot-a")
+
+	if !resp.GetExitedCleanly() {
+		t.Error("ExitedCleanly = false for a clean runtime close")
+	}
+	if len(srv.sessionReports) != 1 {
+		t.Fatalf("ReportSessionScrub calls = %d, want exactly 1 per slot release", len(srv.sessionReports))
+	}
+	if got := srv.sessionReports[0].GetOutcome(); got != adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_RELEASED {
+		t.Errorf("outcome = %v, want RELEASED for a clean slot cleanup", got)
+	}
+	if got := srv.sessionReports[0].GetSlotId().GetValue(); got != "slot-a" {
+		t.Errorf("slot id = %q, want slot-a", got)
 	}
 }
 
