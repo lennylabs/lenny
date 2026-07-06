@@ -659,6 +659,25 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 		return nil, false, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 	}
 
+	// §4.6.1/§4.6.3: deliver the pool's recycle.maxPodUptimeSeconds cap onto the
+	// agent pod so the WarmPoolController's reconcileUptime arm can level-trigger
+	// the CreationTimestamp-derived uptime drain. The cap lives only in the
+	// gateway poolstore (absent from every CRD the controller reconciles), so the
+	// gateway delivers it as the AnnotationMaxPodUptimeSeconds annotation the way
+	// it delivers the tenant pin, alongside the same slot claim. A non-positive
+	// cap (a pool that sets no maxPodUptimeSeconds) stamps nothing, matching the
+	// field's optional status. Best-effort: a missing pod is tolerated and the
+	// next assignment re-stamps it. Without this write the annotation is never
+	// present in production, so the controller's uptime check stays disabled and
+	// the §5.2 maxPodUptimeSeconds drain never fires.
+	if err := StampMaxPodUptime(ctx, c.Client, sb.Namespace, sb.Name, req.MaxPodUptimeSeconds); err != nil {
+		if freshPod {
+			_, _ = c.Counter.Release(ctx, sb.Name)
+			_ = c.Client.Delete(ctx, claim)
+		}
+		return nil, false, fmt.Errorf("stamp max-pod-uptime on pod %s: %w", sb.Name, err)
+	}
+
 	return &SlotResult{
 		SandboxName: sb.Name,
 		SlotID:      req.SessionID,

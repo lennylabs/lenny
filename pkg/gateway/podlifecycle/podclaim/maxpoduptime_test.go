@@ -100,3 +100,54 @@ func TestStampMaxPodUptimePropagatesPatchError_spec_4_6(t *testing.T) {
 		t.Error("StampMaxPodUptime patch error = nil, want non-nil")
 	}
 }
+
+// TestClaimSlotStampsMaxPodUptimeOnPod_spec_4_6 is the wiring regression test
+// for F-5.2.31 (proposal 0035, CODE-E): the production gateway slot-claim path
+// (SlotClaimer.ClaimSlot → reserveSlot) must write the
+// lenny.dev/max-pod-uptime-seconds annotation on the agent pod, alongside the
+// tenant pin, from the pool's recycle.maxPodUptimeSeconds cap. The isolated
+// StampMaxPodUptime tests above and the tier-2 uptime-drain test (which injects
+// the annotation directly) both stay green when the writer is never invoked, so
+// they cannot catch the missing wire. This test drives the real claim path with
+// a cap set and asserts the annotation lands, so it fails against the pre-wire
+// code where reserveSlot never called StampMaxPodUptime and the
+// WarmPoolController's reconcileUptime arm always saw the annotation absent.
+// spec: 4.6.1 (the gateway delivers the uptime cap the controller reads), 4.6.3 (gateway stamps agent-pod annotations, never Sandbox.status)
+func TestClaimSlotStampsMaxPodUptimeOnPod_spec_4_6(t *testing.T) {
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
+	mustCreate(t, c, agentPod("sbx-1", ""))
+
+	req := slotReq("sess-1", "acme", 8)
+	req.MaxPodUptimeSeconds = 3600
+	if _, err := claimer.ClaimSlot(context.Background(), req); err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+
+	pod := getPod(t, c, "sbx-1")
+	if got := pod.Annotations[lennyv1.AnnotationMaxPodUptimeSeconds]; got != "3600" {
+		t.Errorf("pod %s annotation = %q, want %q (the production claim path must deliver the uptime cap)",
+			lennyv1.AnnotationMaxPodUptimeSeconds, got, "3600")
+	}
+}
+
+// TestClaimSlotSkipsMaxPodUptimeForNoCapPool_spec_4_6 verifies the production
+// claim path stamps nothing when the pool sets no maxPodUptimeSeconds (a zero
+// cap): the annotation stays absent so the WarmPoolController's reconcileUptime
+// check is disabled, matching the field's optional status and the gateway-side
+// `maxPodUptimeSeconds > 0` guards. A stamped zero would be read by the
+// controller as created+0 and drain every no-cap pod.
+// spec: 4.6.1 (optional cap; only a pool that sets it is delivered)
+func TestClaimSlotSkipsMaxPodUptimeForNoCapPool_spec_4_6(t *testing.T) {
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
+	mustCreate(t, c, agentPod("sbx-1", ""))
+
+	// slotReq leaves MaxPodUptimeSeconds at zero (the no-cap pool).
+	if _, err := claimer.ClaimSlot(context.Background(), slotReq("sess-1", "acme", 8)); err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+
+	pod := getPod(t, c, "sbx-1")
+	if v, present := pod.Annotations[lennyv1.AnnotationMaxPodUptimeSeconds]; present {
+		t.Errorf("no-cap pool stamped annotation = %q, want the annotation absent", v)
+	}
+}
