@@ -8,7 +8,9 @@ import "sync"
 // slotId, scoped to the slots' owning pods. It is the in-process record of
 // each slot's §6.2 sub-state so the gateway can report the per-pod
 // leaked-slot count (the lenny_adapter_leaked_slots gauge, spec §6.2 line
-// 179) and the active-slot occupancy that gates further assignment.
+// 179). The Redis slot counter is the sole occupancy authority that keeps
+// a leaked slot counted against further assignment (spec §6.2), so the
+// registry exposes only the leaked count, not a pod-wide occupancy count.
 //
 // The registry enforces the per-slot state machine on Transition: an edge
 // absent from ValidTransitions() is rejected. MarkLeaked and MarkReleased
@@ -138,24 +140,6 @@ func (r *Registry) leakedCountLocked(pod string) int {
 	n := 0
 	for _, rec := range r.slots {
 		if rec.pod == pod && rec.state == Leaked {
-			n++
-		}
-	}
-	return n
-}
-
-// ActiveCount returns the number of slots that occupy capacity on pod: per
-// §6.2 line 179 every tracked slot except a Released one (which is dropped)
-// counts, so leaked slots are included and gate further assignment.
-func (r *Registry) ActiveCount(pod string) int {
-	if r == nil {
-		return 0
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := 0
-	for _, rec := range r.slots {
-		if rec.pod == pod && OccupiesSlot(rec.state) {
 			n++
 		}
 	}

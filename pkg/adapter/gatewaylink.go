@@ -67,5 +67,13 @@ func (s *Server) ConnectGateway(mcpSocket, gatewayAddr, certFile, keyFile, clien
 	// recycle-scrub driver can report the outcome. spec: §4.7 (ReportPodScrub);
 	// §5.2. F-5.2.15.
 	s.PodScrubReporter = gwClient
+	// §5.2 per-slot cleanup — the same gateway-control channel carries the
+	// per-session-release ReportSessionScrub the adapter emits on every slot
+	// release, so the gateway advances sessions_served (feeding the
+	// maxSessionsPerPod retirement) and feeds a leaked outcome into the
+	// unhealthy-threshold ledger. Retain the dialed client as the
+	// SessionScrubReporter so the slot-release path can report the outcome.
+	// spec: §4.7 (ReportSessionScrub); §5.2 (maxSessionsPerPod). F-5.2.31.
+	s.SessionScrubReporter = gwClient
 	return gwClient, nil
 }

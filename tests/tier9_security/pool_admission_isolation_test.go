@@ -468,13 +468,13 @@ func TestVMRestartCrossTenantRecycleRetires_spec_5_2_step_7(t *testing.T) {
 			// The retire is the non-counting vm_restart_reprovision reason: a
 			// routine per-boundary reprovision, not a §16.1 retirement-limit
 			// trigger, so it is audit-trail-only and does not widen the frozen
-			// lenny_pod_retirement_total{reason} vocabulary.
+			// lenny_gateway_pod_retirement_total{reason} vocabulary.
 			if d.Reason != podscrub.ReasonVMRestartReprovision {
 				t.Errorf("§5.2 step 7: the vm-restart retire carries reason %q, want %q",
 					d.Reason, podscrub.ReasonVMRestartReprovision)
 			}
 			if d.Reason.CountsOnRetirementTotal() {
-				t.Errorf("§16.1: the vm-restart reprovision reason %q must not count on lenny_pod_retirement_total; "+
+				t.Errorf("§16.1: the vm-restart reprovision reason %q must not count on lenny_gateway_pod_retirement_total; "+
 					"it is a routine per-boundary reprovision, not a retirement-limit trigger", d.Reason)
 			}
 			// A warn-policy scrub failure stamps scrub_warning onto the drain

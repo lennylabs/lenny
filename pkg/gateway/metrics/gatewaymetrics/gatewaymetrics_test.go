@@ -69,7 +69,7 @@ func TestRecycleMetricsExposeSeries_spec_16_1(t *testing.T) {
 	for _, want := range []string{
 		`lenny_pod_scrub_failure_total{pool="agents",runtime_class="gvisor"} 1`,
 		`lenny_pod_scrub_failure_count{k8s_pod_name="pod-1",pool="agents",runtime_class="gvisor"} 3`,
-		`lenny_pod_retirement_total{pool="agents",reason="scrub_failure_limit",runtime_class="gvisor"} 1`,
+		`lenny_gateway_pod_retirement_total{pool="agents",reason="scrub_failure_limit",runtime_class="gvisor"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics output missing %q", want)

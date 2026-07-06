@@ -226,6 +226,24 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		return s.shutdownSlot(ctx, sessionID, slotID, req.GetDeadlineMs())
 	}
+	// spec: §5.2 (whole-pod scrub trigger, uniform across session modes); §4.7
+	// (Shutdown recycle disposition). A concurrent-session pod reaches occupancy
+	// zero when its last slot drains cleanly: the gateway sends a slot-less
+	// recycle Shutdown carrying the last-released slot's session id (so the
+	// non-empty session_id guard above admits it) and the RecycleScrub
+	// disposition, but never sets the pod-global s.sessionID (a concurrent pod
+	// sets only the per-slot st.sessionID, so checkSession below can never pass
+	// for it). Dispatch the whole-pod scrub on the empty pod-global session id:
+	// run startPodScrub and return, replacing the gateway missing-report timeout
+	// with a deliberate scrub-and-report. A base-mode session (which sets
+	// s.sessionID via claimSession) does not match this branch and takes the
+	// checkSession path unchanged, where its own recycle handling runs below.
+	// Ordered before checkSession because a concurrent pod fails that gate.
+	// F-5.2.31.
+	if rc := req.GetRecycle(); rc != nil && s.currentSession() == "" {
+		s.startPodScrub(rc)
+		return &adapterv1.ShutdownResponse{}, nil
+	}
 	if err := s.checkSession(sessionID); err != nil {
 		return nil, err
 	}
@@ -254,6 +272,16 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	// missing-report timeout it armed before sending this Shutdown. On the
 	// terminate path (recycle unset) the pod is replaced and no scrub runs.
 	if rc := req.GetRecycle(); rc != nil {
+		// spec: §5.2 (ReportSessionScrub, maxSessionsPerPod both modes). A base
+		// (maxConcurrentSessions == 1) recycling pod has no slot, so it advances
+		// sessions_served on its own recycle boundary: emit ReportSessionScrub
+		// with an empty slot id for the ending session before the whole-pod
+		// scrub, so advanceScrubCounters reads back a non-zero count and the
+		// maxSessionsPerPod retirement becomes functional in base mode too.
+		// The outcome derives from the same closeErr that set ExitedCleanly.
+		// This runs only on the recycle boundary; the terminate path replaces
+		// the pod and needs no session-scrub report. F-5.2.31.
+		s.reportSessionScrub(ctx, sessionID, "", closeErr)
 		s.startPodScrub(rc)
 	}
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil

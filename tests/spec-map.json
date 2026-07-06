@@ -230,7 +230,17 @@
         "tests/tier8_chaos/live_session_test.go",
         "tests/tier2_component/stores/crdpodregistry_claim_test.go::TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1",
         "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash",
-        "tests/tier8_chaos/reserved_hold_holder_crash_test.go::TestOrphanGCReclaimsReservedClaimAfterHolderCrash"
+        "tests/tier8_chaos/reserved_hold_holder_crash_test.go::TestOrphanGCReclaimsReservedClaimAfterHolderCrash",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileDrainRequestDrainsClaimedPod_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileDrainRequestIgnoredWhenAbsent_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileDrainRequestCorruptStampIgnored_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileDrainRequestRecordsReason_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeDrainsOverUptimePod_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeCountsOncePerPod_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeNoCapNoDrain_spec_4_6",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePrecedesDrainRequest_spec_4_6",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -318,7 +328,11 @@
         "cmd/lenny-gateway/direct_usage_quota_integration_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
         "tests/tier7a_load_local/usagemeter_contention/usagemeter_contention_test.go",
         "tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go",
-        "cmd/lenny-gateway/direct_usage_recovery_test.go"
+        "cmd/lenny-gateway/direct_usage_recovery_test.go",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReportSessionScrubMissingIDs_spec_4_7",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubIncrementsAndLeaks_spec_4_7",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubMissingPodFailsClosed_spec_4_7",
+        "pkg/adapter/gatewaylink_test.go::TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2"
       ],
       "packages": [
         "pkg/adapter",
@@ -433,7 +447,25 @@
         "tests/tier9_security/concurrent_slot_isolation_test.go::TestConcurrentCrossTenantReuseRejected_spec_6_28",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
-        "tests/tier10_conformance/recycle_scrub_conformance_test.go"
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestSessionRetirerStampsAndCountsAtCrossing_spec_5_2",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestSessionRetirerSingleSessionPoolIsNoOp_spec_5_2",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestSessionRetirerConcurrentVMRestartIsNoOp_spec_5_2",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestSessionRetirerOverUptimeCapSuppressesCounter_spec_5_2",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestSessionRetirerNoUptimeCapStillCounts_spec_5_2",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestDrainLedgerStampsAtConcurrentThreshold_spec_5_2",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReportSessionScrubDelegatesLeaked_spec_5_2",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount_spec_5_2",
+        "pkg/adapter/sessionscrub_emit_test.go::TestShutdownSlotEmitsReleasedOnCleanClose_spec_5_2",
+        "pkg/adapter/sessionscrub_emit_test.go::TestShutdownSlotEmitsLeakedOnFailedClose_spec_5_2",
+        "pkg/adapter/sessionscrub_emit_test.go::TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2",
+        "pkg/sandbox/podscrub/podscrub_test.go",
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -502,7 +534,18 @@
       "tests": [
         "pkg/sandbox/state/state_test.go::TestAllStatesIncludePhase1Additions",
         "pkg/sandbox/state/state_test.go::TestIsTerminal",
-        "pkg/sandbox/state/state_test.go::TestIsValidCanonicalTransitions"
+        "pkg/sandbox/state/state_test.go::TestIsValidCanonicalTransitions",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestLeaksCountTowardThreshold_spec_6_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestFailAndLeakCombine_spec_6_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestLeaksCountPersistentlyAcrossWindows_spec_6_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestFailureAgesOutLeakPersists_spec_6_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestForgetClearsPersistentLeaks_spec_6_2",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotLeakedKeepsSlotCounted",
+        "pkg/gateway/sessionserver/slotretry_load_test.go::TestSlotRetryConcurrentLeaksReachThreshold_spec_6_2",
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -971,7 +1014,8 @@
       "tests": [
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
-        "tests/tier3_contract/adapter_checkpointbarrier/..."
+        "tests/tier3_contract/adapter_checkpointbarrier/...",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231"
       ],
       "packages": [
         "pkg/gateway"
@@ -1458,7 +1502,9 @@
     "12.1": {
       "title": "Storage Design Principle",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
+      "tests": [
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231"
+      ],
       "packages": [],
       "blocked_until_phase": "1.5",
       "notes": "Non-normative principles. Enforced by §12.2 and §12.3 tests."
@@ -2220,7 +2266,14 @@
         "pkg/gateway/metrics/gatewaymetrics/retry_resume_test.go::TestSessionExpiryTotalExposes_F_11_3_7",
         "tests/tier2_component/watchdog/expiry_counter_test.go::TestWatchdogSessionExpiryCounter_spec_16_1",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestMetricsReferenceCarriesAnomalyPair_F11_2_20",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability"
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability",
+        "pkg/controller/warmpool/pod_retirement_meter_test.go::TestIncControllerUptimeRetirementCountsByLabels_spec_16_1",
+        "pkg/controller/warmpool/pod_retirement_meter_test.go::TestIncControllerUptimeRetirementSeparatesRuntimeClass_spec_16_1",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestSessionRetirerCountsRuntimeClassLabel_spec_16_1",
+        "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestRetirementMetricsMapsReasonToLabel_spec_16_1",
+        "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePassesRuntimeClass_spec_16_1",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
       ],
       "packages": [
         "pkg/observability/metrics",

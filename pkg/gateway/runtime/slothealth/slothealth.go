@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
 
 // Package slothealth tracks concurrent-workspace (§5.2) slot failures and
-// leaks per pod over a rolling window so the gateway can apply the §5.2
-// whole-pod replacement trigger: when ceil(maxConcurrent/2) or more slots
-// on the same pod fail or leak within a 5-minute window, the pod is
-// unhealthy and §6.2 drains it as a whole.
+// leaks per pod so the gateway can apply the §5.2 whole-pod replacement
+// trigger. Because a failure is transient while a leak persists until pod
+// termination, the two are counted with different lifetimes: a slot failure
+// is counted within a rolling 5-minute window and ages out, while a leaked
+// slot is counted persistently until the pod terminates. When the
+// rolling-window failures plus the persistent leaks reach
+// ceil(maxConcurrent/2) on the same pod, the pod is unhealthy and §6.2 drains
+// it as a whole.
 //
 // spec: §5.2 "Concurrent-workspace slot retry policy" (whole-pod
 // replacement trigger); §6.2 (claimed → draining on the
-// unhealthy-slot threshold), §6.2 (failed_slots + leaked_slots
-// >= ceil(maxConcurrent/2) within the rolling window).
+// unhealthy-slot threshold), §6.2 "`leaked` slot semantics"
+// (rolling-window failed_slots plus persistent leaked_slots
+// >= ceil(maxConcurrent/2)).
 package slothealth
 
 import (
@@ -17,23 +22,33 @@ import (
 	"time"
 )
 
-// DefaultWindow is the §5.2 / §6.2 line 179 rolling window over which slot
-// failures and leaks are counted toward the whole-pod replacement trigger.
+// DefaultWindow is the §5.2 rolling window over which slot failures are
+// counted toward the whole-pod replacement trigger. Leaks are not windowed:
+// a leaked slot persists until pod termination, so it is counted
+// persistently rather than aged out (§6.2 "`leaked` slot semantics").
 const DefaultWindow = 5 * time.Minute
 
-// event is one slot fail-or-leak occurrence at a point in time. leaked
-// distinguishes a §6.2 leaked slot (cleanup timeout exceeded) from an
-// outright failure; both count toward the unhealthy threshold (§5.2 "Both
-// categories contribute to the threshold").
+// event is one slot failure occurrence at a point in time. A failure is
+// transient, so it is counted within the rolling 5-minute window and ages
+// out. Leaks are not events: a §6.2 leaked slot (cleanup timeout exceeded)
+// persists until pod termination and is counted persistently instead (see
+// Tracker.leaked). spec: §6.2 "`leaked` slot semantics" (failed slots
+// counted within a rolling 5-minute window, leaked slots counted
+// persistently).
 type event struct {
-	at     time.Time
-	leaked bool
+	at time.Time
 }
 
-// Tracker accumulates per-pod slot fail/leak events in a rolling window
-// and reports when a pod crosses the §5.2 ceil(maxConcurrent/2) unhealthy
-// threshold. It is safe for concurrent use by multiple gateway request
-// goroutines.
+// Tracker accumulates per-pod slot failures in a rolling window and
+// persistent per-pod leak counts, and reports when a pod crosses the §5.2
+// ceil(maxConcurrent/2) unhealthy threshold. It is safe for concurrent use
+// by multiple gateway request goroutines.
+//
+// A failed slot is transient and is counted within the rolling window; a
+// leaked slot persists until pod termination and is counted persistently, so
+// a pod that accumulates permanent leaks slowly (more than one window apart)
+// still reaches the threshold rather than aging each leak out. spec: §6.2
+// "`leaked` slot semantics", §5.2 whole-pod replacement trigger.
 //
 // Events are assumed to be recorded in non-decreasing time order (the
 // production clock is wall time; tests inject a monotonic clock), which
@@ -43,6 +58,12 @@ type Tracker struct {
 	window time.Duration
 	now    func() time.Time
 	events map[string][]event
+	// leaked is the per-pod count of currently-leaked slots. A leaked slot
+	// stays counted until it is reclaimed at pod termination (Forget), so
+	// this is a persistent count rather than a rolling-window series.
+	// spec: §6.2 "`leaked` slot semantics" (a leaked slot is counted
+	// persistently for as long as the slot remains leaked).
+	leaked map[string]int
 }
 
 // Option configures a Tracker.
@@ -61,7 +82,7 @@ func WithClock(now func() time.Time) Option {
 // New builds a Tracker. Without options it uses the §5.2 5-minute window
 // and the wall clock.
 func New(opts ...Option) *Tracker {
-	t := &Tracker{window: DefaultWindow, now: time.Now, events: map[string][]event{}}
+	t := &Tracker{window: DefaultWindow, now: time.Now, events: map[string][]event{}, leaked: map[string]int{}}
 	for _, o := range opts {
 		o(t)
 	}
@@ -76,70 +97,88 @@ func New(opts ...Option) *Tracker {
 
 // RecordFailure records that a slot on pod transitioned to failed
 // (runtime error, OOM, unhandled exception, or a non-retryable bind
-// failure). spec: §5.2 (failed slots contribute to the threshold).
-func (t *Tracker) RecordFailure(pod string) { t.record(pod, false) }
-
-// RecordLeak records that a slot on pod transitioned to leaked (the §6.2
-// cleanup timeout was exceeded so the slot is not reclaimed until pod
-// termination). A leaked slot counts toward the unhealthy threshold
-// exactly like a failure because it consumes active_slots capacity
-// without being reclaimable. spec: §6.2 line 179.
-func (t *Tracker) RecordLeak(pod string) { t.record(pod, true) }
-
-func (t *Tracker) record(pod string, leaked bool) {
+// failure). A failure is transient, so it is counted within the rolling
+// 5-minute window and ages out. spec: §5.2 (failed slots contribute to the
+// threshold, counted within a rolling 5-minute window).
+func (t *Tracker) RecordFailure(pod string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
-	t.events[pod] = append(t.pruneLocked(pod, now), event{at: now, leaked: leaked})
+	t.events[pod] = append(t.pruneLocked(pod, now), event{at: now})
 }
 
-// Unhealthy reports whether pod has accumulated failed-or-leaked slots
-// reaching ceil(maxConcurrent/2) within the rolling window. Expired
-// events are pruned as a side effect. A pod with no recorded events is
-// never unhealthy.
+// RecordLeak records that a slot on pod transitioned to leaked (the §6.2
+// cleanup timeout was exceeded so the slot is not reclaimed until pod
+// termination). A leaked slot counts toward the unhealthy threshold exactly
+// like a failure because it consumes slot capacity without being
+// reclaimable, but it is counted persistently rather than within the
+// rolling window: a leaked slot persists until pod termination, so a pod
+// that accumulates permanent leaks slowly (more than one window apart) must
+// still reach the threshold rather than aging each leak out. The count is
+// released at pod termination via Forget. spec: §6.2 "`leaked` slot
+// semantics" (leaked slots counted persistently); §5.2 whole-pod
+// replacement trigger.
+func (t *Tracker) RecordLeak(pod string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.leaked[pod]++
+}
+
+// Unhealthy reports whether pod has accumulated in-window failed slots plus
+// persistently-leaked slots reaching ceil(maxConcurrent/2). Expired failure
+// events are pruned as a side effect; the persistent leak count is not
+// pruned. A pod with no recorded failures and no leaks is never unhealthy.
 //
-// spec: §5.2 "When ceil(maxConcurrent / 2) or more slots on the same pod
-// fail or leak within a rolling 5-minute window".
+// spec: §6.2 "`leaked` slot semantics" (the pod transitions to draining
+// when the rolling-window failed_slots plus the persistent leaked_slots
+// reaches ceil(maxConcurrentSessions/2)); §5.2 whole-pod replacement
+// trigger.
 func (t *Tracker) Unhealthy(pod string, maxConcurrent int32) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	evs := t.pruneLocked(pod, t.now())
-	if len(evs) == 0 {
-		delete(t.events, pod)
-		return false
-	}
-	t.events[pod] = evs
-	return len(evs) >= UnhealthyThreshold(maxConcurrent)
+	return t.countsLocked(pod) >= UnhealthyThreshold(maxConcurrent)
 }
 
-// Counts returns the in-window failed and leaked slot counts for pod.
-// Expired events are pruned as a side effect.
+// Counts returns the in-window failed slot count and the persistent leaked
+// slot count for pod. Expired failure events are pruned as a side effect.
 func (t *Tracker) Counts(pod string) (failed, leaked int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	evs := t.pruneLocked(pod, t.now())
 	if len(evs) == 0 {
 		delete(t.events, pod)
-		return 0, 0
+	} else {
+		t.events[pod] = evs
 	}
-	t.events[pod] = evs
-	for _, e := range evs {
-		if e.leaked {
-			leaked++
-		} else {
-			failed++
-		}
-	}
-	return failed, leaked
+	return len(evs), t.leaked[pod]
 }
 
-// Forget drops all recorded events for pod. The gateway calls it once a
-// pod has been drained for replacement so a later pod reusing the name
-// (or a pod that recovered) starts from a clean slate.
+// countsLocked returns the combined failed-plus-leaked slot count for pod:
+// the pruned rolling-window failure count summed with the persistent leaked
+// count. The caller holds t.mu. spec: §6.2 "`leaked` slot semantics"
+// (rolling-window failed_slots plus persistent leaked_slots).
+func (t *Tracker) countsLocked(pod string) int {
+	evs := t.pruneLocked(pod, t.now())
+	if len(evs) == 0 {
+		delete(t.events, pod)
+	} else {
+		t.events[pod] = evs
+	}
+	return len(evs) + t.leaked[pod]
+}
+
+// Forget drops all recorded failures and the persistent leak count for pod.
+// The gateway calls it once a pod has been drained for replacement so a
+// later pod reusing the name (or a pod that recovered) starts from a clean
+// slate. The pod's leaked slots are reclaimed with the terminated pod, so
+// the persistent leak count is released here. spec: §6.2 "`leaked` slot
+// semantics" (a leaked slot is counted persistently for as long as the slot
+// remains leaked, released at pod termination).
 func (t *Tracker) Forget(pod string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.events, pod)
+	delete(t.leaked, pod)
 }
 
 // pruneLocked returns pod's events with those at or before the window
@@ -169,8 +208,9 @@ func (t *Tracker) pruneLocked(pod string, now time.Time) []event {
 	return out
 }
 
-// UnhealthyThreshold is the §5.2 ceil(maxConcurrent/2) count of
-// failed-or-leaked slots within the window that marks a pod unhealthy. A
+// UnhealthyThreshold is the §5.2 ceil(maxConcurrent/2) count that marks a
+// pod unhealthy: the rolling-window failed slots plus the persistent leaked
+// slots reaching this bound trips the whole-pod replacement trigger. A
 // maxConcurrent below 1 is clamped to 1 (a single failure trips it).
 func UnhealthyThreshold(maxConcurrent int32) int {
 	if maxConcurrent < 1 {

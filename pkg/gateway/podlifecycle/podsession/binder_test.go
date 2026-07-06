@@ -1177,13 +1177,19 @@ type recordingShutdownAdapter struct {
 	adapterv1.UnimplementedAdapterServer
 	mu   sync.Mutex
 	reqs []*adapterv1.ShutdownRequest
+	// uncleanExit makes every Shutdown response report ExitedCleanly=false so a
+	// concurrent-slot release test can drive the §6.2 leaked-slot path (the
+	// leaked outcome the binder derives from the ShutdownSlot response). The
+	// zero value keeps the clean-exit behavior existing recycle tests rely on.
+	uncleanExit bool
 }
 
 func (a *recordingShutdownAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	a.mu.Lock()
 	a.reqs = append(a.reqs, req)
+	unclean := a.uncleanExit
 	a.mu.Unlock()
-	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
+	return &adapterv1.ShutdownResponse{ExitedCleanly: !unclean}, nil
 }
 
 func (a *recordingShutdownAdapter) shutdownRequests() []*adapterv1.ShutdownRequest {

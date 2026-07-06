@@ -54,8 +54,9 @@ func TestFailuresReachThreshold_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 179 — leaked slots are combined with failed slots in the
-// rolling count; leaks alone reaching the threshold trip it.
+// spec: §6.2 "`leaked` slot semantics" — the persistent leaked count is
+// combined with the windowed failed count; leaks alone reaching the
+// threshold trip it.
 func TestLeaksCountTowardThreshold_spec_6_2(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	tr := New(WithClock(clk.now))
@@ -71,7 +72,8 @@ func TestLeaksCountTowardThreshold_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 179 — failed_slots + leaked_slots combine.
+// spec: §6.2 "`leaked` slot semantics" — windowed failed_slots plus
+// persistent leaked_slots combine toward the threshold.
 func TestFailAndLeakCombine_spec_6_2(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	tr := New(WithClock(clk.now))
@@ -83,6 +85,82 @@ func TestFailAndLeakCombine_spec_6_2(t *testing.T) {
 	tr.RecordLeak("pod-c")
 	if !tr.Unhealthy("pod-c", 4) {
 		t.Fatal("one failure plus one leak must trip the maxConcurrent=4 threshold")
+	}
+}
+
+// Regression for F-5.2.31 / SPEC-D (§6.2 "leaked slot semantics"): a leaked
+// slot is counted persistently, so permanent leaks arriving more than one
+// window apart still accumulate toward ceil(maxConcurrent/2) rather than
+// aging each leak out of the count and never reaching the threshold. Under
+// the pre-fix rolling-window model each leak was a timestamped event pruned
+// by the 5-minute window, so this pod would never be unhealthy; that is the
+// availability gap this asserts is closed.
+// spec: §6.2 "`leaked` slot semantics" (leaked slots counted persistently),
+// §5.2 whole-pod replacement trigger.
+func TestLeaksCountPersistentlyAcrossWindows_spec_6_2(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	tr := New(WithClock(clk.now), WithWindow(5*time.Minute))
+
+	// maxConcurrent=3 → threshold ceil(3/2)=2.
+	tr.RecordLeak("pod-leak")
+	// Advance well past the rolling window before the second permanent leak.
+	clk.advance(10 * time.Minute)
+	if tr.Unhealthy("pod-leak", 3) {
+		t.Fatal("one persistent leak alone must not trip the maxConcurrent=3 threshold (needs 2)")
+	}
+	tr.RecordLeak("pod-leak")
+	if !tr.Unhealthy("pod-leak", 3) {
+		t.Fatal("two permanent leaks 10m apart must both count and trip the threshold; a leak must not age out of the persistent count")
+	}
+	if f, l := tr.Counts("pod-leak"); f != 0 || l != 2 {
+		t.Fatalf("Counts = (failed=%d, leaked=%d), want (0, 2): the leaked count is persistent, not windowed", f, l)
+	}
+}
+
+// Regression for SPEC-D: a windowed failure ages out of the fail/leak count
+// while a persistent leak on the same pod does not. A leak recorded at t0
+// stays counted; a failure recorded at t0 is gone after the window, so a
+// pod carrying one persistent leak and one long-expired failure counts one,
+// not two. This pins the split lifetime: failures roll, leaks persist.
+// spec: §6.2 "`leaked` slot semantics" (rolling-window failed_slots plus
+// persistent leaked_slots).
+func TestFailureAgesOutLeakPersists_spec_6_2(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	tr := New(WithClock(clk.now), WithWindow(5*time.Minute))
+
+	tr.RecordLeak("pod-mix")
+	tr.RecordFailure("pod-mix")
+	if f, l := tr.Counts("pod-mix"); f != 1 || l != 1 {
+		t.Fatalf("precondition Counts = (failed=%d, leaked=%d), want (1, 1)", f, l)
+	}
+	// Advance past the window: the failure expires, the leak persists.
+	clk.advance(6 * time.Minute)
+	if f, l := tr.Counts("pod-mix"); f != 0 || l != 1 {
+		t.Fatalf("after window Counts = (failed=%d, leaked=%d), want (0, 1): the failure must age out, the leak must persist", f, l)
+	}
+	// maxConcurrent=2 → threshold 1: the surviving persistent leak alone trips.
+	if !tr.Unhealthy("pod-mix", 2) {
+		t.Fatal("the persistent leak alone must keep the pod unhealthy after the failure ages out")
+	}
+}
+
+// Forget releases the persistent leak count at pod termination so a
+// replacement pod reusing the name starts clean. spec: §6.2 "`leaked` slot
+// semantics" (released at pod termination).
+func TestForgetClearsPersistentLeaks_spec_6_2(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	tr := New(WithClock(clk.now))
+	tr.RecordLeak("pod-fl")
+	tr.RecordLeak("pod-fl")
+	if !tr.Unhealthy("pod-fl", 3) { // threshold 2
+		t.Fatal("precondition: two persistent leaks trip maxConcurrent=3")
+	}
+	tr.Forget("pod-fl")
+	if tr.Unhealthy("pod-fl", 3) {
+		t.Fatal("Forget must release the persistent leak count")
+	}
+	if f, l := tr.Counts("pod-fl"); f != 0 || l != 0 {
+		t.Fatalf("after Forget Counts = (%d, %d), want (0, 0)", f, l)
 	}
 }
 

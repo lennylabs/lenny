@@ -220,7 +220,7 @@ When occupancy reaches zero on a recycling pod, the gateway patches the claim's 
 | `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session, or an unschedulable host node |
 | `reserved` | `claimed` | Same-tenant session rebinds within the hold TTL (`reserved → bound` claim patch, no acquisition) |
 | `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm |
-| `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded while idle |
+| `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded. The WarmPoolController derives the pod's uptime from its `CreationTimestamp` and level-triggers the drain regardless of session activity. |
 | `draining` | `terminated` | Replacement provisioned |
 
 The reserved hold extends an occupancy episode across an idle gap: a recycled pod's claim is held rather than deleted for the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s), so a same-tenant session arriving within the window rebinds with no acquisition round trip. The PoolScalingController counts `reserved` pods as occupied for inventory purposes.
@@ -233,7 +233,8 @@ A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level c
 |:-----|:---|:--------|
 | `idle` | `claimed` | First slot assigned |
 | `claimed` | `claimed` | Additional slot assigned or a slot completes while others remain |
-| `claimed` | `draining` | `ceil(maxConcurrentSessions/2)` slots fail or leak within a 5-minute window, or `maxPodUptimeSeconds` exceeded |
+| `claimed` | `draining` | `ceil(maxConcurrentSessions/2)` slots fail (counted within a rolling 5-minute window) or leak (counted persistently for as long as the slots remain leaked), or `maxPodUptimeSeconds` exceeded |
+| `claimed` | `draining` | Served-session count reaches `recycle.maxSessionsPerPod` on a session release, `scrubProfile` is not `vm-restart`. The gateway stamps the drain request per release, decoupled from the occupancy-zero whole-pod scrub, because a persistently leaked slot can hold total occupancy above zero indefinitely. |
 | `draining` | `terminated` | All slots complete, replacement provisioned |
 
 Per-slot sub-states: `slot_assigned` -> `receiving_uploads` -> `running` -> `slot_cleanup`.

@@ -30,6 +30,7 @@ type fakeRuntime struct {
 	envelopes    [][]byte
 	writeErr     error
 	closed       []string
+	closeErr     error         // when set, Close returns it (a failed/timed-out teardown)
 	closeCtxDL   time.Duration // remaining ctx deadline at Close, if any
 	closeHadDL   bool
 	interrupts   []bool // the hard flag of each Interrupt call
@@ -141,7 +142,7 @@ func (f *fakeRuntime) Close(ctx context.Context, sessionID string) error {
 		f.closeHadDL = true
 		f.closeCtxDL = time.Until(dl)
 	}
-	return nil
+	return f.closeErr
 }
 
 // interruptsSnapshot returns a copy of the recorded Interrupt hard flags

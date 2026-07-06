@@ -541,6 +541,7 @@ func TestShutdownRejectsAnUnassignedSession(t *testing.T) {
 type recordingAdapter struct {
 	adapterv1.UnimplementedAdapterServer
 	gotShutdown       *adapterv1.ShutdownRequest
+	shutdownErr       error
 	gotRotate         *adapterv1.RotateCredentialsRequest
 	rotateErr         error
 	gotSignalDeadline *adapterv1.SignalDeadlineRequest
@@ -558,6 +559,9 @@ func (r *recordingAdapter) SignalDeadline(_ context.Context, req *adapterv1.Sign
 
 func (r *recordingAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	r.gotShutdown = req
+	if r.shutdownErr != nil {
+		return nil, r.shutdownErr
+	}
 	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
 }
 
@@ -784,20 +788,30 @@ func TestShutdownLeavesTheRecycleSubMessageNil(t *testing.T) {
 // spec: §4.7 (Shutdown recycle disposition). An adapter-side RPC error on the
 // recycle path surfaces to the caller and reports an unclean exit rather than
 // swallowing the failure.
+//
+// The error is injected at the adapter Shutdown handler rather than derived from
+// an unassigned session: under the §5.2 whole-pod scrub trigger a recycle
+// Shutdown carrying a non-empty session id with no pod-global session assigned is
+// the deliberate occupancy-zero trigger and now succeeds (see the adapter test
+// TestShutdownRecycleConcurrentModeTriggersWholePodScrub_spec_5_2). This test
+// injects a genuine RPC failure to keep pinning that a recycle-path error
+// surfaces and reports an unclean exit, independent of the adapter's session
+// state.
 func TestShutdownRecycleSurfacesRPCError(t *testing.T) {
-	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
-	srv.Runtime = &fakeRuntime{}
-	cl := dialAdapter(t, srv)
+	rec := &recordingAdapter{shutdownErr: status.Error(codes.Internal, "scrub launch failed")}
+	cl := dialRecordingAdapter(t, rec)
 
-	clean, err := cl.ShutdownRecycle(context.Background(), "sess-absent", adapterclient.RecycleScrub{
+	clean, err := cl.ShutdownRecycle(context.Background(), "sess-r", adapterclient.RecycleScrub{
 		PodID: "sandbox-abc",
 	})
 	if err == nil {
-		t.Error("ShutdownRecycle of an unassigned session succeeded, want a failure")
+		t.Error("ShutdownRecycle swallowed an adapter-side RPC error, want it surfaced")
 	}
 	if clean {
 		t.Error("ShutdownRecycle reported a clean exit on an error")
+	}
+	if rec.gotShutdown.GetRecycle() == nil {
+		t.Error("the failing Shutdown carried no recycle sub-message, want the recycle disposition set")
 	}
 }
 

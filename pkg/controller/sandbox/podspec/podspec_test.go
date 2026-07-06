@@ -320,6 +320,67 @@ func TestBuildSidecarWiresStagingAndRuntimeUID(t *testing.T) {
 	}
 }
 
+// TestBuildAdapterCarriesPodNameDownwardAPIEnv_spec_4_7_5_2 asserts the
+// §4.7/§5.2 adapter carries a POD_NAME env sourced from the Downward API
+// fieldRef metadata.name in both deployment models. This env is the
+// adapter's pod identity for every ReportSessionScrub and ReportPodScrub.
+// An absent, misnamed, or wrong-fieldRef env yields an empty cached podID
+// that the gateway rejects InvalidArgument, silently disabling
+// sessions_served advancement, the leak ledger, and the whole-pod scrub
+// trigger. In the sidecar model the reporter is the "adapter" container;
+// in the embedded model the single "runtime" container is the adapter and
+// the gateway-facing process, so it must carry the same env. The test
+// pins the exact fieldRef on both models so a regression on either is
+// caught at build time rather than at runtime. spec: 4.7 (adapter pod
+// identity), 5.2 (ReportSessionScrub). F-5.2.31.
+func TestBuildAdapterCarriesPodNameDownwardAPIEnv_spec_4_7_5_2(t *testing.T) {
+	// The reporter container differs by model: the sidecar model splits
+	// the adapter out, the embedded model links it into the runtime.
+	cases := []struct{ model, reporterContainer string }{
+		{"sidecar", "adapter"},
+		{"embedded", "runtime"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			in := inputs()
+			in.DeploymentModel = tc.model
+			pod, err := podspec.Build(in)
+			if err != nil {
+				t.Fatalf("Build(%s): %v", tc.model, err)
+			}
+			assertPodNameDownwardAPIEnv(t, container(t, pod, tc.reporterContainer))
+		})
+	}
+}
+
+// assertPodNameDownwardAPIEnv fails the test unless the container carries
+// exactly one POD_NAME env sourced from the Downward API fieldRef
+// metadata.name, the §4.7/§5.2 adapter pod-identity contract.
+func assertPodNameDownwardAPIEnv(t *testing.T, c corev1.Container) {
+	t.Helper()
+	var podNameEnv corev1.EnvVar
+	var found bool
+	for _, e := range c.Env {
+		if e.Name == podspec.PodNameEnvVar {
+			podNameEnv = e
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("%q container must carry a %q env (§4.7/§5.2 pod identity)", c.Name, podspec.PodNameEnvVar)
+	}
+	if podNameEnv.Value != "" {
+		t.Errorf("%s must source from the Downward API, not a literal value %q", podspec.PodNameEnvVar, podNameEnv.Value)
+	}
+	if podNameEnv.ValueFrom == nil || podNameEnv.ValueFrom.FieldRef == nil {
+		t.Fatalf("%s must set ValueFrom.FieldRef (Downward API)", podspec.PodNameEnvVar)
+	}
+	if got := podNameEnv.ValueFrom.FieldRef.FieldPath; got != "metadata.name" {
+		t.Errorf("%s fieldRef.fieldPath = %q, want metadata.name", podspec.PodNameEnvVar, got)
+	}
+}
+
 // TestBuildEmbeddedProducesOneContainer asserts the §4.7 embedded
 // model: a single runtime container serving the gRPC contract, with no
 // separate adapter container.

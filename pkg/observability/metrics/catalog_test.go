@@ -15,7 +15,8 @@ import (
 var spec161Metrics = []string{
 	"lenny_gateway_active_sessions", "lenny_warmpool_idle_pods", "lenny_warmpool_reserved_pods",
 	"lenny_warmpool_stale_pods",
-	"lenny_pod_scrub_failure_count", "lenny_pod_retirement_total", "lenny_slot_failure_total",
+	"lenny_pod_scrub_failure_count", "lenny_gateway_pod_retirement_total",
+	"lenny_controller_pod_retirement_total", "lenny_slot_failure_total",
 	"lenny_slot_pod_replacement_total", "lenny_session_startup_duration_seconds",
 	"lenny_session_time_to_first_token_seconds", "lenny_session_creation_duration_seconds",
 	"lenny_pod_claim_duration_seconds", "lenny_pod_state_transition_duration_seconds",

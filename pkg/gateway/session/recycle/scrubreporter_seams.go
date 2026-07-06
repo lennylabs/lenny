@@ -241,6 +241,251 @@ func poolMaxConcurrentSessions(p poolstore.Pool) int32 {
 	return int32(p.SessionPolicy.MaxConcurrentSessions)
 }
 
+// sessionCountRetirer is the §5.2 per-release maxSessionsPerPod retirement
+// for a concurrent non-vm-restart pool. On every session release the
+// ScrubReporter reports the atomic post-increment served-session count and
+// this retirer resolves the pod's pool per release (mirroring
+// drainLedger.maxConcurrentSessions, which loads the same pool from the same
+// poolstore), gates on maxConcurrentSessions > 1 && scrubProfile != vm-restart,
+// and drives the per-release drain decoupled from the whole-pod scrub because
+// a persistently `leaked` slot can hold total occupancy above zero
+// indefinitely, so the occupancy-zero podscrub.Decide maxSessionsPerPod check
+// never fires on such a pool.
+//
+// The drain-request stamp is level-triggered on count >= maxSessionsPerPod and
+// re-issued idempotently on every qualifying release (mirroring
+// drainLedger.RecordLeak's idempotent re-stamp), so a single lost or
+// duplicated crossing report is recovered on the next release rather than
+// abandoning the pod. The lenny_gateway_pod_retirement_total increment is
+// gated on the exact-equality crossing count == maxSessionsPerPod (the count is
+// monotonic and advances by one per release, so exactly one increment lands),
+// additionally suppressed when the pod is already over its maxPodUptimeSeconds
+// cap so a both-caps pod is counted once as uptime_limit by the controller
+// (the cross-process double-count §9 D9 records).
+type sessionCountRetirer struct {
+	cl        client.Client
+	namespace string
+	pools     poolReader
+	runtimes  runtimeReader
+	metrics   RetirementMetricsSink
+	now       func() time.Time
+}
+
+// SessionCountRetirerOptions configures a per-release session-count retirer.
+type SessionCountRetirerOptions struct {
+	// Client reads the agent Pod (pool label, CreationTimestamp) and patches
+	// the lenny.dev/drain-request annotation. Required.
+	Client client.Client
+	// Namespace is the agent namespace the pods live in. Required.
+	Namespace string
+	// Pools resolves the pod's pool to its §5.2 sessionPolicy (the
+	// maxConcurrentSessions denominator, the recycle knobs, and the runtime
+	// reference). Required.
+	Pools poolReader
+	// Runtimes resolves the pool's runtime to its §5.3 default isolation
+	// profile for the §16.1 runtime_class label on the retirement counter.
+	// Required.
+	Runtimes runtimeReader
+	// Metrics records the §16.1 lenny_gateway_pod_retirement_total increment on
+	// the per-release maxSessionsPerPod crossing. Optional; nil discards it.
+	Metrics RetirementMetricsSink
+	// Now overrides the clock for the drain-request stamp instant and the
+	// uptime-suppression check; nil uses wall time.
+	Now func() time.Time
+}
+
+// NewSessionCountRetirer builds the §5.2 per-release maxSessionsPerPod
+// retirer. Client, Namespace, Pools, and Runtimes are required.
+func NewSessionCountRetirer(opts SessionCountRetirerOptions) (leasecontrol.SessionCountRetirer, error) {
+	if opts.Client == nil {
+		return nil, errors.New("recycle: SessionCountRetirer Client is required")
+	}
+	if opts.Namespace == "" {
+		return nil, errors.New("recycle: SessionCountRetirer Namespace is required")
+	}
+	if opts.Pools == nil {
+		return nil, errors.New("recycle: SessionCountRetirer Pools is required")
+	}
+	if opts.Runtimes == nil {
+		return nil, errors.New("recycle: SessionCountRetirer Runtimes is required")
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &sessionCountRetirer{
+		cl:        opts.Client,
+		namespace: opts.Namespace,
+		pools:     opts.Pools,
+		runtimes:  opts.Runtimes,
+		metrics:   opts.Metrics,
+		now:       now,
+	}, nil
+}
+
+// perReleasePolicy is the per-pod §5.2 recycle knobs the per-release
+// maxSessionsPerPod retirement reads, resolved from the pod's pool the same
+// way drainLedger.maxConcurrentSessions resolves the threshold denominator.
+type perReleasePolicy struct {
+	maxConcurrentSessions int32
+	vmRestart             bool
+	maxSessionsPerPod     int
+	maxPodUptimeSeconds   int64
+	// createdAt is the pod's CreationTimestamp, the reference for the
+	// gateway-computed uptime-suppression check. It matches CODE-E's
+	// pod-CreationTimestamp reconcileUptime so both processes key off the same
+	// instant.
+	createdAt time.Time
+	// pool and runtimeClass are the §16.1 dimensions on the retirement counter.
+	pool         string
+	runtimeClass string
+}
+
+// RetireOnSessionCount drives the §5.2 per-release maxSessionsPerPod retirement
+// for podID from the atomic post-increment served-session count. It is a no-op
+// for a single-session pool and a concurrent vm-restart pool (both retire
+// through the occupancy-zero podscrub.Decide path); for a concurrent
+// non-vm-restart pool it stamps lenny.dev/drain-request on count >=
+// maxSessionsPerPod (idempotent, re-issued) and increments
+// lenny_gateway_pod_retirement_total{reason=session_count_limit} once on the
+// exact crossing count == maxSessionsPerPod, suppressed when the pod is already
+// over its maxPodUptimeSeconds cap (counted once as uptime_limit by the
+// controller). spec: §5.2 (per-release maxSessionsPerPod drain, level stamp on
+// >=, counter once on ==, gated on maxConcurrentSessions > 1 && scrubProfile !=
+// vm-restart), §16.1 (session_count_limit counted once), §4.6.3 (gateway
+// stamps drain-request).
+func (r *sessionCountRetirer) RetireOnSessionCount(ctx context.Context, podID string, count int) error {
+	policy, ok, err := r.resolve(ctx, podID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The pod or pool is gone: nothing left to drain. A per-release report
+		// for a vanished pod is a no-op, matching the drain ledger's gone-pod
+		// tolerance. spec: §3.4.
+		return nil
+	}
+	// Gate on the concurrent non-vm-restart pod class: a single-session pool
+	// and a concurrent vm-restart pool retire through the occupancy-zero
+	// podscrub.Decide path, so the per-release drain excludes them to keep the
+	// retire reason and the retirement counter consistent with the §5.2 :486
+	// amendment.
+	if policy.maxConcurrentSessions <= 1 || policy.vmRestart {
+		return nil
+	}
+	// maxSessionsPerPod is required with no default on a recycling pool
+	// (spec/05 §5.2), but a defensively unset (<= 0) value disables the
+	// per-release cap rather than draining on the first release.
+	if policy.maxSessionsPerPod <= 0 || count < policy.maxSessionsPerPod {
+		return nil
+	}
+	// Level-triggered stamp on count >= maxSessionsPerPod, re-issued
+	// idempotently on every qualifying release (mirroring
+	// drainLedger.RecordLeak). StampDrainRequest tolerates only NotFound, so a
+	// gone pod is a no-op and any other error propagates.
+	if err := podclaim.StampDrainRequest(ctx, r.cl, r.namespace, podID, r.now()); err != nil {
+		return fmt.Errorf("recycle: stamp drain-request on over-session pod %s: %w", podID, err)
+	}
+	// Exact-equality counter emit: the count is monotonic and advances by one
+	// per release, so exactly one release observes count == maxSessionsPerPod
+	// and the counter records one increment per retirement. A pod already over
+	// its uptime cap is counted once as uptime_limit by the controller's
+	// reconcileUptime, so the gateway suppresses its session_count_limit emit
+	// there to close the cross-process both-caps double-count (§9 D9). The
+	// drain-request stamp above is unaffected, so the pod still drains via the
+	// level predicate. spec: §16.1, §5.2.
+	if count == policy.maxSessionsPerPod && r.metrics != nil && !overUptimeCap(policy, r.now()) {
+		r.metrics.IncRetirement(string(podscrub.ReasonSessionCountLimit), policy.pool, policy.runtimeClass)
+	}
+	return nil
+}
+
+// resolve reads the pod and its pool to the per-release recycle knobs, the
+// same pod-then-pool resolution drainLedger.maxConcurrentSessions performs. A
+// gone pod or a deleted pool reports ok=false (nothing to drain); a pod with
+// no pool label fails closed so a per-release report on an unresolvable pod is
+// not silently dropped. spec: §5.2 (recycle policy keyed on the pool), §3.4.
+func (r *sessionCountRetirer) resolve(ctx context.Context, podID string) (perReleasePolicy, bool, error) {
+	var pod corev1.Pod
+	if err := r.cl.Get(ctx, client.ObjectKey{Namespace: r.namespace, Name: podID}, &pod); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return perReleasePolicy{}, false, nil
+		}
+		return perReleasePolicy{}, false, fmt.Errorf("recycle: get pod %s for per-release retirement: %w", podID, err)
+	}
+	poolName := pod.Labels[warmpool.LabelPool]
+	if poolName == "" {
+		return perReleasePolicy{}, false, fmt.Errorf("recycle: pod %s carries no %s label", podID, warmpool.LabelPool)
+	}
+	pool, err := r.pools.Get(ctx, poolName)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			return perReleasePolicy{}, false, nil
+		}
+		return perReleasePolicy{}, false, fmt.Errorf("recycle: resolve pool %s for pod %s: %w", poolName, podID, err)
+	}
+	recycle := poolRecyclePolicy(pool)
+	if recycle == nil {
+		// A non-recycling pool has no maxSessionsPerPod retirement; the
+		// per-release path is inert. spec: §5.2.
+		return perReleasePolicy{}, false, nil
+	}
+	runtimeProfile, err := r.resolveRuntimeProfile(ctx, pool.RuntimeRef)
+	if err != nil {
+		return perReleasePolicy{}, false, err
+	}
+	return perReleasePolicy{
+		maxConcurrentSessions: poolMaxConcurrentSessions(pool),
+		vmRestart:             recycle.ScrubProfile == runtimestore.MicrovmScrubVMRestart,
+		maxSessionsPerPod:     recycle.MaxSessionsPerPod,
+		maxPodUptimeSeconds:   int64(recycle.MaxPodUptimeSeconds),
+		createdAt:             pod.CreationTimestamp.Time,
+		pool:                  poolName,
+		runtimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile)),
+	}, true, nil
+}
+
+// resolveRuntimeProfile resolves the pool runtime's §5.3 default isolation
+// profile for the §16.1 runtime_class label. A runtime that no longer resolves
+// yields an empty profile so the label falls through to the pool's explicit
+// profile (or an empty label) rather than erroring. It mirrors
+// podInspector.resolveRuntime but returns only the profile the counter label
+// needs (the retirement counter reads no preConnect capability). spec: §5.3,
+// §16.1.
+func (r *sessionCountRetirer) resolveRuntimeProfile(ctx context.Context, runtimeRef string) (isolation.Profile, error) {
+	if runtimeRef == "" {
+		return "", nil
+	}
+	rt, err := r.runtimes.Get(ctx, runtimeRef)
+	if err != nil {
+		if errors.Is(err, runtimestore.ErrNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("recycle: resolve runtime %s: %w", runtimeRef, err)
+	}
+	return rt.IsolationProfile, nil
+}
+
+// overUptimeCap reports whether the pod is already over its maxPodUptimeSeconds
+// cap at now, the gateway-computed uptime check that suppresses the per-release
+// session_count_limit counter emit (§9 D9 option (a)). The maxPodUptimeSeconds
+// > 0 conjunct is load-bearing: a pool that sets no cap has
+// maxPodUptimeSeconds == 0, and without the guard now > createdAt + 0 would be
+// unconditionally true and zero-count every no-cap concurrent pool across both
+// processes. The guard matches the expiredByUptime and podscrub.Decide
+// maxPodUptimeSeconds > 0 guards, and the check keys off the pod
+// CreationTimestamp so the gateway and CODE-E's reconcileUptime evaluate the
+// same reference instant. spec: §5.2 (uptime drain WarmPoolController-owned),
+// §16.1 (session_count_limit vs uptime_limit partition), §4.6.1 (uptime derived
+// from CreationTimestamp).
+func overUptimeCap(policy perReleasePolicy, now time.Time) bool {
+	if policy.maxPodUptimeSeconds <= 0 || policy.createdAt.IsZero() {
+		return false
+	}
+	deadline := policy.createdAt.Add(time.Duration(policy.maxPodUptimeSeconds) * time.Second)
+	return now.After(deadline)
+}
+
 // poolReader resolves a pool's §5.2 recycle policy and runtime reference.
 // *poolstore.Memory and the pgstore satisfy it through poolstore.Store.
 type poolReader interface {
@@ -391,15 +636,20 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 		// fresh guest VM). The gateway routes on the profile it already holds in
 		// its runtime store, so the disposition retires rather than reusing the
 		// pod without a fresh guest (fail-open); the wire report stays binary.
-		VMRestart:           recycle.ScrubProfile == runtimestore.MicrovmScrubVMRestart,
-		OnScrubFailure:      onScrubFailure(recycle.OnScrubFailure),
-		MaxScrubFailures:    recycle.MaxScrubFailures,
-		MaxSessionsPerPod:   recycle.MaxSessionsPerPod,
-		MaxPodUptimeSeconds: int64(recycle.MaxPodUptimeSeconds),
-		HostSchedulable:     hostSchedulable(pod.Labels),
-		PodUptimeSeconds:    podUptimeSeconds(pod.CreationTimestamp.Time, i.now()),
-		Pool:                poolName,
-		RuntimeClass:        runtimeClass(effectiveProfile(pool, runtimeProfile)),
+		VMRestart:         recycle.ScrubProfile == runtimestore.MicrovmScrubVMRestart,
+		OnScrubFailure:    onScrubFailure(recycle.OnScrubFailure),
+		MaxScrubFailures:  recycle.MaxScrubFailures,
+		MaxSessionsPerPod: recycle.MaxSessionsPerPod,
+		// MaxConcurrentSessions lets applyDisposition suppress the
+		// occupancy-zero session_count_limit counter for a concurrent
+		// non-vm-restart pool (the per-release SessionCountRetirer owns that
+		// emission). spec: §5.2 (per-release maxSessionsPerPod drain), §16.1.
+		MaxConcurrentSessions: int(poolMaxConcurrentSessions(pool)),
+		MaxPodUptimeSeconds:   int64(recycle.MaxPodUptimeSeconds),
+		HostSchedulable:       hostSchedulable(pod.Labels),
+		PodUptimeSeconds:      podUptimeSeconds(pod.CreationTimestamp.Time, i.now()),
+		Pool:                  poolName,
+		RuntimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile)),
 	}, true, nil
 }
 
@@ -770,7 +1020,7 @@ type retirementMetrics struct {
 // NewRetirementMetrics wraps a gatewaymetrics sink as the §16.1 retirement
 // metrics seam. A nil sink returns nil so the ScrubReporter falls back to
 // its no-op metrics. spec: §16.1 (lenny_pod_scrub_failure_total,
-// lenny_pod_scrub_failure_count, lenny_pod_retirement_total).
+// lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total).
 func NewRetirementMetrics(sink RetirementMetricsSink) leasecontrol.RetirementMetrics {
 	if sink == nil {
 		return nil
@@ -795,6 +1045,7 @@ func (m *retirementMetrics) IncRetirement(reason podscrub.RetireReason, pool, ru
 var (
 	_ leasecontrol.RecycleCounterStore    = (*recycleCounterStore)(nil)
 	_ leasecontrol.DrainLedger            = (*drainLedger)(nil)
+	_ leasecontrol.SessionCountRetirer    = (*sessionCountRetirer)(nil)
 	_ leasecontrol.PodInspector           = (*podInspector)(nil)
 	_ leasecontrol.ClaimDispositionDriver = (*claimDispositionDriver)(nil)
 	_ leasecontrol.RetirementMetrics      = (*retirementMetrics)(nil)

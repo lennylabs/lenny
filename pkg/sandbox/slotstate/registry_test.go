@@ -25,9 +25,8 @@ func TestRegistryLifecycleToReleased_spec_6_2(t *testing.T) {
 	if _, ok := r.State("slot-1"); ok {
 		t.Error("a released slot must be dropped from the registry")
 	}
-	if r.ActiveCount("pod-a") != 0 || r.LeakedCount("pod-a") != 0 {
-		t.Errorf("after release: active=%d leaked=%d, want 0/0",
-			r.ActiveCount("pod-a"), r.LeakedCount("pod-a"))
+	if r.LeakedCount("pod-a") != 0 {
+		t.Errorf("after release: leaked=%d, want 0", r.LeakedCount("pod-a"))
 	}
 }
 
@@ -61,9 +60,11 @@ func TestRegistryLeak_spec_6_2(t *testing.T) {
 	if s, ok := r.State("slot-1"); !ok || s != Leaked {
 		t.Fatalf("slot-1 state=%q ok=%v, want leaked/true", s, ok)
 	}
-	// A leaked slot still occupies capacity (§6.2 line 179).
-	if r.ActiveCount("pod-a") != 1 {
-		t.Errorf("leaked slot must remain in active_slots, active=%d", r.ActiveCount("pod-a"))
+	// A leaked slot remains counted in the pod's persistent leaked count
+	// until pod termination (§6.2 line 179); the Redis slot counter is the
+	// separate occupancy authority that gates further assignment.
+	if r.LeakedCount("pod-a") != 1 {
+		t.Errorf("leaked slot must stay counted, leaked=%d", r.LeakedCount("pod-a"))
 	}
 	// Slot the gateway never tracked: MarkLeaked seeds it directly.
 	if n := r.MarkLeaked("slot-2", "pod-a", "p"); n != 2 {

@@ -672,7 +672,8 @@ func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, 
 	// handled by the claim path, and the shared helper still no-ops on an
 	// already-draining Sandbox.
 	key := client.ObjectKey{Namespace: namespace, Name: name}
-	return patchSandboxDraining(ctx, r.Client, key, false)
+	_, err := patchSandboxDraining(ctx, r.Client, key, false)
+	return err
 }
 
 // evaluateRuntimeClass resolves the RuntimeClass the pool's isolation

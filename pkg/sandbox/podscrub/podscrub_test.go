@@ -359,7 +359,7 @@ func TestDecideVMRestartRetiresAndReprovisions(t *testing.T) {
 	}
 
 	// The vm-restart reprovision is a routine per-recycle-boundary retire, not a
-	// §16.1 limit trigger, so it does not count on lenny_pod_retirement_total.
+	// §16.1 limit trigger, so it does not count on lenny_gateway_pod_retirement_total.
 	if ReasonVMRestartReprovision.CountsOnRetirementTotal() {
 		t.Errorf("ReasonVMRestartReprovision counts on the retirement total; it is outside the §16.1 vocabulary")
 	}
@@ -395,7 +395,7 @@ func TestDecideVMRestartWarnFailedRetiresWithWarning(t *testing.T) {
 // preceding vm-restart branch retires first with the non-counting
 // ReasonVMRestartReprovision. The non-happy path is a maxSessionsPerPod: 1
 // vm-restart pool retiring with the counting ReasonSessionCountLimit, which
-// would diverge the retire reason and the lenny_pod_retirement_total increment
+// would diverge the retire reason and the lenny_gateway_pod_retirement_total increment
 // from an otherwise-identical maxSessionsPerPod >= 2 pool. A mis-ordered branch
 // (session-count before vm-restart) fails this test.
 // spec: spec/05 §5.2 step 7 (retire-and-reprovision precedes session-count), §16.1.
@@ -499,16 +499,19 @@ func TestDecideScrubbedReuseReserves(t *testing.T) {
 	}
 }
 
-// TestCountsOnRetirementTotalVocabulary verifies the
-// lenny_pod_retirement_total{reason} membership predicate matches the §16.1
-// frozen vocabulary exactly: the three retirement-limit triggers count, and
-// every operational or failure-driven retire (the §6.39 cordon-drain
-// host_unschedulable, the onScrubFailure: fail termination, and the non-retire
-// reuse label) is excluded so the emitter cannot widen the declared label set.
-// spec: spec/16 §16.1 (lenny_pod_retirement_total reason label set:
-// session_count_limit, uptime_limit, scrub_failure_limit), §16.1.1 (reason is
-// reserved for the lifecycle limit triggers; failures use error_type), §6.39
-// (cordon-drain is an operational retire outside the counter vocabulary).
+// TestCountsOnRetirementTotalVocabulary verifies the retirement-reason
+// membership predicate matches the §16.1 frozen vocabulary exactly: the three
+// retirement-limit triggers count (partitioned across
+// lenny_gateway_pod_retirement_total for session_count_limit and
+// scrub_failure_limit and lenny_controller_pod_retirement_total for
+// uptime_limit), and every operational or failure-driven retire (the §6.39
+// cordon-drain host_unschedulable, the onScrubFailure: fail termination, and
+// the non-retire reuse label) is excluded so the emitter cannot widen the
+// declared label set.
+// spec: spec/16 §16.1 (retirement reason label set: session_count_limit,
+// uptime_limit, scrub_failure_limit), §16.1.1 (reason is reserved for the
+// lifecycle limit triggers; failures use error_type), §6.39 (cordon-drain is
+// an operational retire outside the counter vocabulary).
 func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 	counted := map[RetireReason]bool{
 		ReasonSessionCountLimit:      true,
@@ -536,5 +539,53 @@ func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 	}
 	if RetireReason("host_unschedulable").CountsOnRetirementTotal() {
 		t.Errorf("host_unschedulable counts on the retirement total; it is outside the §16.1 vocabulary")
+	}
+}
+
+// TestCountsOnGatewayRetirementTotalExcludesUptime verifies the gateway-scoped
+// retirement predicate: lenny_gateway_pod_retirement_total carries only the two
+// gateway-decided reasons (session_count_limit, scrub_failure_limit) and
+// suppresses uptime_limit, which is WarmPoolController-owned and counted on
+// lenny_controller_pod_retirement_total. The predicate is the union-membership
+// CountsOnRetirementTotal minus exactly {uptime_limit}, so an over-uptime pod
+// that reaches occupancy zero is not double-counted across the two counters.
+// spec: spec/16 §16.1 (retirement reason vocabulary partitioned by process; the
+// gateway counter carries session_count_limit and scrub_failure_limit),
+// spec/05 §5.2 (the maxPodUptimeSeconds retirement is WarmPoolController-owned).
+func TestCountsOnGatewayRetirementTotalExcludesUptime(t *testing.T) {
+	gatewayCounted := map[RetireReason]bool{
+		ReasonSessionCountLimit:      true,
+		ReasonScrubFailuresExhausted: true,
+		// uptime_limit is a member of the union vocabulary but is
+		// controller-owned; the gateway suppresses it.
+		ReasonMaxUptimeExceeded:    false,
+		ReasonHostUnschedulable:    false,
+		ReasonScrubReportTimeout:   false,
+		ReasonVMRestartReprovision: false,
+		ReasonCleanupFailPolicy:    false,
+		ReasonReuse:                false,
+	}
+	for reason, want := range gatewayCounted {
+		if got := reason.CountsOnGatewayRetirementTotal(); got != want {
+			t.Errorf("RetireReason(%q).CountsOnGatewayRetirementTotal() = %v, want %v", reason, got, want)
+		}
+	}
+
+	// The gateway predicate is exactly the union predicate minus uptime_limit:
+	// it never counts a reason the union excludes, and it excludes only
+	// uptime_limit among the reasons the union counts.
+	for _, reason := range []RetireReason{
+		ReasonSessionCountLimit, ReasonMaxUptimeExceeded, ReasonScrubFailuresExhausted,
+		ReasonHostUnschedulable, ReasonScrubReportTimeout, ReasonVMRestartReprovision,
+		ReasonCleanupFailPolicy, ReasonReuse,
+	} {
+		gateway := reason.CountsOnGatewayRetirementTotal()
+		union := reason.CountsOnRetirementTotal()
+		if gateway && !union {
+			t.Errorf("RetireReason(%q): gateway counts it but the union does not", reason)
+		}
+		if union && !gateway && reason != ReasonMaxUptimeExceeded {
+			t.Errorf("RetireReason(%q): union counts it but the gateway excludes it, and it is not uptime_limit", reason)
+		}
 	}
 }

@@ -23,11 +23,17 @@ type podLifecycleMetrics struct {
 	// recycle.maxScrubFailures at the recycle disposition. Labels:
 	// `k8s_pod_name`, `pool`, `runtime_class`. spec: §16.1.
 	podScrubFailureCount *prometheus.GaugeVec
-	// podRetirement is the §16.1 `lenny_pod_retirement_total` counter:
-	// retirements of a recycling session-mode pod at the recycle
-	// disposition, by reason. Labels: `reason` (frozen to
-	// session_count_limit | uptime_limit | scrub_failure_limit),
-	// `pool`, `runtime_class`. spec: §16.1, §16.1.1.
+	// podRetirement is the §16.1 `lenny_gateway_pod_retirement_total`
+	// counter: gateway-initiated retirements of a recycling session-mode
+	// pod, by reason. Labels: `reason` (frozen to session_count_limit |
+	// scrub_failure_limit — the controller-owned
+	// `lenny_controller_pod_retirement_total` carries uptime_limit, and
+	// applyDisposition suppresses the gateway's uptime_limit emission),
+	// `pool`, `runtime_class`. `scrub_failure_limit` is counted at the
+	// recycle disposition; `session_count_limit` is counted at the recycle
+	// disposition on a single-session pool and at the per-release
+	// maxSessionsPerPod drain on a concurrent non-`vm-restart` pool.
+	// spec: §16.1, §16.1.1.
 	podRetirement *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
@@ -89,14 +95,16 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §16.1 — `lenny_pod_retirement_total` counts session-pool pod
-	// retirements at the recycle disposition by `reason`, frozen to the
-	// three lifecycle-limit triggers (session_count_limit, uptime_limit,
-	// scrub_failure_limit). Labels: `reason`, `pool`, `runtime_class` (all
-	// finite). spec: §16.1, §16.1.1.
+	// §16.1 — `lenny_gateway_pod_retirement_total` counts gateway-initiated
+	// session-pool pod retirements by `reason`, frozen to the two
+	// gateway-decided lifecycle-limit triggers (session_count_limit,
+	// scrub_failure_limit). The controller-owned
+	// `lenny_controller_pod_retirement_total` carries uptime_limit; an
+	// operator sums the two via the §16.1 recording rule. Labels: `reason`,
+	// `pool`, `runtime_class` (all finite). spec: §16.1, §16.1.1.
 	podRetirement, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_pod_retirement_total",
-		Help: "Session-pool pod retirements at the recycle disposition by reason (§16.1).",
+		Name: "lenny_gateway_pod_retirement_total",
+		Help: "Gateway-initiated session-pool pod retirements by reason (§16.1).",
 	}, []string{"reason", "pool", "runtime_class"})
 	if err != nil {
 		return m, err

@@ -674,6 +674,363 @@ func TestDrainLedgerMissingPoolFallsBackToDefaultBound_spec_3_4(t *testing.T) {
 	}
 }
 
+// --- SessionCountRetirer (per-release maxSessionsPerPod drain) tests ---
+
+// perReleasePool builds a recycling session-mode pool with the given
+// maxConcurrentSessions, scrub profile, maxSessionsPerPod, and
+// maxPodUptimeSeconds for the per-release retirer tests.
+func perReleasePool(name string, maxConcurrent int, profile runtimestore.MicrovmScrubMode, maxSessions, maxUptime int) poolstore.Pool {
+	return poolstore.Pool{
+		Name:          name,
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions: maxConcurrent,
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:             true,
+				ScrubProfile:        profile,
+				MaxSessionsPerPod:   maxSessions,
+				MaxPodUptimeSeconds: maxUptime,
+			},
+		},
+	}
+}
+
+// mustSessionRetirer builds a per-release session-count retirer over the
+// supplied client, pool fixtures, and recording sink, with the clock fixed at
+// now.
+func mustSessionRetirer(t *testing.T, cl client.Client, pools map[string]poolstore.Pool, sink recycle.RetirementMetricsSink, now time.Time) leasecontrol.SessionCountRetirer {
+	t.Helper()
+	r, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{
+		Client:    cl,
+		Namespace: testNS,
+		Pools:     fakePoolReader{pools: pools},
+		Runtimes:  fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{}},
+		Metrics:   sink,
+		Now:       func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSessionCountRetirer: %v", err)
+	}
+	return r
+}
+
+// TestSessionRetirerStampsAndCountsAtCrossing verifies the per-release drain on
+// a concurrent non-vm-restart pool stamps lenny.dev/drain-request on count >=
+// maxSessionsPerPod and increments lenny_gateway_pod_retirement_total exactly
+// once on the exact crossing count == maxSessionsPerPod. This is the wired
+// per-release retirement that lets a concurrent pool holding a persistently
+// leaked slot drain within maxSessionsPerPod, decoupled from the whole-pod
+// scrub the occupancy-zero path never reaches on such a pool.
+// spec: 5.2 (per-release maxSessionsPerPod drain, level stamp on >=, counter once on ==), 16.1 (session_count_limit counted once)
+//
+// diagnosis: a failure means a concurrent pool over maxSessionsPerPod is never
+// drained per release, or the retirement counter is not emitted (or emitted
+// more than once), so the §5.2 concurrent-pool retirement bound is unenforced
+// or mis-counted.
+func TestSessionRetirerStampsAndCountsAtCrossing_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	// Concurrent (4) non-vm-restart pool, maxSessionsPerPod 3, no uptime cap.
+	pools := map[string]poolstore.Pool{"agents": perReleasePool("agents", 4, runtimestore.MicrovmScrubStandard, 3, 0)}
+	r := mustSessionRetirer(t, cl, pools, sink, time.Unix(100, 0))
+
+	// Below the bound: no stamp, no counter.
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 2); err != nil {
+		t.Fatalf("count 2: %v", err)
+	}
+	if drainRequested(t, cl, "pod-1") {
+		t.Fatal("drain-request stamped below maxSessionsPerPod")
+	}
+	if len(sink.retirements) != 0 {
+		t.Fatalf("retirements = %v, want none below the bound", sink.retirements)
+	}
+
+	// The exact crossing: stamp AND one counter increment.
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err != nil {
+		t.Fatalf("count 3: %v", err)
+	}
+	if !drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request not stamped at count == maxSessionsPerPod")
+	}
+	if len(sink.retirements) != 1 || sink.retirements[0] != "session_count_limit/agents/" {
+		t.Errorf("retirements = %v, want one session_count_limit at the crossing", sink.retirements)
+	}
+
+	// A later release past the bound re-stamps idempotently but does NOT
+	// re-increment the counter (the exact-equality gate holds it to one).
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 4); err != nil {
+		t.Fatalf("count 4: %v", err)
+	}
+	if len(sink.retirements) != 1 {
+		t.Errorf("retirements after count 4 = %v, want still one (exact-equality gate)", sink.retirements)
+	}
+}
+
+// TestSessionRetirerSingleSessionPoolIsNoOp verifies a single-session pool
+// (maxConcurrentSessions 1) takes no per-release action: it retires through the
+// occupancy-zero podscrub.Decide path, which is its sole session_count_limit
+// emitter, so the per-release path must not stamp or count for it.
+// spec: 5.2 (single-session pool retires at the recycle disposition), 16.1
+//
+// diagnosis: a failure means a single-session pool is drained or counted twice
+// (once here, once at the recycle disposition), double-reporting its retirement.
+func TestSessionRetirerSingleSessionPoolIsNoOp_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	pools := map[string]poolstore.Pool{"agents": perReleasePool("agents", 1, runtimestore.MicrovmScrubStandard, 3, 0)}
+	r := mustSessionRetirer(t, cl, pools, sink, time.Unix(100, 0))
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 5); err != nil {
+		t.Fatalf("RetireOnSessionCount: %v", err)
+	}
+	if drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request stamped on a single-session pool (should retire via the occupancy-zero path)")
+	}
+	if len(sink.retirements) != 0 {
+		t.Errorf("retirements = %v, want none on a single-session pool", sink.retirements)
+	}
+}
+
+// TestSessionRetirerConcurrentVMRestartIsNoOp verifies a concurrent vm-restart
+// pool takes no per-release action: it retires at the occupancy-zero recycle
+// boundary with the non-counting vm_restart_reprovision reason, which Decide
+// ranks above the session-count branch, so the per-release drain excludes it to
+// preserve that precedence and the §5.2 :486 vm-restart carve-out.
+// spec: 5.2 (per-release drain gated on scrubProfile != vm-restart), 16.1
+//
+// diagnosis: a failure means a concurrent vm-restart pool is drained on the
+// per-release path, preempting its mandated vm_restart_reprovision disposition
+// and diverging the retire reason and retirement counter.
+func TestSessionRetirerConcurrentVMRestartIsNoOp_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	pools := map[string]poolstore.Pool{"agents": perReleasePool("agents", 4, runtimestore.MicrovmScrubVMRestart, 3, 0)}
+	r := mustSessionRetirer(t, cl, pools, sink, time.Unix(100, 0))
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err != nil {
+		t.Fatalf("RetireOnSessionCount: %v", err)
+	}
+	if drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request stamped on a concurrent vm-restart pool (should retire via the occupancy-zero boundary)")
+	}
+	if len(sink.retirements) != 0 {
+		t.Errorf("retirements = %v, want none on a concurrent vm-restart pool", sink.retirements)
+	}
+}
+
+// TestSessionRetirerOverUptimeCapSuppressesCounter verifies the exact-crossing
+// counter emit is suppressed when the pod is already over its
+// maxPodUptimeSeconds cap: a both-caps pod is counted once as uptime_limit by
+// the controller's reconcileUptime, so the gateway suppresses its
+// session_count_limit emit to close the cross-process double-count (§9 D9). The
+// drain-request stamp is unaffected, so the pod still drains.
+// spec: 5.2 (uptime drain WarmPoolController-owned), 16.1 (session_count_limit vs uptime_limit partition)
+//
+// diagnosis: a failure means a pod already over its uptime cap that crosses
+// maxSessionsPerPod during its uptime drain is counted twice across the two
+// processes (once as uptime_limit by the controller, once as session_count_limit
+// by the gateway), over-reporting through the summing recording rule.
+func TestSessionRetirerOverUptimeCapSuppressesCounter_spec_5_2(t *testing.T) {
+	// Pod created at t=0; maxPodUptimeSeconds 60; clock at t=120 is over the cap.
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	pools := map[string]poolstore.Pool{"agents": perReleasePool("agents", 4, runtimestore.MicrovmScrubStandard, 3, 60)}
+	r := mustSessionRetirer(t, cl, pools, sink, time.Unix(120, 0))
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err != nil {
+		t.Fatalf("RetireOnSessionCount: %v", err)
+	}
+	// The pod still drains via the level predicate.
+	if !drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request not stamped for an over-uptime pod (the stamp is unaffected by the uptime suppression)")
+	}
+	// But the session_count_limit counter is suppressed: the controller counts
+	// it as uptime_limit.
+	if len(sink.retirements) != 0 {
+		t.Errorf("retirements = %v, want none (session_count_limit suppressed for an over-uptime pod)", sink.retirements)
+	}
+}
+
+// TestSessionRetirerNoUptimeCapStillCounts verifies the maxPodUptimeSeconds > 0
+// conjunct in the uptime suppression: a pool that sets no cap
+// (maxPodUptimeSeconds == 0) is never suppressed and still counts
+// session_count_limit on the crossing, so a no-cap concurrent pool (the common
+// case) is not zero-counted across both processes.
+// spec: 5.2 (maxPodUptimeSeconds > 0 guard), 16.1 (session_count_limit counted once)
+//
+// diagnosis: a failure means a no-cap concurrent pool has its session_count_limit
+// emit wrongly suppressed (now > createdAt + 0 is unconditionally true), so its
+// retirement is zero-counted across both processes.
+func TestSessionRetirerNoUptimeCapStillCounts_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	pools := map[string]poolstore.Pool{"agents": perReleasePool("agents", 4, runtimestore.MicrovmScrubStandard, 3, 0)}
+	r := mustSessionRetirer(t, cl, pools, sink, time.Unix(1_000_000, 0)) // long after creation
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err != nil {
+		t.Fatalf("RetireOnSessionCount: %v", err)
+	}
+	if len(sink.retirements) != 1 || sink.retirements[0] != "session_count_limit/agents/" {
+		t.Errorf("retirements = %v, want one session_count_limit (no-cap pool is not suppressed)", sink.retirements)
+	}
+}
+
+// TestSessionRetirerDeletedRuntimeFallsThroughToPoolProfile verifies a pool
+// whose runtime was deleted resolves the §16.1 runtime_class label from the
+// pool's own isolation profile rather than erroring: a runtime deleted between
+// warm and the per-release drain must not error the retirement counter.
+// spec: 5.3 (runtime default isolation profile), 16.1 (runtime_class label)
+//
+// diagnosis: a failure means a per-release retirement on a pool whose runtime
+// was deleted errors the RPC or drops the runtime_class label, so the retirement
+// is either lost or mislabeled.
+func TestSessionRetirerDeletedRuntimeFallsThroughToPoolProfile_spec_16_1(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	pool := perReleasePool("agents", 4, runtimestore.MicrovmScrubStandard, 3, 0)
+	pool.RuntimeRef = "gone-runtime" // absent from the runtime store
+	pool.IsolationProfile = isolation.ProfileMicrovm
+	r, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{
+		Client:    cl,
+		Namespace: testNS,
+		Pools:     fakePoolReader{pools: map[string]poolstore.Pool{"agents": pool}},
+		Runtimes:  fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{}},
+		Metrics:   sink,
+		Now:       func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewSessionCountRetirer: %v", err)
+	}
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err != nil {
+		t.Fatalf("RetireOnSessionCount with a deleted runtime: %v", err)
+	}
+	rc, _ := isolation.RuntimeClassName(isolation.ProfileMicrovm)
+	want := "session_count_limit/agents/" + rc
+	if len(sink.retirements) != 1 || sink.retirements[0] != want {
+		t.Errorf("retirements = %v, want one %q from the pool profile", sink.retirements, want)
+	}
+}
+
+// TestSessionRetirerNoPoolLabelFailsClosed verifies a per-release report on a
+// pod with no lenny.dev/pool label surfaces an error rather than silently
+// dropping the evaluation: an unresolvable pod must not bypass the per-release
+// retirement.
+// spec: 5.2 (recycle policy keyed on the pool), 3.4
+//
+// diagnosis: a failure means a per-release report on a pod whose pool cannot be
+// resolved is silently swallowed, so a concurrent pool over maxSessionsPerPod is
+// never drained.
+func TestSessionRetirerNoPoolLabelFailsClosed_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "", "true", time.Unix(0, 0))
+	delete(pod.Labels, warmpool.LabelPool)
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	r := mustSessionRetirer(t, cl, nil, &recordingSink{}, time.Unix(100, 0))
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err == nil {
+		t.Error("RetireOnSessionCount on a pod with no pool label: err = nil, want non-nil")
+	}
+}
+
+// TestSessionRetirerMissingPodIsNoOp verifies a per-release report on a pod the
+// apiserver no longer knows is a clean no-op: a concurrent retirement that
+// removed the pod must not error the scrub-report RPC.
+// spec: 3.4 (pod gone, nothing to drain)
+//
+// diagnosis: a failure means a session release racing a pod deletion errors the
+// RPC instead of cleanly no-opping for a pod that no longer exists.
+func TestSessionRetirerMissingPodIsNoOp_spec_3_4(t *testing.T) {
+	cl := fake.NewClientBuilder().Build()
+	r := mustSessionRetirer(t, cl, nil, &recordingSink{}, time.Unix(100, 0))
+	if err := r.RetireOnSessionCount(context.Background(), "ghost", 3); err != nil {
+		t.Fatalf("RetireOnSessionCount on a missing pod: %v", err)
+	}
+}
+
+// TestSessionRetirerMissingPoolIsNoOp verifies a per-release report on a pod
+// whose pool was deleted is a clean no-op: a pool torn down with its pods
+// leaves nothing to drain.
+// spec: 3.4 (pool gone, nothing to drain)
+//
+// diagnosis: a failure means a session release on a pod whose pool was deleted
+// errors the RPC instead of cleanly no-opping.
+func TestSessionRetirerMissingPoolIsNoOp_spec_3_4(t *testing.T) {
+	pod := agentPod("pod-1", "deleted-pool", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	r := mustSessionRetirer(t, cl, nil, sink, time.Unix(100, 0)) // no pools => ErrNotFound
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err != nil {
+		t.Fatalf("RetireOnSessionCount with a deleted pool: %v", err)
+	}
+	if drainRequested(t, cl, "pod-1") || len(sink.retirements) != 0 {
+		t.Error("per-release retirement acted on a pod whose pool was deleted")
+	}
+}
+
+// TestSessionRetirerNonRecyclingPoolIsNoOp verifies a per-release report on a
+// pod whose pool is not a recycling pool is a no-op: a non-recycling pool has
+// no maxSessionsPerPod retirement, so the per-release path is inert for it.
+// spec: 5.2 (per-release drain applies only to a recycling pool)
+//
+// diagnosis: a failure means the per-release path drains a non-recycling pool,
+// which has no maxSessionsPerPod retirement to enforce.
+func TestSessionRetirerNonRecyclingPoolIsNoOp_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	nonRecycling := poolstore.Pool{
+		Name:          "agents",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{MaxConcurrentSessions: 4},
+	}
+	r := mustSessionRetirer(t, cl, map[string]poolstore.Pool{"agents": nonRecycling}, sink, time.Unix(100, 0))
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 5); err != nil {
+		t.Fatalf("RetireOnSessionCount on a non-recycling pool: %v", err)
+	}
+	if drainRequested(t, cl, "pod-1") || len(sink.retirements) != 0 {
+		t.Error("per-release retirement acted on a non-recycling pool")
+	}
+}
+
+// TestSessionRetirerCountsRuntimeClassLabel verifies the retirement counter
+// carries the §16.1 runtime_class label resolved from the pool runtime's
+// isolation profile, the same effectiveProfile/runtimeClass resolution the
+// inspector performs, so the per-release retirement metric matches the
+// occupancy-zero disposition metric on its label dimensions.
+// spec: 16.1 (runtime_class label on lenny_gateway_pod_retirement_total), 5.3 (runtime default isolation profile)
+//
+// diagnosis: a failure means the per-release retirement counter drops or
+// mislabels the runtime_class dimension the §16.1 inventory mandates, so the
+// per-release and occupancy-zero retirement series carry inconsistent labels.
+func TestSessionRetirerCountsRuntimeClassLabel_spec_16_1(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	sink := &recordingSink{}
+	pool := perReleasePool("agents", 4, runtimestore.MicrovmScrubStandard, 3, 0)
+	pool.RuntimeRef = "rt-1"
+	// The runtime's default isolation profile maps to a runtime_class label.
+	rt := runtimestore.Runtime{IsolationProfile: isolation.ProfileSandboxed}
+	r, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{
+		Client:    cl,
+		Namespace: testNS,
+		Pools:     fakePoolReader{pools: map[string]poolstore.Pool{"agents": pool}},
+		Runtimes:  fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{"rt-1": rt}},
+		Metrics:   sink,
+		Now:       func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewSessionCountRetirer: %v", err)
+	}
+	if err := r.RetireOnSessionCount(context.Background(), "pod-1", 3); err != nil {
+		t.Fatalf("RetireOnSessionCount: %v", err)
+	}
+	rc, _ := isolation.RuntimeClassName(isolation.ProfileSandboxed)
+	want := "session_count_limit/agents/" + rc
+	if len(sink.retirements) != 1 || sink.retirements[0] != want {
+		t.Errorf("retirements = %v, want one %q with the resolved runtime_class", sink.retirements, want)
+	}
+}
+
 // TestNewSeamsRequireDeps verifies each seam constructor fails closed when a
 // required dependency is nil rather than panicking on the request path.
 // spec: 4.7 (ReportSessionScrub/ReportPodScrub)
@@ -698,6 +1055,18 @@ func TestNewSeamsRequireDeps_spec_4_7(t *testing.T) {
 	}
 	if _, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{Tracker: tracker, Client: cl, Namespace: testNS}); err == nil {
 		t.Error("NewDrainLedger with nil Pools: err = nil, want non-nil")
+	}
+	if _, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{Namespace: testNS, Pools: pools, Runtimes: runtimes}); err == nil {
+		t.Error("NewSessionCountRetirer with nil Client: err = nil, want non-nil")
+	}
+	if _, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{Client: cl, Pools: pools, Runtimes: runtimes}); err == nil {
+		t.Error("NewSessionCountRetirer with empty Namespace: err = nil, want non-nil")
+	}
+	if _, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{Client: cl, Namespace: testNS, Runtimes: runtimes}); err == nil {
+		t.Error("NewSessionCountRetirer with nil Pools: err = nil, want non-nil")
+	}
+	if _, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{Client: cl, Namespace: testNS, Pools: pools}); err == nil {
+		t.Error("NewSessionCountRetirer with nil Runtimes: err = nil, want non-nil")
 	}
 	if _, err := recycle.NewPodInspector(recycle.PodInspectorOptions{Namespace: testNS, Pools: pools, Runtimes: runtimes}); err == nil {
 		t.Error("NewPodInspector with nil Client: err = nil, want non-nil")
@@ -736,7 +1105,7 @@ func (s *recordingSink) IncRetirement(reason, pool, rc string) {
 // TestRetirementMetricsMapsReasonToLabel verifies the adapter forwards the
 // scrub-failure and retirement emissions and maps the typed RetireReason onto
 // its string label.
-// spec: 16.1 (lenny_pod_scrub_failure_total, lenny_pod_scrub_failure_count, lenny_pod_retirement_total)
+// spec: 16.1 (lenny_pod_scrub_failure_total, lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total)
 //
 // diagnosis: a failure means the recycle observability is dropped or the
 // retirement reason label is mis-encoded, so the §16.1 metric catalog

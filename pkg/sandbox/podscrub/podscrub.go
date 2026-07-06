@@ -140,10 +140,15 @@ type Inputs struct {
 }
 
 // RetireReason is a stable label for the disposition the driver records in
-// the audit trail. A reason that reports CountsOnRetirementTotal is also
-// emitted on lenny_pod_retirement_total{reason}; a reason outside that frozen
-// §16.1 vocabulary (the §6.39 cordon-drain, the fail-policy termination) is
-// recorded in the audit trail only and never on the retirement counter.
+// the audit trail. A reason that reports CountsOnRetirementTotal is a member
+// of the frozen §16.1 retirement-reason vocabulary (session_count_limit,
+// uptime_limit, scrub_failure_limit), which partitions by process across two
+// counters: the gateway's applyDisposition emits session_count_limit and
+// scrub_failure_limit on lenny_gateway_pod_retirement_total and suppresses its
+// uptime_limit emission, while the WarmPoolController counts uptime_limit on
+// lenny_controller_pod_retirement_total. A reason outside that frozen
+// vocabulary (the §6.39 cordon-drain, the fail-policy termination) is recorded
+// in the audit trail only and never on either retirement counter.
 type RetireReason string
 
 const (
@@ -154,23 +159,29 @@ const (
 	// pod on a scrub failure. spec: §6.2 line 156.
 	ReasonCleanupFailPolicy RetireReason = "cleanup_fail_policy"
 	// ReasonScrubFailuresExhausted: the cumulative scrub-failure count
-	// reached maxScrubFailures. The emitted lenny_pod_retirement_total
+	// reached maxScrubFailures. The emitted lenny_gateway_pod_retirement_total
 	// {reason} value is the scrub_failure_limit trigger from the spec/16
 	// retirement-reason vocabulary, so the counter and its emitter agree.
 	// spec: spec/06 §6.2 line 149 (scrub-failure limit retire), spec/16
 	// §16.1 (retirement reason vocabulary).
 	ReasonScrubFailuresExhausted RetireReason = "scrub_failure_limit"
 	// ReasonSessionCountLimit: the pod's served-session count reached
-	// recycle.maxSessionsPerPod. The emitted lenny_pod_retirement_total
+	// recycle.maxSessionsPerPod. The emitted lenny_gateway_pod_retirement_total
 	// {reason} value is the session_count_limit trigger from the spec/16
 	// retirement-reason vocabulary. spec: spec/06 §6.2 (recycle
 	// disposition), spec/16 §16.1 (retirement reason vocabulary).
 	ReasonSessionCountLimit RetireReason = "session_count_limit"
-	// ReasonMaxUptimeExceeded: pod uptime reached maxPodUptimeSeconds.
-	// The emitted lenny_pod_retirement_total{reason} value is the
-	// uptime_limit trigger from the spec/16 retirement-reason vocabulary,
-	// so the counter and its emitter agree. spec: §6.2 line 151, spec/16
-	// §16.1 (retirement reason vocabulary).
+	// ReasonMaxUptimeExceeded: pod uptime reached maxPodUptimeSeconds. Its
+	// audit reason is the uptime_limit trigger from the spec/16
+	// retirement-reason vocabulary. The uptime_limit retirement is
+	// WarmPoolController-owned, counted on lenny_controller_pod_retirement_total
+	// by the level-triggered maxPodUptimeSeconds drain; the gateway's
+	// applyDisposition suppresses its own uptime_limit emission on
+	// lenny_gateway_pod_retirement_total, so an over-uptime pod that reaches
+	// occupancy zero is not double-counted. Decide still returns this reason at
+	// the occupancy-zero recycle boundary as a draining-state backstop. spec:
+	// §6.2 line 151, spec/16 §16.1 (retirement reason vocabulary partitioned by
+	// process across the two counters).
 	ReasonMaxUptimeExceeded RetireReason = "uptime_limit"
 	// ReasonHostUnschedulable: the pod's host node is cordoned, so the
 	// recycle disposition retires it instead of producing a
@@ -178,7 +189,7 @@ const (
 	// both preConnect (re-warm) and non-preConnect (reserve) reuse paths.
 	// This reason is an operational drain driven by infrastructure rather than
 	// one of the three retirement-limit triggers, so it is NOT a member of the
-	// lenny_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
+	// lenny_gateway_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
 	// reports false for it; the disposition still drives the drain and records
 	// the reason in the audit trail. spec: §6.2 (recycle disposition), §6.39
 	// (host-node schedulability retire), spec/16 §16.1.1 (retirement-reason
@@ -192,7 +203,7 @@ const (
 	// is uncleared and the retire is fail-closed (the `failed` terminal). This
 	// is a coordinator-driven timeout rather than one of the three
 	// retirement-limit triggers, so it is NOT a member of the
-	// lenny_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
+	// lenny_gateway_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
 	// reports false for it. spec: §3.4 (gateway-side missing-report timeout),
 	// §4.7 (missing report bounded by cleanupTimeoutSeconds plus a grace),
 	// spec/16 §16.1.1 (retirement-reason vocabulary is the three limit triggers
@@ -206,7 +217,7 @@ const (
 	// so this retire, rather than a reuse, is the fail-closed disposition for a
 	// vm-restart pool. This is a routine per-recycle-boundary reprovision rather
 	// than one of the three retirement-limit triggers, so it is NOT a member of
-	// the lenny_pod_retirement_total{reason} vocabulary and
+	// the lenny_gateway_pod_retirement_total{reason} vocabulary and
 	// CountsOnRetirementTotal reports false for it (like ReasonHostUnschedulable
 	// and ReasonScrubReportTimeout); the disposition still drives the drain and
 	// records the reason in the audit trail. spec: spec/05 §5.2 step 7
@@ -216,16 +227,20 @@ const (
 )
 
 // CountsOnRetirementTotal reports whether this reason is a member of the
-// §16.1 lenny_pod_retirement_total{reason} vocabulary, which the spec freezes
-// to exactly the three retirement-limit triggers: session_count_limit,
-// uptime_limit, and scrub_failure_limit. A retire whose reason is not one of
-// the three (the onScrubFailure: fail termination, which §16.1.1 classifies as
-// a failure carried on error_type rather than reason, and the §6.39
-// cordon-drain operational retire) drives the drain disposition and records
-// its reason in the audit trail but is not counted on the retirement counter,
-// so the emitter never widens the frozen label set. spec: spec/16 §16.1
-// (lenny_pod_retirement_total reason label set), §16.1.1 (reason is reserved
-// for the lifecycle limit triggers; failures use error_type).
+// §16.1 retirement-reason vocabulary, which the spec freezes to exactly the
+// three retirement-limit triggers: session_count_limit, uptime_limit, and
+// scrub_failure_limit. That vocabulary partitions across two counters
+// (lenny_gateway_pod_retirement_total for session_count_limit and
+// scrub_failure_limit, lenny_controller_pod_retirement_total for uptime_limit);
+// this predicate reports membership in the union, and the gateway's
+// applyDisposition additionally suppresses its own uptime_limit emission. A
+// retire whose reason is not one of the three (the onScrubFailure: fail
+// termination, which §16.1.1 classifies as a failure carried on error_type
+// rather than reason, and the §6.39 cordon-drain operational retire) drives the
+// drain disposition and records its reason in the audit trail but is not
+// counted on either retirement counter, so the emitter never widens the frozen
+// label set. spec: spec/16 §16.1 (retirement reason label set), §16.1.1 (reason
+// is reserved for the lifecycle limit triggers; failures use error_type).
 func (r RetireReason) CountsOnRetirementTotal() bool {
 	switch r {
 	case ReasonSessionCountLimit, ReasonMaxUptimeExceeded, ReasonScrubFailuresExhausted:
@@ -233,6 +248,27 @@ func (r RetireReason) CountsOnRetirementTotal() bool {
 	default:
 		return false
 	}
+}
+
+// CountsOnGatewayRetirementTotal reports whether the gateway's applyDisposition
+// increments lenny_gateway_pod_retirement_total for this reason. It is the
+// gateway-scoped restriction of CountsOnRetirementTotal: the §16.1 vocabulary
+// partitions by process, and the gateway counter carries only the two
+// gateway-decided reasons (session_count_limit, scrub_failure_limit). The
+// uptime_limit retirement is WarmPoolController-owned and counted on
+// lenny_controller_pod_retirement_total, so the gateway suppresses its own
+// uptime_limit emission even though Decide still returns ReasonMaxUptimeExceeded
+// at the occupancy-zero recycle boundary as a draining-state backstop; without
+// this suppression an over-uptime pod that drains its last slot to occupancy
+// zero would be counted once by the gateway applyDisposition and once by the
+// controller reconcileUptime, double-reporting through the §16.1 summing
+// recording rule. The reasons this predicate excludes but CountsOnRetirementTotal
+// includes is exactly {uptime_limit}. spec: spec/16 §16.1 (retirement reason
+// vocabulary partitioned by process across the two counters; the gateway counter
+// carries session_count_limit and scrub_failure_limit), spec/05 §5.2 (the
+// maxPodUptimeSeconds retirement is WarmPoolController-owned).
+func (r RetireReason) CountsOnGatewayRetirementTotal() bool {
+	return r.CountsOnRetirementTotal() && r != ReasonMaxUptimeExceeded
 }
 
 // Disposition is the resolved §6.2 task_cleanup branch.
@@ -257,14 +293,19 @@ type Disposition struct {
 
 	// Retire is true when NextPhase removes the pod from the warm pool
 	// (draining or failed). A retire whose Reason reports
-	// CountsOnRetirementTotal drives lenny_pod_retirement_total; a retire
-	// outside that frozen vocabulary (the §6.39 cordon-drain, the fail-policy
-	// termination) drains without incrementing the counter.
+	// CountsOnRetirementTotal is a member of the frozen §16.1 vocabulary; the
+	// gateway's applyDisposition drives lenny_gateway_pod_retirement_total for
+	// session_count_limit and scrub_failure_limit and suppresses its
+	// uptime_limit emission (the controller owns that count). A retire outside
+	// that frozen vocabulary (the §6.39 cordon-drain, the fail-policy
+	// termination) drains without incrementing either counter.
 	Retire bool
 
 	// Reason is the stable observability/audit label for the branch. Whether
-	// it is a member of the §16.1 lenny_pod_retirement_total{reason}
-	// vocabulary is reported by Reason.CountsOnRetirementTotal.
+	// it is a member of the §16.1 retirement-reason vocabulary (partitioned
+	// across lenny_gateway_pod_retirement_total and
+	// lenny_controller_pod_retirement_total) is reported by
+	// Reason.CountsOnRetirementTotal.
 	Reason RetireReason
 }
 

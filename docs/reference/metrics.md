@@ -159,7 +159,8 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | Metric | Type | Labels | Description |
 |:-------|:-----|:-------|:------------|
 | `lenny_pod_scrub_failure_count` | Gauge | `k8s_pod_name`, `pool`, `runtime_class` | Per-pod scrub failure count on a recycling session-mode pod. |
-| `lenny_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Pod retirements. Reasons: `session_count_limit`, `uptime_limit`, `scrub_failure_limit`. |
+| `lenny_gateway_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Gateway-initiated pod retirements. Reasons: `session_count_limit`, `scrub_failure_limit`. Counted at the recycle disposition on a single-session pool and at the per-release `maxSessionsPerPod` drain on a concurrent non-`vm-restart` pool. |
+| `lenny_controller_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Controller-initiated pod retirements from the WarmPoolController's level-triggered `maxPodUptimeSeconds` drain. Reason: `uptime_limit`. Sum with the gateway counter for total retirements: `lenny:pod_retirement:total = sum(lenny_gateway_pod_retirement_total) + sum(lenny_controller_pod_retirement_total)`. |
 | `lenny_pod_session_reuse_count` | Histogram | `pool`, `k8s_pod_name` | Sessions served per pod under `recycle.enabled`. |
 | `lenny_slot_failure_total` | Counter | `error_type`, `pool`, `k8s_pod_name` | Per-slot failures on session-mode pods with `maxConcurrentSessions > 1`. |
 | `lenny_slot_pod_replacement_total` | Counter | `pool`, `k8s_pod_name` | Pod replacements triggered by slot failures. |

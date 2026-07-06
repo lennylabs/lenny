@@ -40,6 +40,35 @@ func TestAddToSchemeRegistersAllKinds(t *testing.T) {
 	}
 }
 
+// TestGatewayStampedAnnotationKeys pins the wire-visible annotation-key
+// literals the gateway stamps on an agent Pod and the WarmPoolController
+// reads back. A rename or typo on either side silently disconnects the
+// stamps-then-reads chain: the writer stamps one key and the reader looks
+// for another, so the drain never fires and no compile error surfaces.
+// AnnotationMaxPodUptimeSeconds is the delivery surface for the §4.6.1
+// CreationTimestamp-derived uptime drain (the gateway holds the
+// recycle.maxPodUptimeSeconds cap in its poolstore and the cap is absent
+// from every CRD the controller reconciles), so its literal is the
+// load-bearing contract between the gateway StampMaxPodUptime writer and
+// the controller reconcileUptime reader.
+// spec: §4.6.1, §4.6.3 (gateway delivers the uptime cap the controller
+// reads; the drain-request annotation carries the unhealthy-threshold
+// drain; both transitions are WarmPoolController-written).
+func TestGatewayStampedAnnotationKeys(t *testing.T) {
+	for _, tc := range []struct {
+		got  string
+		want string
+	}{
+		{lennyv1.AnnotationMaxPodUptimeSeconds, "lenny.dev/max-pod-uptime-seconds"},
+		{lennyv1.AnnotationDrainRequest, "lenny.dev/drain-request"},
+		{lennyv1.AnnotationScrubWarning, "lenny.dev/scrub-warning"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("annotation key = %q, want %q", tc.got, tc.want)
+		}
+	}
+}
+
 func TestSandboxDeepCopyIsolatesTheCopy(t *testing.T) {
 	orig := &lennyv1.Sandbox{
 		Spec:   lennyv1.SandboxSpec{RuntimeRef: "claude-code", PoolRef: "default"},

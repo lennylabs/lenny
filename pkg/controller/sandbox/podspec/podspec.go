@@ -163,6 +163,17 @@ const (
 	// matches runtimekit.SocketEnvVar.
 	RuntimeSocketEnvVar = "LENNY_ADAPTER_SOCKET"
 
+	// PodNameEnvVar is the Downward API environment variable the adapter
+	// reads to learn its own pod name. spec: §4.7, §5.2 — the adapter
+	// reports each per-slot cleanup outcome via ReportSessionScrub and
+	// the whole-pod scrub outcome via ReportPodScrub, both keyed on the
+	// pod identity. ShutdownSlot carries no podId and the base recycle
+	// Shutdown carries it only inside RecycleScrub, so the adapter takes
+	// its pod identity from this Downward API env and caches it. An
+	// absent or misnamed env yields an empty cached podID, which the
+	// gateway rejects InvalidArgument, so the name is load-bearing.
+	PodNameEnvVar = "POD_NAME"
+
 	// PlatformMCPSocketName is the §9.1/§4.7 abstract Unix socket the
 	// adapter's platform MCP server binds (@lenny-platform-mcp). A
 	// type:agent runtime discovers it from the adapter manifest's
@@ -531,6 +542,13 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				// runtime socket the runtime container dials.
 				"--runtime-socket=" + RuntimeSocketName,
 			}, append(append(sharedAssetsArgs(in), platformMCPArgs(in)...), nonceOnlyArgs(in)...)...),
+			// spec: §4.7, §5.2 — the adapter reports each per-slot cleanup
+			// outcome (ReportSessionScrub) and the whole-pod scrub outcome
+			// (ReportPodScrub) keyed on the pod identity. It reads that
+			// identity from this Downward API POD_NAME env and caches it,
+			// since ShutdownSlot carries no podId and the base recycle
+			// Shutdown carries it only inside RecycleScrub.
+			Env:             []corev1.EnvVar{podNameEnv()},
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    adapterMounts,
 			SecurityContext: containerSecurityContext(in.adapterUID()),
@@ -610,6 +628,14 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				// uploads the same way the sidecar adapter does.
 				"--staging-dir=" + stagingPath,
 			}, append(sharedAssetsArgs(in), platformMCPArgs(in)...)...),
+			// spec: §4.7, §5.2 — the embedded runtime is the adapter and the
+			// pod's gateway-facing process, so it emits ReportSessionScrub and
+			// ReportPodScrub keyed on the pod identity it reads from this
+			// Downward API POD_NAME env. Omitting it here leaves an embedded
+			// recycling pool without pod identity and silently disables the
+			// scrub-report chain, the same load-bearing env as the sidecar
+			// adapter container.
+			Env:             []corev1.EnvVar{podNameEnv()},
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    runtimeMounts,
 			SecurityContext: containerSecurityContext(in.agentUID()),
@@ -768,6 +794,25 @@ func nonceOnlyArgs(in Inputs) []string {
 		return []string{"--require-so-peercred=false"}
 	}
 	return nil
+}
+
+// podNameEnv returns the Downward API POD_NAME env var the adapter reads
+// to learn its own pod name. spec: §4.7, §5.2 — the adapter (the pod's
+// gateway-facing process) reports each per-slot cleanup outcome via
+// ReportSessionScrub and the whole-pod scrub outcome via ReportPodScrub,
+// both keyed on the pod identity, and caches it off this env. Both
+// deployment models mount it: in the sidecar model the adapter container
+// is that process; in the embedded model the single runtime container is
+// the adapter. An absent env yields an empty cached podID, which the
+// gateway rejects InvalidArgument, silently disabling the scrub-report
+// chain, so the env is load-bearing on both models.
+func podNameEnv() corev1.EnvVar {
+	return corev1.EnvVar{
+		Name: PodNameEnvVar,
+		ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+		},
+	}
 }
 
 // podVolumes returns the §6.1 / §6.4 / §13.1 pod volumes: the

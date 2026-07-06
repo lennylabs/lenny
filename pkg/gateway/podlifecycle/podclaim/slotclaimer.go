@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -136,6 +137,48 @@ func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName
 	}
 	if err != nil {
 		return fmt.Errorf("podclaim: stamp scrub-warning on pod %s: %w", podName, err)
+	}
+	return nil
+}
+
+// StampMaxPodUptime stamps the §4.6.1 lenny.dev/max-pod-uptime-seconds
+// annotation on the agent Pod named podName (the §4.6.1 reconciler names the
+// pod identically to its Sandbox). The gateway holds the pool's
+// sessionPolicy.recycle.maxPodUptimeSeconds cap in its poolstore, but that cap
+// is absent from every CRD the WarmPoolController reconciles, so the gateway
+// delivers it on the pod as this annotation and the controller's
+// reconcileUptime arm reads it to level-trigger the CreationTimestamp-derived
+// uptime drain. The annotation carries the cap as a decimal integer number of
+// seconds. A non-positive cap (a pool that sets no maxPodUptimeSeconds) stamps
+// nothing: the annotation's absence disables the controller's uptime check,
+// matching the field's optional status and mirroring the expiredByUptime and
+// podscrub.Decide `maxPodUptimeSeconds > 0` guards.
+//
+// A JSON-merge patch is used (matching stampPodTenant and StampDrainRequest) so
+// a missing pod returns NotFound rather than being created annotation-only; an
+// absent or terminating pod is tolerated because a pod that is already gone
+// needs no cap. The gateway's `get`/`patch` on agent Pods grant covers this
+// write alongside the lenny.dev/drain-request stamp and the lenny.dev/tenant-id
+// pin; the gateway never writes Sandbox.status itself (§4.6.3 ownership
+// decomposition).
+//
+// spec: §4.6.1 (uptime drains derive from the pod CreationTimestamp against
+// recycle.maxPodUptimeSeconds and are WarmPoolController-written); §4.6.3 (the
+// gateway delivers the cap the controller reads).
+func StampMaxPodUptime(ctx context.Context, cl client.Client, namespace, podName string, maxPodUptimeSeconds int64) error {
+	if maxPodUptimeSeconds <= 0 {
+		return nil
+	}
+	body := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
+		lennyv1.AnnotationMaxPodUptimeSeconds, strconv.FormatInt(maxPodUptimeSeconds, 10))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace}}
+	err := cl.Patch(ctx, pod, client.RawPatch(types.MergePatchType, []byte(body)),
+		client.FieldOwner(string(ownership.Gateway)))
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("podclaim: stamp max-pod-uptime on pod %s: %w", podName, err)
 	}
 	return nil
 }
@@ -616,6 +659,25 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 		return nil, false, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 	}
 
+	// §4.6.1/§4.6.3: deliver the pool's recycle.maxPodUptimeSeconds cap onto the
+	// agent pod so the WarmPoolController's reconcileUptime arm can level-trigger
+	// the CreationTimestamp-derived uptime drain. The cap lives only in the
+	// gateway poolstore (absent from every CRD the controller reconciles), so the
+	// gateway delivers it as the AnnotationMaxPodUptimeSeconds annotation the way
+	// it delivers the tenant pin, alongside the same slot claim. A non-positive
+	// cap (a pool that sets no maxPodUptimeSeconds) stamps nothing, matching the
+	// field's optional status. Best-effort: a missing pod is tolerated and the
+	// next assignment re-stamps it. Without this write the annotation is never
+	// present in production, so the controller's uptime check stays disabled and
+	// the §5.2 maxPodUptimeSeconds drain never fires.
+	if err := StampMaxPodUptime(ctx, c.Client, sb.Namespace, sb.Name, req.MaxPodUptimeSeconds); err != nil {
+		if freshPod {
+			_, _ = c.Counter.Release(ctx, sb.Name)
+			_ = c.Client.Delete(ctx, claim)
+		}
+		return nil, false, fmt.Errorf("stamp max-pod-uptime on pod %s: %w", sb.Name, err)
+	}
+
 	return &SlotResult{
 		SandboxName: sb.Name,
 		SlotID:      req.SessionID,
@@ -651,8 +713,31 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // The counter decrement is clamped at zero so a double release cannot drive
 // the count negative; a release that reaches zero disposes of the claim
 // idempotently (a NotFound from either the recycling patch or the DELETE is a
-// no-op). spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.30/§6.41.
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle bool) error {
+// no-op).
+//
+// leaked reports that the slot's adapter cleanup did not complete cleanly (§6.2
+// leaked-slot semantics). A leaked slot's resources are not reclaimed until pod
+// termination, so its occupancy must remain counted: ReleaseSlot skips the
+// Redis-counter decrement and the occupancy-zero disposition entirely, leaving
+// the counter at its current value so the gateway does not over-assign a new
+// slot into the leaked slot's unreleased resources. A pod carrying a leaked
+// slot is by definition not at occupancy zero, so it takes neither the recycle
+// patch nor the claim DELETE; it is retired by the §5.2/§6.2 liveness paths
+// (the ceil-threshold drain, the per-release maxSessionsPerPod drain, or the
+// WarmPoolController uptime drain) rather than at this release.
+//
+// recycled reports whether this release crossed the occupancy-zero edge of a
+// recycling pool: the last slot released cleanly, the Redis counter reached
+// zero, and the per-pod claim was patched bound → recycling. On that edge the
+// caller (Binder.ReleaseSlot) sends the adapter the whole-pod recycle Shutdown
+// that triggers the §5.2 scrub, so the signal is threaded back rather than kept
+// internal. It is false on every other release (a sibling slot remains, the
+// slot leaked, the pool does not recycle, or the claim had already vanished).
+//
+// spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.2 (leaked slot
+// remains counted); §6.30/§6.41; §5.2 (whole-pod scrub trigger, threaded to the
+// binder via recycled).
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (recycled bool, err error) {
 	if c.Counter == nil {
 		// The Redis counter (with its §12.4 Postgres fallback) is the only
 		// intra-pod occupancy record now that the gateway does not mirror the
@@ -662,18 +747,26 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// posture ClaimSlot takes on a nil counter. spec: §12.4 (every
 		// Redis-backed role has a durable fallback; the gate fails closed when
 		// it cannot decide).
-		return errors.New("podclaim: slot counter is required for concurrent-session slot release")
+		return false, errors.New("podclaim: slot counter is required for concurrent-session slot release")
+	}
+	if leaked {
+		// §6.2: a leaked slot remains counted in the pod's Redis slot-counter
+		// occupancy until pod termination, so the gateway does not over-assign
+		// a new slot into its unreleased resources. Skip the decrement and the
+		// occupancy-zero disposition: the slot's occupancy stays, and the pod is
+		// not at occupancy zero while the leak persists.
+		return false, nil
 	}
 	// §5.2 atomic slot release. The Redis counter is the source of truth —
 	// DECR clamped at zero.
 	remaining, err := c.Counter.Release(ctx, sandboxName)
 	if err != nil {
-		return fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
+		return false, fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
 	}
 
 	if remaining > 0 {
 		// Sibling slots remain on the pod; the per-pod claim stays.
-		return nil
+		return false, nil
 	}
 
 	if recycle {
@@ -688,9 +781,9 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// there is nothing left to recycle. spec: §3.1, §3.4, §6.41.
 		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(sandboxName), c.now); err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil
+				return false, nil
 			}
-			return err
+			return false, err
 		}
 		// §3.4: arm the gateway-side missing-report timeout now that the claim
 		// is `recycling`. The adapter's ReportPodScrub cancels it; if no report
@@ -700,12 +793,16 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		if c.RecycleBoundary != nil {
 			c.RecycleBoundary.OnRecycling(sandboxName)
 		}
-		return nil
+		// §5.2: the claim is now `recycling` on a true occupancy-zero edge (every
+		// slot released cleanly, so no leaked slot holds occupancy). Signal the
+		// binder to send the adapter the whole-pod recycle Shutdown that triggers
+		// the scrub whose ReportPodScrub cancels the armed timeout.
+		return true, nil
 	}
 
 	// Last slot drained on a non-recycling pool, or a failed/crashed session:
 	// delete the per-pod occupancy claim so the pod retires. The §4.6.1
 	// occupancy projection moves the pod from claimed to draining on the
 	// claim DELETE.
-	return DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
+	return false, DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
 }

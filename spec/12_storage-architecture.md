@@ -464,7 +464,7 @@ type PodRegistry interface {
 
 `ClaimOpts.ClusterID` is a nullable field (type `*ClusterID`). In v1, `ClaimOpts.ClusterID` is always `nil` (single-cluster). The `LocalClusterRegistry` (see below) propagates a non-nil `ClusterID` when routing claims to a remote cluster in a multi-cluster topology.
 
-**`agent_pod_state` table schema.** The `agent_pod_state` Postgres table mirrors `Sandbox` CRD status fields. In v1 it is a read-optimized mirror maintained by the WarmPoolController on every pod state transition; at Tier 4 it becomes the primary store for `PostgresPodRegistry`. The table is platform-global (no RLS — `tenant_id` is a denormalized convenience column set on claim, not an isolation boundary; see [§4.2](04_system-components.md#42-session-manager) data model table). The `sessions_served` and `scrub_failure_count` columns are the exception to the WarmPoolController-maintained mirror: they are gateway-written recycle counters, incremented at each session release (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively ([§4.7](04_system-components.md#47-runtime-adapter)), and read by the recycle disposition ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+**`agent_pod_state` table schema.** The `agent_pod_state` Postgres table mirrors `Sandbox` CRD status fields. In v1 it is a read-optimized mirror maintained by the WarmPoolController on every pod state transition; at Tier 4 it becomes the primary store for `PostgresPodRegistry`. The table is platform-global (no RLS — `tenant_id` is a denormalized convenience column set on claim, not an isolation boundary; see [§4.2](04_system-components.md#42-session-manager) data model table). The `sessions_served` and `scrub_failure_count` columns are the exception to the WarmPoolController-maintained mirror: they are gateway-written recycle counters, incremented at each session release (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively ([§4.7](04_system-components.md#47-runtime-adapter)); `scrub_failure_count` is read by the recycle disposition, and `sessions_served` is read by the recycle disposition on a single-session pool and on each session release on a concurrent non-`vm-restart` pool ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 
 ```sql
 CREATE TABLE agent_pod_state (
@@ -477,7 +477,7 @@ CREATE TABLE agent_pod_state (
     execution_mode  TEXT        NOT NULL,  -- session, service
     resource_version BIGINT    NOT NULL,   -- CRD generation for optimistic-locking; incremented on every state transition
     node_name       TEXT,                  -- Kubernetes node hosting the pod
-    sessions_served     INTEGER,           -- gateway-written at each session release; sessions served over the pod's lifetime, evaluated against recycle.maxSessionsPerPod at the recycle disposition
+    sessions_served     INTEGER,           -- gateway-written at each session release; sessions served over the pod's lifetime; on a single-session pool evaluated against recycle.maxSessionsPerPod at the recycle disposition, on a concurrent non-vm-restart pool evaluated on each session release (§5.2)
     scrub_failure_count INTEGER,           -- gateway-written; failed whole-pod scrubs, evaluated against recycle.maxScrubFailures
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

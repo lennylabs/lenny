@@ -55,4 +55,29 @@ const (
 	// returns the pod with a scrub_warning annotation); spec/06_warm-pod-model.md
 	// §6.2 (preConnect re-warm on scrub_warning, persists through the re-warm).
 	AnnotationScrubWarning = "lenny.dev/scrub-warning"
+
+	// AnnotationMaxPodUptimeSeconds carries the pod's pool
+	// sessionPolicy.recycle.maxPodUptimeSeconds as a decimal integer number
+	// of seconds. It is the delivery surface for the §4.6.1 uptime drain:
+	// the §4.6.1 uptime retirement derives from the pod CreationTimestamp
+	// against recycle.maxPodUptimeSeconds, but that cap lives only in the
+	// gateway poolstore and is absent from every CRD the WarmPoolController
+	// reconciles, so the gateway stamps it on the agent Pod and the
+	// WarmPoolController reads it, mirroring how AnnotationCertNotAfter
+	// carries the per-pod cert expiry to the same reader. The gateway
+	// stamps it once at pod claim from the poolstore
+	// SessionPolicy.Recycle.MaxPodUptimeSeconds, and the WarmPoolController
+	// reads it to level-trigger the §4.6.1/§4.6.3 uptime drain (the coarse
+	// claimed → draining transition it alone writes on Sandbox.status). An
+	// absent or zero value disables the check: the gateway stamps the
+	// annotation only for a pool that sets maxPodUptimeSeconds, matching the
+	// field's optional status. The gateway's get/patch on agent Pods grant
+	// covers this annotation write alongside the lenny.dev/drain-request
+	// stamp and the lenny.dev/tenant-id pin; the gateway never writes
+	// Sandbox.status itself (§4.6.3 ownership decomposition).
+	// spec: spec/04_system-components.md §4.6.1 (CreationTimestamp-derived
+	// uptime drain, WarmPoolController-written), §4.6.3 (the gateway delivers
+	// the cap the controller reads; WarmPoolController is the sole writer of
+	// Sandbox.status).
+	AnnotationMaxPodUptimeSeconds = "lenny.dev/max-pod-uptime-seconds"
 )
