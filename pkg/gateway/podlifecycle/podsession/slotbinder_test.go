@@ -580,6 +580,140 @@ func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
 	}
 }
 
+// spec: §5.2 (whole-pod scrub trigger, uniform across session modes), §4.7
+// (Shutdown recycle disposition), §3.4
+// diagnosis: a recycling concurrent-session pool never triggered the §5.2
+// whole-pod scrub at occupancy zero. On the last clean slot drain
+// Binder.ReleaseSlot must send the adapter a whole-pod recycle Shutdown (a
+// RecycleScrub sub-message) carrying the last-released slot's session id, the
+// folded pod_id (SandboxName) plus the pool's cleanup parameters, and NO
+// slot_id, so the adapter runs the scrub rather than the per-slot teardown.
+// Pre-fix code closed the adapter connection right after the per-slot
+// ShutdownSlot and had no recycled signal from SlotClaimer.ReleaseSlot, so the
+// recycle Shutdown never fired and every recycling concurrent pool was retired
+// by the missing-report timeout. This test fails against the pre-fix binder: it
+// would observe only the per-slot Shutdown (slot_id set, recycle nil).
+func TestReleaseSlotRecyclingSendsWholePodRecycleShutdown_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+	binder.RecycleBoundary = &fakeRecycleBoundary{}
+
+	// A single slot on a recycling concurrent pool: releasing it cleanly drives
+	// the Redis counter to zero (occupancy zero, no leaked slot), so the recycle
+	// disposition and its whole-pod scrub Shutdown must fire.
+	res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "slot-sess", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{},
+		Recycle:               true,
+		CleanupCommands:       []string{"rm -rf /workspace/*", "sync"},
+		CleanupTimeoutSeconds: 25,
+	})
+	if err != nil {
+		t.Fatalf("BindSlot: %v", err)
+	}
+	if len(res.CleanupCommands) != 2 || res.CleanupTimeoutSeconds != 25 {
+		t.Fatalf("slot BindResult scrub config = %v / %d, want the bind-request fields carried through",
+			res.CleanupCommands, res.CleanupTimeoutSeconds)
+	}
+	// Swap the slot's adapter connection for the recording fake so the exact
+	// ShutdownRequests ReleaseSlot sends (the per-slot teardown then the
+	// whole-pod recycle) are observable on the wire.
+	res.Adapter.Close()
+	rec := &recordingShutdownAdapter{}
+	res.Adapter = dialRecordingAdapter(t, rec)
+
+	if err := binder.ReleaseSlot(context.Background(), res); err != nil {
+		t.Fatalf("ReleaseSlot: %v", err)
+	}
+
+	// The claim is patched recycling (not deleted): the pod recycles rather than
+	// retiring.
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("a recycling last-slot drain must keep the per-pod claim (patched recycling), not delete it")
+	}
+
+	// Two Shutdown RPCs reach the adapter: the per-slot teardown (slot_id set,
+	// recycle nil) and the whole-pod recycle (recycle set, no slot_id). Find the
+	// recycle one and assert its disposition.
+	reqs := rec.shutdownRequests()
+	var recycleReq *adapterv1.ShutdownRequest
+	for _, r := range reqs {
+		if r.GetRecycle() != nil {
+			recycleReq = r
+		}
+	}
+	if recycleReq == nil {
+		t.Fatalf("no whole-pod recycle Shutdown reached the adapter; requests = %d, want one carrying a RecycleScrub sub-message", len(reqs))
+	}
+	if recycleReq.GetSlotId().GetValue() != "" {
+		t.Errorf("recycle Shutdown carried slot_id %q, want none (it is a whole-pod scrub, not a per-slot teardown)",
+			recycleReq.GetSlotId().GetValue())
+	}
+	if recycleReq.GetSessionId().GetValue() != "slot-sess" {
+		t.Errorf("recycle Shutdown session_id = %q, want the last-released slot's session (slot-sess) so the adapter's non-empty guard admits it",
+			recycleReq.GetSessionId().GetValue())
+	}
+	rc := recycleReq.GetRecycle()
+	if rc.GetPodId() != "sbx-1" {
+		t.Errorf("RecycleScrub.pod_id = %q, want sbx-1 (the folded SandboxName)", rc.GetPodId())
+	}
+	if rc.GetCleanupTimeoutSeconds() != 25 {
+		t.Errorf("RecycleScrub.cleanup_timeout_seconds = %d, want 25", rc.GetCleanupTimeoutSeconds())
+	}
+	if got := rc.GetCleanupCommands(); len(got) != 2 || got[0] != "rm -rf /workspace/*" || got[1] != "sync" {
+		t.Errorf("RecycleScrub.cleanup_commands = %v, want [rm -rf /workspace/* sync]", got)
+	}
+}
+
+// spec: §5.2 (whole-pod scrub fires only on a true occupancy zero), §6.2
+// (leaked slot remains counted)
+// diagnosis: a leaked last slot on a recycling concurrent pool must NOT trigger
+// the whole-pod recycle Shutdown: the leaked slot holds occupancy above zero, so
+// the pod is not at the occupancy-zero recycle edge and is retired later by a
+// liveness path. CODE-A is ordered after CODE-C precisely so the recycle branch
+// fires only when every slot released cleanly. A binder that sent the recycle
+// Shutdown on any last-slot release regardless of the leaked outcome would scrub
+// and reuse a pod still holding leaked resources; this test fails against it.
+func TestReleaseSlotLeakedLastSlotSendsNoRecycleShutdown_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+	binder.RecycleBoundary = &fakeRecycleBoundary{}
+
+	res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "slot-sess", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{},
+		Recycle:               true,
+		CleanupCommands:       []string{"rm -rf /workspace/*"},
+		CleanupTimeoutSeconds: 10,
+	})
+	if err != nil {
+		t.Fatalf("BindSlot: %v", err)
+	}
+	res.Adapter.Close()
+	// The recording fake reports the slot teardown as unclean so the release is
+	// leaked: the counter stays counted, occupancy never reaches zero, and no
+	// whole-pod recycle Shutdown must be sent.
+	rec := &recordingShutdownAdapter{uncleanExit: true}
+	res.Adapter = dialRecordingAdapter(t, rec)
+
+	if err := binder.ReleaseSlot(context.Background(), res); err != nil {
+		t.Fatalf("ReleaseSlot (leaked): %v", err)
+	}
+
+	// The leaked slot keeps the pod counted, so the claim survives.
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("a leaked last-slot release must keep the per-pod claim (occupancy is not zero, §6.2)")
+	}
+	// No recycle Shutdown fired: the only Shutdown is the per-slot teardown.
+	for _, r := range rec.shutdownRequests() {
+		if r.GetRecycle() != nil {
+			t.Error("a leaked last-slot release must not send the whole-pod recycle Shutdown (occupancy is not zero); the pod is retired by a liveness path instead")
+		}
+	}
+}
+
 // TestReleaseSlotReturnsCredentialLeasesToPool_spec_7_1 asserts that the
 // concurrent-session slot teardown also runs the §7.1 step 23 credential-
 // lease release, matching session-mode Release.

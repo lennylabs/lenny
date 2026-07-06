@@ -1944,6 +1944,12 @@ func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, 
 		// claim bound → recycling and signals the whole-pod scrub (the §3.1
 		// "Concurrent" preset) rather than deleting the claim outright.
 		Recycle: match.Recycle,
+		// spec: §5.2 (whole-pod scrub trigger) — carry the pool's cleanup
+		// parameters (folded onto PoolMatch from the sessionPolicy mirror) so
+		// the occupancy-zero recycle Shutdown delivers them to the adapter's
+		// whole-pod scrub without re-resolving the pool at the release boundary.
+		CleanupCommands:       match.CleanupCommands,
+		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
 	}
 }
 

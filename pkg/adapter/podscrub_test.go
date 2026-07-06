@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -253,6 +256,92 @@ func TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2(t *test
 	reports := reporter.snapshot()
 	if len(reports) != 1 || reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Fatalf("reports = %+v, want one PodScrubSucceeded", reports)
+	}
+}
+
+// TestShutdownRecycleConcurrentModeTriggersWholePodScrub asserts the §5.2
+// concurrent-mode occupancy-zero scrub trigger (CODE-A): a concurrent-session
+// pod sets only per-slot session state and never the pod-global s.sessionID, so
+// the gateway sends a slot-less recycle Shutdown carrying the last-released
+// slot's session id and the RecycleScrub disposition. The Shutdown handler must
+// dispatch the whole-pod scrub on the empty pod-global session (the new branch
+// keyed on req.GetRecycle() != nil && s.sessionID == "") rather than failing the
+// checkSession gate.
+//
+// The pre-fix handler had no such branch: a slot-less recycle Shutdown with an
+// empty pod-global session fell through to checkSession, which returned
+// FailedPrecondition ("pod has no assigned session") and never ran the scrub, so
+// every recycling concurrent pool was retired by the gateway missing-report
+// timeout. This test starts NO pod-global session (mirroring a concurrent pod)
+// and asserts the scrub runs and reports; it fails against the pre-fix handler,
+// which would return an error and emit no report.
+//
+// diagnosis: a failure means the concurrent-mode recycle boundary stopped
+// triggering the whole-pod scrub, so a recycling concurrent pool falls back to
+// the missing-report timeout instead of the deliberate scrub-and-reuse.
+// spec: 5.2 (whole-pod scrub trigger, uniform across session modes), 4.7
+// (Shutdown recycle disposition, ReportPodScrub)
+func TestShutdownRecycleConcurrentModeTriggersWholePodScrub_spec_5_2(t *testing.T) {
+	s, reporter, ops, done := recycleServer(t)
+
+	// No StartSession: a concurrent pod's pod-global s.sessionID stays empty
+	// (only per-slot st.sessionID is set on the slot path). The recycle Shutdown
+	// carries the last-released slot's session id so the non-empty session_id
+	// guard admits it, and no slot_id so it is a whole-pod (not per-slot)
+	// teardown.
+	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		Recycle: &adapterv1.RecycleScrub{
+			PodId: "pod-concurrent",
+		},
+	})
+	if err != nil {
+		t.Fatalf("concurrent recycle Shutdown returned an error (the checkSession gate was reached): %v", err)
+	}
+	if resp == nil {
+		t.Fatal("concurrent recycle Shutdown returned a nil response")
+	}
+	waitScrubDone(t, done)
+
+	if !ops.killed || !ops.verified {
+		t.Errorf("concurrent-mode whole-pod scrub did not run: killed=%v verified=%v", ops.killed, ops.verified)
+	}
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("ReportPodScrub calls = %d, want exactly 1", len(reports))
+	}
+	if reports[0].podID != "pod-concurrent" {
+		t.Errorf("reported pod id = %q, want the message pod_id %q", reports[0].podID, "pod-concurrent")
+	}
+	if reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
+		t.Errorf("outcome = %v, want PodScrubSucceeded", reports[0].outcome)
+	}
+}
+
+// TestShutdownRejectsRecycleWithEmptySessionID asserts the §4.7 non-empty
+// session_id guard still holds ahead of the concurrent-mode recycle branch: a
+// recycle Shutdown with no session id is rejected with InvalidArgument and never
+// runs the scrub, so a malformed request cannot trigger a whole-pod scrub with
+// no session context.
+//
+// diagnosis: a failure means the concurrent-mode recycle branch was ordered
+// ahead of the empty-session_id guard, letting a session-less recycle Shutdown
+// run the scrub.
+// spec: 4.7 (Shutdown non-empty session_id guard), 5.2 (whole-pod scrub trigger)
+func TestShutdownRejectsRecycleWithEmptySessionID_spec_4_7(t *testing.T) {
+	s, reporter, ops, _ := recycleServer(t)
+
+	_, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		Recycle: &adapterv1.RecycleScrub{PodId: "pod-x"},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("Shutdown with an empty session id returned %v, want InvalidArgument", err)
+	}
+	if ops.killed || ops.verified {
+		t.Error("a session-less recycle Shutdown must not run the whole-pod scrub")
+	}
+	if len(reporter.snapshot()) != 0 {
+		t.Error("a session-less recycle Shutdown must emit no ReportPodScrub")
 	}
 }
 

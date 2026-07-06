@@ -226,6 +226,24 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		return s.shutdownSlot(ctx, sessionID, slotID, req.GetDeadlineMs())
 	}
+	// spec: §5.2 (whole-pod scrub trigger, uniform across session modes); §4.7
+	// (Shutdown recycle disposition). A concurrent-session pod reaches occupancy
+	// zero when its last slot drains cleanly: the gateway sends a slot-less
+	// recycle Shutdown carrying the last-released slot's session id (so the
+	// non-empty session_id guard above admits it) and the RecycleScrub
+	// disposition, but never sets the pod-global s.sessionID (a concurrent pod
+	// sets only the per-slot st.sessionID, so checkSession below can never pass
+	// for it). Dispatch the whole-pod scrub on the empty pod-global session id:
+	// run startPodScrub and return, replacing the gateway missing-report timeout
+	// with a deliberate scrub-and-report. A base-mode session (which sets
+	// s.sessionID via claimSession) does not match this branch and takes the
+	// checkSession path unchanged, where its own recycle handling runs below.
+	// Ordered before checkSession because a concurrent pod fails that gate.
+	// F-5.2.31.
+	if rc := req.GetRecycle(); rc != nil && s.currentSession() == "" {
+		s.startPodScrub(rc)
+		return &adapterv1.ShutdownResponse{}, nil
+	}
 	if err := s.checkSession(sessionID); err != nil {
 		return nil, err
 	}

@@ -664,9 +664,18 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // (the ceil-threshold drain, the per-release maxSessionsPerPod drain, or the
 // WarmPoolController uptime drain) rather than at this release.
 //
+// recycled reports whether this release crossed the occupancy-zero edge of a
+// recycling pool: the last slot released cleanly, the Redis counter reached
+// zero, and the per-pod claim was patched bound → recycling. On that edge the
+// caller (Binder.ReleaseSlot) sends the adapter the whole-pod recycle Shutdown
+// that triggers the §5.2 scrub, so the signal is threaded back rather than kept
+// internal. It is false on every other release (a sibling slot remains, the
+// slot leaked, the pool does not recycle, or the claim had already vanished).
+//
 // spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.2 (leaked slot
-// remains counted); §6.30/§6.41.
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) error {
+// remains counted); §6.30/§6.41; §5.2 (whole-pod scrub trigger, threaded to the
+// binder via recycled).
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (recycled bool, err error) {
 	if c.Counter == nil {
 		// The Redis counter (with its §12.4 Postgres fallback) is the only
 		// intra-pod occupancy record now that the gateway does not mirror the
@@ -676,7 +685,7 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// posture ClaimSlot takes on a nil counter. spec: §12.4 (every
 		// Redis-backed role has a durable fallback; the gate fails closed when
 		// it cannot decide).
-		return errors.New("podclaim: slot counter is required for concurrent-session slot release")
+		return false, errors.New("podclaim: slot counter is required for concurrent-session slot release")
 	}
 	if leaked {
 		// §6.2: a leaked slot remains counted in the pod's Redis slot-counter
@@ -684,18 +693,18 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// a new slot into its unreleased resources. Skip the decrement and the
 		// occupancy-zero disposition: the slot's occupancy stays, and the pod is
 		// not at occupancy zero while the leak persists.
-		return nil
+		return false, nil
 	}
 	// §5.2 atomic slot release. The Redis counter is the source of truth —
 	// DECR clamped at zero.
 	remaining, err := c.Counter.Release(ctx, sandboxName)
 	if err != nil {
-		return fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
+		return false, fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
 	}
 
 	if remaining > 0 {
 		// Sibling slots remain on the pod; the per-pod claim stays.
-		return nil
+		return false, nil
 	}
 
 	if recycle {
@@ -710,9 +719,9 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// there is nothing left to recycle. spec: §3.1, §3.4, §6.41.
 		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(sandboxName), c.now); err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil
+				return false, nil
 			}
-			return err
+			return false, err
 		}
 		// §3.4: arm the gateway-side missing-report timeout now that the claim
 		// is `recycling`. The adapter's ReportPodScrub cancels it; if no report
@@ -722,12 +731,16 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		if c.RecycleBoundary != nil {
 			c.RecycleBoundary.OnRecycling(sandboxName)
 		}
-		return nil
+		// §5.2: the claim is now `recycling` on a true occupancy-zero edge (every
+		// slot released cleanly, so no leaked slot holds occupancy). Signal the
+		// binder to send the adapter the whole-pod recycle Shutdown that triggers
+		// the scrub whose ReportPodScrub cancels the armed timeout.
+		return true, nil
 	}
 
 	// Last slot drained on a non-recycling pool, or a failed/crashed session:
 	// delete the per-pod occupancy claim so the pod retires. The §4.6.1
 	// occupancy projection moves the pod from claimed to draining on the
 	// claim DELETE.
-	return DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
+	return false, DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
 }

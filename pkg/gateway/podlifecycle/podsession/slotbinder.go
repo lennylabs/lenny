@@ -94,6 +94,18 @@ type SlotBindRequest struct {
 	// cohort" preset), where the pod terminates after the cohort drains. spec:
 	// §3.1, §3.4, §6.30/§6.41 (occupancy-zero recycle edge on a recycling pod).
 	Recycle bool
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
+	// parameters (folded onto PoolMatch from the sessionPolicy mirror) carried
+	// so the occupancy-zero recycle Shutdown delivers them to the adapter
+	// without re-resolving the pool at the release boundary. materializeSlot
+	// copies them onto the BindResult so ReleaseSlot builds them into the §4.7
+	// RecycleScrub sub-message (with PodId == SandboxName) on the last-slot-drain
+	// recycle edge. Empty/zero on a non-recycling concurrent pool. The scrub
+	// profile is not carried on the wire; the gateway routes the §5.2 step-7
+	// vm-restart retire on the recycle policy in its own runtime store (C4).
+	// spec: §5.2 (whole-pod scrub trigger), §4.6.3.
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
 }
 
 // BindSlot places a session on a §5.2 concurrent-session pod slot.
@@ -327,6 +339,11 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		// occupancy-zero edge of a recycling concurrent pool rather than
 		// deleting the claim.
 		Recycle: req.Recycle,
+		// spec: §5.2 (whole-pod scrub trigger) — carry the pool's cleanup
+		// parameters so the occupancy-zero recycle Shutdown delivers them to the
+		// adapter's whole-pod scrub without re-resolving the pool at release.
+		CleanupCommands:       req.CleanupCommands,
+		CleanupTimeoutSeconds: req.CleanupTimeoutSeconds,
 	}, nil
 }
 
@@ -476,16 +493,19 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 	// rollback, not the occupancy-zero recycle edge, so it never patches the
 	// claim to `recycling` or arms the missing-report timeout. leaked=false: a
 	// reservation rollback frees a slot that never held runtime resources, so
-	// the counter must decrement (the slot is not leaked). spec: §5.2 (slot
-	// retry releases the reservation), §3.4, §6.2 (leaked slot remains counted).
-	return claimer.ReleaseSlot(ctx, sandboxName, slotID, false, false)
+	// the counter must decrement (the slot is not leaked). The recycled signal
+	// is discarded: recycle=false never returns it. spec: §5.2 (slot retry
+	// releases the reservation), §3.4, §6.2 (leaked slot remains counted).
+	_, err := claimer.ReleaseSlot(ctx, sandboxName, slotID, false, false)
+	return err
 }
 
 // ReleaseSlot tears down a concurrent-session slot when its session ends.
-// It shuts the slot's runtime down through the adapter, closes the adapter
-// connection, and decrements the pod's §5.2 Redis slot counter; when the
-// last slot drains (the counter reaches zero) the per-pod SandboxClaim is
-// deleted so the pod returns to the pool.
+// It shuts the slot's runtime down through the adapter and decrements the
+// pod's §5.2 Redis slot counter; when the last slot drains cleanly (the counter
+// reaches zero) on a recycling pool the per-pod SandboxClaim is patched
+// bound → recycling and the adapter runs the §5.2 whole-pod scrub, and on a
+// non-recycling pool the claim is deleted so the pod returns to the pool.
 //
 // Unlike session-mode Release, ReleaseSlot does not delete the claim while
 // sibling slots remain: a concurrent-session pod hosts up to
@@ -493,6 +513,15 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 // whole occupancy episode. The Redis-counter decrement and the
 // claim-delete-on-last edge are handled by podclaim.SlotClaimer.ReleaseSlot.
 // The adapter Shutdown is best-effort.
+//
+// On the occupancy-zero recycle edge (every slot released cleanly and the pool
+// recycles) SlotClaimer.ReleaseSlot returns recycled=true; ReleaseSlot then
+// sends the adapter the whole-pod recycle Shutdown over the still-open per-slot
+// connection so the adapter keeps the pod process alive, runs the §5.2 scrub,
+// and reports its outcome via ReportPodScrub. The adapter connection is closed
+// only after that recycle Shutdown, so the whole-pod scrub trigger travels the
+// same live connection the per-slot ShutdownSlot used. spec: §5.2 (whole-pod
+// scrub trigger); §4.7 (Shutdown recycle disposition).
 func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// spec: §6.2 (leaked slot remains counted) — a slot whose adapter cleanup
 	// did not complete cleanly is leaked: its resources are not reclaimed until
@@ -504,10 +533,12 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	leaked := false
 	if result.Adapter != nil {
 		// spec: §6.4 lines 401-405 — tear down just this slot (its runtime
-		// and per-slot tree); sibling slots on the pod keep running.
+		// and per-slot tree); sibling slots on the pod keep running. The
+		// connection is held open past this call: on the occupancy-zero recycle
+		// edge below the whole-pod recycle Shutdown reuses it before it is closed.
 		cleanly, err := result.Adapter.ShutdownSlot(ctx, result.SessionID, result.SlotID)
 		leaked = err != nil || !cleanly
-		result.Adapter.Close()
+		defer result.Adapter.Close()
 	}
 	// spec: §7.1 line 52 (step 23) — release the slot session's §4.9
 	// credential leases back to the pool, the same teardown session-mode
@@ -522,7 +553,28 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		// gateway-side timeout session-mode Release arms.
 		RecycleBoundary: b.RecycleBoundary,
 	}
-	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID, result.Recycle, leaked)
+	recycled, err := claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID, result.Recycle, leaked)
+	if err != nil {
+		return err
+	}
+	if recycled && result.Adapter != nil {
+		// spec: §5.2 (whole-pod scrub trigger); §4.7 (Shutdown recycle
+		// disposition). The last slot released cleanly, the claim is now
+		// `recycling`, and the missing-report timeout is armed. Send the
+		// whole-pod recycle Shutdown over the still-open connection: it carries
+		// the last-released slot's session id (the adapter's non-empty session_id
+		// guard admits it), the RecycleScrub disposition (PodID plus the pool's
+		// cleanup parameters), and no slot id, so the adapter runs the §5.2 scrub
+		// and reports ReportPodScrub. Best-effort: a failure here leaves the
+		// armed missing-report timeout to retire the pod. The response's
+		// ExitedCleanly is ignored — the scrub outcome arrives asynchronously.
+		_, _ = result.Adapter.ShutdownRecycle(ctx, result.SessionID, adapterclient.RecycleScrub{
+			PodID:                 result.SandboxName,
+			CleanupCommands:       result.CleanupCommands,
+			CleanupTimeoutSeconds: int32(result.CleanupTimeoutSeconds),
+		})
+	}
+	return nil
 }
 
 // DrainSandbox requests the whole-pod retirement of a concurrent-session

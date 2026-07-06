@@ -407,7 +407,7 @@ func TestReleaseSlotRequiresCounter(t *testing.T) {
 		t.Fatalf("seed per-pod claim: %v", err)
 	}
 	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS}
-	if err := claimer.ReleaseSlot(ctx, "sbx-1", "sess-1", false, false); err == nil {
+	if _, err := claimer.ReleaseSlot(ctx, "sbx-1", "sess-1", false, false); err == nil {
 		t.Error("ReleaseSlot with no Counter must fail closed")
 	}
 	// The fail-closed release must not have deleted the per-pod claim.
@@ -463,16 +463,24 @@ func TestReleaseSlotDecrementsAndDeletesClaimOnLastSlot(t *testing.T) {
 	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 2)
 
 	// Release one of the two slots: the per-pod claim stays.
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1", false, false); err != nil {
+	recycled, err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1", false, false)
+	if err != nil {
 		t.Fatalf("ReleaseSlot: %v", err)
+	}
+	if recycled {
+		t.Error("a sibling-slot-remaining release must not report recycled")
 	}
 	if !podClaimExists(t, c, "sbx-1") {
 		t.Error("the per-pod claim must remain while a sibling slot is held")
 	}
 
 	// Release the last slot: the per-pod claim is deleted (non-recycling pool).
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-2", false, false); err != nil {
+	recycled, err = claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-2", false, false)
+	if err != nil {
 		t.Fatalf("ReleaseSlot last: %v", err)
+	}
+	if recycled {
+		t.Error("a non-recycling last-slot drain must not report recycled (the claim is deleted, no scrub)")
 	}
 	if podClaimExists(t, c, "sbx-1") {
 		t.Error("the per-pod claim must be deleted when the last slot drains")
@@ -497,8 +505,12 @@ func TestReleaseSlotLeakedKeepsSlotCounted(t *testing.T) {
 	// Release one slot as leaked: the counter must NOT decrement, so the pod
 	// stays at occupancy 2 and the gateway cannot over-assign into the leaked
 	// slot's resources.
-	if err := claimer.ReleaseSlot(ctx, "sbx-1", "sess-1", false, true); err != nil {
+	recycled, err := claimer.ReleaseSlot(ctx, "sbx-1", "sess-1", false, true)
+	if err != nil {
 		t.Fatalf("ReleaseSlot leaked: %v", err)
+	}
+	if recycled {
+		t.Error("a leaked release must not report recycled (occupancy is not zero)")
 	}
 	// The per-pod claim must remain: a leaked slot holds occupancy above zero,
 	// so the pod is not at the occupancy-zero disposition edge.
@@ -524,11 +536,16 @@ type fakeRecycleArmer struct{ armed []string }
 
 func (f *fakeRecycleArmer) OnRecycling(podID string) { f.armed = append(f.armed, podID) }
 
-// spec: 3.4, 3.1, 6.41
+// spec: 3.4, 3.1, 6.41, 5.2
 // diagnosis: a recycling concurrent-session pool deleted the per-pod claim on
 // the last-slot-drain edge instead of patching it bound → recycling and arming
 // the §3.4 missing-report timeout, so the pod retired rather than recycling and
-// no gateway-side timeout bounded a missing ReportPodScrub.
+// no gateway-side timeout bounded a missing ReportPodScrub. The returned
+// recycled signal is the §5.2 whole-pod scrub trigger: it must be true on the
+// occupancy-zero recycle edge so Binder.ReleaseSlot sends the adapter the
+// recycle Shutdown. Pre-fix ReleaseSlot returned no such signal (a single error
+// return), so the binder had no way to fire the concurrent whole-pod scrub and
+// every recycling concurrent pool was retired by the missing-report timeout.
 func TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4(t *testing.T) {
 	armer := &fakeRecycleArmer{}
 	claimer, c, counter := slotClaimerFor(t, concurrentSandbox("sbx-1", "claimed", "acme"))
@@ -539,8 +556,12 @@ func TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4(t *testing.
 	// (not deleted) and the missing-report timeout is armed. leaked=false: the
 	// last slot released cleanly, so occupancy reaches zero and the recycle
 	// disposition runs.
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1", true, false); err != nil {
+	recycled, err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-1", true, false)
+	if err != nil {
 		t.Fatalf("ReleaseSlot recycle: %v", err)
+	}
+	if !recycled {
+		t.Error("the occupancy-zero recycle edge must report recycled=true so the binder fires the §5.2 whole-pod scrub Shutdown")
 	}
 	if !podClaimExists(t, c, "sbx-1") {
 		t.Fatal("a recycling last-slot-drain must keep the claim (patched recycling), not delete it")
@@ -560,8 +581,12 @@ func TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4(t *testing.
 // no-op that touches no claim.
 func TestReleaseSlotIsIdempotentAtZero(t *testing.T) {
 	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", "acme"))
-	if err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-gone", false, false); err != nil {
+	recycled, err := claimer.ReleaseSlot(context.Background(), "sbx-1", "sess-gone", false, false)
+	if err != nil {
 		t.Fatalf("ReleaseSlot on a zero-slot pod: %v", err)
+	}
+	if recycled {
+		t.Error("a no-op release on a zero-slot pod must not report recycled")
 	}
 	if podClaimExists(t, c, "sbx-1") {
 		t.Error("release on a zero-slot pod must not create a claim")

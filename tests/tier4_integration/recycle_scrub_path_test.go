@@ -29,10 +29,14 @@ package tier4_integration_test
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -52,6 +56,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
@@ -316,7 +322,22 @@ func (recycleFakeRuntime) Output(context.Context, string) (<-chan []byte, error)
 func newRecycleAdapter(t *testing.T, ops *recycleScrubOps, reporter *recycleScrubReporter) (*adapter.Server, <-chan struct{}) {
 	t.Helper()
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	base := t.TempDir()
+	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
+	// The §6.4 concurrent-slot roots so the concurrent BindSlot path can
+	// materialize a per-slot workspace; the session-mode recycle tests never
+	// take the slot path, so setting them is inert for them.
+	srv.WorkspaceBase = filepath.Join(base, "workspace")
+	srv.SessionsRoot = filepath.Join(base, "sessions")
+	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
+	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
+	// The whole-pod scrub runs its cleanup commands with cwd = WorkspaceRoot, so
+	// the root must exist for the argv-mode cleanup exec to chdir into it.
+	for _, d := range []string{srv.WorkspaceRoot, srv.CredentialsDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir adapter dir %s: %v", d, err)
+		}
+	}
 	srv.Runtime = recycleFakeRuntime{}
 	srv.ScrubOps = ops
 	if reporter != nil {
@@ -729,6 +750,109 @@ func TestRecyclePathFailedDispositionRetires_spec_6_2(t *testing.T) {
 	}
 	if reps := reporter.snapshot(); len(reps) != 0 {
 		t.Errorf("failed-disposition Release emitted %d ReportPodScrub, want 0", len(reps))
+	}
+}
+
+// recycleSlotBinder wires a podsession.Binder for the §5.2 concurrent-session
+// (maxConcurrentSessions > 1) recycle path: the session-mode recycleBinder plus
+// a miniredis-backed slot counter, which is the intra-pod capacity gate the
+// concurrent BindSlot/ReleaseSlot path requires (a binder with no counter fails
+// closed). The recording armer is returned so the concurrent recycle test can
+// assert the occupancy-zero edge armed exactly one missing-report timer.
+func recycleSlotBinder(t *testing.T, c client.Client, dial func(string) (*adapterclient.Client, error)) (*podsession.Binder, *recordingArmer) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	binder, armer := recycleBinder(c, dial)
+	binder.SlotCounter = slotcounter.New(rc)
+	return binder, armer
+}
+
+// TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2 drives the §5.2
+// concurrent-session recycle path end to end (CODE-A): a single slot on a
+// recycling concurrent pool releases cleanly, the last-slot-drain edge patches
+// the per-pod claim bound → recycling, arms the missing-report timeout, and
+// sends the adapter the whole-pod recycle Shutdown that triggers the §5.2 scrub
+// and its ReportPodScrub. Before CODE-A the concurrent ReleaseSlot ran only the
+// per-slot ShutdownSlot and never the whole-pod recycle Shutdown, so the adapter
+// scrub never ran and the pod was retired by the missing-report timeout; this
+// test asserts the corrected end-to-end reuse flow and fails against the pre-fix
+// binder (no scrub host ops run, no ReportPodScrub emitted).
+//
+// diagnosis: a failure means the concurrent-session recycle boundary broke end
+// to end. If the claim is not `recycling`, ReleaseSlot did not patch it on the
+// occupancy-zero edge. If the adapter ran no scrub or emitted no ReportPodScrub,
+// the whole-pod recycle Shutdown was not sent or the adapter did not dispatch
+// the concurrent-mode scrub branch.
+// spec: 5.2 (whole-pod scrub trigger, uniform across session modes; concurrent
+// occupancy-zero reuse), 4.7 (Shutdown recycle disposition), 3.4 (recycle
+// disposition, patch-then-scrub)
+func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
+	c := recycleCluster(t)
+	ops := &recycleScrubOps{}
+	reporter := newRecycleScrubReporter()
+	srv, scrubDone := newRecycleAdapter(t, ops, reporter)
+	binder, armer := recycleSlotBinder(t, c, recycleAdapterDialer(t, srv))
+
+	// A single slot on a recycling concurrent pool. maxConcurrentSessions > 1
+	// routes through the slot path; releasing the one slot cleanly drives the
+	// Redis counter to zero (occupancy zero), so the recycle disposition fires.
+	res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool:                  "recycle-pool",
+		SessionID:             "slot-sess",
+		TenantID:              "acme",
+		Runtime:               "echo",
+		MaxConcurrentSessions: 4,
+		Plan:                  &adapterv1.WorkspacePlan{},
+		Recycle:               true,
+		CleanupCommands:       []string{"true"},
+		CleanupTimeoutSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("BindSlot: %v", err)
+	}
+	if res.CleanupTimeoutSeconds != 30 || len(res.CleanupCommands) != 1 || res.CleanupCommands[0] != "true" {
+		t.Fatalf("slot BindResult scrub config = %d / %v, want the bind-request cleanup config carried through",
+			res.CleanupTimeoutSeconds, res.CleanupCommands)
+	}
+	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Bound) {
+		t.Fatalf("claim phase after BindSlot = %q, want bound", got)
+	}
+
+	// A clean last-slot release patches the claim bound → recycling, arms the
+	// missing-report timeout, and sends the whole-pod recycle Shutdown.
+	if err := binder.ReleaseSlot(context.Background(), res); err != nil {
+		t.Fatalf("ReleaseSlot: %v", err)
+	}
+	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
+		t.Fatalf("claim phase after clean concurrent recycle ReleaseSlot = %q, want recycling (§3.4 patch-then-scrub)", got)
+	}
+	if armed := armer.armedSnapshot(); len(armed) != 1 || armed[0] != "sbx-r" {
+		t.Fatalf("missing-report timers armed = %v, want [sbx-r]", armed)
+	}
+
+	// Wait for the async whole-pod scrub to report.
+	select {
+	case <-reporter.reported:
+	case <-time.After(5 * time.Second):
+		t.Fatal("adapter did not emit ReportPodScrub within 5s (the concurrent whole-pod scrub did not trigger)")
+	}
+	<-scrubDone
+
+	killed, verified, _ := ops.ranScrub()
+	if !killed || !verified {
+		t.Errorf("concurrent whole-pod scrub host ops ran killed=%v verified=%v, want both true", killed, verified)
+	}
+	reps := reporter.snapshot()
+	if len(reps) != 1 {
+		t.Fatalf("ReportPodScrub count = %d, want 1", len(reps))
+	}
+	if reps[0].podID != "sbx-r" {
+		t.Errorf("reported pod_id = %q, want sbx-r (the SandboxName the timer keys on)", reps[0].podID)
+	}
+	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
+		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reps[0].outcome)
 	}
 }
 

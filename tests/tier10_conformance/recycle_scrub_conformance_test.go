@@ -234,6 +234,70 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 	}
 }
 
+// spec: 5.2 (whole-pod scrub trigger, uniform across session modes), 4.7
+// (runtime adapter recycle disposition).
+//
+// diagnosis: a failure means a conforming adapter does not run the §5.2
+// whole-pod scrub on a concurrent-mode recycle Shutdown. A concurrent-session
+// pod (maxConcurrentSessions > 1) sets only per-slot session state, never the
+// pod-global session, so the gateway's occupancy-zero recycle Shutdown carries
+// the last-released slot's session id and NO slot id against a pod whose
+// pod-global session is empty. A conforming adapter must dispatch the whole-pod
+// scrub on that request rather than rejecting it with a "pod has no assigned
+// session" precondition failure. An adapter that gates the scrub behind a
+// pod-global session (the pre-CODE-A behavior) leaves every recycling
+// concurrent pool to the gateway missing-report timeout and can no longer reuse
+// it, so this case pins the concurrent occupancy-zero reuse contract.
+func TestRecycleScrubConcurrentModeConformance(t *testing.T) {
+	const podID = "pod-recycle-concurrent"
+	rt := &scrubConformanceRuntime{}
+	ops := &scrubConformanceOps{}
+	reporter := &scrubConformanceReporter{}
+	done := make(chan struct{})
+
+	s := adapter.New("conformance")
+	s.WorkspaceRoot = t.TempDir()
+	s.Runtime = rt
+	s.ScrubOps = ops
+	s.PodScrubReporter = reporter
+	s.SetScrubDoneHook(func() { close(done) })
+
+	// No StartSession: a concurrent-session pod never sets the pod-global
+	// session (only per-slot state). The recycle Shutdown carries the
+	// last-released slot's session id (so the non-empty session_id guard admits
+	// it) and no slot id (it is a whole-pod, not a per-slot, teardown).
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		Recycle: &adapterv1.RecycleScrub{
+			PodId:                 podID,
+			CleanupCommands:       []string{},
+			CleanupTimeoutSeconds: 30,
+		},
+	}); err != nil {
+		t.Fatalf("concurrent-mode recycle Shutdown: %v (the adapter gated the scrub behind a pod-global session)", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent-mode recycle scrub did not finish within 5s")
+	}
+
+	if killed, verified := ops.ran(); !killed || !verified {
+		t.Errorf("concurrent-mode whole-pod scrub did not run: killed=%v verified=%v", killed, verified)
+	}
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("concurrent-mode ReportPodScrub calls = %d, want exactly 1: %+v", len(reports), reports)
+	}
+	if reports[0].podID != podID {
+		t.Errorf("reported podId = %q, want %q", reports[0].podID, podID)
+	}
+	if reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
+		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reports[0].outcome)
+	}
+}
+
 // spec: 5.2 (ReportPodScrub binary outcome, retire-and-reprovision), 4.7
 // (runtime adapter recycle disposition).
 //

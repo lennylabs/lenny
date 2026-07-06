@@ -176,7 +176,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	} else {
 		s.counters.Inc("clean_release")
 	}
-	if err := s.claimer.ReleaseSlot(ctx, s.podID, sessionID, false, leaked); err != nil {
+	if _, err := s.claimer.ReleaseSlot(ctx, s.podID, sessionID, false, leaked); err != nil {
 		return fmt.Errorf("ReleaseSlot(leaked=%v): %w", leaked, err)
 	}
 
