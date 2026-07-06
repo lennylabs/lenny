@@ -320,6 +320,47 @@ func TestBuildSidecarWiresStagingAndRuntimeUID(t *testing.T) {
 	}
 }
 
+// TestBuildAdapterCarriesPodNameDownwardAPIEnv_spec_4_7_5_2 asserts the
+// §4.7/§5.2 adapter container carries a POD_NAME env sourced from the
+// Downward API fieldRef metadata.name. This env is the adapter's pod
+// identity for every ReportSessionScrub and ReportPodScrub. An absent,
+// misnamed, or wrong-fieldRef env yields an empty cached podID that the
+// gateway rejects InvalidArgument, silently disabling sessions_served
+// advancement, the leak ledger, and the whole-pod scrub trigger. The
+// test pins the exact fieldRef so a regression is caught at build time
+// rather than at runtime. spec: 4.7 (adapter pod identity), 5.2
+// (ReportSessionScrub). F-5.2.31.
+func TestBuildAdapterCarriesPodNameDownwardAPIEnv_spec_4_7_5_2(t *testing.T) {
+	in := inputs()
+	in.DeploymentModel = "sidecar"
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	var podNameEnv corev1.EnvVar
+	var found bool
+	for _, e := range container(t, pod, "adapter").Env {
+		if e.Name == podspec.PodNameEnvVar {
+			podNameEnv = e
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("adapter container must carry a %q env (§4.7/§5.2 pod identity)", podspec.PodNameEnvVar)
+	}
+	if podNameEnv.Value != "" {
+		t.Errorf("%s must source from the Downward API, not a literal value %q", podspec.PodNameEnvVar, podNameEnv.Value)
+	}
+	if podNameEnv.ValueFrom == nil || podNameEnv.ValueFrom.FieldRef == nil {
+		t.Fatalf("%s must set ValueFrom.FieldRef (Downward API)", podspec.PodNameEnvVar)
+	}
+	if got := podNameEnv.ValueFrom.FieldRef.FieldPath; got != "metadata.name" {
+		t.Errorf("%s fieldRef.fieldPath = %q, want metadata.name", podspec.PodNameEnvVar, got)
+	}
+}
+
 // TestBuildEmbeddedProducesOneContainer asserts the §4.7 embedded
 // model: a single runtime container serving the gRPC contract, with no
 // separate adapter container.
