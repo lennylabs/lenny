@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -571,9 +572,11 @@ func (r *PodReconciler) podUptimeDeadline(pod *corev1.Pod) (time.Time, bool) {
 // read is not gated on the idle state label: a drain-requested concurrent pod
 // carries a leaked slot that holds its Redis-counter occupancy above zero, so
 // its per-pod claim stays bound and the pod projects claimed/active; the legal
-// §6.2 edge is claimed→draining, and the idle-gated arms would skip it. It
-// returns requested=true when the annotation was present and the transition was
-// applied (or was a no-op because the Sandbox was already draining), so the
+// §6.2 edge is claimed→draining, and the idle-gated arms would skip it. On the
+// transition edge it records the reason (a structured log naming the pool, pod,
+// and reason=drain_request), the CODE-E "record the transition reason" clause.
+// It returns requested=true when the annotation was present and the transition
+// was applied (or was a no-op because the Sandbox was already draining), so the
 // caller stops the reconcile short of the idle-gated cert-expiry check.
 //
 // The controller uptime counter is deliberately not incremented here: a
@@ -594,8 +597,21 @@ func (r *PodReconciler) reconcileDrainRequest(ctx context.Context, pod *corev1.P
 		return false, nil
 	}
 	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}
-	if _, err := patchSandboxDraining(ctx, r.Client, key, false); err != nil {
+	transitioned, err := patchSandboxDraining(ctx, r.Client, key, false)
+	if err != nil {
 		return false, err
+	}
+	// Record the transition reason on the edge that flips a non-draining
+	// Sandbox to draining (CODE-E "record the transition reason"). The
+	// drain-request path emits no retirement counter (whichever gateway path
+	// stamped the annotation already counted the pod; a second count here would
+	// double-report, see OnUptimeRetirement), so the record is a structured log
+	// naming the pool, pod, and reason=drain_request rather than a metric. The
+	// log fires only on the transition edge, so a level-triggered re-reconcile of
+	// an already-draining pod does not re-log it.
+	if transitioned {
+		logf.FromContext(ctx).Info("drained pod on gateway drain-request",
+			"pool", pod.Labels[LabelPool], "pod", pod.Name, "reason", "drain_request")
 	}
 	return true, nil
 }

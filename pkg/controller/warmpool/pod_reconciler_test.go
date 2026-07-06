@@ -5,13 +5,17 @@ package warmpool_test
 import (
 	"context"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
@@ -461,6 +465,73 @@ func TestPodReconcileDrainRequestCorruptStampIgnored_spec_4_6(t *testing.T) {
 	if got := getSandbox(t, c, "pod-corrupt").Status.Phase; got != string(state.Claimed) {
 		t.Fatalf("sandbox phase=%q for a corrupt drain-request stamp, want %q", got, state.Claimed)
 	}
+}
+
+// TestPodReconcileDrainRequestRecordsReason_spec_4_6 pins the CODE-E "record
+// the transition reason" clause: the drain-request consumer, on the edge that
+// flips a non-draining Sandbox to draining, emits a structured record naming
+// the pool, pod, and reason=drain_request. The drain-request path emits no
+// retirement counter (the gateway path that stamped the annotation already
+// counted the pod), so the reason record is a log rather than a metric. It
+// asserts the record is emitted exactly once on the transition and is not
+// re-emitted on a later reconcile of the already-draining pod. It would fail
+// against the pre-fix consumer, which drove the transition but recorded no
+// reason.
+// spec: 4.6.1, 4.6.3 (WarmPoolController-written drain records the transition reason)
+func TestPodReconcileDrainRequestRecordsReason_spec_4_6(t *testing.T) {
+	s := newScheme(t)
+	now := time.Now()
+	sb := claimedSandbox("pod-reason")
+	pod := managedPod("pod-reason", "", string(state.Claimed), map[string]string{
+		lennyv1.AnnotationDrainRequest: now.Format(time.RFC3339Nano),
+	})
+	c := newClient(t, s, sb, pod)
+
+	var mu sync.Mutex
+	var records []logRecord
+	ctx := logf.IntoContext(context.Background(), funcr.New(func(prefix, args string) {
+		mu.Lock()
+		defer mu.Unlock()
+		records = append(records, logRecord{msg: prefix, args: args})
+	}, funcr.Options{}))
+
+	r := &warmpool.PodReconciler{Client: c, Now: func() time.Time { return now }}
+	// First reconcile flips the pod to draining and records the reason.
+	if _, err := r.Reconcile(ctx, ctrl.Request{
+		NamespacedName: client.ObjectKey{Namespace: testNS, Name: "pod-reason"},
+	}); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	// Second reconcile re-reaches the drain-request arm (the pod is still present
+	// with a nil DeletionTimestamp while it drains), but the transition is a
+	// no-op, so the reason must not be re-recorded.
+	if _, err := r.Reconcile(ctx, ctrl.Request{
+		NamespacedName: client.ObjectKey{Namespace: testNS, Name: "pod-reason"},
+	}); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var reasonRecords int
+	for _, rec := range records {
+		if strings.Contains(rec.args, "drain_request") {
+			reasonRecords++
+			if !strings.Contains(rec.args, testPool) || !strings.Contains(rec.args, "pod-reason") {
+				t.Fatalf("drain-request reason record %q missing pool %q or pod name", rec.args, testPool)
+			}
+		}
+	}
+	if reasonRecords != 1 {
+		t.Fatalf("drain-request reason recorded %d times, want exactly 1 (transition edge only)", reasonRecords)
+	}
+}
+
+// logRecord captures one logr message and its rendered key/value args for the
+// reason-record assertion above.
+type logRecord struct {
+	msg  string
+	args string
 }
 
 // TestPodReconcileUptimeDrainsOverUptimePod_spec_4_6 pins the §4.6.1/§4.6.3
