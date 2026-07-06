@@ -630,9 +630,9 @@ func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
 		t.Errorf("disposition reason = %q, want vm_restart_reprovision", disp.Reason)
 	}
 	// The reprovision reason is a routine per-recycle-boundary retire, not a
-	// §16.1 limit trigger, so it is not counted on lenny_pod_retirement_total.
+	// §16.1 limit trigger, so it is not counted on lenny_gateway_pod_retirement_total.
 	if disp.Reason.CountsOnRetirementTotal() {
-		t.Error("ReasonVMRestartReprovision counts on lenny_pod_retirement_total, want a non-counting audit-only reason")
+		t.Error("ReasonVMRestartReprovision counts on lenny_gateway_pod_retirement_total, want a non-counting audit-only reason")
 	}
 }
 

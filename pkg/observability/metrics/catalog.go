@@ -79,7 +79,17 @@ var metricCatalog = []MetricSpec{
 	// retention). The emitter compares the running value against the
 	// pool's recycle.maxScrubFailures (default 3) to drive pod retirement.
 	{"lenny_pod_scrub_failure_count", TypeGauge, "Per-pod scrub failure count on a recycling session-mode pod (cumulative per k8s_pod_name; resets only on pod replacement)"},
-	{"lenny_pod_retirement_total", TypeCounter, "Session-pool pod retirements by reason"},
+	// lenny_gateway_pod_retirement_total counts gateway-initiated retirements
+	// of a recycling session-mode pod, by reason (session_count_limit,
+	// scrub_failure_limit). spec: §16.1 — the gateway's occupancy-zero
+	// applyDisposition and the per-release maxSessionsPerPod drain.
+	{"lenny_gateway_pod_retirement_total", TypeCounter, "Gateway-initiated session-pool pod retirements by reason"},
+	// lenny_controller_pod_retirement_total counts WarmPoolController-initiated
+	// retirements with reason="uptime_limit", registered in the controller's own
+	// metrics registry because the controller and the gateway run as separate
+	// processes with no direct RPC. Sum the two retirement counters via the
+	// §16.1 recording rule. spec: §16.1 — controller-owned uptime_limit drain.
+	{"lenny_controller_pod_retirement_total", TypeCounter, "Controller-initiated session-pool pod retirements (level-triggered maxPodUptimeSeconds drain)"},
 	{"lenny_slot_failure_total", TypeCounter, "Concurrent-workspace slot failure count"},
 	{"lenny_slot_pod_replacement_total", TypeCounter, "Concurrent-workspace slot pod replacement count"},
 	{"lenny_session_startup_duration_seconds", TypeHistogram, "End-to-end session startup duration"},

@@ -1228,13 +1228,15 @@ func (m *Metrics) SetScrubFailureCount(podID, pool, runtimeClass string, count i
 	m.podScrubFailureCount.WithLabelValues(podID, pool, runtimeClass).Set(float64(count))
 }
 
-// IncRetirement increments the §16.1 `lenny_pod_retirement_total` counter
-// for the (reason, pool, runtimeClass) tuple. The §4.7 recycle disposition
-// calls it only for a reason in the frozen §16.1 vocabulary (the three
-// retirement-limit triggers: session_count_limit, uptime_limit,
-// scrub_failure_limit); the §6.39 cordon-drain and the fail-policy
-// termination drain without a retirement-counter increment. spec: §16.1,
-// §16.1.1.
+// IncRetirement increments the §16.1 `lenny_gateway_pod_retirement_total`
+// counter for the (reason, pool, runtimeClass) tuple. The gateway counter is
+// scoped to gateway-decided retirements, so its `reason` is frozen to the two
+// gateway-owned lifecycle-limit triggers (session_count_limit,
+// scrub_failure_limit); the controller-owned
+// `lenny_controller_pod_retirement_total` carries uptime_limit and
+// applyDisposition suppresses the gateway's uptime_limit emission. The §6.39
+// cordon-drain and the fail-policy termination drain without a
+// retirement-counter increment. spec: §16.1, §16.1.1.
 func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {
 	if m == nil {
 		return

@@ -150,12 +150,13 @@ type PodReconciler struct {
 
 	// OnUptimeRetirement, when set, is invoked once per pod on the
 	// claimed→draining edge the level-triggered maxPodUptimeSeconds drain
-	// flips (reconcileUptime). It is the seam the controller-owned
-	// lenny_controller_pod_retirement_total{reason="uptime_limit"} counter
-	// hooks: the gateway suppresses its uptime_limit counter emission (§4.6.1
-	// uptime drains are WarmPoolController-owned), so this arm is the sole
-	// counter for that reason. It fires only on the transition edge (not the
-	// already-draining no-op re-run) so a repeated reconcile of a draining
+	// flips (reconcileUptime), with the pod's pool and resolved runtime class
+	// (from pod.Spec.RuntimeClassName). It is the seam the controller-owned
+	// lenny_controller_pod_retirement_total{reason="uptime_limit",pool,runtime_class}
+	// counter hooks: the gateway suppresses its uptime_limit counter emission
+	// (§4.6.1 uptime drains are WarmPoolController-owned), so this arm is the
+	// sole counter for that reason. It fires only on the transition edge (not
+	// the already-draining no-op re-run) so a repeated reconcile of a draining
 	// over-uptime pod does not re-count it. Nil is a no-op.
 	//
 	// The drain-request consumer path deliberately does not invoke this seam:
@@ -164,7 +165,7 @@ type PodReconciler struct {
 	// maxSessionsPerPod stamp), so counting it here would double-count it.
 	//
 	// spec: §4.6.1 (uptime drains are WarmPoolController-written).
-	OnUptimeRetirement func(pool string)
+	OnUptimeRetirement func(pool, runtimeClass string)
 
 	// MaxConcurrentReconciles is the §4.6.1 worker count
 	// (--max-concurrent-reconciles). Zero or negative selects the
@@ -535,7 +536,7 @@ func (r *PodReconciler) reconcileUptime(ctx context.Context, pod *corev1.Pod) (t
 		return 0, false, err
 	}
 	if transitioned && r.OnUptimeRetirement != nil {
-		r.OnUptimeRetirement(pod.Labels[LabelPool])
+		r.OnUptimeRetirement(pod.Labels[LabelPool], podRuntimeClass(pod))
 	}
 	return 0, true, nil
 }
@@ -562,6 +563,19 @@ func (r *PodReconciler) podUptimeDeadline(pod *corev1.Pod) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return created.Add(time.Duration(seconds) * time.Second), true
+}
+
+// podRuntimeClass returns the pod's resolved Kubernetes RuntimeClass name for
+// the runtime_class label on lenny_controller_pod_retirement_total. The Sandbox
+// reconciler stamps pod.Spec.RuntimeClassName from the pool's §5.3 isolation
+// profile; a pod with no RuntimeClassName (an unset default-runtime pool)
+// resolves to the empty label value, matching the gateway counter's handling of
+// a pod with no runtime class.
+func podRuntimeClass(pod *corev1.Pod) string {
+	if pod.Spec.RuntimeClassName != nil {
+		return *pod.Spec.RuntimeClassName
+	}
+	return ""
 }
 
 // reconcileDrainRequest consumes the §4.6.3 lenny.dev/drain-request annotation

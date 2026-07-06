@@ -90,12 +90,17 @@ func (w *controllerWiring) registerCoreControllers() {
 	// watches managed Pods and Nodes; the Node watch re-labels every pod
 	// on a node when the node is cordoned or uncordoned.
 	if err := (&warmpool.PodReconciler{
-		Client:                  mgr.GetClient(),
-		CertTTL:                 f.certTTL,
-		CertExpiryThreshold:     f.certExpiryThreshold,
-		CertIssuanceGrace:       f.certIssuanceGrace,
-		RequireCertIssuance:     f.requireCertIssuance,
-		CertMetrics:             controllermetrics.CertExpiry{},
+		Client:              mgr.GetClient(),
+		CertTTL:             f.certTTL,
+		CertExpiryThreshold: f.certExpiryThreshold,
+		CertIssuanceGrace:   f.certIssuanceGrace,
+		RequireCertIssuance: f.requireCertIssuance,
+		CertMetrics:         controllermetrics.CertExpiry{},
+		// §16.1 lenny_controller_pod_retirement_total: the controller owns the
+		// uptime_limit retirement count because the level-triggered
+		// maxPodUptimeSeconds drain runs in this process, not the gateway
+		// (which suppresses its own uptime_limit emission).
+		OnUptimeRetirement:      warmpool.IncControllerUptimeRetirement,
 		MaxConcurrentReconciles: f.maxConcurrentReconciles,
 		QueueFactory:            w.queueFactory,
 	}).SetupWithManager(mgr); err != nil {

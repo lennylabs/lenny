@@ -229,7 +229,7 @@ type PodRecyclePolicy struct {
 	PodUptimeSeconds int64
 	// Pool is the pod's pool name, the pool dimension on the §16.1
 	// recycle metrics (lenny_pod_scrub_failure_total,
-	// lenny_pod_scrub_failure_count, lenny_pod_retirement_total). spec:
+	// lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total). spec:
 	// §16.1 (pool label).
 	Pool string
 	// RuntimeClass is the pod's Kubernetes RuntimeClass name, the
@@ -299,7 +299,7 @@ type ClaimDispositionDriver interface {
 // method carries the pool and runtime_class dimensions the §16.1 inventory
 // mandates on these series so a concrete sink can emit them at the required
 // label cardinality. spec: §16.1 (lenny_pod_scrub_failure_total,
-// lenny_pod_scrub_failure_count, lenny_pod_retirement_total — labeled by
+// lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total — labeled by
 // pool, runtime_class), §5.2 (onScrubFailure: warn increments both
 // scrub-failure series on every failure).
 type RetirementMetrics interface {
@@ -312,13 +312,15 @@ type RetirementMetrics interface {
 	// (lenny_pod_scrub_failure_count gauge, labeled by k8s_pod_name, pool,
 	// runtime_class). spec: §16.1 (lenny_pod_scrub_failure_count).
 	SetScrubFailureCount(podID, pool, runtimeClass string, count int)
-	// IncRetirement records one pod retirement by reason
-	// (lenny_pod_retirement_total{reason, pool, runtime_class}). The caller
-	// emits it only for a reason in the frozen §16.1 vocabulary (the three
-	// retirement-limit triggers); the §6.39 cordon-drain and the fail-policy
-	// termination drain without a retirement-counter increment, so a sink
-	// never observes an out-of-vocabulary reason value. spec: §16.1
-	// (lenny_pod_retirement_total reason label set), §16.1.1.
+	// IncRetirement records one gateway-decided pod retirement by reason
+	// (lenny_gateway_pod_retirement_total{reason, pool, runtime_class}). The
+	// caller emits it only for a gateway-owned reason in the frozen §16.1
+	// vocabulary (session_count_limit, scrub_failure_limit); it suppresses the
+	// uptime_limit emission (the controller owns that count), and the §6.39
+	// cordon-drain and the fail-policy termination drain without a
+	// retirement-counter increment, so a sink never observes an
+	// out-of-vocabulary reason value. spec: §16.1
+	// (lenny_gateway_pod_retirement_total reason label set), §16.1.1.
 	IncRetirement(reason podscrub.RetireReason, pool, runtimeClass string)
 }
 
@@ -497,25 +499,29 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 }
 
 // applyDisposition drives a resolved disposition onto the claim binding
-// state and emits the retirement metric for a reason in the §16.1 vocabulary.
-// A retire writes the terminal disposition (failed vs released), carrying the
-// scrub_warning the §6.39 cordon-drain-under-warn path computes and the
-// adapter-supplied failure detail for the audit trail; a reuse drives the
-// recycle path. pool and runtimeClass label lenny_pod_retirement_total, which
-// is incremented only for a reason the §16.1 inventory declares (the three
-// retirement-limit triggers); the §6.39 cordon-drain and the fail-policy
-// termination drain without a counter increment. spec: §3.4, §6.39, §16.1.
+// state and emits the gateway retirement metric for a gateway-owned reason in
+// the §16.1 vocabulary. A retire writes the terminal disposition (failed vs
+// released), carrying the scrub_warning the §6.39 cordon-drain-under-warn path
+// computes and the adapter-supplied failure detail for the audit trail; a reuse
+// drives the recycle path. pool and runtimeClass label
+// lenny_gateway_pod_retirement_total, which is incremented only for a
+// gateway-owned reason the §16.1 inventory declares (session_count_limit,
+// scrub_failure_limit; the uptime_limit count is controller-owned); the §6.39
+// cordon-drain and the fail-policy termination drain without a counter
+// increment. spec: §3.4, §6.39, §16.1.
 func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runtimeClass, detail string, preConnect bool, d podscrub.Disposition) error {
 	if d.Retire {
-		// lenny_pod_retirement_total{reason} is frozen to the three §16.1
-		// retirement-limit triggers (session_count_limit, uptime_limit,
-		// scrub_failure_limit). The §6.39 cordon-drain retire and the
-		// onScrubFailure: fail termination drive the drain but are not members
-		// of that vocabulary, so the counter is incremented only when the
-		// reason is one the inventory declares; emitting d.Reason for a
-		// non-vocabulary retire would widen the frozen label set. The audit
-		// trail below still receives the full reason. spec: spec/16 §16.1
-		// (retirement counter label set), §16.1.1 (reason vocabulary).
+		// lenny_gateway_pod_retirement_total{reason} carries only the
+		// gateway-owned members of the frozen §16.1 vocabulary
+		// (session_count_limit, scrub_failure_limit); the controller-owned
+		// lenny_controller_pod_retirement_total carries uptime_limit. The §6.39
+		// cordon-drain retire and the onScrubFailure: fail termination drive the
+		// drain but are not members of that vocabulary, so the counter is
+		// incremented only when the reason is one the inventory declares;
+		// emitting d.Reason for a non-vocabulary retire would widen the frozen
+		// label set. The audit trail below still receives the full reason. spec:
+		// spec/16 §16.1 (retirement counter label set), §16.1.1 (reason
+		// vocabulary).
 		if d.Reason.CountsOnRetirementTotal() {
 			r.metrics.IncRetirement(d.Reason, pool, runtimeClass)
 		}

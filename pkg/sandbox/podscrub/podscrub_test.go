@@ -359,7 +359,7 @@ func TestDecideVMRestartRetiresAndReprovisions(t *testing.T) {
 	}
 
 	// The vm-restart reprovision is a routine per-recycle-boundary retire, not a
-	// §16.1 limit trigger, so it does not count on lenny_pod_retirement_total.
+	// §16.1 limit trigger, so it does not count on lenny_gateway_pod_retirement_total.
 	if ReasonVMRestartReprovision.CountsOnRetirementTotal() {
 		t.Errorf("ReasonVMRestartReprovision counts on the retirement total; it is outside the §16.1 vocabulary")
 	}
@@ -395,7 +395,7 @@ func TestDecideVMRestartWarnFailedRetiresWithWarning(t *testing.T) {
 // preceding vm-restart branch retires first with the non-counting
 // ReasonVMRestartReprovision. The non-happy path is a maxSessionsPerPod: 1
 // vm-restart pool retiring with the counting ReasonSessionCountLimit, which
-// would diverge the retire reason and the lenny_pod_retirement_total increment
+// would diverge the retire reason and the lenny_gateway_pod_retirement_total increment
 // from an otherwise-identical maxSessionsPerPod >= 2 pool. A mis-ordered branch
 // (session-count before vm-restart) fails this test.
 // spec: spec/05 §5.2 step 7 (retire-and-reprovision precedes session-count), §16.1.
@@ -499,16 +499,19 @@ func TestDecideScrubbedReuseReserves(t *testing.T) {
 	}
 }
 
-// TestCountsOnRetirementTotalVocabulary verifies the
-// lenny_pod_retirement_total{reason} membership predicate matches the §16.1
-// frozen vocabulary exactly: the three retirement-limit triggers count, and
-// every operational or failure-driven retire (the §6.39 cordon-drain
-// host_unschedulable, the onScrubFailure: fail termination, and the non-retire
-// reuse label) is excluded so the emitter cannot widen the declared label set.
-// spec: spec/16 §16.1 (lenny_pod_retirement_total reason label set:
-// session_count_limit, uptime_limit, scrub_failure_limit), §16.1.1 (reason is
-// reserved for the lifecycle limit triggers; failures use error_type), §6.39
-// (cordon-drain is an operational retire outside the counter vocabulary).
+// TestCountsOnRetirementTotalVocabulary verifies the retirement-reason
+// membership predicate matches the §16.1 frozen vocabulary exactly: the three
+// retirement-limit triggers count (partitioned across
+// lenny_gateway_pod_retirement_total for session_count_limit and
+// scrub_failure_limit and lenny_controller_pod_retirement_total for
+// uptime_limit), and every operational or failure-driven retire (the §6.39
+// cordon-drain host_unschedulable, the onScrubFailure: fail termination, and
+// the non-retire reuse label) is excluded so the emitter cannot widen the
+// declared label set.
+// spec: spec/16 §16.1 (retirement reason label set: session_count_limit,
+// uptime_limit, scrub_failure_limit), §16.1.1 (reason is reserved for the
+// lifecycle limit triggers; failures use error_type), §6.39 (cordon-drain is
+// an operational retire outside the counter vocabulary).
 func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 	counted := map[RetireReason]bool{
 		ReasonSessionCountLimit:      true,

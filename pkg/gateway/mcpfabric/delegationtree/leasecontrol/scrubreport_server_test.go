@@ -329,7 +329,7 @@ func (f *fakeDriver) Retire(_ context.Context, podID string, failed, scrubWarnin
 	return f.retireErr
 }
 
-// retirementCall records one lenny_pod_retirement_total emission with its
+// retirementCall records one lenny_gateway_pod_retirement_total emission with its
 // §16.1 reason, pool, and runtime_class labels.
 type retirementCall struct {
 	reason       podscrub.RetireReason
@@ -783,17 +783,19 @@ func TestReporterPodScrubVMRestartWarnFailedRetiresWithWarning_spec_5_2(t *testi
 }
 
 // TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter verifies the
-// vm-restart reprovision drains the pod without incrementing
-// lenny_pod_retirement_total: the counter's reason label is frozen to the three
-// §16.1 limit triggers and vm_restart_reprovision is outside that vocabulary
-// (like host_unschedulable and scrub_report_timeout), so the routine
-// per-recycle-boundary reprovision does not widen the frozen label set.
-// spec: 16.1 (lenny_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 5.2 (vm-restart reprovision)
+// vm-restart reprovision drains the pod without incrementing the gateway
+// retirement counter lenny_gateway_pod_retirement_total: the frozen §16.1
+// retirement-reason vocabulary partitions across the gateway counter
+// (session_count_limit, scrub_failure_limit) and the controller counter
+// (uptime_limit), and vm_restart_reprovision is outside that vocabulary (like
+// host_unschedulable and scrub_report_timeout), so the routine
+// per-recycle-boundary reprovision does not widen either frozen label set.
+// spec: 16.1 (lenny_gateway_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 5.2 (vm-restart reprovision)
 //
 // diagnosis: a failure means the vm-restart reprovision emits
-// lenny_pod_retirement_total{reason="vm_restart_reprovision"}, a reason value
-// the §16.1 inventory does not declare, breaking the frozen-vocabulary contract
-// on every recycle boundary of a vm-restart pool.
+// lenny_gateway_pod_retirement_total{reason="vm_restart_reprovision"}, a reason
+// value the §16.1 inventory does not declare, breaking the frozen-vocabulary
+// contract on every recycle boundary of a vm-restart pool.
 func TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter_spec_16_1(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
@@ -872,7 +874,7 @@ func TestNewScrubReporterRequiresDeps_spec_4_7(t *testing.T) {
 // their mandated pool and runtime_class label dimensions. The aggregate
 // lenny_pod_scrub_failure_total counter increments alongside the per-pod
 // lenny_pod_scrub_failure_count gauge.
-// spec: 16.1 (lenny_pod_scrub_failure_total, lenny_pod_scrub_failure_count, lenny_pod_retirement_total labeled by pool, runtime_class), 5.2 (both scrub-failure series increment on failure)
+// spec: 16.1 (lenny_pod_scrub_failure_total, lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total labeled by pool, runtime_class), 5.2 (both scrub-failure series increment on failure)
 //
 // diagnosis: a failure means the operator-facing recycle observability is
 // missing — the aggregate scrub-failure counter is not emitted, a retiring
@@ -914,17 +916,18 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 }
 
 // TestReporterPodScrubCordonDrainEmitsNoRetirementCounter verifies the §6.39
-// cordon-drain retire drains the pod without incrementing
-// lenny_pod_retirement_total: the counter's reason label is frozen to the
-// three §16.1 limit triggers (session_count_limit, uptime_limit,
-// scrub_failure_limit) and host_unschedulable is outside that vocabulary, so
-// the disposition drives the drain and records the reason on the claim audit
-// trail but emits no retirement-counter increment with an out-of-vocabulary
-// label value. The driver still receives the cordon-drain retire.
-// spec: 16.1 (lenny_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 6.39 (cordon-drain operational retire)
+// cordon-drain retire drains the pod without incrementing the gateway
+// retirement counter lenny_gateway_pod_retirement_total: the frozen §16.1
+// retirement-reason vocabulary (session_count_limit, uptime_limit,
+// scrub_failure_limit) partitions across the gateway counter and the
+// controller counter, and host_unschedulable is outside that vocabulary, so the
+// disposition drives the drain and records the reason on the claim audit trail
+// but emits no retirement-counter increment with an out-of-vocabulary label
+// value. The driver still receives the cordon-drain retire.
+// spec: 16.1 (lenny_gateway_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 6.39 (cordon-drain operational retire)
 //
 // diagnosis: a failure means the §6.39 cordon-drain emits
-// lenny_pod_retirement_total{reason="host_unschedulable"}, a fourth reason
+// lenny_gateway_pod_retirement_total{reason="host_unschedulable"}, a reason
 // value the §16.1 inventory does not declare, widening the frozen label set
 // and breaking the metric-catalog vocabulary contract.
 func TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1(t *testing.T) {
@@ -958,13 +961,13 @@ func TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1(t *testin
 
 // TestReporterPodScrubFailPolicyEmitsNoRetirementCounter verifies the
 // onScrubFailure: fail termination drains to the claim `failed` terminal
-// without incrementing lenny_pod_retirement_total: cleanup_fail_policy is a
+// without incrementing lenny_gateway_pod_retirement_total: cleanup_fail_policy is a
 // failure-driven retire that §16.1.1 classifies under error_type rather than
 // the retirement-counter reason vocabulary, so the counter is not widened.
-// spec: 16.1 (lenny_pod_retirement_total reason label set), 16.1.1 (failures use error_type, not reason), 5.2 (onScrubFailure: fail)
+// spec: 16.1 (lenny_gateway_pod_retirement_total reason label set), 16.1.1 (failures use error_type, not reason), 5.2 (onScrubFailure: fail)
 //
 // diagnosis: a failure means the fail-policy termination emits a
-// lenny_pod_retirement_total{reason="cleanup_fail_policy"} increment, a value
+// lenny_gateway_pod_retirement_total{reason="cleanup_fail_policy"} increment, a value
 // the §16.1 inventory does not declare.
 func TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}

@@ -736,7 +736,7 @@ func (s *recordingSink) IncRetirement(reason, pool, rc string) {
 // TestRetirementMetricsMapsReasonToLabel verifies the adapter forwards the
 // scrub-failure and retirement emissions and maps the typed RetireReason onto
 // its string label.
-// spec: 16.1 (lenny_pod_scrub_failure_total, lenny_pod_scrub_failure_count, lenny_pod_retirement_total)
+// spec: 16.1 (lenny_pod_scrub_failure_total, lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total)
 //
 // diagnosis: a failure means the recycle observability is dropped or the
 // retirement reason label is mis-encoded, so the §16.1 metric catalog

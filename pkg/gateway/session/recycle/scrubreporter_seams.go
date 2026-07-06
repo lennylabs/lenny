@@ -770,7 +770,7 @@ type retirementMetrics struct {
 // NewRetirementMetrics wraps a gatewaymetrics sink as the §16.1 retirement
 // metrics seam. A nil sink returns nil so the ScrubReporter falls back to
 // its no-op metrics. spec: §16.1 (lenny_pod_scrub_failure_total,
-// lenny_pod_scrub_failure_count, lenny_pod_retirement_total).
+// lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total).
 func NewRetirementMetrics(sink RetirementMetricsSink) leasecontrol.RetirementMetrics {
 	if sink == nil {
 		return nil

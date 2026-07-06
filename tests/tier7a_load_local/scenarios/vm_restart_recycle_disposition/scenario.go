@@ -168,7 +168,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 		}
 		if d.Reason.CountsOnRetirementTotal() {
 			s.counters.Inc("vmrestart_counted_on_retirement_total")
-			return fmt.Errorf("§16.1 violated: vm-restart reprovision for %s counted on lenny_pod_retirement_total", podID)
+			return fmt.Errorf("§16.1 violated: vm-restart reprovision for %s counted on lenny_gateway_pod_retirement_total", podID)
 		}
 		s.counters.Inc("vmrestart_retired")
 		return nil
@@ -200,7 +200,7 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 		return fmt.Errorf("§5.2 step 7 violated: %d vm-restart boundaries did not retire-and-reprovision (reused or wrong reason)", v)
 	}
 	if v := s.counters.Get("vmrestart_counted_on_retirement_total"); v > 0 {
-		return fmt.Errorf("§16.1 violated: %d vm-restart reprovisions counted on lenny_pod_retirement_total", v)
+		return fmt.Errorf("§16.1 violated: %d vm-restart reprovisions counted on lenny_gateway_pod_retirement_total", v)
 	}
 	if v := s.counters.Get("standard_vmrestart_reason"); v > 0 {
 		return fmt.Errorf("§5.2 step 7 violated: %d standard boundaries got the vm-restart reason", v)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -554,7 +555,7 @@ func TestPodReconcileUptimeDrainsOverUptimePod_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{
 		Client:             c,
 		Now:                func() time.Time { return created.Add(2 * time.Hour) }, // 2h > 1h cap
-		OnUptimeRetirement: func(pool string) { retired = append(retired, pool) },
+		OnUptimeRetirement: func(pool, _ string) { retired = append(retired, pool) },
 	}
 	reconcilePod(t, r, "pod-overuptime")
 
@@ -563,6 +564,52 @@ func TestPodReconcileUptimeDrainsOverUptimePod_spec_4_6(t *testing.T) {
 	}
 	if len(retired) != 1 || retired[0] != testPool {
 		t.Fatalf("OnUptimeRetirement calls = %v, want exactly one for %q", retired, testPool)
+	}
+}
+
+// TestPodReconcileUptimePassesRuntimeClass_spec_16_1 pins the CODE-F seam
+// contract: the level-triggered uptime drain reports the pod's resolved
+// runtime_class (pod.Spec.RuntimeClassName) alongside its pool, so the
+// controller-owned lenny_controller_pod_retirement_total series is labeled the
+// way §16.1 requires. Against the pre-CODE-F seam (which reported only pool)
+// the runtime_class would be empty, so this asserts the corrected outcome.
+// spec: 16.1 (lenny_controller_pod_retirement_total{reason,pool,runtime_class})
+func TestPodReconcileUptimePassesRuntimeClass_spec_16_1(t *testing.T) {
+	s := newScheme(t)
+	// envtest runs the RuntimeClass admission plugin, which rejects a pod that
+	// references a RuntimeClass that does not exist. Register node/v1 and create
+	// the RuntimeClass so the labeled pod is admitted.
+	if err := nodev1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme nodev1: %v", err)
+	}
+	rc := "gvisor"
+	runtimeClass := &nodev1.RuntimeClass{
+		ObjectMeta: metav1.ObjectMeta{Name: rc},
+		Handler:    rc,
+	}
+	sb := claimedSandbox("pod-rc-uptime")
+	pod := managedPod("pod-rc-uptime", "", string(state.Claimed), uptimeAnnotation(3600))
+	pod.Spec.RuntimeClassName = &rc
+	c := newClient(t, s, runtimeClass, sb, pod)
+
+	created := getCorePod(t, c, "pod-rc-uptime").CreationTimestamp.Time
+	var gotPool, gotRC string
+	var calls int
+	r := &warmpool.PodReconciler{
+		Client: c,
+		Now:    func() time.Time { return created.Add(2 * time.Hour) },
+		OnUptimeRetirement: func(pool, runtimeClass string) {
+			gotPool, gotRC = pool, runtimeClass
+			calls++
+		},
+	}
+	reconcilePod(t, r, "pod-rc-uptime")
+
+	if calls != 1 {
+		t.Fatalf("OnUptimeRetirement fired %d times, want 1", calls)
+	}
+	if gotPool != testPool || gotRC != rc {
+		t.Fatalf("OnUptimeRetirement(pool=%q, runtimeClass=%q), want (%q, %q)", gotPool, gotRC, testPool, rc)
 	}
 }
 
@@ -585,7 +632,7 @@ func TestPodReconcileUptimeCountsOncePerPod_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{
 		Client:             c,
 		Now:                func() time.Time { return created.Add(2 * time.Hour) },
-		OnUptimeRetirement: func(string) { count++ },
+		OnUptimeRetirement: func(string, string) { count++ },
 	}
 	reconcilePod(t, r, "pod-recount")
 	reconcilePod(t, r, "pod-recount") // pod is already draining now
@@ -611,7 +658,7 @@ func TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{
 		Client:             c,
 		Now:                func() time.Time { return created.Add(10 * time.Minute) }, // 10m < 60m cap
-		OnUptimeRetirement: func(string) { count++ },
+		OnUptimeRetirement: func(string, string) { count++ },
 	}
 	res := reconcilePod(t, r, "pod-young-uptime")
 
@@ -643,7 +690,7 @@ func TestPodReconcileUptimeNoCapNoDrain_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{
 		Client:             c,
 		Now:                func() time.Time { return created.Add(1000 * time.Hour) },
-		OnUptimeRetirement: func(string) { count++ },
+		OnUptimeRetirement: func(string, string) { count++ },
 	}
 	reconcilePod(t, r, "pod-nocap")
 
@@ -678,7 +725,7 @@ func TestPodReconcileUptimePrecedesDrainRequest_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{
 		Client:             c,
 		Now:                func() time.Time { return created.Add(2 * time.Hour) },
-		OnUptimeRetirement: func(string) { count++ },
+		OnUptimeRetirement: func(string, string) { count++ },
 	}
 	reconcilePod(t, r, "pod-bothcaps")
 
