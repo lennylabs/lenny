@@ -514,15 +514,24 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID, pool, runti
 		// lenny_gateway_pod_retirement_total{reason} carries only the
 		// gateway-owned members of the frozen §16.1 vocabulary
 		// (session_count_limit, scrub_failure_limit); the controller-owned
-		// lenny_controller_pod_retirement_total carries uptime_limit. The §6.39
-		// cordon-drain retire and the onScrubFailure: fail termination drive the
-		// drain but are not members of that vocabulary, so the counter is
-		// incremented only when the reason is one the inventory declares;
-		// emitting d.Reason for a non-vocabulary retire would widen the frozen
-		// label set. The audit trail below still receives the full reason. spec:
+		// lenny_controller_pod_retirement_total carries uptime_limit.
+		// CountsOnGatewayRetirementTotal is the gateway-scoped predicate: it
+		// excludes uptime_limit even though Decide still returns
+		// ReasonMaxUptimeExceeded at the occupancy-zero recycle boundary (a
+		// draining-state backstop), because the WarmPoolController's
+		// level-triggered maxPodUptimeSeconds drain is the sole uptime_limit
+		// emitter. Suppressing the gateway emission here keeps an over-uptime pod
+		// that drains its last slot to occupancy zero from being counted twice
+		// (once by this applyDisposition, once by the controller reconcileUptime)
+		// through the §16.1 summing recording rule. The §6.39 cordon-drain retire
+		// and the onScrubFailure: fail termination drive the drain but are not
+		// members of the vocabulary, so the counter is incremented only for a
+		// gateway-owned reason; emitting d.Reason for a non-vocabulary or
+		// controller-owned retire would widen or double-report the frozen label
+		// set. The audit trail below still receives the full reason. spec:
 		// spec/16 §16.1 (retirement counter label set), §16.1.1 (reason
 		// vocabulary).
-		if d.Reason.CountsOnRetirementTotal() {
+		if d.Reason.CountsOnGatewayRetirementTotal() {
 			r.metrics.IncRetirement(d.Reason, pool, runtimeClass)
 		}
 		// state.Failed is the onScrubFailure: fail termination → claim

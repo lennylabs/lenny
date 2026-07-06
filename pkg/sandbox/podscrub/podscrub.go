@@ -250,6 +250,27 @@ func (r RetireReason) CountsOnRetirementTotal() bool {
 	}
 }
 
+// CountsOnGatewayRetirementTotal reports whether the gateway's applyDisposition
+// increments lenny_gateway_pod_retirement_total for this reason. It is the
+// gateway-scoped restriction of CountsOnRetirementTotal: the §16.1 vocabulary
+// partitions by process, and the gateway counter carries only the two
+// gateway-decided reasons (session_count_limit, scrub_failure_limit). The
+// uptime_limit retirement is WarmPoolController-owned and counted on
+// lenny_controller_pod_retirement_total, so the gateway suppresses its own
+// uptime_limit emission even though Decide still returns ReasonMaxUptimeExceeded
+// at the occupancy-zero recycle boundary as a draining-state backstop; without
+// this suppression an over-uptime pod that drains its last slot to occupancy
+// zero would be counted once by the gateway applyDisposition and once by the
+// controller reconcileUptime, double-reporting through the §16.1 summing
+// recording rule. The reasons this predicate excludes but CountsOnRetirementTotal
+// includes is exactly {uptime_limit}. spec: spec/16 §16.1 (retirement reason
+// vocabulary partitioned by process across the two counters; the gateway counter
+// carries session_count_limit and scrub_failure_limit), spec/05 §5.2 (the
+// maxPodUptimeSeconds retirement is WarmPoolController-owned).
+func (r RetireReason) CountsOnGatewayRetirementTotal() bool {
+	return r.CountsOnRetirementTotal() && r != ReasonMaxUptimeExceeded
+}
+
 // Disposition is the resolved §6.2 task_cleanup branch.
 type Disposition struct {
 	// Ready is false only when the scrub result is still ScrubPending:

@@ -541,3 +541,51 @@ func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 		t.Errorf("host_unschedulable counts on the retirement total; it is outside the §16.1 vocabulary")
 	}
 }
+
+// TestCountsOnGatewayRetirementTotalExcludesUptime verifies the gateway-scoped
+// retirement predicate: lenny_gateway_pod_retirement_total carries only the two
+// gateway-decided reasons (session_count_limit, scrub_failure_limit) and
+// suppresses uptime_limit, which is WarmPoolController-owned and counted on
+// lenny_controller_pod_retirement_total. The predicate is the union-membership
+// CountsOnRetirementTotal minus exactly {uptime_limit}, so an over-uptime pod
+// that reaches occupancy zero is not double-counted across the two counters.
+// spec: spec/16 §16.1 (retirement reason vocabulary partitioned by process; the
+// gateway counter carries session_count_limit and scrub_failure_limit),
+// spec/05 §5.2 (the maxPodUptimeSeconds retirement is WarmPoolController-owned).
+func TestCountsOnGatewayRetirementTotalExcludesUptime(t *testing.T) {
+	gatewayCounted := map[RetireReason]bool{
+		ReasonSessionCountLimit:      true,
+		ReasonScrubFailuresExhausted: true,
+		// uptime_limit is a member of the union vocabulary but is
+		// controller-owned; the gateway suppresses it.
+		ReasonMaxUptimeExceeded:    false,
+		ReasonHostUnschedulable:    false,
+		ReasonScrubReportTimeout:   false,
+		ReasonVMRestartReprovision: false,
+		ReasonCleanupFailPolicy:    false,
+		ReasonReuse:                false,
+	}
+	for reason, want := range gatewayCounted {
+		if got := reason.CountsOnGatewayRetirementTotal(); got != want {
+			t.Errorf("RetireReason(%q).CountsOnGatewayRetirementTotal() = %v, want %v", reason, got, want)
+		}
+	}
+
+	// The gateway predicate is exactly the union predicate minus uptime_limit:
+	// it never counts a reason the union excludes, and it excludes only
+	// uptime_limit among the reasons the union counts.
+	for _, reason := range []RetireReason{
+		ReasonSessionCountLimit, ReasonMaxUptimeExceeded, ReasonScrubFailuresExhausted,
+		ReasonHostUnschedulable, ReasonScrubReportTimeout, ReasonVMRestartReprovision,
+		ReasonCleanupFailPolicy, ReasonReuse,
+	} {
+		gateway := reason.CountsOnGatewayRetirementTotal()
+		union := reason.CountsOnRetirementTotal()
+		if gateway && !union {
+			t.Errorf("RetireReason(%q): gateway counts it but the union does not", reason)
+		}
+		if union && !gateway && reason != ReasonMaxUptimeExceeded {
+			t.Errorf("RetireReason(%q): union counts it but the gateway excludes it, and it is not uptime_limit", reason)
+		}
+	}
+}

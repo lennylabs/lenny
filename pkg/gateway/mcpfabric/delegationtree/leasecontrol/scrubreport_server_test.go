@@ -822,6 +822,57 @@ func TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter_spec_16_1(t *te
 	}
 }
 
+// TestReporterPodScrubUptimeExceededSuppressesGatewayCounter verifies that an
+// over-uptime pod reaching occupancy zero, where podscrub.Decide returns
+// ReasonMaxUptimeExceeded, drains the pod (the backstop draining transition)
+// but does NOT increment the gateway retirement counter
+// lenny_gateway_pod_retirement_total for uptime_limit. The §16.1 vocabulary
+// partitions by process: the maxPodUptimeSeconds retirement is
+// WarmPoolController-owned and counted on lenny_controller_pod_retirement_total
+// by the level-triggered reconcileUptime drain, so applyDisposition suppresses
+// the gateway emission via CountsOnGatewayRetirementTotal. Without the
+// suppression the retirement would be double-reported (once by this gateway path
+// and once by the controller) through the §16.1 summing recording rule.
+// spec: 16.1 (two-scoped retirement counters, exactly-once split; gateway carries session_count_limit and scrub_failure_limit only), 5.2 (maxPodUptimeSeconds retirement is WarmPoolController-owned)
+//
+// diagnosis: a failure means the gateway applyDisposition still emits
+// lenny_gateway_pod_retirement_total{reason="uptime_limit"} for an over-uptime
+// pod at occupancy zero, so the controller-owned uptime retirement is
+// double-counted across the two counters and the summing recording rule
+// over-reports every uptime drain that races an occupancy-zero recycle.
+func TestReporterPodScrubUptimeExceededSuppressesGatewayCounter_spec_16_1(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 1
+	// maxSessionsPerPod not reached (1 < 100) and not vm-restart, so Decide
+	// falls through the session-count branch to the uptime branch:
+	// PodUptimeSeconds (7200) >= MaxPodUptimeSeconds (3600).
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		OnScrubFailure: podscrub.OnCleanupWarn, MaxScrubFailures: 3,
+		MaxSessionsPerPod: 100, MaxPodUptimeSeconds: 3600, PodUptimeSeconds: 7200,
+		HostSchedulable: true, Pool: "agents-pool", RuntimeClass: "gvisor",
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	// The pod is still drained on the uptime disposition (the draining-state
+	// backstop): applyDisposition suppresses only the counter, not the drain.
+	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonMaxUptimeExceeded {
+		t.Fatalf("retires = %+v, want one uptime_limit drain", d.retires)
+	}
+	// But the gateway counter is NOT incremented: uptime_limit is
+	// controller-owned, so the gateway suppresses its own emission.
+	if len(m.retirements) != 0 {
+		t.Errorf("retirements = %+v, want none (uptime_limit is controller-owned; the gateway suppresses its emission)", m.retirements)
+	}
+}
+
 // TestReporterPodScrubMissingPodIsNoOp verifies a whole-pod scrub for a pod
 // whose claim is gone is a no-op (nothing left to recycle), not an error.
 // spec: 3.4 (recycle disposition)
