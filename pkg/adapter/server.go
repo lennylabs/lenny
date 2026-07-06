@@ -14,6 +14,7 @@ package adapter
 
 import (
 	"context"
+	"os"
 	"sync"
 	"time"
 
@@ -25,6 +26,14 @@ import (
 // ProtocolVersionV1 is the adapter↔gateway protocol version for the v1
 // contract (§15.5).
 const ProtocolVersionV1 = "1.0.0"
+
+// podNameEnvVar is the Downward API environment variable the adapter reads
+// at startup to learn its own pod name, matching the fieldRef: metadata.name
+// env the sandbox pod spec sets on the adapter container
+// (podspec.PodNameEnvVar). The adapter caches it as the pod identity the
+// §4.7/§5.2 ReportSessionScrub and ReportPodScrub report paths key on.
+// spec: §4.7, §5.2 (adapter pod identity). F-5.2.31.
+const podNameEnvVar = "POD_NAME"
 
 // RuntimeKind selects which §5.1 runtime type the adapter drives. It
 // picks the adapter→runtime path: a type: agent runtime is driven over
@@ -159,6 +168,16 @@ type Server struct {
 	// gateway missing-report timeout retires the pod.
 	// spec: §4.7 (ReportPodScrub); §5.2. F-5.2.15.
 	PodScrubReporter PodScrubReporter
+	// SessionScrubReporter emits the §5.2 per-slot cleanup outcome to the
+	// gateway on every session release via ReportSessionScrub, so the gateway
+	// advances sessions_served (feeding the maxSessionsPerPod retirement) and
+	// feeds a leaked outcome into the unhealthy-threshold ledger. ConnectGateway
+	// wires it to the dialed *gatewaycontrol.Client alongside PodScrubReporter.
+	// Nil (the dev path with no gateway link) leaves the slot-release path
+	// unable to report, so sessions_served never advances and maxSessionsPerPod
+	// stays inert. spec: §4.7 (ReportSessionScrub); §5.2 (maxSessionsPerPod).
+	// F-5.2.31.
+	SessionScrubReporter SessionScrubReporter
 	// ScrubOps runs the §5.2 whole-pod scrub host operations at the recycle
 	// boundary. cmd/lenny-adapter wires it to a scrub.DefaultOps built from
 	// the pod's credential and workspace paths; tests inject a fake. Nil (a
@@ -167,6 +186,17 @@ type Server struct {
 	// retires the pod rather than reusing it without a scrub having run.
 	// spec: §5.2 (whole-pod scrub).
 	ScrubOps scrub.Ops
+	// podID is the adapter's own pod name, read once from the Downward API
+	// POD_NAME env at construction (New) and cached immutably for the process
+	// lifetime. The session- and pod-scrub report paths key on it: ShutdownSlot
+	// carries no pod_id and the base recycle Shutdown carries pod_id only inside
+	// RecycleScrub, so the adapter takes its pod identity from this env. An
+	// absent or misnamed env leaves it empty, which the gateway rejects
+	// InvalidArgument, so the whole scrub-report chain is disabled fail-closed
+	// rather than reporting under an empty key. Set once before any RPC handler
+	// runs, so it needs no lock. spec: §4.7, §5.2 (adapter pod identity).
+	// F-5.2.31.
+	podID string
 	// scrubDone is a test-only seam the recycle-scrub driver fires once its
 	// background goroutine returns, so a test can wait for the async scrub
 	// deterministically without a sleep. Nil in production. spec: §5.2 (async
@@ -360,11 +390,16 @@ type Server struct {
 }
 
 // New returns a Server advertising the given build version and the v1
-// protocol contract. Capabilities start empty.
+// protocol contract. Capabilities start empty. It reads the adapter's own
+// pod name once from the Downward API POD_NAME env and caches it as the pod
+// identity the §4.7/§5.2 scrub-report paths key on; an unset env leaves the
+// cached identity empty, which the gateway rejects fail-closed. spec: §4.7,
+// §5.2 (adapter pod identity). F-5.2.31.
 func New(version string) *Server {
 	return &Server{
 		ProtocolVersions: []string{ProtocolVersionV1},
 		Version:          version,
+		podID:            os.Getenv(podNameEnvVar),
 	}
 }
 

@@ -103,3 +103,51 @@ func TestConnectGatewayWithAddrWiresPodScrubReporter_spec_5_2(t *testing.T) {
 		t.Error("PodScrubReporter is not the same gateway client as ConnectorForwarder")
 	}
 }
+
+// spec: §4.7 (ReportSessionScrub), §5.2 (maxSessionsPerPod) — with a gateway
+// address ConnectGateway retains the dialed GatewayControl client on the Server
+// as the SessionScrubReporter, the seam the §5.2 slot-release path reports the
+// per-slot cleanup outcome through, and it is the same client as the pod-scrub
+// reporter and the platform and connector forwarders. F-5.2.31.
+//
+// diagnosis: a failure means the per-session-release ReportSessionScrub has no
+// GatewayControl link to report over, so sessions_served never advances, the
+// maxSessionsPerPod retirement stays inert, and a leaked slot never reaches the
+// gateway leak ledger.
+func TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2(t *testing.T) {
+	s := adapter.New("gatewaylink-test")
+	// Empty cert/key/ca selects the plaintext dev dial path, so no live
+	// gateway certificate is required to build the client.
+	closer, err := s.ConnectGateway("@lenny-platform-mcp", "lenny-gateway.lenny-system.svc:50051", "", "", "")
+	if err != nil {
+		t.Fatalf("ConnectGateway: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+	if s.SessionScrubReporter == nil {
+		t.Fatal("SessionScrubReporter nil after dialing the gateway; the slot-release path has no report link")
+	}
+	// The per-slot cleanup report travels the same GatewayControl client the
+	// whole-pod scrub report and the platform and connector tool calls travel
+	// over, so every gateway-control seam points at one dialed client.
+	if any(s.SessionScrubReporter) != any(s.PodScrubReporter) {
+		t.Error("SessionScrubReporter is not the same gateway client as PodScrubReporter")
+	}
+	if any(s.SessionScrubReporter) != any(s.PlatformForwarder) {
+		t.Error("SessionScrubReporter is not the same gateway client as PlatformForwarder")
+	}
+}
+
+// spec: §9.1 lines 8-31, §5.2 (maxSessionsPerPod) — with no gateway address
+// ConnectGateway leaves the SessionScrubReporter nil (the dev path with no
+// gateway link), alongside the other gateway-control seams. F-5.2.31.
+func TestConnectGatewayNoAddrLeavesSessionScrubReporterNil_spec_5_2(t *testing.T) {
+	s := adapter.New("gatewaylink-test")
+	closer, err := s.ConnectGateway("@lenny-platform-mcp", "", "", "", "")
+	if err != nil {
+		t.Fatalf("ConnectGateway: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+	if s.SessionScrubReporter != nil {
+		t.Errorf("SessionScrubReporter set without a gateway address: %#v", s.SessionScrubReporter)
+	}
+}
