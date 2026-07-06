@@ -11,10 +11,13 @@ export const meta = {
 
 // args: { scope: string, batchSize?: number, severityOrder?: string[], maxAttemptsPerFinding?: number }
 // scope forms: "theme:T-STD" | "section:11.7" | "section:25" (whole §25) | "all"
-const scope = (args && args.scope) || 'all'
-const batchSize = (args && args.batchSize) || 6
-const severityOrder = (args && args.severityOrder) || ['High', 'Medium', 'Low', 'Info']
-const maxAttemptsPerFinding = (args && args.maxAttemptsPerFinding) || 4
+// args sometimes arrives JSON-encoded as a string rather than parsed into an
+// object; parse defensively so a stringified call site still works.
+const parsedArgs = typeof args === 'string' ? JSON.parse(args) : (args || {})
+const scope = parsedArgs.scope || 'all'
+const batchSize = parsedArgs.batchSize || 6
+const severityOrder = parsedArgs.severityOrder || ['High', 'Medium', 'Low', 'Info']
+const maxAttemptsPerFinding = parsedArgs.maxAttemptsPerFinding || 4
 
 const SELECT_SCHEMA = {
   type: 'object',
