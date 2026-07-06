@@ -9,9 +9,9 @@
 //     5-minute window; a `leaked` slot is counted persistently for as long as
 //     the slot remains leaked. This lands in §5.2 (whole-pod replacement
 //     trigger), §6.2 (leaked slot semantics + the concurrent-occupancy diagram
-//     edge), and the §10.1/§10.3 whole-pod-connection-loss restatement, and it
-//     must match the concurrent-session occupancy table row in
-//     state-machines.md.
+//     edge), and the §10.1 (Horizontal Scaling) whole-pod-connection-loss
+//     restatement, and it must match the concurrent-session occupancy table row
+//     in state-machines.md.
 //  2. The per-release `maxSessionsPerPod` drain. On a concurrent
 //     (`maxConcurrentSessions > 1`) non-`vm-restart` pool the pod drains on the
 //     session release that drives the served-session count to
@@ -43,9 +43,9 @@
 //
 // spec: 5.2 (per-release maxSessionsPerPod drain, persistent leak counting,
 // CreationTimestamp uptime drain, retirement counters), 6.2 (leaked slot
-// semantics, concurrent-occupancy diagram edges), 10.3 (whole-pod-connection-
-// loss trigger restatement), 12.1 (sessions_served schema), 16.1 (retirement
-// counters + recording rule).
+// semantics, concurrent-occupancy diagram edges), 10.1 (whole-pod-connection-
+// loss trigger restatement in Horizontal Scaling), 12.1 (sessions_served
+// schema), 16.1 (retirement counters + recording rule).
 
 package tier11_docs_test
 
@@ -61,8 +61,8 @@ func stateMachinesDoc(t *testing.T, root string) string {
 	return readDocPage(t, filepath.Join(root, "docs", "reference", "state-machines.md"))
 }
 
-// spec: 5.2, 6.2, 10.3
-// diagnosis: §5.2, §6.2, the §10.1/§10.3 whole-pod-connection-loss restatement,
+// spec: 5.2, 6.2, 10.1
+// diagnosis: §5.2, §6.2, the §10.1 whole-pod-connection-loss restatement,
 //
 //	or the state-machines.md concurrent-session occupancy table disagree on the
 //	leaked-slot counting lifetime. Proposal 0035 (SPEC-D) made a `failed` slot
@@ -95,9 +95,9 @@ func TestLeakedSlotCountingLifetimeAgrees_F5231(t *testing.T) {
 		"counted persistently for as long as the slots remain leaked",
 	})
 
-	// §10.1/§10.3 whole-pod-connection-loss restatement: window for failures,
-	// persistent for leaks. The restatement lives in the §10 gateway-internals
-	// horizontal-scaling text; scope to the sentence carrying the trigger.
+	// §10.1 whole-pod-connection-loss restatement: window for failures,
+	// persistent for leaks. The restatement lives in the §10.1 Horizontal
+	// Scaling text; scope to the sentence carrying the trigger.
 	s10 := readDocPage(t, filepath.Join(specDir, "10_gateway-internals.md"))
 	restateLine := lineContaining(s10, "The whole-pod replacement trigger")
 	if restateLine == "" {
