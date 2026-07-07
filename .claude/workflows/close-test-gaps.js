@@ -5,11 +5,11 @@ export const meta = {
   phases: [
     { title: 'Select', detail: 'pick up to batchSize still-open findings in scope, severity-first; resolve any found already-satisfied in passing' },
     { title: 'Close', detail: 'sequential per-finding loop: write a spec-derived test; if it fails, second-guess the test before the code, then fix only when spec-alignment is unambiguous with full blast-radius verification, else escalate to a human; independently verify; mark resolved' },
-    { title: 'Verify', detail: 'batch-level lenny-test --changed, coverage --diff, validate-maps' },
+    { title: 'Verify', detail: 'batch-level lenny-test run --since <merge-base>, coverage --diff, validate-maps, pre-existing-vs-introduced triage on any failure' },
   ],
 }
 
-// args: { scope: string, batchSize?: number, severityOrder?: string[], maxAttemptsPerFinding?: number }
+// args: { scope: string, batchSize?: number, severityOrder?: string[], maxAttemptsPerFinding?: number, branch?: string }
 // scope forms: "theme:T-STD" | "section:11.7" | "section:25" (whole §25) | "all"
 // args sometimes arrives JSON-encoded as a string rather than parsed into an
 // object; parse defensively so a stringified call site still works.
@@ -18,11 +18,19 @@ const scope = parsedArgs.scope || 'all'
 const batchSize = parsedArgs.batchSize || 6
 const severityOrder = parsedArgs.severityOrder || ['High', 'Medium', 'Low', 'Info']
 const maxAttemptsPerFinding = parsedArgs.maxAttemptsPerFinding || 4
+// branch: reuse an existing branch across several batches of the same
+// category (checked out if it exists, created off the current branch if
+// not) instead of always minting a fresh test-gaps/<scope>-<n> branch.
+// Selecting against a branch that already carries prior batches' resolved
+// findings is what makes this safe to call repeatedly; selecting against a
+// stale base (e.g. re-running with no branch, or a branch behind the
+// category's real progress) re-does already-closed work from scratch.
+const explicitBranch = parsedArgs.branch || null
 
 const SELECT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['branch', 'selected', 'resolvedInPassing', 'remainingOpenInScope'],
+  required: ['branch', 'selected', 'resolvedInPassing', 'remainingOpenInScope', 'alreadyEscalatedInScope'],
   properties: {
     branch: { type: 'string' },
     selected: {
@@ -46,6 +54,7 @@ const SELECT_SCHEMA = {
     },
     resolvedInPassing: { type: 'array', items: { type: 'string' } },
     remainingOpenInScope: { type: 'integer' },
+    alreadyEscalatedInScope: { type: 'integer' },
   },
 }
 
@@ -68,21 +77,24 @@ const selectPrompt = [
   '',
   'SCOPE for this run: ' + scope + '. Interpret it as: `theme:T-XXX` means the `## Theme —` section whose anchor is `t-theme-...` matching that prefix (grep TEST-GAPS.md for the T-XXX findings\' parent theme heading); `section:X.Y` means the `## §X.Y` section (or, for a bare section number like `section:25`, every `## §25.*` heading); `all` means the whole file.',
   '',
-  '1. Create and check out a fresh git branch off the current branch: `git checkout -b test-gaps/' + scopeSlugPlaceholder() + '-<n>` where `<n>` is one more than the highest existing `test-gaps/*` branch suffix (`git branch --list \'test-gaps/*\'`), or 1 if none exist. Report the exact branch name you created.',
-  '2. Within scope, grep for `^### - \\[ \\] T-.*— OPEN` to list candidate findings. For each candidate, read its full body (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test).',
+  explicitBranch
+    ? ('1. Check out the branch this category is already accumulating on: `git checkout ' + explicitBranch + '` (it must already exist — this call is a continuation batch on that branch, not the first one). Report it as branch.')
+    : ('1. Create and check out a fresh git branch off the current branch: `git checkout -b test-gaps/' + scopeSlugPlaceholder() + '-<n>` where `<n>` is one more than the highest existing `test-gaps/*` branch suffix (`git branch --list \'test-gaps/*\'`), or 1 if none exist. Report the exact branch name you created.'),
+  '2. Within scope, grep for `^### - \\[ \\] T-.*— OPEN` to list candidate findings. SKIP any finding whose body already contains a `**Needs human input` field — a prior batch already escalated it and re-investigating it again without new information would waste effort; it stays excluded from selection until a human answer removes that field or the finding is otherwise updated. For each remaining candidate, read its full body (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test).',
   '3. Re-verify each candidate is still real before selecting it (this repo may have moved since TEST-GAPS.md was last reconciled): check whether its Suggested-test file now exists on disk, and whether `tests/spec-map.json` now lists a covering test for its section. If a finding is already satisfied, resolve it right now: edit TEST-GAPS.md in place, flip it to `- [x] ... RESOLVED <sha>` (cite the actual landing commit via `git log --oneline --all -- <test file>`) with a **Resolution:** field, and record its id under resolvedInPassing. Commit this housekeeping edit by itself (`git commit -m "TEST-GAPS: resolve <ids> found already satisfied"`) before continuing.',
-  '4. From the genuinely still-open candidates, select up to ' + batchSize + ', ordered by severity ' + severityOrder.join(' > ') + ' (highest first), preferring findings that cluster on a shared spec subsection or test file so one implementation session can close several efficiently.',
+  '4. From the genuinely still-open, not-already-escalated candidates, select up to ' + batchSize + ', ordered by severity ' + severityOrder.join(' > ') + ' (highest first), preferring findings that cluster on a shared spec subsection or test file so one implementation session can close several efficiently.',
   '5. For each selected finding, extract targetTier from its Suggested-test field (the tier it names, e.g. "tier4", "tier2", "tier9"; if more than one tier is named, use the lowest-numbered one as targetTier and mention the rest in gap).',
-  '6. Count and report remainingOpenInScope: how many OPEN findings remain in scope after removing resolvedInPassing and the selected batch.',
+  '6. Count and report remainingOpenInScope: how many OPEN findings remain in scope after removing resolvedInPassing and the selected batch (this excludes already-escalated needs-human findings, which are done for the purposes of this loop even though their checkbox stays open) — report separately as alreadyEscalatedInScope how many OPEN findings in scope already carry a Needs human input field and were skipped for that reason.',
   '',
   'Do not implement anything yet. Do not touch findings outside scope.',
   '',
-  'RETURN the schema fields: branch (the exact branch name from step 1), selected (array as specified), resolvedInPassing (array of ids), remainingOpenInScope (integer).',
+  'RETURN the schema fields: branch (the exact branch name from step 1), selected (array as specified), resolvedInPassing (array of ids), remainingOpenInScope (integer, excluding already-escalated findings per step 6), alreadyEscalatedInScope (integer).',
 ].join('\n')
 
 const selectResult = await agent(selectPrompt, { label: 'select', phase: 'Select', schema: SELECT_SCHEMA, effort: 'medium' })
 log('Selected ' + selectResult.selected.length + ' findings on branch ' + selectResult.branch +
-  ' (resolved ' + selectResult.resolvedInPassing.length + ' in passing, ' + selectResult.remainingOpenInScope + ' remain open in scope after this batch).')
+  ' (resolved ' + selectResult.resolvedInPassing.length + ' in passing, ' + selectResult.remainingOpenInScope + ' closable remain, ' +
+  selectResult.alreadyEscalatedInScope + ' already escalated to needs-human and excluded).')
 
 // ---------------------------------------------------------------------------
 // Close: sequential per-finding loop (findings share the working tree and a
@@ -156,6 +168,8 @@ function implementPrompt(f, priorIssues) {
     '',
     'DECISION TREE. Work through this in order; do not skip straight to writing a code fix.',
     '',
+    'STEP 0 — record `git rev-parse HEAD` before touching anything, as this finding\'s startSha. STEP 5a\'s full regression pass is scoped against it (`lenny-test run --since <startSha>`, not `--changed`, which only diffs the uncommitted working tree and sees nothing once earlier findings in this batch are already committed).',
+    '',
     'STEP 1 — write the test from the spec, not the finding\'s paraphrase. Re-read the exact spec section this finding cites (it may have drifted since the finding was written) and quote the precise sentence(s) you are deriving the assertion from as specCitation. Write the test at the target tier (or the lowest tier that can genuinely exercise the behavior), with a `// spec: §X.Y` citation and, for tier2+, a `// diagnosis:` comment. Reuse existing tests/testinfra building blocks; do not hand-roll ad hoc infra when a helper already exists.',
     '',
     'STEP 2 — run it against the CURRENT, unmodified product code, before changing anything else.',
@@ -171,9 +185,9 @@ function implementPrompt(f, priorIssues) {
     '  b. Re-read the surrounding spec subsection (not just the cited line) for a conflicting requirement, and grep `proposals/` for any prior decision that may have intentionally chosen the current behavior for a reason not obvious from this one line.',
     '  c. Confidence checkpoint — is it unambiguous that (i) the spec requires the new behavior, (ii) no other spec section or approved proposal contradicts it, and (iii) you have fully enumerated the blast radius? Answer honestly; a plausible-sounding fix is not the same as an unambiguous one.',
     '',
-    'STEP 5a — route="code-fix" (only when STEP 4c is a clean yes on all three). Apply the minimal, targeted fix; update every call site/test the blast-radius search found that assumed the old behavior; cite `// spec: §X.Y` on the fix itself, not just the test. Then run a FULL regression pass across the WHOLE reached surface, not just this finding\'s own tier or package: `lenny-test --changed` with no `--max-tier` cap, so every tier the change graph reaches for the touched packages runs. Record the exact command as fullRegressionCommand. If the change touches a shared or foundational package, also run tier1+tier2 for its known reverse-dependents. This must be green before you report route="code-fix"; if it is not, keep fixing within this same attempt or, if you lose confidence the fix is clean, fall back to STEP 5b instead of forcing it through.',
+    'STEP 5a — route="code-fix" (only when STEP 4c is a clean yes on all three). Apply the minimal, targeted fix; update every call site/test the blast-radius search found that assumed the old behavior; cite `// spec: §X.Y` on the fix itself, not just the test. Then run a FULL regression pass across the WHOLE reached surface, not just this finding\'s own tier or package: `lenny-test run --since <startSha from STEP 0>` (check the dry-run plan first with `--dry-run` if unsure which tiers that resolves to), so every tier the change graph reaches for the touched packages runs — not `lenny-test --changed`, which diffs the uncommitted working tree and sees nothing once your own change is committed. Record the exact command as fullRegressionCommand. If the change touches a shared or foundational package, also run tier1+tier2 for its known reverse-dependents. This must be green before you report route="code-fix"; if it is not, keep fixing within this same attempt or, if you lose confidence the fix is clean, fall back to STEP 5b instead of forcing it through. A gating failure that is unrelated to this finding\'s own diff (check by running the same failing test against startSha) is not this finding\'s to fix — note it in notes and do not let it block route="code-fix", but do not silently ignore it either.',
     '',
-    'STEP 5b — route="needs-human" (when STEP 4c is not a clean yes, or a code-fix attempt could not get the full regression pass green without further changes you are not confident about). Do NOT modify product code — if you made exploratory edits while investigating, revert them (`git checkout -- <files>` or `git reset --hard` scoped to just this finding\'s changes, being careful not to discard other commits already on this branch). Write the exact question a human needs to answer (spec ambiguity, contested blast radius, uncertain wider effect) as humanQuestion; the batch driver records it directly on this finding in TEST-GAPS.md afterward (there is no separate issue tracker for this skill). Keep the spec-derived test from STEP 1 if you can mark it non-blocking (`t.Skip("<one-line reason tied to the still-open TEST-GAPS.md finding, not an id>")`) rather than discard the spec-faithful assertion; otherwise note in notes why you discarded it. Do NOT edit TEST-GAPS.md yourself for this route; the finding stays OPEN and is annotated by a later single-writer step.',
+    'STEP 5b — route="needs-human" (when STEP 4c is not a clean yes, or a code-fix attempt could not get the full regression pass green without further changes you are not confident about). Do NOT modify product code — if you made exploratory edits while investigating, revert them (`git checkout -- <files>` or `git reset --hard` scoped to just this finding\'s changes, being careful not to discard other commits already on this branch). Write the exact question a human needs to answer (spec ambiguity, contested blast radius, uncertain wider effect) as humanQuestion; the batch driver records it directly on this finding in TEST-GAPS.md afterward (there is no separate issue tracker for this skill). Keep the spec-derived test from STEP 1 if you can mark it non-blocking (`t.Skip("<one-line reason tied to the still-open TEST-GAPS.md finding, not an id>")`) rather than discard the spec-faithful assertion — and if you keep it, COMMIT it (with any new schema/testdata fixtures it needs) before returning; a kept-but-uncommitted test is invisible to review and easy to lose, and no other step in this workflow will commit it for you. Register it in tests/spec-map.json/tests/change-graph.json like any other new test so `lenny-test validate-maps` stays clean. Otherwise, if you discard the test, note in notes why. Do NOT edit TEST-GAPS.md yourself for this route; the finding stays OPEN and is annotated by a later single-writer step.',
     '',
     'route="moot": re-verifying (independent of the above) shows the gap no longer exists — already covered by since-landed work you can point to. Cite the covering test/commit as resolutionNote.',
     '',
@@ -328,12 +342,13 @@ const codeFixCount = closedResults.filter(function (r) { return r.impl && r.impl
 const verifyBatchPrompt = [
   'ROLE. Batch-level verification for the test-gaps closure batch just implemented on the current branch. This batch includes ' + codeFixCount + ' product-code fix(es) (route=code-fix), so this pass is the second, independent full-regression check on top of each fix\'s own.',
   '',
-  '1. Run `lenny-test --changed` with NO `--max-tier` cap (every tier the change graph reaches for every package touched in this batch, not a capped subset) and report pass/fail.',
-  '2. Run `lenny-test coverage --diff <the commit this branch started from — find it via `git merge-base HEAD <the branch it was cut from>`>` and report the changed-line coverage percentage against the 80% floor.',
-  '3. Run `lenny-test validate-maps` and fix any spec-map/change-graph drift this batch introduced (small fixes only; commit separately if you make any).',
-  '4. Do NOT merge this branch into anything and do NOT push. This batch is reviewed by a human before merge, per this repo\'s git workflow rules.',
+  '1. Find the commit this branch was cut from: `baseSha=$(git merge-base HEAD <the branch it was cut from, typically the branch this run started on>)`. Run `lenny-test run --since "$baseSha" --dry-run` first to see which tiers it resolves to, then run it for real IN THE FOREGROUND and wait for it to actually finish (this can take several minutes; do not background it and report before it completes — an incomplete run is not a verification, and forcing a result before the command returns produces a false allTiersGreen). Use `lenny-test run --since "$baseSha"`, NOT `lenny-test --changed` (which diffs only the uncommitted working tree and sees nothing once this batch is fully committed).',
+  '2. If a tier fails, check whether the SAME test fails against `$baseSha` too (temporarily `git checkout "$baseSha"`, re-run just that test, then `git checkout -` back to this branch — the tree is clean at this point in the workflow so this is safe). A failure that reproduces identically on the base commit is pre-existing and not this batch\'s to fix; note it in notes as pre-existing and do not let it flip allTiersGreen to false on its own, but do not silently drop it either — a human reviewing this batch should still see it flagged. A failure that does NOT reproduce on the base commit is a real regression this batch introduced; allTiersGreen is false and notes must say which finding\'s change looks responsible.',
+  '3. Run `lenny-test coverage --diff "$baseSha"` and report the changed-line coverage percentage against the 80% floor.',
+  '4. Run `lenny-test validate-maps` and fix any spec-map/change-graph drift this batch introduced (small fixes only, e.g. registering a new test file under the right spec-map section — when editing tests/spec-map.json by script rather than by hand, preserve its existing formatting, for example Python\'s json.dump needs ensure_ascii=False or every non-ASCII spec character gets escaped and the diff balloons; commit the fix separately from anything else).',
+  '5. Do NOT merge this branch into anything and do NOT push. This batch is reviewed by a human before merge, per this repo\'s git workflow rules.',
   '',
-  'RETURN: allTiersGreen (boolean), coveragePct (number or null if not computed), validateMapsClean (boolean), notes (string).',
+  'RETURN: allTiersGreen (boolean, per step 2\'s pre-existing-vs-introduced distinction), coveragePct (number or null if not computed), validateMapsClean (boolean), notes (string, including any pre-existing failures flagged for human visibility even though they don\'t count against allTiersGreen).',
 ].join('\n')
 const verifyResult = await agent(verifyBatchPrompt, {
   label: 'batch-verify', phase: 'Verify', effort: 'high',
