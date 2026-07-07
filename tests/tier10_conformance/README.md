@@ -6,15 +6,13 @@ The tests here build the harness and the bundled reference runtimes (`echo`, `st
 
 ## Current state
 
-The suite is a placeholder. `scaffolds_test.go` is the only file in the tier; every named §12.10 test calls `t.Skip` with a `blocked:` diagnosis naming the missing deliverable:
+The suite is implemented. `scaffolds_test.go` builds `cmd/lenny-compliance` and the bundled reference runtimes (`echo`, `streaming-echo`, `delegation-echo`) and exercises `TestBasicAdapterProtocol`, `TestStandardLevel`, `TestFullLevel`, and `TestBundledRuntimesEveryPR` against them, plus `TestReferenceCatalogNightly`, `TestThirdPartyRegistration`, and `TestFidelityMatrix`. `concurrent_slot_conformance_test.go` and `recycle_scrub_conformance_test.go` cover the §5.2 concurrent-session slot lifecycle and whole-pod scrub conformance scenarios.
 
-| Test | Blocked on |
-|:--|:--|
-| `TestReferenceCatalogNightly` | §26 reference-runtime OCI images published to a registry |
-| `TestThirdPartyRegistration` | `RegisterAdapterUnderTest` entry point in `cmd/lenny-compliance` |
-| `TestFidelityMatrix` | Documented per-MessagePart fidelity table plus the OpenAI / Anthropic translators |
+- `TestReferenceCatalogNightly` asserts `pkg/compliance.ReferenceCatalog()` is structurally complete against the §26.1 reference-runtime manifest unconditionally. It additionally exercises the registry-driven image-pull contract, logging the recognized registry, only when `LENNY_REFERENCE_IMAGE_REGISTRY` is set; the multi-gigabyte image pull itself is a release-pipeline concern out of scope for the in-process test runner.
+- `TestThirdPartyRegistration` exercises `pkg/compliance.RegisterAdapterUnderTest`, the same entry point a downstream runtime project imports from its own test code, against the bundled echo runtime.
+- `TestFidelityMatrix` asserts the documented per-`MessagePart` fidelity table against the OpenAI Chat Completions and Open Responses translators in `pkg/gateway/externalapi/outputpartfidelity`.
 
-Once those deliverables land the scaffolds split into per-subject `*_test.go` files and lose their skips.
+Every test in the tier gates on the Go toolchain being on `PATH` (needed to build the harness and the runtimes); that is the one skip in the suite, and it is a genuine external-dependency skip rather than a missing deliverable. No test in the tier is currently blocked on an undelivered dependency.
 
 ## Build tag and invocation
 

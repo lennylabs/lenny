@@ -13,16 +13,10 @@
 //
 // The tests gate on the Go toolchain being available (it is needed to
 // build the harness and the runtimes); a missing toolchain is a
-// genuine external-dependency skip.
-//
-// Sections of §12.10 that need an unbuilt deliverable carry a precise
-// blocked: skip naming the missing piece:
-//   - TestReferenceCatalogNightly needs the §26 reference-runtime OCI
-//     images published to a registry.
-//   - TestThirdPartyRegistration needs the RegisterAdapterUnderTest
-//     entry point in cmd/lenny-compliance.
-//   - TestFidelityMatrix needs the documented per-MessagePart fidelity
-//     table and the OpenAI/Anthropic translators.
+// genuine external-dependency skip and the only skip in the suite.
+// TestReferenceCatalogNightly, TestThirdPartyRegistration, and
+// TestFidelityMatrix are fully implemented; see README.md for what
+// each one covers.
 
 package tier10_conformance_test
 
