@@ -22,7 +22,7 @@ const maxAttemptsPerFinding = parsedArgs.maxAttemptsPerFinding || 4
 const SELECT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['branch', 'selected', 'resolvedInPassing', 'remainingOpenInScope'],
+  required: ['branch', 'selected', 'resolvedInPassing', 'remainingOpenInScope', 'alreadyEscalatedInScope'],
   properties: {
     branch: { type: 'string' },
     selected: {
@@ -46,6 +46,7 @@ const SELECT_SCHEMA = {
     },
     resolvedInPassing: { type: 'array', items: { type: 'string' } },
     remainingOpenInScope: { type: 'integer' },
+    alreadyEscalatedInScope: { type: 'integer' },
   },
 }
 
@@ -69,20 +70,21 @@ const selectPrompt = [
   'SCOPE for this run: ' + scope + '. Interpret it as: `theme:T-XXX` means the `## Theme —` section whose anchor is `t-theme-...` matching that prefix (grep TEST-GAPS.md for the T-XXX findings\' parent theme heading); `section:X.Y` means the `## §X.Y` section (or, for a bare section number like `section:25`, every `## §25.*` heading); `all` means the whole file.',
   '',
   '1. Create and check out a fresh git branch off the current branch: `git checkout -b test-gaps/' + scopeSlugPlaceholder() + '-<n>` where `<n>` is one more than the highest existing `test-gaps/*` branch suffix (`git branch --list \'test-gaps/*\'`), or 1 if none exist. Report the exact branch name you created.',
-  '2. Within scope, grep for `^### - \\[ \\] T-.*— OPEN` to list candidate findings. For each candidate, read its full body (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test).',
+  '2. Within scope, grep for `^### - \\[ \\] T-.*— OPEN` to list candidate findings. SKIP any finding whose body already contains a `**Needs human input` field — a prior batch already escalated it and re-investigating it again without new information would waste effort; it stays excluded from selection until a human answer removes that field or the finding is otherwise updated. For each remaining candidate, read its full body (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test).',
   '3. Re-verify each candidate is still real before selecting it (this repo may have moved since TEST-GAPS.md was last reconciled): check whether its Suggested-test file now exists on disk, and whether `tests/spec-map.json` now lists a covering test for its section. If a finding is already satisfied, resolve it right now: edit TEST-GAPS.md in place, flip it to `- [x] ... RESOLVED <sha>` (cite the actual landing commit via `git log --oneline --all -- <test file>`) with a **Resolution:** field, and record its id under resolvedInPassing. Commit this housekeeping edit by itself (`git commit -m "TEST-GAPS: resolve <ids> found already satisfied"`) before continuing.',
-  '4. From the genuinely still-open candidates, select up to ' + batchSize + ', ordered by severity ' + severityOrder.join(' > ') + ' (highest first), preferring findings that cluster on a shared spec subsection or test file so one implementation session can close several efficiently.',
+  '4. From the genuinely still-open, not-already-escalated candidates, select up to ' + batchSize + ', ordered by severity ' + severityOrder.join(' > ') + ' (highest first), preferring findings that cluster on a shared spec subsection or test file so one implementation session can close several efficiently.',
   '5. For each selected finding, extract targetTier from its Suggested-test field (the tier it names, e.g. "tier4", "tier2", "tier9"; if more than one tier is named, use the lowest-numbered one as targetTier and mention the rest in gap).',
-  '6. Count and report remainingOpenInScope: how many OPEN findings remain in scope after removing resolvedInPassing and the selected batch.',
+  '6. Count and report remainingOpenInScope: how many OPEN findings remain in scope after removing resolvedInPassing and the selected batch (this excludes already-escalated needs-human findings, which are done for the purposes of this loop even though their checkbox stays open) — report separately as alreadyEscalatedInScope how many OPEN findings in scope already carry a Needs human input field and were skipped for that reason.',
   '',
   'Do not implement anything yet. Do not touch findings outside scope.',
   '',
-  'RETURN the schema fields: branch (the exact branch name from step 1), selected (array as specified), resolvedInPassing (array of ids), remainingOpenInScope (integer).',
+  'RETURN the schema fields: branch (the exact branch name from step 1), selected (array as specified), resolvedInPassing (array of ids), remainingOpenInScope (integer, excluding already-escalated findings per step 6), alreadyEscalatedInScope (integer).',
 ].join('\n')
 
 const selectResult = await agent(selectPrompt, { label: 'select', phase: 'Select', schema: SELECT_SCHEMA, effort: 'medium' })
 log('Selected ' + selectResult.selected.length + ' findings on branch ' + selectResult.branch +
-  ' (resolved ' + selectResult.resolvedInPassing.length + ' in passing, ' + selectResult.remainingOpenInScope + ' remain open in scope after this batch).')
+  ' (resolved ' + selectResult.resolvedInPassing.length + ' in passing, ' + selectResult.remainingOpenInScope + ' closable remain, ' +
+  selectResult.alreadyEscalatedInScope + ' already escalated to needs-human and excluded).')
 
 // ---------------------------------------------------------------------------
 // Close: sequential per-finding loop (findings share the working tree and a
