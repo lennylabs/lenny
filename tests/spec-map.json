@@ -1150,7 +1150,9 @@
         "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_ExpandDrainContractComplete",
         "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_PauseResume",
         "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_RollbackFromExpanding",
-        "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_RollbackFromDrainingRequiresRestoreOldPool"
+        "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_RollbackFromDrainingRequiresRestoreOldPool",
+        "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_ExpandGateContract",
+        "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart"
       ],
       "packages": [
         "pkg/runtime/upgrade/state"

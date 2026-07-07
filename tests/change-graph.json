@@ -283,6 +283,9 @@
     "tests/testinfra/containers": {
       "component": ["tests/testinfra/containers/postgres_test.go"]
     },
+    "tests/testinfra/fixtures/expand_contract_migration": {
+      "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]
+    },
     "tests/testdata/migrations": {
       "static": ["scripts/lint-schema.sh"],
       "component": ["tests/tier2_component/migrations/migrations_test.go"]
