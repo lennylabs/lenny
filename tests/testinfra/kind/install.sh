@@ -545,12 +545,21 @@ bootstrap:
     # lookup resolves these when a test posts POST /v1/sessions with the
     # matching runtimeRef; the Sandbox reconciler reads the same-named
     # Runtime CR (applied from agent-workload.yaml) for the pod image.
+    # capabilities.injection.supported is true (§5.1) to match the
+    # Runtime CRD in agent-workload.yaml, so the tier5/8/9
+    # sessiondriver harness can drive a mid-session message round trip
+    # against a real echo-runtime-sidecar pod.
     - name: echo-runtime-sidecar
       type: agent
       image: ${ECHO_IMAGE}
       integrationLevel: basic
       executionMode: session
       isolationProfile: standard
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
       labels:
         lenny.dev/e2e: echo-sidecar
     - name: echo-runtime-embedded

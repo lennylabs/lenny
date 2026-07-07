@@ -623,7 +623,8 @@
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1",
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1",
         "tests/tier9_security/pool_access_pin_test.go::TestCreateBodyPoolEnforcesTenantAccess_spec_4",
-        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage"
+        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
+        "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent"
       ],
       "packages": [
         "pkg/session"
