@@ -1,0 +1,16 @@
+{
+  "_note": "Vendored subset of the externally published OCSF class registry, used to check Lenny's OCSF class_uid assignments against the real standard rather than Lenny's own schemas/ocsf-mapping.yaml mirror. Not a full OCSF JSON Schema bundle: only the class_uid -> caption pairs Lenny's translator currently emits.",
+  "version": "1.1.0",
+  "source": "https://schema.ocsf.io/1.1.0/export/schema",
+  "classes": {
+    "1001": "File System Activity",
+    "2004": "Detection Finding",
+    "3001": "Account Change",
+    "3002": "Authentication",
+    "3004": "Entity Management",
+    "3006": "Group Management",
+    "5001": "Device Inventory Info",
+    "6003": "API Activity",
+    "6004": "Web Resource Access Activity"
+  }
+}
