@@ -2090,7 +2090,8 @@
         "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go",
         "tests/tier3_contract/rest_mcp_consistency/consistency_test.go",
         "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
-        "tests/tier3_contract/rest_openai_responses/fidelity_test.go"
+        "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
+        "tests/tier3_contract/multiprotocol_journey/journey_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",

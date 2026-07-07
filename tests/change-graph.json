@@ -206,7 +206,7 @@
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/..."]
     },
     "cmd/lenny-gateway": {
       "static": ["cmd/lenny-gateway/..."],
@@ -414,7 +414,7 @@
     },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
-      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/..."]
+      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."]
     },
     "tests/testdata/openai_chat": {
       "contract": ["tests/tier3_contract/rest_openai_chat/..."]
@@ -427,7 +427,7 @@
     },
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
-      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."]
     }
   }
 }
