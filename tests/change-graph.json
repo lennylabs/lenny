@@ -67,6 +67,10 @@
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
+    "pkg/gateway/externalapi/openapi": {
+      "unit": ["pkg/gateway/externalapi/openapi/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/..."]
+    },
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],
       "contract": ["tests/tier3_contract/rest_auth/..."]
