@@ -21,6 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
@@ -170,6 +173,51 @@ func opsServer(t *testing.T) *opsserver.Server {
 		Diagnostics: diagnostics.NewService(diagSource),
 		Runbooks:    stubRunbookSource{},
 	})
+}
+
+// opsServerWithAuth builds the same §25 lenny-ops Server as opsServer,
+// wired behind the real §25.4 OIDC authentication + role gate (an HMAC
+// bearer verifier), so a caller's JWT scope claim reaches the §25.12
+// MCP scope-enforcement layer through the production authentication
+// path rather than the local-development X-Lenny-Scope header
+// fallback.
+func opsServerWithAuth(t *testing.T) (*opsserver.Server, *jwt.HMACSigner) {
+	t.Helper()
+
+	diagSource := stubDiagSource{
+		pool: diagnostics.PoolRecord{
+			Name: "default-gvisor", Found: true, CRDSynced: true,
+			Signals: diagnostics.PoolSignals{ImagePullFailures: 2},
+		},
+	}
+	signer := jwt.NewHMACSigner("ops-scope-test", []byte("ops-scope-test-secret"))
+	srv := opsserver.New(opsserver.Options{
+		Locks:       coordination.NewMemStore(),
+		Diagnostics: diagnostics.NewService(diagSource),
+		Auth: &opsserver.AuthConfig{
+			Options:     authmw.Options{Verifier: signer},
+			RateLimiter: opsserver.NewRateLimiter(1000, 1000),
+		},
+	})
+	return srv, signer
+}
+
+// mintScopedToken signs a bearer carrying sub, the platform-admin role,
+// and the given RFC 9068 space-separated scope claim, so a contract
+// test can drive the §25.12 MCP scope-enforcement layer with a real
+// JWT rather than the dev-only X-Lenny-Scope header.
+func mintScopedToken(t *testing.T, signer *jwt.HMACSigner, scope string) string {
+	t.Helper()
+	tok, err := signer.Sign(jwt.Claims{
+		Subject:  "sa-prod-watchdog-01",
+		TenantID: "default",
+		Roles:    []auth.Role{auth.RolePlatformAdmin},
+		Scope:    scope,
+	})
+	if err != nil {
+		t.Fatalf("sign scoped token: %v", err)
+	}
+	return tok
 }
 
 // request issues an HTTP request against the §25 lenny-ops Server and
