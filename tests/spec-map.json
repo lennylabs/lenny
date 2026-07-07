@@ -765,7 +765,8 @@
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
         "pkg/gateway/mcpfabric/mcptools/...",
-        "pkg/gateway/mcpfabric/delegation/..."
+        "pkg/gateway/mcpfabric/delegation/...",
+        "tests/tier4_integration/delegation_await_collect_test.go::TestDelegationAwaitChildren"
       ],
       "packages": [
         "pkg/delegation/tools"
