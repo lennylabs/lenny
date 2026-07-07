@@ -1601,6 +1601,7 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier2_component/stores/storerouter_test.go",
         "tests/tier3_contract/cloudevents/cloudevents_test.go",
+        "tests/tier3_contract/cloudevents/published_schema_test.go",
         "tests/tier2_component/stores/postgrespodregistry_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go"
       ],
