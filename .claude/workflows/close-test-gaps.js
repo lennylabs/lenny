@@ -9,7 +9,7 @@ export const meta = {
   ],
 }
 
-// args: { scope: string, batchSize?: number, severityOrder?: string[], maxAttemptsPerFinding?: number }
+// args: { scope: string, batchSize?: number, severityOrder?: string[], maxAttemptsPerFinding?: number, branch?: string }
 // scope forms: "theme:T-STD" | "section:11.7" | "section:25" (whole §25) | "all"
 // args sometimes arrives JSON-encoded as a string rather than parsed into an
 // object; parse defensively so a stringified call site still works.
@@ -18,6 +18,14 @@ const scope = parsedArgs.scope || 'all'
 const batchSize = parsedArgs.batchSize || 6
 const severityOrder = parsedArgs.severityOrder || ['High', 'Medium', 'Low', 'Info']
 const maxAttemptsPerFinding = parsedArgs.maxAttemptsPerFinding || 4
+// branch: reuse an existing branch across several batches of the same
+// category (checked out if it exists, created off the current branch if
+// not) instead of always minting a fresh test-gaps/<scope>-<n> branch.
+// Selecting against a branch that already carries prior batches' resolved
+// findings is what makes this safe to call repeatedly; selecting against a
+// stale base (e.g. re-running with no branch, or a branch behind the
+// category's real progress) re-does already-closed work from scratch.
+const explicitBranch = parsedArgs.branch || null
 
 const SELECT_SCHEMA = {
   type: 'object',
@@ -69,7 +77,9 @@ const selectPrompt = [
   '',
   'SCOPE for this run: ' + scope + '. Interpret it as: `theme:T-XXX` means the `## Theme —` section whose anchor is `t-theme-...` matching that prefix (grep TEST-GAPS.md for the T-XXX findings\' parent theme heading); `section:X.Y` means the `## §X.Y` section (or, for a bare section number like `section:25`, every `## §25.*` heading); `all` means the whole file.',
   '',
-  '1. Create and check out a fresh git branch off the current branch: `git checkout -b test-gaps/' + scopeSlugPlaceholder() + '-<n>` where `<n>` is one more than the highest existing `test-gaps/*` branch suffix (`git branch --list \'test-gaps/*\'`), or 1 if none exist. Report the exact branch name you created.',
+  explicitBranch
+    ? ('1. Check out the branch this category is already accumulating on: `git checkout ' + explicitBranch + '` (it must already exist — this call is a continuation batch on that branch, not the first one). Report it as branch.')
+    : ('1. Create and check out a fresh git branch off the current branch: `git checkout -b test-gaps/' + scopeSlugPlaceholder() + '-<n>` where `<n>` is one more than the highest existing `test-gaps/*` branch suffix (`git branch --list \'test-gaps/*\'`), or 1 if none exist. Report the exact branch name you created.'),
   '2. Within scope, grep for `^### - \\[ \\] T-.*— OPEN` to list candidate findings. SKIP any finding whose body already contains a `**Needs human input` field — a prior batch already escalated it and re-investigating it again without new information would waste effort; it stays excluded from selection until a human answer removes that field or the finding is otherwise updated. For each remaining candidate, read its full body (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test).',
   '3. Re-verify each candidate is still real before selecting it (this repo may have moved since TEST-GAPS.md was last reconciled): check whether its Suggested-test file now exists on disk, and whether `tests/spec-map.json` now lists a covering test for its section. If a finding is already satisfied, resolve it right now: edit TEST-GAPS.md in place, flip it to `- [x] ... RESOLVED <sha>` (cite the actual landing commit via `git log --oneline --all -- <test file>`) with a **Resolution:** field, and record its id under resolvedInPassing. Commit this housekeeping edit by itself (`git commit -m "TEST-GAPS: resolve <ids> found already satisfied"`) before continuing.',
   '4. From the genuinely still-open, not-already-escalated candidates, select up to ' + batchSize + ', ordered by severity ' + severityOrder.join(' > ') + ' (highest first), preferring findings that cluster on a shared spec subsection or test file so one implementation session can close several efficiently.',
