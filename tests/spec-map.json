@@ -2116,6 +2116,8 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterToolResultCorrelation",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal",
+        "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementCanonicalAccepted",
+        "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementSiblingLocationRejected",
         "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
       ],
