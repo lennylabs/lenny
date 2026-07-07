@@ -639,7 +639,8 @@
         "pkg/gateway/sessionserver/messages_test.go",
         "pkg/gateway/sessionserver/interactions_test.go",
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
-        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage"
+        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1124,7 +1125,8 @@
         "pkg/events/...",
         "pkg/gateway/eventbuffer/...",
         "pkg/gateway/sessionserver/events_test.go",
-        "tests/tier2_component/coordination/sweep_test.go"
+        "tests/tier2_component/coordination/sweep_test.go",
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
       ],
       "packages": [
         "pkg/gateway/reliability"
