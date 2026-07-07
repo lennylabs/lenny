@@ -2931,7 +2931,8 @@
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
         "cmd/lenny-ctl/...",
-        "tests/tier11_docs/time_to_hello_world_test.go"
+        "tests/tier11_docs/time_to_hello_world_test.go",
+        "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney"
       ],
       "packages": [
         "cmd/lenny-ctl"
@@ -3203,7 +3204,9 @@
     "26": {
       "title": "Reference Runtime Catalog",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney"
+      ],
       "packages": [
         "cmd/runtimes/"
       ],
