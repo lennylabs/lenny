@@ -12,6 +12,11 @@
 # install is a no-op beyond the verification reads.
 #
 # Steps:
+#   0. Prune host-side Docker build cache, dangling images, and each
+#      node's unreferenced containerd images (all idle 24h+, or
+#      unreferenced by any container for the node-side prune). Guards
+#      against unbounded disk growth on this long-lived cluster from
+#      tests that build or load uniquely-tagged images per run.
 #   1. Build the platform binary images and the two reference echo
 #      runtime images, each as a separate `docker build` process.
 #   2. Load the images onto the Kind cluster nodes.
@@ -43,6 +48,8 @@
 #                        deploys out-of-date binaries after a code change;
 #                        set this to guarantee the deployed images reflect
 #                        the current tree. Ignored when LENNY_SKIP_BUILD=1.
+#   LENNY_SKIP_PRUNE     When "1", skip the pre-build host and node prune
+#                        step (see below). Default: prune runs every time.
 
 set -euo pipefail
 
@@ -136,6 +143,25 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------
+# Step 0: prune stale host-side build cache and dangling images.
+#
+# This cluster is long-lived and re-installed/re-verified many times
+# across sessions; a test that builds a uniquely-tagged image on every
+# run (see tests/tier5_e2e_kind/runtime_publish_journey_test.go) leaves
+# BuildKit cache entries that `docker rmi` never clears. Left unpruned
+# across enough runs this silently exhausts the Docker Desktop VM disk
+# (observed directly: a single day of repeated test-gaps batches against
+# that journey test filled a 500GB+ VM disk). Time-scoped so a same-day
+# rerun still benefits from a warm cache; only entries idle a day or
+# more are reclaimed.
+# ---------------------------------------------------------------------
+if [[ "${LENNY_SKIP_PRUNE:-}" != "1" ]]; then
+  log "pruning host docker build cache and dangling images older than 24h"
+  docker builder prune -f --filter until=24h >/dev/null 2>&1 || true
+  docker image prune -f --filter until=24h >/dev/null 2>&1 || true
+fi
+
+# ---------------------------------------------------------------------
 # Step 1+2: build and load the binary images.
 #
 # Each image is built with its own `docker build` invocation. A shell
@@ -197,6 +223,31 @@ fi
 # the script does not depend on the caller's current-context.
 KCTX="kind-${CLUSTER}"
 kc() { kubectl --context "${KCTX}" "$@"; }
+
+# ---------------------------------------------------------------------
+# Step 3b: prune unreferenced images from each node's containerd store.
+#
+# A node's containerd content store only grows: `kind load docker-image`
+# (used both by this script and directly by tests such as
+# runtime_publish_journey_test.go, which loads a freshly-tagged image on
+# every run) has no built-in eviction, and nothing else on this
+# long-lived cluster reclaims it either. crictl's --prune flag removes
+# only images with no referencing container, so this never touches an
+# image a running pod still needs. crictl ships inside the kind node
+# image; fall back to a no-op with a warning if a future node image ever
+# drops it rather than fail the install over housekeeping.
+# ---------------------------------------------------------------------
+if [[ "${LENNY_SKIP_PRUNE:-}" != "1" ]]; then
+  nodes="$(kind get nodes --name "${CLUSTER}")"
+  for node in ${nodes}; do
+    if docker exec "${node}" which crictl >/dev/null 2>&1; then
+      log "pruning unreferenced containerd images on ${node}"
+      docker exec "${node}" crictl rmi --prune >/dev/null 2>&1 || true
+    else
+      log "WARNING: crictl not found on ${node}; skipping node image prune"
+    fi
+  done
+fi
 
 # ---------------------------------------------------------------------
 # Step 2 (load): load the built images onto the cluster nodes. Done

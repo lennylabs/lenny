@@ -420,6 +420,15 @@ func registeredImageField(t *testing.T, combined, wantName string) string {
 // against the bare-digest reference), the same normalization
 // install.sh's own resolve_digest / per-node tag loop targets by
 // stripping the tag from its destination reference.
+//
+// Unlike install.sh's own use of this technique (a handful of fixed,
+// stably-named reference-runtime images reused across installs), every
+// run of this test builds and pins an image under a fresh, uniquely
+// generated name, so without cleanup each run permanently deposits a
+// full runtime image on every node's containerd content store — the
+// only leak in this journey (every other resource it creates is
+// t.Cleanup'd). Register the removal before returning so an early
+// t.Fatalf in a later step still triggers it.
 func pinImageOnNodes(t *testing.T, c *kind.Cluster, pushedTag, digestRef string) {
 	t.Helper()
 	load := exec.Command("kind", "load", "docker-image", "--name", c.Name, pushedTag)
@@ -435,6 +444,12 @@ func pinImageOnNodes(t *testing.T, c *kind.Cluster, pushedTag, digestRef string)
 	if len(nodes) == 0 {
 		t.Fatalf("kind get nodes --name %s returned no nodes", c.Name)
 	}
+	t.Cleanup(func() {
+		for _, node := range nodes {
+			_ = exec.Command("docker", "exec", node, "ctr", "-n", "k8s.io", "images", "rm", bareDigestRef).Run()
+			_ = exec.Command("docker", "exec", node, "ctr", "-n", "k8s.io", "images", "rm", pushedTag).Run()
+		}
+	})
 	for _, node := range nodes {
 		tagCmd := exec.Command("docker", "exec", node,
 			"ctr", "-n", "k8s.io", "images", "tag", "--force", pushedTag, bareDigestRef)
