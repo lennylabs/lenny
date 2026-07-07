@@ -1447,6 +1447,7 @@
         "tests/tier2_component/auditstore/...",
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
+        "tests/tier3_contract/ocsf_audit/published_schema_test.go",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier8_chaos/audit_chain_test.go",
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
@@ -1979,7 +1980,9 @@
         "tests/tier3_contract/sdks/harness/...",
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
         "tests/tier3_contract/rest_openai_chat/published_schema_test.go",
-        "tests/tier3_contract/rest_openai_responses/published_schema_test.go"
+        "tests/tier3_contract/rest_openai_responses/published_schema_test.go",
+        "tests/tier5_e2e_kind/mcp_conformance_test.go",
+        "tests/tier5_e2e_kind/openai_conformance_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -2062,7 +2065,8 @@
       "tests": [
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier4_integration/gateway_full_e2e_test.go",
-        "tests/tier3_contract/rest_mcp_consistency/published_schema_test.go"
+        "tests/tier3_contract/rest_mcp_consistency/published_schema_test.go",
+        "tests/tier5_e2e_kind/mcp_conformance_test.go"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/mcp"
