@@ -132,7 +132,6 @@ func TestRESTOpenAIResponsesFidelityMatrix(t *testing.T) {
 	for _, dropped := range []string{
 		`"schemaVersion"`,
 		`"ref"`,
-		`"annotations"`,
 		`"protocolHints"`,
 		`"parts"`,
 	} {
@@ -161,6 +160,20 @@ func TestRESTOpenAIResponsesFidelityMatrix(t *testing.T) {
 	}
 	if len(got.Output) != 1 {
 		t.Fatalf("output items: got %d, want 1", len(got.Output))
+	}
+	// The matrix marks MessagePart.annotations [dropped]: no Lenny
+	// annotation metadata (e.g. `role`, `final`, custom keys) may
+	// leak into the wire form. The published Responses schema itself
+	// requires an `annotations` key on every output_text content
+	// block (used for citations), so the key's presence is not the
+	// signal — its content is. It must stay empty because this
+	// translator never produces citations.
+	for _, item := range got.Output {
+		for _, c := range item.Content {
+			if len(c.Annotations) != 0 {
+				t.Errorf("output content annotations: got %v, want empty; matrix marks MessagePart.annotations [dropped]", c.Annotations)
+			}
+		}
 	}
 
 	// The REST surface mirrors the same internal session with its

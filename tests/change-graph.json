@@ -407,6 +407,16 @@
     },
     "spec/": {
       "static": ["tests/tier0_static/spec_link_check_test.go"]
+    },
+    "pkg/gateway/environment/translator": {
+      "unit": ["pkg/gateway/environment/translator/..."],
+      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/..."]
+    },
+    "tests/testdata/openai_chat": {
+      "contract": ["tests/tier3_contract/rest_openai_chat/..."]
+    },
+    "tests/testdata/openai_responses": {
+      "contract": ["tests/tier3_contract/rest_openai_responses/..."]
     }
   }
 }

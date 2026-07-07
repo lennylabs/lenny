@@ -1976,7 +1976,9 @@
         "tests/tier3_contract/sdks/python_client_test.go",
         "tests/tier3_contract/sdks/typescript_client_test.go",
         "tests/tier3_contract/sdks/harness/...",
-        "tests/tier3_contract/sdks/runtime_sdk_test.go"
+        "tests/tier3_contract/sdks/runtime_sdk_test.go",
+        "tests/tier3_contract/rest_openai_chat/published_schema_test.go",
+        "tests/tier3_contract/rest_openai_responses/published_schema_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",

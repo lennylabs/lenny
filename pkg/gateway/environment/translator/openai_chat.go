@@ -54,11 +54,20 @@ type OpenAIChatCompletionsRequest struct {
 	User     string              `json:"user,omitempty"`
 }
 
-// OpenAIChatMessage is one entry in the OpenAI messages array.
+// OpenAIChatMessage is one entry in the OpenAI messages array, and
+// also the response message embedded in each OpenAIChoice.
+//
+// Refusal is a required key on the published
+// ChatCompletionResponseMessage schema (nullable string); the
+// translator never produces a model refusal, so it is always `null`
+// on a response. It has no meaning on an inbound request message and
+// is simply left unset (nil) there. spec: §15.1
+// (OpenAICompletionsAdapter is OpenAI Chat Completions compatible).
 type OpenAIChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Name    string `json:"name,omitempty"`
+	Role    string  `json:"role"`
+	Content string  `json:"content"`
+	Name    string  `json:"name,omitempty"`
+	Refusal *string `json:"refusal"`
 }
 
 // OpenAIChatCompletionsResponse is the non-streaming OpenAI response.
@@ -72,10 +81,19 @@ type OpenAIChatCompletionsResponse struct {
 }
 
 // OpenAIChoice is one choice in the response.
+//
+// Logprobs is always emitted as `null`: the translator never
+// requests or computes per-token log probabilities. The field is a
+// required key on the published OpenAI Chat Completions Choice
+// schema (nullable, but the key must be present), so it is a pointer
+// that marshals to JSON `null` rather than an omitted key. spec:
+// §15.1 (OpenAICompletionsAdapter is OpenAI Chat Completions
+// compatible).
 type OpenAIChoice struct {
 	Index        int               `json:"index"`
 	Message      OpenAIChatMessage `json:"message"`
 	FinishReason string            `json:"finish_reason"`
+	Logprobs     *struct{}         `json:"logprobs"`
 }
 
 // OpenAIUsage is the usage block.

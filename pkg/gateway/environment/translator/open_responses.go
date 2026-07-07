@@ -51,15 +51,60 @@ type OpenResponsesRequest struct {
 }
 
 // OpenResponsesResponse is the §15.1 successful response.
+//
+// Error, IncompleteDetails, Instructions, Tools, ParallelToolCalls,
+// Metadata, ToolChoice, Temperature, and TopP are required keys on
+// the published OpenAI Responses API `Response` object even though
+// this translator does not model requesting them. Each is set to the
+// value OpenAI's own API documents for a call made with no options
+// set, so the wire body validates against the published schema
+// without asserting behavior (tool calling, sampling controls) the
+// translator does not implement. spec: §15.1 (Open Responses
+// adapter covers OpenAI Responses API clients; the Responses API is a
+// proper superset of Open Responses).
 type OpenResponsesResponse struct {
-	ID                 string             `json:"id"`
-	Object             string             `json:"object"`
-	CreatedAt          int64              `json:"created_at"`
-	Status             string             `json:"status"`
-	Model              string             `json:"model"`
-	PreviousResponseID string             `json:"previous_response_id,omitempty"`
-	Output             []OpenResponseItem `json:"output"`
-	Usage              OpenResponsesUsage `json:"usage"`
+	ID                 string                          `json:"id"`
+	Object             string                          `json:"object"`
+	CreatedAt          int64                           `json:"created_at"`
+	Status             string                          `json:"status"`
+	Model              string                          `json:"model"`
+	PreviousResponseID string                          `json:"previous_response_id,omitempty"`
+	Output             []OpenResponseItem              `json:"output"`
+	Usage              OpenResponsesUsage              `json:"usage"`
+	Error              *OpenResponsesError             `json:"error"`
+	IncompleteDetails  *OpenResponsesIncompleteDetails `json:"incomplete_details"`
+	Instructions       *string                         `json:"instructions"`
+	Tools              []OpenResponsesTool             `json:"tools"`
+	ParallelToolCalls  bool                            `json:"parallel_tool_calls"`
+	Metadata           map[string]string               `json:"metadata"`
+	ToolChoice         string                          `json:"tool_choice"`
+	Temperature        float64                         `json:"temperature"`
+	TopP               float64                         `json:"top_p"`
+}
+
+// OpenResponsesError is the published `error` object shape. The
+// translator never populates it on a successful response (errors are
+// surfaced as HTTP-level OpenAIError envelopes instead), so the
+// fields exist only to give a nil *OpenResponsesError the correct
+// wire shape when a future caller sets one.
+type OpenResponsesError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// OpenResponsesIncompleteDetails is the published
+// `incomplete_details` object shape, populated when Status is
+// "incomplete".
+type OpenResponsesIncompleteDetails struct {
+	Reason string `json:"reason"`
+}
+
+// OpenResponsesTool is the published `tools` array element shape.
+// The translator does not accept tool definitions on the request, so
+// this is always empty on the response; the type exists so the field
+// is typed rather than `[]any`.
+type OpenResponsesTool struct {
+	Type string `json:"type"`
 }
 
 // OpenResponseItem is one item in the output array.
@@ -72,16 +117,45 @@ type OpenResponseItem struct {
 }
 
 // OpenResponseContent is one content block inside an output item.
+//
+// Annotations and Logprobs are required keys on the published
+// `output_text` content schema (both arrays, never null). The
+// translator neither generates citations nor computes per-token log
+// probabilities, so both are always empty, non-nil slices — a nil
+// slice would mismatch the schema's `[]any{}.MarshalJSON` `[]` shape
+// only if json.Marshal ever emitted `null` for it, so both fields are
+// initialized explicitly where a content block is built. spec:
+// §15.1 (Open Responses adapter covers OpenAI Responses API
+// clients).
 type OpenResponseContent struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type        string           `json:"type"`
+	Text        string           `json:"text,omitempty"`
+	Annotations []map[string]any `json:"annotations"`
+	Logprobs    []map[string]any `json:"logprobs"`
 }
 
-// OpenResponsesUsage is the usage block.
+// OpenResponsesUsage is the usage block. InputTokensDetails and
+// OutputTokensDetails are required keys on the published
+// `ResponseUsage` schema; the translator does not track cached or
+// reasoning token counts, so both breakdowns report zero.
 type OpenResponsesUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens         int                        `json:"input_tokens"`
+	InputTokensDetails  OpenResponsesTokensDetails `json:"input_tokens_details"`
+	OutputTokens        int                        `json:"output_tokens"`
+	OutputTokensDetails OpenResponsesOutputDetails `json:"output_tokens_details"`
+	TotalTokens         int                        `json:"total_tokens"`
+}
+
+// OpenResponsesTokensDetails is the published `input_tokens_details`
+// object shape.
+type OpenResponsesTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// OpenResponsesOutputDetails is the published `output_tokens_details`
+// object shape.
+type OpenResponsesOutputDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 // OpenResponsesHandler is the §15.1 POST /v1/responses handler.
@@ -292,6 +366,15 @@ func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request)
 		Model:              row.RuntimeRef,
 		PreviousResponseID: row.ParentSessionID,
 		Output:             nil,
+		Error:              nil,
+		IncompleteDetails:  nil,
+		Instructions:       nil,
+		Tools:              []OpenResponsesTool{},
+		ParallelToolCalls:  true,
+		Metadata:           map[string]string{},
+		ToolChoice:         "auto",
+		Temperature:        1,
+		TopP:               1,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -351,6 +434,15 @@ func buildOpenResponsesResponse(id, model, prev string, now time.Time, out []exe
 		Model:              model,
 		PreviousResponseID: prev,
 		Output:             []OpenResponseItem{},
+		Error:              nil,
+		IncompleteDetails:  nil,
+		Instructions:       nil,
+		Tools:              []OpenResponsesTool{},
+		ParallelToolCalls:  true,
+		Metadata:           map[string]string{},
+		ToolChoice:         "auto",
+		Temperature:        1,
+		TopP:               1,
 	}
 	if len(out) > 0 {
 		item := OpenResponseItem{
@@ -362,8 +454,10 @@ func buildOpenResponsesResponse(id, model, prev string, now time.Time, out []exe
 		for _, p := range out {
 			if p.Type == "text" {
 				item.Content = append(item.Content, OpenResponseContent{
-					Type: "output_text",
-					Text: p.Text,
+					Type:        "output_text",
+					Text:        p.Text,
+					Annotations: []map[string]any{},
+					Logprobs:    []map[string]any{},
 				})
 			}
 		}
