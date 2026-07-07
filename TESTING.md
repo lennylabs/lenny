@@ -255,7 +255,7 @@ lenny/
     ├── tier9_security/            # Flat *_test.go layout
     │   ├── pentest/               # Driver, fixtures, findings store
     │   └── reviews/               # Security-review notes
-    ├── tier10_conformance/        # Placeholder; scaffolds_test.go only until the suite ships
+    ├── tier10_conformance/        # Runtime-adapter conformance battery (see tests/tier10_conformance/README.md)
     └── tier11_docs/               # No build tag; verification-only doc tests
 ```
 

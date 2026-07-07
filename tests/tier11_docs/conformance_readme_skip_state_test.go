@@ -194,3 +194,29 @@ func topLevelTestFuncNames(src string) []string {
 	}
 	return names
 }
+
+// tier10TreeLineRE matches the TESTING.md directory-tree line for
+// tests/tier10_conformance/, capturing its trailing comment.
+var tier10TreeLineRE = regexp.MustCompile(`(?m)^.*\btier10_conformance/\s*#\s*(.*)$`)
+
+// spec: 12.10
+// diagnosis: TESTING.md's repo directory-tree diagram describes
+//
+//	tests/tier10_conformance/ as a placeholder while the suite under that
+//	directory has non-skipping tests. A failure here means TESTING.md
+//	drifted from the tier's actual implementation state the same way
+//	tests/tier10_conformance/README.md previously did; both documents must
+//	be updated together when the suite's state changes.
+func TestTestingMdConformanceTreeEntryNotStale(t *testing.T) {
+	root := repoRoot(t)
+	testingMd := readDocPage(t, filepath.Join(root, "TESTING.md"))
+
+	m := tier10TreeLineRE.FindStringSubmatch(testingMd)
+	if m == nil {
+		t.Fatal("TESTING.md: no directory-tree line for tests/tier10_conformance/ (renamed or removed?)")
+	}
+	comment := strings.ToLower(m[1])
+	if strings.Contains(comment, "placeholder") {
+		t.Errorf("TESTING.md describes tests/tier10_conformance/ as %q, but the suite under that directory has implemented, non-skipping tests; update the directory-tree comment to match tests/tier10_conformance/README.md", m[1])
+	}
+}
