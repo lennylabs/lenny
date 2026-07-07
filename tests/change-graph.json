@@ -417,6 +417,13 @@
     },
     "tests/testdata/openai_responses": {
       "contract": ["tests/tier3_contract/rest_openai_responses/..."]
+    },
+    "tests/testdata/mcp": {
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
+    },
+    "pkg/gateway/mcpfabric/mcp": {
+      "unit": ["pkg/gateway/mcpfabric/mcp/..."],
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
     }
   }
 }
