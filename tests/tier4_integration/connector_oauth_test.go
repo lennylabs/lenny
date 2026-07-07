@@ -14,6 +14,8 @@ package tier4_integration_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"io"
@@ -158,7 +160,8 @@ func TestOAuthConnector(t *testing.T) {
 	if q.Get("state") != state {
 		t.Errorf("authorization URL state = %q, want %q", q.Get("state"), state)
 	}
-	if q.Get("code_challenge") == "" || q.Get("code_challenge_method") != "S256" {
+	codeChallenge := q.Get("code_challenge")
+	if codeChallenge == "" || q.Get("code_challenge_method") != "S256" {
 		t.Errorf("authorization URL missing PKCE S256 challenge: %v", q)
 	}
 
@@ -196,6 +199,20 @@ func TestOAuthConnector(t *testing.T) {
 	}
 	if exchanged.codeVerifier == "" {
 		t.Error("token exchange carried no PKCE code_verifier")
+	}
+
+	// §9.3 / RFC 7636: the code_challenge sent in the authorization
+	// request MUST be BASE64URL(SHA256(ASCII(code_verifier))) for the
+	// verifier submitted at token exchange. Pin the transformation
+	// end-to-end so a regression that mints a code_challenge not
+	// derived from the verifier, or that silently switches to the
+	// `plain` method while still labelling the request S256, fails
+	// here even though the two presence checks above would pass.
+	sum := sha256.Sum256([]byte(exchanged.codeVerifier))
+	wantChallenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	if codeChallenge != wantChallenge {
+		t.Errorf("code_challenge = %q, want BASE64URL(SHA256(code_verifier)) = %q (verifier %q)",
+			codeChallenge, wantChallenge, exchanged.codeVerifier)
 	}
 
 	// §9.3 anti-CSRF: a replayed state is single-use — the second

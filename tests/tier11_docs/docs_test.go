@@ -97,6 +97,51 @@ func TestRepoREADMEReferencesSpecAndTesting(t *testing.T) {
 	}
 }
 
+// TESTING.md §13.10 names the directories that carry the Phase-5
+// REST↔OpenAI contract fidelity coverage, and §13.15 names where the
+// LLM-proxy request/response wire-shape coverage lives. A reader
+// following either reference must land on a real test suite.
+//
+// spec: 13.10 (Phase 5 — ExternalAdapterRegistry + MCP/Completions/Open
+// Responses + REST/MCP contract tests), 13.15 (Phase 5.8 — LLM Proxy +
+// lenny-direct-mode-isolation admission webhook)
+// diagnosis: TESTING.md names a contract or component test directory that
+// does not exist on disk, or has silently regressed to the stale
+// tests/tier3_contract/rest_openai_completions/ path this test was added
+// to catch. A failure here means a reader following TESTING.md's Phase-5
+// or Phase-5.8 "Test infrastructure to land" bullets lands on a missing
+// path.
+func TestTESTINGmdContractDirectoryReferencesResolve(t *testing.T) {
+	root := repoRoot(t)
+	b, err := os.ReadFile(filepath.Join(root, "TESTING.md"))
+	if err != nil {
+		t.Fatalf("read TESTING.md: %v", err)
+	}
+	content := string(b)
+
+	for _, rel := range []string{
+		"tests/tier3_contract/rest_openai_chat",
+		"tests/tier3_contract/rest_openai_responses",
+		"tests/tier2_component/translators",
+	} {
+		marker := "`" + rel + "/`"
+		if !strings.Contains(content, marker) {
+			t.Errorf("TESTING.md no longer references %s; update this test if the doc text changed intentionally", marker)
+			continue
+		}
+		info, err := os.Stat(filepath.Join(root, rel))
+		if err != nil || !info.IsDir() {
+			t.Errorf("TESTING.md references %s/, but it does not exist on disk: %v", rel, err)
+		}
+	}
+
+	// Guard against reintroducing the stale directory name this test
+	// was added to catch.
+	if strings.Contains(content, "rest_openai_completions") {
+		t.Errorf("TESTING.md references the stale tests/tier3_contract/rest_openai_completions/ path; the actual directory is rest_openai_chat/")
+	}
+}
+
 func fileExists(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && !info.IsDir()

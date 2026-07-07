@@ -1447,6 +1447,7 @@
         "tests/tier2_component/auditstore/...",
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
+        "tests/tier3_contract/ocsf_audit/published_schema_test.go",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier8_chaos/audit_chain_test.go",
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
@@ -1601,6 +1602,7 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier2_component/stores/storerouter_test.go",
         "tests/tier3_contract/cloudevents/cloudevents_test.go",
+        "tests/tier3_contract/cloudevents/published_schema_test.go",
         "tests/tier2_component/stores/postgrespodregistry_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go"
       ],
@@ -1976,7 +1978,11 @@
         "tests/tier3_contract/sdks/python_client_test.go",
         "tests/tier3_contract/sdks/typescript_client_test.go",
         "tests/tier3_contract/sdks/harness/...",
-        "tests/tier3_contract/sdks/runtime_sdk_test.go"
+        "tests/tier3_contract/sdks/runtime_sdk_test.go",
+        "tests/tier3_contract/rest_openai_chat/published_schema_test.go",
+        "tests/tier3_contract/rest_openai_responses/published_schema_test.go",
+        "tests/tier5_e2e_kind/mcp_conformance_test.go",
+        "tests/tier5_e2e_kind/openai_conformance_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -2037,6 +2043,8 @@
         "tests/tier2_component/translators/openai_chat_translator_test.go",
         "tests/tier2_component/translators/openai_responses_translator_test.go",
         "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go",
+        "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentIsValidOpenAPI31",
+        "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestSessionDomainDocumentedPathsHaveLiveHandlers",
         "tests/tier9_security/elicitation_integrity_gate_test.go",
         "tests/tier9_security/lease_extension_clear_test.go",
         "tests/tier6_e2e_cloud/session_lifecycle_test.go",
@@ -2048,7 +2056,8 @@
         "pkg/gateway/session/sessionstore",
         "pkg/gateway/session/sessionstore/memstore",
         "pkg/gateway/sessionserver",
-        "cmd/lenny-gateway"
+        "cmd/lenny-gateway",
+        "pkg/gateway/externalapi/openapi"
       ],
       "blocked_until_phase": "4",
       "notes": "Phase 4 ships: (1) pkg/api/v1/session §15.1 state enum + precondition validator (Go-callable); (2) pkg/gateway/sessionstore Store interface and memstore in-memory backend with tenant isolation; (3) pkg/gateway/sessionserver http.Handler implementing POST /v1/sessions, GET, GET /v1/sessions/{id}, DELETE, and the five state-mutating transitions (finalize, start, interrupt, terminate, resume) — each enforces §15.1 preconditions via session.Validate and emits the INVALID_STATE_TRANSITION envelope on rejection; (4) cmd/lenny-gateway minimal binary boots the handler against memstore. Tier-3 contract tests drive the handler via httptest. The Postgres-backed store, OIDC auth middleware, workspace materialization, upload pipeline, derive/replay flows, OpenAPI document, and the §11.6 admission controller wiring are deferred to later phases — the handler surface is store-agnostic, so swapping memstore for the production store leaves the contract tests unchanged."
@@ -2058,7 +2067,9 @@
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
         "pkg/gateway/mcpfabric/mcp/...",
-        "tests/tier4_integration/gateway_full_e2e_test.go"
+        "tests/tier4_integration/gateway_full_e2e_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/published_schema_test.go",
+        "tests/tier5_e2e_kind/mcp_conformance_test.go"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/mcp"
@@ -2073,7 +2084,10 @@
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",
         "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
-        "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go"
+        "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/consistency_test.go",
+        "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
+        "tests/tier3_contract/rest_openai_responses/fidelity_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -2108,6 +2122,8 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterToolResultCorrelation",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal",
+        "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementCanonicalAccepted",
+        "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementSiblingLocationRejected",
         "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
       ],
@@ -2642,10 +2658,12 @@
     "18": {
       "title": "Build Sequence",
       "spec_file": "spec/18_build-sequence.md",
-      "tests": [],
+      "tests": [
+        "tests/tier11_docs/docs_test.go::TestTESTINGmdContractDirectoryReferencesResolve"
+      ],
       "packages": [],
       "blocked_until_phase": "0",
-      "notes": "Non-normative. The implementation phases drive the test sequence in TESTING.md §13."
+      "notes": "Non-normative. The implementation phases drive the test sequence in TESTING.md §13. TestTESTINGmdContractDirectoryReferencesResolve pins TESTING.md §13.10 and §13.15's contract/component directory references to real on-disk paths."
     },
     "18.1": {
       "title": "ImageResolver build artifact",

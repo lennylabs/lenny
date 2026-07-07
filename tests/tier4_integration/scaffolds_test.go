@@ -106,9 +106,9 @@ func TestStreamingReconnect(t *testing.T) {
 //     translator_test.go)
 //   - tier-2 component test against the anthropic corpus
 //     (tests/tier2_component/translators/anthropic_translator_test.go)
-//   - tier-3 contract test
-//     (tests/tier3_contract/rest_openai_completions/... and the
-//     Anthropic-shaped sibling)
+//   - tier-2 component wire-shape pinning against the canonical fixture
+//     corpus (tests/tier2_component/translators/... covers both the
+//     anthropic_direct and openai_direct request/response shapes)
 //   - pkg/gateway/llmproxy/llmproxy/handler_test.go covers the live SSE relay
 //     against a mock Anthropic backend.
 //

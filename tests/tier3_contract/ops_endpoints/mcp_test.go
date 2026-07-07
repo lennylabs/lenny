@@ -195,6 +195,88 @@ func TestMCPToolsCallScopeForbidden(t *testing.T) {
 	}
 }
 
+// TestMCPToolsCallHonorsSpaceSeparatedJWTScopeClaim confirms the §25.12
+// scope-enforcement layer parses and enforces the real RFC 9068 JWT
+// `scope` claim end to end: a space-separated multi-value claim,
+// carried on a Bearer token authenticated through the §25.4 OIDC gate
+// (not the local-development X-Lenny-Scope header), narrows tools/call
+// to the granted scopes and forbids every other tool.
+//
+// spec: 25.12 (MCP security model — scope enforcement)
+// diagnosis: A tools/call outside the caller's JWT scope claim
+// succeeded, or a tools/call inside it was wrongly rejected. §25.1
+// requires the scope claim to be a space-separated string (RFC 9068)
+// and §25.12 requires every tools/call to check the caller's scope
+// claim against the tool's x-lenny-scope identifier before any REST
+// call is issued; this must hold for the authenticated JWT claim, not
+// only the header fallback the other tests in this file use.
+func TestMCPToolsCallHonorsSpaceSeparatedJWTScopeClaim(t *testing.T) {
+	t.Skip("the MCP management server does not yet bridge the authenticated JWT scope claim into the tools/call scope-enforcement layer, and the invoker drops the Authorization header on the internal REST replay, so a real end-to-end JWT scope check cannot pass yet (spec §25.12 Security Model, layer 2 and layer 3, and Headers and Correlation)")
+	srv, signer := opsServerWithAuth(t)
+	// RFC 9068: "the scope claim is a space-separated string of scope
+	// values (not an array)." Two values are granted; a lock-acquire
+	// (tools:locks:write) is outside both.
+	const grantedScope = "tools:health:read tools:diagnostics:read"
+	bearer := "Bearer " + mintScopedToken(t, signer, grantedScope)
+
+	// A tool outside the JWT's scope claim is rejected before any REST
+	// call is issued.
+	rec, body := request(t, srv, http.MethodPost, "/mcp/management",
+		map[string]string{"Authorization": bearer},
+		map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{
+				"name":      "lenny_lock_acquire",
+				"arguments": map[string]any{"scope": "pool:p"},
+			},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (JSON-RPC carries the error in the body); body=%v", rec.Code, body)
+	}
+	rpcErr, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a JSON-RPC error for a tool outside the JWT scope claim, got: %v", body)
+	}
+	if code, _ := rpcErr["code"].(float64); code != -32001 {
+		t.Errorf("error code = %v, want -32001 SCOPE_FORBIDDEN", rpcErr["code"])
+	}
+	data, _ := rpcErr["data"].(map[string]any)
+	if data["code"] != "SCOPE_FORBIDDEN" {
+		t.Errorf("data.code = %v, want SCOPE_FORBIDDEN", data["code"])
+	}
+	if data["requiredScope"] != "tools:locks:write" {
+		t.Errorf("data.requiredScope = %v, want tools:locks:write", data["requiredScope"])
+	}
+	if data["activeScope"] != grantedScope {
+		t.Errorf("data.activeScope = %v, want the caller's JWT scope claim %q", data["activeScope"], grantedScope)
+	}
+
+	// A tool inside the JWT's scope claim (tools:diagnostics:read) is
+	// permitted through to the underlying endpoint.
+	rec, body = request(t, srv, http.MethodPost, "/mcp/management",
+		map[string]string{"Authorization": bearer},
+		map[string]any{
+			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": map[string]any{
+				"name":      "lenny_diagnostics_pool",
+				"arguments": map[string]any{"name": "default-gvisor"},
+			},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	if _, ok := body["error"]; ok {
+		t.Fatalf("a tool inside the JWT scope claim was rejected: %v", body)
+	}
+	result, ok := body["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/call response has no result: %v", body)
+	}
+	if result["isError"] != false {
+		t.Errorf("isError = %v, want false for a scoped-in tool call", result["isError"])
+	}
+}
+
 // TestRunbookIndexContract confirms GET /v1/admin/runbooks returns the
 // §25.7 runbook index with the parsed front matter.
 //

@@ -67,6 +67,10 @@
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
+    "pkg/gateway/externalapi/openapi": {
+      "unit": ["pkg/gateway/externalapi/openapi/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/..."]
+    },
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],
       "contract": ["tests/tier3_contract/rest_auth/..."]
@@ -296,7 +300,7 @@
     "schemas/messagepart.schema.json": {
       "static": ["tests/tier0_static/schemas_test.go"],
       "unit": ["pkg/output/..."],
-      "contract": ["tests/tier3_contract/rest_openai_completions/..."]
+      "contract": ["tests/tier3_contract/rest_openai_chat/..."]
     },
     "schemas/workspaceplan-v1.json": {
       "static": ["tests/tier0_static/schemas_test.go"],
@@ -407,6 +411,23 @@
     },
     "spec/": {
       "static": ["tests/tier0_static/spec_link_check_test.go"]
+    },
+    "pkg/gateway/environment/translator": {
+      "unit": ["pkg/gateway/environment/translator/..."],
+      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/..."]
+    },
+    "tests/testdata/openai_chat": {
+      "contract": ["tests/tier3_contract/rest_openai_chat/..."]
+    },
+    "tests/testdata/openai_responses": {
+      "contract": ["tests/tier3_contract/rest_openai_responses/..."]
+    },
+    "tests/testdata/mcp": {
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
+    },
+    "pkg/gateway/mcpfabric/mcp": {
+      "unit": ["pkg/gateway/mcpfabric/mcp/..."],
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
     }
   }
 }

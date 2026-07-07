@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.internal/testdata/openslo/schema/openslo-v1.schema.json",
+  "$defs": {
+    "Metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        },
+        "displayName": { "type": "string" },
+        "labels": { "type": "object" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "MetricSourceRef": {
+      "type": "object",
+      "required": ["metricSource"],
+      "properties": {
+        "metricSource": {
+          "type": "object",
+          "required": ["spec"],
+          "properties": {
+            "metricSourceRef": { "type": "string" },
+            "type": { "type": "string" },
+            "spec": { "type": "object", "minProperties": 1 }
+          }
+        }
+      }
+    },
+    "RatioMetric": {
+      "type": "object",
+      "required": ["counter", "total"],
+      "properties": {
+        "counter": { "type": "boolean" },
+        "good": { "$ref": "#/$defs/MetricSourceRef" },
+        "bad": { "$ref": "#/$defs/MetricSourceRef" },
+        "total": { "$ref": "#/$defs/MetricSourceRef" }
+      }
+    },
+    "SLISpec": {
+      "type": "object",
+      "required": ["ratioMetric"],
+      "properties": {
+        "description": { "type": "string", "maxLength": 1050 },
+        "ratioMetric": { "$ref": "#/$defs/RatioMetric" }
+      }
+    },
+    "SLIDocument": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": { "const": "openslo/v1" },
+        "kind": { "const": "SLI" },
+        "metadata": { "$ref": "#/$defs/Metadata" },
+        "spec": { "$ref": "#/$defs/SLISpec" }
+      }
+    },
+    "TimeWindow": {
+      "type": "object",
+      "required": ["duration", "isRolling"],
+      "properties": {
+        "duration": { "type": "string" },
+        "isRolling": { "type": "boolean" },
+        "calendar": { "type": "object" }
+      }
+    },
+    "Objective": {
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "target": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        "targetPercent": { "type": "number", "minimum": 0, "exclusiveMaximum": 100 }
+      }
+    },
+    "SLOAlertPolicyEntry": {
+      "description": "OpenSLO README, 'Notes (SLO)': 'alertPolicies[] ... An alert policy can be defined inline or can refer to an AlertPolicy object, in which case the following are required: alertPolicyRef string: this is the name of the AlertPolicy'. A bare string is neither an inline AlertPolicy object nor a { alertPolicyRef } reference object.",
+      "type": "object",
+      "properties": {
+        "alertPolicyRef": { "type": "string" },
+        "kind": { "const": "AlertPolicy" }
+      },
+      "anyOf": [
+        { "required": ["alertPolicyRef"] },
+        { "required": ["kind", "metadata", "spec"] }
+      ]
+    },
+    "SLOSpec": {
+      "type": "object",
+      "required": ["service", "budgetingMethod", "timeWindow", "objectives"],
+      "properties": {
+        "description": { "type": "string", "maxLength": 1050 },
+        "service": { "type": "string" },
+        "indicator": { "type": "object" },
+        "indicatorRef": { "type": "string" },
+        "budgetingMethod": {
+          "enum": ["Occurrences", "Timeslices", "RatioTimeslices"]
+        },
+        "timeWindow": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "$ref": "#/$defs/TimeWindow" }
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Objective" }
+        },
+        "alertPolicies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SLOAlertPolicyEntry" }
+        }
+      }
+    },
+    "SLODocument": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": { "const": "openslo/v1" },
+        "kind": { "const": "SLO" },
+        "metadata": { "$ref": "#/$defs/Metadata" },
+        "spec": { "$ref": "#/$defs/SLOSpec" }
+      }
+    },
+    "AlertConditionType": {
+      "type": "object",
+      "required": ["kind", "op", "threshold", "lookbackWindow"],
+      "properties": {
+        "kind": { "const": "burnrate" },
+        "op": { "enum": ["lte", "gte", "lt", "gt"] },
+        "threshold": { "type": "number" },
+        "lookbackWindow": { "type": "string" },
+        "alertAfter": { "type": "string" }
+      }
+    },
+    "AlertConditionSpec": {
+      "type": "object",
+      "required": ["severity", "condition"],
+      "properties": {
+        "description": { "type": "string", "maxLength": 1050 },
+        "severity": { "type": "string" },
+        "condition": { "$ref": "#/$defs/AlertConditionType" }
+      }
+    },
+    "AlertPolicyConditionEntry": {
+      "description": "OpenSLO README, 'Notes (AlertPolicy)': 'conditions[] Alert Condition, an array, (max of one condition), required field. A condition can be defined inline or can refer to external Alert condition ... in which case the following are required: conditionRef string'.",
+      "type": "object",
+      "properties": {
+        "conditionRef": { "type": "string" },
+        "kind": { "const": "AlertCondition" },
+        "metadata": { "$ref": "#/$defs/Metadata" },
+        "spec": { "$ref": "#/$defs/AlertConditionSpec" }
+      },
+      "anyOf": [
+        { "required": ["conditionRef"] },
+        { "required": ["kind", "metadata", "spec"] }
+      ]
+    },
+    "AlertNotificationTargetEntry": {
+      "description": "OpenSLO README, 'Notes (AlertPolicy)': 'notificationTargets[] Alert Notification Target, required field. A condition can be defined inline or can refer to an AlertNotificationTarget object, in which case the following are required: targetRef string'.",
+      "type": "object",
+      "properties": {
+        "targetRef": { "type": "string" },
+        "kind": { "const": "AlertNotificationTarget" }
+      },
+      "anyOf": [
+        { "required": ["targetRef"] },
+        { "required": ["kind", "metadata", "spec"] }
+      ]
+    },
+    "AlertPolicySpec": {
+      "type": "object",
+      "required": ["conditions", "notificationTargets"],
+      "properties": {
+        "description": { "type": "string", "maxLength": 1050 },
+        "alertWhenNoData": { "type": "boolean" },
+        "alertWhenResolved": { "type": "boolean" },
+        "alertWhenBreaching": { "type": "boolean" },
+        "conditions": {
+          "description": "OpenSLO README, 'Notes (AlertPolicy)': 'conditions[] Alert Condition, an array, (max of one condition), required field.'",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "$ref": "#/$defs/AlertPolicyConditionEntry" }
+        },
+        "notificationTargets": {
+          "description": "OpenSLO README, 'Notes (AlertPolicy)': 'notificationTargets[] Alert Notification Target, required field.'",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/AlertNotificationTargetEntry" }
+        }
+      }
+    },
+    "AlertPolicyDocument": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": { "const": "openslo/v1" },
+        "kind": { "const": "AlertPolicy" },
+        "metadata": { "$ref": "#/$defs/Metadata" },
+        "spec": { "$ref": "#/$defs/AlertPolicySpec" }
+      }
+    }
+  }
+}

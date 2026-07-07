@@ -255,7 +255,7 @@ lenny/
     ├── tier9_security/            # Flat *_test.go layout
     │   ├── pentest/               # Driver, fixtures, findings store
     │   └── reviews/               # Security-review notes
-    ├── tier10_conformance/        # Placeholder; scaffolds_test.go only until the suite ships
+    ├── tier10_conformance/        # Runtime-adapter conformance battery (see tests/tier10_conformance/README.md)
     └── tier11_docs/               # No build tag; verification-only doc tests
 ```
 
@@ -1601,7 +1601,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure to land.**
 - `tests/tier3_contract/rest_mcp/` covers every overlapping operation per §12.3.1.
-- `tests/tier3_contract/rest_openai_completions/` and `tests/tier3_contract/rest_openai_responses/` cover the documented fidelity matrices.
+- `tests/tier3_contract/rest_openai_chat/` and `tests/tier3_contract/rest_openai_responses/` cover the documented fidelity matrices.
 - `tests/tier2_component/translators/openai_translator_test.go` and `anthropic_translator_test.go` exercise the native translators.
 - `tests/tier4_integration/mcp_runtime_endpoints_test.go` exercises `type: mcp` runtime endpoints.
 
@@ -1647,7 +1647,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure to land.**
 - `tests/tier2_component/gateway_subsystems/llm_proxy_test.go` validates lease-token validation, native translator for `anthropic_direct`, SSE relay, circuit breaker.
-- `tests/tier3_contract/llm_proxy/` validates request and response shapes against the Anthropic mock and OpenAI mock.
+- `tests/tier2_component/translators/` pins the `anthropic_direct` and `openai_direct` request/response wire shapes against the canonical fixture corpus under `tests/testdata/`.
 - `tests/tier5_e2e_kind/llm_proxy_proxy_mode_test.go` exercises proxy-mode end-to-end with `streaming-echo`.
 - `tests/tier5_e2e_kind/admission_direct_mode_isolation_test.go` validates the new webhook.
 
