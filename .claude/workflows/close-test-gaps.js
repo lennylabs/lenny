@@ -310,17 +310,33 @@ if (toResolve.length) {
 }
 
 // ---------------------------------------------------------------------------
-// Annotate needs-human findings: one agent, sequential edits, records each
-// open question directly on its still-OPEN finding. No external issue
-// tracker is used by this skill/workflow.
+// Annotate needs-human AND stuck findings: one agent, sequential edits,
+// records why each is still open directly on its still-OPEN finding. No
+// external issue tracker is used by this skill/workflow. A stuck finding
+// (the implementer and verifier went through maxAttemptsPerFinding rounds
+// without landing on an approved test/code-fix/moot) is functionally the
+// same as needs-human from a human's perspective — something needs a
+// decision before another batch retries it — even though the implementer
+// never explicitly declared route="needs-human"; both get the same
+// **Needs human input:** field and both are excluded from future Select
+// rounds by it (see the Select step above).
 // ---------------------------------------------------------------------------
+const toAnnotate = needsHuman.map(function (r) { return { id: r.finding.id, humanQuestion: r.impl.humanQuestion } })
+  .concat(stuck.map(function (r) {
+    return {
+      id: r.finding.id,
+      humanQuestion: 'This finding was attempted ' + r.attempts + ' time(s) and the independent verifier rejected every attempt: ' +
+        (r.verify && r.verify.issues && r.verify.issues.length ? r.verify.issues.join(' ') : 'no specific issues were recorded.') +
+        ' A human should review the attempt history before a future batch retries this finding, since repeating the same approach is likely to hit the same rejection.',
+    }
+  }))
 let annotateResult = { annotatedCount: 0 }
-if (needsHuman.length) {
+if (toAnnotate.length) {
   const annotatePrompt = [
-    'ROLE. Annotate the following TEST-GAPS.md findings with an open question for a human. Do NOT flip their checkbox or OPEN marker; they stay exactly as open findings, just with one more field.',
+    'ROLE. Annotate the following TEST-GAPS.md findings with an open question or blocker note for a human. Do NOT flip their checkbox or OPEN marker; they stay exactly as open findings, just with one more field.',
     '',
     'FINDINGS TO ANNOTATE:',
-    JSON.stringify(needsHuman.map(function (r) { return { id: r.finding.id, humanQuestion: r.impl.humanQuestion } })),
+    JSON.stringify(toAnnotate),
     '',
     'For each, locate its heading (`grep -n \'^### - \\[ \\] <id> \'`) in TEST-GAPS.md and append one new field after the existing Suggested test field, before the next heading: `- **Needs human input (as of ' + '<today\'s date via `date +%F`>' + '):** <humanQuestion>`. Do not alter any of the finding\'s other fields.',
     '',
