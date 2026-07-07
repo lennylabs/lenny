@@ -101,6 +101,16 @@ func TestRepoREADMEReferencesSpecAndTesting(t *testing.T) {
 // REST↔OpenAI contract fidelity coverage, and §13.15 names where the
 // LLM-proxy request/response wire-shape coverage lives. A reader
 // following either reference must land on a real test suite.
+//
+// spec: 13.10 (Phase 5 — ExternalAdapterRegistry + MCP/Completions/Open
+// Responses + REST/MCP contract tests), 13.15 (Phase 5.8 — LLM Proxy +
+// lenny-direct-mode-isolation admission webhook)
+// diagnosis: TESTING.md names a contract or component test directory that
+// does not exist on disk, or has silently regressed to the stale
+// tests/tier3_contract/rest_openai_completions/ path this test was added
+// to catch. A failure here means a reader following TESTING.md's Phase-5
+// or Phase-5.8 "Test infrastructure to land" bullets lands on a missing
+// path.
 func TestTESTINGmdContractDirectoryReferencesResolve(t *testing.T) {
 	root := repoRoot(t)
 	b, err := os.ReadFile(filepath.Join(root, "TESTING.md"))
