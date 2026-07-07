@@ -69,7 +69,16 @@ func TestAdminBootstrap(t *testing.T) {
 //   - pkg/gateway/sessionserver Resume handler in handleResume
 //   - pkg/gateway/storage/retentiongc (retention sweep)
 //   - tier-2 miniostore_test.go (MinIO ArtifactStore round-trip)
-//   - tier-5 e2e checkpoint_test.go (live Kind exercise)
+//
+// The composite eviction-checkpoint-then-resume client journey (evict
+// a bound agent pod, checkpoint to MinIO, resume on a fresh pod with
+// the workspace restored, including the MinIO-outage fallback to the
+// Postgres session_eviction_state minimal-state record) is not yet
+// covered: it needs the §4.4 eviction checkpoint trigger wired on the
+// live gateway first, which does not exist today (checkpoint.TriggerEviction
+// is defined in pkg/checkpoint but no gateway code path invokes it).
+// tests/tier5_e2e_kind/checkpoint_resume_test.go documents the
+// remaining dependencies as a skip.
 //
 // The cooperative quiescence handshake is exercised by the §15.4
 // adapter contract tests in tests/tier3_contract/adapter_jsonl.
@@ -77,8 +86,9 @@ func TestAdminBootstrap(t *testing.T) {
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + tier-3 contract tests; this scaffold documents the composition.
 func TestCheckpointResume(t *testing.T) {
 	t.Logf("§4.4 / §7.1: checkpoint and resume covered by pkg/checkpoint property tests, " +
-		"sessionserver handleResume unit tests, miniostore tier-2 contract, and tier-5 e2e " +
-		"checkpoint_test.go. No tier-4 composite surface to add.")
+		"sessionserver handleResume unit tests, and miniostore tier-2 contract. The composite " +
+		"eviction-checkpoint-then-resume client journey is documented as a dependency-blocked " +
+		"skip in tests/tier5_e2e_kind/checkpoint_resume_test.go; no tier-4 composite surface to add.")
 }
 
 // §13.16 — interactive sessions / streaming.

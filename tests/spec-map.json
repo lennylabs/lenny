@@ -178,7 +178,9 @@
         "tests/tier2_component/stores/evictionfallback_test.go",
         "tests/tier2_component/stores/partialmanifeststore_test.go",
         "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
-        "tests/tier8_chaos/minio_outage_during_checkpoint_test.go"
+        "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState"
       ],
       "packages": [
         "pkg/store/event",
@@ -624,7 +626,8 @@
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1",
         "tests/tier9_security/pool_access_pin_test.go::TestCreateBodyPoolEnforcesTenantAccess_spec_4",
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
-        "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent"
+        "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace"
       ],
       "packages": [
         "pkg/session"
