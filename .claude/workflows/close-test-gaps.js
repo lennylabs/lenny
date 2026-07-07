@@ -337,25 +337,36 @@ if (needsHuman.length) {
 // ---------------------------------------------------------------------------
 // Verify: batch-level.
 // ---------------------------------------------------------------------------
+// The full `lenny-test run --since <base>` regression pass reliably takes
+// longer than one agent turn has patience for (observed truncated/forced
+// across three straight batches, whether foregrounded, backgrounded, or
+// nudged) — an in-workflow agent either forces a false result before the
+// run finishes or the run gets orphaned by turn-boundary cleanup. This
+// phase therefore only runs the FAST, reliably-completing checks
+// (validate-maps, coverage --diff, and a dry-run of what the full pass
+// would cover) and fixes small drift; the full regression pass itself is
+// the orchestrating session's job afterward (documented in the
+// close-test-gaps SKILL.md procedure), run with run_in_background and
+// awaited via its own completion notification rather than inside an
+// agent's turn.
 phase('Verify')
 const codeFixCount = closedResults.filter(function (r) { return r.impl && r.impl.route === 'code-fix' }).length
 const verifyBatchPrompt = [
-  'ROLE. Batch-level verification for the test-gaps closure batch just implemented on the current branch. This batch includes ' + codeFixCount + ' product-code fix(es) (route=code-fix), so this pass is the second, independent full-regression check on top of each fix\'s own.',
+  'ROLE. Fast batch-level checks for the test-gaps closure batch just implemented on the current branch. This batch includes ' + codeFixCount + ' product-code fix(es) (route=code-fix). Do NOT attempt the full `lenny-test run` regression suite here — it does not reliably complete within one turn; the orchestrating session runs it separately afterward. Stick to the checks below, which complete quickly.',
   '',
-  '1. Find the commit this branch was cut from: `baseSha=$(git merge-base HEAD <the branch it was cut from, typically the branch this run started on>)`. Run `lenny-test run --since "$baseSha" --dry-run` first to see which tiers it resolves to, then run it for real IN THE FOREGROUND and wait for it to actually finish (this can take several minutes; do not background it and report before it completes — an incomplete run is not a verification, and forcing a result before the command returns produces a false allTiersGreen). Use `lenny-test run --since "$baseSha"`, NOT `lenny-test --changed` (which diffs only the uncommitted working tree and sees nothing once this batch is fully committed).',
-  '2. If a tier fails, check whether the SAME test fails against `$baseSha` too (temporarily `git checkout "$baseSha"`, re-run just that test, then `git checkout -` back to this branch — the tree is clean at this point in the workflow so this is safe). A failure that reproduces identically on the base commit is pre-existing and not this batch\'s to fix; note it in notes as pre-existing and do not let it flip allTiersGreen to false on its own, but do not silently drop it either — a human reviewing this batch should still see it flagged. A failure that does NOT reproduce on the base commit is a real regression this batch introduced; allTiersGreen is false and notes must say which finding\'s change looks responsible.',
-  '3. Run `lenny-test coverage --diff "$baseSha"` and report the changed-line coverage percentage against the 80% floor.',
-  '4. Run `lenny-test validate-maps` and fix any spec-map/change-graph drift this batch introduced (small fixes only, e.g. registering a new test file under the right spec-map section — when editing tests/spec-map.json by script rather than by hand, preserve its existing formatting, for example Python\'s json.dump needs ensure_ascii=False or every non-ASCII spec character gets escaped and the diff balloons; commit the fix separately from anything else).',
-  '5. Do NOT merge this branch into anything and do NOT push. This batch is reviewed by a human before merge, per this repo\'s git workflow rules.',
+  '1. Find the commit this branch was cut from: `baseSha=$(git merge-base HEAD <the branch it was cut from, typically the branch this run started on>)`. Run `lenny-test run --since "$baseSha" --dry-run` (dry-run only, do not run it for real) and report which tiers it resolves to, so a human knows what the follow-up full pass needs to cover.',
+  '2. Run `lenny-test coverage --diff "$baseSha"` and report the changed-line coverage percentage against the 80% floor.',
+  '3. Run `lenny-test validate-maps` and fix any spec-map/change-graph drift this batch introduced (small fixes only, e.g. registering a new test file under the right spec-map section — when editing tests/spec-map.json by script rather than by hand, preserve its existing formatting, for example Python\'s json.dump needs ensure_ascii=False or every non-ASCII spec character gets escaped and the diff balloons; commit the fix separately from anything else).',
+  '4. Do NOT merge this branch into anything and do NOT push. This batch is reviewed by a human before merge, per this repo\'s git workflow rules.',
   '',
-  'RETURN: allTiersGreen (boolean, per step 2\'s pre-existing-vs-introduced distinction), coveragePct (number or null if not computed), validateMapsClean (boolean), notes (string, including any pre-existing failures flagged for human visibility even though they don\'t count against allTiersGreen).',
+  'RETURN: dryRunTiers (array of tier names the full pass needs to cover), coveragePct (number or null if not computed), validateMapsClean (boolean), notes (string).',
 ].join('\n')
 const verifyResult = await agent(verifyBatchPrompt, {
-  label: 'batch-verify', phase: 'Verify', effort: 'high',
+  label: 'batch-verify', phase: 'Verify', effort: 'medium',
   schema: {
     type: 'object', additionalProperties: false,
-    required: ['allTiersGreen', 'validateMapsClean'],
-    properties: { allTiersGreen: { type: 'boolean' }, coveragePct: { type: ['number', 'null'] }, validateMapsClean: { type: 'boolean' }, notes: { type: 'string' } },
+    required: ['dryRunTiers', 'validateMapsClean'],
+    properties: { dryRunTiers: { type: 'array', items: { type: 'string' } }, coveragePct: { type: ['number', 'null'] }, validateMapsClean: { type: 'boolean' }, notes: { type: 'string' } },
   },
 })
 
