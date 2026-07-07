@@ -12,11 +12,10 @@
 # install is a no-op beyond the verification reads.
 #
 # Steps:
-#   0. Prune host-side Docker build cache, dangling images, and each
-#      node's unreferenced containerd images (all idle 24h+, or
-#      unreferenced by any container for the node-side prune). Guards
-#      against unbounded disk growth on this long-lived cluster from
-#      tests that build or load uniquely-tagged images per run.
+#   0. Prune host-side Docker build cache and dangling images idle 24h+,
+#      and each node's genuinely nameless (dangling) containerd images.
+#      Guards against unbounded disk growth on this long-lived cluster
+#      from tests that build or load uniquely-tagged images per run.
 #   1. Build the platform binary images and the two reference echo
 #      runtime images, each as a separate `docker build` process.
 #   2. Load the images onto the Kind cluster nodes.
@@ -225,28 +224,57 @@ KCTX="kind-${CLUSTER}"
 kc() { kubectl --context "${KCTX}" "$@"; }
 
 # ---------------------------------------------------------------------
-# Step 3b: prune unreferenced images from each node's containerd store.
+# Step 3b: prune genuinely dangling (nameless) images from each node's
+# containerd store.
 #
 # A node's containerd content store only grows: `kind load docker-image`
 # (used both by this script and directly by tests such as
 # runtime_publish_journey_test.go, which loads a freshly-tagged image on
-# every run) has no built-in eviction, and nothing else on this
-# long-lived cluster reclaims it either. crictl's --prune flag removes
-# only images with no referencing container, so this never touches an
-# image a running pod still needs. crictl ships inside the kind node
-# image; fall back to a no-op with a warning if a future node image ever
-# drops it rather than fail the install over housekeeping.
+# every run) leaves an anonymous `import-<date>` alias alongside the
+# intended name on every load, and nothing else on this long-lived
+# cluster reclaims either. This deliberately does NOT use `crictl rmi
+# --prune`: that flag removes every image with no CURRENTLY RUNNING
+# container, which also catches images that are needed but only run
+# on demand (Job images re-triggered later, reference-runtime images
+# only pulled when a session actually uses them) and deletes their real
+# tags -- observed directly deleting lenny-migrate:e2e,
+# lenny-runtime-elicitation-echo:e2e, and others still needed by this
+# cluster. Only an image with an EMPTY repoTags list (no human-readable
+# name at all, matched by exact repoDigest reference so a same-content
+# but properly-named sibling is never touched) is dangling in the sense
+# this step targets. crictl ships inside the kind node image; python3
+# is a pinned dev-environment tool (scripts/setup-dev.sh). Fall back to
+# a no-op with a warning if either is missing rather than fail the
+# install over housekeeping.
 # ---------------------------------------------------------------------
 if [[ "${LENNY_SKIP_PRUNE:-}" != "1" ]]; then
-  nodes="$(kind get nodes --name "${CLUSTER}")"
-  for node in ${nodes}; do
-    if docker exec "${node}" which crictl >/dev/null 2>&1; then
-      log "pruning unreferenced containerd images on ${node}"
-      docker exec "${node}" crictl rmi --prune >/dev/null 2>&1 || true
-    else
-      log "WARNING: crictl not found on ${node}; skipping node image prune"
-    fi
-  done
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "WARNING: python3 not found; skipping node image prune"
+  else
+    nodes="$(kind get nodes --name "${CLUSTER}")"
+    for node in ${nodes}; do
+      if docker exec "${node}" which crictl >/dev/null 2>&1; then
+        log "pruning dangling (untagged) containerd images on ${node}"
+        refs="$(docker exec "${node}" crictl images -o json 2>/dev/null | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for img in data.get("images", []):
+    if not img.get("repoTags"):
+        digests = img.get("repoDigests") or []
+        if digests:
+            print(digests[0])
+' || true)"
+        if [[ -n "${refs}" ]]; then
+          while IFS= read -r ref; do
+            [[ -z "${ref}" ]] && continue
+            docker exec "${node}" crictl rmi "${ref}" >/dev/null 2>&1 || true
+          done <<<"${refs}"
+        fi
+      else
+        log "WARNING: crictl not found on ${node}; skipping node image prune"
+      fi
+    done
+  fi
 fi
 
 # ---------------------------------------------------------------------
