@@ -178,7 +178,9 @@
         "tests/tier2_component/stores/evictionfallback_test.go",
         "tests/tier2_component/stores/partialmanifeststore_test.go",
         "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
-        "tests/tier8_chaos/minio_outage_during_checkpoint_test.go"
+        "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState"
       ],
       "packages": [
         "pkg/store/event",
@@ -622,7 +624,10 @@
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1",
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1",
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1",
-        "tests/tier9_security/pool_access_pin_test.go::TestCreateBodyPoolEnforcesTenantAccess_spec_4"
+        "tests/tier9_security/pool_access_pin_test.go::TestCreateBodyPoolEnforcesTenantAccess_spec_4",
+        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
+        "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace"
       ],
       "packages": [
         "pkg/session"
@@ -636,7 +641,9 @@
         "pkg/session/state/...",
         "pkg/gateway/sessionserver/messages_test.go",
         "pkg/gateway/sessionserver/interactions_test.go",
-        "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go"
+        "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
+        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -762,7 +769,8 @@
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
         "pkg/gateway/mcpfabric/mcptools/...",
-        "pkg/gateway/mcpfabric/delegation/..."
+        "pkg/gateway/mcpfabric/delegation/...",
+        "tests/tier4_integration/delegation_await_collect_test.go::TestDelegationAwaitChildren"
       ],
       "packages": [
         "pkg/delegation/tools"
@@ -1120,7 +1128,8 @@
         "pkg/events/...",
         "pkg/gateway/eventbuffer/...",
         "pkg/gateway/sessionserver/events_test.go",
-        "tests/tier2_component/coordination/sweep_test.go"
+        "tests/tier2_component/coordination/sweep_test.go",
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
       ],
       "packages": [
         "pkg/gateway/reliability"
@@ -1137,7 +1146,13 @@
         "pkg/runtime/upgrade/state/state_test.go::TestRecordPauseAndResumePreservesPrior",
         "pkg/runtime/upgrade/state/state_test.go::TestRecordPauseRejectsTerminal",
         "pkg/runtime/upgrade/state/state_test.go::TestRecordDoublePauseIsError",
-        "pkg/runtime/upgrade/state/state_test.go::TestNewRecordAtRehydratesPausedRecord"
+        "pkg/runtime/upgrade/state/state_test.go::TestNewRecordAtRehydratesPausedRecord",
+        "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_ExpandDrainContractComplete",
+        "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_PauseResume",
+        "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_RollbackFromExpanding",
+        "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_RollbackFromDrainingRequiresRestoreOldPool",
+        "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_ExpandGateContract",
+        "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart"
       ],
       "packages": [
         "pkg/runtime/upgrade/state"
@@ -1638,7 +1653,8 @@
         "tests/tier2_component/legalholdescrow/pgstore_test.go",
         "tests/tier2_component/stores/memorystore_preflight_test.go",
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
-        "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go"
+        "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
+        "tests/tier4_integration/erasure_job_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -2087,7 +2103,8 @@
         "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go",
         "tests/tier3_contract/rest_mcp_consistency/consistency_test.go",
         "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
-        "tests/tier3_contract/rest_openai_responses/fidelity_test.go"
+        "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
+        "tests/tier3_contract/multiprotocol_journey/journey_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -2925,7 +2942,8 @@
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
         "cmd/lenny-ctl/...",
-        "tests/tier11_docs/time_to_hello_world_test.go"
+        "tests/tier11_docs/time_to_hello_world_test.go",
+        "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney"
       ],
       "packages": [
         "cmd/lenny-ctl"
@@ -3197,7 +3215,9 @@
     "26": {
       "title": "Reference Runtime Catalog",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney"
+      ],
       "packages": [
         "cmd/runtimes/"
       ],

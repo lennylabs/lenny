@@ -51,3 +51,9 @@ defaultPoolConfig:
   warmCount: 1
   resourceClass: medium
   egressProfile: restricted
+# Labels are required from v1 (§5.1): they are the primary mechanism for
+# environment runtimeSelector and connectorSelector matching. Replace
+# with labels meaningful to your deployment; a registration with no
+# labels is rejected.
+labels:
+  runtime: {{.Name}}

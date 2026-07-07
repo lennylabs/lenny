@@ -2,13 +2,22 @@
 
 // Command {{.Name}} is a Basic-level Lenny agent runtime. It implements
 // the adapter binary protocol directly, with no Lenny SDK dependency:
-// read a JSON Lines frame from stdin, switch on the frame type, write a
-// response frame to stdout, and flush.
+// read a JSON Lines frame, switch on the frame type, write a response
+// frame, and flush.
 //
 // Basic level is the smallest viable runtime. It has no platform MCP
 // access and no lifecycle channel. The contract is the four frame types
 // handled below: message, heartbeat, shutdown, and unknown (ignored for
 // forward compatibility).
+//
+// Transport: the §4.7 embedded deployment model runs this binary as the
+// container's own process with the adapter's frames on stdin/stdout. The
+// §4.7 sidecar deployment model runs the adapter in a separate container
+// with no stdin attached to this one; the adapter instead passes its
+// abstract Unix socket name in the LENNY_ADAPTER_SOCKET environment
+// variable, and this runtime dials that socket and exchanges the same
+// frames over the connection. openTransport below resolves which one
+// applies; the frame loop in run is identical either way.
 //
 // Replace the body of handleMessage with a model call to build a real
 // agent. The rest of the loop is the protocol and stays unchanged.
@@ -20,7 +29,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
+	"strings"
+	"time"
 )
 
 const (
@@ -28,6 +41,19 @@ const (
 	exitRuntimeError  = 1
 	exitProtocolError = 2
 )
+
+// adapterSocketEnvVar names the §4.7 sidecar deployment model's runtime
+// transport selector: the adapter passes its abstract Unix socket name
+// to the runtime container in this environment variable. Absent, the
+// runtime uses the stdin/stdout transport instead.
+const adapterSocketEnvVar = "LENNY_ADAPTER_SOCKET"
+
+// dialTimeout bounds how long openTransport waits for the adapter's
+// socket listener to accept a connection. The adapter spawns the
+// runtime container after it has already bound the socket, but this
+// process may still race the listener at startup; the bounded retry
+// absorbs that race.
+const dialTimeout = 5 * time.Second
 
 // frame is the common envelope for every inbound JSON Lines frame. Only
 // the type field is read first; the typed decode happens per branch.
@@ -67,7 +93,14 @@ type heartbeatAck struct {
 }
 
 func main() {
-	if err := run(os.Stdin, os.Stdout); err != nil {
+	in, out, closeTransport, err := openTransport()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitRuntimeError)
+	}
+	defer closeTransport()
+
+	if err := run(in, out); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if _, ok := err.(protocolError); ok {
 			os.Exit(exitProtocolError)
@@ -82,11 +115,45 @@ type protocolError struct{ msg string }
 
 func (e protocolError) Error() string { return "protocol error: " + e.msg }
 
+// openTransport resolves the byte transport this runtime exchanges
+// JSON Lines frames over: the abstract Unix socket named by
+// adapterSocketEnvVar under the §4.7 sidecar deployment model, or
+// stdin/stdout otherwise (the embedded deployment model, and the
+// contract transport `lenny runtime validate` and the conformance
+// harness drive directly). The returned close func releases the socket
+// connection; it is a no-op for the stdin/stdout transport.
+func openTransport() (io.Reader, io.Writer, func(), error) {
+	socket := strings.TrimSpace(os.Getenv(adapterSocketEnvVar))
+	if socket == "" {
+		return os.Stdin, os.Stdout, func() {}, nil
+	}
+	addr := socket
+	if strings.HasPrefix(socket, "@") {
+		// A Linux abstract address begins with "@"; the kernel resolves
+		// it once the leading byte is replaced with NUL.
+		addr = "\x00" + socket[1:]
+	}
+	deadline := time.Now().Add(dialTimeout)
+	var lastErr error
+	for {
+		var d net.Dialer
+		conn, err := d.Dial("unix", addr)
+		if err == nil {
+			return conn, conn, func() { _ = conn.Close() }, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, nil, nil, fmt.Errorf("dial adapter socket %q: %w", socket, lastErr)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // run is the Basic-level frame loop. It reads newline-delimited JSON
 // from in and writes newline-delimited JSON to out, flushing after
 // every write. It returns when in reaches EOF or a shutdown frame
 // arrives.
-func run(in *os.File, out *os.File) error {
+func run(in io.Reader, out io.Writer) error {
 	scanner := bufio.NewScanner(in)
 	// Raise the scanner buffer ceiling: a message frame may carry a
 	// large inline part.

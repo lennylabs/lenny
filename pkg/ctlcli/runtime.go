@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 
@@ -249,6 +250,22 @@ func cmdRuntimePublish(ctx context.Context, c *ctl.Client, args []string, stdout
 
 	// Push the image unless the caller opted out. docker push is a
 	// subprocess; a missing docker binary is a clear up-front error.
+	//
+	// registerImage is the reference the registration call below uses.
+	// It starts out equal to the pushed tag, but §5.1 line 690 requires
+	// every registered Runtime image to be digest-pinned
+	// (image@sha256:...), and `docker push` refuses to push a reference
+	// that already carries a digest ("cannot push a digest reference").
+	// So a freshly pushed tag can never be both pushable and, unmodified,
+	// a valid registration image: after a successful push the digest is
+	// resolved from the local image content id and substituted in, the
+	// same technique tests/testinfra/kind/install.sh's resolve_digest
+	// shell function uses to pin the reference-runtime images it loads
+	// onto the tier-5 Kind cluster. A caller using --skip-push is
+	// expected to already pass a digest-pinned --image (the image is
+	// already in the registry under that reference), so registerImage
+	// is left unchanged in that path.
+	registerImage := image
 	if !skipPush {
 		if _, err := exec.LookPath("docker"); err != nil {
 			fmt.Fprintln(stderr,
@@ -264,12 +281,18 @@ func cmdRuntimePublish(ctx context.Context, c *ctl.Client, args []string, stdout
 			fmt.Fprintf(stderr, "lenny runtime publish: docker push failed: %v\n", err)
 			return 1
 		}
+		id, err := resolveLocalImageID(image)
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny runtime publish: resolve pushed image digest: %v\n", err)
+			return 1
+		}
+		registerImage = digestPinnedImage(image, id)
 	}
 
 	// Build the registration body. --manifest names a runtime.yaml whose
 	// fields become the registration request; without it, a minimal
 	// {name, image, type: agent} record is registered.
-	body, err := publishRegistrationBody(name, image, manifestPath)
+	body, err := publishRegistrationBody(name, registerImage, manifestPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny runtime publish: %v\n", err)
 		return 1
@@ -282,6 +305,31 @@ func cmdRuntimePublish(ctx context.Context, c *ctl.Client, args []string, stdout
 	}
 	fmt.Fprintf(stderr, "lenny runtime publish: runtime %q registered\n", name)
 	return 0
+}
+
+// resolveLocalImageID returns the local content id `docker image
+// inspect` reports for ref (the `sha256:<hex>` form). It is the
+// exec.Command wrapper around digestPinnedImage's input; kept separate
+// so the pinning logic itself is unit-testable without a real docker
+// daemon.
+func resolveLocalImageID(ref string) (string, error) {
+	out, err := exec.Command("docker", "image", "inspect", ref, "--format", "{{.Id}}").Output()
+	if err != nil {
+		return "", fmt.Errorf("docker image inspect %s: %w", ref, err)
+	}
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", fmt.Errorf("docker image inspect %s: empty id", ref)
+	}
+	return id, nil
+}
+
+// digestPinnedImage appends id (a `sha256:<hex>` content id) to ref as
+// the §5.1 line 690 digest-pinned reference form
+// (`<ref>@sha256:<hex>`), the same `<image>@sha256:<id>` construction
+// tests/testinfra/kind/install.sh's resolve_digest shell function uses.
+func digestPinnedImage(ref, id string) string {
+	return ref + "@" + id
 }
 
 // publishRegistrationBody builds the §15.1 runtime-registration request

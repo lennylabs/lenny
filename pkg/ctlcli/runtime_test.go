@@ -332,6 +332,22 @@ integrationLevel: full
 	}
 }
 
+// TestDigestPinnedImage checks the §5.1 line 690 digest-pinned
+// reference construction cmdRuntimePublish uses to register a freshly
+// pushed image: appending the local content id to the pushed reference
+// as `<ref>@sha256:<hex>`, the same form
+// tests/testinfra/kind/install.sh's resolve_digest shell function
+// produces for the reference-runtime images it pins onto the tier-5
+// Kind cluster.
+func TestDigestPinnedImage(t *testing.T) {
+	got := digestPinnedImage("ghcr.io/acme/runtime-my-agent:1.0.0",
+		"sha256:423ae0b7acbb96187f80433ed52acd2871e9142dd097c8fe523fb746277baee2")
+	want := "ghcr.io/acme/runtime-my-agent:1.0.0@sha256:423ae0b7acbb96187f80433ed52acd2871e9142dd097c8fe523fb746277baee2"
+	if got != want {
+		t.Errorf("digestPinnedImage: got %q, want %q", got, want)
+	}
+}
+
 // TestAdminRuntimesRegister checks that `admin runtimes register`
 // posts the runtime.yaml to POST /v1/admin/runtimes.
 func TestAdminRuntimesRegister(t *testing.T) {

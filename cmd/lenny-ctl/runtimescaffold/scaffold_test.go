@@ -238,6 +238,15 @@ func TestGenerateWritesFileSet(t *testing.T) {
 		if !strings.Contains(string(manifest), "integrationLevel: "+level) {
 			t.Errorf("%s/%s: runtime.yaml lacks integrationLevel: %s", c.lang, c.tmpl, level)
 		}
+		// spec: §5.1 line 51 ("Labels are required from v1"): the admin
+		// registration path (POST /v1/admin/runtimes, the path `lenny
+		// runtime publish` and `lenny-ctl admin runtimes register` both
+		// use) unconditionally rejects a manifest with no labels. A
+		// scaffold with none can never be published as scaffolded.
+		if !strings.Contains(string(manifest), "labels:") {
+			t.Errorf("%s/%s: runtime.yaml has no labels field; POST /v1/admin/runtimes "+
+				"rejects a runtime with no labels (§5.1 line 51)", c.lang, c.tmpl)
+		}
 	}
 }
 

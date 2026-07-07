@@ -40,6 +40,13 @@ handler: runc
 # §4.7 sidecar deployment model: cmd/runtimes/echo is a stdin/stdout JSONL
 # exec target and the lenny-adapter sidecar bridges it over an abstract
 # Unix socket. Backs the pod-warm echo-pool-sidecar pool.
+#
+# capabilities.injection.supported is true (§5.1) so the tier5/8/9
+# sessiondriver harness can exercise a mid-session lenny/send_message /
+# POST .../messages round trip against this runtime's real pod, not
+# only the initial prompt delivered at session start. echocore
+# (pkg/runtimekit/echocore) already answers every inbound `message`
+# frame, so the runtime is genuinely multi_turn-capable.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -51,6 +58,11 @@ spec:
   executionMode: session
   isolationProfile: standard
   deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
 ---
 # §4.7 embedded deployment model: cmd/runtimes/echo-embedded links the
 # adapter into one container that serves the gRPC contract directly. Backs

@@ -206,7 +206,7 @@
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/..."]
     },
     "cmd/lenny-gateway": {
       "static": ["cmd/lenny-gateway/..."],
@@ -282,6 +282,9 @@
     },
     "tests/testinfra/containers": {
       "component": ["tests/testinfra/containers/postgres_test.go"]
+    },
+    "tests/testinfra/fixtures/expand_contract_migration": {
+      "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]
     },
     "tests/testdata/migrations": {
       "static": ["scripts/lint-schema.sh"],
@@ -414,7 +417,7 @@
     },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
-      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/..."]
+      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."]
     },
     "tests/testdata/openai_chat": {
       "contract": ["tests/tier3_contract/rest_openai_chat/..."]
@@ -427,7 +430,7 @@
     },
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
-      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."]
     }
   }
 }

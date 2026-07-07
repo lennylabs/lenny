@@ -12,6 +12,10 @@
 # install is a no-op beyond the verification reads.
 #
 # Steps:
+#   0. Prune host-side Docker build cache and dangling images idle 24h+,
+#      and each node's genuinely nameless (dangling) containerd images.
+#      Guards against unbounded disk growth on this long-lived cluster
+#      from tests that build or load uniquely-tagged images per run.
 #   1. Build the platform binary images and the two reference echo
 #      runtime images, each as a separate `docker build` process.
 #   2. Load the images onto the Kind cluster nodes.
@@ -43,6 +47,8 @@
 #                        deploys out-of-date binaries after a code change;
 #                        set this to guarantee the deployed images reflect
 #                        the current tree. Ignored when LENNY_SKIP_BUILD=1.
+#   LENNY_SKIP_PRUNE     When "1", skip the pre-build host and node prune
+#                        step (see below). Default: prune runs every time.
 
 set -euo pipefail
 
@@ -136,6 +142,25 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------
+# Step 0: prune stale host-side build cache and dangling images.
+#
+# This cluster is long-lived and re-installed/re-verified many times
+# across sessions; a test that builds a uniquely-tagged image on every
+# run (see tests/tier5_e2e_kind/runtime_publish_journey_test.go) leaves
+# BuildKit cache entries that `docker rmi` never clears. Left unpruned
+# across enough runs this silently exhausts the Docker Desktop VM disk
+# (observed directly: a single day of repeated test-gaps batches against
+# that journey test filled a 500GB+ VM disk). Time-scoped so a same-day
+# rerun still benefits from a warm cache; only entries idle a day or
+# more are reclaimed.
+# ---------------------------------------------------------------------
+if [[ "${LENNY_SKIP_PRUNE:-}" != "1" ]]; then
+  log "pruning host docker build cache and dangling images older than 24h"
+  docker builder prune -f --filter until=24h >/dev/null 2>&1 || true
+  docker image prune -f --filter until=24h >/dev/null 2>&1 || true
+fi
+
+# ---------------------------------------------------------------------
 # Step 1+2: build and load the binary images.
 #
 # Each image is built with its own `docker build` invocation. A shell
@@ -197,6 +222,60 @@ fi
 # the script does not depend on the caller's current-context.
 KCTX="kind-${CLUSTER}"
 kc() { kubectl --context "${KCTX}" "$@"; }
+
+# ---------------------------------------------------------------------
+# Step 3b: prune genuinely dangling (nameless) images from each node's
+# containerd store.
+#
+# A node's containerd content store only grows: `kind load docker-image`
+# (used both by this script and directly by tests such as
+# runtime_publish_journey_test.go, which loads a freshly-tagged image on
+# every run) leaves an anonymous `import-<date>` alias alongside the
+# intended name on every load, and nothing else on this long-lived
+# cluster reclaims either. This deliberately does NOT use `crictl rmi
+# --prune`: that flag removes every image with no CURRENTLY RUNNING
+# container, which also catches images that are needed but only run
+# on demand (Job images re-triggered later, reference-runtime images
+# only pulled when a session actually uses them) and deletes their real
+# tags -- observed directly deleting lenny-migrate:e2e,
+# lenny-runtime-elicitation-echo:e2e, and others still needed by this
+# cluster. Only an image with an EMPTY repoTags list (no human-readable
+# name at all, matched by exact repoDigest reference so a same-content
+# but properly-named sibling is never touched) is dangling in the sense
+# this step targets. crictl ships inside the kind node image; python3
+# is a pinned dev-environment tool (scripts/setup-dev.sh). Fall back to
+# a no-op with a warning if either is missing rather than fail the
+# install over housekeeping.
+# ---------------------------------------------------------------------
+if [[ "${LENNY_SKIP_PRUNE:-}" != "1" ]]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "WARNING: python3 not found; skipping node image prune"
+  else
+    nodes="$(kind get nodes --name "${CLUSTER}")"
+    for node in ${nodes}; do
+      if docker exec "${node}" which crictl >/dev/null 2>&1; then
+        log "pruning dangling (untagged) containerd images on ${node}"
+        refs="$(docker exec "${node}" crictl images -o json 2>/dev/null | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for img in data.get("images", []):
+    if not img.get("repoTags"):
+        digests = img.get("repoDigests") or []
+        if digests:
+            print(digests[0])
+' || true)"
+        if [[ -n "${refs}" ]]; then
+          while IFS= read -r ref; do
+            [[ -z "${ref}" ]] && continue
+            docker exec "${node}" crictl rmi "${ref}" >/dev/null 2>&1 || true
+          done <<<"${refs}"
+        fi
+      else
+        log "WARNING: crictl not found on ${node}; skipping node image prune"
+      fi
+    done
+  fi
+fi
 
 # ---------------------------------------------------------------------
 # Step 2 (load): load the built images onto the cluster nodes. Done
@@ -545,12 +624,21 @@ bootstrap:
     # lookup resolves these when a test posts POST /v1/sessions with the
     # matching runtimeRef; the Sandbox reconciler reads the same-named
     # Runtime CR (applied from agent-workload.yaml) for the pod image.
+    # capabilities.injection.supported is true (§5.1) to match the
+    # Runtime CRD in agent-workload.yaml, so the tier5/8/9
+    # sessiondriver harness can drive a mid-session message round trip
+    # against a real echo-runtime-sidecar pod.
     - name: echo-runtime-sidecar
       type: agent
       image: ${ECHO_IMAGE}
       integrationLevel: basic
       executionMode: session
       isolationProfile: standard
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
       labels:
         lenny.dev/e2e: echo-sidecar
     - name: echo-runtime-embedded
