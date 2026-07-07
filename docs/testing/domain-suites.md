@@ -41,7 +41,7 @@ The most important security suite. Every store, query path, API surface, and ada
 ## §14.5 MCP elicitation chain
 
 - **Tier 1**: `pkg/elicitation/` ships the canonicalised SHA-256 digest + tamper detector.
-- **Tier 3**: `tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go::TestRESTMCPElicitation`.
+- **Tier 3**: `tests/tier3_contract/rest_mcp_consistency/consistency_test.go::TestRESTMCPElicitation`.
 - **Tier 4**: `TestMCPElicitationChain`, `TestMCPProvenance` (scaffolds).
 - **Tier 9**: tier-9 security scaffolds cover the tamper / floor enforcement cases.
 

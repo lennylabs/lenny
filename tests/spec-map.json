@@ -2081,7 +2081,10 @@
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",
         "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
-        "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go"
+        "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/consistency_test.go",
+        "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
+        "tests/tier3_contract/rest_openai_responses/fidelity_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
