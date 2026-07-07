@@ -1642,7 +1642,8 @@
         "tests/tier2_component/legalholdescrow/pgstore_test.go",
         "tests/tier2_component/stores/memorystore_preflight_test.go",
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
-        "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go"
+        "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
+        "tests/tier4_integration/erasure_job_test.go"
       ],
       "packages": [
         "pkg/store",
