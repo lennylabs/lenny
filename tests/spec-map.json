@@ -491,7 +491,8 @@
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
         "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
-        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
       ],
       "packages": [
         "pkg/isolation"
@@ -523,8 +524,8 @@
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
         "pkg/controller/warmpool/...",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestGvisorIsolation",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestKataIsolation",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestKataIsolation",
         "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
       ],
       "packages": [
@@ -1771,12 +1772,14 @@
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsMutableRootFS",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRequiresDropAll",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAddedCapabilities",
+        "pkg/podsecurity/podsecurity_test.go::TestCapabilitiesDropped_spec_13_1",
         "tests/tier5_e2e_kind/admission_test.go",
         "tests/tier9_security/admission_cred_test.go",
         "tests/tier9_security/admission_ephemeral_test.go",
         "tests/tier9_security/admission_label_immutability_test.go",
         "tests/tier9_security/admission_security_test.go",
-        "tests/tier9_security/image_signing_test.go"
+        "tests/tier9_security/image_signing_test.go",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
       ],
       "packages": [
         "pkg/podsecurity"

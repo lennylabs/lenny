@@ -34,6 +34,7 @@ import (
 
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/lennylabs/lenny/pkg/podsecurity"
 	"github.com/lennylabs/lenny/tests/testinfra/cloud"
 )
 
@@ -165,14 +166,18 @@ func TestGvisorIsolation(t *testing.T) {
 // pod on the gVisor pool rather than only leaving the RuntimeClass
 // and the node label present with nothing scheduled), and asserts
 // every container on those pods carries the §13.1 "Capabilities: All
-// dropped" posture. It soft-skips (log + return) when the cluster has
-// the gvisor RuntimeClass and a labeled node but no pod has been
-// scheduled there yet: the cloud-sandbox node-pool wiring through
-// scripts/cloud/<provider>/up.sh that would keep a SandboxWarmPool's
-// gVisor-profile pods Ready is not yet built, so a bare cloud-small
-// cluster reaches this point with the RuntimeClass and label present
-// (both provisioned by up-runtimeclass-pools.sh for other purposes)
-// but no gvisor-RuntimeClass pod actually running.
+// dropped" posture using podsecurity.CapabilitiesDropped — the same,
+// independently unit-tested rule (pkg/podsecurity/podsecurity_test.go
+// ::TestCapabilitiesDropped_spec_13_1) the §13.1 admission validator
+// applies, rather than a check re-derived here. It soft-skips (log
+// and return) when the cluster has the gvisor RuntimeClass and a
+// labeled node but no pod has been scheduled there yet: the
+// cloud-sandbox node-pool wiring through scripts/cloud/<provider>/up.sh
+// that would keep a SandboxWarmPool's gVisor-profile pods Ready is not
+// yet built, so a bare cloud-small cluster reaches this point with the
+// RuntimeClass and label present (both provisioned by
+// up-runtimeclass-pools.sh for other purposes) but no
+// gvisor-RuntimeClass pod actually running.
 func assertGvisorPoolPodsCapabilitiesDropped(t *testing.T, cli *kubernetes.Clientset, agentNamespaces []corev1.Namespace) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -199,12 +204,14 @@ func assertGvisorPoolPodsCapabilitiesDropped(t *testing.T, cli *kubernetes.Clien
 		containers := append([]corev1.Container{}, pod.Spec.Containers...)
 		containers = append(containers, pod.Spec.InitContainers...)
 		for _, c := range containers {
-			var drop []corev1.Capability
+			var drop []string
 			if c.SecurityContext != nil && c.SecurityContext.Capabilities != nil {
-				drop = c.SecurityContext.Capabilities.Drop
+				for _, d := range c.SecurityContext.Capabilities.Drop {
+					drop = append(drop, string(d))
+				}
 			}
-			if len(drop) != 1 || drop[0] != "ALL" {
-				t.Errorf("pod %s/%s container %q securityContext.capabilities.drop = %v, want [\"ALL\"] (§13.1 Capabilities row)",
+			if !podsecurity.CapabilitiesDropped(drop) {
+				t.Errorf("pod %s/%s container %q securityContext.capabilities.drop = %v, want a list containing \"ALL\" (§13.1 Capabilities row)",
 					pod.Namespace, pod.Name, c.Name, drop)
 			}
 		}

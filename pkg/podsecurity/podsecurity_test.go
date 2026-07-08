@@ -443,3 +443,35 @@ func TestValidateRejectsEmptyContainerList(t *testing.T) {
 		t.Errorf("empty container list should be rejected")
 	}
 }
+
+// spec: §13.1 ("Capabilities | All dropped") — CapabilitiesDropped is the
+// exported primitive the §13.1 Capabilities row check reduces to
+// (exercised indirectly above via TestValidateRequiresDropAll and
+// TestValidateRejectsAddedCapabilities); this table pins its own
+// input/output contract directly so a caller outside this package, such
+// as a cluster-assertion test reading a live pod's
+// securityContext.capabilities.drop off the Kubernetes API, has a
+// pinned, independently verified rule to call instead of re-deriving
+// the "ALL present" check inline.
+func TestCapabilitiesDropped_spec_13_1(t *testing.T) {
+	cases := []struct {
+		name  string
+		drops []string
+		want  bool
+	}{
+		{"exactly ALL", []string{"ALL"}, true},
+		{"ALL alongside a redundant entry", []string{"ALL", "NET_RAW"}, true},
+		{"nil list", nil, false},
+		{"empty list", []string{}, false},
+		{"single non-ALL entry", []string{"NET_RAW"}, false},
+		{"several non-ALL entries", []string{"NET_RAW", "SYS_ADMIN"}, false},
+		{"case-sensitive: lowercase all does not count", []string{"all"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CapabilitiesDropped(tc.drops); got != tc.want {
+				t.Errorf("CapabilitiesDropped(%v) = %v, want %v", tc.drops, got, tc.want)
+			}
+		})
+	}
+}

@@ -273,7 +273,7 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 		if c.ReadOnlyRootFilesystem == nil || !*c.ReadOnlyRootFilesystem {
 			violations = append(violations, fmt.Sprintf("container %q: readOnlyRootFilesystem must be true (§13.1 Root filesystem row)", c.Name))
 		}
-		if !dropsAllCapabilities(c.CapabilitiesDrop) {
+		if !CapabilitiesDropped(c.CapabilitiesDrop) {
 			violations = append(violations, fmt.Sprintf("container %q: capabilities.drop must contain ALL (§13.1 Capabilities row)", c.Name))
 		}
 		if len(c.CapabilitiesAdd) > 0 {
@@ -359,10 +359,15 @@ func describeSeccomp(profileType string) string {
 	return profileType
 }
 
-// dropsAllCapabilities reports whether the drop list contains "ALL".
-// The check is case-sensitive matching the Kubernetes capability
-// value the API server emits.
-func dropsAllCapabilities(drops []string) bool {
+// CapabilitiesDropped reports whether drops satisfies the §13.1
+// "Capabilities: All dropped" row: the list must contain "ALL". The
+// check is case-sensitive, matching the Kubernetes capability value
+// the API server emits. Exported so callers outside this package
+// (for example the tier-6 cloud cluster assertions, which read a live
+// pod's securityContext.capabilities.drop off the Kubernetes API
+// rather than building a PodSpec) can apply the same §13.1 rule
+// ValidateAgentPod enforces instead of re-deriving it.
+func CapabilitiesDropped(drops []string) bool {
 	for _, d := range drops {
 		if d == "ALL" {
 			return true
