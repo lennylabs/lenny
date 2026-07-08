@@ -224,6 +224,7 @@ function verifyFindingPrompt(f, implResult) {
 }
 
 const closedResults = []
+let abortedOnTerminalError = false
 for (const f of selectResult.selected) {
   let attempt = 0
   let implResult = null
@@ -235,9 +236,28 @@ for (const f of selectResult.selected) {
     implResult = await agent(implementPrompt(f, priorIssues), {
       label: f.id + ':impl:' + attempt, phase: 'Close', schema: IMPLEMENT_SCHEMA, effort: 'high',
     })
+    if (!implResult) {
+      // agent() returns null on a terminal API error (auth expiry, rate/usage
+      // limit) after retries, not just for this finding but almost certainly
+      // for every subsequent agent() call in this run too. Stop cleanly here
+      // rather than dereference a null implResult (which crashed the whole
+      // workflow the first two times this happened) — closedResults keeps
+      // whatever this batch already finished, so Mark-resolved/Annotate/
+      // Verify below still run on that partial progress instead of losing
+      // it. The unresolved finding itself is left OPEN, untouched, for the
+      // next batch (Select will just pick it up again next time).
+      verifyResult = { approved: false, issues: ['implementer agent returned no result (terminal API error); not retried within this run'] }
+      abortedOnTerminalError = true
+      break
+    }
     verifyResult = await agent(verifyFindingPrompt(f, implResult), {
       label: f.id + ':verify:' + attempt, phase: 'Close', schema: VERIFY_FINDING_SCHEMA, effort: 'medium',
     })
+    if (!verifyResult) {
+      verifyResult = { approved: false, issues: ['verifier agent returned no result (terminal API error); not retried within this run'] }
+      abortedOnTerminalError = true
+      break
+    }
     if (implResult.route === 'moot' || implResult.route === 'needs-human') {
       // Single-pass sanity check only; nothing to iterate on (moot needs no
       // fix, needs-human deliberately touches no code to iterate against).
@@ -274,6 +294,15 @@ for (const f of selectResult.selected) {
   }
   closedResults.push({ finding: f, impl: implResult, verify: verifyResult, attempts: attempt })
   log(f.id + ' -> route=' + (implResult ? implResult.route : 'none') + ' approved=' + verifyResult.approved + ' after ' + attempt + ' attempt(s).')
+  if (abortedOnTerminalError) {
+    // Don't keep looping over the rest of the batch's findings — a terminal
+    // API error almost certainly recurs on every further agent() call in
+    // this run, so trying the next finding would just fail the same way.
+    // Stop the Close loop here; Mark-resolved/Annotate/Verify below still
+    // process whatever finished before this point.
+    log('stopping the Close loop early after a terminal API error; ' + (selectResult.selected.length - closedResults.length) + ' selected finding(s) left untouched this run.')
+    break
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +314,17 @@ const toResolve = closedResults.filter(function (r) {
   return r.verify.approved && r.impl && (r.impl.route === 'test' || r.impl.route === 'code-fix' || r.impl.route === 'moot')
 })
 const needsHuman = closedResults.filter(function (r) { return r.impl && r.impl.route === 'needs-human' })
-const stuck = closedResults.filter(function (r) { return !r.verify.approved && (!r.impl || r.impl.route !== 'needs-human') })
+// abortedFindings: impl is null because the implementer or verifier agent
+// hit a terminal API error (rate/usage limit, auth expiry) and never
+// produced a real result — not a genuine quality disagreement. These stay
+// completely untouched (no annotation, no exclusion from future Select) so
+// the very next batch just retries them normally once the underlying
+// constraint clears.
+const abortedFindings = closedResults.filter(function (r) { return !r.impl && !r.verify.approved })
+// stuck: a genuine quality rejection — the implementer produced a real
+// result but the independent verifier rejected every attempt within
+// maxAttemptsPerFinding. This is what should be annotated and excluded.
+const stuck = closedResults.filter(function (r) { return !r.verify.approved && r.impl && r.impl.route !== 'needs-human' })
 
 let markResult = { markedCount: 0 }
 if (toResolve.length) {
@@ -391,15 +430,19 @@ return {
   scope: scope,
   resolvedInPassing: selectResult.resolvedInPassing,
   remainingOpenInScope: selectResult.remainingOpenInScope,
+  abortedOnTerminalError: abortedOnTerminalError,
   batch: {
     selectedCount: selectResult.selected.length,
+    processedCount: closedResults.length,
     resolvedCount: toResolve.length,
     codeFixCount: codeFixCount,
     needsHumanCount: needsHuman.length,
     stuckCount: stuck.length,
+    abortedCount: abortedFindings.length,
     resolved: toResolve.map(function (r) { return { id: r.finding.id, route: r.impl.route } }),
     needsHuman: needsHuman.map(function (r) { return { id: r.finding.id, question: r.impl.humanQuestion } }),
     stuck: stuck.map(function (r) { return { id: r.finding.id, issues: r.verify.issues } }),
+    aborted: abortedFindings.map(function (r) { return r.finding.id }),
   },
   markResult: markResult,
   annotateResult: annotateResult,
