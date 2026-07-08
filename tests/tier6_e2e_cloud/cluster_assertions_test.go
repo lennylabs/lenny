@@ -103,14 +103,16 @@ func requireGatewayInstalled(t *testing.T, cli *kubernetes.Clientset) (selector 
 	return "lenny.dev/component=gateway"
 }
 
-// spec: 6.1 (pre-warmed pod anatomy: RuntimeClass selection — gVisor variant)
+// spec: 5.3 (sandboxed isolation profile is the gvisor RuntimeClass and
+// is the default for all workloads), 13.1 (Capabilities: All dropped)
 // diagnosis: TestGvisorIsolation asserts the chart's agent-namespace
 // PSA labels are restricted (so a non-RuntimeClass-aware install
-// would reject gVisor pods) and that a sandboxed-profile pool
-// matches a node carrying the gVisor RuntimeClass. The EKS default
-// node group does not ship gVisor — an unblocked run requires an
-// EKS sandbox node group running the gVisor runtime (eksctl
-// --node-runtime gvisor) and a Lenny SandboxWarmPool whose
+// would reject gVisor pods), that a sandboxed-profile pool matches a
+// node carrying the gVisor RuntimeClass, and — once a pod is actually
+// scheduled under that RuntimeClass — that every container on it
+// drops all Linux capabilities. The EKS default node group does not
+// ship gVisor — an unblocked run requires a cloud sandbox node group
+// running the gVisor runtime and a Lenny SandboxWarmPool whose
 // isolationProfile is sandboxed.
 func TestGvisorIsolation(t *testing.T) {
 	_ = requireCloud(t)
@@ -149,6 +151,65 @@ func TestGvisorIsolation(t *testing.T) {
 		return
 	}
 	t.Logf("TestGvisorIsolation: %d gVisor-labeled node(s) present; SandboxWarmPool selection invariant covered by tier-2 admission tests", len(nodes.Items))
+
+	assertGvisorPoolPodsCapabilitiesDropped(t, cli, nss.Items)
+}
+
+// assertGvisorPoolPodsCapabilitiesDropped covers the remaining two
+// clauses of the TESTING.md §12.6 gvisor_isolation row this test
+// exercises: "Default isolation profile (sandboxed) creates pods on
+// the gVisor ... node pool" and "capability dropping behave[s] per
+// documented sandbox semantics". It lists every pod across the
+// chart's agent namespaces, finds the ones actually scheduled under
+// the gvisor RuntimeClass (proving the sandboxed profile placed a
+// pod on the gVisor pool rather than only leaving the RuntimeClass
+// and the node label present with nothing scheduled), and asserts
+// every container on those pods carries the §13.1 "Capabilities: All
+// dropped" posture. It soft-skips (log + return) when the cluster has
+// the gvisor RuntimeClass and a labeled node but no pod has been
+// scheduled there yet: the cloud-sandbox node-pool wiring through
+// scripts/cloud/<provider>/up.sh that would keep a SandboxWarmPool's
+// gVisor-profile pods Ready is not yet built, so a bare cloud-small
+// cluster reaches this point with the RuntimeClass and label present
+// (both provisioned by up-runtimeclass-pools.sh for other purposes)
+// but no gvisor-RuntimeClass pod actually running.
+func assertGvisorPoolPodsCapabilitiesDropped(t *testing.T, cli *kubernetes.Clientset, agentNamespaces []corev1.Namespace) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var gvisorPods []corev1.Pod
+	for _, ns := range agentNamespaces {
+		pods, err := cli.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			t.Fatalf("list pods in agent namespace %s: %v", ns.Name, err)
+		}
+		for _, pod := range pods.Items {
+			if pod.Spec.RuntimeClassName != nil && *pod.Spec.RuntimeClassName == "gvisor" {
+				gvisorPods = append(gvisorPods, pod)
+			}
+		}
+	}
+	if len(gvisorPods) == 0 {
+		t.Log("TestGvisorIsolation: no pod scheduled under the gvisor RuntimeClass yet; provision the cloud-sandbox node pool " +
+			"(scripts/cloud/<provider>/up.sh cloud-sandbox shape) and a SandboxWarmPool with isolationProfile: sandboxed to unblock")
+		return
+	}
+	for _, pod := range gvisorPods {
+		containers := append([]corev1.Container{}, pod.Spec.Containers...)
+		containers = append(containers, pod.Spec.InitContainers...)
+		for _, c := range containers {
+			var drop []corev1.Capability
+			if c.SecurityContext != nil && c.SecurityContext.Capabilities != nil {
+				drop = c.SecurityContext.Capabilities.Drop
+			}
+			if len(drop) != 1 || drop[0] != "ALL" {
+				t.Errorf("pod %s/%s container %q securityContext.capabilities.drop = %v, want [\"ALL\"] (§13.1 Capabilities row)",
+					pod.Namespace, pod.Name, c.Name, drop)
+			}
+		}
+	}
+	t.Logf("TestGvisorIsolation: %d pod(s) scheduled under the gvisor RuntimeClass, all containers drop every capability", len(gvisorPods))
 }
 
 // spec: 6.1 (pre-warmed pod anatomy: RuntimeClass selection — Kata / microVM variant)
