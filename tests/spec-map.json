@@ -489,7 +489,8 @@
         "pkg/admission/webhook/direct_mode_isolation_test.go",
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
-        "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7"
+        "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
       ],
       "packages": [
         "pkg/isolation"
@@ -522,7 +523,8 @@
       "tests": [
         "pkg/controller/warmpool/...",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestGvisorIsolation",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestKataIsolation"
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestKataIsolation",
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
       ],
       "packages": [
         "pkg/controller/warmpool",

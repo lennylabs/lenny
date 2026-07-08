@@ -224,6 +224,17 @@ KCTX="kind-${CLUSTER}"
 kc() { kubectl --context "${KCTX}" "$@"; }
 
 # ---------------------------------------------------------------------
+# Step 3a: install the §5.3 gVisor RuntimeClass onto the sandbox-gvisor
+# labelled node (idempotent; see install-gvisor.sh). Runs immediately
+# after cluster creation and before any workload exists on the node, so
+# the containerd restart it performs on a first install never disturbs
+# a running agent pod. Set LENNY_KIND_SKIP_GVISOR=1 to opt out on a host
+# with no route to the gVisor release bucket; the sandboxed pool below
+# then stays Degraded and gvisor_isolation_test.go skips cleanly.
+# ---------------------------------------------------------------------
+LENNY_KIND_CLUSTER="${CLUSTER}" "${SCRIPT_DIR}/install-gvisor.sh"
+
+# ---------------------------------------------------------------------
 # Step 3b: prune genuinely dangling (nameless) images from each node's
 # containerd store.
 #
@@ -677,6 +688,24 @@ bootstrap:
       isolationProfile: standard
       labels:
         lenny.dev/e2e: elicitation-echo
+    # §5.3 sandboxed-profile reference runtime. Backs gvisor-echo-pool,
+    # the only pool on this overlay that runs under the gvisor
+    # RuntimeClass rather than runc. install-gvisor.sh installs runsc on
+    # the sandbox-gvisor labelled node and applies the RuntimeClass
+    # before this pool's pod is scheduled (Step 3a, ahead of this
+    # Step-9 apply). Uses the same distroless echo image as
+    # echo-runtime-sidecar: gvisor_isolation_test.go fingerprints the
+    # gVisor sentry kernel through a short-lived ephemeral debug
+    # container (busybox) rather than execing into this shell-less
+    # image directly. spec: §5.3.
+    - name: gvisor-echo-runtime
+      type: agent
+      image: ${ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: sandboxed
+      labels:
+        lenny.dev/e2e: gvisor-echo
   pools:
     # §6.3 pod-warm arm: a standard/session pool backed by the sidecar
     # echo runtime. warmCount is 6 (not 1) so the §6.3 startup benchmark's
@@ -730,6 +759,22 @@ bootstrap:
       warmCount: 1
       allowStandardIsolation: true
       dnsPolicy: cluster-default
+    # §5.3 sandboxed isolation profile is the production default and
+    # needs no allowStandardIsolation-style opt-in flag. No dnsPolicy
+    # override: §13.2 rejects dnsPolicy: cluster-default on a
+    # non-standard-isolation pool (the dedicated-CoreDNS opt-out is
+    # standard-only), and none is needed here — coredns.clusterIP is
+    # unset on this overlay, so the Sandbox reconciler's applyDedicatedDNS
+    # already falls back every agent pod (regardless of pool) to the
+    # default ClusterFirst resolver. warmCount: 1 — gvisor_isolation_
+    # test.go is the only consumer and claims no pod (it inspects the
+    # warm, unclaimed pod directly), so a single replica is enough
+    # headroom.
+    - name: gvisor-echo-pool
+      runtimeRef: gvisor-echo-runtime
+      isolationProfile: sandboxed
+      executionMode: session
+      warmCount: 1
 EOF
 
 # --server-side=false forces client-side apply. Helm 4 defaults to

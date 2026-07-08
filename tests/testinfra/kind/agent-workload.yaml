@@ -145,3 +145,26 @@ spec:
   executionMode: session
   isolationProfile: standard
   deploymentModel: sidecar
+---
+# §5.3 sandboxed isolation profile reference runtime. Backs
+# gvisor-echo-pool, the only pool on this overlay whose isolation
+# profile is sandboxed rather than standard. install.sh's Step 3a
+# (tests/testinfra/kind/install-gvisor.sh) installs runsc on the
+# sandbox-gvisor labelled node and applies the gvisor RuntimeClass
+# before this pod is scheduled, so the Sandbox reconciler's §5.3
+# RuntimeClass stamp resolves to a real gVisor-backed pod instead of a
+# Degraded pool. Uses the same distroless echo image as
+# echo-runtime-sidecar: gvisor_isolation_test.go fingerprints the
+# gVisor sentry kernel through a short-lived ephemeral debug container
+# rather than execing into this shell-less image directly. spec: §5.3.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: gvisor-echo-runtime
+spec:
+  type: agent
+  image: __ECHO_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: sandboxed
+  deploymentModel: sidecar

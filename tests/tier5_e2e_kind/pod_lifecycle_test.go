@@ -77,9 +77,15 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) {
 	}
 
 	// The Sandbox reconciler stamps the §5.3 isolation RuntimeClass onto
-	// every agent pod; the standard profile maps to the runc handler.
-	if rc := podField(t, c, p.Name, "{.spec.runtimeClassName}"); rc != "runc" {
-		t.Errorf("%s: runtimeClassName = %q, want \"runc\" (§5.3 standard isolation profile)", p.Name, rc)
+	// every agent pod. Every reference pool on this overlay is
+	// isolationProfile: standard (runc) except gvisor-echo-pool
+	// (isolationProfile: sandboxed), which tests/tier5_e2e_kind/
+	// gvisor_isolation_test.go covers in full; this assertion only
+	// needs the right expectation per pool so it does not misreport a
+	// correctly-sandboxed pod as a RuntimeClass regression.
+	want := expectedRuntimeClass(p.Pool)
+	if rc := podField(t, c, p.Name, "{.spec.runtimeClassName}"); rc != want {
+		t.Errorf("%s: runtimeClassName = %q, want %q (§5.3 isolation profile for pool %s)", p.Name, rc, want, p.Pool)
 	}
 
 	// A warmed, unclaimed pod's Sandbox sits in the idle phase.
@@ -87,8 +93,20 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) {
 		t.Errorf("%s: backing Sandbox phase = %q, want \"idle\" (a warm, claimable pod)", p.Name, phase)
 	}
 
-	t.Logf("%s: §4.7 %s model verified — containers %v, RuntimeClass runc, Sandbox idle",
-		p.Name, p.Model, containers)
+	t.Logf("%s: §4.7 %s model verified — containers %v, RuntimeClass %s, Sandbox idle",
+		p.Name, p.Model, containers, want)
+}
+
+// expectedRuntimeClass returns the §5.3 RuntimeClass the Sandbox
+// reconciler stamps onto a warm pod from the named pool. Every pool on
+// this overlay is isolationProfile: standard (runc) except
+// gvisor-echo-pool (isolationProfile: sandboxed); see
+// tests/testinfra/kind/install.sh's generated bootstrap overlay.
+func expectedRuntimeClass(pool string) string {
+	if pool == "gvisor-echo-pool" {
+		return "gvisor"
+	}
+	return "runc"
 }
 
 // podContainers returns the names of a pod's containers.

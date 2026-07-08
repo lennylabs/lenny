@@ -187,7 +187,10 @@
     },
     "pkg/podsecurity": {
       "unit": ["pkg/podsecurity/..."],
-      "e2e_kind": ["tests/tier5_e2e_kind/admission_policy_test.go"]
+      "e2e_kind": [
+        "tests/tier5_e2e_kind/admission_policy_test.go",
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go"
+      ]
     },
     "pkg/environment": {
       "unit": ["pkg/environment/..."],
