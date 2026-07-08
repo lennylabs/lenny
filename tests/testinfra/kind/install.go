@@ -121,9 +121,10 @@ func RequireAgentWorkload(t testing.TB, c *Cluster) []AgentPod {
 // deploymentModel maps an agent workload pool name to its §4.7
 // deployment model. The two reference echo pools name themselves
 // with a -sidecar or -embedded suffix; the tier-9 probe pools
-// (cred-shell-echo-pool, elicitation-echo-pool) and the §5.3 sandboxed
-// reference pool (gvisor-echo-pool) declare their model on the Runtime
-// CRD instead.
+// (cred-shell-echo-pool, elicitation-echo-pool), the §5.3 sandboxed
+// reference pool (gvisor-echo-pool), and the §5.2 sequential-reuse /
+// concurrent-slot reference pools (task-mode-echo-pool,
+// concurrent-echo-pool) declare their model on the Runtime CRD instead.
 func deploymentModel(pool string) string {
 	switch {
 	case strings.HasSuffix(pool, "-sidecar"):
@@ -131,7 +132,8 @@ func deploymentModel(pool string) string {
 	case strings.HasSuffix(pool, "-embedded"):
 		return "embedded"
 	case strings.Contains(pool, "cred-shell-echo") || strings.Contains(pool, "elicitation-echo") ||
-		strings.Contains(pool, "gvisor-echo"):
+		strings.Contains(pool, "gvisor-echo") || strings.Contains(pool, "task-mode-echo") ||
+		strings.Contains(pool, "concurrent-echo"):
 		// These runtimes all deploy as sidecar (see
 		// tests/testinfra/kind/agent-workload.yaml). The §4.7
 		// container topology is the same as the reference sidecar

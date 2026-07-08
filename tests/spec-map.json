@@ -440,6 +440,7 @@
         "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier4_integration/concurrent_workspace_test.go",
         "tests/tier4_integration/concurrent_stateless_test.go",
+        "tests/tier5_e2e_kind/execution_modes_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
         "tests/tier12_load_cloud/concurrent_stateless_test.go",
         "tests/tier12_load_cloud/concurrent_workspace_test.go",

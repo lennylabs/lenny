@@ -166,6 +166,15 @@ type PoolPolicyMirror struct {
 	MaxConcurrentSessions int32
 	// MaxConcurrent is the service-mode per-pod request capacity.
 	MaxConcurrent int32
+	// Recycle is sessionPolicy.recycle.enabled: the §5.2 sequential
+	// pod-reuse flag for every scrub profile (standard, vm-restart,
+	// in-place). The CRD pair carries the flag only implicitly, for the
+	// microvm cross-tenant scrub variants where a non-empty scrubProfile
+	// is itself an admission-enforced signal (§4.6.3 ownership); a
+	// standard-profile recycling pool sets no CRD field at all, so this
+	// gateway-enforced mirror is the only source foldPoolPolicy has for
+	// the common case. spec: §5.2 (Recycle lifecycle).
+	Recycle bool
 	// AllowCrossTenantReuse is sessionPolicy.recycle.allowCrossTenantReuse.
 	AllowCrossTenantReuse bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2
@@ -332,6 +341,13 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 		return nil
 	}
 	m.MaxConcurrentSessions = mirror.MaxConcurrentSessions
+	// spec: §5.2 (Recycle lifecycle) — the CRD only sets SessionPolicy.
+	// Recycle for the microvm cross-tenant scrub variants (a non-empty
+	// scrubProfile); a standard-profile recycling pool carries no CRD
+	// signal at all. OR in the mirror's Recycle rather than overwrite, so
+	// a CRD-derived true (the microvm case) is never downgraded by a
+	// mirror row that happens to omit the flag.
+	m.Recycle = m.Recycle || mirror.Recycle
 	m.AllowCrossTenantReuse = mirror.AllowCrossTenantReuse
 	// §5.2 whole-pod scrub trigger: the deployer cleanup commands and their
 	// aggregate cap are gateway-enforced and live on the mirror, so fold them

@@ -418,6 +418,12 @@ spec:
             {{- with .Values.gateway.deprecatedAPIVersions }}
             - --deprecated-api-versions={{ join "," . }}
             {{- end }}
+            # §7.1 line 112 — the seal-and-export retry window. Rendered
+            # only when set; 0/unset keeps the gateway binary's compiled-in
+            # 300s default.
+            {{- if gt (int .Values.gateway.workspaceSealMaxDurationSeconds) 0 }}
+            - --workspace-seal-max-duration-seconds={{ .Values.gateway.workspaceSealMaxDurationSeconds }}
+            {{- end }}
             # spec: §25.3 lines 596, 604, 625 — Capacity Recommendations
             # operator knobs. Rendered only when set so the gateway keeps
             # the spec defaults (all rules active, default windows, no

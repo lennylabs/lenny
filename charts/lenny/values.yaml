@@ -2100,6 +2100,15 @@ gateway:
   # /v2/ lands, set this to `[v1]` for the duration of the sunset.
   # spec: §15.5 item 1; docs/api/index.md line 124 — F-15.5.11.
   deprecatedAPIVersions: []
+  # workspaceSealMaxDurationSeconds is the §7.1 line 112
+  # maxWorkspaceSealDurationSeconds pool-level default's platform-wide
+  # floor: the total wall-clock window /terminate retries the
+  # seal-and-export checkpoint before giving up and releasing the pod
+  # anyway. 0 (default) leaves the gateway binary's own compiled-in
+  # default (300s) in force. Deployers without a working checkpoint sink
+  # in a given environment can shorten this so a session teardown is not
+  # held for the full 5-minute retry window on every termination.
+  workspaceSealMaxDurationSeconds: 0
   # recommendations tunes the §25.3 Capacity Recommendations service.
   # spec: §25.3 lines 596, 604, 625 — F-25.3.12.
   recommendations:

@@ -120,6 +120,11 @@ RUNTIME_IMAGES=(
   # raises §9.2 elicitations through the platform MCP fabric.
   "lenny-runtime-cred-shell-echo=runtimes/cred-shell-echo"
   "lenny-runtime-elicitation-echo=runtimes/elicitation-echo"
+  # §5.2 slotId dispatch-loop reference runtime. Backs
+  # concurrent-echo-pool (sessionPolicy.maxConcurrentSessions > 1), the
+  # tier-5 real-pod counterpart of the tier-4
+  # concurrent_workspace_test.go in-process flow.
+  "lenny-runtime-echo-concurrent=runtimes/echo-concurrent"
 )
 
 log() { printf '==> %s\n' "$*"; }
@@ -369,6 +374,7 @@ ECHO_EMBEDDED_IMAGE="$(resolve_digest "lenny-runtime-echo-embedded:${TAG}")"
 PRECONNECT_ECHO_IMAGE="$(resolve_digest "lenny-runtime-preconnect-echo:${TAG}")"
 CRED_SHELL_ECHO_IMAGE="$(resolve_digest "lenny-runtime-cred-shell-echo:${TAG}")"
 ELICITATION_ECHO_IMAGE="$(resolve_digest "lenny-runtime-elicitation-echo:${TAG}")"
+ECHO_CONCURRENT_IMAGE="$(resolve_digest "lenny-runtime-echo-concurrent:${TAG}")"
 log "echo runtime image pinned to ${ECHO_IMAGE}"
 
 # ---------------------------------------------------------------------
@@ -397,6 +403,7 @@ RUNTIME_DIGEST_REFS=(
   "${PRECONNECT_ECHO_IMAGE}"
   "${CRED_SHELL_ECHO_IMAGE}"
   "${ELICITATION_ECHO_IMAGE}"
+  "${ECHO_CONCURRENT_IMAGE}"
 )
 for node in $(kind get nodes --name "${CLUSTER}"); do
   for ref in "${RUNTIME_DIGEST_REFS[@]}"; do
@@ -706,6 +713,31 @@ bootstrap:
       isolationProfile: sandboxed
       labels:
         lenny.dev/e2e: gvisor-echo
+    # §5.2 slotId dispatch-loop reference runtime, the sidecar-model
+    # counterpart of the tier-4 concurrent_workspace_test.go in-process
+    # flow. Backs concurrent-echo-pool, whose sessionPolicy.
+    # maxConcurrentSessions > 1 multiplexes simultaneous sessions onto
+    # this runtime's single stdin/stdout dispatch loop keyed on slotId.
+    - name: echo-runtime-concurrent
+      type: agent
+      image: ${ECHO_CONCURRENT_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: echo-concurrent
+    # §5.2 sequential-pod-reuse ("task mode") reference runtime. Reuses
+    # ECHO_IMAGE under a distinct name so task-mode-echo-pool has a
+    # runtimeRef no other pool shares (see agent-workload.yaml for the
+    # ErrAmbiguousPool rationale).
+    - name: echo-runtime-task-mode
+      type: agent
+      image: ${ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: echo-task-mode
   pools:
     # §6.3 pod-warm arm: a standard/session pool backed by the sidecar
     # echo runtime. warmCount is 6 (not 1) so the §6.3 startup benchmark's
@@ -775,6 +807,57 @@ bootstrap:
       isolationProfile: sandboxed
       executionMode: session
       warmCount: 1
+    # §5.2 sequential pod-reuse ("task mode") pool: recycle.enabled with
+    # maxConcurrentSessions left at the default of 1 serves successive
+    # sessions on the one warm pod, with a whole-pod Lenny scrub between
+    # them. warmCount: 2, not 1 — claiming the sole idle pod on a
+    # warmCount: 1 pool through the combined POST /v1/sessions/start path
+    # trips the pool's own PoolWarmingUp bootstrap condition (idle count
+    # drops to 0 the instant the claim lands, before the replacement
+    # warms), and startOnPod's post-claim ResolvePool re-check then aborts
+    # the just-claimed pod; this reproduces on any pre-existing warmCount:
+    # 1 pool (verified directly against gvisor-echo-pool) and is unrelated
+    # to sessionPolicy — tracked separately, not a task-mode-specific
+    # defect. A depth of 2 keeps a spare idle pod so
+    # tests/tier5_e2e_kind/execution_modes_test.go's claims do not race
+    # it; tenant pinning plus the reserved-pod preference (§5.2 "the pod
+    # is held for its tenant through the claim's reserved state and
+    # serves the next session") still routes the tenant's second session
+    # back onto the same recycled pod. maxSessionsPerPod is required with
+    # no default when recycle.enabled is true (§5.2); 5 gives the test
+    # headroom for more than one cycle.
+    - name: task-mode-echo-pool
+      runtimeRef: echo-runtime-task-mode
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 2
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+      sessionPolicy:
+        recycle:
+          enabled: true
+          acknowledgeBestEffortScrub: true
+          maxSessionsPerPod: 5
+        cleanupTimeoutSeconds: 30
+    # §5.2 concurrent-session pool: maxConcurrentSessions > 1 multiplexes
+    # simultaneous sessions onto one warm pod's echo-concurrent process,
+    # each in its own slotId-addressed slot. warmCount: 2 for the same
+    # PoolWarmingUp-race reason as task-mode-echo-pool above,
+    # deliberately above 1 even though a single pod's 2 slots are enough
+    # capacity for the test's two sessions. cleanupTimeoutSeconds must be
+    # >= maxConcurrentSessions * 5 (§5.2 per-slot cleanup timeout floor);
+    # 30 clears the 2 * 5 = 10s minimum with headroom.
+    - name: concurrent-echo-pool
+      runtimeRef: echo-runtime-concurrent
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 2
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+      sessionPolicy:
+        maxConcurrentSessions: 2
+        acknowledgeProcessLevelIsolation: true
+        cleanupTimeoutSeconds: 30
 EOF
 
 # --server-side=false forces client-side apply. Helm 4 defaults to
@@ -862,6 +945,7 @@ sed \
   -e "s|__PRECONNECT_ECHO_IMAGE__|${PRECONNECT_ECHO_IMAGE}|g" \
   -e "s|__CRED_SHELL_ECHO_IMAGE__|${CRED_SHELL_ECHO_IMAGE}|g" \
   -e "s|__ELICITATION_ECHO_IMAGE__|${ELICITATION_ECHO_IMAGE}|g" \
+  -e "s|__ECHO_CONCURRENT_IMAGE__|${ECHO_CONCURRENT_IMAGE}|g" \
   "${AGENT_WORKLOAD_MANIFEST}" | kc apply -f -
 
 # The pools reach Postgres only after the post-install lenny-bootstrap Job

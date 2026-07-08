@@ -98,6 +98,60 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	}
 }
 
+// spec: §5.2 (Recycle lifecycle) — "the pod is held for its tenant
+// through the claim's `reserved` state and serves the next session" on a
+// `standard` (or `in-place`) recycling pool, not only the microvm
+// cross-tenant variants.
+//
+// diagnosis: a failure here means a standard-profile recycling pool's
+// PoolMatch.Recycle never turns true, so the release path
+// (BindResult.Recycle, resolve.go's caller) always retires the pod
+// instead of scrubbing and reusing it — the CRD pair carries
+// SessionPolicy.Recycle only for the microvm scrub variants
+// (sessionPolicyToCRD), so a standard-profile pool's recycle.enabled
+// reaches the gateway solely through this mirror fold.
+func TestResolvePoolFoldsRecycleForStandardScrubProfile(t *testing.T) {
+	tmpl := sandboxTemplate("reuse-tmpl", "reuse-runtime", "standard")
+	c := k8sClient(t, warmPool("reuse-pool", "reuse-tmpl"), tmpl)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"reuse-pool": {Recycle: true},
+	}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "reuse-runtime", "standard", "")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if !got.Recycle {
+		t.Error("Recycle = false, want true (folded from the mirror for a standard-profile recycling pool)")
+	}
+}
+
+// spec: §5.2 (Recycle lifecycle, Kata/microvm scrub variant) — the CRD
+// pair sets SessionPolicy.Recycle for a microvm cross-tenant-reuse pool
+// (a non-empty scrubProfile); TestResolvePoolFoldsPolicyMirror's mirror
+// carries no Recycle field (the zero value), so this pins the OR
+// combination: a CRD-derived true must never be downgraded by a mirror
+// row that omits the flag.
+func TestResolvePoolKeepsCRDRecycleWhenMirrorOmitsIt(t *testing.T) {
+	tmpl := serviceTemplate("microvm-reuse-tmpl", "microvm-reuse-runtime", "microvm", 1)
+	tmpl.Spec.ExecutionMode = "session"
+	tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{
+		Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "vm-restart"},
+	}
+	c := k8sClient(t, warmPool("microvm-reuse-pool", "microvm-reuse-tmpl"), tmpl)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"microvm-reuse-pool": {AllowCrossTenantReuse: true},
+	}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "microvm-reuse-runtime", "microvm", "")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if !got.Recycle {
+		t.Error("Recycle = false, want true (the CRD-derived scrubProfile signal must survive the fold)")
+	}
+}
+
 // spec: §5.2 (whole-pod scrub cleanup commands, gateway-enforced subset)
 // TestResolvePoolFoldsCleanupCommands covers the §5.2 whole-pod scrub
 // cleanup commands and their aggregate cap reaching PoolMatch from the
