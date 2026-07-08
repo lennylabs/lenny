@@ -32,12 +32,18 @@ import (
 )
 
 // requireEnv reads an env var or skips the test with a precise hint
-// at the Terraform output the operator forgot to source.
+// at the Terraform output the operator forgot to source. name is
+// expected to carry the LENNY_<PROVIDER>_ prefix
+// (LENNY_AWS_/LENNY_GCP_/LENNY_AZURE_) the matching
+// deploy/terraform/cloud/<provider> module's up.sh script exports,
+// so the hint names the right module for whichever provider called
+// it (aws_resources_test.go and cloud_portability_test.go share this
+// helper across all three providers).
 func requireEnv(t *testing.T, name string) string {
 	t.Helper()
 	v := strings.TrimSpace(os.Getenv(name))
 	if v == "" {
-		t.Logf("requireEnv: %s is unset; source the Terraform outputs (terraform -chdir=deploy/terraform/cloud/aws output) before running this test", name)
+		t.Logf("requireEnv: %s is unset; source the matching deploy/terraform/cloud/<provider> Terraform outputs (terraform -chdir=deploy/terraform/cloud/<provider> output) before running this test", name)
 		return ""
 	}
 	return v

@@ -2560,7 +2560,13 @@
       "title": "Cloud Portability",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress",
+        "tests/tier6_e2e_cloud/aws_resources_test.go::TestCloudKMS",
+        "tests/tier6_e2e_cloud/aws_resources_test.go::TestCloudCSI",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudKMSGCP",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudCSIGCS",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudKMSAzure",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudCSIAzureBlob"
       ],
       "packages": [
         "pkg/blobstore/s3",
@@ -2571,7 +2577,7 @@
         "pkg/kms/azure"
       ],
       "blocked_until_phase": "6",
-      "notes": "Non-normative portability statement. The cloud-provider abstractions live under pkg/blobstore/{s3,gcs,azureblob} (Store implementations) and pkg/kms/{aws,gcp,azure} (Provider implementations) and ship in Phase 6. The tier-6 e2e cloud managed_ingress suite (cluster_assertions_test.go::TestManagedIngress) is the pre-release environment check that an operator-supplied Ingress and provider-native external load balancer route HTTPS traffic to the gateway on managed Kubernetes."
+      "notes": "Non-normative portability statement. The cloud-provider abstractions live under pkg/blobstore/{s3,gcs,azureblob} (Store implementations) and pkg/kms/{aws,gcp,azure} (Provider implementations) and ship in Phase 6. The tier-6 e2e cloud managed_ingress suite (cluster_assertions_test.go::TestManagedIngress) is the pre-release environment check that an operator-supplied Ingress and provider-native external load balancer route HTTPS traffic to the gateway on managed Kubernetes. TESTING.md §12.6's cloud_csi / cloud_kms interface-parity claim is exercised per provider by aws_resources_test.go (S3 / AWS KMS) and cloud_portability_test.go (GCS / Cloud KMS on gcp; Azure Blob / Key Vault on azure), each a live Put/Get/Stat/SoftDelete artifact round-trip and a WrapDEK/UnwrapDEK + cross-alias-rejection KMS round-trip against the deploy/terraform/cloud/<provider> provisioned resources."
     },
     "17.6": {
       "title": "Packaging and Installation",
