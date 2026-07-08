@@ -2530,13 +2530,14 @@
       "title": "Disaster Recovery",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiZoneDR"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestMultiZoneDR",
+        "tests/tier8_chaos/postgres_ha_failover_test.go::TestPostgresHAFailover"
       ],
       "packages": [
         "pkg/dr"
       ],
       "blocked_until_phase": "14",
-      "notes": "Postgres point-in-time recovery, Redis snapshot strategy, Kubernetes cluster failover. Phase 14 lands the runbooks and the chaos drill harness. Cloud-verify multi-AZ Postgres failover is covered by the tier-6 e2e cloud scaffold; the suite runs against the provider's native HA Postgres offering when LENNY_CLOUD_PROVIDER is set."
+      "notes": "Postgres point-in-time recovery, Redis snapshot strategy, Kubernetes cluster failover. Phase 14 lands the runbooks and the chaos drill harness. Cloud-verify multi-AZ Postgres failover is covered by the tier-6 e2e cloud scaffold; the suite runs against the provider's native HA Postgres offering when LENNY_CLOUD_PROVIDER is set. The tier-8 Kind chaos test drives the primary-down recovery half against the datastores-ha-postgres.yaml overlay: a real session write, primary kill, pg_ctl promote, and gateway DSN rewire, asserting the pre-failover session survives with no data loss. Fully-automatic RTO-bounded promotion is the tier-6 cloud provider's managed-Postgres path, not this Kind exercise."
     },
     "17.4": {
       "title": "Local Development Mode (lenny-dev)",
