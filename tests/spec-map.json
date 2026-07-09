@@ -2673,7 +2673,8 @@
       "title": "Image Registry and Air-Gap",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "pkg/common/registry/resolver_test.go"
+        "pkg/common/registry/resolver_test.go",
+        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "14",
