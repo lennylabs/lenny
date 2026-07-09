@@ -102,8 +102,16 @@ func main() {
 // always non-nil when err is nil.
 // spec: §12.10 (TESTING.md) — the reference-runtime and third-party
 // conformance batteries run against a container image via
-// `lenny-compliance --image`.
+// `lenny-compliance --image`. A `file://` reference (see
+// tests/testinfra/runtimes/conformance-fixtures/README.md) names a
+// binary on disk directly rather than a container image, for driving
+// the §11 intentionally-malformed conformance fixtures through the
+// same --image entry point without a docker build per fixture; it
+// bypasses docker entirely.
 func resolveImageBinary(ctx context.Context, image string) (string, func(), error) {
+	if path, ok := strings.CutPrefix(image, "file://"); ok {
+		return path, func() {}, nil
+	}
 	if err := ensureImagePresent(ctx, image); err != nil {
 		return "", nil, err
 	}
