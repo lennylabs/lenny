@@ -2555,7 +2555,8 @@
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier9_security/embedded_echo_credfree_test.go",
         "tests/tier9_security/embedded_gateway_loopback_test.go",
-        "tests/tier9_security/admission_token_service_gate_render_test.go"
+        "tests/tier9_security/admission_token_service_gate_render_test.go",
+        "tests/tier4_integration/source_mode_protocols_test.go"
       ],
       "packages": [
         "cmd/lenny-dev",
