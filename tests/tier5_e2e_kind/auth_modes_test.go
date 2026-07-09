@@ -292,16 +292,14 @@ func TestStandardBearerGatesSessionCreation(t *testing.T) {
 		}
 		if status == http.StatusServiceUnavailable {
 			// A persistent pool-not-ready 503 is a warm-pool capacity
-			// condition on this shared, long-lived e2e cluster (real
-			// claimed pods can accumulate across many days of reuse; see
-			// tests/testinfra/kind/datastores-ha.md for the same
-			// shared-cluster caveat on other suites), not an auth-chain
-			// failure: pool-claim logic runs only once auth, tenant
-			// resolution, and role checks have already admitted the
-			// request, so reaching this envelope is itself proof the
-			// bearer was honoured. errors.Is-style skip, matching
-			// sessiondriver.ErrPoolNotReady's precedent for this exact
-			// envelope elsewhere in the suite.
+			// condition (this e2e Kind cluster is long-lived and reused
+			// across many test runs; claimed pods can accumulate faster
+			// than the pool releases them), not an auth-chain failure:
+			// pool-claim logic runs only once auth, tenant resolution,
+			// and role checks have already admitted the request, so
+			// reaching this envelope is itself proof the bearer was
+			// honoured. This mirrors sessiondriver.ErrPoolNotReady's
+			// precedent for this exact envelope elsewhere in the suite.
 			t.Skipf("pool %s did not free an idle pod within the retry window (body %v); "+
 				"the 503 RUNTIME_UNAVAILABLE envelope itself confirms the bearer passed the auth chain "+
 				"(an auth failure would be 401/403, not a pool-claim envelope)", "echo-pool-sidecar", resp)
