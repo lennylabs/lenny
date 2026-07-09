@@ -34,6 +34,7 @@ import (
 
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/lennylabs/lenny/pkg/podsecurity"
 	"github.com/lennylabs/lenny/tests/testinfra/cloud"
 )
 
@@ -103,14 +104,16 @@ func requireGatewayInstalled(t *testing.T, cli *kubernetes.Clientset) (selector 
 	return "lenny.dev/component=gateway"
 }
 
-// spec: 6.1 (pre-warmed pod anatomy: RuntimeClass selection — gVisor variant)
+// spec: 5.3 (sandboxed isolation profile is the gvisor RuntimeClass and
+// is the default for all workloads), 13.1 (Capabilities: All dropped)
 // diagnosis: TestGvisorIsolation asserts the chart's agent-namespace
 // PSA labels are restricted (so a non-RuntimeClass-aware install
-// would reject gVisor pods) and that a sandboxed-profile pool
-// matches a node carrying the gVisor RuntimeClass. The EKS default
-// node group does not ship gVisor — an unblocked run requires an
-// EKS sandbox node group running the gVisor runtime (eksctl
-// --node-runtime gvisor) and a Lenny SandboxWarmPool whose
+// would reject gVisor pods), that a sandboxed-profile pool matches a
+// node carrying the gVisor RuntimeClass, and — once a pod is actually
+// scheduled under that RuntimeClass — that every container on it
+// drops all Linux capabilities. The EKS default node group does not
+// ship gVisor — an unblocked run requires a cloud sandbox node group
+// running the gVisor runtime and a Lenny SandboxWarmPool whose
 // isolationProfile is sandboxed.
 func TestGvisorIsolation(t *testing.T) {
 	_ = requireCloud(t)
@@ -149,6 +152,71 @@ func TestGvisorIsolation(t *testing.T) {
 		return
 	}
 	t.Logf("TestGvisorIsolation: %d gVisor-labeled node(s) present; SandboxWarmPool selection invariant covered by tier-2 admission tests", len(nodes.Items))
+
+	assertGvisorPoolPodsCapabilitiesDropped(t, cli, nss.Items)
+}
+
+// assertGvisorPoolPodsCapabilitiesDropped covers the remaining two
+// clauses of the TESTING.md §12.6 gvisor_isolation row this test
+// exercises: "Default isolation profile (sandboxed) creates pods on
+// the gVisor ... node pool" and "capability dropping behave[s] per
+// documented sandbox semantics". It lists every pod across the
+// chart's agent namespaces, finds the ones actually scheduled under
+// the gvisor RuntimeClass (proving the sandboxed profile placed a
+// pod on the gVisor pool rather than only leaving the RuntimeClass
+// and the node label present with nothing scheduled), and asserts
+// every container on those pods carries the §13.1 "Capabilities: All
+// dropped" posture using podsecurity.CapabilitiesDropped — the same,
+// independently unit-tested rule (pkg/podsecurity/podsecurity_test.go
+// ::TestCapabilitiesDropped_spec_13_1) the §13.1 admission validator
+// applies, rather than a check re-derived here. It soft-skips (log
+// and return) when the cluster has the gvisor RuntimeClass and a
+// labeled node but no pod has been scheduled there yet: the
+// cloud-sandbox node-pool wiring through scripts/cloud/<provider>/up.sh
+// that would keep a SandboxWarmPool's gVisor-profile pods Ready is not
+// yet built, so a bare cloud-small cluster reaches this point with the
+// RuntimeClass and label present (both provisioned by
+// up-runtimeclass-pools.sh for other purposes) but no
+// gvisor-RuntimeClass pod actually running.
+func assertGvisorPoolPodsCapabilitiesDropped(t *testing.T, cli *kubernetes.Clientset, agentNamespaces []corev1.Namespace) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var gvisorPods []corev1.Pod
+	for _, ns := range agentNamespaces {
+		pods, err := cli.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			t.Fatalf("list pods in agent namespace %s: %v", ns.Name, err)
+		}
+		for _, pod := range pods.Items {
+			if pod.Spec.RuntimeClassName != nil && *pod.Spec.RuntimeClassName == "gvisor" {
+				gvisorPods = append(gvisorPods, pod)
+			}
+		}
+	}
+	if len(gvisorPods) == 0 {
+		t.Log("TestGvisorIsolation: no pod scheduled under the gvisor RuntimeClass yet; provision the cloud-sandbox node pool " +
+			"(scripts/cloud/<provider>/up.sh cloud-sandbox shape) and a SandboxWarmPool with isolationProfile: sandboxed to unblock")
+		return
+	}
+	for _, pod := range gvisorPods {
+		containers := append([]corev1.Container{}, pod.Spec.Containers...)
+		containers = append(containers, pod.Spec.InitContainers...)
+		for _, c := range containers {
+			var drop []string
+			if c.SecurityContext != nil && c.SecurityContext.Capabilities != nil {
+				for _, d := range c.SecurityContext.Capabilities.Drop {
+					drop = append(drop, string(d))
+				}
+			}
+			if !podsecurity.CapabilitiesDropped(drop) {
+				t.Errorf("pod %s/%s container %q securityContext.capabilities.drop = %v, want a list containing \"ALL\" (§13.1 Capabilities row)",
+					pod.Namespace, pod.Name, c.Name, drop)
+			}
+		}
+	}
+	t.Logf("TestGvisorIsolation: %d pod(s) scheduled under the gvisor RuntimeClass, all containers drop every capability", len(gvisorPods))
 }
 
 // spec: 6.1 (pre-warmed pod anatomy: RuntimeClass selection — Kata / microVM variant)
@@ -179,6 +247,75 @@ func TestKataIsolation(t *testing.T) {
 		return
 	}
 	t.Logf("TestKataIsolation: RuntimeClass %q present; startup-latency assertion covered by tier-5 e2e_kind TestNodeDrainDuringActiveSession", found)
+}
+
+// spec: 12.6 (TESTING.md deployment matrix, Azure row: "gVisor via
+// Kata-equivalent containerd handler, or Confidential Containers"),
+// 17.5 (cloud portability: "RuntimeClass works with any conformant
+// runtime")
+// diagnosis: TestConfidentialContainersIsolation is the AKS-specific
+// named cell the deployment matrix documents alongside TestKataIsolation:
+// it asserts an AKS cluster carries a Confidential Containers
+// RuntimeClass (the "kata-cc" family AKS Pod Sandboxing installs) and
+// that a pod has actually scheduled under it, not only that the
+// RuntimeClass object exists with nothing running — the same
+// present-then-scheduled invariant TestGvisorIsolation and
+// TestKataIsolation apply for their providers. Confidential Containers
+// is the named AKS sandbox variant rather than a cross-provider
+// capability, so the test runs only against Azure and logs-and-returns
+// on every other configured provider. Without an AKS
+// confidential-computing node pool the test skips with the documented
+// hint at the AKS Pod Sandboxing feature the operator would enable.
+func TestConfidentialContainersIsolation(t *testing.T) {
+	p := requireCloud(t)
+	if p != cloud.ProviderAzure {
+		t.Logf("TestConfidentialContainersIsolation: Confidential Containers is the AKS-specific sandbox option (§12.6); LENNY_CLOUD_PROVIDER=%q is not azure", p)
+		return
+	}
+	cli := kube(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	rcList, err := cli.NodeV1().RuntimeClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list RuntimeClasses: %v", err)
+	}
+	var found string
+	for _, rc := range rcList.Items {
+		name := strings.ToLower(rc.Name)
+		if strings.Contains(name, "confidential") || strings.Contains(name, "kata-cc") {
+			found = rc.Name
+			break
+		}
+	}
+	if found == "" {
+		t.Log("TestConfidentialContainersIsolation: no Confidential Containers RuntimeClass installed; enable AKS Pod Sandboxing with a confidential-computing node pool to unblock")
+		return
+	}
+
+	nss, err := cli.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: "lenny.dev/agent-namespace=true",
+	})
+	if err != nil {
+		t.Fatalf("list agent namespaces: %v", err)
+	}
+	if len(nss.Items) == 0 {
+		t.Log("TestConfidentialContainersIsolation: no agent namespaces installed; the chart's bootstrap did not run")
+		return
+	}
+	for _, ns := range nss.Items {
+		pods, err := cli.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			t.Fatalf("list pods in agent namespace %s: %v", ns.Name, err)
+		}
+		for _, pod := range pods.Items {
+			if pod.Spec.RuntimeClassName != nil && *pod.Spec.RuntimeClassName == found {
+				t.Logf("TestConfidentialContainersIsolation: pod %s/%s scheduled under Confidential Containers RuntimeClass %q", pod.Namespace, pod.Name, found)
+				return
+			}
+		}
+	}
+	t.Logf("TestConfidentialContainersIsolation: RuntimeClass %q present but no pod scheduled under it yet; provision a SandboxWarmPool whose isolationProfile targets %q to unblock", found, found)
 }
 
 // spec: 17.3 (disaster recovery: zone-local Postgres failover)

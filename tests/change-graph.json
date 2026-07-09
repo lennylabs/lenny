@@ -187,7 +187,10 @@
     },
     "pkg/podsecurity": {
       "unit": ["pkg/podsecurity/..."],
-      "e2e_kind": ["tests/tier5_e2e_kind/admission_policy_test.go"]
+      "e2e_kind": [
+        "tests/tier5_e2e_kind/admission_policy_test.go",
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go"
+      ]
     },
     "pkg/environment": {
       "unit": ["pkg/environment/..."],
@@ -264,7 +267,8 @@
     },
     "pkg/common/registry": {
       "unit": ["pkg/common/registry/..."],
-      "component": ["tests/tier2_component/translators/image_resolver_test.go"]
+      "component": ["tests/tier2_component/translators/image_resolver_test.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/airgap_registry_mirror_test.go"]
     },
     "migrations/": {
       "static": ["scripts/lint-schema.sh", "scripts/lint-queries.sh"],
@@ -351,7 +355,8 @@
         "tests/tier5_e2e_kind/admission_inventory_test.go",
         "tests/tier5_e2e_kind/network_policy_test.go",
         "tests/tier5_e2e_kind/bootstrap_first_install_test.go",
-        "tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go"
+        "tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go",
+        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
       ]
     },
     "cmd/runtimes/echo/": {

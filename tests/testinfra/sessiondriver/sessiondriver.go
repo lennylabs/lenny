@@ -95,6 +95,11 @@ type Session struct {
 	UpdatedAt     string          `json:"updatedAt,omitempty"`
 	FailureClass  string          `json:"failureClass,omitempty"`
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
+
+	// PodAssignment is the §4.6 name of the agent pod the gateway bound
+	// this session to (the SandboxClaim/Sandbox name). Empty on a
+	// service-mode session, which is claimless (§5.2).
+	PodAssignment string `json:"podAssignment,omitempty"`
 }
 
 // MessageResponse is the parsed §15.1 POST /v1/sessions/{id}/messages
@@ -306,6 +311,19 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 // The retry window covers the observed sub-second replenish on the
 // tier-5/8/9 Kind path.
 func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string) (*Session, error) {
+	return d.CreateAndStartWithPlan(ctx, tenantID, runtimeRef, nil)
+}
+
+// CreateAndStartWithPlan behaves like CreateAndStart but additionally
+// materializes the given §14 WorkspacePlan (raw JSON, e.g.
+// `{"schemaVersion":1,"sources":[{"type":"inlineFile","path":"marker.txt",
+// "content":"...","mode":"0644"}]}`) into the claimed pod's
+// /workspace/current at session start. A nil plan omits the field
+// entirely, identical to CreateAndStart. Used by a test that needs to
+// place content into a real pod's workspace without shelling into a
+// distroless runtime image (the adapter, not the caller, owns
+// /workspace/current, so this is the only write path a client has).
+func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRef string, workspacePlan json.RawMessage) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
 	}
@@ -315,7 +333,16 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 	// match needs the same profile on the session record. Without
 	// this override the gateway falls back to its default
 	// (`sandboxed`) and the lookup misses every pool.
-	body := fmt.Sprintf(`{"runtimeRef":%q,"isolationProfile":"standard"}`, runtimeRef)
+	req := struct {
+		RuntimeRef       string          `json:"runtimeRef"`
+		IsolationProfile string          `json:"isolationProfile"`
+		WorkspacePlan    json.RawMessage `json:"workspacePlan,omitempty"`
+	}{RuntimeRef: runtimeRef, IsolationProfile: "standard", WorkspacePlan: workspacePlan}
+	bodyBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("encode create-and-start body: %w", err)
+	}
+	body := string(bodyBytes)
 	var (
 		lastStatus int
 		lastBody   []byte

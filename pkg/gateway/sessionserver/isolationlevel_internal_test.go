@@ -94,6 +94,26 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create queue pool: %v", err)
 	}
+	// §5.2 sequential pod-reuse ("task mode") on the standard (non-microvm)
+	// scrub profile: no scrubProfile and no cross-tenant reuse, the common
+	// recycling-pool configuration. The CRD pair carries no signal at all
+	// for this case (sessionPolicyToCRD returns nil without a scrubProfile
+	// or the in-place acknowledgment), so the mirror is the only source
+	// foldPoolPolicy has for it.
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:          "standard-reuse-pool",
+		RuntimeRef:    "standard-reuse-runtime",
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			Recycle: &runtimestore.RecyclePolicy{
+				Enabled:                    true,
+				AcknowledgeBestEffortScrub: true,
+				MaxSessionsPerPod:          5,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create standard-reuse pool: %v", err)
+	}
 
 	m := poolPolicyMirror{pools: store}
 
@@ -109,14 +129,26 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("PoolPolicy(reuse-pool): found=%v err=%v", found, err)
 	}
-	if !got.AllowCrossTenantReuse || got.MaxPodUptimeSeconds != 86400 {
-		t.Errorf("reuse-pool mirror = %+v, want allowCrossTenantReuse / 86400", got)
+	if !got.Recycle || !got.AllowCrossTenantReuse || got.MaxPodUptimeSeconds != 86400 {
+		t.Errorf("reuse-pool mirror = %+v, want recycle / allowCrossTenantReuse / 86400", got)
 	}
 	// §5.2 whole-pod scrub cleanup config surfaces on the mirror so the
 	// recycle-path Shutdown delivers it to the adapter.
 	if got.CleanupTimeoutSeconds != 20 || len(got.CleanupCommands) != 2 ||
 		got.CleanupCommands[0] != "rm -rf /workspace/*" || got.CleanupCommands[1] != "sync" {
 		t.Errorf("reuse-pool mirror cleanup = %v / %d, want [rm -rf /workspace/* sync] / 20", got.CleanupCommands, got.CleanupTimeoutSeconds)
+	}
+
+	got, found, err = m.PoolPolicy(ctx, "standard-reuse-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(standard-reuse-pool): found=%v err=%v", found, err)
+	}
+	if !got.Recycle {
+		t.Errorf("standard-reuse-pool mirror.Recycle = false, want true (§5.2 recycle.enabled on the "+
+			"standard scrub profile); got %+v", got)
+	}
+	if got.AllowCrossTenantReuse {
+		t.Errorf("standard-reuse-pool mirror.AllowCrossTenantReuse = true, want false (not requested)")
 	}
 
 	got, found, err = m.PoolPolicy(ctx, "svc-pool")

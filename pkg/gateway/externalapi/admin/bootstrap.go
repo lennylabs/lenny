@@ -580,6 +580,23 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 				continue
 			}
 		}
+		// spec: §15.1 — an existing tenant row is not proof its
+		// billing_seq_/audit_seq_ sequences were ever provisioned: the
+		// built-in "default" tenant row is inserted directly by
+		// migrations 0053/0054 (tagging pre-tenant-scoped rows), never
+		// through this handler's create branch above, so a bootstrap
+		// seed naming "default" always took this existing-row branch and
+		// never called provisionTenantSequences. provisionSequence's
+		// CREATE SEQUENCE IF NOT EXISTS is a no-op for a tenant whose
+		// sequences already exist, so re-provisioning here is safe on
+		// every re-run and closes the gap for any tenant row created
+		// outside the admin-API create path. F-11.2.10.
+		if !opts.dryRun {
+			if err := r.provisionTenantSequences(req.Context(), p.ID); err != nil {
+				out.add(i, p.ID, actionError, seedStoreErrorCode, err.Error(), nil)
+				continue
+			}
+		}
 		out.add(i, p.ID, action, code, "", conflicts)
 	}
 	return out

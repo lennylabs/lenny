@@ -215,3 +215,59 @@ spec:
   # gateway can DNS-resolve every Sentinel pod individually. The
   # go-redis Sentinel client expects to talk to each Sentinel directly.
   clusterIP: None
+---
+# The base datastores.yaml's allow-e2e-datastores-ingress /
+# allow-egress-to-e2e-datastores NetworkPolicies open ports 5432,
+# 6379, 9000, and 9090 between e2e-datastore-labelled pods (see the
+# comment above those resources). They predate this overlay and do
+# not include 26379, the Sentinel protocol port: without these two
+# additional policies, the default-deny-all baseline blocks the
+# direct sentinel-to-sentinel connections the ODOWN quorum and leader
+# election handshake needs (SENTINEL IS-MASTER-DOWN-BY-ADDR is a
+# direct RPC between sentinels, not something relayed over the
+# monitored master's pub/sub channel on 6379), so every sentinel
+# marks its peers down and a real master failure never reaches
+# quorum. These two policies are additive on top of the base ones and
+# scoped to the sentinel StatefulSet's own pods, so they widen no
+# other e2e-datastore traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-e2e-redis-sentinel-ingress
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis-sentinel
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/e2e-datastore: redis-sentinel
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 26379
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-e2e-redis-sentinel
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis-sentinel
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/e2e-datastore: redis-sentinel
+      ports:
+        - port: 26379
+          protocol: TCP

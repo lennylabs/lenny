@@ -53,6 +53,17 @@ capabilities:
         state: skip
         reason: Firecracker integration is AWS-specific.
 
+  - name: confidential_containers
+    spec_section: "12.6"
+    status:
+      gke:
+        state: skip
+        reason: Confidential Containers is the named AKS Pod Sandboxing variant; GKE's sandbox option is gvisor_isolation.
+      eks:
+        state: skip
+        reason: Confidential Containers is the named AKS Pod Sandboxing variant; EKS's sandbox options are kata_isolation and firecracker_isolation.
+      aks: planned
+
   - name: multi_zone_dr
     spec_section: "17.3"
     status:

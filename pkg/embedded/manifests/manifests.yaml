@@ -4020,6 +4020,9 @@ spec:
             # spec: §15.5 item 1; docs/api/index.md line 124 —
             # F-15.5.11. Empty omits the flag so the middleware stays
             # inert until the operator declares a sunset window.
+            # §7.1 line 112 — the seal-and-export retry window. Rendered
+            # only when set; 0/unset keeps the gateway binary's compiled-in
+            # 300s default.
             # spec: §25.3 lines 596, 604, 625 — Capacity Recommendations
             # operator knobs. Rendered only when set so the gateway keeps
             # the spec defaults (all rules active, default windows, no

@@ -219,11 +219,14 @@ function verifyFindingPrompt(f, implResult) {
     '',
     'ALL ROUTES. Check for leaked internal identifiers: test code, test names, and comments must not reference this batch\'s scratch labels, the TEST-GAPS finding id, or any other id that is not a durable spec-section reference — only a `// spec: §X.Y` citation or a prose description of the behavior belongs there. Commit messages must not embed the TEST-GAPS finding id either; they describe the behavior. REJECT if you find one.',
     '',
+    'ALL ROUTES. TEST-GAPS.md itself being unchanged by this finding\'s commit(s) is CORRECT, not a defect: the implementer must never edit TEST-GAPS.md (see the implementer\'s own instructions), and the batch driver\'s separate mark-resolved/annotate step applies the checkbox flip and Resolution/Needs-human-input field after your approval, not before. Do not REJECT for "TEST-GAPS.md was not updated" or "the checkbox was not flipped" — that is expected at this point in the pipeline and is not this implementer\'s responsibility.',
+    '',
     'RETURN approved (boolean), issues (array of strings; empty if approved), and forceRoute="needs-human" when you are rejecting a code-fix specifically because you are not convinced of its spec alignment (as opposed to a fixable procedural gap like a missing annotation).',
   ].join('\n')
 }
 
 const closedResults = []
+let abortedOnTerminalError = false
 for (const f of selectResult.selected) {
   let attempt = 0
   let implResult = null
@@ -235,9 +238,28 @@ for (const f of selectResult.selected) {
     implResult = await agent(implementPrompt(f, priorIssues), {
       label: f.id + ':impl:' + attempt, phase: 'Close', schema: IMPLEMENT_SCHEMA, effort: 'high',
     })
+    if (!implResult) {
+      // agent() returns null on a terminal API error (auth expiry, rate/usage
+      // limit) after retries, not just for this finding but almost certainly
+      // for every subsequent agent() call in this run too. Stop cleanly here
+      // rather than dereference a null implResult (which crashed the whole
+      // workflow the first two times this happened) — closedResults keeps
+      // whatever this batch already finished, so Mark-resolved/Annotate/
+      // Verify below still run on that partial progress instead of losing
+      // it. The unresolved finding itself is left OPEN, untouched, for the
+      // next batch (Select will just pick it up again next time).
+      verifyResult = { approved: false, issues: ['implementer agent returned no result (terminal API error); not retried within this run'] }
+      abortedOnTerminalError = true
+      break
+    }
     verifyResult = await agent(verifyFindingPrompt(f, implResult), {
       label: f.id + ':verify:' + attempt, phase: 'Close', schema: VERIFY_FINDING_SCHEMA, effort: 'medium',
     })
+    if (!verifyResult) {
+      verifyResult = { approved: false, issues: ['verifier agent returned no result (terminal API error); not retried within this run'] }
+      abortedOnTerminalError = true
+      break
+    }
     if (implResult.route === 'moot' || implResult.route === 'needs-human') {
       // Single-pass sanity check only; nothing to iterate on (moot needs no
       // fix, needs-human deliberately touches no code to iterate against).
@@ -274,6 +296,15 @@ for (const f of selectResult.selected) {
   }
   closedResults.push({ finding: f, impl: implResult, verify: verifyResult, attempts: attempt })
   log(f.id + ' -> route=' + (implResult ? implResult.route : 'none') + ' approved=' + verifyResult.approved + ' after ' + attempt + ' attempt(s).')
+  if (abortedOnTerminalError) {
+    // Don't keep looping over the rest of the batch's findings — a terminal
+    // API error almost certainly recurs on every further agent() call in
+    // this run, so trying the next finding would just fail the same way.
+    // Stop the Close loop here; Mark-resolved/Annotate/Verify below still
+    // process whatever finished before this point.
+    log('stopping the Close loop early after a terminal API error; ' + (selectResult.selected.length - closedResults.length) + ' selected finding(s) left untouched this run.')
+    break
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -281,11 +312,33 @@ for (const f of selectResult.selected) {
 // concurrent writers since Close already finished). Only test/code-fix/moot
 // close a finding; needs-human and anything unapproved stay OPEN.
 // ---------------------------------------------------------------------------
-const toResolve = closedResults.filter(function (r) {
+const approvedClosable = closedResults.filter(function (r) {
   return r.verify.approved && r.impl && (r.impl.route === 'test' || r.impl.route === 'code-fix' || r.impl.route === 'moot')
 })
+// A route=test/code-fix/moot approval with no commitSha means the
+// implementer's own commit never actually landed (observed directly: a
+// Bash-tool outage let an implementer finish and pass independent
+// verification without ever running `git commit`). Marking TEST-GAPS.md
+// resolved in that case would record a resolution backed by nothing in
+// git — the exact bookkeeping-vs-reality gap this workflow exists to
+// prevent. Route these to the same stuck/annotate path as a genuine
+// rejection instead of silently resolving them.
+const toResolve = approvedClosable.filter(function (r) { return !!r.impl.commitSha })
+const missingCommit = approvedClosable.filter(function (r) { return !r.impl.commitSha })
 const needsHuman = closedResults.filter(function (r) { return r.impl && r.impl.route === 'needs-human' })
-const stuck = closedResults.filter(function (r) { return !r.verify.approved && (!r.impl || r.impl.route !== 'needs-human') })
+// abortedFindings: impl is null because the implementer or verifier agent
+// hit a terminal API error (rate/usage limit, auth expiry) and never
+// produced a real result — not a genuine quality disagreement. These stay
+// completely untouched (no annotation, no exclusion from future Select) so
+// the very next batch just retries them normally once the underlying
+// constraint clears.
+const abortedFindings = closedResults.filter(function (r) { return !r.impl && !r.verify.approved })
+// stuck: a genuine quality rejection — the implementer produced a real
+// result but the independent verifier rejected every attempt within
+// maxAttemptsPerFinding — plus the missingCommit case above. Both are
+// annotated and excluded from future Select rounds the same way.
+const stuck = closedResults.filter(function (r) { return !r.verify.approved && r.impl && r.impl.route !== 'needs-human' })
+  .concat(missingCommit)
 
 let markResult = { markedCount: 0 }
 if (toResolve.length) {
@@ -322,7 +375,13 @@ if (toResolve.length) {
 // rounds by it (see the Select step above).
 // ---------------------------------------------------------------------------
 const toAnnotate = needsHuman.map(function (r) { return { id: r.finding.id, humanQuestion: r.impl.humanQuestion } })
-  .concat(stuck.map(function (r) {
+  .concat(missingCommit.map(function (r) {
+    return {
+      id: r.finding.id,
+      humanQuestion: 'The independent verifier approved this route="' + r.impl.route + '" attempt, but the implementer never recorded a commitSha, meaning the underlying commit likely never landed (e.g. a tool outage interrupted `git commit` after the work was finished and verified). Check the working tree for orphaned uncommitted/untracked changes from this finding; if present and this resolutionNote still matches them, independently re-verify (build/run for real) before committing and marking resolved by hand — do not mark it resolved on the strength of this approval alone. resolutionNote: ' + (r.impl.resolutionNote || '(none given)'),
+    }
+  }))
+  .concat(stuck.filter(function (r) { return missingCommit.indexOf(r) === -1 }).map(function (r) {
     return {
       id: r.finding.id,
       humanQuestion: 'This finding was attempted ' + r.attempts + ' time(s) and the independent verifier rejected every attempt: ' +
@@ -348,6 +407,16 @@ if (toAnnotate.length) {
     label: 'annotate-needs-human', phase: 'Close', effort: 'medium',
     schema: { type: 'object', additionalProperties: false, required: ['annotatedCount'], properties: { annotatedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
   })
+  if (!annotateResult) {
+    // agent() returned null on a terminal API error: the needs-human
+    // question(s) this batch produced were NEVER WRITTEN to TEST-GAPS.md
+    // (observed directly — a batch's own summary claimed a finding was
+    // annotated when the write had in fact failed silently here). Flag it
+    // explicitly rather than let a bare `null` in the final report hide a
+    // real gap a human must close by hand.
+    annotateResult = { annotatedCount: 0, abortedOnTerminalError: true, pendingQuestions: toAnnotate }
+    abortedOnTerminalError = true
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +446,7 @@ const verifyBatchPrompt = [
   '',
   'RETURN: dryRunTiers (array of tier names the full pass needs to cover), coveragePct (number or null if not computed), validateMapsClean (boolean), notes (string).',
 ].join('\n')
-const verifyResult = await agent(verifyBatchPrompt, {
+let batchVerifyResult = await agent(verifyBatchPrompt, {
   label: 'batch-verify', phase: 'Verify', effort: 'medium',
   schema: {
     type: 'object', additionalProperties: false,
@@ -385,23 +454,34 @@ const verifyResult = await agent(verifyBatchPrompt, {
     properties: { dryRunTiers: { type: 'array', items: { type: 'string' } }, coveragePct: { type: ['number', 'null'] }, validateMapsClean: { type: 'boolean' }, notes: { type: 'string' } },
   },
 })
+if (!batchVerifyResult) {
+  // Same terminal-error shape as the Annotate step above: the fast checks
+  // (validate-maps, coverage --diff, dry-run tiers) never ran for this
+  // batch. Flag it explicitly rather than report a bare `null`.
+  batchVerifyResult = { dryRunTiers: [], validateMapsClean: false, abortedOnTerminalError: true, notes: 'batch-verify agent returned no result (terminal API error); fast checks not run this batch — run them manually.' }
+  abortedOnTerminalError = true
+}
 
 return {
   branch: selectResult.branch,
   scope: scope,
   resolvedInPassing: selectResult.resolvedInPassing,
   remainingOpenInScope: selectResult.remainingOpenInScope,
+  abortedOnTerminalError: abortedOnTerminalError,
   batch: {
     selectedCount: selectResult.selected.length,
+    processedCount: closedResults.length,
     resolvedCount: toResolve.length,
     codeFixCount: codeFixCount,
     needsHumanCount: needsHuman.length,
     stuckCount: stuck.length,
+    abortedCount: abortedFindings.length,
     resolved: toResolve.map(function (r) { return { id: r.finding.id, route: r.impl.route } }),
     needsHuman: needsHuman.map(function (r) { return { id: r.finding.id, question: r.impl.humanQuestion } }),
     stuck: stuck.map(function (r) { return { id: r.finding.id, issues: r.verify.issues } }),
+    aborted: abortedFindings.map(function (r) { return r.finding.id }),
   },
   markResult: markResult,
   annotateResult: annotateResult,
-  verify: verifyResult,
+  verify: batchVerifyResult,
 }

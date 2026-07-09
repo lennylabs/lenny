@@ -440,6 +440,7 @@
         "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier4_integration/concurrent_workspace_test.go",
         "tests/tier4_integration/concurrent_stateless_test.go",
+        "tests/tier5_e2e_kind/execution_modes_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
         "tests/tier12_load_cloud/concurrent_stateless_test.go",
         "tests/tier12_load_cloud/concurrent_workspace_test.go",
@@ -489,7 +490,9 @@
         "pkg/admission/webhook/direct_mode_isolation_test.go",
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
-        "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7"
+        "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
       ],
       "packages": [
         "pkg/isolation"
@@ -521,8 +524,10 @@
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
         "pkg/controller/warmpool/...",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestGvisorIsolation",
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestKataIsolation"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestKataIsolation",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation",
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1055,7 +1060,8 @@
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderTransportAccepted",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403",
         "tests/tier2_component/stores/userstore_test.go",
-        "tests/tier2_component/stores/customrolestore_test.go"
+        "tests/tier2_component/stores/customrolestore_test.go",
+        "tests/tier5_e2e_kind/auth_modes_test.go::TestStandardBearerGatesSessionCreation"
       ],
       "packages": [
         "pkg/auth"
@@ -1579,6 +1585,7 @@
         "tests/tier2_component/quota/quotastore_test.go",
         "pkg/redisconn/redisconn_test.go",
         "tests/tier8_chaos/redis_sentinel_failover_test.go",
+        "tests/tier8_chaos/redis_ha_failover_kind_test.go::TestRedisHAFailoverKind",
         "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReserveSlotUnderLock",
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers",
         "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go"
@@ -1589,7 +1596,7 @@
         "pkg/redisconn"
       ],
       "blocked_until_phase": "4",
-      "notes": "pkg/redisconn is the gateway/ops Redis client constructor: it accepts either a direct redis-url or a §12.8 Sentinel failover configuration (sentinel addrs + master name) and returns a go-redis client that follows automatic Sentinel failover transparently. The cmd/lenny-gateway and cmd/lenny-ops binaries call into it."
+      "notes": "pkg/redisconn is the gateway/ops Redis client constructor: it accepts either a direct redis-url or a §12.8 Sentinel failover configuration (sentinel addrs + master name) and returns a go-redis client that follows automatic Sentinel failover transparently. The cmd/lenny-gateway and cmd/lenny-ops binaries call into it. TestRedisSentinelFailover drives the failover against the compose Sentinel topology; TestRedisHAFailoverKind drives the same behavior against the Kind datastores-ha-redis.yaml overlay."
     },
     "12.5": {
       "title": "Artifact Store",
@@ -1768,12 +1775,14 @@
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsMutableRootFS",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRequiresDropAll",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAddedCapabilities",
+        "pkg/podsecurity/podsecurity_test.go::TestCapabilitiesDropped_spec_13_1",
         "tests/tier5_e2e_kind/admission_test.go",
         "tests/tier9_security/admission_cred_test.go",
         "tests/tier9_security/admission_ephemeral_test.go",
         "tests/tier9_security/admission_label_immutability_test.go",
         "tests/tier9_security/admission_security_test.go",
-        "tests/tier9_security/image_signing_test.go"
+        "tests/tier9_security/image_signing_test.go",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -1789,7 +1798,11 @@
         "tests/tier5_e2e_kind/ingress_test.go",
         "tests/tier9_security/network_policy_test.go",
         "tests/tier6_e2e_cloud/managed_elasticache_test.go",
-        "tests/tier6_e2e_cloud/managed_rds_test.go"
+        "tests/tier6_e2e_cloud/managed_rds_test.go",
+        "tests/tier6_e2e_cloud/managed_cloudsql_test.go",
+        "tests/tier6_e2e_cloud/managed_memorystore_test.go",
+        "tests/tier6_e2e_cloud/managed_azuredb_test.go",
+        "tests/tier6_e2e_cloud/managed_azurecache_test.go"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
@@ -2523,13 +2536,15 @@
       "title": "Disaster Recovery",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiZoneDR"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestMultiZoneDR",
+        "tests/tier8_chaos/postgres_ha_failover_test.go::TestPostgresHAFailover",
+        "tests/tier8_chaos/redis_ha_failover_kind_test.go::TestRedisHAFailoverKind"
       ],
       "packages": [
         "pkg/dr"
       ],
       "blocked_until_phase": "14",
-      "notes": "Postgres point-in-time recovery, Redis snapshot strategy, Kubernetes cluster failover. Phase 14 lands the runbooks and the chaos drill harness. Cloud-verify multi-AZ Postgres failover is covered by the tier-6 e2e cloud scaffold; the suite runs against the provider's native HA Postgres offering when LENNY_CLOUD_PROVIDER is set."
+      "notes": "Postgres point-in-time recovery, Redis snapshot strategy, Kubernetes cluster failover. Phase 14 lands the runbooks and the chaos drill harness. Cloud-verify multi-AZ Postgres failover is covered by the tier-6 e2e cloud scaffold; the suite runs against the provider's native HA Postgres offering when LENNY_CLOUD_PROVIDER is set. The tier-8 Kind chaos test drives the primary-down recovery half against the datastores-ha-postgres.yaml overlay: a real session write, primary kill, pg_ctl promote, and gateway DSN rewire, asserting the pre-failover session survives with no data loss. Fully-automatic RTO-bounded promotion is the tier-6 cloud provider's managed-Postgres path, not this Kind exercise. TestRedisHAFailoverKind drives the matching Redis half against the datastores-ha-redis.yaml Kind overlay (TestRedisSentinelFailover exercises the same §12.8 behavior against the compose Sentinel topology instead): it scales the base Redis Deployment to zero, asserts Sentinel's quorum promotes the replica within the RTO target, and asserts a pre-failover canary write survives on the promoted node."
     },
     "17.4": {
       "title": "Local Development Mode (lenny-dev)",
@@ -2541,7 +2556,8 @@
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier9_security/embedded_echo_credfree_test.go",
         "tests/tier9_security/embedded_gateway_loopback_test.go",
-        "tests/tier9_security/admission_token_service_gate_render_test.go"
+        "tests/tier9_security/admission_token_service_gate_render_test.go",
+        "tests/tier4_integration/source_mode_protocols_test.go"
       ],
       "packages": [
         "cmd/lenny-dev",
@@ -2554,7 +2570,14 @@
       "title": "Cloud Portability",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress",
+        "tests/tier6_e2e_cloud/aws_resources_test.go::TestCloudKMS",
+        "tests/tier6_e2e_cloud/aws_resources_test.go::TestCloudCSI",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudKMSGCP",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudCSIGCS",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudKMSAzure",
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudCSIAzureBlob",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation"
       ],
       "packages": [
         "pkg/blobstore/s3",
@@ -2565,7 +2588,7 @@
         "pkg/kms/azure"
       ],
       "blocked_until_phase": "6",
-      "notes": "Non-normative portability statement. The cloud-provider abstractions live under pkg/blobstore/{s3,gcs,azureblob} (Store implementations) and pkg/kms/{aws,gcp,azure} (Provider implementations) and ship in Phase 6. The tier-6 e2e cloud managed_ingress suite (cluster_assertions_test.go::TestManagedIngress) is the pre-release environment check that an operator-supplied Ingress and provider-native external load balancer route HTTPS traffic to the gateway on managed Kubernetes."
+      "notes": "Non-normative portability statement. The cloud-provider abstractions live under pkg/blobstore/{s3,gcs,azureblob} (Store implementations) and pkg/kms/{aws,gcp,azure} (Provider implementations) and ship in Phase 6. The tier-6 e2e cloud managed_ingress suite (cluster_assertions_test.go::TestManagedIngress) is the pre-release environment check that an operator-supplied Ingress and provider-native external load balancer route HTTPS traffic to the gateway on managed Kubernetes. TESTING.md §12.6's cloud_csi / cloud_kms interface-parity claim is exercised per provider by aws_resources_test.go (S3 / AWS KMS) and cloud_portability_test.go (GCS / Cloud KMS on gcp; Azure Blob / Key Vault on azure), each a live Put/Get/Stat/SoftDelete artifact round-trip and a WrapDEK/UnwrapDEK + cross-alias-rejection KMS round-trip against the deploy/terraform/cloud/<provider> provisioned resources."
     },
     "17.6": {
       "title": "Packaging and Installation",
@@ -2654,7 +2677,8 @@
       "title": "Image Registry and Air-Gap",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "pkg/common/registry/resolver_test.go"
+        "pkg/common/registry/resolver_test.go",
+        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "14",
@@ -3216,7 +3240,8 @@
       "title": "Reference Runtime Catalog",
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
-        "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney"
+        "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney",
+        "tests/tier10_conformance/reference_battery_test.go::TestImageDeploymentConformance"
       ],
       "packages": [
         "cmd/runtimes/"

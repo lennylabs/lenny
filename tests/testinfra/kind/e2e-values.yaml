@@ -137,6 +137,21 @@ gateway:
     limits:
       cpu: "1"
       memory: 1536Mi
+  # The Kind e2e overlay wires no checkpoint sink into lenny-adapter's
+  # args (see agent-workload.yaml / install.sh's generated bootstrap
+  # overlay): every adapter Checkpoint RPC returns Unimplemented
+  # ("adapter is not configured with a checkpoint sink"). §7.1's
+  # seal-and-export step on /terminate retries a failing checkpoint for
+  # the full maxWorkspaceSealDurationSeconds window (compiled-in default
+  # 300s) before releasing the pod anyway, so on this cluster every real
+  # session termination would otherwise hold its pod for five minutes.
+  # Shortening the window to the backoff floor (5s: one attempt, no
+  # retry) lets a tier-5 test that claims and terminates a real session
+  # (for example tests/tier5_e2e_kind/execution_modes_test.go) observe
+  # pod release and recycling promptly. This is the e2e harness overlay
+  # only; production deployments keep the chart's 300s default (or set
+  # their own once a checkpoint sink is wired).
+  workspaceSealMaxDurationSeconds: 5
 
 ops:
   image:

@@ -1,6 +1,6 @@
 # Tier-8 chaos: HA store overlays
 
-The tier-8 chaos failover tests (`TestPostgresFailover`,
+The tier-8 chaos failover tests (`TestPostgresHAFailover`,
 `TestRedisSentinelFailover`, `TestMinIOReplicationLag`) need HA store
 topologies that the base e2e Kind cluster does not deploy. The base
 `datastores.yaml` ships single-replica Postgres, Redis, and MinIO so
@@ -20,6 +20,13 @@ sets `LENNY_REDIS_SENTINEL_ADDRS` to the headless Sentinel Service
 (`lenny-redis-sentinel.lenny-system.svc:26379`) and
 `LENNY_REDIS_SENTINEL_MASTER` to `lenny-master`.
 
+The overlay also carries two NetworkPolicies opening port 26379
+between e2e-datastore pods. The base `datastores.yaml` NetworkPolicy
+baseline only opens 5432/6379/9000/9090, and Sentinel's ODOWN quorum
+and leader-election protocol needs direct sentinel-to-sentinel
+`SENTINEL IS-MASTER-DOWN-BY-ADDR` RPCs on 26379, not just the
+pub/sub gossip channel on the monitored master's own port.
+
 Apply with the base baseline:
 
 ```bash
@@ -27,8 +34,14 @@ kubectl apply -f tests/testinfra/k8s/datastores.yaml
 kubectl apply -f tests/testinfra/kind/datastores-ha-redis.yaml
 ```
 
-The chaos test drives a master-kill by deleting the
-`lenny-redis` pod; Sentinel promotes the replica, and the gateway's
+`TestRedisHAFailoverKind` (`tests/tier8_chaos/redis_ha_failover_kind_test.go`)
+drives a master-kill by scaling the base `lenny-redis` Deployment to
+zero, mirroring `TestPostgresHAFailover`'s primary-kill below. A pod
+delete instead of a scale-to-zero does not exercise a real failover
+here: the base Deployment recreates a deleted pod under the same
+Service name fast enough that Sentinel observes only a brief
+"+reboot"/"-sdown" blip and never reaches ODOWN quorum. Once the
+Deployment is at zero, Sentinel promotes the replica, and the gateway's
 go-redis Sentinel client follows the failover transparently.
 
 ## `datastores-ha-postgres.yaml`
@@ -47,12 +60,17 @@ kubectl apply -f tests/testinfra/k8s/datastores.yaml
 kubectl apply -f tests/testinfra/kind/datastores-ha-postgres.yaml
 ```
 
-The chaos test drives a primary-kill by deleting the
-`lenny-postgres` pod. The §17.3 RPO=0 + RTO < 30s automatic
-promotion is operator-managed (no in-cluster failover controller in
-v1): the test exec's `pg_ctl promote` on the replica, rewires the
-gateway's connection string, and asserts the gateway resumes
-reads / writes against the promoted standby.
+`TestPostgresHAFailover` (`tests/tier8_chaos/postgres_ha_failover_test.go`)
+drives a primary-kill by scaling the `lenny-postgres` Deployment to
+zero. The §17.3 RPO=0 + RTO < 30s automatic promotion is
+operator-managed (no in-cluster failover controller in v1): the test
+exec's `pg_ctl promote` on the replica, rewires the gateway's
+connection string (the `lenny-datastore-conn` Secret's `postgres-dsn`
+key) and rolls the gateway Deployment, then asserts a session created
+before the kill is still readable through the gateway with no data
+loss. The fully-automatic RTO-bounded promotion is exercised by the
+tier-6 cloud suite's `TestMultiZoneDR` against the provider's native
+multi-AZ Postgres offering, not by this Kind exercise.
 
 ## `datastores-ha-minio.yaml`
 

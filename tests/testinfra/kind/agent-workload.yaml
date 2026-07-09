@@ -145,3 +145,65 @@ spec:
   executionMode: session
   isolationProfile: standard
   deploymentModel: sidecar
+---
+# §5.3 sandboxed isolation profile reference runtime. Backs
+# gvisor-echo-pool, the only pool on this overlay whose isolation
+# profile is sandboxed rather than standard. install.sh's Step 3a
+# (tests/testinfra/kind/install-gvisor.sh) installs runsc on the
+# sandbox-gvisor labelled node and applies the gvisor RuntimeClass
+# before this pod is scheduled, so the Sandbox reconciler's §5.3
+# RuntimeClass stamp resolves to a real gVisor-backed pod instead of a
+# Degraded pool. Uses the same distroless echo image as
+# echo-runtime-sidecar: gvisor_isolation_test.go fingerprints the
+# gVisor sentry kernel through a short-lived ephemeral debug container
+# rather than execing into this shell-less image directly. spec: §5.3.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: gvisor-echo-runtime
+spec:
+  type: agent
+  image: __ECHO_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: sandboxed
+  deploymentModel: sidecar
+---
+# §5.2 slotId dispatch-loop reference runtime. cmd/runtimes/echo-concurrent
+# is a stdin/stdout §15.4.1 binary that demultiplexes several simultaneous
+# slots over the single connection, keyed on the inbound frame's slotId, so
+# the §4.7 sidecar deployment model bridges it over the abstract Unix
+# socket the same way echo-runtime-sidecar does. Backs concurrent-echo-pool
+# (sessionPolicy.maxConcurrentSessions > 1), the tier-5 real-pod
+# counterpart of the tier-4 concurrent_workspace_test.go in-process flow.
+# spec: §5.2, §6.4.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: echo-runtime-concurrent
+spec:
+  type: agent
+  image: __ECHO_CONCURRENT_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+# §5.2 sequential-pod-reuse ("task mode") reference runtime. Reuses the
+# same cmd/runtimes/echo image as echo-runtime-sidecar under a distinct
+# Runtime name so task-mode-echo-pool has a runtimeRef no other pool on
+# this overlay shares — podsession.ResolvePool rejects a (runtimeRef,
+# isolationProfile) pair matched by more than one pool with
+# ErrAmbiguousPool, and echo-pool-sidecar already claims
+# echo-runtime-sidecar at isolationProfile: standard. spec: §5.2.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: echo-runtime-task-mode
+spec:
+  type: agent
+  image: __ECHO_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar

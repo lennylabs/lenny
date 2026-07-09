@@ -2348,6 +2348,14 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		mirror.CleanupCommands = sp.CleanupCommands
 		mirror.CleanupTimeoutSeconds = sp.CleanupTimeoutSeconds
 		if r := sp.Recycle; r != nil {
+			// spec: §5.2 (Recycle lifecycle) — recycle.enabled itself is
+			// gateway-enforced and poolstore-sourced for every scrub
+			// profile; the CRD pair carries it only implicitly for the
+			// microvm variants (a non-empty scrubProfile). Without this,
+			// a standard-profile recycling pool's pod is always retired
+			// at release (BindResult.Recycle never true), so §5.2
+			// sequential pod reuse never triggers for the common case.
+			mirror.Recycle = r.Enabled
 			mirror.AllowCrossTenantReuse = r.AllowCrossTenantReuse
 			mirror.MaxPodUptimeSeconds = int64(r.MaxPodUptimeSeconds)
 		}
