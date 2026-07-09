@@ -387,6 +387,16 @@ if (toAnnotate.length) {
     label: 'annotate-needs-human', phase: 'Close', effort: 'medium',
     schema: { type: 'object', additionalProperties: false, required: ['annotatedCount'], properties: { annotatedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
   })
+  if (!annotateResult) {
+    // agent() returned null on a terminal API error: the needs-human
+    // question(s) this batch produced were NEVER WRITTEN to TEST-GAPS.md
+    // (observed directly — a batch's own summary claimed a finding was
+    // annotated when the write had in fact failed silently here). Flag it
+    // explicitly rather than let a bare `null` in the final report hide a
+    // real gap a human must close by hand.
+    annotateResult = { annotatedCount: 0, abortedOnTerminalError: true, pendingQuestions: toAnnotate }
+    abortedOnTerminalError = true
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +426,7 @@ const verifyBatchPrompt = [
   '',
   'RETURN: dryRunTiers (array of tier names the full pass needs to cover), coveragePct (number or null if not computed), validateMapsClean (boolean), notes (string).',
 ].join('\n')
-const verifyResult = await agent(verifyBatchPrompt, {
+verifyResult = await agent(verifyBatchPrompt, {
   label: 'batch-verify', phase: 'Verify', effort: 'medium',
   schema: {
     type: 'object', additionalProperties: false,
@@ -424,6 +434,13 @@ const verifyResult = await agent(verifyBatchPrompt, {
     properties: { dryRunTiers: { type: 'array', items: { type: 'string' } }, coveragePct: { type: ['number', 'null'] }, validateMapsClean: { type: 'boolean' }, notes: { type: 'string' } },
   },
 })
+if (!verifyResult) {
+  // Same terminal-error shape as the Annotate step above: the fast checks
+  // (validate-maps, coverage --diff, dry-run tiers) never ran for this
+  // batch. Flag it explicitly rather than report a bare `null`.
+  verifyResult = { dryRunTiers: [], validateMapsClean: false, abortedOnTerminalError: true, notes: 'batch-verify agent returned no result (terminal API error); fast checks not run this batch — run them manually.' }
+  abortedOnTerminalError = true
+}
 
 return {
   branch: selectResult.branch,
