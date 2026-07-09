@@ -134,6 +134,50 @@ func deploymentReadyState(t *testing.T, c *kind.Cluster, deployment string) stri
 	return strings.TrimSpace(out)
 }
 
+// statefulSetReady reports whether the named StatefulSet in lenny-system
+// has its full desired replica count Ready. Prefer this over `kubectl
+// wait --for=condition=Ready pod -l <selector>` for a StatefulSet using
+// the default OrderedReady pod management policy: that policy creates
+// ordinal pods one at a time, so a pod-selector wait issued before the
+// last ordinal has even been created only waits on however many pods
+// exist at that instant and can return success while the
+// still-being-created final ordinal is left Pending, racing a caller
+// that then immediately reads or port-forwards to the full set.
+func statefulSetReady(t *testing.T, c *kind.Cluster, statefulSet string) bool {
+	t.Helper()
+	out, err := c.KubectlOut(
+		t,
+		"-n", lennySystemNamespace, "get", "statefulset", statefulSet,
+		"-o", "jsonpath={.spec.replicas}/{.status.readyReplicas}",
+	)
+	if err != nil {
+		return false
+	}
+	desired, ready, ok := strings.Cut(strings.TrimSpace(out), "/")
+	if !ok || desired == "" {
+		return false
+	}
+	if ready == "" {
+		ready = "0"
+	}
+	return desired == ready
+}
+
+// statefulSetReadyState returns the "<ready>/<desired>" replica string
+// for the named StatefulSet, for diagnostic logging.
+func statefulSetReadyState(t *testing.T, c *kind.Cluster, statefulSet string) string {
+	t.Helper()
+	out, err := c.KubectlOut(
+		t,
+		"-n", lennySystemNamespace, "get", "statefulset", statefulSet,
+		"-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}",
+	)
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(out)
+}
+
 // podNames returns the names of every pod in lenny-system matching the
 // label selector. The chaos tests use it to count Deployment pods and
 // to confirm a deleted pod was replaced by a new one.
