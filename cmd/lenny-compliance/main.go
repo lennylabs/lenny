@@ -40,6 +40,7 @@ const harnessVersion = "0.3.0-phase2.8"
 func main() {
 	var (
 		binaryPath = flag.String("binary", "", "path to the adapter binary under test")
+		image      = flag.String("image", "", "OCI image reference for the runtime under test (docker pull if not already cached locally; mutually exclusive with --binary)")
 		level      = flag.String("level", "basic", "integration level: basic|standard|full")
 		jsonOut    = flag.Bool("json", false, "emit JSON report on stdout instead of a human summary")
 		timeout    = flag.Duration("timeout", 30*time.Second, "per-check timeout")
@@ -47,8 +48,26 @@ func main() {
 	)
 	flag.Parse()
 
+	// spec: §12.10 (TESTING.md) — `lenny-compliance --image <ref> --level
+	// <level>` drives a container-deployed runtime through the same
+	// battery a locally built binary runs. Resolve --image to a wrapper
+	// script the rest of the harness can exec like any other adapter
+	// binary, so the check functions need no image-aware branch.
+	if *image != "" {
+		if *binaryPath != "" {
+			fmt.Fprintln(os.Stderr, "lenny-compliance: --binary and --image are mutually exclusive")
+			os.Exit(2)
+		}
+		resolved, cleanup, err := resolveImageBinary(context.Background(), *image)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lenny-compliance: %v\n", err)
+			os.Exit(1)
+		}
+		defer cleanup()
+		binaryPath = &resolved
+	}
 	if *binaryPath == "" {
-		fmt.Fprintln(os.Stderr, "lenny-compliance: --binary is required")
+		fmt.Fprintln(os.Stderr, "lenny-compliance: --binary or --image is required")
 		os.Exit(2)
 	}
 	var report Report
@@ -63,9 +82,81 @@ func main() {
 		fmt.Fprintf(os.Stderr, "lenny-compliance: unknown --level %q (basic|standard|full)\n", *level)
 		os.Exit(2)
 	}
+	// Report the image reference the operator asked for rather than the
+	// generated wrapper script's temp path, which carries no meaning
+	// outside this process.
+	if *image != "" {
+		report.Binary = *image
+	}
 
 	emit(report, *jsonOut)
 	os.Exit(report.failedCount())
+}
+
+// resolveImageBinary makes image runnable through the harness's
+// exec-a-binary-path abstraction. It pulls image via docker when not
+// already cached locally, then materializes a small wrapper script that
+// execs `docker run --rm -i <image>`, piping the harness's stdin/stdout
+// through to the container the same way it would to a local adapter
+// binary. The returned cleanup func removes the wrapper script; it is
+// always non-nil when err is nil.
+// spec: §12.10 (TESTING.md) — the reference-runtime and third-party
+// conformance batteries run against a container image via
+// `lenny-compliance --image`.
+func resolveImageBinary(ctx context.Context, image string) (string, func(), error) {
+	if err := ensureImagePresent(ctx, image); err != nil {
+		return "", nil, err
+	}
+	return materializeImageWrapper(image)
+}
+
+// ensureImagePresent skips the pull when the image is already cached in
+// the local docker daemon (the case for an image built in-process by a
+// test), and otherwise pulls it. A pull failure is reported with the
+// docker output attached so a missing or unauthorized image reads as an
+// external-dependency error rather than an opaque non-zero exit.
+func ensureImagePresent(ctx context.Context, image string) error {
+	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "docker", "pull", image).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker pull %s: %w\n%s", image, err, out)
+	}
+	return nil
+}
+
+// materializeImageWrapper writes a shebang script that runs image as a
+// piped subprocess and returns its path plus a cleanup func that removes
+// it. driveAdapter execs the returned path exactly as it would a local
+// adapter binary.
+func materializeImageWrapper(image string) (string, func(), error) {
+	f, err := os.CreateTemp("", "lenny-compliance-image-*.sh")
+	if err != nil {
+		return "", nil, fmt.Errorf("create image wrapper script: %w", err)
+	}
+	script := "#!/bin/sh\nexec docker run --rm -i " + shellSingleQuote(image) + "\n"
+	if _, err := f.WriteString(script); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("write image wrapper script: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("close image wrapper script: %w", err)
+	}
+	if err := os.Chmod(f.Name(), 0o755); err != nil {
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("chmod image wrapper script: %w", err)
+	}
+	path := f.Name()
+	return path, func() { os.Remove(path) }, nil
+}
+
+// shellSingleQuote quotes s for safe interpolation into the generated
+// /bin/sh wrapper script's single-quoted argument position.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // Report is the conformance report. One entry per check.
