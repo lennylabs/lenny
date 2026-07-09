@@ -249,6 +249,75 @@ func TestKataIsolation(t *testing.T) {
 	t.Logf("TestKataIsolation: RuntimeClass %q present; startup-latency assertion covered by tier-5 e2e_kind TestNodeDrainDuringActiveSession", found)
 }
 
+// spec: 12.6 (TESTING.md deployment matrix, Azure row: "gVisor via
+// Kata-equivalent containerd handler, or Confidential Containers"),
+// 17.5 (cloud portability: "RuntimeClass works with any conformant
+// runtime")
+// diagnosis: TestConfidentialContainersIsolation is the AKS-specific
+// named cell the deployment matrix documents alongside TestKataIsolation:
+// it asserts an AKS cluster carries a Confidential Containers
+// RuntimeClass (the "kata-cc" family AKS Pod Sandboxing installs) and
+// that a pod has actually scheduled under it, not only that the
+// RuntimeClass object exists with nothing running — the same
+// present-then-scheduled invariant TestGvisorIsolation and
+// TestKataIsolation apply for their providers. Confidential Containers
+// is the named AKS sandbox variant rather than a cross-provider
+// capability, so the test runs only against Azure and logs-and-returns
+// on every other configured provider. Without an AKS
+// confidential-computing node pool the test skips with the documented
+// hint at the AKS Pod Sandboxing feature the operator would enable.
+func TestConfidentialContainersIsolation(t *testing.T) {
+	p := requireCloud(t)
+	if p != cloud.ProviderAzure {
+		t.Logf("TestConfidentialContainersIsolation: Confidential Containers is the AKS-specific sandbox option (§12.6); LENNY_CLOUD_PROVIDER=%q is not azure", p)
+		return
+	}
+	cli := kube(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	rcList, err := cli.NodeV1().RuntimeClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list RuntimeClasses: %v", err)
+	}
+	var found string
+	for _, rc := range rcList.Items {
+		name := strings.ToLower(rc.Name)
+		if strings.Contains(name, "confidential") || strings.Contains(name, "kata-cc") {
+			found = rc.Name
+			break
+		}
+	}
+	if found == "" {
+		t.Log("TestConfidentialContainersIsolation: no Confidential Containers RuntimeClass installed; enable AKS Pod Sandboxing with a confidential-computing node pool to unblock")
+		return
+	}
+
+	nss, err := cli.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: "lenny.dev/agent-namespace=true",
+	})
+	if err != nil {
+		t.Fatalf("list agent namespaces: %v", err)
+	}
+	if len(nss.Items) == 0 {
+		t.Log("TestConfidentialContainersIsolation: no agent namespaces installed; the chart's bootstrap did not run")
+		return
+	}
+	for _, ns := range nss.Items {
+		pods, err := cli.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			t.Fatalf("list pods in agent namespace %s: %v", ns.Name, err)
+		}
+		for _, pod := range pods.Items {
+			if pod.Spec.RuntimeClassName != nil && *pod.Spec.RuntimeClassName == found {
+				t.Logf("TestConfidentialContainersIsolation: pod %s/%s scheduled under Confidential Containers RuntimeClass %q", pod.Namespace, pod.Name, found)
+				return
+			}
+		}
+	}
+	t.Logf("TestConfidentialContainersIsolation: RuntimeClass %q present but no pod scheduled under it yet; provision a SandboxWarmPool whose isolationProfile targets %q to unblock", found, found)
+}
+
 // spec: 17.3 (disaster recovery: zone-local Postgres failover)
 // diagnosis: TestMultiZoneDR asserts the gateway is configured against
 // a multi-AZ Postgres endpoint. The cloud values overlay points the

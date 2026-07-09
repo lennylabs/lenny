@@ -526,6 +526,7 @@
         "pkg/controller/warmpool/...",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestKataIsolation",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation",
         "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
       ],
       "packages": [
@@ -2575,7 +2576,8 @@
         "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudKMSGCP",
         "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudCSIGCS",
         "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudKMSAzure",
-        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudCSIAzureBlob"
+        "tests/tier6_e2e_cloud/cloud_portability_test.go::TestCloudCSIAzureBlob",
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation"
       ],
       "packages": [
         "pkg/blobstore/s3",
