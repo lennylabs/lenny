@@ -1059,7 +1059,8 @@
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderTransportAccepted",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403",
         "tests/tier2_component/stores/userstore_test.go",
-        "tests/tier2_component/stores/customrolestore_test.go"
+        "tests/tier2_component/stores/customrolestore_test.go",
+        "tests/tier5_e2e_kind/auth_modes_test.go::TestStandardBearerGatesSessionCreation"
       ],
       "packages": [
         "pkg/auth"

@@ -520,6 +520,17 @@ var prodMigrationSchema = []struct {
 	// grants, and the platform sequence are asserted directly in
 	// migrations/0173_billing_audit_ddl_role_test.go. spec: §11.7, §15.1,
 	// §10.2.
+	//
+	// 0174 creates the fixed billing_seq_/audit_seq_ sequences for the
+	// built-in "default" tenant, the same category of fix 0173 applies to
+	// the "platform" pseudo-tenant chain: migrations 0053/0054 insert the
+	// "default" tenant row directly, bypassing the admin-API tenant-create
+	// path (§15.1) that would otherwise provision its sequences, so its
+	// first billing/audit write fails on nextval of a nonexistent relation
+	// absent this migration. It adds no column and creates no table. The
+	// sequences are asserted directly in
+	// migrations/0174_default_tenant_billing_audit_sequences_test.go.
+	// spec: §11.2.1, §11.7, §15.1, §10.2.
 }
 
 // spec: 12.2, 18.5
