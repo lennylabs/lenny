@@ -671,7 +671,8 @@
       "title": "Upload Safety",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
-        "pkg/upload/..."
+        "pkg/upload/...",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives"
       ],
       "packages": [
         "pkg/upload"
@@ -1890,7 +1891,9 @@
         "pkg/upload/upload_test.go::TestValidateEntrySymlinkRejectsEscape",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsOversizedAggregate",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsTooManyEntries",
-        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio"
+        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives"
       ],
       "packages": [
         "pkg/upload"
