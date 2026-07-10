@@ -648,7 +648,8 @@
         "pkg/gateway/sessionserver/interactions_test.go",
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
-        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
+        "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15"
       ],
       "packages": [
         "pkg/session/interactive"
