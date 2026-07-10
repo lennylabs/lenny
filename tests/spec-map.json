@@ -1682,6 +1682,7 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier9_security/audit_integrity_test.go",
+        "tests/tier9_security/blackbox_fuzz_test.go",
         "tests/tier9_security/live_session_test.go",
         "tests/tier9_security/pentest/...",
         "tests/tier9_security/rbac_test.go",
