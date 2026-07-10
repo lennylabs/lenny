@@ -146,32 +146,13 @@ func TestAdmissionSandboxClaimGuard(t *testing.T) {
 		"charts/lenny helm-unittest. Live double-claim exercise on the tier-5 ops backlog.")
 }
 
-// §12.9.4 NetworkPolicy adversarial — agent-namespace egress.
-// The lenny-system half of §12.9.4 is covered by
-// TestNetworkPolicyAdversarial; this scaffold is the agent-pod egress
-// half.
-// §12.9.4 agent-pod egress — covered structurally by:
-//   - network_policy_test.go (lenny-system default-deny against
-//     the e2e cluster).
-//   - pkg/preflight network-policy parity audits
-//     (NET-047/050/057/061/064/065/067/068).
-//   - cmd/lenny-egress-capture (the §12.9.8 sidecar that records
-//     outbound traffic for the credential-leakage probe; unit
-//     tests cover the forward + JSONL capture path).
-//
-// The composite in-pod egress probe needs the cred-shell-echo
-// runtime (shipped at cmd/runtimes/cred-shell-echo) deployed
-// alongside the egress-capture sidecar in the e2e overlay (the
-// agent-workload.yaml wiring landed in commit 3aa580b); the live
-// probe is on the tier-5/9 ops backlog.
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestNetworkPolicyAgentEgress(t *testing.T) {
-	t.Logf("§12.9.4: lenny-system default-deny by network_policy_test.go; NetworkPolicy " +
-		"parity audits by pkg/preflight; egress-capture sidecar by cmd/lenny-egress-capture " +
-		"unit tests. Live in-pod probe on the ops backlog (cred-shell-echo + sidecar wiring " +
-		"shipped in 3aa580b).")
-}
+// §12.9.4 NetworkPolicy adversarial — agent-namespace egress. The
+// lenny-system half of §12.9.4 is covered by TestNetworkPolicyAdversarial;
+// the agent-pod egress half is TestNetworkPolicyAgentEgress in
+// agent_egress_test.go, which schedules a probe pod in lenny-agents and
+// asserts every forbidden destination (internet, Postgres, Redis, a
+// sibling tenant's namespace, the cloud metadata address) times out at
+// the CNI layer.
 
 // §12.9.6 Input fuzzing — covered structurally by:
 //   - pkg/audit, pkg/auth/jwt, pkg/checkpoint, pkg/circuitbreaker,

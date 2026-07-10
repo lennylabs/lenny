@@ -1802,6 +1802,7 @@
         "tests/tier2_component/migrations/migrations_test.go",
         "tests/tier5_e2e_kind/ingress_test.go",
         "tests/tier9_security/network_policy_test.go",
+        "tests/tier9_security/agent_egress_test.go",
         "tests/tier6_e2e_cloud/managed_elasticache_test.go",
         "tests/tier6_e2e_cloud/managed_rds_test.go",
         "tests/tier6_e2e_cloud/managed_cloudsql_test.go",
