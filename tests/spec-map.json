@@ -731,11 +731,16 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "pkg/delegation/lease/lease_test.go::TestResolveMaxDepthApplies82BisPrecedence",
         "pkg/delegation/lease/lease_test.go::TestEnforcePolicyCeilingCapsResolved",
-        "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling"
+        "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationCycleDetectedRejectsSelfRecursion",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationDepthExceededRejectsChainBeyondCeiling",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationBudgetExhaustedRejectsWidenedFanOutSlice"
       ],
       "packages": [
         "pkg/delegation/cycle",
-        "pkg/delegation/lease"
+        "pkg/delegation/lease",
+        "pkg/gateway/mcpfabric/mcptools",
+        "pkg/gateway/externalapi/errorclassify"
       ],
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the §8.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the §8.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the §8.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the §8.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."

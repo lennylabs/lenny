@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/elicitation"
@@ -2236,6 +2237,46 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 						"parent_isolation": string(isoErr.ParentProfile),
 						"target_isolation": string(isoErr.ChildProfile),
 					})
+			}
+			// spec: §8.2 "Cycle-detection decision matrix" — a
+			// self-recursive hop the three-layer AND gate rejected.
+			// §15.2.1 line 1395 (item 4) requires every manual
+			// MCP-only tool, including lenny/delegate_task, to use
+			// the shared error taxonomy rather than a bare error
+			// that falls through to INTERNAL_ERROR. `details`
+			// carries blockedBy (the first false layer in canonical
+			// platform -> runtime -> policy order), effectiveSettings
+			// (the resolved {mode, platform, runtime, policy} tuple),
+			// and the offending identity. F-8.2 cycle detection.
+			var cycleErr *cycle.Rejection
+			if errors.As(err, &cycleErr) {
+				return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_CYCLE_DETECTED",
+					err.Error(),
+					map[string]any{
+						"blockedBy":        string(cycleErr.BlockedBy),
+						"cycleRuntimeName": cycleErr.CycleRuntimeName,
+						"cyclePoolName":    cycleErr.CyclePoolName,
+						"effectiveSettings": map[string]any{
+							"mode":     string(cycleErr.EffectiveSettings.Mode),
+							"platform": cycleErr.EffectiveSettings.PlatformAllowSelfRec,
+							"runtime":  cycleErr.EffectiveSettings.RuntimeAllowSelfRec,
+							"policy":   cycleErr.EffectiveSettings.PolicyAllowSelfRec,
+						},
+					})
+			}
+			// spec: §8.2 "2a-bis. Effective maxDepth resolution
+			// (normative, always enforced)" — every effective
+			// delegation lease carries a positive integer maxDepth
+			// enforced on every hop; pkg/delegation/lease.CheckDepth
+			// rejects a hop that would push the chain past it. §15.2.1
+			// line 1395 (item 4) requires the shared error taxonomy
+			// rather than the INTERNAL_ERROR fallback a bare error
+			// produces.
+			var depthErr *lease.DepthExceededError
+			if errors.As(err, &depthErr) {
+				return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_DEPTH_EXCEEDED",
+					err.Error(),
+					map[string]any{"current": depthErr.Current, "max": depthErr.Max})
 			}
 			// §8.2 line 58: the child-token exchange requires the
 			// parent's authenticated user JWT as `subject_token`. A
