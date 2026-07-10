@@ -233,6 +233,12 @@ func TestBindUploadArchiveAbortRecordsMetric(t *testing.T) {
 // the validator in isolation; this proves it is actually invoked on the
 // real extraction path reached from Binder.Bind, not just callable in a
 // test harness that talks to it directly. F-7.4.11, F-13.4.1.
+//
+// diagnosis: a failure means the gateway-side extraction path reached from
+// Binder.Bind no longer enforces the decompression-ratio, path-traversal, or
+// entry-count ceilings on a real bind — the validator may still pass in
+// isolation while a malicious archive materializes onto the workspace root
+// or exhausts the pod's disk/CPU during extraction.
 func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 	cases := []struct {
 		name       string
