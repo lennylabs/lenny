@@ -140,6 +140,19 @@ const IMPLEMENT_SCHEMA = {
     resolutionNote: { type: 'string' },
     humanQuestion: { type: 'string' },
     notes: { type: 'string' },
+    discoveredIssues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'severity', 'evidence'],
+        properties: {
+          title: { type: 'string' },
+          severity: { type: 'string', enum: ['High', 'Medium', 'Low', 'Info'] },
+          evidence: { type: 'string' },
+        },
+      },
+    },
   },
 }
 
@@ -193,7 +206,9 @@ function implementPrompt(f, priorIssues) {
     '',
     'GENERAL. Do not defer any route for "missing infrastructure" — Kind, envtest, and the compose stack (Postgres/Redis/MinIO) are available locally (`lenny-test infra up --profile compose|kind`); that is never a reason to pick needs-human. Commit message form for test/code-fix/moot: "test-gaps: close <one-line description of the behavior now covered/fixed>" (describe the behavior; do not embed the TEST-GAPS finding id or any other internal tracking id in the message). Do NOT put a TEST-GAPS finding id, or any other id that is not a durable spec-section reference, into test code, test names, or comments anywhere — cite only `// spec: §X.Y (...)` or describe the behavior in prose, the same rule `implement-proposal` applies to proposal-internal labels. Do NOT edit TEST-GAPS.md yourself for any route; the batch driver marks or annotates it after an independent check.',
     '',
-    'RETURN: id="' + f.id + '", route, attempts (how many internal fix-and-recheck cycles you needed), testFirstFailed (boolean), commitSha (if you committed), tiersRun (array actually executed), fullRegressionCommand (the exact command, required for route=code-fix), specCitation (the verbatim quote backing the test and, for code-fix, the fix), blastRadiusNotes (required for route=code-fix and route=needs-human), resolutionNote (for test/code-fix/moot, one or two sentences for the TEST-GAPS.md Resolution field, written as if the reader has no other context), humanQuestion (required for route=needs-human), notes.',
+    'DISCOVERED ISSUES. If, while working this finding, you hit a real issue that is genuinely out of scope for it — a separate bug, a design gap, a pre-existing defect your blast-radius search turned up, a test file that no longer matches live behavior — do NOT just mention it in a commit message or in notes and move on; that has repeatedly meant it gets lost (found in prior batches\' transcripts, never surfacing as a trackable finding). Stay scoped to THIS finding (do not fix the other issue here), but record it as an entry in discoveredIssues: title (one line), severity (your honest estimate), and evidence (the specific file:line, command output, or reasoning that makes this concrete, not just an assertion). The batch driver files each one as a new OPEN TEST-GAPS.md finding after this run; you do not need to know its future finding id or edit TEST-GAPS.md yourself.',
+    '',
+    'RETURN: id="' + f.id + '", route, attempts (how many internal fix-and-recheck cycles you needed), testFirstFailed (boolean), commitSha (if you committed), tiersRun (array actually executed), fullRegressionCommand (the exact command, required for route=code-fix), specCitation (the verbatim quote backing the test and, for code-fix, the fix), blastRadiusNotes (required for route=code-fix and route=needs-human), resolutionNote (for test/code-fix/moot, one or two sentences for the TEST-GAPS.md Resolution field, written as if the reader has no other context), humanQuestion (required for route=needs-human), notes, discoveredIssues (array, empty if none).',
   ].filter(Boolean).join('\n')
 }
 
@@ -420,6 +435,47 @@ if (toAnnotate.length) {
 }
 
 // ---------------------------------------------------------------------------
+// File discovered issues: one agent, sequential edits, turns each
+// implementer-reported out-of-scope discovery into a genuine new OPEN
+// TEST-GAPS.md finding. Without this step, a discovery like this only ever
+// lived in a commit message or an implementer's notes field — observed
+// directly across prior batches (grep the git log for "filed as a separate
+// followup", "pre-existing gap", "surfaced a separate defect") — which is
+// indistinguishable from never having been found at all once that commit
+// scrolls out of anyone's attention. This is a single writer, like
+// Mark-resolved/Annotate above, to avoid concurrent TEST-GAPS.md edits.
+// ---------------------------------------------------------------------------
+const discoveredIssues = closedResults
+  .filter(function (r) { return r.impl && r.impl.discoveredIssues && r.impl.discoveredIssues.length })
+  .flatMap(function (r) { return r.impl.discoveredIssues.map(function (di) { return Object.assign({ foundWhileClosing: r.finding.id }, di) }) })
+let fileIssuesResult = { filedCount: 0 }
+if (discoveredIssues.length) {
+  const fileIssuesPrompt = [
+    'ROLE. File the following implementer-discovered issues as new OPEN findings in TEST-GAPS.md. Each was found incidentally while closing an unrelated finding and is out of scope for it; they need their own durable record.',
+    '',
+    'DISCOVERED ISSUES:',
+    JSON.stringify(discoveredIssues),
+    '',
+    'For each: pick the TEST-GAPS.md section that actually covers its subject matter (the spec section it concerns, or the closest theme section — do not default to wherever foundWhileClosing happens to live unless that is genuinely the right home), find that section\'s highest existing finding number and use the next one, and insert a new finding block in the same format every other finding in that section uses: `### - [ ] <new-id> — <title> [<severity>] — OPEN` followed by `- **Spec/Doc:**`, `- **Existing tests:**`, `- **Gap:**`, `- **Dependencies:**`, `- **Suggested test:**` fields, writing them from the evidence given (it is fine for Existing tests / Suggested test to be brief if the evidence does not spell them out — do not invent specifics the evidence does not support). Update that section\'s theme/spec-area summary line near the top of the file (the "NH NM NL NI" counts) to include the new finding. Do not touch any other finding\'s text.',
+    '',
+    'Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: record <N> issue(s) discovered during batch review"`.',
+    '',
+    'RETURN filedCount (integer) and commitSha.',
+  ].join('\n')
+  fileIssuesResult = await agent(fileIssuesPrompt, {
+    label: 'file-discovered-issues', phase: 'Close', effort: 'medium',
+    schema: { type: 'object', additionalProperties: false, required: ['filedCount'], properties: { filedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
+  })
+  if (!fileIssuesResult) {
+    // Same terminal-error shape as Annotate: the write may never have
+    // happened. Surface the raw list so a human can file them by hand
+    // rather than silently dropping them a second time.
+    fileIssuesResult = { filedCount: 0, abortedOnTerminalError: true, pendingIssues: discoveredIssues }
+    abortedOnTerminalError = true
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Verify: batch-level.
 // ---------------------------------------------------------------------------
 // The full `lenny-test run --since <base>` regression pass reliably takes
@@ -480,8 +536,11 @@ return {
     needsHuman: needsHuman.map(function (r) { return { id: r.finding.id, question: r.impl.humanQuestion } }),
     stuck: stuck.map(function (r) { return { id: r.finding.id, issues: r.verify.issues } }),
     aborted: abortedFindings.map(function (r) { return r.finding.id }),
+    discoveredCount: discoveredIssues.length,
+    discovered: discoveredIssues,
   },
   markResult: markResult,
   annotateResult: annotateResult,
+  fileIssuesResult: fileIssuesResult,
   verify: batchVerifyResult,
 }
