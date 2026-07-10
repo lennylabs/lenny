@@ -906,7 +906,8 @@
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
         "tests/tier2_component/stores/connectorstore_test.go",
-        "tests/tier4_integration/connector_oauth_test.go"
+        "tests/tier4_integration/connector_oauth_test.go",
+        "tests/tier4_integration/connector_delegation_scope_test.go"
       ],
       "packages": [
         "pkg/connector",
