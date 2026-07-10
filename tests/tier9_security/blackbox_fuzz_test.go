@@ -12,10 +12,12 @@
 // unit tests), gated on zap.sh being on PATH. This file supplies the
 // in-tree black-box battery the ZAP run would otherwise be the only
 // coverage for: it boots a real lenny-gateway subprocess (the same
-// binary ZAP would point at) via tests/testinfra/gateway and drives a
-// small adversarial corpus at the REST and MCP surfaces, asserting each
-// probe is rejected rather than crashing the process or falling through
-// to a 200.
+// binary ZAP would point at) via tests/testinfra/gateway and drives the
+// six §12.9.6-named adversarial categories (oversize headers, deeply
+// nested objects, path-traversal artifact keys, oversize payloads,
+// malformed JSON, and SQL-injection strings) at the REST and MCP
+// surfaces, asserting each probe is rejected rather than crashing the
+// process or falling through to a 200.
 package tier9_security_test
 
 import (
@@ -223,6 +225,176 @@ func TestBlackboxFuzzDeeplyNestedJSONRPCBodyRejectedByMCP(t *testing.T) {
 	}
 	if data["code"] != "VALIDATION_ERROR" {
 		t.Errorf("deeply nested JSON-RPC method: want error.data.code VALIDATION_ERROR, got %v", data["code"])
+	}
+}
+
+// spec: 12.9.6
+// diagnosis: an oversize request payload on a critical operation
+// crashed the gateway subprocess, hung the connection, or reached the
+// inner handler and returned 2xx instead of being rejected at the
+// idempotency boundary. Any POST carrying an Idempotency-Key header on
+// one of the §11.5 critical-operation paths is buffered and hashed by
+// the idempotency middleware before the inner handler runs; a body
+// past the configured cap must be rejected with a 413 BODY_TOO_LARGE
+// envelope and the gateway process must survive to serve the next
+// request.
+func TestBlackboxFuzzOversizePayloadRejected(t *testing.T) {
+	// A tight cap keeps the oversize probe body small and the test
+	// fast; the default (8 MiB) is exercised in the idempotency
+	// package's own unit tests (idempotency_test.go).
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--idempotency-max-body-bytes=1024")
+
+	oversizeBody := []byte(fmt.Sprintf(`{"runtimeRef":"fuzz-runtime","userId":"%s"}`, strings.Repeat("a", 2048)))
+
+	req, err := http.NewRequest(http.MethodPost, gw.BaseURL()+"/v1/sessions/start", bytes.NewReader(oversizeBody))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	req.Header.Set("Idempotency-Key", "blackbox-fuzz-oversize-payload")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("oversize-payload request errored instead of receiving a rejection response: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize payload: want 413, got %d (body %s)", resp.StatusCode, raw)
+	}
+	envelope := decodeErrorEnvelope(t, raw)
+	if envelope["code"] != "BODY_TOO_LARGE" {
+		t.Errorf("oversize payload: want error.code BODY_TOO_LARGE, got %v", envelope["code"])
+	}
+
+	// The gateway process must still be answering normal requests after
+	// the oversize-payload probe.
+	follow, err := http.NewRequest(http.MethodGet, gw.BaseURL()+"/v1/sessions", nil)
+	if err != nil {
+		t.Fatalf("build follow-up request: %v", err)
+	}
+	follow.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	followResp, err := http.DefaultClient.Do(follow)
+	if err != nil {
+		t.Fatalf("gateway did not survive the oversize-payload probe: %v", err)
+	}
+	defer followResp.Body.Close()
+	io.Copy(io.Discard, followResp.Body)
+	if followResp.StatusCode != http.StatusOK {
+		t.Errorf("follow-up request after oversize payload: want 200, got %d", followResp.StatusCode)
+	}
+}
+
+// spec: 12.9.6
+// diagnosis: malformed or truncated JSON either crashed the decoder or
+// was silently accepted, instead of surfacing the documented 400
+// VALIDATION_ERROR envelope. POST /v1/sessions/start decodes the body
+// with encoding/json; a body that is not syntactically valid JSON at
+// all (unterminated object) must fail the decode and the handler must
+// still answer with the shared error envelope rather than a 500 or an
+// unhandled panic.
+func TestBlackboxFuzzMalformedJSONBodyRejected(t *testing.T) {
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"truncated_object", `{"runtimeRef":"fuzz-runtime","userId":`},
+		{"unquoted_garbage", `{not valid json at all`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, gw.BaseURL()+"/v1/sessions/start", strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("malformed-JSON request errored instead of receiving a rejection response: %v", err)
+			}
+			defer resp.Body.Close()
+			raw, _ := io.ReadAll(resp.Body)
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("malformed JSON body %q: want 400, got %d (body %s)", tc.body, resp.StatusCode, raw)
+			}
+			envelope := decodeErrorEnvelope(t, raw)
+			if envelope["code"] != "VALIDATION_ERROR" {
+				t.Errorf("malformed JSON body %q: want error.code VALIDATION_ERROR, got %v", tc.body, envelope["code"])
+			}
+		})
+	}
+}
+
+// spec: 12.9.6
+// diagnosis: a SQL-injection-shaped string presented as a tenant claim
+// either reached a downstream query unescaped or was accepted where
+// the wire contract requires the §10.2 tenant_id pattern. The
+// dev-header auth path (X-Lenny-Tenant-ID) runs every claim through
+// auth.ValidateTenantID's ^[a-zA-Z0-9_-]{1,128}$ pattern before it is
+// ever used to scope a lookup; a classic SQLi payload contains
+// characters the pattern rejects (quotes, spaces, semicolons), so the
+// request must fail closed with the documented 401
+// TENANT_CLAIM_INVALID_FORMAT envelope rather than reach any query or
+// crash the process.
+func TestBlackboxFuzzSQLInjectionTenantClaimRejected(t *testing.T) {
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
+
+	cases := []struct {
+		name   string
+		tenant string
+	}{
+		{"classic_or_true", `' OR '1'='1`},
+		{"stacked_drop_table", `acme'; DROP TABLE sessions; --`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, gw.BaseURL()+"/v1/sessions", nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req.Header.Set("X-Lenny-Tenant-ID", tc.tenant)
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("SQL-injection tenant-claim request errored instead of receiving a rejection response: %v", err)
+			}
+			defer resp.Body.Close()
+			raw, _ := io.ReadAll(resp.Body)
+
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("SQL-injection tenant claim %q: want 401, got %d (body %s)", tc.tenant, resp.StatusCode, raw)
+			}
+			envelope := decodeErrorEnvelope(t, raw)
+			if envelope["code"] != "TENANT_CLAIM_INVALID_FORMAT" {
+				t.Errorf("SQL-injection tenant claim %q: want error.code TENANT_CLAIM_INVALID_FORMAT, got %v", tc.tenant, envelope["code"])
+			}
+		})
+	}
+
+	// The gateway process must still be answering normal requests after
+	// the SQL-injection probes.
+	follow, err := http.NewRequest(http.MethodGet, gw.BaseURL()+"/v1/sessions", nil)
+	if err != nil {
+		t.Fatalf("build follow-up request: %v", err)
+	}
+	follow.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	followResp, err := http.DefaultClient.Do(follow)
+	if err != nil {
+		t.Fatalf("gateway did not survive the SQL-injection tenant-claim probes: %v", err)
+	}
+	defer followResp.Body.Close()
+	io.Copy(io.Discard, followResp.Body)
+	if followResp.StatusCode != http.StatusOK {
+		t.Errorf("follow-up request after SQL-injection probes: want 200, got %d", followResp.StatusCode)
 	}
 }
 
