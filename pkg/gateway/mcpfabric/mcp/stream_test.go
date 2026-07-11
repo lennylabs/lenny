@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -568,4 +569,58 @@ func (f *flushRecorder) Header() http.Header {
 }
 func (f *flushRecorder) Write(p []byte) (int, error) { return f.Builder.Write(p) }
 func (f *flushRecorder) WriteHeader(int)             {}
-func (f *flushRecorder) Flush()                      {}
+
+// spec: §15 OutboundChannel bounded-error policy — "the gateway closes
+// the channel on non-nil error" applies to any write/flush failure, not
+// only a deadline timeout. writeBoundedSSEFrame must propagate a Write
+// error rather than swallow it.
+// diagnosis: a nil return here means a write failure on the underlying
+// connection is silently ignored instead of signaling the caller to
+// close the connection.
+func TestWriteBoundedSSEFramePropagatesWriteError(t *testing.T) {
+	w := &erroringWriter{writeErr: errors.New("broken pipe")}
+	err := writeBoundedSSEFrame(w, []byte("data: x\n\n"))
+	if err == nil {
+		t.Fatal("writeBoundedSSEFrame: got nil error, want the underlying Write error propagated")
+	}
+}
+
+// spec: §15 OutboundChannel bounded-error policy, same rationale as
+// TestWriteBoundedSSEFramePropagatesWriteError, for the flush leg.
+// diagnosis: a nil return here means a flush failure (e.g. the
+// connection dropped between Write and Flush) is silently ignored.
+func TestFlushBoundedSSEPropagatesFlushError(t *testing.T) {
+	w := &erroringWriter{flushErr: errors.New("connection reset")}
+	err := flushBoundedSSE(w)
+	if err == nil {
+		t.Fatal("flushBoundedSSE: got nil error, want the underlying Flush error propagated")
+	}
+}
+
+// erroringWriter is a minimal http.ResponseWriter whose Write and Flush
+// can be made to fail, to exercise writeBoundedSSEFrame/flushBoundedSSE's
+// error-return branches. It deliberately does not implement
+// SetWriteDeadline, so http.ResponseController.SetWriteDeadline returns
+// http.ErrNotSupported (the tolerated case both functions fall through
+// on), letting these tests isolate the Write/Flush error paths.
+type erroringWriter struct {
+	hdr      http.Header
+	writeErr error
+	flushErr error
+}
+
+func (e *erroringWriter) Header() http.Header {
+	if e.hdr == nil {
+		e.hdr = http.Header{}
+	}
+	return e.hdr
+}
+func (e *erroringWriter) Write(p []byte) (int, error) {
+	if e.writeErr != nil {
+		return 0, e.writeErr
+	}
+	return len(p), nil
+}
+func (e *erroringWriter) WriteHeader(int)   {}
+func (e *erroringWriter) FlushError() error { return e.flushErr }
+func (f *flushRecorder) Flush()             {}
