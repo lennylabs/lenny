@@ -1226,7 +1226,8 @@
         "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey",
         "tests/tier2_component/stores/experimentstore_test.go",
         "tests/tier2_component/stores/evalstore_test.go",
-        "tests/tier2_component/evalaggregates/eval_aggregates_test.go"
+        "tests/tier2_component/evalaggregates/eval_aggregates_test.go",
+        "pkg/gateway/sessionserver/eval_test.go::TestEvalRateLimitSlidingWindowBoundaryEvasion_spec_10_7_938"
       ],
       "packages": [
         "pkg/experiment"
