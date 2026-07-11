@@ -248,11 +248,22 @@ for (const f of selectResult.selected) {
   let verifyResult = { approved: false, issues: [] }
   let priorIssues = []
   let forcedHuman = false
+  // A finding can take several attempts (a rejected first pass, a
+  // corrected second one); each attempt's own discoveredIssues would
+  // otherwise be lost when a later attempt's implResult overwrites the
+  // earlier one (observed directly: a real discoveredIssue from a
+  // superseded first attempt never made it to the File-discovered-issues
+  // step because only the FINAL implResult was read). Accumulate across
+  // every attempt instead.
+  const discoveredThisFinding = []
   while (attempt < maxAttemptsPerFinding) {
     attempt++
     implResult = await agent(implementPrompt(f, priorIssues), {
       label: f.id + ':impl:' + attempt, phase: 'Close', schema: IMPLEMENT_SCHEMA, effort: 'high',
     })
+    if (implResult && implResult.discoveredIssues && implResult.discoveredIssues.length) {
+      discoveredThisFinding.push.apply(discoveredThisFinding, implResult.discoveredIssues)
+    }
     if (!implResult) {
       // agent() returns null on a terminal API error (auth expiry, rate/usage
       // limit) after retries, not just for this finding but almost certainly
@@ -308,6 +319,12 @@ for (const f of selectResult.selected) {
     })
     implResult = { id: f.id, route: 'needs-human', attempts: attempt, humanQuestion: revertResult.humanQuestion, notes: 'code-fix reverted after verifier veto' }
     verifyResult = { approved: true, issues: [] }
+  }
+  if (implResult) {
+    // Replace with the full cross-attempt accumulation so a discovery
+    // from a superseded earlier attempt isn't lost (see the comment
+    // above discoveredThisFinding).
+    implResult.discoveredIssues = discoveredThisFinding
   }
   closedResults.push({ finding: f, impl: implResult, verify: verifyResult, attempts: attempt })
   log(f.id + ' -> route=' + (implResult ? implResult.route : 'none') + ' approved=' + verifyResult.approved + ' after ' + attempt + ' attempt(s).')
@@ -380,6 +397,16 @@ if (toResolve.length) {
     label: 'mark-resolved', phase: 'Close', effort: 'medium',
     schema: { type: 'object', additionalProperties: false, required: ['markedCount'], properties: { markedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
   })
+  if (!markResult) {
+    // Same terminal-error shape as Annotate/File-discovered-issues below:
+    // the write to TEST-GAPS.md may never have happened (observed
+    // directly — resolvedCount reported >0 in a batch summary while
+    // markResult came back as a bare `null` and the findings stayed
+    // OPEN on disk). Carry the unresolved list forward instead of
+    // losing it in a null.
+    markResult = { markedCount: 0, abortedOnTerminalError: true, pendingResolutions: toResolve.map(function (r) { return { id: r.finding.id, commitSha: r.impl.commitSha, route: r.impl.route } }) }
+    abortedOnTerminalError = true
+  }
 }
 
 // ---------------------------------------------------------------------------
