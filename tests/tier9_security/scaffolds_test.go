@@ -123,7 +123,8 @@ func resolvePentestBundlePath(bundleEnv, releaseGate, root string) (path string,
 	if releaseGate != "" {
 		return "", false, fmt.Errorf(
 			"%s is set but %s is unset: a release build must supply the partner pen-test bundle rather than fall back to the internal baseline",
-			releaseGateEnv, pentestBundleEnv)
+			releaseGateEnv, pentestBundleEnv,
+		)
 	}
 	return filepath.Join(root, "tests", "tier9_security", "pentest", "v1-baseline-bundle.json"), true, nil
 }
@@ -324,7 +325,8 @@ func TestSBOMGeneration(t *testing.T) {
 // engagement bundle.
 func TestPentestReplay(t *testing.T) {
 	bundlePath, baseline, resolveErr := resolvePentestBundlePath(
-		os.Getenv(pentestBundleEnv), os.Getenv(releaseGateEnv), repoRoot(t))
+		os.Getenv(pentestBundleEnv), os.Getenv(releaseGateEnv), repoRoot(t),
+	)
 	if resolveErr != nil {
 		t.Fatalf("§18.33 pen-test replay: %v", resolveErr)
 	}
