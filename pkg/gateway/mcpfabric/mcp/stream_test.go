@@ -615,6 +615,7 @@ func (e *erroringWriter) Header() http.Header {
 	}
 	return e.hdr
 }
+
 func (e *erroringWriter) Write(p []byte) (int, error) {
 	if e.writeErr != nil {
 		return 0, e.writeErr
