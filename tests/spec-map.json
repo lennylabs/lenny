@@ -755,14 +755,15 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "tests/tier2_component/stores/delegationpolicystore_test.go",
-        "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866"
+        "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
+        "tests/tier4_integration/delegation_credential_pool_race_test.go::TestDelegateTaskConcurrentCredentialPoolExhaustionRace"
       ],
       "packages": [
         "pkg/delegation/lease",
         "pkg/delegation/policy"
       ],
       "blocked_until_phase": "9",
-      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2."
+      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2. The concurrent credential-pool point-in-time-check race (adversarial case) has a spec-derived test at tests/tier4_integration/delegation_credential_pool_race_test.go, kept t.Skip'd because credentialPropagation has no production implementation to race against yet."
     },
     "8.4": {
       "title": "Approval Modes",
