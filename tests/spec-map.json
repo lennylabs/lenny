@@ -2744,6 +2744,23 @@
       "blocked_until_phase": "2",
       "notes": "ImageResolver enforces override > url > default precedence and digest pinning. Spec §18 (build sequence) is currently deferred; this entry captures the §18.1 deliverable named by the prior spec revision."
     },
+    "18.33": {
+      "title": "Phase 14 — External pen-test replay",
+      "spec_file": "spec/18_build-sequence.md",
+      "tests": [
+        "tests/tier9_security/scaffolds_test.go::TestPentestReplay",
+        "tests/tier9_security/scaffolds_test.go::TestPentestReplayReleaseGateRequiresPartnerBundle",
+        "tests/tier9_security/pentest/driver_test.go::TestLoadExampleBundleParses",
+        "tests/tier9_security/pentest/driver_test.go::TestAssertAllRemediatedPassesCleanBundle",
+        "tests/tier9_security/pentest/driver_test.go::TestParseBundleRejectsMalformed",
+        "tests/tier9_security/pentest/driver_test.go::TestLoadBundleMissingFile"
+      ],
+      "packages": [
+        "tests/tier9_security/pentest"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "TestPentestReplay runs the §18.33 external pen-test driver against the bundle at LENNY_PENTEST_BUNDLE, falling back to the internal v1-baseline-bundle.json on a non-release run. TestPentestReplayReleaseGateRequiresPartnerBundle pins resolvePentestBundlePath's release-gate branch: when LENNY_RELEASE_GATE is set (as .github/workflows/pre-release.yml's security-pentest job sets it), an unset LENNY_PENTEST_BUNDLE fails the test instead of silently falling back to the baseline, so the Phase 14 exit gate cannot pass a release without a real partner engagement bundle."
+    },
     "19": {
       "title": "Resolved Decisions",
       "spec_file": "spec/19_resolved-decisions.md",
