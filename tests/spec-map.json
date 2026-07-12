@@ -172,7 +172,8 @@
         "tests/tier3_contract/rest_sessions/sessions_test.go",
         "tests/tier4_integration/idempotency_test.go",
         "tests/tier4_integration/session_lifecycle_test.go",
-        "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres"
+        "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres",
+        "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway"
       ],
       "packages": [
         "pkg/session",
