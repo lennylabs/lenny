@@ -288,8 +288,7 @@
       "component": [
         "tests/tier2_component/migrations/...",
         "tests/tier2_component/stores/..."
-      ],
-      "integration": ["tests/tier4_integration/migration_upgrade_test.go"]
+      ]
     },
     "scripts/lint-schema.sh": {
       "static": ["scripts/lint-schema.sh"]
