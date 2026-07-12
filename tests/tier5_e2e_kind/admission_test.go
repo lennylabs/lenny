@@ -142,6 +142,10 @@ func TestAdmissionPodSecurityAdmitsCompliantPod(t *testing.T) {
 
 	// A pod that satisfies every §13.1 invariant. fsGroup 65534 is the
 	// lenny-cred-readers GID from pkg/controller/sandbox/podspec.
+	// supplementalGroups carries the same GID: §13.1 requires the webhook
+	// to validate the presence of both the fsGroup and the
+	// supplementalGroups settings, so a pod that sets only the fsGroup is
+	// rejected with POD_SPEC_CRED_FSGROUP_MISSING.
 	const goodPod = `apiVersion: v1
 kind: Pod
 metadata:
@@ -151,6 +155,7 @@ spec:
   securityContext:
     runAsNonRoot: true
     fsGroup: 65534
+    supplementalGroups: [65534]
     seccompProfile:
       type: RuntimeDefault
   containers:
@@ -449,7 +454,30 @@ const poolScalingControllerSA = "system:serviceaccount:lenny-system:lenny-pool-s
 // error and does not fail the test itself, leaving the caller to assert.
 func applyAsPoolScalingController(t *testing.T, c *kind.Cluster, manifest string) (string, error) {
 	t.Helper()
-	cmd := c.Kubectl("apply", "--as", poolScalingControllerSA, "-f", "-")
+	return applyAsPoolScalingControllerArgs(t, c, manifest)
+}
+
+// dryRunApplyAsPoolScalingController is the server-side dry-run form of
+// applyAsPoolScalingController: it runs the full admission chain
+// impersonating the controller without persisting the object. A
+// positive control that must reach a webhook downstream of the
+// lenny-pool-config-validator (which admits SandboxTemplate spec writes
+// only from the PoolScalingController service account) uses this so the
+// pool-config-validator admits the write and the object never lands in
+// etcd.
+func dryRunApplyAsPoolScalingController(t *testing.T, c *kind.Cluster, manifest string) (string, error) {
+	t.Helper()
+	return applyAsPoolScalingControllerArgs(t, c, manifest, "--dry-run=server")
+}
+
+// applyAsPoolScalingControllerArgs pipes manifest to `kubectl apply -f -`
+// impersonating the PoolScalingController service account, appending any
+// extra kubectl flags. It returns the combined output and error without
+// failing the test.
+func applyAsPoolScalingControllerArgs(t *testing.T, c *kind.Cluster, manifest string, extra ...string) (string, error) {
+	t.Helper()
+	args := append([]string{"apply", "--as", poolScalingControllerSA, "-f", "-"}, extra...)
+	cmd := c.Kubectl(args...)
 	cmd.Stdin = strings.NewReader(manifest)
 	out, err := cmd.CombinedOutput()
 	return string(out), err

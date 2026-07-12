@@ -257,7 +257,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/controller/warmpool/...",
-        "pkg/controller/poolscaling/..."
+        "pkg/controller/poolscaling/...",
+        "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -280,6 +281,7 @@
         "tests/tier2_component/stores/agentpodstatestore_test.go",
         "tests/tier8_chaos/concurrency_test.go",
         "tests/tier8_chaos/leader_election_test.go",
+        "tests/tier8_chaos/adr007_leader_kill_claim_test.go::TestLeaderKillMidClaimNoDoubleAssignment",
         "tests/tier8_chaos/live_session_test.go",
         "tests/tier2_component/stores/crdpodregistry_claim_test.go::TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1",
         "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash",
@@ -349,7 +351,8 @@
         "pkg/admission/ownership/ownership_test.go::TestOwnerSdkWarmCircuitBreakerOverridesDefault",
         "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix",
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
-        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC"
+        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
+        "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -415,7 +418,8 @@
       "tests": [
         "pkg/gateway/policy/interceptor/...",
         "pkg/gateway/mcpfabric/delegationpolicystore/...",
-        "pkg/gateway/mcpfabric/mcptools/predelegation_test.go"
+        "pkg/gateway/mcpfabric/mcptools/predelegation_test.go",
+        "tests/tier4_integration/external_interceptor_test.go"
       ],
       "packages": [
         "pkg/gateway/interceptors",
@@ -449,7 +453,8 @@
         "tests/tier2_component/gateway_subsystems/llm_proxy_test.go",
         "tests/tier8_chaos/testbed_partition_test.go",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
-        "tests/tier5_e2e_kind/admission_credential_multitenant_test.go"
+        "tests/tier5_e2e_kind/admission_credential_multitenant_test.go",
+        "tests/tier9_security/lease_spiffe_replay_test.go"
       ],
       "packages": [
         "pkg/credential",
