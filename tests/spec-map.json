@@ -351,7 +351,8 @@
         "pkg/admission/ownership/ownership_test.go::TestOwnerSdkWarmCircuitBreakerOverridesDefault",
         "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix",
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
-        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC"
+        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
+        "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite"
       ],
       "packages": [
         "pkg/admission/ownership",
