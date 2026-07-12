@@ -178,6 +178,7 @@
       "tests": [
         "pkg/tokenexchange/...",
         "pkg/credential/...",
+        "cmd/lenny-token-service/mtls_test.go::TestTokenServiceGRPCRequiresClientMTLS",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/oauth_token/oauth_token_record_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS",
