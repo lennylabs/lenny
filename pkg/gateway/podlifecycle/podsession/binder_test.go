@@ -1764,6 +1764,85 @@ func TestBindFallbackReturnsErrNoIdlePodWhenMirrorAlsoExhausted(t *testing.T) {
 	}
 }
 
+// TestFallbackDoubleClaimFencedByDeterministicName pins the §4.6.1
+// timing-independent double-claim guarantee to the mechanism that actually
+// enforces it: the deterministic claim-<podName> name plus the API server's
+// name-uniqueness check. The Postgres-backed fallback claim path names its
+// SandboxClaim claim-<podName>, identical to the normal CRD-based path, so a
+// fallback claim that races the normal path for the same Sandbox collides on
+// name-uniqueness rather than establishing a second binding. Here a
+// normal-path claim already holds sbx-fb under claim-sbx-fb while a stale
+// mirror still reports the pod idle; the fallback CREATE for the same pod
+// must be rejected. No admission webhook runs in this envtest, so the
+// name-uniqueness check alone fences the cross-path race, which is precisely
+// what the spec means by double-claim being impossible regardless of timing.
+//
+// spec: §4.6.1 — "the deterministic claim-<podName> name additionally
+// subjects a duplicate CREATE to the API server's name-uniqueness check,
+// double-claim is impossible regardless of timing: even if two writers race
+// to create a claim for the same Sandbox, the second writer's CREATE is
+// rejected ... by the name-uniqueness check, before a second binding is
+// established"; without the deterministic name "the fallback path could race
+// with the normal CRD-based claim path and produce duplicate claims for the
+// same Sandbox".
+//
+// diagnosis: a failure here means the Postgres fallback claim path no longer
+// names its claim claim-<podName>. A fallback claim racing the normal
+// CRD-based claim for the same Sandbox would then create a second,
+// differently-named SandboxClaim and establish a duplicate binding, the exact
+// double-claim the §4.6.1 deterministic-name fence exists to prevent. The
+// webhook's sibling List is not a timing-independent fence, so the
+// deterministic name is the guarantee under test.
+func TestFallbackDoubleClaimFencedByDeterministicName(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+
+	// A normal CRD-based claim already holds sbx-fb under the deterministic
+	// name claim-sbx-fb. The pod carries no pool label, so the gateway's
+	// label-selecting API claim finds no idle pod and attempts the fallback.
+	existing := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("sbx-fb"), Namespace: testNS},
+		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-fb", TenantID: "acme"},
+	}
+	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"), existing)
+	binder := newBinder(c, adapterDialer(t, srv))
+	// The mirror is stale: it still reports sbx-fb idle even though the
+	// normal path already claimed it. This is the race the fence must survive.
+	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 1}
+	binder.Fallback = mirror
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-2", TenantID: "acme", Runtime: "claude-code",
+	})
+	if err == nil {
+		t.Fatal("Bind established a second binding for an already-claimed pod; the deterministic-name fence must reject the fallback CREATE")
+	}
+	if !apierrors.IsAlreadyExists(err) {
+		t.Errorf("Bind error = %v, want an AlreadyExists name-uniqueness rejection from the fallback CREATE", err)
+	}
+
+	// Exactly one SandboxClaim exists for sbx-fb: the original. The fallback
+	// created no second, differently-named claim.
+	var claims lennyv1.SandboxClaimList
+	if err := c.List(context.Background(), &claims, client.InNamespace(testNS)); err != nil {
+		t.Fatalf("list claims: %v", err)
+	}
+	n := 0
+	for i := range claims.Items {
+		if claims.Items[i].Spec.SandboxRef == "sbx-fb" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("SandboxClaims for sbx-fb = %d, want exactly 1 (no duplicate binding from the fallback)", n)
+	}
+	if rt.started != "" {
+		t.Errorf("runtime started %q for a fenced double-claim; want no session started", rt.started)
+	}
+}
+
 func TestBindWithoutFallbackReturnsErrNoIdlePod(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()

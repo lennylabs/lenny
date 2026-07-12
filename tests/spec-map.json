@@ -263,7 +263,8 @@
       "tests": [
         "pkg/controller/warmpool/...",
         "pkg/controller/poolscaling/...",
-        "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6"
+        "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6",
+        "tests/tier5_e2e_kind/node_drain_checkpoint_test.go::TestNodeDrainCheckpointsActiveSession"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -288,6 +289,7 @@
         "tests/tier8_chaos/leader_election_test.go",
         "tests/tier8_chaos/adr007_leader_kill_claim_test.go::TestLeaderKillMidClaimNoDoubleAssignment",
         "tests/tier8_chaos/live_session_test.go",
+        "tests/tier8_chaos/warm_pod_eviction_test.go::TestWarmPodEvictionProactiveReplacement",
         "tests/tier2_component/stores/crdpodregistry_claim_test.go::TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1",
         "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash",
         "tests/tier8_chaos/reserved_hold_holder_crash_test.go::TestOrphanGCReclaimsReservedClaimAfterHolderCrash",
@@ -300,7 +302,11 @@
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6",
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeNoCapNoDrain_spec_4_6",
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePrecedesDrainRequest_spec_4_6",
-        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4"
+        "pkg/controller/warmpool/pod_reconciler_manager_test.go::TestPodReconcileHostSchedulableFollowsCordonUncordon_spec_4_6",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4",
+        "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueDispositionDrainsAsPodsFreeOnRealPool",
+        "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestFallbackDoubleClaimFencedByDeterministicName"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -357,7 +363,13 @@
         "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix",
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
-        "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite"
+        "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusReReadsAndNeverForcesOnSSAConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
       ],
       "packages": [
         "pkg/admission/ownership",
