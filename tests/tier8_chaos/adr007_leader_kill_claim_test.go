@@ -235,7 +235,7 @@ func TestLeaderKillMidClaimNoDoubleAssignment(t *testing.T) {
 		}
 	}
 	if doubles == 0 {
-		t.Logf("verified: no Sandbox carries more than one non-terminal SandboxClaim after the leader-kill race; "+
+		t.Logf("verified: no Sandbox carries more than one non-terminal SandboxClaim after the leader-kill race; " +
 			"ADR-007 fencing held across failover")
 	}
 }
