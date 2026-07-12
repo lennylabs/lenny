@@ -3167,10 +3167,11 @@
         "tests/tier10_conformance/release_channel_manifest_test.go"
       ],
       "packages": [
-        "pkg/operability/lifecycle",
+        "pkg/upgrade",
         "pkg/ops/upgradeservice",
         "pkg/ops/versionsource",
         "pkg/ops/opsserver",
+        "pkg/ops/registryservice",
         "pkg/releasechannel"
       ],
       "blocked_until_phase": "14",
