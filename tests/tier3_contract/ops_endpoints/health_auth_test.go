@@ -54,6 +54,12 @@ func healthAuthSurface() http.Handler {
 // platform-admin or tenant-admin role (same as the rest of the admin API)."
 // spec: §25.4 — "Deployers create dedicated service accounts with the
 // platform-admin or tenant-admin role."
+//
+// diagnosis: the gateway-side health endpoints (/v1/admin/health,
+// /v1/admin/health/summary, /v1/admin/health/{component}) do not enforce
+// the §25.3 platform-admin/tenant-admin role requirement — an
+// unauthenticated or non-admin caller receives a 200 health document
+// instead of a 401/403, or a legitimate admin caller is wrongly rejected.
 func TestHealthEndpointsRequireAdminRole(t *testing.T) {
 	// Kept as the spec-faithful assertion for the still-open TEST-GAPS
 	// health-auth finding: the gateway currently serves /v1/admin/health*
