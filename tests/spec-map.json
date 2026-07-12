@@ -319,7 +319,11 @@
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
         "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
+        "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
         "tests/tier8_chaos/nonce_only_degradation_test.go",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
@@ -334,7 +338,13 @@
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReportSessionScrubMissingIDs_spec_4_7",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubIncrementsAndLeaks_spec_4_7",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubMissingPodFailsClosed_spec_4_7",
-        "pkg/adapter/gatewaylink_test.go::TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2"
+        "pkg/adapter/gatewaylink_test.go::TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2",
+        "pkg/adapter/peercredselftest_test.go::TestPeercredSelftest_spec_4_7_passes_on_loopback",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestPassesUnderRuncAndGvisor",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestFaultCrashLoops",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPRejectsNonceLessAdversary_spec_4_7",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestConnectorMCPRejectsNonceLessAdversary_spec_4_7",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7"
       ],
       "packages": [
         "pkg/adapter",
@@ -1798,6 +1808,7 @@
         "tests/tier9_security/admission_label_immutability_test.go",
         "tests/tier9_security/admission_security_test.go",
         "tests/tier9_security/image_signing_test.go",
+        "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
       ],
       "packages": [

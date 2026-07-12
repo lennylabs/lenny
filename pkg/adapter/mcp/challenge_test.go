@@ -118,6 +118,59 @@ func TestServerChallengeTimeout_spec_4_7(t *testing.T) {
 	}
 }
 
+// spec: §4.7 line 904 — the adapterChallenge is generated fresh per
+// connection ("each connection requires a fresh HMAC computation gated on
+// the adapter's ephemeral challenge"), so a stale HMAC captured by a
+// process that observed the manifest nonce on one connection cannot be
+// replayed to authenticate a later connection.
+func TestServerChallengeReplayAcrossConnectionsRejected_spec_4_7(t *testing.T) {
+	lis := serveOnBufconn(t, challengeServer(), testNonce)
+
+	// Connection A is a legitimate agent. Completing its handshake exposes
+	// the per-connection adapterChallenge and the HMAC computed against it —
+	// exactly what a pod-local process inspecting the socket could observe
+	// and attempt to replay.
+	connA, err := lis.Dial()
+	if err != nil {
+		t.Fatalf("dial connection A: %v", err)
+	}
+	defer connA.Close()
+	encA, decA := json.NewEncoder(connA), json.NewDecoder(connA)
+	sendRequest(t, encA, 1, "initialize", initParams(testNonce))
+	challengeA := readChallenge(t, decA)
+	staleHMAC := mcp.ExpectedChallengeResponse(testNonce, challengeA)
+	if err := encA.Encode(map[string]string{mcp.ChallengeResponseParamKey: staleHMAC}); err != nil {
+		t.Fatalf("answer connection A challenge: %v", err)
+	}
+	if resp := readResponse(t, decA); resp["result"] == nil {
+		t.Fatalf("connection A did not complete initialize: %v", resp)
+	}
+
+	// Connection B is the replay attacker: it reuses the observed nonce and
+	// the stale HMAC from connection A.
+	connB, err := lis.Dial()
+	if err != nil {
+		t.Fatalf("dial connection B: %v", err)
+	}
+	defer connB.Close()
+	encB, decB := json.NewEncoder(connB), json.NewDecoder(connB)
+	sendRequest(t, encB, 1, "initialize", initParams(testNonce))
+	challengeB := readChallenge(t, decB)
+
+	// The challenge is fresh per connection, so the stale HMAC (bound to
+	// challengeA) cannot authenticate connection B.
+	if challengeB == challengeA {
+		t.Fatalf("adapterChallenge was reused across connections (%q); the spec requires a fresh challenge per connection", challengeB)
+	}
+	if err := encB.Encode(map[string]string{mcp.ChallengeResponseParamKey: staleHMAC}); err != nil {
+		t.Fatalf("replay stale HMAC on connection B: %v", err)
+	}
+	var resp map[string]json.RawMessage
+	if err := decB.Decode(&resp); err == nil {
+		t.Errorf("server accepted a replayed HMAC on a fresh connection: %v; want an immediate close", resp)
+	}
+}
+
 // spec: §4.7 lines 879-883 — the supplement is opt-in: a server with
 // RequireChallenge unset sends the initialize response directly with no
 // intervening challenge frame.
