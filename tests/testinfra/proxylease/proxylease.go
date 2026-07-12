@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // Options configures the proxy-lease fixture.
@@ -76,6 +77,14 @@ type Fixture struct {
 	// upstream. A test asserts the stub received this value and not the
 	// lease token.
 	UpstreamKey string
+	// PodCredentialLease is the wire-form CredentialLease the gateway
+	// pushes to the pod's adapter via AssignCredentials for the minted
+	// proxy lease (§4.7 item 4). Its Payload is the exact bytes the
+	// adapter's credential-file writer materializes into the pod's
+	// credentials.json. A test writes it through pkg/adapter/credfile to
+	// assert the real upstream key never reaches the pod's filesystem in
+	// proxy mode, while UpstreamKey is present on the upstream request.
+	PodCredentialLease *adapterv1.CredentialLease
 
 	usage *captureRecorder
 }
@@ -138,6 +147,15 @@ func Start(t testing.TB, opts Options) *Fixture {
 		t.Fatalf("proxylease.Start: minted lease carries no proxy token: %+v", lease)
 	}
 
+	// The wire-form lease is the exact object the gateway pushes to the
+	// pod's adapter; its Payload is what the adapter writes to the pod's
+	// credential file. ProtoLease is the production serializer, so a test
+	// materializing it observes the real pod-facing bytes.
+	podLease, err := credassign.ProtoLease(lease)
+	if err != nil {
+		t.Fatalf("proxylease.Start: render pod-facing wire lease: %v", err)
+	}
+
 	// Point the anthropic_direct translator at the upstream stub. The
 	// gateway's flag surface has no anthropic base-URL override, so the
 	// helper constructs the registry directly rather than through
@@ -166,10 +184,11 @@ func Start(t testing.TB, opts Options) *Fixture {
 	t.Cleanup(srv.Close)
 
 	return &Fixture{
-		ProxyMessagesURL: srv.URL + "/v1/messages",
-		LeaseToken:       lease.Proxy.LeaseToken,
-		UpstreamKey:      upstreamKey,
-		usage:            rec,
+		ProxyMessagesURL:   srv.URL + "/v1/messages",
+		LeaseToken:         lease.Proxy.LeaseToken,
+		UpstreamKey:        upstreamKey,
+		PodCredentialLease: podLease,
+		usage:              rec,
 	}
 }
 
