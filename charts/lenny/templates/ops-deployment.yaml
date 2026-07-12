@@ -253,6 +253,16 @@ spec:
             - --ops-roll-timeout-seconds={{ .Values.platform.upgrade.opsRollTimeoutSeconds }}
             - --gateway-roll-timeout-seconds={{ .Values.platform.upgrade.gatewayRollTimeoutSeconds }}
             - --controller-roll-timeout-seconds={{ .Values.platform.upgrade.controllerRollTimeoutSeconds }}
+            {{- with .Values.platform.releaseChannel.url }}
+            # §25.8 upgrade-check consumer: fetch the release manifest over
+            # HTTP from the configured channel and verify its Ed25519
+            # X-Lenny-Release-Signature before trusting it.
+            - --release-channel-url={{ . }}
+            {{- with $.Values.platform.releaseChannel.publicKeyPath }}
+            - --release-channel-public-key-file={{ . }}
+            - --release-channel-public-key-id={{ required "platform.releaseChannel.publicKeyID is required when publicKeyPath is set (§25.8 consumer looks the trusted key up by keyId)" $.Values.platform.releaseChannel.publicKeyID }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             # §25.8 release-channel manifest publisher.
             - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}

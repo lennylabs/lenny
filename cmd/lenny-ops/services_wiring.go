@@ -265,7 +265,13 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 		ValuesKey:  *w.f.driftHelmValuesKey,
 		WrittenBy:  "lenny-ops",
 	})
-	w.upgradeChecker = buildUpgradeChecker(*w.f.releaseChannelManifestPath, buildVersion, w.pgPool, w.opsEmitter, w.auditRecorder)
+	w.upgradeChecker = buildUpgradeChecker(upgradeCheckerConfig{
+		channelURL:     *w.f.releaseChannelURL,
+		publicKeyPath:  *w.f.releaseChannelPublicKeyPath,
+		publicKeyID:    *w.f.releaseChannelPublicKeyID,
+		manifestPath:   *w.f.releaseChannelManifestPath,
+		currentVersion: buildVersion,
+	}, w.pgPool, w.opsEmitter, w.auditRecorder)
 	// §25.8 air-gap item 5 (line 3425): the CRD manifests and migration SQL
 	// the upgrade's CRDUpdate/SchemaMigration phases need are compiled into
 	// this binary (pkg/ops/platformassets), so an air-gapped install pulls

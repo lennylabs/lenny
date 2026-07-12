@@ -1927,25 +1927,74 @@ func upgradeWatchdogJob(wd *upgradeservice.Watchdog) opsservice.ScheduledJob {
 	}
 }
 
-// buildUpgradeChecker constructs the §25.8 upgrade-check client. It reads
-// the operator-supplied release manifest (the same document the
-// release-channel publisher serves at GET /v1/latest) as its Source, so
-// an air-gapped or mirror install that hosts its own channel can compare
-// the advertised version against the running one. When no manifest is
-// configured (platform.upgradeChannel: "") the checker is disabled and
-// GET /v1/admin/platform/upgrade-check reports the channel disabled.
+// upgradeCheckerConfig carries the §25.8 upgrade-check consumer wiring
+// resolved from flags: the remote release-channel endpoint and the
+// public key its signatures are verified against (the production path),
+// plus a local manifest file (the air-gap/dev fallback).
+type upgradeCheckerConfig struct {
+	// channelURL is the §25.8 platform.releaseChannel.url endpoint the
+	// consumer fetches over HTTP. Empty disables the HTTP path.
+	channelURL string
+	// publicKeyPath is the PEM Ed25519 public key the consumer verifies
+	// release-channel responses against (platform.releaseChannel.publicKeyPath).
+	publicKeyPath string
+	// publicKeyID is the key identifier the consumer trusts; it must
+	// match the keyId in the X-Lenny-Release-Signature envelope.
+	publicKeyID string
+	// manifestPath is a local release manifest JSON used as an
+	// air-gap/dev fallback when no HTTP channel is configured.
+	manifestPath string
+	// currentVersion is the running platform version compared against
+	// the advertised one.
+	currentVersion string
+}
+
+// buildUpgradeChecker constructs the §25.8 upgrade-check client. The
+// primary path fetches the release manifest over HTTP from the
+// configured release-channel endpoint (platform.releaseChannel.url) and
+// verifies its Ed25519 X-Lenny-Release-Signature against the operator's
+// public key before trusting it, so the platform learns about a newer
+// release from the signed channel. When only a local manifest file is
+// configured (the air-gap/dev fallback) the checker reads that file
+// instead. When neither is set (platform.upgradeChannel: "") the checker
+// is disabled and GET /v1/admin/platform/upgrade-check reports the
+// channel disabled.
 //
-// spec: §25.8 Upgrade Check, Air-Gapped Support.
-func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool, emitter events.EventEmitter, recorder *opsaudit.Recorder) *upgradeservice.Checker {
+// spec: §25.8 Upgrade Check ("queries a configurable release channel
+// endpoint"), Release Channel Service Details (Ed25519 X-Lenny-Release-
+// Signature), Air-Gapped Support.
+func buildUpgradeChecker(cfg upgradeCheckerConfig, pool *pgxpool.Pool, emitter events.EventEmitter, recorder *opsaudit.Recorder) *upgradeservice.Checker {
 	var source releasechannel.Source
-	if manifestPath != "" {
-		manifestBytes, err := os.ReadFile(manifestPath)
+	switch {
+	case cfg.channelURL != "":
+		// §25.8: the upgrade-check queries the configurable release
+		// channel over HTTP and verifies the signed response. Without a
+		// trust anchor the response cannot be authenticated, so the
+		// consumer fails closed rather than trusting an unverified
+		// manifest.
+		verifier, err := buildReleaseChannelVerifier(cfg.publicKeyPath, cfg.publicKeyID)
 		if err != nil {
-			log.Fatalf("lenny-ops: read upgrade-check manifest %s: %v", manifestPath, err)
+			log.Fatalf("lenny-ops: build release-channel verifier: %v", err)
+		}
+		if verifier == nil {
+			log.Printf("lenny-ops: §25.8 release-channel URL %q is set but no verifying public key is configured; "+
+				"upgrade-check disabled (set platform.releaseChannel.publicKeyPath to the channel's Ed25519 public key)", cfg.channelURL)
+		} else {
+			src, err := releasechannel.NewHTTPSource(cfg.channelURL, verifier, cfg.currentVersion, nil)
+			if err != nil {
+				log.Fatalf("lenny-ops: build release-channel HTTP source: %v", err)
+			}
+			source = src
+			log.Printf("lenny-ops: §25.8 upgrade-check consumer active (channel=%s, keyId=%s)", cfg.channelURL, cfg.publicKeyID)
+		}
+	case cfg.manifestPath != "":
+		manifestBytes, err := os.ReadFile(cfg.manifestPath)
+		if err != nil {
+			log.Fatalf("lenny-ops: read upgrade-check manifest %s: %v", cfg.manifestPath, err)
 		}
 		var stable releasechannel.Manifest
 		if err := json.Unmarshal(manifestBytes, &stable); err != nil {
-			log.Fatalf("lenny-ops: decode upgrade-check manifest %s: %v", manifestPath, err)
+			log.Fatalf("lenny-ops: decode upgrade-check manifest %s: %v", cfg.manifestPath, err)
 		}
 		source = releasechannel.NewStaticSource(map[releasechannel.Channel]releasechannel.Manifest{
 			releasechannel.ChannelStable: stable,
@@ -1960,12 +2009,37 @@ func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool
 	}
 	return upgradeservice.NewChecker(upgradeservice.CheckerOptions{
 		Source:         source,
-		CurrentVersion: currentVersion,
+		CurrentVersion: cfg.currentVersion,
 		Emitter:        emitter,
 		Audit:          upgradeAuditSink(recorder),
 		Gauge:          setPlatformUpgradeAvailable,
 		Cache:          cache,
 	})
+}
+
+// buildReleaseChannelVerifier builds the §25.8 upgrade-check trust
+// anchor from the operator-supplied public key. It returns nil when no
+// public key is configured: the canonical Lenny release-channel public
+// key is compiled into lenny-ops per §25.8, but that key material is not
+// yet shipped in this build, so an install that has not set
+// platform.releaseChannel.publicKeyPath has no anchor and the caller
+// fails the upgrade-check closed.
+//
+// spec: §25.8 (the Lenny release-channel public key is compiled into
+// lenny-ops; operators override via platform.releaseChannel.publicKeyPath).
+func buildReleaseChannelVerifier(publicKeyPath, publicKeyID string) (*releasechannel.Verifier, error) {
+	if publicKeyPath == "" {
+		return nil, nil
+	}
+	if publicKeyID == "" {
+		return nil, errors.New("--release-channel-public-key-file is set but --release-channel-public-key-id is empty; " +
+			"the consumer looks the trusted key up by the keyId in the X-Lenny-Release-Signature envelope")
+	}
+	key, err := loadEd25519PublicKey(publicKeyPath, publicKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("load release-channel public key: %w", err)
+	}
+	return releasechannel.NewVerifier([]releasechannel.Key{key})
 }
 
 // certExpirySeconds is the lenny_cert_expiry_seconds gauge the §16.5

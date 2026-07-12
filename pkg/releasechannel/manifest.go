@@ -30,6 +30,7 @@
 package releasechannel
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -187,8 +188,11 @@ func parseSemver(v string) [3]int {
 type Source interface {
 	// Latest returns the most recent manifest published for the named
 	// channel. ErrManifestNotFound is the spec's "no advertised
-	// release yet" signal; every other error fails the request.
-	Latest(channel Channel) (Manifest, error)
+	// release yet" signal; every other error fails the request. The
+	// context lets an I/O-backed Source (the HTTP consumer that fetches
+	// the manifest from a remote release channel) honor the caller's
+	// cancellation and deadline; an in-memory Source ignores it.
+	Latest(ctx context.Context, channel Channel) (Manifest, error)
 }
 
 // ErrManifestNotFound is returned by Source.Latest when the channel
@@ -218,8 +222,9 @@ func NewStaticSource(manifests map[Channel]Manifest) *StaticSource {
 }
 
 // Latest returns the manifest for channel, or ErrManifestNotFound when
-// the channel has no advertised release.
-func (s *StaticSource) Latest(channel Channel) (Manifest, error) {
+// the channel has no advertised release. The context is unused: the map
+// lookup does no I/O.
+func (s *StaticSource) Latest(_ context.Context, channel Channel) (Manifest, error) {
 	m, ok := s.manifests[channel]
 	if !ok {
 		return Manifest{}, ErrManifestNotFound

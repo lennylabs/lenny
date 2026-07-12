@@ -142,6 +142,57 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --registry-require-digest=true
 
+  - it: wires the §25.8 upgrade-check consumer to the default release channel
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-url=https://releases.lenny.dev/v1/latest
+      # No verifying public key by default, so no public-key flags render.
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-public-key-file=
+
+  - it: wires the §25.8 upgrade-check verifier key when publicKeyPath is set
+    set:
+      platform.releaseChannel.url: https://mirror.internal/v1/latest
+      platform.releaseChannel.publicKeyPath: /etc/lenny/release-channel-pub/key.pem
+      platform.releaseChannel.publicKeyID: mirror-key-1
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-url=https://mirror.internal/v1/latest
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-public-key-file=/etc/lenny/release-channel-pub/key.pem
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-public-key-id=mirror-key-1
+
+  - it: fails render when the verifier keyID is omitted with a publicKeyPath
+    set:
+      platform.releaseChannel.publicKeyPath: /etc/lenny/release-channel-pub/key.pem
+      platform.releaseChannel.publicKeyID: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: platform.releaseChannel.publicKeyID is required when publicKeyPath is set (§25.8 consumer looks the trusted key up by keyId)
+
+  - it: omits the §25.8 upgrade-check consumer args when the channel is disabled
+    set:
+      platform.releaseChannel.url: ""
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --release-channel-url=
+
   - it: grants Lease RBAC for §25.4 leader election
     documentSelector:
       path: kind
