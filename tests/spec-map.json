@@ -3297,10 +3297,12 @@
     "25.15": {
       "title": "Failure Mode Analysis",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier8_chaos/ops_survives_gateway_outage_test.go::TestOpsSurfaceSurvivesGatewayOutageEndToEnd"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.15 Failure Mode Analysis. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.15 Failure Mode Analysis. The high-value scenario (lenny-ops up while the gateway is down) is pinned end to end by the tier-8 chaos test: it scales the gateway to zero and asserts the ops surface stays available (connectivity 200 with the gateway shown unreachable), runbook fetching is unchanged, and the gateway-resident audit query fails. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
     },
     "25.16": {
       "title": "Deployment Topology Summary",
