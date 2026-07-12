@@ -28,12 +28,14 @@ func opsServerWithDiagSource(source diagnostics.DataSource) *opsserver.Server {
 	})
 }
 
-// degradedSessionSource is a §25.6 DataSource that serves the session
-// record from the Kubernetes API fallback, as the production source does
-// when Postgres is unreachable. It reports the canonical degradation
-// envelope §25.6 documents for that outage: actualSource "kubernetes",
+// degradedSessionSource is a §25.6 DataSource standing in for a data
+// source that served the session record from the Kubernetes API fallback
+// after a Postgres outage. It reports the canonical degradation envelope
+// §25.6 documents for that outage: actualSource "kubernetes",
 // primarySource "postgres", and retryHistory / sessionMetadata among the
-// unavailable fields.
+// unavailable fields. The contract under test is the opsserver mapping
+// from a diagnosis carrying this envelope to the 207 partial-result
+// response, independent of which source produced it.
 type degradedSessionSource struct {
 	stubDiagSource
 }
