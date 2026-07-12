@@ -3033,11 +3033,13 @@
         "tests/tier3_contract/ops_endpoints/drift_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
+        "tests/tier3_contract/ops_endpoints/backup_test.go",
         "tests/tier3_contract/ops_endpoints/helpers_test.go"
       ],
       "packages": [
         "cmd/lenny-ops",
         "pkg/ops/opsserver",
+        "pkg/ops/backup",
         "pkg/ops/diagnostics",
         "pkg/ops/coordination",
         "pkg/ops/escalation",
