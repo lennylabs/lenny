@@ -653,7 +653,8 @@
         "pkg/gateway/sessionserver/interactions_test.go",
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
-        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -664,7 +665,8 @@
       "title": "Retry and Resume",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
-        "pkg/checkpoint/..."
+        "pkg/checkpoint/...",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
       ],
       "packages": [
         "pkg/session/resume",
@@ -1039,7 +1041,8 @@
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/...",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
       ],
       "packages": [
         "pkg/gateway"

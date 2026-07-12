@@ -165,6 +165,21 @@ func New(t testing.TB, opts ...Options) *Driver {
 // driver before re-asserting cluster health).
 func NewKept(t testing.TB, opts ...Options) *Driver {
 	t.Helper()
+	return NewKeptForTarget(t, "svc/lenny-gateway", opts...)
+}
+
+// NewKeptForTarget is NewKept bound to an explicit kubectl port-forward
+// target rather than the load-balanced lenny-gateway Service. Pass
+// "svc/lenny-gateway" for the Service (what NewKept does), or
+// "pod/<gateway-pod-name>" to pin every request this driver makes onto a
+// single gateway replica. Pinning a driver per replica is how a tier-5
+// HA test forces a stream onto one replica and its reconnect onto
+// another, exercising the §10.1 "a client can reconnect to any replica
+// and resume" contract over shared externalized session and event state.
+//
+// Like NewKept, it does not register a t.Cleanup; the caller owns Close.
+func NewKeptForTarget(t testing.TB, target string, opts ...Options) *Driver {
+	t.Helper()
 	o := Options{}
 	if len(opts) > 0 {
 		o = opts[0]
@@ -174,7 +189,7 @@ func NewKept(t testing.TB, opts ...Options) *Driver {
 	}
 
 	c := kind.InstallLenny(t)
-	baseURL, stop := c.PortForward(t, "svc/lenny-gateway", "lenny-system", gatewayServicePort)
+	baseURL, stop := c.PortForward(t, target, "lenny-system", gatewayServicePort)
 
 	d := &Driver{
 		cluster:             c,
