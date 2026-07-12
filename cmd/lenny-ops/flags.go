@@ -66,6 +66,9 @@ type opsFlags struct {
 	releaseChannelPrevKeyPath        *string
 	releaseChannelPrevKeyID          *string
 	releaseChannelManifestPath       *string
+	releaseChannelURL                *string
+	releaseChannelPublicKeyPath      *string
+	releaseChannelPublicKeyID        *string
 	registryURL                      *string
 	registryPullSecret               *string
 	registryRequireDigest            *bool
@@ -271,6 +274,24 @@ func (f *opsFlags) registerUpgradeFlags() {
 		"path to the §25.8 release-channel manifest JSON the publisher serves. When set "+
 			"the publisher loads this file at startup and serves it on GET /v1/latest. "+
 			"Override via LENNY_RELEASE_CHANNEL_MANIFEST_FILE.")
+	// §25.8 upgrade-check consumer: the configurable release-channel
+	// endpoint lenny-ops fetches over HTTP and the operator-held public
+	// key it verifies the X-Lenny-Release-Signature against.
+	f.releaseChannelURL = flag.String("release-channel-url",
+		envOr("LENNY_RELEASE_CHANNEL_URL", ""),
+		"§25.8 platform.releaseChannel.url: the release-channel endpoint the upgrade-check "+
+			"consumer queries over HTTP (for example https://releases.lenny.dev/v1/latest). "+
+			"When empty the HTTP consumer is disabled. Override via LENNY_RELEASE_CHANNEL_URL.")
+	f.releaseChannelPublicKeyPath = flag.String("release-channel-public-key-file",
+		os.Getenv("LENNY_RELEASE_CHANNEL_PUBLIC_KEY_FILE"),
+		"path to the PEM (PKIX) Ed25519 public key the upgrade-check consumer verifies §25.8 "+
+			"release-channel responses against (platform.releaseChannel.publicKeyPath). Required "+
+			"when --release-channel-url is set. Override via LENNY_RELEASE_CHANNEL_PUBLIC_KEY_FILE.")
+	f.releaseChannelPublicKeyID = flag.String("release-channel-public-key-id",
+		envOr("LENNY_RELEASE_CHANNEL_PUBLIC_KEY_ID", ""),
+		"identifier of the §25.8 release-channel signing key the consumer trusts; must match the "+
+			"keyId in the X-Lenny-Release-Signature envelope. Required when "+
+			"--release-channel-public-key-file is set. Override via LENNY_RELEASE_CHANNEL_PUBLIC_KEY_ID.")
 	// §25.8 platform.registry.* — the base image-registry configuration the
 	// runtime registry API (GET/PUT /v1/admin/platform/registry) overlays.
 	f.registryURL = flag.String("registry-url", envOr("LENNY_PLATFORM_REGISTRY_URL", "ghcr.io/lennylabs"),

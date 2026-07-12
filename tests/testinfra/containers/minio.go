@@ -48,6 +48,12 @@ type MinIOOptions struct {
 	// colon: MinIO parses `MINIO_KMS_SECRET_KEY` as `<name>:<base64>`
 	// on the first colon.
 	KMSKeyName string
+	// Env supplies extra environment variables merged over the container's
+	// default MINIO_ROOT_USER / MINIO_ROOT_PASSWORD. A caller that needs
+	// server-side encryption (SSE-S3 / SSE-KMS) enables MinIO's built-in
+	// KMS here, for example
+	// Env: {"MINIO_KMS_SECRET_KEY": "key-name:<base64-32-byte-key>"}.
+	Env map[string]string
 }
 
 // MinIO is the handle returned by StartMinIO.
@@ -102,6 +108,9 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		}
 		env["MINIO_KMS_SECRET_KEY"] = opts.KMSKeyName + ":" + base64.StdEncoding.EncodeToString(raw)
 	}
+	for k, v := range opts.Env {
+		env[k] = v
+	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
@@ -153,5 +162,20 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		Client:     client,
 		KMSKeyName: opts.KMSKeyName,
 		container:  container,
+	}
+}
+
+// Stop terminates the MinIO container mid-test so a caller can inject a
+// genuine MinIO outage: subsequent client operations fail to connect
+// rather than returning success. It is the testcontainers analogue of the
+// tier-8 "scale the MinIO Deployment to zero" injection, used by the
+// §25.11 backup-degradation upload-failure test. The t.Cleanup registered
+// by StartMinIO tolerates a double Terminate.
+func (m *MinIO) Stop(t testing.TB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := m.container.Terminate(ctx); err != nil {
+		t.Fatalf("MinIO.Stop: terminate: %v", err)
 	}
 }

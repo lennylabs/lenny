@@ -65,6 +65,7 @@
     "pkg/gateway/externalapi/admin": {
       "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
+      "contract": ["tests/tier3_contract/gateway_ops/..."],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
     "pkg/gateway/externalapi/openapi": {
@@ -268,6 +269,15 @@
       "unit": ["pkg/observability/tracing/..."],
       "component": ["tests/tier2_component/observability/..."]
     },
+    "pkg/ops/versionsource": {
+      "unit": ["pkg/ops/versionsource/..."],
+      "component": ["tests/tier2_component/observability/version_aggregation_test.go"]
+    },
+    "pkg/releasechannel": {
+      "unit": ["pkg/releasechannel/..."],
+      "integration": ["tests/tier4_integration/release_channel_fetch_test.go"],
+      "conformance": ["tests/tier10_conformance/release_channel_manifest_test.go"]
+    },
     "pkg/alerting/rules": {
       "unit": ["pkg/alerting/rules/..."],
       "component": ["tests/tier2_component/alerting/..."]
@@ -290,8 +300,7 @@
       "component": [
         "tests/tier2_component/migrations/...",
         "tests/tier2_component/stores/..."
-      ],
-      "integration": ["tests/tier4_integration/migration_upgrade_test.go"]
+      ]
     },
     "scripts/lint-schema.sh": {
       "static": ["scripts/lint-schema.sh"]

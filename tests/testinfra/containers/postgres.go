@@ -150,6 +150,21 @@ func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	}
 }
 
+// Stop terminates the Postgres container mid-test so a caller can inject a
+// genuine Postgres outage: subsequent pool operations fail to reach the
+// backend rather than returning stale success. It is the testcontainers
+// analogue of the tier-8 "scale the Postgres Deployment to zero" injection,
+// used by the §25.11 backup-degradation failure tests. The t.Cleanup
+// registered by StartPostgres tolerates a double Terminate.
+func (p *Postgres) Stop(t testing.TB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := p.container.Terminate(ctx); err != nil {
+		t.Fatalf("Postgres.Stop: terminate: %v", err)
+	}
+}
+
 // applyMigrations applies every numbered .up.sql under dir using
 // golang-migrate. dir may be absolute or repo-relative.
 func applyMigrations(dsn, dir string) error {

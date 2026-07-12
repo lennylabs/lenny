@@ -183,7 +183,7 @@ func (c *Checker) Check(ctx context.Context) (CheckResult, error) {
 	if !c.Enabled() {
 		return CheckResult{}, ErrChannelDisabled
 	}
-	m, err := c.source.Latest(releasechannel.ChannelStable)
+	m, err := c.source.Latest(ctx, releasechannel.ChannelStable)
 	if err != nil {
 		// §25.8 line 3413 Unreachable behavior: serve the cached response
 		// with cached=true and a cacheAge when the channel is unreachable.

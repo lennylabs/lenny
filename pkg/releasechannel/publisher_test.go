@@ -3,6 +3,7 @@
 package releasechannel_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -202,7 +203,7 @@ func TestPublisherRejectsNonGet(t *testing.T) {
 // surface on Source outages.
 type errSource struct{}
 
-func (errSource) Latest(_ releasechannel.Channel) (releasechannel.Manifest, error) {
+func (errSource) Latest(_ context.Context, _ releasechannel.Channel) (releasechannel.Manifest, error) {
 	return releasechannel.Manifest{}, errors.New("postgres unreachable")
 }
 
@@ -250,7 +251,7 @@ func TestParseChannelDefaultsToStable(t *testing.T) {
 
 func TestStaticSourceReturnsErrManifestNotFound(t *testing.T) {
 	src := releasechannel.NewStaticSource(nil)
-	_, err := src.Latest(releasechannel.ChannelStable)
+	_, err := src.Latest(context.Background(), releasechannel.ChannelStable)
 	if !errors.Is(err, releasechannel.ErrManifestNotFound) {
 		t.Errorf("Latest on empty source = %v, want ErrManifestNotFound", err)
 	}

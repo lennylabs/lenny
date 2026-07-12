@@ -1,0 +1,12 @@
+{
+  "lenny.dryRun": true,
+  "lenny.preview": {
+    "estimatedDowntime": "0s",
+    "resourcesAffected": [
+      "bootstrap_seed_snapshot:live"
+    ],
+    "warnings": [
+      "This replaces the stored desired-state snapshot. Re-run with confirm:true to apply."
+    ]
+  }
+}

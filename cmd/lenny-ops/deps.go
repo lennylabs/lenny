@@ -19,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -59,6 +58,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/registryservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepg "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
+	"github.com/lennylabs/lenny/pkg/ops/versionsource"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
@@ -1927,25 +1927,74 @@ func upgradeWatchdogJob(wd *upgradeservice.Watchdog) opsservice.ScheduledJob {
 	}
 }
 
-// buildUpgradeChecker constructs the §25.8 upgrade-check client. It reads
-// the operator-supplied release manifest (the same document the
-// release-channel publisher serves at GET /v1/latest) as its Source, so
-// an air-gapped or mirror install that hosts its own channel can compare
-// the advertised version against the running one. When no manifest is
-// configured (platform.upgradeChannel: "") the checker is disabled and
-// GET /v1/admin/platform/upgrade-check reports the channel disabled.
+// upgradeCheckerConfig carries the §25.8 upgrade-check consumer wiring
+// resolved from flags: the remote release-channel endpoint and the
+// public key its signatures are verified against (the production path),
+// plus a local manifest file (the air-gap/dev fallback).
+type upgradeCheckerConfig struct {
+	// channelURL is the §25.8 platform.releaseChannel.url endpoint the
+	// consumer fetches over HTTP. Empty disables the HTTP path.
+	channelURL string
+	// publicKeyPath is the PEM Ed25519 public key the consumer verifies
+	// release-channel responses against (platform.releaseChannel.publicKeyPath).
+	publicKeyPath string
+	// publicKeyID is the key identifier the consumer trusts; it must
+	// match the keyId in the X-Lenny-Release-Signature envelope.
+	publicKeyID string
+	// manifestPath is a local release manifest JSON used as an
+	// air-gap/dev fallback when no HTTP channel is configured.
+	manifestPath string
+	// currentVersion is the running platform version compared against
+	// the advertised one.
+	currentVersion string
+}
+
+// buildUpgradeChecker constructs the §25.8 upgrade-check client. The
+// primary path fetches the release manifest over HTTP from the
+// configured release-channel endpoint (platform.releaseChannel.url) and
+// verifies its Ed25519 X-Lenny-Release-Signature against the operator's
+// public key before trusting it, so the platform learns about a newer
+// release from the signed channel. When only a local manifest file is
+// configured (the air-gap/dev fallback) the checker reads that file
+// instead. When neither is set (platform.upgradeChannel: "") the checker
+// is disabled and GET /v1/admin/platform/upgrade-check reports the
+// channel disabled.
 //
-// spec: §25.8 Upgrade Check, Air-Gapped Support.
-func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool, emitter events.EventEmitter, recorder *opsaudit.Recorder) *upgradeservice.Checker {
+// spec: §25.8 Upgrade Check ("queries a configurable release channel
+// endpoint"), Release Channel Service Details (Ed25519 X-Lenny-Release-
+// Signature), Air-Gapped Support.
+func buildUpgradeChecker(cfg upgradeCheckerConfig, pool *pgxpool.Pool, emitter events.EventEmitter, recorder *opsaudit.Recorder) *upgradeservice.Checker {
 	var source releasechannel.Source
-	if manifestPath != "" {
-		manifestBytes, err := os.ReadFile(manifestPath)
+	switch {
+	case cfg.channelURL != "":
+		// §25.8: the upgrade-check queries the configurable release
+		// channel over HTTP and verifies the signed response. Without a
+		// trust anchor the response cannot be authenticated, so the
+		// consumer fails closed rather than trusting an unverified
+		// manifest.
+		verifier, err := buildReleaseChannelVerifier(cfg.publicKeyPath, cfg.publicKeyID)
 		if err != nil {
-			log.Fatalf("lenny-ops: read upgrade-check manifest %s: %v", manifestPath, err)
+			log.Fatalf("lenny-ops: build release-channel verifier: %v", err)
+		}
+		if verifier == nil {
+			log.Printf("lenny-ops: §25.8 release-channel URL %q is set but no verifying public key is configured; "+
+				"upgrade-check disabled (set platform.releaseChannel.publicKeyPath to the channel's Ed25519 public key)", cfg.channelURL)
+		} else {
+			src, err := releasechannel.NewHTTPSource(cfg.channelURL, verifier, cfg.currentVersion, nil)
+			if err != nil {
+				log.Fatalf("lenny-ops: build release-channel HTTP source: %v", err)
+			}
+			source = src
+			log.Printf("lenny-ops: §25.8 upgrade-check consumer active (channel=%s, keyId=%s)", cfg.channelURL, cfg.publicKeyID)
+		}
+	case cfg.manifestPath != "":
+		manifestBytes, err := os.ReadFile(cfg.manifestPath)
+		if err != nil {
+			log.Fatalf("lenny-ops: read upgrade-check manifest %s: %v", cfg.manifestPath, err)
 		}
 		var stable releasechannel.Manifest
 		if err := json.Unmarshal(manifestBytes, &stable); err != nil {
-			log.Fatalf("lenny-ops: decode upgrade-check manifest %s: %v", manifestPath, err)
+			log.Fatalf("lenny-ops: decode upgrade-check manifest %s: %v", cfg.manifestPath, err)
 		}
 		source = releasechannel.NewStaticSource(map[releasechannel.Channel]releasechannel.Manifest{
 			releasechannel.ChannelStable: stable,
@@ -1960,12 +2009,37 @@ func buildUpgradeChecker(manifestPath, currentVersion string, pool *pgxpool.Pool
 	}
 	return upgradeservice.NewChecker(upgradeservice.CheckerOptions{
 		Source:         source,
-		CurrentVersion: currentVersion,
+		CurrentVersion: cfg.currentVersion,
 		Emitter:        emitter,
 		Audit:          upgradeAuditSink(recorder),
 		Gauge:          setPlatformUpgradeAvailable,
 		Cache:          cache,
 	})
+}
+
+// buildReleaseChannelVerifier builds the §25.8 upgrade-check trust
+// anchor from the operator-supplied public key. It returns nil when no
+// public key is configured: the canonical Lenny release-channel public
+// key is compiled into lenny-ops per §25.8, but that key material is not
+// yet shipped in this build, so an install that has not set
+// platform.releaseChannel.publicKeyPath has no anchor and the caller
+// fails the upgrade-check closed.
+//
+// spec: §25.8 (the Lenny release-channel public key is compiled into
+// lenny-ops; operators override via platform.releaseChannel.publicKeyPath).
+func buildReleaseChannelVerifier(publicKeyPath, publicKeyID string) (*releasechannel.Verifier, error) {
+	if publicKeyPath == "" {
+		return nil, nil
+	}
+	if publicKeyID == "" {
+		return nil, errors.New("--release-channel-public-key-file is set but --release-channel-public-key-id is empty; " +
+			"the consumer looks the trusted key up by the keyId in the X-Lenny-Release-Signature envelope")
+	}
+	key, err := loadEd25519PublicKey(publicKeyPath, publicKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("load release-channel public key: %w", err)
+	}
+	return releasechannel.NewVerifier([]releasechannel.Key{key})
 }
 
 // certExpirySeconds is the lenny_cert_expiry_seconds gauge the §16.5
@@ -2072,12 +2146,12 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 	}
 	if gatewayURL != "" && gw != nil {
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"gateway", buildVersion, gatewayVersionFunc(gw, gatewayURL),
+			"gateway", buildVersion, versionsource.Gateway(gw, gatewayURL),
 		))
 	}
 	if clientset != nil {
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"controllers", buildVersion, controllerVersionFunc(clientset, namespace),
+			"controllers", buildVersion, versionsource.Controller(clientset, namespace),
 		))
 	}
 	if pool != nil {
@@ -2086,7 +2160,7 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 		// value yet (drift detection for it lands with the embedded
 		// required-schema constant). It is reported for introspection.
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"postgres-schema", "", schemaVersionFunc(pool),
+			"postgres-schema", "", versionsource.Schema(pool),
 		))
 	}
 	return upgradeservice.NewVersionAggregator(upgradeservice.VersionAggregatorOptions{
@@ -2094,76 +2168,6 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 		Sources:         sources,
 		Gauge:           setPlatformVersionDrift,
 	})
-}
-
-// gatewayVersionFunc resolves the gateway binary version via the §25.3
-// GET /v1/admin/platform/version endpoint — the GatewayClient.GetVersion
-// call site §25.8 names.
-func gatewayVersionFunc(client *http.Client, gatewayURL string) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			strings.TrimRight(gatewayURL, "/")+"/v1/admin/platform/version", nil)
-		if err != nil {
-			return "", err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", err
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("gateway version endpoint returned HTTP %d", resp.StatusCode)
-		}
-		var body struct {
-			GatewayVersion string `json:"gatewayVersion"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			return "", fmt.Errorf("decode gateway version: %w", err)
-		}
-		if body.GatewayVersion == "" {
-			return "", errors.New("gateway reported an empty version")
-		}
-		return body.GatewayVersion, nil
-	}
-}
-
-// schemaVersionFunc resolves the Postgres schema version per §25.8 (the
-// value `SELECT version FROM schema_migrations ORDER BY version DESC
-// LIMIT 1` reports). The version column is cast to text so an integer
-// migration counter and a string version both scan cleanly.
-func schemaVersionFunc(pool *pgxpool.Pool) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		var v string
-		err := pool.QueryRow(ctx,
-			"SELECT version::text FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&v)
-		if err != nil {
-			return "", err
-		}
-		return v, nil
-	}
-}
-
-// controllerVersionFunc resolves the controller Deployment version from
-// the image tag of the `lenny-controller` Deployment's `controller`
-// container (the chart names them in charts/lenny/templates/controller-
-// deployment.yaml).
-func controllerVersionFunc(clientset *kubernetes.Clientset, namespace string) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		dep, err := clientset.AppsV1().Deployments(namespace).Get(ctx, "lenny-controller", metav1.GetOptions{})
-		if err != nil {
-			return "", err
-		}
-		for _, c := range dep.Spec.Template.Spec.Containers {
-			if c.Name != "controller" {
-				continue
-			}
-			if i := strings.LastIndex(c.Image, ":"); i >= 0 && i < len(c.Image)-1 {
-				return c.Image[i+1:], nil
-			}
-			return "", fmt.Errorf("controller image %q has no tag", c.Image)
-		}
-		return "", errors.New("lenny-controller Deployment has no controller container")
-	}
 }
 
 // upgradeCheckJob is the §25.8 / §25.4 line 1338 platform_upgrade_check
