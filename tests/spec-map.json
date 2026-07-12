@@ -3026,6 +3026,7 @@
       "tests": [
         "tests/tier3_contract/ops_endpoints/conventions_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_test.go",
+        "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_scope_test.go",
         "tests/tier3_contract/ops_endpoints/locks_test.go",
         "tests/tier3_contract/ops_endpoints/escalations_test.go",
@@ -3149,6 +3150,7 @@
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/auditrate/auditrate_test.go",
         "tests/tier2_component/stores/diagnostics_prodsource_test.go",
+        "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
         "tests/tier4_integration/diagnostics_test.go"
       ],
       "packages": [
