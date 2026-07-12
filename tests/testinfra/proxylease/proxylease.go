@@ -52,6 +52,14 @@ type Options struct {
 	TenantID string
 	// SessionID the lease binds to. Empty selects "s-proxylease".
 	SessionID string
+	// Breaker is the §4.9 upstream circuit breaker the proxy's forwarder
+	// gates every upstream call through. A nil breaker selects a fresh
+	// default-configured one. A test that drives the breaker across
+	// requests (for example a tier-8 provider-partition chaos scenario)
+	// injects its own breaker with a controllable clock and threshold so
+	// it can trip the breaker, observe the open state, advance past the
+	// cooldown, and assert the half-open probe recovery.
+	Breaker *llmproxy.CircuitBreaker
 }
 
 // Fixture is a running §4.9 proxy delivery path with one provisioned
@@ -142,11 +150,15 @@ func Start(t testing.TB, opts Options) *Fixture {
 		},
 	)
 
+	breaker := opts.Breaker
+	if breaker == nil {
+		breaker = &llmproxy.CircuitBreaker{}
+	}
 	rec := &captureRecorder{}
 	handler := &llmproxy.Handler{
 		Leases:      leases,
 		Translators: registry,
-		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Forwarder:   &llmproxy.Forwarder{Breaker: breaker},
 		Credentials: creds,
 		Usage:       rec,
 	}
