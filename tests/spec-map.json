@@ -1616,6 +1616,7 @@
         "tests/tier2_component/stores/miniostore_test.go",
         "tests/tier2_component/stores/artifactcatalog_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
+        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
         "tests/tier2_component/preflight/minio_sse_test.go"
       ],
       "packages": [
@@ -1691,7 +1692,8 @@
         "tests/tier9_security/ssrf_test.go",
         "tests/tier9_security/store_helpers_test.go",
         "tests/tier9_security/tenant_isolation_test.go",
-        "tests/tier9_security/credential_leakage_test.go"
+        "tests/tier9_security/credential_leakage_test.go",
+        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed"
       ],
       "packages": [
         "pkg/compliance/dataclassification"
