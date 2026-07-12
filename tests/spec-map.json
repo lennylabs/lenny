@@ -180,6 +180,7 @@
         "pkg/credential/...",
         "pkg/gateway/credentials/credassign/token_service_degraded_modes_test.go::TestTokenServiceOutageDifferentiatedDegradation",
         "cmd/lenny-token-service/mtls_test.go::TestTokenServiceGRPCRequiresClientMTLS",
+        "cmd/lenny-token-service/spiffe_test.go::TestSPIFFEAuditInterceptorAttributesPerReplicaIdentity",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/oauth_token/oauth_token_record_test.go",
         "tests/tier4_integration/oauth_token_proxy_test.go::TestOAuthTokenExchangeProxiedToDeployedTokenService",
