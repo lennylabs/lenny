@@ -222,14 +222,19 @@
         "pkg/checkpoint/checkpoint_test.go::TestFreshnessCheckRejectsStale",
         "tests/tier2_component/stores/evictionfallback_test.go",
         "tests/tier2_component/stores/partialmanifeststore_test.go",
+        "tests/tier2_component/stores/partialcleanup_component_test.go",
         "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
+        "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
+        "tests/tier8_chaos/node_drain_during_minio_outage_test.go",
         "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointWritesMetadataOnlyAfterMinIOUpload",
         "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails",
         "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackMinIOOutageWritesPostgresMinimalState",
         "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackTotalLossWhenBothStoresDown",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
-        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState"
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState",
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles"
       ],
       "packages": [
         "pkg/store/event",
@@ -1562,6 +1567,7 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
         "tests/tier3_contract/ocsf_audit/published_schema_test.go",
+        "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier8_chaos/audit_chain_test.go",
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
