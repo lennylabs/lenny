@@ -219,3 +219,109 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 		t.Errorf("split-brain audit events = %d, want 2", audit.splitBrain)
 	}
 }
+
+// TestSplitBrainLosingHolderReceives409_spec_25_4 drives a both-locks-active
+// split-brain (a pre-outage Postgres lock and a still-active post-outage
+// Redis lock on the same scope), runs the recovery reconciliation, and then
+// asserts the observable §25.4 contract for the losing Redis holder: its
+// next heartbeat (Extend) returns 409 REMEDIATION_LOCK_CONFLICT carrying
+// splitBrain:true, winner:"pre_outage", and winnerHolder set to the
+// pre-outage acquiredBy. The existing reconciliation test asserts the
+// split-brain metric and audit event fire; this test pins the failure path
+// the loser actually observes, which the metric/audit assertions do not
+// cover.
+//
+// diagnosis: a failure means the deterministic split-brain resolution does
+// not notify the losing holder — the losing Redis lock is left live so the
+// loser's heartbeat succeeds (or returns a bare 404) instead of the 409
+// REMEDIATION_LOCK_CONFLICT with splitBrain:true — so the loser keeps
+// running a remediation the winner now owns exclusively, which is the exact
+// silent split-brain §25.4 is designed to prevent.
+//
+// spec: §25.4 line 2267 ("Not expired | Not expired | Pre-outage (Postgres)
+// wins ... The Redis lock is removed; the Redis lock holder receives 409
+// REMEDIATION_LOCK_CONFLICT with splitBrain: true, winner: "pre_outage",
+// winnerHolder: "<pre-outage acquiredBy>" on its next heartbeat/list/release
+// call.") and line 2271 (the losing holder is "always notified via the
+// heartbeat path").
+func TestSplitBrainLosingHolderReceives409_spec_25_4(t *testing.T) {
+	pg := containers.StartPostgres(t, containers.PostgresOptions{})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	up, err := migrations.FS.ReadFile("0121_ops_remediation_locks.up.sql")
+	if err != nil {
+		t.Fatalf("read migration 0121: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx, string(up)); err != nil {
+		t.Fatalf("apply migration 0121: %v", err)
+	}
+
+	pgStore := pgstore.New(pg.Pool)
+	rdStore := redisstore.New(rd.Client)
+	svc := coordination.NewService(coordination.ServiceOptions{
+		Postgres: pgStore,
+		Redis:    rdStore,
+	})
+
+	// Pre-outage: alice holds pool:alpha at Tier 1 (Postgres) and stays
+	// active through the outage.
+	if _, err := svc.Acquire(ctx, coordination.LockRequest{Scope: "pool:alpha", Operation: "scale", AcquiredBy: "alice", TTLSeconds: 300}); err != nil {
+		t.Fatalf("pre-outage acquire pool:alpha: %v", err)
+	}
+
+	// Postgres → Tier 2 transition: bump the Redis-side outage epoch so the
+	// post-outage acquisition carries it.
+	postEpoch, err := rdStore.IncrementEpoch(ctx)
+	if err != nil {
+		t.Fatalf("increment redis epoch: %v", err)
+	}
+
+	// Post-outage: bob acquires the same scope at Tier 2 (Redis) while
+	// Postgres is unreachable, still active at reconciliation time. bob is
+	// the losing holder once Postgres recovers (both active → pre-outage
+	// alice wins).
+	bob, err := rdStore.Acquire(ctx, coordination.LockRequest{Scope: "pool:alpha", Operation: "scale", AcquiredBy: "bob", TTLSeconds: 300}, postEpoch)
+	if err != nil {
+		t.Fatalf("post-outage redis acquire pool:alpha: %v", err)
+	}
+
+	// Recovery: reconcile. alice keeps pool:alpha; bob is the loser.
+	if err := svc.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	// The losing holder's next heartbeat must return 409
+	// REMEDIATION_LOCK_CONFLICT with splitBrain:true, winner:"pre_outage",
+	// winnerHolder:"alice".
+	bobCtx := coordination.WithCaller(ctx, "bob")
+	_, err = svc.Extend(bobCtx, bob.ID, 300)
+	if err == nil {
+		t.Fatalf("losing holder heartbeat succeeded; want 409 REMEDIATION_LOCK_CONFLICT splitBrain")
+	}
+	if code := coordination.CodeOf(err); code != coordination.ErrCodeConflict {
+		t.Errorf("losing holder heartbeat error code = %q, want %q (REMEDIATION_LOCK_CONFLICT)", code, coordination.ErrCodeConflict)
+	}
+	if !coordination.IsSplitBrain(err) {
+		t.Errorf("losing holder heartbeat error IsSplitBrain = false, want true (splitBrain:true)")
+	}
+	winner, winnerHolder := coordination.SplitBrainDetails(err)
+	if winner != "pre_outage" {
+		t.Errorf("split-brain winner = %q, want pre_outage", winner)
+	}
+	if winnerHolder != "alice" {
+		t.Errorf("split-brain winnerHolder = %q, want alice (the pre-outage acquiredBy)", winnerHolder)
+	}
+
+	// The losing Redis lock is removed (§25.4 line 2267 "The Redis lock is
+	// removed") so a later Postgres outage cannot resurface it.
+	if got, err := rdStore.Get(ctx, bob.ID); coordination.CodeOf(err) != coordination.ErrCodeNotFound {
+		t.Errorf("losing Redis lock still present after reconcile: lock=%v err=%v, want REMEDIATION_LOCK_NOT_FOUND", got, err)
+	}
+
+	// The losing holder is notified on the release path too (§25.4 line
+	// 2267 names heartbeat/list/release).
+	if relErr := svc.Release(bobCtx, bob.ID); !coordination.IsSplitBrain(relErr) {
+		t.Errorf("losing holder release error IsSplitBrain = false (err=%v), want split-brain 409", relErr)
+	}
+}

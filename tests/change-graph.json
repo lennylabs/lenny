@@ -262,6 +262,17 @@
       "unit": ["pkg/ops/versionsource/..."],
       "component": ["tests/tier2_component/observability/version_aggregation_test.go"]
     },
+    "pkg/ops/opsserver": {
+      "unit": ["pkg/ops/opsserver/..."],
+      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+    },
+    "pkg/ops/runbooks": {
+      "unit": ["pkg/ops/runbooks/..."],
+      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+    },
+    "docs/runbooks": {
+      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+    },
     "pkg/releasechannel": {
       "unit": ["pkg/releasechannel/..."],
       "integration": ["tests/tier4_integration/release_channel_fetch_test.go"],

@@ -67,8 +67,17 @@ type LeaderReporter interface {
 // Server is the lenny-ops HTTP handler. It routes the operability
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
-	mux                *http.ServeMux
-	handler            http.Handler // mux wrapped in the §25.4 correlation/access-log middleware
+	mux     *http.ServeMux
+	handler http.Handler // mux wrapped in the §25.4 correlation/access-log middleware
+	// mcpReplay is the handler the §25.12 MCP invoker replays a mapped
+	// tool request against. It is the post-authentication portion of the
+	// handler chain: when an AuthConfig is wired it runs the §25.4 role
+	// gate and §25.1 scope gate (but not the bearer verifier or the
+	// per-service-account rate limiter), so a replay carrying the caller's
+	// already-verified principal is authorized as that caller without
+	// re-verifying a bearer that is not forwarded in-process; when no
+	// AuthConfig is wired it is the bare mux (the dev / embedded path).
+	mcpReplay          http.Handler
 	probes             map[string]probe.Func
 	runbooks           RunbookSource
 	selfHealth         SelfHealthReporter
@@ -426,6 +435,12 @@ func New(opts Options) *Server {
 	if s.idem != nil {
 		inner = s.idem.Wrap(inner)
 	}
+	// §25.12: default (dev / no-AuthConfig) replay target is the mux
+	// itself, so an in-process MCP tool invocation reaches the same
+	// unauthenticated surface a direct dev request does. withOpsAuth
+	// overwrites this with the post-authentication chain when an
+	// AuthConfig is wired.
+	s.mcpReplay = inner
 	// §25.4 lines 1562-1564: when an AuthConfig is supplied, every
 	// operability route runs through the OIDC authentication + role gate
 	// (the Kubernetes probes are exempt). The auth wrapper sits inside the

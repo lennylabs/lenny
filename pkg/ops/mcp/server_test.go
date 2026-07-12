@@ -4,6 +4,7 @@ package mcp_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ type fakeInvoker struct {
 	called string
 }
 
-func (f *fakeInvoker) Invoke(tool mcp.Tool, _ json.RawMessage) (mcp.ToolResult, error) {
+func (f *fakeInvoker) Invoke(_ context.Context, tool mcp.Tool, _ json.RawMessage) (mcp.ToolResult, error) {
 	f.called = tool.Name
 	return f.result, f.err
 }

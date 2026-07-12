@@ -100,6 +100,7 @@ type SplitBrainConflict struct {
 	Winner         string // "pre_outage" | "post_outage"
 	WinnerHolder   string // the acquiredBy that retained the lock
 	LoserHolder    string // the acquiredBy whose lock was removed
+	LoserLockID    string // the id of the losing lock (the removed Redis lock when pre_outage wins)
 	LoserWasActive bool   // the loser was non-expired at resolution time
 }
 
@@ -128,6 +129,14 @@ type epochStore interface {
 	Store
 	EpochManager
 	ActiveLocks(ctx context.Context) ([]Lock, error)
+}
+
+// redisLockRemover is an optional Tier 2 (Redis) capability: it removes a
+// lock by id regardless of holder. The Service type-asserts for it during
+// reconciliation to drop a losing split-brain Redis lock (§25.4 line 2267,
+// "The Redis lock is removed"). Only the Redis store implements it.
+type redisLockRemover interface {
+	RemoveByID(ctx context.Context, lockID string) error
 }
 
 // Metrics receives the §25.4 remediation-lock metric signals. A nil

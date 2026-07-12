@@ -41,6 +41,7 @@ package tier9_security_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,7 @@ import (
 // reject a scope-excluded call before the invoker is reached.
 type sweepRecordingInvoker struct{ calls []string }
 
-func (r *sweepRecordingInvoker) Invoke(tool mcp.Tool, _ json.RawMessage) (mcp.ToolResult, error) {
+func (r *sweepRecordingInvoker) Invoke(_ context.Context, tool mcp.Tool, _ json.RawMessage) (mcp.ToolResult, error) {
 	r.calls = append(r.calls, tool.Name)
 	return mcp.ToolResult{Status: http.StatusOK, Body: json.RawMessage(`{}`)}, nil
 }
