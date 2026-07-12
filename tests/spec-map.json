@@ -3112,7 +3112,13 @@
         "tests/tier2_component/coordination/tier_transition_test.go::TestTierTransitionSplitBrainReconciliation_spec_25_4",
         "tests/tier4_integration/ops_service_e2e_test.go",
         "tests/tier8_chaos/escalation_retry_test.go",
-        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4"
+        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsHealthzAnonymousAdmitted_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingAdmitsPlatformAdmin_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminPlatformLockForbidden_spec_25_4_2128",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsScopeClaimNarrowsBelowRoleCeiling_spec_25_4_1569"
       ],
       "packages": [
         "cmd/lenny-ops"
