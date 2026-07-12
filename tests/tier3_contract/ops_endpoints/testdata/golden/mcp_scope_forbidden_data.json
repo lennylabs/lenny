@@ -1,0 +1,7 @@
+{
+  "activeScope": "tools:health:read",
+  "category": "AUTH",
+  "code": "SCOPE_FORBIDDEN",
+  "requiredScope": "tools:locks:write",
+  "retryable": false
+}

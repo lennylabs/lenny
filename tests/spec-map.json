@@ -3030,6 +3030,7 @@
         "tests/tier3_contract/ops_endpoints/escalations_test.go",
         "tests/tier3_contract/ops_endpoints/drift_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
+        "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/helpers_test.go"
       ],
       "packages": [
@@ -3097,7 +3098,8 @@
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
         "tests/tier4_integration/ops_service_e2e_test.go",
-        "tests/tier8_chaos/escalation_retry_test.go"
+        "tests/tier8_chaos/escalation_retry_test.go",
+        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4"
       ],
       "packages": [
         "cmd/lenny-ops"
@@ -3226,7 +3228,11 @@
     "25.12": {
       "title": "MCP Management Server",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementScopeForbiddenSweep_spec_25_12",
+        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E"
+      ],
       "packages": [
         "pkg/operability/mcp"
       ],
