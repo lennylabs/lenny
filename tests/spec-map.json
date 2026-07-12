@@ -377,7 +377,10 @@
         "tests/tier2_component/stores/credentialpoolstore_test.go",
         "tests/tier2_component/stores/credleasestore_test.go",
         "tests/tier2_component/translators/anthropic_translator_test.go",
-        "tests/tier4_integration/credential_test.go"
+        "tests/tier4_integration/credential_test.go",
+        "tests/tier4_integration/llm_proxy_roundtrip_test.go",
+        "tests/tier8_chaos/testbed_partition_test.go",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/credential",
@@ -468,7 +471,8 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -527,7 +531,8 @@
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestKataIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation",
-        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -731,7 +736,9 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "pkg/delegation/lease/lease_test.go::TestResolveMaxDepthApplies82BisPrecedence",
         "pkg/delegation/lease/lease_test.go::TestEnforcePolicyCeilingCapsResolved",
-        "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling"
+        "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling",
+        "tests/tier4_integration/multi_agent_testbed_test.go::TestMultiAgentDelegationTestbedPerHopInvariants",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/delegation/cycle",
@@ -860,13 +867,15 @@
       "tests": [
         "pkg/gateway/mcpfabric/mcp/...",
         "pkg/adapter/mcp/...",
-        "pkg/gateway/mcpfabric/mcptools/discover_agents_filtering_test.go"
+        "pkg/gateway/mcpfabric/mcptools/discover_agents_filtering_test.go",
+        "tests/testinfra/stubs/mcpserver/mcpserver_test.go",
+        "tests/tier4_integration/external_mcp_tool_test.go"
       ],
       "packages": [
         "pkg/mcp"
       ],
       "blocked_until_phase": "5",
-      "notes": "Catalogue of MCP touchpoints: client-facing protocol, internal control-plane stub, delegation MCP. Phase 5 ships the client-facing layer; the others are §9.2-§9.4."
+      "notes": "Catalogue of MCP touchpoints: client-facing protocol, internal control-plane stub, delegation MCP. Phase 5 ships the client-facing layer; the others are §9.2-§9.4. The Gateway ↔ external MCP tools boundary is exercised end to end against the tests/testinfra/stubs/mcpserver external server stub."
     },
     "9.2": {
       "title": "Elicitation Chain",
@@ -900,7 +909,8 @@
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
         "tests/tier2_component/stores/connectorstore_test.go",
-        "tests/tier4_integration/connector_oauth_test.go"
+        "tests/tier4_integration/connector_oauth_test.go",
+        "tests/tier4_integration/external_mcp_tool_test.go"
       ],
       "packages": [
         "pkg/connector",
@@ -2117,7 +2127,8 @@
         "tests/tier3_contract/rest_mcp_consistency/consistency_test.go",
         "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
         "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
-        "tests/tier3_contract/multiprotocol_journey/journey_test.go"
+        "tests/tier3_contract/multiprotocol_journey/journey_test.go",
+        "tests/tier4_integration/multi_protocol_same_deployment_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
