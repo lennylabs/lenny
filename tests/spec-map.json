@@ -3154,6 +3154,9 @@
       "tests": [
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
+        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestOpsUnreachableFromAgentPod_spec_25_1",
+        "tests/tier8_chaos/ops_survives_gateway_test.go::TestOpsSurvivesGatewayOutage",
+        "tests/tier8_chaos/ops_survives_gateway_test.go::TestGatewayHealthSummarySurvivesOpsOutage",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
       ],
@@ -3167,7 +3170,8 @@
       "title": "Architecture Overview",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
+        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E"
       ],
       "packages": [
         "pkg/operability"
@@ -3210,6 +3214,7 @@
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
         "tests/tier2_component/coordination/tier_transition_test.go::TestTierTransitionSplitBrainReconciliation_spec_25_4",
         "tests/tier4_integration/ops_service_e2e_test.go",
+        "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
@@ -3316,7 +3321,8 @@
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "tests/tier2_component/auditstore/admin_query_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
-        "tests/tier4_integration/audit_deferred_reconcile_test.go"
+        "tests/tier4_integration/audit_deferred_reconcile_test.go",
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
       ],
       "packages": [
         "pkg/operability/audit"
@@ -3392,10 +3398,12 @@
     "25.15": {
       "title": "Failure Mode Analysis",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier8_chaos/ops_survives_gateway_outage_test.go::TestOpsSurfaceSurvivesGatewayOutageEndToEnd"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.15 Failure Mode Analysis. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.15 Failure Mode Analysis. The high-value scenario (lenny-ops up while the gateway is down) is pinned end to end by the tier-8 chaos test: it scales the gateway to zero and asserts the ops surface stays available (connectivity 200 with the gateway shown unreachable), runbook fetching is unchanged, and the gateway-resident audit query fails. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
     },
     "25.16": {
       "title": "Deployment Topology Summary",
@@ -3408,10 +3416,12 @@
     "25.17": {
       "title": "End-to-End Operational Example",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review."
     },
     "26": {
       "title": "Reference Runtime Catalog",
