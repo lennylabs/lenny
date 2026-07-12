@@ -288,6 +288,7 @@
         "tests/tier8_chaos/leader_election_test.go",
         "tests/tier8_chaos/adr007_leader_kill_claim_test.go::TestLeaderKillMidClaimNoDoubleAssignment",
         "tests/tier8_chaos/live_session_test.go",
+        "tests/tier8_chaos/warm_pod_eviction_test.go::TestWarmPodEvictionProactiveReplacement",
         "tests/tier2_component/stores/crdpodregistry_claim_test.go::TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1",
         "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash",
         "tests/tier8_chaos/reserved_hold_holder_crash_test.go::TestOrphanGCReclaimsReservedClaimAfterHolderCrash",
