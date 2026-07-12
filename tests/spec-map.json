@@ -3168,6 +3168,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/gateway/externalapi/admin/audit_query_test.go",
+        "tests/tier2_component/auditstore/admin_query_test.go",
         "tests/tier4_integration/ops_endpoints_test.go"
       ],
       "packages": [
