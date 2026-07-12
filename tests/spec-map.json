@@ -3223,7 +3223,8 @@
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "tests/tier2_component/auditstore/admin_query_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
-        "tests/tier4_integration/audit_deferred_reconcile_test.go"
+        "tests/tier4_integration/audit_deferred_reconcile_test.go",
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
       ],
       "packages": [
         "pkg/operability/audit"
@@ -3317,10 +3318,12 @@
     "25.17": {
       "title": "End-to-End Operational Example",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review."
     },
     "26": {
       "title": "Reference Runtime Catalog",
