@@ -3169,7 +3169,8 @@
       "tests": [
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "tests/tier2_component/auditstore/admin_query_test.go",
-        "tests/tier4_integration/ops_endpoints_test.go"
+        "tests/tier4_integration/ops_endpoints_test.go",
+        "tests/tier4_integration/audit_deferred_reconcile_test.go"
       ],
       "packages": [
         "pkg/operability/audit"
