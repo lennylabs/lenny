@@ -56,7 +56,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 ### Spec subsections
 - [§1-3 Core Principles, Goals, and Architecture](#t-1-3) — 2H 4M 0L 1I — no suggested test files landed on disk; all 7 findings (T-2.1..T-2.5, T-1.1, T-3.1) remain OPEN unchanged
 - [§4.0 Agent Operability Additions](#t-4.0) — 3H 5M 1L 1I — No test drives a real subsystem to a delivered ops event above unit tier; §4.0 missing from spec-map.json
-- [§4.1 Edge Gateway Replicas](#t-4.1) — 4H 4M 1L 1I — No cross-replica session-continuity test; subsystem isolation and MCP-runtime conformance stay unverified.
+- [§4.1 Edge Gateway Replicas](#t-4.1) — 4H 5M 1L 1I — No cross-replica session-continuity test; subsystem isolation and MCP-runtime conformance stay unverified.
 - [§4.2 Session Manager](#t-4.2) — 3H 4M 2L 1I — Session Manager: recovery_generation increment and manifest_reason='terminated_during_resume' still untested end to end (memstore-only)
 - [§4.3 Token Service](#t-4.3) — 4H 4M 1L 1I — mTLS enforcement, the oauth/token gateway-proxy path, and RFC 8693 response conformance are still untested end to end; the access-token Redis cache is built but never populated on issuance (dead cache)
 - [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 2L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
@@ -377,6 +377,13 @@ Counts: 4 High, 4 Medium, 1 Low, 1 Info.
 - **Gap:** The spec-map entry for §4.1 does not identify the tests that encode the section's behavior, which weakens the coverage-tracking guarantee the file is meant to provide. This is an observation about map fidelity rather than a missing test in itself; the concrete tests it should reference are the subjects of T-4.1.1 through T-4.1.9.
 - **Dependencies:** none — buildable today.
 - **Suggested test:** After the tests in this unit land, update the §4.1 entry in `tests/spec-map.json` to enumerate the concrete subsystem, capacity, replica-continuity, and `/mcp/runtimes` tests in place of the bare `pkg/gateway/...` glob.
+
+### - [ ] T-4.1.11 — File Fabric subsystem has no §12.2.3 component-tier suite because `sessionserver.Server` exposes no external constructor to drive the upload handler against real MinIO [Medium] — OPEN
+- **Spec/Doc:** TESTING.md §12.2.3 requires a File Fabric component suite ("upload/download through the gateway against real MinIO"). The upload handler is `pkg/gateway/sessionserver/upload.go` (`handleUpload`).
+- **Existing tests:** The single-blob upload path has in-package unit coverage under `pkg/gateway/sessionserver`. The declared gateway-subsystems component suite scaffold `tests/tier2_component/gateway_subsystems/scaffolds_test.go::TestFileFabric` is a coverage-map log only; the llm_proxy half of the §12.2.3 suite landed with T-4.1.2's resolution, but the File Fabric half is still absent (recorded there as a discovered issue).
+- **Gap:** No component-tier test drives `handleUpload` against a real MinIO backend. `handleUpload` hangs off `sessionserver.Server` (`pkg/gateway/sessionserver/sessionserver.go:121`), whose fields (`tenants`, `blobs`, and the rest) are unexported and which exposes no exported constructor for external-package assembly; existing sessionserver tests build it in-package via `&Server{...}`. Wiring the upload handler to real MinIO (`containers.StartMinIO` + `pkg/blobstore`) at component tier from `tests/tier2_component/gateway_subsystems` therefore requires a product change (an exported, test-usable constructor or handler factory), which is out of scope for a test-only closure. The `TestFileFabric` scaffold additionally notes the §15.1 `/upload-archive` and §7.4 gitClone paths are not wired into the gateway, so only the single-blob `/upload` path is drivable today.
+- **Dependencies:** Requires a product change adding an exported, external-package-usable constructor or handler factory for `sessionserver.Server`, plus `containers.StartMinIO` and a `pkg/blobstore` MinIO backend on the component-tier harness (`tests/tier2_component/gateway_subsystems`).
+- **Suggested test:** After the constructor/factory lands, add a File Fabric case under `tests/tier2_component/gateway_subsystems` that drives `handleUpload` through the gateway surface against a real MinIO container and asserts the single-blob `/upload` round-trip.
 
 ## §4.2 Session Manager <a id="t-4.2"></a>
 **Spec file:** `spec/04_system-components.md`
