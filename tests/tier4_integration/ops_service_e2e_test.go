@@ -36,6 +36,13 @@ import (
 // spec: §25.4 (the mandatory lenny-ops service hosts the remediation
 // surface; Tier 1 Postgres acquire is a distributed mutex over the shared
 // ops_remediation_locks table; a released lock leaves no row).
+// diagnosis: a failure means the cmd/lenny-ops composition root did not
+// thread the live Postgres Tier-1 store through to the remediation-lock
+// surface. Either POST /v1/admin/remediation-locks did not persist a row
+// to ops_remediation_locks, a duplicate acquire did not return the 409
+// distributed-mutex conflict, or DELETE did not remove the row — any of
+// which shows the §25.4 remediation endpoints diverged from the spec when
+// driven against a real store rather than an httptest stub.
 func TestOpsServiceRemediationLockPersistenceE2E(t *testing.T) {
 	opsprocess.SkipUnlessAvailable(t)
 
