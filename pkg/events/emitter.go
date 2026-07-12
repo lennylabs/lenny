@@ -4,9 +4,14 @@ package events
 
 import "context"
 
-// CloudEventsSpecVersion is the §25.3 / §12.6 CloudEvents envelope
-// version every operational event carries.
-const CloudEventsSpecVersion = "1.0.2"
+// CloudEventsSpecVersion is the value of the CloudEvents specversion
+// context attribute every operational event carries. Per the §12.6
+// envelope-contract table and the §25.5 worked event frames, the
+// attribute value is "1.0" (the implemented CloudEvents revision is
+// v1.0.2, but the specversion attribute names the 1.0 line, not the
+// patch revision). This mirrors pkg/gateway/storage/eventbus.SpecVersion.
+// spec: §12.6 (CloudEvents envelope contract), §25.5 (event envelope).
+const CloudEventsSpecVersion = "1.0"
 
 // EventEmitter is the §4.0 / §25.3 operational-event sink every
 // subsystem depends on. Subsystems take an EventEmitter and call Emit at
