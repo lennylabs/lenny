@@ -2295,7 +2295,8 @@
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleMatchesAlertCatalog",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleFieldsMatchCatalog",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestBundledAlertingRulesFragmentIsCurrent",
-        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed"
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestGatewayEvaluatorTracksCatalogAndRenderedChart"
       ],
       "packages": [
         "pkg/observability/metrics",
@@ -2405,6 +2406,7 @@
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleFieldsMatchCatalog",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestBundledAlertingRulesFragmentIsCurrent",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestGatewayEvaluatorTracksCatalogAndRenderedChart",
         "tests/tier7b_load_kind/experiment_test.go::TestExperimentLoad",
         "tests/tier7b_load_kind/scenarios/experiment_load",
         "pkg/tokenservice/revocation_propagation_metric_test.go::TestRevocationPropagationObservesEventBusOutcome_SEC_TS_1",

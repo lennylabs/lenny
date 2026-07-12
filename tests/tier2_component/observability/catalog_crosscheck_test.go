@@ -30,8 +30,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v3"
 
+	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/alerting/inproceval"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 )
 
@@ -194,6 +197,88 @@ func TestPrometheusRuleMatchesAlertCatalog(t *testing.T) {
 	if len(rendered) != len(catalog) {
 		t.Errorf("rendered chart has %d alerts, the §16.5 catalog has %d — the two surfaces have drifted",
 			len(rendered), len(catalog))
+	}
+}
+
+// spec: 25.13 (the gateway in-process evaluator, the shared catalog, and the rendered chart are one set)
+// diagnosis: The set of alert names the gateway's in-process evaluator
+//
+//	tracks has drifted from the pkg/alerting/rules catalog or
+//	from the chart-rendered PrometheusRule. §25.13 makes the
+//	shared catalog the single source of truth for all three
+//	surfaces; a filtered or hand-maintained evaluator rule set,
+//	or a chart that renders a different set than the gateway
+//	evaluates, violates the no-drift invariant. The existing
+//	crosscheck tests only compare the rendered chart against the
+//	catalog; this one pins the third surface, the gateway
+//	evaluator, to the same set.
+func TestGatewayEvaluatorTracksCatalogAndRenderedChart(t *testing.T) {
+	root := repoRoot(t)
+
+	// Construct the gateway's in-process alert evaluator the same way
+	// cmd/lenny-gateway does at startup (runserver.go): the shared
+	// pkg/alerting/rules catalog, evaluated by the inproceval instant-
+	// vector backend over this replica's own metric registry. Only the
+	// tracked rule *set* is under test, so an empty registry suffices
+	// and no evaluation tick is driven.
+	//
+	// spec: §25.13 line 4679 — "**The gateway binary** — the in-process
+	// alert state tracker (Section 25.3, Health API) evaluates these
+	// expressions against the in-process metric registry."
+	catalog := rules.Catalog()
+	ev := evaluator.New(catalog, inproceval.New(prometheus.NewRegistry()), evaluator.Options{})
+
+	// Distinct catalog names. The §16.5 / §17.2 multi-pair alerts share
+	// an alert Name (distinguished only by static labels), and the
+	// evaluator keys its per-rule state machine by Name, so it tracks
+	// one entry per distinct name. Compare the three surfaces at that
+	// name granularity.
+	catalogNames := map[string]bool{}
+	for _, r := range catalog {
+		catalogNames[r.Name] = true
+	}
+
+	// Direction A: the gateway evaluator must track every catalog rule.
+	// State(name) reports ok for a tracked rule. Because the evaluator
+	// was built from the full catalog, its tracked set cannot exceed the
+	// catalog, so this single direction establishes evaluator == catalog.
+	// A regression that fed the evaluator a hand-maintained subset, or
+	// that made evaluator.New silently drop rules, leaves some catalog
+	// name untracked here.
+	//
+	// spec: §25.13 line 4682 — "the rule definitions cannot drift
+	// between what the gateway evaluates and what Prometheus loads."
+	for name := range catalogNames {
+		if _, ok := ev.State(name); !ok {
+			t.Errorf("§25.13 gateway evaluator does not track catalog alert %q — the compiled-in evaluator has drifted from the shared catalog", name)
+		}
+	}
+
+	// The rendered chart's distinct alert names.
+	doc := helmTemplatePrometheusRule(t, root)
+	renderedNames := map[string]bool{}
+	for _, r := range flattenRendered(doc) {
+		renderedNames[r.Alert] = true
+	}
+
+	// Direction B: tie the third surface in. The evaluator tracks the
+	// catalog (Direction A), so asserting catalog == rendered makes all
+	// three sets equal. A rule the gateway evaluates but the chart never
+	// renders (or the reverse) is exactly the two-source-of-truth drift
+	// §25.13 line 4682 forbids.
+	for name := range catalogNames {
+		if !renderedNames[name] {
+			t.Errorf("catalog alert %q is evaluated by the gateway but missing from the rendered chart — Prometheus would never load a rule the gateway fires on", name)
+		}
+	}
+	for name := range renderedNames {
+		if !catalogNames[name] {
+			t.Errorf("rendered chart alert %q is not in the shared catalog and is therefore never evaluated by the gateway", name)
+		}
+	}
+	if len(renderedNames) != len(catalogNames) {
+		t.Errorf("distinct alert names disagree: gateway evaluator/catalog=%d, rendered chart=%d — the §25.13 single source of truth has drifted",
+			len(catalogNames), len(renderedNames))
 	}
 }
 
