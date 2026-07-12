@@ -357,7 +357,13 @@
         "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix",
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
-        "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite"
+        "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusReReadsAndNeverForcesOnSSAConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
       ],
       "packages": [
         "pkg/admission/ownership",
