@@ -427,7 +427,12 @@
         "tests/tier2_component/stores/interceptorstore_test.go",
         "tests/tier2_component/gateway_subsystems/llm_proxy_interceptor_test.go",
         "tests/tier4_integration/external_interceptor_test.go",
-        "tests/tier4_integration/admission_gate_order_test.go"
+        "tests/tier4_integration/admission_gate_order_test.go",
+        "tests/tier4_integration/interceptor_weakening_cooldown_test.go",
+        "tests/tier4_integration/send_message_scan_test.go",
+        "tests/tier4_integration/export_scan_test.go",
+        "tests/tier3_contract/interceptor_proto/contract_test.go",
+        "tests/tier8_chaos/interceptor_fail_open_escalation_test.go::TestInterceptorFailOpenEscalationOverGRPC_spec_4_8"
       ],
       "packages": [
         "pkg/gateway/interceptors",
@@ -840,7 +845,8 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "tests/tier2_component/stores/delegationpolicystore_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
-        "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility"
+        "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility",
+        "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058"
       ],
       "packages": [
         "pkg/delegation/lease",

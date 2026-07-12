@@ -28,6 +28,8 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 )
@@ -85,6 +87,18 @@ func (s *Stub) Intercept(ctx context.Context, req *interceptorv1.InterceptReques
 // gateway's --external-interceptor endpoint= field.
 func (s *Stub) Addr() string { return s.addr }
 
+// SetHandler swaps the active Handler on a running stub. It is the
+// controllable fault mode a chaos test uses to degrade the interceptor
+// mid-run (swap in Fail or Hang) and later recover it (swap back to
+// Allow) without tearing down the gRPC listener or the client
+// connection, so the same real socket exercises the degrade-then-recover
+// transition end to end.
+func (s *Stub) SetHandler(h Handler) {
+	s.mu.Lock()
+	s.handler = h
+	s.mu.Unlock()
+}
+
 // Requests returns a snapshot of every InterceptRequest the stub has
 // received, in arrival order.
 func (s *Stub) Requests() []*interceptorv1.InterceptRequest {
@@ -123,6 +137,18 @@ func Modify(modified []byte) Handler {
 			Action:          interceptorv1.InterceptResponse_MODIFY,
 			ModifiedContent: modified,
 		}, nil
+	}
+}
+
+// Fail returns a Handler that returns a gRPC error for every request,
+// modeling a degraded interceptor service whose calls error out. The
+// gateway's External adapter surfaces the error to the Chain, which
+// resolves it via the registration's failPolicy. Unlike Hang, it returns
+// immediately, so a chaos test can drive many faulting calls
+// deterministically without waiting on the per-interceptor timeout.
+func Fail(reason string) Handler {
+	return func(context.Context, *interceptorv1.InterceptRequest) (*interceptorv1.InterceptResponse, error) {
+		return nil, status.Error(codes.Unavailable, reason)
 	}
 }
 
