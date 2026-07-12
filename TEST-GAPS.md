@@ -59,7 +59,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§4.1 Edge Gateway Replicas](#t-4.1) — 4H 5M 1L 1I — No cross-replica session-continuity test; subsystem isolation and MCP-runtime conformance stay unverified.
 - [§4.2 Session Manager](#t-4.2) — 3H 4M 2L 1I — Session Manager: recovery_generation increment and manifest_reason='terminated_during_resume' still untested end to end (memstore-only)
 - [§4.3 Token Service](#t-4.3) — 4H 4M 1L 1I — mTLS enforcement, the oauth/token gateway-proxy path, and RFC 8693 response conformance are still untested end to end; the access-token Redis cache is built but never populated on issuance (dead cache)
-- [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 2L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
+- [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 3L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
 - [§4.5 Artifact Store](#t-4.5) — 3H 7M 2L 2I — Tenant-prefix isolation, DeleteByTenant, and T4 SSE-KMS selection tested only against in-memory fakes, never real MinIO/S3
 - [§4.6 Pod Lifecycle Controllers](#t-4.6) — 3H 8M 4L 1I — 3 High gaps still open: ADR-007 leader-kill chaos, etcd-unavailable chaos, cross-controller SSA-conflict test
 - [§4.7 Runtime Adapter](#t-4.7) — 6H 7M 4L 1I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002)
@@ -79,11 +79,11 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§7.5 Setup Commands](#t-7.5) — 4H 5M 1L 1I — SETUP_COMMAND_FAILED verified end-to-end only at finalize; network-block, RunSetup contract still unit-only
 - [§8.1 Design Philosophy](#t-8.1) — 2H 3M 1L 2I — Delegation's 3-invariant guarantee and anti-bypass claim still have no component+/adversarial test (T-8.1.1/.2)
 - [§8.2 Delegation Mechanism](#t-8.2) — 5H 6M 1L 2I — Delegation integration/e2e/chaos/security coverage is still absent above unit tests; all 14 OPEN.
-- [§8.3 Delegation Policy and Lease](#t-8.3) — 6H 5M 2L 1I — credentialPropagation (inherit/independent/deny) still has zero production implementation and zero tests at any tier
+- [§8.3 Delegation Policy and Lease](#t-8.3) — 6H 5M 3L 1I — credentialPropagation (inherit/independent/deny) still has zero production implementation and zero tests at any tier
 - [§8.4 Approval Modes](#t-8.4) — 2H 3M 1L 1I — deny/approval/DELEGATION_DENIED still unit-only; zero tier2+ tests and the error code is still absent from the §15.1 catalog
 - [§8.5 Delegation Tools](#t-8.5) — 2H 7M 1L 0I — No e2e delegation-tool coverage against a live gateway; tools/list lacks an MCP-schema conformance test.
 - [§8.6 Lease Extension](#t-8.6) — 5H 4M 1L 1I — No tier4/5 test drives the relocated in-process budget-exhaustion trigger through a real proxied LLM call end to end
-- [§8.7 File Export Model](#t-8.7) — 4H 5M 2L 1I — Export path works in prod now (resolver wired, commit b4dd4c48) but still has zero tier2+ tests; field renamed to task.workspaceFiles.export.
+- [§8.7 File Export Model](#t-8.7) — 4H 5M 3L 1I — Export path works in prod now (resolver wired, commit b4dd4c48) but still has zero tier2+ tests; field renamed to task.workspaceFiles.export.
 - [§8.8 TaskRecord and TaskResult Schema](#t-8.8) — 4H 6M 3L 1I — treeUsage/deadlock now implemented and tested; no tier-4+ test drives either via a live gateway
 - [§8.9 Task Tree](#t-8.9) — 1H 5M 2L 0I — ListByRoot RLS isolation, e2e Kind tree coverage, and MCP schema conformance for get_task_tree remain open.
 - [§8.10 Delegation Tree Recovery](#t-8.10) — 5H 5M 2L 1I — Recovery worker now wired into prod (4cc6f317); still no integration/e2e/chaos test drives a real pod failure.
@@ -654,6 +654,13 @@ The checkpoint primitives, enums, retry budgets, and timeout constants in `pkg/c
 - **Gap:** pkg/adapter/embeddedcheckpoint/embeddedcheckpoint.go gates only on host platform (Linux vs ErrNotSupported at line 46), never on isolation profile, and neither pkg/admission/pool_config_validator/validator.go nor pkg/controller/runtime/controller.go rejects deploymentModel=embedded (pkg/apis/lenny/v1alpha1/runtime_types.go:56) combined with isolationProfile=sandboxed/microvm (runtime_types.go:46). A pod could take the embedded SIGSTOP path under a sandboxed profile and silently produce an inconsistent checkpoint. This is a product defect (the negative counterpart to T-4.4.8).
 - **Dependencies:** Needs an enforcement point (admission rejection of deploymentModel=embedded + isolationProfile=sandboxed/microvm, or a runtime-level guard).
 - **Suggested test:** Add an admission test that rejects deploymentModel=embedded combined with isolationProfile=sandboxed/microvm, and a runtime-guard negative test that the embedded SIGSTOP path is refused under those profiles.
+
+### - [ ] T-4.4.20 — checkpointer triggerForSource comment references a non-existent snapshotWithTrigger method and asserts an unimplemented eviction/pre-scale-down trigger path [Low] — OPEN
+- **Spec/Doc:** §4.4 defines dedicated eviction and pre-scale-down checkpoint triggers distinct from the periodic trigger (spec/04_system-components.md, §4.4 Event / Checkpoint Store).
+- **Existing tests:** None assert the checkpointer's trigger-source mapping; this is a stale-comment / dead-path observation surfaced while closing T-4.4.14.
+- **Gap:** The triggerForSource doc comment at pkg/gateway/checkpoint/checkpointer/checkpointer.go:339-352 states that "eviction and pre-scale-down callers invoke the dedicated trigger directly via snapshotWithTrigger", but `grep -rn snapshotWithTrigger pkg/ cmd/` matches only that comment line, and `grep -rn TriggerPreScaleDown pkg/gateway/ cmd/` returns no caller. The function body maps all three WorkspaceSnapshotSource cases (including default) to checkpoint.TriggerPeriodic, so the described dedicated-trigger path does not exist. The comment asserts behavior the code does not implement and misleads a future reader into believing an eviction/pre-scale-down trigger path is wired. This is a stale comment distinct from the missing eviction-trigger feature tracked by T-4.4.14.
+- **Dependencies:** None — buildable today (the comment correction is standalone; wiring the actual trigger is tracked separately by T-4.4.14).
+- **Suggested test:** Correct the triggerForSource comment to describe the implemented mapping (all sources currently resolve to TriggerPeriodic), or, once a dedicated eviction/pre-scale-down trigger path is wired per T-4.4.14, add a unit assertion that triggerForSource maps each WorkspaceSnapshotSource to its intended trigger.
 
 ## §4.5 Artifact Store <a id="t-4.5"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -2590,6 +2597,13 @@ Counts: 6 High, 5 Medium, 2 Low, 1 Info.
 - **Dependencies:** Requires a load scenario that fans out to high `maxParallelChildren` and a Prometheus snapshot of the Lua-duration metric (tests/testinfra/loadgen, tests/testinfra/scenkit). The high-fan-out scenario does not exist yet.
 - **Suggested test:** Add tests/tier7b_load_kind/scenarios/delegation_high_fanout that drives `maxParallelChildren` near the soft ceiling and asserts `lenny_redis_lua_script_duration_seconds{script="budget_reserve"}` P99 stays under the documented 5 ms threshold, using tests/testinfra/loadgen.
 
+### - [ ] T-8.3.15 — `gateway.interceptorWeakeningCooldownSeconds` is not clamped to the spec's 30s minimum / 600s maximum bounds [Low] — OPEN
+- **Spec/Doc:** "`gateway.interceptorWeakeningCooldownSeconds` (default: **60 s**, minimum: 30 s, maximum: 600 s)" (spec/08_recursive-delegation.md:218).
+- **Existing tests:** No test asserts that an out-of-range cooldown value is clamped or rejected; surfaced while closing T-4.8.7.
+- **Gap:** No code enforces the spec's 30s–600s bounds on the cooldown value. cmd/lenny-gateway/flags.go:688 registers `--interceptor-weakening-cooldown-seconds` with no range validation; cmd/lenny-gateway/adminrouter.go:323 passes the raw `*interceptorWeakeningCooldownSeconds` into WithInterceptors, which records it verbatim as CooldownSecondsAtTransition (pkg/gateway/externalapi/admin/interceptors.go:331); and delegation.NewService (pkg/gateway/mcpfabric/delegation/service.go ~542-548) only maps 0→default and negative→disable. A Helm value like 5 or 5000 is accepted and produces a cooldown window outside the spec-mandated range, either shortening the mandatory fail-open exposure window below the 30s floor or extending it past the 600s ceiling.
+- **Dependencies:** None — buildable today (the clamp/validation is a standalone gateway-config fix).
+- **Suggested test:** Add a unit/component test that a configured cooldown below 30s or above 600s is clamped to the bound (or rejected at flag-parse time), and that the effective CooldownSecondsAtTransition recorded on a weakening transition falls within [30, 600].
+
 ## §8.4 Approval Modes <a id="t-8.4"></a>
 **Spec file:** `spec/08_recursive-delegation.md`
 **Reviewed:** 2026-07-06
@@ -2888,6 +2902,13 @@ Counts: 4 High, 5 Medium, 2 Low, 1 Info.
 - **Gap:** Once the integration and e2e tests from T-8.7.1 exist, the export path will still be exercised in a single combination. The spec applies the model to every delegation regardless of mode, isolation, and backend, so a single-combination test is a deployment-combination gap. This is recorded as an observation to scope after T-8.7.1 lands; it does not assert a current per-combination divergence.
 - **Dependencies:** Depends on T-8.7.1 and the tier6 cloud harness. `tests/testinfra/matrix` and `tests/testinfra/cloud` exist for the parameterization and the cloud blob backends.
 - **Suggested test:** Parameterize `tests/tier4_integration/file_export_test.go` over execution mode using `tests/testinfra/matrix`, and add a tier6 case in `tests/tier6_e2e_cloud` that runs the export path against S3/GCS/Azure Blob backends per `tests/tier6_e2e_cloud/parity-matrix.yaml`.
+
+### - [ ] T-8.7.13 — Stale SEAM comment in RunPreExportMaterialization claims the delegation file-export path is not yet built [Low] — OPEN
+- **Spec/Doc:** §8.7 defines the delegation file-export materialization path from the parent workspace into the child (spec/08_recursive-delegation.md, §8.7 File Export Model).
+- **Existing tests:** None assert on the comment; this is a stale-comment observation surfaced while closing T-4.8.10.
+- **Gap:** The SEAM block on RunPreExportMaterialization at pkg/gateway/policy/interceptor/export.go lines ~335-348 states: "the §8.7 delegation file-export materialization path... is not yet built: delegation.Service.Delegate creates the child session but does not materialize exported files, and delegate_task carries no fileExport field." This is stale: delegation.Request now carries FileExport (`[]export.Spec`), delegation.Service.Delegate calls materializeExport (pkg/gateway/mcpfabric/delegation/service.go:1340), and pkg/gateway/mcpfabric/delegation/export/export.go:255 invokes interceptor.RunPreExportMaterialization from the wired Materializer. The comment describes a since-closed seam and misleads a future reader into thinking the export path is inert.
+- **Dependencies:** None — buildable today (the comment correction is standalone).
+- **Suggested test:** Correct or delete the stale SEAM comment so it reflects the wired export-materialization path (delegation.Request.FileExport → materializeExport → RunPreExportMaterialization). The behavioral coverage of that path is tracked by T-8.7.1 and T-8.7.2.
 
 ## §8.8 TaskRecord and TaskResult Schema <a id="t-8.8"></a>
 **Spec file:** `spec/08_recursive-delegation.md`
