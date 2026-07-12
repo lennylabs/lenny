@@ -62,7 +62,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 2L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
 - [§4.5 Artifact Store](#t-4.5) — 3H 5M 2L 2I — Tenant-prefix isolation, DeleteByTenant, and T4 SSE-KMS selection tested only against in-memory fakes, never real MinIO/S3
 - [§4.6 Pod Lifecycle Controllers](#t-4.6) — 3H 7M 3L 1I — 3 High gaps still open: ADR-007 leader-kill chaos, etcd-unavailable chaos, cross-controller SSA-conflict test
-- [§4.7 Runtime Adapter](#t-4.7) — 6H 7M 2L 1I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002)
+- [§4.7 Runtime Adapter](#t-4.7) — 6H 8M 2L 1I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002); new gap: compliance harness binary-provisioning flake under the parallel unit tier
 - [§4.8 Gateway Policy Engine](#t-4.8) — 3H 9M 2L 1I — External gRPC interceptor path (and the protobuf contract, admission-gate ordering) still never exercised through a live gateway binary
 - [§4.9 Credential Leasing Service](#t-4.9) — 8H 8M 2L 1I — No proxy/SPIFFE/deny-list/fallback/lifecycle e2e coverage; pre-claim race now spans create->finalize (proposal 0007), still untested; three tier5 admission tests now fail closed against unrelated webhooks post-proposal-0035
 - [§5.1 Runtime](#t-5.1) — 2H 6M 2L 1I — publishedMetadata + MCP capability-inference contract tests still missing; integrationLevel/labels gaps closed
@@ -157,7 +157,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§25.5 Operational Event Stream](#t-25.5) — 6H 5M 2L 1I — No tier3/4/5/6/8/9 test exercises the event stream; SSE/poll still lacks a Redis source (retention purge now resolved).
 - [§25.6 Diagnostic Endpoints](#t-25.6) — 3H 8M 1L 0I — Auto-remediation now implemented+unit-tested (was High); tier4/5 live-service, REST scope, degradation-matrix gaps remain High
 - [§25.7 Operational Runbooks Engine](#t-25.7) — 2H 4M 1L 1I — MCP runbook tools now drop all 5 Path A filters (openapi.json declares no query params); still no inventory/authz test
-- [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 7M 2L 2I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test
+- [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 10M 2L 3I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test; new gaps: status progress omits the §25.2 canonical envelope, version/full drops CRD/Helm sources, no compiled-in release-channel key, TESTING.md change-graph example dangling refs
 - [§25.9-25.10 Audit Log Query API and Config Drift Detection](#t-25.9-25.10) — 4H 8M 2L 1I — §25.9 audit query endpoints and drift reconcile/deferred-write reconciliation still lack real-Postgres/gateway integration tests
 - [§25.11 Backup and Restore API](#t-25.11) — 3H 6M 3L 2I — Backup/restore round-trip, tier3/4/5/6/8/9 gaps remain open; two findings downgraded by new component tests.
 - [§25.12 MCP Management Server](#t-25.12) — 6H 6M 2L 2I — Build-time openapi-to-mcp generator landed (T-25.12.1 resolved); gateway-proxy routing still absent so new admin tools can't dispatch
@@ -964,6 +964,13 @@ Counts: 6 High, 7 Medium, 2 Low, 1 Info.
 - **Gap:** A dashboard query for §4.7 coverage now surfaces most of the real higher-tier coverage, but still omits the Basic-protocol, SDK-battery, MCP-lifecycle, and pod-topology suites named above, and does not flag that the tier-10 conformance entry it does list (`recycle_scrub_conformance_test.go`) doesn't close the reference-runtime nightly gap (T-4.7.1). This is an observation about coverage attribution rather than a missing test.
 - **Dependencies:** None — buildable today by editing tests/spec-map.json.
 - **Suggested test:** Update the §4.7 `tests` list in `tests/spec-map.json` to add the tier-3 `adapter_jsonl` and `sdks/runtime_sdk_test.go` suites, the tier-4 `mcp_runtime_lifecycle_test.go`, and the tier-5 `pod_lifecycle_test.go`, so the residual gaps (T-4.7.1's conformance scaffold) stay auditable from the map.
+
+### - [ ] T-4.7.17 — cmd/lenny-compliance tier1 tests flake under the parallel unit runner with `fork/exec .../delegation-echo: no such file or directory` [Medium] — OPEN
+- **Spec/Doc:** The `cmd/lenny-compliance` conformance harness runs the Basic/Standard/Full batteries (spec/18_build-sequence.md:122, 166, 424; TESTING.md §12.10 conformance), building the `echo`/`streaming-echo`/`delegation-echo` runtime binaries the batteries exercise.
+- **Existing tests:** `cmd/lenny-compliance/standard_test.go` (standard-battery cases at lines 165, 181, 193, 205, and others) drives the harness against the built runtime binaries; the package passes in isolation (`go test ./cmd/lenny-compliance/` reports `ok`).
+- **Gap:** `lenny-test run --since` (run_id `3b91a58c0240be6ef6bb340a`) reported 18 failures in `cmd/lenny-compliance`, all `fork/exec /tmp/compliance-standard-test-*/delegation-echo: no such file or directory`. The same package passes when run alone, so the harness that builds the `delegation-echo`/`echo` runtime binaries into a temp dir races or fails to provision them under the full parallel unit tier. This is a harness reliability defect, unrelated to any product diff.
+- **Dependencies:** none — buildable today by making the harness binary provisioning parallel-safe.
+- **Suggested test:** Make the `delegation-echo`/`echo` binary build deterministic under parallel execution (build once and share, or scope the temp dir and gate on completion before the batteries run), then exercise the package under the parallel unit tier (for example `lenny-test stress`) to confirm the `fork/exec ... no such file or directory` flake no longer reproduces.
 
 ## §4.8 Gateway Policy Engine <a id="t-4.8"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -9267,6 +9274,34 @@ Counts: 6 High, 7 Medium, 2 Low, 2 Info.
 - **Gap:** The §25.8 surface is not represented in the cloud parity matrix, so the upgrade state machine, the cert-manager integration, and version aggregation are never validated on a managed cluster where the K8s API, managed ingress, and cloud cert issuers differ from Kind. This is an Info observation because the matrix is the documented place to declare such coverage and the entries are simply absent. Target tier: tier6 cloud, declared via the parity matrix.
 - **Dependencies:** Requires the cloud e2e harness (`tests/testinfra/cloud`) and provider credentials, which the matrix already assumes for other capabilities.
 - **Suggested test:** Add a `platform_upgrade` and a `cert_manager_lifecycle` capability to `tests/tier6_e2e_cloud/parity-matrix.yaml` with at least one `validated` provider, backed by a tier6 test that drives a no-op version aggregation and a cert renewal observation on GKE.
+
+### - [ ] T-25.8.18 — Platform-upgrade GET /status progress object is not the full §25.2 canonical envelope (missing percent, etaSeconds, etaMethod, lastProgressAt, stalledForSeconds) [Medium] — OPEN
+- **Spec/Doc:** The §25.2 canonical operational-progress envelope (`conventions.Progress`, `pkg/ops/conventions/conventions.go:272`) requires `percent`, `completedSteps`, `totalSteps`, `etaSeconds`, and `stalledForSeconds`; §25.8 (spec/25_agent-operability.md:3496) states `etaSeconds` uses `etaMethod: "fixed_phase_durations"` combined with `historical_p50`.
+- **Existing tests:** `pkg/ops/conventions/conventions_test.go:182` asserts the canonical envelope carries `percent`, `completedSteps`, `totalSteps`, `etaSeconds`, and `stalledForSeconds`. No test pins the platform-upgrade `GET /status` progress payload to that envelope.
+- **Gap:** `upgradeStatusBody` (`pkg/ops/opsserver/platform_upgrade.go:283-300`) sets `"progress": st.Progress()`, and `State.Progress()` (`pkg/ops/upgradeservice/upgradeservice.go:151`) returns only `{currentStep, completedSteps, totalSteps, currentStepDetail}`. The status endpoint therefore omits `percent`, `etaSeconds`, `etaMethod`, `lastProgressAt`, and `stalledForSeconds`. The Operations Inventory path (`pkg/ops/opsinventory/sources.go` `upgradeProgress`) builds a fuller `conventions.Progress`, but the status endpoint serves the bare four-key map.
+- **Dependencies:** Feature-sized — requires implementing the `fixed_phase_durations` ETA (combined with `historical_p50`) and the `percent` basis before the endpoint can emit the full envelope.
+- **Suggested test:** Add a tier3 contract test asserting the platform-upgrade `GET /status` progress object validates against the §25.2 canonical `conventions.Progress` envelope, including `percent`, `etaSeconds`, `etaMethod`, `lastProgressAt`, and `stalledForSeconds`.
+
+### - [ ] T-25.8.19 — version/full under-reports two of the six §25.8 aggregation sources: CRD versions and Helm chart version are never wired [Medium] — OPEN
+- **Spec/Doc:** spec/25_agent-operability.md:3366-3372 lists "CRD versions from K8s API" and "Helm chart version from K8s API (`helm.sh/release.v1` Secret)" among the aggregated version sources for `GET /v1/admin/platform/version/full`.
+- **Existing tests:** Unit coverage exercises `buildVersionAggregator` against the wired ops, gateway, controllers, and postgres-schema sources; no test asserts a CRD-version or Helm-chart-version source.
+- **Gap:** `cmd/lenny-ops/deps.go` `buildVersionAggregator` wires only the ops, gateway, controllers, and postgres-schema sources (a comment notes the CRD-version and Helm-chart-version sources are documented follow-on additions). A search for `helm.sh/release` and a CRD-version source across `pkg/ops/upgradeservice` and `cmd/lenny-ops` finds no implementation, so `GET /v1/admin/platform/version/full` silently omits CRD and Helm drift.
+- **Dependencies:** Requires implementing a CRD-version source and a Helm-chart-version source (reading the `helm.sh/release.v1` Secret) before the aggregator reports all six sources.
+- **Suggested test:** Add a test asserting `GET /v1/admin/platform/version/full` includes the CRD-version and Helm-chart-version sources against a real K8s API with CRDs and a Helm release Secret present.
+
+### - [ ] T-25.8.20 — Canonical compiled-in release-channel public key is not shipped in lenny-ops [Medium] — OPEN
+- **Spec/Doc:** spec/25_agent-operability.md:3415 states "The Lenny release-channel public key is compiled into `lenny-ops`."
+- **Existing tests:** Unit coverage exercises `buildReleaseChannelVerifier`, which returns `nil` when `platform.releaseChannel.publicKeyPath` is unset; no test asserts a compiled-in default key material exists.
+- **Gap:** No release-channel public key material exists in the repo. `buildReleaseChannelVerifier` (`cmd/lenny-ops/deps.go`) returns `nil` when `platform.releaseChannel.publicKeyPath` is unset, so the stock chart (`releaseChannel.url` defaults to `https://releases.lenny.dev/v1/latest`, `publicKeyPath` empty) has no trust anchor and the upgrade-check consumer fails closed until an operator supplies a key.
+- **Dependencies:** Build/release decision — shipping or generating the canonical key and defining its custody process is unresolved.
+- **Suggested test:** Add a test asserting the stock chart configuration yields a working release-channel verifier from the compiled-in key, so the default install has a trust anchor without operator-supplied key material.
+
+### - [ ] T-25.8.21 — TESTING.md change-graph format example references a nonexistent schema_lint_test.go and mis-tiers checkpoint_resume_test.go [Info] — OPEN
+- **Spec/Doc:** TESTING.md change-graph format example JSON block (the same block T-25.8.7 corrected for the `migration_upgrade_test.go` entry).
+- **Existing tests:** `tests/tier0_static` covers change-graph and spec-map validation, but does not assert that the illustrative paths in the TESTING.md change-graph example resolve on disk or are correctly tiered.
+- **Gap:** TESTING.md:325 lists `tests/tier0_static/schema_lint_test.go`, which does not exist (`find tests -name schema_lint_test.go` returns nothing; the real file is `tests/tier0_static/schemas_test.go`). TESTING.md:318 lists `tests/tier4_integration/checkpoint_resume_test.go`, but that file lives at `tests/tier5_e2e_kind/checkpoint_resume_test.go`. These are illustrative doc-example entries (not in the live `change-graph.json`), so lower impact than the `migration_upgrade_test.go` case, but they are the same class of dangling and mistiered reference in the same TESTING.md JSON block.
+- **Dependencies:** none — doc-example correction.
+- **Suggested test:** Correct the TESTING.md change-graph example to reference `tests/tier0_static/schemas_test.go` and the tier5 `checkpoint_resume_test.go` path, and extend the tier0 manifest-integrity check (per T-25.8.7 / T-10.5.11) to cover paths named in the TESTING.md change-graph example.
 
 ## §25.9-25.10 Audit Log Query API and Config Drift Detection <a id="t-25.9-25.10"></a>
 **Spec file:** `spec/25_agent-operability.md`
