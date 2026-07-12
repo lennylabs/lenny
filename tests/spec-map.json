@@ -384,6 +384,7 @@
         "pkg/credential/credential_test.go::TestRotationTriggerCountsAgainstBudget",
         "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
         "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
+        "pkg/gateway/credentials/credrenewal/credrenewal_test.go::TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9",
         "tests/tier2_component/stores/credentialstore_test.go",
         "tests/tier2_component/stores/credentialpoolstore_test.go",
         "tests/tier2_component/stores/credleasestore_test.go",

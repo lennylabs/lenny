@@ -214,6 +214,61 @@ func TestForgetStopsTracking(t *testing.T) {
 	}
 }
 
+// errTokenServiceBreakerOpen stands in for the signal the §4.3 Token
+// Service circuit breaker surfaces to the renewal worker when it is open
+// (the gateway maps a tripped breaker to a Token-Service-unavailable
+// sentinel). The exact channel the worker consults for breaker state is a
+// still-open design question (see the skipped guard test below).
+var errTokenServiceBreakerOpen = errors.New("credrenewal_test: Token Service circuit breaker open")
+
+// TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9 pins the §4.9
+// "Token Service unavailability guard": when the Token Service circuit
+// breaker is open and the existing lease has not yet expired
+// (now < expiresAt), the proactive renewal worker MUST NOT trigger the
+// standard Fallback Flow. Instead it extends the adapter-side lease timer
+// by one renewBeforeBuffer interval and reschedules the renewal, keeping
+// the session alive on its current, still-valid credential until the
+// Token Service recovers.
+//
+// The guard is not yet implemented in the worker: a breaker-open renewal
+// failure is treated like any other renewal failure and, after
+// MaxRenewalRetries, the lease is exhausted and falls through to fault
+// rotation — the checkpoint-and-restart loop the spec explicitly forbids
+// here. The test is skipped until the guard lands; it encodes the
+// spec-required behavior so the assertion is ready when the worker gains
+// breaker awareness and an adapter-timer-extension path.
+//
+// spec: §4.9 (Proactive Lease Renewal — Token Service unavailability guard)
+func TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9(t *testing.T) {
+	t.Skip("§4.9 Token Service unavailability guard is not implemented in the credential renewal worker: a breaker-open renewal is exhausted after MaxRenewalRetries and falls through to the Fallback Flow instead of extending the adapter lease timer and rescheduling")
+
+	// Breaker-open is modeled as the Renewer failing with the Token
+	// Service breaker signal; the lease's expiresAt is well in the future.
+	r := &fakeRenewer{err: errTokenServiceBreakerOpen}
+	var exhausted []string
+	w := credrenewal.New(r, credrenewal.Options{
+		OnExhausted: func(l credrenewal.Lease) { exhausted = append(exhausted, l.LeaseID) },
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-1", SessionID: "sess-1",
+		RenewBefore: base, ExpiresAt: base.Add(time.Hour),
+	})
+
+	// More ticks than MaxRenewalRetries: under the guard none may exhaust
+	// the lease, because the credential is still valid and the breaker is
+	// only transiently open. The Fallback Flow is reserved for an actually
+	// expired credential (now >= expiresAt) or an upstream rejection.
+	for i := 0; i < credrenewal.MaxRenewalRetries+2; i++ {
+		w.Tick(context.Background(), base.Add(time.Second))
+	}
+	if len(exhausted) != 0 {
+		t.Fatalf("lease exhausted %v while the Token Service breaker was open and the lease had not expired; §4.9 forbids the Fallback Flow here", exhausted)
+	}
+	if w.Tracked() != 1 {
+		t.Errorf("tracked = %d, want 1 — the lease stays tracked and is rescheduled while the breaker is open", w.Tracked())
+	}
+}
+
 // flakyRenewer fails its first failFirst calls, then succeeds.
 type flakyRenewer struct {
 	failFirst int
