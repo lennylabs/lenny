@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/jsonrpc_response.json",
+  "title": "JSON-RPC 2.0 response envelope (MCP management server, spec 25.12)",
+  "description": "The single JSON-RPC 2.0 response object the 25.12 MCP management server returns for a request carrying an id. Every response declares jsonrpc:2.0, echoes the request id, and carries exactly one of result or error.",
+  "type": "object",
+  "required": ["jsonrpc", "id"],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "id": {
+      "type": ["integer", "string"]
+    },
+    "result": {
+      "type": "object"
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "integer"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": ["result"]
+    },
+    {
+      "required": ["error"]
+    }
+  ],
+  "additionalProperties": false
+}
