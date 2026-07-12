@@ -421,7 +421,8 @@
         "pkg/gateway/mcpfabric/mcptools/predelegation_test.go",
         "tests/tier2_component/stores/interceptorstore_test.go",
         "tests/tier2_component/gateway_subsystems/llm_proxy_interceptor_test.go",
-        "tests/tier4_integration/external_interceptor_test.go"
+        "tests/tier4_integration/external_interceptor_test.go",
+        "tests/tier4_integration/admission_gate_order_test.go"
       ],
       "packages": [
         "pkg/gateway/interceptors",
@@ -1528,7 +1529,8 @@
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenOperationTypeBreakerRejects",
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenBreakerWithDifferentScopeDoesNotMatch",
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestFirstOpenMatchWins",
-        "tests/tier2_component/breakers/..."
+        "tests/tier2_component/breakers/...",
+        "tests/tier4_integration/admission_gate_order_test.go"
       ],
       "packages": [
         "pkg/circuitbreaker",
