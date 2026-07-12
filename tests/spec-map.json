@@ -3147,7 +3147,8 @@
         "pkg/ops/diagnostics/chain_test.go",
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/auditrate/auditrate_test.go",
-        "tests/tier2_component/stores/diagnostics_prodsource_test.go"
+        "tests/tier2_component/stores/diagnostics_prodsource_test.go",
+        "tests/tier4_integration/diagnostics_test.go"
       ],
       "packages": [
         "pkg/operability/diag"
