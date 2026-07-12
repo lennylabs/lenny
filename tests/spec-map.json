@@ -224,6 +224,7 @@
         "tests/tier2_component/stores/partialmanifeststore_test.go",
         "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
         "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
+        "tests/tier8_chaos/node_drain_during_minio_outage_test.go",
         "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointWritesMetadataOnlyAfterMinIOUpload",
         "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails",
         "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackMinIOOutageWritesPostgresMinimalState",

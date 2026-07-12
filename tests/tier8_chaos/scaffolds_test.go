@@ -128,19 +128,14 @@ func TestDNSOutage(t *testing.T) {
 
 // --- Lifecycle failures ---
 
-// §12.8 node drain during MinIO outage — covered structurally by:
-//   - tests/tier5_e2e_kind/scaffolds_test.go::TestNodeDrainDuringActiveSession
-//     (the drain half).
-//   - tests/tier8_chaos/store_failure_test.go::TestMinIOUnavailable
-//     (the MinIO-down half).
-//   - pkg/admission/drain_readiness webhook (the §12.5 readiness gate).
-//
-// The combined drain + outage scenario is a tier-8 ops follow-on.
-// spec: 12.8
-// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
-func TestNodeDrainDuringMinIOOutage(t *testing.T) {
-	t.Logf("§12.8: drain half covered by tier-5 TestNodeDrainDuringActiveSession; outage half by tier-8 TestMinIOUnavailable. Combined scenario on the ops backlog.")
-}
+// §4.4 / §12.8 node drain during MinIO outage — implemented in
+// tests/tier8_chaos/node_drain_during_minio_outage_test.go
+// (TestNodeDrainDuringMinIOOutage). That file reserves the node-drain
+// chaos-subset target and documents where the eviction-fallback /
+// total-loss disposition is exercised (the tier-4 eviction-fallback
+// tests against real fault-injected stores), the drain driver (tier-5
+// TestNodeDrainDuringActiveSession), and the §12.5 pre-drain gate
+// (tier-8 TestMinIOUnavailable).
 
 // §12.8 runtime upgrade stuck — covered structurally by:
 //   - pkg/controller/runtimeupgrade (the runtime-upgrade state
