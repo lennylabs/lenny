@@ -4,6 +4,8 @@ package containers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -35,6 +37,17 @@ type MinIOOptions struct {
 	// StartupTimeout caps how long we wait for the container to become
 	// ready. Defaults to 60 seconds.
 	StartupTimeout time.Duration
+	// KMSKeyName, when set, starts MinIO with a single SSE-KMS key of
+	// this name (MinIO's built-in `MINIO_KMS_SECRET_KEY` key manager).
+	// It exercises the §12.5 T4 SSE-KMS write path against a real KMS
+	// backend: a PutObject requesting this key succeeds and records
+	// `X-Amz-Server-Side-Encryption: aws:kms`; a PutObject requesting
+	// any other key name is rejected by MinIO with `kms:KeyNotFound`,
+	// which is the fail-closed trigger the store must map onto
+	// CLASSIFICATION_CONTROL_VIOLATION. The name must not contain a
+	// colon: MinIO parses `MINIO_KMS_SECRET_KEY` as `<name>:<base64>`
+	// on the first colon.
+	KMSKeyName string
 }
 
 // MinIO is the handle returned by StartMinIO.
@@ -48,6 +61,12 @@ type MinIO struct {
 	Bucket string
 	// Client is a ready-to-use MinIO client.
 	Client *minio.Client
+	// KMSKeyName is the single SSE-KMS key configured on the container
+	// when MinIOOptions.KMSKeyName was set, otherwise empty. Tests that
+	// exercise the §12.5 T4 SSE-KMS path point their key resolver at
+	// this name for the success case and at any other name for the
+	// fail-closed case.
+	KMSKeyName string
 
 	container testcontainers.Container
 }
@@ -70,15 +89,26 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
 	defer cancel()
 
+	env := map[string]string{
+		"MINIO_ROOT_USER":     minioTestAccessKey,
+		"MINIO_ROOT_PASSWORD": minioTestSecretKey,
+	}
+	if opts.KMSKeyName != "" {
+		// MinIO's built-in single-key KMS: `<name>:<base64 256-bit key>`.
+		// A random key per container keeps the material test-only.
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			t.Fatalf("StartMinIO: generate KMS key: %v", err)
+		}
+		env["MINIO_KMS_SECRET_KEY"] = opts.KMSKeyName + ":" + base64.StdEncoding.EncodeToString(raw)
+	}
+
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        opts.Image,
 			Cmd:          []string{"server", "/data"},
 			ExposedPorts: []string{"9000/tcp"},
-			Env: map[string]string{
-				"MINIO_ROOT_USER":     minioTestAccessKey,
-				"MINIO_ROOT_PASSWORD": minioTestSecretKey,
-			},
+			Env:          env,
 			WaitingFor: wait.ForHTTP("/minio/health/live").
 				WithPort("9000/tcp").
 				WithStartupTimeout(opts.StartupTimeout),
@@ -116,11 +146,12 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 	}
 
 	return &MinIO{
-		Endpoint:  endpoint,
-		AccessKey: minioTestAccessKey,
-		SecretKey: minioTestSecretKey,
-		Bucket:    opts.Bucket,
-		Client:    client,
-		container: container,
+		Endpoint:   endpoint,
+		AccessKey:  minioTestAccessKey,
+		SecretKey:  minioTestSecretKey,
+		Bucket:     opts.Bucket,
+		Client:     client,
+		KMSKeyName: opts.KMSKeyName,
+		container:  container,
 	}
 }
