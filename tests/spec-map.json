@@ -861,13 +861,15 @@
       "tests": [
         "pkg/gateway/mcpfabric/mcp/...",
         "pkg/adapter/mcp/...",
-        "pkg/gateway/mcpfabric/mcptools/discover_agents_filtering_test.go"
+        "pkg/gateway/mcpfabric/mcptools/discover_agents_filtering_test.go",
+        "tests/testinfra/stubs/mcpserver/mcpserver_test.go",
+        "tests/tier4_integration/external_mcp_tool_test.go"
       ],
       "packages": [
         "pkg/mcp"
       ],
       "blocked_until_phase": "5",
-      "notes": "Catalogue of MCP touchpoints: client-facing protocol, internal control-plane stub, delegation MCP. Phase 5 ships the client-facing layer; the others are §9.2-§9.4."
+      "notes": "Catalogue of MCP touchpoints: client-facing protocol, internal control-plane stub, delegation MCP. Phase 5 ships the client-facing layer; the others are §9.2-§9.4. The Gateway ↔ external MCP tools boundary is exercised end to end against the tests/testinfra/stubs/mcpserver external server stub."
     },
     "9.2": {
       "title": "Elicitation Chain",
@@ -901,7 +903,8 @@
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
         "tests/tier2_component/stores/connectorstore_test.go",
-        "tests/tier4_integration/connector_oauth_test.go"
+        "tests/tier4_integration/connector_oauth_test.go",
+        "tests/tier4_integration/external_mcp_tool_test.go"
       ],
       "packages": [
         "pkg/connector",
