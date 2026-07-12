@@ -145,7 +145,14 @@
     },
     "pkg/gateway/llmproxy": {
       "unit": ["pkg/gateway/llmproxy/..."],
-      "integration": ["tests/tier4_integration/llm_proxy_roundtrip_test.go"]
+      "integration": [
+        "tests/tier4_integration/llm_proxy_roundtrip_test.go",
+        "tests/tier4_integration/credential_fallback_test.go"
+      ]
+    },
+    "pkg/gateway/credentials/credfallback": {
+      "unit": ["pkg/gateway/credentials/credfallback/..."],
+      "integration": ["tests/tier4_integration/credential_fallback_test.go"]
     },
     "pkg/admission/sandboxclaim_guard": {
       "unit": ["pkg/admission/sandboxclaim_guard/..."],
