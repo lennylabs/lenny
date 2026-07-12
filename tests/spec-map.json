@@ -434,6 +434,7 @@
         "tests/tier4_integration/credential_lifecycle_test.go",
         "tests/tier4_integration/credential_test.go",
         "tests/tier4_integration/llm_proxy_roundtrip_test.go",
+        "tests/tier2_component/gateway_subsystems/llm_proxy_test.go",
         "tests/tier8_chaos/testbed_partition_test.go",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
         "tests/tier5_e2e_kind/admission_credential_multitenant_test.go"
