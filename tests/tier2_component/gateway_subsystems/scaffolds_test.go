@@ -122,30 +122,10 @@ func TestAdminPlane(t *testing.T) {
 		"handler.")
 }
 
-// TestLLMProxy — lease-token validation, native translator for
-// anthropic_direct, request/response/SSE translation, deny-list
-// enforcement, per-subsystem isolation, circuit-breaker behavior.
-// Validated against the mock LLM provider. The proxy, four
-// translators, circuit breaker, and lease-token verifier ship in
-// pkg/gateway/llmproxy/llmproxy and are unit-covered there; the missing piece
-// for a component-tier wiring is the mock LLM provider recorder,
-// which is not in tests/testinfra.
-//
-// spec: 12.2.3
-// diagnosis: the mock LLM provider recorder is not in
-// tests/testinfra, and the Postgres-backed credleasestore wiring
-// duplicates the existing credleasestore_test.go contract suite.
-func TestLLMProxy(t *testing.T) {
-	t.Log("§12.2.3 LLM Proxy coverage map:")
-	t.Log("- proxy, translators (openai_direct, openai_responses, " +
-		"anthropic_direct, azure_openai, bedrock, vertex), and " +
-		"lease-token verifier: pkg/gateway/llmproxy/llmproxy unit suites.")
-	t.Log("- credleasestore contract: " +
-		"tests/tier2_component/stores/credleasestore_test.go.")
-	t.Log("- circuit breaker: pkg/circuitbreaker unit suite plus " +
-		"pkg/gateway/middleware/circuitbreaker/breakerstore Redis-backed contract suite.")
-	t.Log("The mock LLM provider recorder fixture for a composite " +
-		"component-tier run is on the v1 follow-on backlog; the " +
-		"per-translator and per-handler unit suites cover the " +
-		"documented surface.")
-}
+// The §12.2.3 LLM Proxy subsystem now has a real component-tier suite in
+// llm_proxy_test.go (TestLLMProxySubsystemOnRealStore): it wires the
+// llmproxy.Handler to a real Postgres-backed credential-lease store and
+// the mock LLM provider recorder, then drives lease-token validation, the
+// anthropic_direct translator, non-streaming and SSE translation, deny-list
+// enforcement, and circuit-breaker behavior on the wire. The coverage-map
+// scaffold that stood in for it has been replaced by that suite.

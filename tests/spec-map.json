@@ -148,7 +148,13 @@
       "title": "Edge Gateway Replicas",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "pkg/gateway/..."
+        "pkg/gateway/...",
+        "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPRuntimeEndpointExchangeConformsToSchema",
+        "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPSchemaValidatorRejectsNonConformingFrames",
+        "tests/tier4_integration/subsystem_isolation_test.go::TestUploadHandlerSaturationDoesNotStarveOtherSubsystems",
+        "tests/tier3_contract/rest_circuitbreaker/subsystem_unavailable_test.go::TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes",
+        "pkg/gateway/sessionserver/upload_breaker_convergence_test.go::TestUploadHandlerBreakerConvergesAcrossReplicasUnderBlobStoreOutage",
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
       ],
       "packages": [
         "pkg/gateway"
@@ -433,6 +439,7 @@
         "tests/tier4_integration/credential_lifecycle_test.go",
         "tests/tier4_integration/credential_test.go",
         "tests/tier4_integration/llm_proxy_roundtrip_test.go",
+        "tests/tier2_component/gateway_subsystems/llm_proxy_test.go",
         "tests/tier8_chaos/testbed_partition_test.go",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
         "tests/tier5_e2e_kind/admission_credential_multitenant_test.go"
@@ -1097,7 +1104,8 @@
         "tests/tier2_component/stores/coordleasestore_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/...",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
-        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
       ],
       "packages": [
         "pkg/gateway"
