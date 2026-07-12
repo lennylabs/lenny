@@ -5,17 +5,17 @@
 // Tier-4 integration test for the §4.4 eviction-fallback degradation
 // paths under real fault injection against the live stores:
 //
-//   1. MinIO unreachable mid-fallback with Postgres healthy. The writer
-//      must degrade to the Postgres minimal-state record, truncate the
-//      context inline, and set the conversation_only resume signals
-//      (workspace_lost=true, context_truncated=true, conversation
-//      cursor preserved). The §4.4 line 263 fallback-entry counter
-//      fires; the total-loss counter and the session.lost event do not.
-//   2. MinIO and Postgres both unreachable. The writer must fire the
-//      §4.4 lines 283-289 total-loss orchestration: best-effort
-//      session.lost with reason eviction_total_loss, the
-//      lenny_session_eviction_total_loss_total counter, and the §4.4
-//      line 279 partial-keys-logged counter, leaving no durable row.
+//  1. MinIO unreachable mid-fallback with Postgres healthy. The writer
+//     must degrade to the Postgres minimal-state record, truncate the
+//     context inline, and set the conversation_only resume signals
+//     (workspace_lost=true, context_truncated=true, conversation
+//     cursor preserved). The §4.4 line 263 fallback-entry counter
+//     fires; the total-loss counter and the session.lost event do not.
+//  2. MinIO and Postgres both unreachable. The writer must fire the
+//     §4.4 lines 283-289 total-loss orchestration: best-effort
+//     session.lost with reason eviction_total_loss, the
+//     lenny_session_eviction_total_loss_total counter, and the §4.4
+//     line 279 partial-keys-logged counter, leaving no durable row.
 //
 // The unit tests in pkg/gateway/storage/evictionfallback cover the
 // chooser and total-loss branches against in-memory fakes, and the

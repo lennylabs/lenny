@@ -46,7 +46,8 @@ const realUpstreamKey = "sk-ant-upstream-real-secret"
 func messagesRequest(echo string, stream bool) string {
 	return fmt.Sprintf(
 		`{"model":"claude-3-5-sonnet","stream":%t,"messages":[{"role":"user","content":%q}]}`,
-		stream, echo)
+		stream, echo,
+	)
 }
 
 // fakeResolver is the §4.9 CredentialResolver read side: the in-memory

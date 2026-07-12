@@ -138,7 +138,8 @@ func serveSSE(t *testing.T, srv *opsserver.Server, target string, headers map[st
 // CloudEvents envelope. Any of these breaks a watchdog consuming the
 // stream.
 func TestEventStreamSSEFramingContract(t *testing.T) {
-	srv := eventStreamServer(t, 0,
+	srv := eventStreamServer(
+		t, 0,
 		gwevents.OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"},
 		gwevents.OperationalEvent{Type: "dev.lenny.pool_state_changed", Severity: "warning"},
 	)
@@ -182,7 +183,8 @@ func TestEventStreamSSEFramingContract(t *testing.T) {
 // replays already-delivered events, so a reconnecting watchdog double-
 // processes events it already handled.
 func TestEventStreamSSEResumeContract(t *testing.T) {
-	srv := eventStreamServer(t, 0,
+	srv := eventStreamServer(
+		t, 0,
 		gwevents.OperationalEvent{Type: "dev.lenny.alert_fired"},
 		gwevents.OperationalEvent{Type: "dev.lenny.pool_state_changed"},
 		gwevents.OperationalEvent{Type: "dev.lenny.drift_detected"},
@@ -234,7 +236,8 @@ func pollBody(t *testing.T, srv *opsserver.Server, target string) (map[string]an
 // follow-up poll with the returned cursor re-serves events already read,
 // so a polling watchdog cannot make forward progress without duplicates.
 func TestEventStreamPollingCursorContract(t *testing.T) {
-	srv := eventStreamServer(t, 0,
+	srv := eventStreamServer(
+		t, 0,
 		gwevents.OperationalEvent{Type: "dev.lenny.alert_fired"},
 		gwevents.OperationalEvent{Type: "dev.lenny.pool_state_changed"},
 		gwevents.OperationalEvent{Type: "dev.lenny.drift_detected"},
