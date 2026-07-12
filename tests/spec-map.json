@@ -83,6 +83,7 @@
         "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
         "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
         "tests/tier2_component/stores/tenantaccessstore_test.go",
+        "tests/tier4_integration/ops_event_emission_test.go",
         "tests/tier5_e2e_kind/etcd_encryption_test.go",
         "charts/lenny/tests/etcd-encryption_test.yaml"
       ],
@@ -114,6 +115,34 @@
       "chart_templates": [
         "charts/lenny/templates/etcd-encryption.yaml"
       ]
+    },
+    "4.0": {
+      "title": "Agent Operability Additions",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/upgrade/upgrade_test.go::TestAdvanceEmitsUpgradeProgressedOnEveryTransition",
+        "pkg/upgrade/upgrade_test.go::TestAdvanceWithNilEmitterStillTransitions",
+        "pkg/upgrade/upgrade_test.go::TestAdvanceRollbackEmitsRolledBackPhase",
+        "pkg/controller/warmpool/poolphase_test.go::TestReconcileEmitsPoolStateChangedOnTransition",
+        "pkg/controller/warmpool/poolphase_test.go::TestReconcileNoEmitOnStablePhase",
+        "pkg/controller/warmpool/poolphase_test.go::TestReconcileEmitsExhaustedWithWarningSeverity",
+        "pkg/gateway/externalapi/admin/breakers_test.go::TestOpenBreakerEmitsStateChangedAuditPayload_spec_16_7_673",
+        "pkg/gateway/externalapi/admin/breakers_test.go::TestCloseBreakerEmitsStateChangedAuditPayload_spec_16_7_673",
+        "pkg/gateway/externalapi/admin/eventbuffer_test.go::TestEventBufferSurfacesCircuitBreakerEvent",
+        "pkg/gateway/sessionserver/opsevent_internal_test.go::TestRecordSessionCompletedEmitsSessionFailed",
+        "pkg/gateway/credentials/credentialserver/credentialserver_audit_test.go::TestRotateEmitsCredentialRotated_F491",
+        "tests/tier4_integration/ops_event_emission_test.go"
+      ],
+      "packages": [
+        "pkg/events",
+        "pkg/upgrade",
+        "pkg/controller/warmpool",
+        "pkg/gateway/externalapi/admin",
+        "pkg/gateway/sessionserver",
+        "pkg/gateway/credentials/credentialserver"
+      ],
+      "blocked_until_phase": "4.5",
+      "notes": "§4.0 states the normative EventEmitter wiring on existing subsystems: each listed subsystem takes EventEmitter as a constructor dependency and calls Emit(ctx, event) at the documented state-change point. The unit tests pin each subsystem's emission (upgrade state machine → upgrade_progressed; warm pool state manager → pool_state_changed; circuit breaker handler → circuit_breaker_opened/closed; session manager → session_failed; credential server → credential_rotated). The tier-4 integration test drives a real state change through the live gateway to a delivered operational event. Without this entry the emission call sites had no spec-map linkage, so a dropped Emit would not surface as a coverage gap."
     },
     "4.1": {
       "title": "Edge Gateway Replicas",
@@ -194,6 +223,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier2_component/stores/gcsstore_test.go",
+        "tests/tier2_component/stores/s3store_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudCSI"
       ],
       "packages": [
@@ -1634,6 +1665,7 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier2_component/stores/miniostore_sse_kms_test.go",
         "tests/tier2_component/stores/artifactcatalog_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
@@ -3128,7 +3160,8 @@
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
-        "pkg/ops/opsserver/event_subscriptions_test.go"
+        "pkg/ops/opsserver/event_subscriptions_test.go",
+        "tests/tier3_contract/ops_endpoints/events_test.go"
       ],
       "packages": [
         "pkg/operability/events",
