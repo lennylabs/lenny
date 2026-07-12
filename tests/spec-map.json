@@ -1691,7 +1691,8 @@
         "tests/tier2_component/stores/artifactcatalog_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
-        "tests/tier2_component/preflight/minio_sse_test.go"
+        "tests/tier2_component/preflight/minio_sse_test.go",
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -2528,7 +2529,8 @@
         "pkg/tokenservice/exchange_type_test.go::TestRejectedExchangeCarriesExchangeType_spec_16_7",
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationEmitsExchangeAndRevokeAudit",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
-        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound"
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound",
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
       ],
       "packages": [
         "pkg/observability/audit"
