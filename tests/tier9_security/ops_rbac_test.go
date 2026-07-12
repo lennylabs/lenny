@@ -108,8 +108,8 @@ func opsErrorCode(t *testing.T, body string) string {
 	return env.Error.Code
 }
 
-// opsReadEndpoints are the read endpoints across the three operability
-// families the finding names. Authentication and the role ceiling are
+// opsReadEndpoints are the read endpoints across the lock, escalation,
+// and operations families. Authentication and the role ceiling are
 // enforced identically on each before any handler runs.
 var opsReadEndpoints = []struct {
 	name   string
@@ -124,6 +124,12 @@ var opsReadEndpoints = []struct {
 // spec: §25.4 line 1567 — "Requires platform-admin or tenant-admin role
 // on all endpoints. No anonymous access except /healthz." A request with
 // no bearer is rejected 401 on every operability endpoint.
+//
+// diagnosis: the §25.4 lenny-ops auth middleware admitted an
+// unauthenticated caller on a non-/healthz endpoint. Either the OIDC
+// gate is not wired onto the lock, escalation, or operations family, or
+// it fails open when the Authorization header is absent, exposing every
+// operability surface to anonymous callers.
 func TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567(t *testing.T) {
 	srv, _ := authedOpsServer()
 	for _, ep := range opsReadEndpoints {
@@ -151,6 +157,10 @@ func TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567(t *testing.T) {
 
 // spec: §25.4 line 1567 — /healthz is the sole exemption from the auth
 // requirement so the kubelet can probe an unauthenticated liveness path.
+//
+// diagnosis: the §25.4 /healthz exemption regressed — the auth gate now
+// blocks the one endpoint the spec exempts, which breaks the kubelet
+// liveness probe and would flap lenny-ops out of readiness.
 func TestOpsHealthzAnonymousAdmitted_spec_25_4_1567(t *testing.T) {
 	srv, _ := authedOpsServer()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -165,6 +175,11 @@ func TestOpsHealthzAnonymousAdmitted_spec_25_4_1567(t *testing.T) {
 // and tenant-admin. A verified bearer whose only role is below the
 // ceiling is rejected 403 on every operability endpoint even though
 // authentication succeeded.
+//
+// diagnosis: the §25.4 role ceiling did not hold — a verified bearer
+// whose only role is below platform-admin/tenant-admin reached an
+// operability endpoint. The role gate either omits an endpoint family or
+// admits a role the ceiling excludes.
 func TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567(t *testing.T) {
 	srv, signer := authedOpsServer()
 	tok := mintOpsRBACToken(t, signer, "bob@acme.com", "acme", "", auth.RoleUser)
@@ -184,6 +199,11 @@ func TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567(t *testing.T) {
 
 // spec: §25.4 line 1567 — platform-admin passes the role gate (neither
 // 401 nor 403) on every operability endpoint.
+//
+// diagnosis: the §25.4 role ceiling is over-restrictive — a
+// platform-admin, which the spec admits on all endpoints, was denied.
+// The role gate rejects an identity the ceiling grants, locking
+// operators out of the operability surface.
 func TestOpsRoleCeilingAdmitsPlatformAdmin_spec_25_4_1567(t *testing.T) {
 	srv, signer := authedOpsServer()
 	tok := mintOpsRBACToken(t, signer, "alice@acme.com", "platform", "", auth.RolePlatformAdmin)
@@ -206,6 +226,11 @@ func TestOpsRoleCeilingAdmitsPlatformAdmin_spec_25_4_1567(t *testing.T) {
 // acquiring a platform-scoped lock is denied by the scope-based lock
 // authorization; the same JWT acquiring a lock on a pool in its own
 // tenant passes the control.
+//
+// diagnosis: the §25.4 lock-scope authorization did not return 403
+// LOCK_SCOPE_FORBIDDEN for a tenant-admin acquiring a platform-scoped
+// lock. A tenant admin can block a platform upgrade or restore, or the
+// control over-blocks a lock in the caller's own tenant.
 func TestOpsTenantAdminPlatformLockForbidden_spec_25_4_2128(t *testing.T) {
 	srv, signer := authedOpsServer()
 	tenantAdmin := mintOpsRBACToken(t, signer, "carol@acme.com", "acme", "", auth.RoleTenantAdmin)
@@ -245,6 +270,11 @@ func TestOpsTenantAdminPlatformLockForbidden_spec_25_4_2128(t *testing.T) {
 // SCOPE_FORBIDDEN when it attempts a write (lock acquire requires
 // tools:locks:write), while the same role with no scope claim, or with
 // the matching write scope, passes the gate.
+//
+// diagnosis: the §25.4 RFC 9068 scope-claim narrowing did not hold — a
+// platform-admin token scoped to tools:locks:read reached a write, so
+// the scope claim fails to narrow the effective surface below the role
+// ceiling, or it over-narrows and denies a read its scope grants.
 func TestOpsScopeClaimNarrowsBelowRoleCeiling_spec_25_4_1569(t *testing.T) {
 	srv, signer := authedOpsServer()
 
