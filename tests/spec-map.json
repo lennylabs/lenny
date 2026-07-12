@@ -263,7 +263,8 @@
       "tests": [
         "pkg/controller/warmpool/...",
         "pkg/controller/poolscaling/...",
-        "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6"
+        "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6",
+        "tests/tier5_e2e_kind/node_drain_checkpoint_test.go::TestNodeDrainCheckpointsActiveSession"
       ],
       "packages": [
         "pkg/controller/warmpool",
