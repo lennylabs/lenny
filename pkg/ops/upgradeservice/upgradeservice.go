@@ -145,9 +145,11 @@ type State struct {
 // Active reports whether the upgrade is still in flight (not terminal).
 func (s State) Active() bool { return !upgrade.IsTerminal(s.Phase) }
 
-// Progress returns the §25.8 line 357 uniform progress object for the
-// upgrade: the 1-based step, the total step count, and a human-readable
-// detail. A terminal upgrade reports the full step count.
+// Progress returns the §25.2 canonical progress object for the upgrade:
+// the machine-readable phase identifier, the numeric step counts, and a
+// human-readable detail. A terminal upgrade reports the full step count.
+//
+// spec: §25.2 (progress envelope), §25.8 (upgrade progress).
 func (s State) Progress() map[string]any {
 	step, ok := upgrade.StepNumber(s.Phase)
 	if !ok {
@@ -162,8 +164,14 @@ func (s State) Progress() map[string]any {
 	case s.Paused:
 		detail = "Waiting for operator to call /upgrade/proceed"
 	}
+	// §25.2: currentStep is the machine-readable step identifier — the
+	// phase name (e.g. "OpsRoll"), matching the canonical Progress
+	// envelope and the §25.4 Operations Inventory. The 1-based numeric
+	// step index is completedSteps, the discrete step count the §25.2
+	// envelope defines separately.
 	return map[string]any{
-		"currentStep":       step,
+		"currentStep":       string(s.Phase),
+		"completedSteps":    step,
 		"totalSteps":        upgrade.TotalSteps,
 		"currentStepDetail": detail,
 	}

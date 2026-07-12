@@ -340,7 +340,8 @@ func TestVerifyOnlyAtVerification(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 357 — the progress object reports the 1-based step,
+// spec: §25.2 — the progress object reports currentStep as the
+// machine-readable phase name, completedSteps as the 1-based step index,
 // the total, and an operator-facing detail.
 func TestProgressObject(t *testing.T) {
 	svc, _, _ := newService(t)
@@ -348,7 +349,10 @@ func TestProgressObject(t *testing.T) {
 	_, _ = svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.5.0"})
 	st, _, _ := svc.Status(ctx)
 	p := st.Progress()
-	if p["currentStep"] != 1 || p["totalSteps"] != upgrade.TotalSteps {
+	if p["currentStep"] != string(upgrade.Preflight) {
+		t.Errorf("currentStep = %v, want the phase name %q", p["currentStep"], upgrade.Preflight)
+	}
+	if p["completedSteps"] != 1 || p["totalSteps"] != upgrade.TotalSteps {
 		t.Errorf("progress = %v", p)
 	}
 	if p["currentStepDetail"] != "Waiting for operator to call /upgrade/proceed" {

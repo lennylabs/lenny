@@ -3157,9 +3157,15 @@
     "25.8": {
       "title": "Platform Lifecycle Management",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier3_contract/ops_endpoints/upgrade_test.go",
+        "pkg/ops/opsserver/platform_upgrade_test.go",
+        "pkg/ops/upgradeservice/upgradeservice_test.go"
+      ],
       "packages": [
-        "pkg/operability/lifecycle"
+        "pkg/operability/lifecycle",
+        "pkg/ops/upgradeservice",
+        "pkg/ops/opsserver"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
