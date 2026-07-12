@@ -3073,7 +3073,8 @@
       "title": "Architecture Overview",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
+        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E"
       ],
       "packages": [
         "pkg/operability"
@@ -3116,6 +3117,7 @@
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
         "tests/tier2_component/coordination/tier_transition_test.go::TestTierTransitionSplitBrainReconciliation_spec_25_4",
         "tests/tier4_integration/ops_service_e2e_test.go",
+        "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
