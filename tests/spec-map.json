@@ -3081,6 +3081,7 @@
         "pkg/events/auditbearing_test.go::TestOperationalEventInlineOCSFWireForm",
         "pkg/events/auditbearing_test.go::TestOperationalEventEmptyExtensionsRoundTrip",
         "tests/tier2_component/healthchecks/...",
+        "cmd/lenny-gateway/health_without_prometheus_test.go::TestHealthDegradesFromInProcessRegistryWithoutPrometheus_spec_25_3_450",
         "tests/tier3_contract/ops_endpoints/health_auth_test.go::TestHealthEndpointsRequireAdminRole",
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsResponseWireContract",
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsPostRestartDegradedEnvelope",
