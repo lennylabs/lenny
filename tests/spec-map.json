@@ -379,7 +379,8 @@
         "tests/tier2_component/translators/anthropic_translator_test.go",
         "tests/tier4_integration/credential_test.go",
         "tests/tier4_integration/llm_proxy_roundtrip_test.go",
-        "tests/tier8_chaos/testbed_partition_test.go"
+        "tests/tier8_chaos/testbed_partition_test.go",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/credential",
@@ -470,7 +471,8 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -529,7 +531,8 @@
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestKataIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation",
-        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation"
+        "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -734,7 +737,8 @@
         "pkg/delegation/lease/lease_test.go::TestResolveMaxDepthApplies82BisPrecedence",
         "pkg/delegation/lease/lease_test.go::TestEnforcePolicyCeilingCapsResolved",
         "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling",
-        "tests/tier4_integration/multi_agent_testbed_test.go::TestMultiAgentDelegationTestbedPerHopInvariants"
+        "tests/tier4_integration/multi_agent_testbed_test.go::TestMultiAgentDelegationTestbedPerHopInvariants",
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
       ],
       "packages": [
         "pkg/delegation/cycle",
