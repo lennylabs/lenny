@@ -3243,13 +3243,14 @@
       "title": "Backup and Restore API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/ops/backup/backup_test.go"
+        "pkg/ops/backup/backup_test.go",
+        "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip"
       ],
       "packages": [
         "pkg/operability/backup"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip."
     },
     "25.12": {
       "title": "MCP Management Server",
