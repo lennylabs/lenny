@@ -334,7 +334,10 @@
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReportSessionScrubMissingIDs_spec_4_7",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubIncrementsAndLeaks_spec_4_7",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubMissingPodFailsClosed_spec_4_7",
-        "pkg/adapter/gatewaylink_test.go::TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2"
+        "pkg/adapter/gatewaylink_test.go::TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2",
+        "pkg/adapter/peercredselftest_test.go::TestPeercredSelftest_spec_4_7_passes_on_loopback",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestPassesUnderRuncAndGvisor",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestFaultCrashLoops"
       ],
       "packages": [
         "pkg/adapter",
