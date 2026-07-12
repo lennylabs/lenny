@@ -58,7 +58,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§4.0 Agent Operability Additions](#t-4.0) — 3H 5M 1L 1I — No test drives a real subsystem to a delivered ops event above unit tier; §4.0 missing from spec-map.json
 - [§4.1 Edge Gateway Replicas](#t-4.1) — 4H 4M 1L 1I — No cross-replica session-continuity test; subsystem isolation and MCP-runtime conformance stay unverified.
 - [§4.2 Session Manager](#t-4.2) — 3H 4M 2L 1I — Session Manager: recovery_generation increment and manifest_reason='terminated_during_resume' still untested end to end (memstore-only)
-- [§4.3 Token Service](#t-4.3) — 4H 3M 1L 1I — mTLS enforcement, the oauth/token gateway-proxy path, and RFC 8693 response conformance are still untested end to end
+- [§4.3 Token Service](#t-4.3) — 4H 4M 1L 1I — mTLS enforcement, the oauth/token gateway-proxy path, and RFC 8693 response conformance are still untested end to end; the access-token Redis cache is built but never populated on issuance (dead cache)
 - [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 2L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
 - [§4.5 Artifact Store](#t-4.5) — 3H 7M 2L 2I — Tenant-prefix isolation, DeleteByTenant, and T4 SSE-KMS selection tested only against in-memory fakes, never real MinIO/S3
 - [§4.6 Pod Lifecycle Controllers](#t-4.6) — 3H 7M 3L 1I — 3 High gaps still open: ADR-007 leader-kill chaos, etcd-unavailable chaos, cross-controller SSA-conflict test
@@ -533,6 +533,13 @@ Counts: 4 High, 3 Medium, 1 Low, 1 Info (corrected from the 2026-06-03 tally, wh
 - **Gap:** The spec-to-test map points at packages that were never created and at file paths that have since moved, so a dashboard query for §4.3 coverage resolves stale or missing targets. The named tests do exist under different paths, so this is an accuracy and traceability defect, not a behavioral gap.
 - **Dependencies:** none — buildable today.
 - **Suggested test:** Update the §4.3 entry in `tests/spec-map.json` to point `packages` at `pkg/tokenservice` and the real store packages, replace `pkg/token/...`/`pkg/store/token` with the existing directories, and re-anchor the tier6 entries to `aws_resources_test.go::TestCloudKMS` and `cluster_assertions_test.go::TestCloudSecretStore`.
+
+### - [ ] T-4.3.10 — Token Service builds the §4.3 access-token cache but never populates it on issuance (dead cache) [Medium] — OPEN
+- **Spec/Doc:** "Access tokens short-lived, cached in Redis" (spec/04_system-components.md, §4.3 Token Service).
+- **Existing tests:** `pkg/tokenservice/cache` has unit coverage against miniredis and, since T-4.3.6, a tier2 component test against real Redis (`tests/tier2_component/stores/tokencache_test.go`). Those tests exercise the cache object in isolation (Put/Get/TTL/at-rest encryption); no test drives issuance or revocation through the Token Service and asserts the cache is populated or invalidated as a side effect.
+- **Gap:** The access-token cache is constructed only when `--redis-url` is set (`cmd/lenny-token-service/server.go:94-99`) but is never wired into the issuance or validation path. `buildEventEmitterAndCache` ends with `_ = w.accessCache` (`cmd/lenny-token-service/server.go:101`), and a grep across `pkg/` and `cmd/` shows `w.accessCache` (`cmd/lenny-token-service/wiring.go:139`) has no consumer: there is no `Put`/`Get`/`Invalidate` call site outside `pkg/tokenservice/cache` itself. The spec §4.3 property "access tokens short-lived, cached in Redis" is therefore not realized end to end, and the tier4 assertion T-4.3.6 suggested (a deployed Token Service populates the Redis cache on issuance) would fail against current code. This is a code defect, not a pure test gap.
+- **Dependencies:** Needs a code fix first, most likely through the proposal pipeline: wire `accessCache.Put` on issuance and `accessCache.Invalidate` on revocation. The tier4 test is written once the cache is wired.
+- **Suggested test:** After the cache is wired into the issuance and revocation paths, add a tier4 integration test that boots the Token Service against a real Redis, issues an access token, asserts the corresponding cache entry is present, then revokes and asserts the entry is invalidated.
 
 ## §4.4 Event / Checkpoint Store <a id="t-4.4"></a>
 **Spec file:** `spec/04_system-components.md`
