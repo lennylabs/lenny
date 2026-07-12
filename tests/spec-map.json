@@ -166,11 +166,14 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/session/...",
+        "tests/tier2_component/stores/partial_manifest_terminated_during_resume_test.go::TestPartialManifestTerminatedDuringResume",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/rest_idempotency/idempotency_test.go",
         "tests/tier3_contract/rest_sessions/sessions_test.go",
         "tests/tier4_integration/idempotency_test.go",
-        "tests/tier4_integration/session_lifecycle_test.go"
+        "tests/tier4_integration/session_lifecycle_test.go",
+        "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres",
+        "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway"
       ],
       "packages": [
         "pkg/session",
@@ -221,6 +224,10 @@
         "tests/tier2_component/stores/partialmanifeststore_test.go",
         "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
         "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
+        "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointWritesMetadataOnlyAfterMinIOUpload",
+        "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails",
+        "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackMinIOOutageWritesPostgresMinimalState",
+        "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackTotalLossWhenBothStoresDown",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState"
       ],
@@ -1684,7 +1691,8 @@
         "tests/tier2_component/stores/artifactcatalog_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
-        "tests/tier2_component/preflight/minio_sse_test.go"
+        "tests/tier2_component/preflight/minio_sse_test.go",
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -2521,7 +2529,8 @@
         "pkg/tokenservice/exchange_type_test.go::TestRejectedExchangeCarriesExchangeType_spec_16_7",
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationEmitsExchangeAndRevokeAudit",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
-        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound"
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound",
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
       ],
       "packages": [
         "pkg/observability/audit"
