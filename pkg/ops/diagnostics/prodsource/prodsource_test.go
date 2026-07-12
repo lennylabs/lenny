@@ -294,3 +294,56 @@ func TestSourceSessionPGError(t *testing.T) {
 		t.Fatalf("want error propagated on Postgres failure")
 	}
 }
+
+// TestSourceSessionPostgresUnreachableKubernetesFallback pins the §25.6
+// Postgres-unreachable fallback: when Postgres cannot be read, the
+// session diagnosis must fall back to the Kubernetes API for pod state
+// and return a partial result whose degradation envelope reports
+// actualSource "kubernetes" and primarySource "postgres", rather than
+// propagating the raw Postgres error (which the HTTP layer maps to 500).
+// A Kubernetes connection is present here, so the fallback source exists.
+//
+// This test is skipped: the production Source does not implement the
+// fallback yet, and building it faithfully is blocked on an unresolved
+// cross-section question — the spec locates the pod via the label
+// selector lenny.dev/session-id={id}, but no product code stamps that
+// label on pods (the §4.6.1 claim model is per-pod and carries no
+// per-session pod annotation), so the fallback as specified cannot find
+// the pod in a running cluster. Un-skip once the platform records the
+// session→pod mapping the K8s fallback keys on.
+//
+// spec: §25.6 lines 2918-2922 (Postgres unreachable → 207
+// DIAGNOSTICS_PARTIAL, degradation.actualSource="kubernetes",
+// primarySource="postgres"; both Postgres and Kubernetes unreachable →
+// 503).
+func TestSourceSessionPostgresUnreachableKubernetesFallback_spec_25_6_2918(t *testing.T) {
+	t.Skip("Postgres-unreachable Kubernetes fallback is unimplemented: spec locates the pod by the lenny.dev/session-id label that no product code stamps; blocked on the session→pod recovery decision")
+
+	// Postgres unreachable, Kubernetes reachable: the diagnosis is served
+	// from the K8s API as a partial result.
+	s := &Source{
+		PG:           &fakePG{sessionErr: errors.New("connection refused")},
+		Pods:         &fakePods{sig: diagnostics.Signals{ExitCode: 137, OOMKilled: true}, found: true},
+		PodNamespace: "lenny-system",
+	}
+	rec, err := s.Session(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("want K8s fallback, got propagated error: %v", err)
+	}
+	if !rec.Found {
+		t.Fatalf("want the session served from the Kubernetes fallback, got not-found")
+	}
+	if rec.Degradation == nil {
+		t.Fatalf("want a degradation envelope on the Postgres-unreachable fallback")
+	}
+	if rec.Degradation.ActualSource != "kubernetes" || rec.Degradation.PrimarySource != "postgres" {
+		t.Fatalf("want actualSource=kubernetes primarySource=postgres, got %+v", rec.Degradation)
+	}
+
+	// Both Postgres and Kubernetes unreachable: no fallback source, so the
+	// diagnosis is unavailable (the HTTP layer maps this to 503).
+	both := &Source{PG: &fakePG{sessionErr: errors.New("connection refused")}}
+	if _, err := both.Session(context.Background(), "s1"); err == nil {
+		t.Fatalf("want an unavailable error when both Postgres and Kubernetes are unreachable")
+	}
+}
