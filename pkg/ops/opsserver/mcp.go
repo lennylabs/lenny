@@ -4,6 +4,7 @@ package opsserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -34,7 +35,23 @@ type opsInvoker struct {
 // the lenny-ops mux. The captured response becomes the tool result;
 // §25.2 dry-run previews (200 with dryRun:true) are surfaced so the
 // management server can apply the §25.12 dry-run mapping.
-func (i *opsInvoker) Invoke(tool mcp.Tool, args json.RawMessage) (mcp.ToolResult, error) {
+//
+// The replay inherits ctx from the originating /mcp/management request,
+// so the caller's already-verified principal, scope claim, and
+// correlation values carry onto the replayed request. §25.12 requires
+// that the tool's mapped REST call "passes through the standard OIDC/JWT
+// middleware and role-based authorization check"; the replay routes
+// through the post-authentication chain (mcpReplayHandler), which re-runs
+// the §25.4 role gate and §25.1 scope gate against that principal without
+// re-verifying a bearer that is not forwarded in-process. Without
+// propagating the principal the role gate would reject the principal-less
+// replay (401/403) and every management tool invocation would fail
+// whenever the §25.4 auth gate is configured.
+//
+// spec: §25.12 — "Every MCP tool invocation that passes the scope check
+// is translated into a REST call ... That REST call passes through the
+// standard OIDC/JWT middleware and role-based authorization check."
+func (i *opsInvoker) Invoke(ctx context.Context, tool mcp.Tool, args json.RawMessage) (mcp.ToolResult, error) {
 	path, query, body, err := buildToolRequest(tool, args)
 	if err != nil {
 		return mcp.ToolResult{}, err
@@ -50,12 +67,18 @@ func (i *opsInvoker) Invoke(tool mcp.Tool, args json.RawMessage) (mcp.ToolResult
 		reader = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequest(tool.Method, url, reader)
+	// Inherit the caller's verified principal, scope claim, and
+	// correlation context from the originating /mcp/management request so
+	// the replay is authorized as the real caller (spec: §25.12).
+	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	// §25.12: the management server is the caller; mark the invocation
-	// so audit and identity attribution see the MCP path.
+	// so audit and identity attribution see the MCP path. This is only a
+	// fallback: when a principal is on the context the handlers attribute
+	// to the principal's subject, not this header.
 	req.Header.Set("X-Lenny-Caller", "mcp-management")
 	rec := httptest.NewRecorder()
-	i.server.ServeHTTP(rec, req)
+	i.server.mcpReplay.ServeHTTP(rec, req)
 
 	result := mcp.ToolResult{
 		Status: rec.Code,
