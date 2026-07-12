@@ -223,6 +223,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier2_component/stores/gcsstore_test.go",
+        "tests/tier2_component/stores/s3store_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudCSI"
       ],
       "packages": [
