@@ -55,16 +55,16 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 
 ### Spec subsections
 - [§1-3 Core Principles, Goals, and Architecture](#t-1-3) — 2H 4M 0L 1I — no suggested test files landed on disk; all 7 findings (T-2.1..T-2.5, T-1.1, T-3.1) remain OPEN unchanged
-- [§4.0 Agent Operability Additions](#t-4.0) — 3H 4M 1L 1I — No test drives a real subsystem to a delivered ops event above unit tier; §4.0 missing from spec-map.json
+- [§4.0 Agent Operability Additions](#t-4.0) — 3H 5M 1L 1I — No test drives a real subsystem to a delivered ops event above unit tier; §4.0 missing from spec-map.json
 - [§4.1 Edge Gateway Replicas](#t-4.1) — 4H 4M 1L 1I — No cross-replica session-continuity test; subsystem isolation and MCP-runtime conformance stay unverified.
 - [§4.2 Session Manager](#t-4.2) — 3H 4M 2L 1I — Session Manager: recovery_generation increment and manifest_reason='terminated_during_resume' still untested end to end (memstore-only)
 - [§4.3 Token Service](#t-4.3) — 4H 3M 1L 1I — mTLS enforcement, the oauth/token gateway-proxy path, and RFC 8693 response conformance are still untested end to end
 - [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 2L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
-- [§4.5 Artifact Store](#t-4.5) — 3H 5M 2L 2I — Tenant-prefix isolation, DeleteByTenant, and T4 SSE-KMS selection tested only against in-memory fakes, never real MinIO/S3
+- [§4.5 Artifact Store](#t-4.5) — 3H 7M 2L 2I — Tenant-prefix isolation, DeleteByTenant, and T4 SSE-KMS selection tested only against in-memory fakes, never real MinIO/S3
 - [§4.6 Pod Lifecycle Controllers](#t-4.6) — 3H 7M 3L 1I — 3 High gaps still open: ADR-007 leader-kill chaos, etcd-unavailable chaos, cross-controller SSA-conflict test
 - [§4.7 Runtime Adapter](#t-4.7) — 6H 7M 4L 1I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002)
 - [§4.8 Gateway Policy Engine](#t-4.8) — 3H 9M 2L 1I — External gRPC interceptor path (and the protobuf contract, admission-gate ordering) still never exercised through a live gateway binary
-- [§4.9 Credential Leasing Service](#t-4.9) — 9H 12M 3L 1I — No proxy/SPIFFE/deny-list/fallback/lifecycle e2e coverage; pre-claim race now spans create->finalize (proposal 0007), still untested; three tier5 admission tests now fail closed against unrelated webhooks post-proposal-0035
+- [§4.9 Credential Leasing Service](#t-4.9) — 9H 12M 4L 1I — No proxy/SPIFFE/deny-list/fallback/lifecycle e2e coverage; pre-claim race now spans create->finalize (proposal 0007), still untested; three tier5 admission tests now fail closed against unrelated webhooks post-proposal-0035
 - [§5.1 Runtime](#t-5.1) — 2H 6M 2L 1I — publishedMetadata + MCP capability-inference contract tests still missing; integrationLevel/labels gaps closed
 - [§5.2 Pool Configuration and Execution Modes](#t-5.2) — 4H 5M 2L 1I — Tenant-label-immutability webhook and T4 cross-tenant retire-at-assignment lack live-cluster tests
 - [§5.3 Isolation Profiles](#t-5.3) — 3H 5M 2L 1I — gVisor/Kata sandbox boundary and cosign/webhook fail-closed paths still untested end-to-end (3 High)
@@ -110,7 +110,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§12.2 Storage Roles](#t-12.2) — 1H 4M 1L 0I — EventStore chain-exclusion invariant (publish-state/retry-count never re-hash prev_hash) still has zero component test
 - [§12.3 Postgres HA Requirements](#t-12.3) — 3H 5M 3L 1I — Postgres HA failover (RPO=0/RTO&lt;30s), 503-on-outage, and transaction-mode pooler sentinel remain untested live
 - [§12.4 Redis HA and Failure Modes](#t-12.4) — 3H 6M 2L 1I — Bounded fail-open / cumulative financial-security control and plaintext-rejection probe still untested against a real Redis outage.
-- [§12.5 Artifact Store](#t-12.5) — 3H 6M 2L 1I — 3 High gaps open: MinIO-outage fallback, checkpoint-resume, and S3/GCS/Azure backends lack e2e coverage.
+- [§12.5 Artifact Store](#t-12.5) — 4H 6M 2L 1I — 3 High gaps open: MinIO-outage fallback, checkpoint-resume, and S3/GCS/Azure backends lack e2e coverage.
 - [§12.6 Interface Design](#t-12.6) — 1H 5M 2L 1I — EventBus publish-after-commit replay/retranscribe path still untested against a real Redis outage (tier8)
 - [§12.7 Extensibility](#t-12.7) — 0H 1M 1L 1I — TokenStore Vault/KMS migration bullet unproven: cloud_secret_store tier6 suite still planned for all providers
 - [§12.8 Compliance Interfaces](#t-12.8) — 6H 8M 2L 1I — Phase 3.5 legal-hold escrow now built+tested (was the headline gap); chaos scaffolds & erasure.requested sink propagation remain the open High gaps.
@@ -314,6 +314,13 @@ Counts: 2 High, 4 Medium, 0 Low, 1 Info.
 - **Gap:** No gap for the scope matcher consumed by the MCP adapter or for the CloudEvents envelope; this finding records where the §4.0 shared-package coverage already exists so it is not double-counted. The admin-API middleware consumer of `pkg/common/scopes` (as opposed to the MCP adapter consumer) is exercised by the tier9 RBAC test (tests/tier9_security/rbac_test.go) against the admin role matrix.
 - **Dependencies:** none — buildable today.
 - **Suggested test:** No new test required for this item; retain the tier3 contract coverage and ensure the future §4.0 spec-map entry (T-4.0.3) references mcp_test.go and cloudevents_test.go so the coverage is attributed.
+
+### - [ ] T-4.0.10 — No tier-2+ test drives `pool_state_changed`, `upgrade_progressed`, `session_failed`, or `credential_rotated`/`credential_pool_exhausted` to a delivered operational event [Medium] — OPEN
+- **Spec/Doc:** spec/04_system-components.md:32-36 lists five EventEmitter-wired subsystems that emit operational events at documented state-change points.
+- **Existing tests:** `tests/tier4_integration/ops_event_emission_test.go` drives only the circuit-breaker subsystem (`circuit_breaker_opened`/`circuit_breaker_closed`) against `GET /v1/admin/events/buffer`. A grep for the other four event short-names across `tests/` finds only unit- and contract-tier references, none asserting delivery through a live subsystem.
+- **Gap:** Four of the five EventEmitter-wired subsystems have no component-or-higher test driving a real state change to a delivered operational event. `pool_state_changed` and `upgrade_progressed` require a Kubernetes warm-pool/upgrade state change (tier5/Kind); `session_failed` and `credential_rotated`/`credential_pool_exhausted` require inducing a session failure or a credential-lease rotation against a live gateway, and no test currently drives either to a buffer assertion. This extends the circuit-breaker-only coverage of T-4.0.1 to the remaining subsystems.
+- **Dependencies:** `pool_state_changed`/`upgrade_progressed` need the tier5 Kind harness with a warm-pool/upgrade driver; `session_failed`/`credential_rotated` need a live gateway with a failing session and a credential-lease rotation. The event-buffer assertion surface (`GET /v1/admin/events/buffer`) already exists.
+- **Suggested test:** Add a tier4 integration case driving a session failure and a credential-lease rotation to their event short-names on the buffer, plus a tier5 Kind case driving a warm-pool state change and a runtime upgrade to `pool_state_changed` and `upgrade_progressed`.
 
 ## §4.1 Edge Gateway Replicas <a id="t-4.1"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -724,6 +731,20 @@ The §4.5 spec text (spec/04_system-components.md:296-312) is byte-identical to 
 - **Gap:** The immutability/content-addressing property is exercised against literal expected hashes rather than recomputed over bytes actually persisted to and retrieved from the store. The risk is low because the upload hash computation is unit-tested, but there is no end-to-end confirmation that the stored object's bytes hash to the recorded reference. This is an observation about assertion strength rather than a missing behavior.
 - **Dependencies:** none — buildable today. Folds naturally into the derive byte-copy test (T-4.5.5) using a real MinIO container.
 - **Suggested test:** Within `tests/tier4_integration/derive_workspace_copy_test.go`, after the derive byte-copy, read the stored snapshot object back and assert `sha256(bytes)` equals the snapshot's recorded `ContentHash` and the derived session's `parent_workspace_ref`.
+
+### - [ ] T-4.5.13 — `pkg/blobstore/s3` exposes no path-style addressing knob, blocking any S3-compatible-emulator component test [Medium] — OPEN
+- **Spec/Doc:** §4.5 provides for cloud-managed deployments using AWS S3 and self-managed deployments using an S3-compatible backend; component-tier coverage of the S3 backend requires pointing it at a local S3-compatible emulator.
+- **Existing tests:** `pkg/blobstore/s3/s3_test.go` constructs an in-process fake; no component test runs the S3 backend against a real or emulated endpoint. Empirically, pointing `s3.New` at a MinIO container issues virtual-hosted requests to `http://lenny-artifacts.localhost:PORT/...` and fails with `dial tcp: lookup lenny-artifacts.localhost: no such host`.
+- **Gap:** `pkg/blobstore/s3/s3.go:192` calls `s3.NewFromConfig(cfg.AWSConfig)` with no option function, so `UsePathStyle` is always false, and the config struct (`s3.go:65`) carries no endpoint or path-style field. Real AWS S3 works with the current code, but any local S3-compatible emulator (MinIO, LocalStack) is unreachable because virtual-hosted addressing resolves a per-bucket hostname that does not exist locally. This blocks a real-backend component test for the S3 backend, a subset of the T-4.5.2 gap.
+- **Dependencies:** Requires a path-style/endpoint override on the S3 config plus a MinIO or LocalStack container (`tests/testinfra/containers`).
+- **Suggested test:** Add a path-style/endpoint-override field to the S3 config wired to `func(o *s3.Options){ o.UsePathStyle = true }`, then add `tests/tier2_component/stores/s3store_test.go` running the shared blobstore contract against a MinIO container in path-style mode.
+
+### - [ ] T-4.5.14 — `pkg/blobstore/azureblob` accepts only a bearer TokenCredential, blocking any Azurite component test [Medium] — OPEN
+- **Spec/Doc:** §4.5 provides for cloud-managed deployments using Azure Blob Storage; component-tier coverage of the Azure Blob backend requires pointing it at the Azurite emulator.
+- **Existing tests:** `pkg/blobstore/azureblob/azureblob_test.go` constructs an in-process fake; no component test runs the Azure Blob backend against Azurite.
+- **Gap:** `pkg/blobstore/azureblob/azureblob.go:191-210` requires `cfg.Credential` (an `azcore.TokenCredential`) non-nil and constructs `azblob.NewClient(serviceURL, tokenCred, nil)`, which authenticates via OAuth bearer tokens. Azurite over HTTP supports only SharedKey/SAS auth, so there is no exported path to point the store at Azurite. The config struct (`azureblob.go:60`) has no SharedKeyCredential or connection-string field, and no `azblob.NewClientWithSharedKeyCredential`/`NewClientFromConnectionString` call exists in the package. This blocks a real-backend component test for the Azure Blob backend, a subset of the T-4.5.2 gap.
+- **Dependencies:** Requires a SharedKey or connection-string credential path on the azureblob config plus an Azurite container (`tests/testinfra/containers`).
+- **Suggested test:** Add a SharedKeyCredential/connection-string field to the azureblob config wired to `azblob.NewClientWithSharedKeyCredential`/`NewClientFromConnectionString`, then add `tests/tier2_component/stores/azureblobstore_test.go` running the shared blobstore contract against an Azurite container.
 
 ## §4.6 Pod Lifecycle Controllers <a id="t-4.6"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -1233,6 +1254,13 @@ Counts: 7 High, 7 Medium, 2 Low, 1 Info.
 - **Gap:** All four scenarios are `t.Logf` scaffolds mapped by `tests/tier8_chaos/runbook-map.yaml:141-156`; the credential-bearing chaos workload needed to hold a live lease does not yet exist, so resilience of credential leasing under failure is unverified end to end. Overlaps T-4.9.7.
 - **Dependencies:** Requires the chaos profile (toxiproxy) and a pod holding a live lease; the credential-bearing chaos workload does not exist. Building it is part of this finding.
 - **Suggested test:** Flip the four scaffolds into live tier8 tests that each hold a real lease: drive an emergency revoke during an active session, fail a rotation, cut Redis and assert deny-list propagation, and exhaust a finite-lease pool.
+
+### - [ ] T-4.9.26 — Existing test function names embed non-durable ids (finding ids and line-numbered spec refs), violating the test-naming rule [Low] — OPEN
+- **Spec/Doc:** The project test-convention rule requires citing the spec only through a `// spec: §X.Y` annotation and forbids embedding finding ids or line-numbered spec references in test function names (see `.claude/rules/test-coverage.md`).
+- **Existing tests:** `pkg/gateway/credentials/credentialserver/credentialserver_audit_test.go:89` `TestRotateEmitsCredentialRotated_F491` (and sibling `_F491` tests); `pkg/gateway/externalapi/admin/breakers_test.go:158`/`:195` `TestOpenBreakerEmitsStateChangedAuditPayload_spec_16_7_673` and `TestCloseBreakerEmitsStateChangedAuditPayload_spec_16_7_673`; `pkg/credential/lease_test.go:125` `TestAllProxyDialectsIsExhaustive_spec_4_9_1473`.
+- **Gap:** These test names embed a finding id (`_F491`) or a line-numbered spec reference (`_spec_16_7_673`, `_spec_4_9_1473`) directly in the function name. Finding ids and line numbers are non-durable and drift as the spec and audit change, so the names go stale and violate the naming rule. Two of the three cited files are §4.9 credential-leasing tests; the breakers file is a §16.7 audit-event test.
+- **Dependencies:** none — buildable today.
+- **Suggested test:** Rename the offending test functions to name the behavior under test and move the spec citation into a `// spec:` annotation, then add a tier0/static lint that fails when a test name matches the finding-id or line-numbered-spec-ref pattern so the drift cannot recur.
 
 ## §5.1 Runtime <a id="t-5.1"></a>
 **Spec file:** `spec/05_runtime-registry-and-pool-model.md`
@@ -5217,6 +5245,13 @@ Counts: 3 High, 6 Medium, 2 Low, 1 Info (across 12 findings, 2 resolved).
 - **Gap:** This is a spec-map-versus-disk inconsistency. A dashboard query for §12.5 resolves a dead test pointer and an absent package, which masks the real coverage location and could let a relocation regression ship unnoticed. No behavior is untested; the mapping is stale.
 - **Dependencies:** None — buildable today.
 - **Suggested test:** Update tests/spec-map.json §12.5 to point at `tests/tier6_e2e_cloud/cluster_assertions_test.go::TestMultiAZMinIO`, replace the `pkg/store/artifact` package entry with the `pkg/blobstore/*` packages, and add the existing `pkg/blobstore/cataloging`, `pkg/gateway/checkpoint/checkpointretention`, `pkg/gateway/storage/retentiongc`, and `pkg/tenantkms` test paths so the §12.5 row reflects actual coverage.
+
+### - [ ] T-12.5.13 — Cloud blob backends (s3, gcs, azureblob) do not fail closed with `CLASSIFICATION_CONTROL_VIOLATION` when a T4 tenant KMS key is rejected at the backend [High] — OPEN
+- **Spec/Doc:** The §12.5 crypto-erasure MUST requires a T4 (`requireKey=true`) write to fail closed with `CLASSIFICATION_CONTROL_VIOLATION` when the tenant-scoped KMS key is unusable, so a T4 artifact is never written under a key that cannot later crypto-erase it (spec/12_storage-architecture.md).
+- **Existing tests:** The MinIO backend was fixed to fail closed on a rejected tenant key (T-4.5.3). The cloud backends map only resolver-level failures (`pkg/blobstore/s3/s3.go:127-136`) to `ErrClassificationControlViolation`; no test drives an AWS/GCS/Azure KMS rejection of a T4 tenant key on a write.
+- **Gap:** `pkg/blobstore/s3/s3.go:247-251` (`PutObject`) and `:296-297` (`CopyObject`) return a generic `blobstore/s3: PutObject/CopyObject: %w` error on any client error, including an AWS KMS rejection of the tenant-scoped key on a `requireKey=true` (T4) write; there is no `SetOnKMSUnavailable` hook and no mapping of a backend KMS rejection to `ErrClassificationControlViolation`. `pkg/blobstore/gcs/gcs.go` (see the `ErrClassificationControlViolation` comment at `gcs.go:64`) and `pkg/blobstore/azureblob/azureblob.go` share the resolver pattern and very likely the same gap. The same §12.5 crypto-erasure MUST that the MinIO fix addresses is therefore unmet on the cloud backends. These are cloud/tier6 backends, out of scope for the MinIO-focused finding they were found under (T-4.5.3).
+- **Dependencies:** Requires provisioned per-provider buckets with a tenant-scoped KMS key that can be disabled, via `scripts/cloud/<provider>/up.sh` and the `tests/testinfra/cloud` guard (tier6).
+- **Suggested test:** Map a backend KMS rejection on a `requireKey=true` write to `ErrClassificationControlViolation` in each cloud backend, then add a tier6 case per provider that disables the tenant KMS key and asserts a T4 `PutObject`/`CopyObject` fails closed with `CLASSIFICATION_CONTROL_VIOLATION` and writes no object.
 
 ## §12.6 Interface Design <a id="t-12.6"></a>
 **Spec file:** `spec/12_storage-architecture.md`
