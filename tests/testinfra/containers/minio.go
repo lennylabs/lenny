@@ -135,3 +135,18 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		container: container,
 	}
 }
+
+// Stop terminates the MinIO container mid-test so a caller can inject a
+// genuine MinIO outage: subsequent client operations fail to connect
+// rather than returning success. It is the testcontainers analogue of the
+// tier-8 "scale the MinIO Deployment to zero" injection, used by the
+// §25.11 backup-degradation upload-failure test. The t.Cleanup registered
+// by StartMinIO tolerates a double Terminate.
+func (m *MinIO) Stop(t testing.TB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := m.container.Terminate(ctx); err != nil {
+		t.Fatalf("MinIO.Stop: terminate: %v", err)
+	}
+}
