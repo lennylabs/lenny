@@ -86,7 +86,7 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	manifest, err := p.source.Latest(channel)
+	manifest, err := p.source.Latest(r.Context(), channel)
 	if err != nil {
 		if errors.Is(err, ErrManifestNotFound) {
 			writeError(w, http.StatusNotFound,

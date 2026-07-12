@@ -1716,13 +1716,22 @@ platform:
     # GET /v1/admin/platform/upgrade-check. Empty disables the check.
     url: https://releases.lenny.dev/v1/latest
     # publicKeyPath is the file path inside the lenny-ops container of
-    # the operator-held Ed25519 public key that signs release-channel
-    # responses (§25.8 "operators running a mirror that re-signs with
-    # their own key can override via platform.releaseChannel.public-
-    # KeyPath"). Empty means the canonical Lenny release-channel public
-    # key compiled into lenny-ops is used; set to mount an internal
-    # mirror's verifying key into the pod.
+    # the operator-held Ed25519 public key (PEM PKIX) the upgrade-check
+    # consumer verifies release-channel responses against (§25.8
+    # "operators running a mirror that re-signs with their own key can
+    # override via platform.releaseChannel.publicKeyPath"). When set,
+    # lenny-ops fetches the manifest from url over HTTP and rejects any
+    # response whose X-Lenny-Release-Signature does not verify. Empty
+    # leaves the upgrade-check consumer without a trust anchor: the check
+    # fails closed until either this key or the compiled-in canonical key
+    # is available. Mount the key file into the pod (a Secret volume) at
+    # this path.
     publicKeyPath: ""
+    # publicKeyID is the identifier of the release-channel signing key
+    # the consumer trusts. It must match the keyId in the responses'
+    # X-Lenny-Release-Signature envelope. Required when publicKeyPath is
+    # set.
+    publicKeyID: ""
     # publisher configures the §25.8 release-channel manifest publisher
     # this lenny-ops install runs. Most installs are channel consumers
     # rather than publishers; set publisher.enabled to true to make

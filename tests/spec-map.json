@@ -3157,12 +3157,25 @@
     "25.8": {
       "title": "Platform Lifecycle Management",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier3_contract/ops_endpoints/upgrade_test.go",
+        "pkg/ops/opsserver/platform_upgrade_test.go",
+        "pkg/ops/upgradeservice/upgradeservice_test.go",
+        "tests/tier2_component/observability/version_aggregation_test.go",
+        "tests/tier4_integration/release_channel_fetch_test.go",
+        "tests/tier9_security/release_channel_signature_test.go",
+        "tests/tier10_conformance/release_channel_manifest_test.go"
+      ],
       "packages": [
-        "pkg/operability/lifecycle"
+        "pkg/upgrade",
+        "pkg/ops/upgradeservice",
+        "pkg/ops/versionsource",
+        "pkg/ops/opsserver",
+        "pkg/ops/registryservice",
+        "pkg/releasechannel"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts."
     },
     "25.9": {
       "title": "Audit Log Query API",

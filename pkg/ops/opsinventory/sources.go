@@ -293,7 +293,13 @@ func upgradeStatus(st upgradeservice.State) operations.Status {
 func upgradeProgress(st upgradeservice.State) *conventions.Progress {
 	raw := st.Progress()
 	p := &conventions.Progress{EtaMethod: conventions.EtaNone}
-	if step, ok := raw["currentStep"].(int); ok {
+	// §25.2: currentStep is the phase-name identifier; completedSteps is
+	// the numeric step index. §25.4 (Operations Inventory) surfaces the
+	// phase name in currentStep, e.g. "GatewayRoll".
+	if cs, ok := raw["currentStep"].(string); ok {
+		p.CurrentStep = cs
+	}
+	if step, ok := raw["completedSteps"].(int); ok {
 		s := step
 		p.CompletedSteps = &s
 	}
