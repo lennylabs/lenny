@@ -133,7 +133,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§16.3 Distributed Tracing](#t-16.3) — 5H 4M 2L 2I — No trace-id-propagation or coordinator.handoff span test through real running binaries (tier4/5) or a live collector/cloud backend
 - [§16.4 Logging](#t-16.4) — 3H 6M 3L 1I — New session_logs/stream_cursors partitioning + maintainer (mig. 0149) has zero real-Postgres coverage and no writer
 - [§16.5 Alerting Rules and SLOs](#t-16.5) — 3H 7M 2L 2I — §16.5: no test drives the real gateway/Prometheus surface to alert-firing; SLO/burn-rate load validation still unexecuted (skip-gated).
-- [§16.6 Operational Events Catalog](#t-16.6) — 3H 5M 1L 1I — Ops-event delivery has no Tier 4 integration coverage and the CloudEvents envelope is never pinned to the external v1.0.2 schema.
+- [§16.6 Operational Events Catalog](#t-16.6) — 3H 6M 1L 1I — Ops-event delivery has no Tier 4 integration coverage and the CloudEvents envelope is never pinned to the external v1.0.2 schema; pkg/events is missing from change-graph.json so envelope changes resolve to tier-0 only.
 - [§16.7 Section 25 Audit Events](#t-16.7) — 2H 7M 2L 1I — Most §16.7 payload fields, OCSF-schema conformance, and residency routing remain unverified above unit tier
 - [§16.8 Section 25 Metrics](#t-16.8) — 2H 5M 1L 1I — 5 of 65 §16.8 metrics still lack an emit site; no test scrapes lenny-ops /metrics to verify §16.8 exposure
 - [§16.9 Prometheus Scrape Targets and CRDs](#t-16.9) — 2H 5M 2L 1I — No e2e/tier5-6 or CRD-schema coverage: ServiceMonitor/PodMonitor discovery, scrape, and default-deny reachability are render-only.
@@ -154,7 +154,7 @@ Across 132 audited units: **1553 findings** — 487 High, 691 Medium, 228 Low, 1
 - [§25.1-25.2 Agent Operability: Design Philosophy and Architecture](#t-25.1-25.2) — 3H 6M 1L 1I — lenny-ops still lacks live integration/chaos/cloud tests; new gap: recommendations degraded-envelope transition untested
 - [§25.3 Gateway-Side Ops Endpoints](#t-25.3) — 3H 4M 3L 0I — Health endpoints still unauthenticated vs spec's admin-role mandate; 4 admin endpoints still have zero contract/integration coverage.
 - [§25.4 The lenny-ops Service](#t-25.4) — 4H 8M 2L 1I — lenny-ops split-brain lock reconciliation, RBAC/NetworkPolicy, and compose/cloud e2e coverage still absent; audit moved to gateway §25.9
-- [§25.5 Operational Event Stream](#t-25.5) — 6H 5M 2L 1I — No tier3/4/5/6/8/9 test exercises the event stream; SSE/poll still lacks a Redis source (retention purge now resolved).
+- [§25.5 Operational Event Stream](#t-25.5) — 6H 6M 3L 1I — No tier3/4/5/6/8/9 test exercises the event stream; SSE/poll still lacks a Redis source (retention purge now resolved); read endpoints are platform-admin-only vs the tenant-scoped-caller rule, and UpdateSubscription filter patching is unasserted.
 - [§25.6 Diagnostic Endpoints](#t-25.6) — 3H 8M 1L 0I — Auto-remediation now implemented+unit-tested (was High); tier4/5 live-service, REST scope, degradation-matrix gaps remain High
 - [§25.7 Operational Runbooks Engine](#t-25.7) — 2H 4M 1L 1I — MCP runbook tools now drop all 5 Path A filters (openapi.json declares no query params); still no inventory/authz test
 - [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 10M 2L 3I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test; new gaps: status progress omits the §25.2 canonical envelope, version/full drops CRD/Helm sources, no compiled-in release-channel key, TESTING.md change-graph example dangling refs
@@ -7178,6 +7178,13 @@ Coverage for §16.5 is concentrated in static and unit tiers. `pkg/alerting/rule
 - **Dependencies:** None — buildable today.
 - **Suggested test:** Extend `pkg/events/catalog.go` with a per-event severity and required-payload-field table and add a `pkg/events/catalog_severity_test.go` that asserts each §16.6 experiment event's declared severity and payload-field set matches the spec, so the contract is verified at the catalog rather than only at scattered emission sites.
 
+### - [ ] T-16.6.11 — `tests/change-graph.json` has no glob for `pkg/events`, so operational-event envelope changes resolve to tier-0 only under `--changed`/`--since` [Medium] — OPEN
+- **Spec/Doc:** §16.6 defines the operational-event catalog whose records are CloudEvents JSON with `type` `dev.lenny.<short_name>`. (spec/16_observability.md) `tests/change-graph.json` maps a changed source package to the test tiers a `--changed`/`--since` run selects, and CI's change-scoped runs rely on it to pick the tests a diff must exercise.
+- **Existing tests:** The tier1 unit suites (`pkg/events`, `pkg/gateway/eventbuffer`, `pkg/ops/events`) and the tier3 CloudEvents contract suite (`tests/tier3_contract/cloudevents/`, which pins the §25.5/§16.6 envelope) exist and pass when run directly. But `grep -n 'pkg/events' tests/change-graph.json` returns nothing, and `go run ./cmd/lenny-test run --since <sha> --dry-run` for a diff touching `pkg/events/emitter.go` prints "no tiers resolved from selector; running static only".
+- **Gap:** Because `pkg/events` is absent from `change-graph.json`, a change-selected CI run for a diff that touches the foundational event package resolves to tier-0 static only and never exercises the tier-1 unit tests or the tier-3 CloudEvents contract tests that this package feeds. A regression in the operational-event envelope (as with the `specversion` defect fixed under T-25.5.2) would pass a change-scoped CI run. This is a change-graph fidelity gap on the package that owns the CloudEvents envelope.
+- **Dependencies:** none — buildable today; the edit is to `tests/change-graph.json`.
+- **Suggested test:** Add a `change-graph.json` glob for `pkg/events` mapping `unit -> pkg/events/...` (and the dependent `pkg/gateway/eventbuffer/...`, `pkg/ops/events/...` unit targets) and `contract -> tests/tier3_contract/cloudevents/...`, then extend the tier0 change-graph validation so a source package feeding a contract suite that is missing from the selector fails the check.
+
 ## §16.7 Section 25 Audit Events <a id="t-16.7"></a>
 **Spec file:** `spec/16_observability.md`
 **Reviewed:** 2026-07-06
@@ -8997,6 +9004,20 @@ Counts: 4 High, 8 Medium, 2 Low, 1 Info.
 - **Gap:** The cross-protocol matrix (REST, MCP, OpenAI Chat Completions, OpenAI Open Responses) does not apply to §25.5 subscription CRUD because the spec scopes it to REST. This is an informational observation: a contract test asserting the platform MCP server does not register webhook-subscription tools would lock in the deliberate omission, but its absence is not a coverage defect.
 - **Dependencies:** none — buildable today.
 - **Suggested test:** Optionally add a tier3 assertion in `tests/tier3_contract/rest_mcp_consistency` confirming `/mcp/management` exposes no `event-subscription` tool, documenting the REST-only decision as an executable guard.
+
+### - [ ] T-25.5.15 — Read endpoints `GET /v1/admin/events` and `/events/stream` are RBAC-gated to platform-admin only, contradicting the §25.5 tenant-scoped-caller rule [Medium] — OPEN
+- **Spec/Doc:** "SSE and polling endpoints apply the same filter: tenant-scoped callers only see events matching their tenant or carrying no tenant label if the caller has permission for platform-scoped events." (spec/25_agent-operability.md:2772)
+- **Existing tests:** No test exercises a tenant-scoped caller against these read endpoints. `pkg/ops/opsserver/schema.go:221-222` registers both `GET /v1/admin/events` and `/events/stream` with the `platform-admin` role, and `HandlePoll`/`HandleStream` (`pkg/ops/events/service.go:336,463`) take no caller identity.
+- **Gap:** A tenant-scoped caller cannot reach a platform-admin-only endpoint, so either the RBAC scope on these endpoints is wrong or the spec's tenant-scoped-caller sentence describes an unreachable case. There is also no plumbing to determine a caller's tenant even if the scope were widened, because the handlers accept no caller identity. This is a spec-versus-RBAC contradiction on the §25.5 tenant-isolation read path (distinct from the delivery-time filtering gap recorded in T-25.5.5, which its human-input note surfaced this contradiction while investigating).
+- **Dependencies:** Needs a spec/RBAC reconciliation deciding how a tenant-scoped caller reaches these read endpoints and where the "permission for platform-scoped events" check lives; a code-only fix is blocked until that is resolved.
+- **Suggested test:** After the reconciliation, add a test asserting a tenant-scoped caller reaches the SSE/poll endpoints and receives only its own tenant's (and permitted platform-scoped) events, and that a caller lacking platform-scoped permission never observes no-tenant-label events.
+
+### - [ ] T-25.5.16 — `UpdateSubscription` filter patching (`Types`/`Severity`) is not directly asserted; the existing Update test covers only `Description`/`Active` [Low] — OPEN
+- **Spec/Doc:** §25.5 defines `UpdateSubscription` as a patch over the subscription's fields, including the `Types` and `Severity` filter fields, which are normalized and sorted on write. (spec/25_agent-operability.md)
+- **Existing tests:** `pkg/ops/eventsubscription/eventsubscription_test.go:148` `TestServiceUpdate_spec_25_5` patches only `Description` and `Active` and checks `Generation==1`; it never sends `Types` or `Severity` through an `UpdateRequest`.
+- **Gap:** The normalize-and-patch path for the filter fields (`eventsubscription.go:445-460`) is unexercised at the Update boundary, despite the finding this was discovered under naming "UpdateSubscription filter patching". A patch that mishandled the filter fields would pass the current Update test. This is a behavioral sub-gap on the patch path.
+- **Dependencies:** none — buildable today against the `eventsubscription` service.
+- **Suggested test:** Add a case sending `Types` and `Severity` through an `UpdateRequest` and asserting the patched, normalized, sorted result, so the filter-field patch path is verified at the Update boundary without touching the contested `EventStreamService` unification.
 
 ## §25.6 Diagnostic Endpoints <a id="t-25.6"></a>
 **Spec file:** `spec/25_agent-operability.md`
