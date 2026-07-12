@@ -3230,7 +3230,8 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementScopeForbiddenSweep_spec_25_12",
-        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4"
+        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E"
       ],
       "packages": [
         "pkg/operability/mcp"
