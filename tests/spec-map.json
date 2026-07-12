@@ -3080,6 +3080,7 @@
         "pkg/events/auditbearing_test.go::TestOperationalEventInlineOCSFWireForm",
         "pkg/events/auditbearing_test.go::TestOperationalEventEmptyExtensionsRoundTrip",
         "tests/tier2_component/healthchecks/...",
+        "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
       ],

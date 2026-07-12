@@ -19,6 +19,8 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -385,4 +387,323 @@ func TestGatewayAuditQueryEndpointsE2E(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Errorf("summary with unsupported groupBy: status %d, want 400 (%v)", code, badGroup)
 	}
+}
+
+// TestGatewaySideOpsEndpointsE2E boots the real cmd/lenny-gateway binary
+// against a live Postgres and Redis and walks the §25.3 gateway-side ops
+// endpoints the declared lenny_ops_endpoints suite (TESTING.md §12.4)
+// names — health, capacity recommendations, and version/config
+// introspection — plus the §25.3 in-memory event buffer's cursor
+// round-trip. These are the in-process endpoints the gateway serves from
+// its own admin listener; the value over the httptest-with-stubs
+// component tests is that the composition root threads the live backends
+// through the health probes and surfaces the effective running config.
+//
+// spec: §25.3 — the Platform Health API ("GET /v1/admin/health |
+// Aggregate health of all components"; "The health endpoint itself never
+// returns 5xx"; "UNKNOWN_HEALTH_COMPONENT | ... 404"); Capacity
+// Recommendations ("GET /v1/admin/recommendations | Prioritized
+// recommendations. Optional ?category= filter"; "While every ring buffer
+// is empty ... the response's degradation envelope reports "level":
+// "degraded" with "thresholdSource": "compiled-in-defaults""; "UNKNOWN_
+// RECOMMENDATION_CATEGORY | ... 400"); Version and Config Introspection
+// ("GET /v1/admin/platform/version | Compiled-in version info
+// (gateway.version, gitCommit, buildDate, goVersion)"; "GET
+// /v1/admin/platform/config | Effective running configuration"); and the
+// Gateway Event Buffer ("GET /v1/admin/events/buffer | Recent events from
+// in-memory buffer. Params: ?since={monotonic_id} ...", "Each event is
+// assigned a monotonic uint64 ID ... for cursor-based polling").
+// diagnosis: a failure means the cmd/lenny-gateway composition root did
+// not serve one of the §25.3 gateway-side ops endpoints as specified when
+// driven against real backends. Either the health aggregate did not
+// thread the live Postgres/Redis probes into per-component verdicts (or
+// returned a forbidden 5xx / mis-coded an unknown component), the
+// recommendations endpoint did not report the data-starved degraded
+// envelope or its category-filter error codes, version/config did not
+// surface the compiled-in metadata and effective backend wiring, or the
+// event buffer did not round-trip a monotonic cursor over a real emitted
+// event.
+func TestGatewaySideOpsEndpointsE2E(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	gw := gateway.StartWith(t, "--dev-mode",
+		"--postgres-dsn="+pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0",
+	)
+	base := gw.BaseURL()
+	client := http.DefaultClient
+
+	// do issues an admin request under the given tenant/role dev headers
+	// and returns the status plus the decoded top-level JSON object.
+	do := func(method, path, tenant, roles string, body any) (int, map[string]any) {
+		t.Helper()
+		var reader io.Reader
+		if body != nil {
+			b, _ := json.Marshal(body)
+			reader = bytes.NewReader(b)
+		}
+		req, _ := http.NewRequest(method, base+path, reader)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Lenny-Tenant-ID", tenant)
+		req.Header.Set("X-Lenny-User-ID", "alice@"+tenant+".example")
+		if roles != "" {
+			req.Header.Set("X-Lenny-Roles", roles)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &out)
+		}
+		return resp.StatusCode, out
+	}
+
+	// ---- Platform Health API ----
+	// §25.3: the aggregate health synthesizes the live dependency probes.
+	// With Postgres and Redis reachable, both components report healthy,
+	// proving the composition root wired the real probes rather than a
+	// static stub. The endpoint returns 200 regardless of verdict.
+	t.Run("health", func(t *testing.T) {
+		code, report := do(http.MethodGet, "/v1/admin/health", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/health: status %d, want 200 (never 5xx) (%v)", code, report)
+		}
+		status, _ := report["status"].(string)
+		switch status {
+		case "healthy", "degraded", "unhealthy":
+		default:
+			t.Errorf("aggregate status = %q, want one of healthy/degraded/unhealthy", status)
+		}
+		comps, _ := report["components"].([]any)
+		if len(comps) == 0 {
+			t.Fatalf("health report carried no components: %v", report)
+		}
+		byName := map[string]string{}
+		for _, c := range comps {
+			comp, _ := c.(map[string]any)
+			name, _ := comp["name"].(string)
+			st, _ := comp["status"].(string)
+			byName[name] = st
+		}
+		// §25.3 Data Sources / Degradation: the live Postgres and Redis
+		// probes are wired when the backends are configured, and both are
+		// reachable here, so each reports healthy.
+		if got, ok := byName["postgres"]; !ok {
+			t.Errorf("health report has no postgres component (probe not wired): %v", byName)
+		} else if got != "healthy" {
+			t.Errorf("postgres component status = %q, want healthy (Postgres is reachable)", got)
+		}
+		if got, ok := byName["redis"]; !ok {
+			t.Errorf("health report has no redis component (probe not wired): %v", byName)
+		} else if got != "healthy" {
+			t.Errorf("redis component status = %q, want healthy (Redis is reachable)", got)
+		}
+
+		// summary is the minimal synthetic-check surface: status + count.
+		code, summary := do(http.MethodGet, "/v1/admin/health/summary", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/health/summary: status %d (%v)", code, summary)
+		}
+		if _, ok := summary["status"].(string); !ok {
+			t.Errorf("health summary missing status: %v", summary)
+		}
+		if n, _ := summary["componentCount"].(float64); n < 1 {
+			t.Errorf("health summary componentCount = %v, want >= 1", summary["componentCount"])
+		}
+
+		// component deep-dive resolves a registered component by name.
+		code, comp := do(http.MethodGet, "/v1/admin/health/postgres", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/health/postgres: status %d (%v)", code, comp)
+		}
+		if name, _ := comp["name"].(string); name != "postgres" {
+			t.Errorf("component deep-dive name = %q, want postgres", name)
+		}
+
+		// §25.3: UNKNOWN_HEALTH_COMPONENT (404) is the only error the
+		// health surface returns; an unknown name is a 4xx, never a 5xx.
+		code, unknown := do(http.MethodGet, "/v1/admin/health/no-such-component", "platform", "platform-admin", nil)
+		if code != http.StatusNotFound {
+			t.Fatalf("GET /v1/admin/health/{unknown}: status %d, want 404 (%v)", code, unknown)
+		}
+		errObj, _ := unknown["error"].(map[string]any)
+		if errObj == nil || errObj["code"] != "UNKNOWN_HEALTH_COMPONENT" {
+			t.Errorf("unknown component error code = %v, want UNKNOWN_HEALTH_COMPONENT", unknown["error"])
+		}
+	})
+
+	// ---- Version and Config Introspection ----
+	t.Run("version_and_config", func(t *testing.T) {
+		code, ver := do(http.MethodGet, "/v1/admin/platform/version", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/platform/version: status %d (%v)", code, ver)
+		}
+		// §25.3: the version response is the gateway's own compiled-in
+		// metadata — gatewayVersion, gitCommit, buildDate, goVersion.
+		for _, k := range []string{"gatewayVersion", "gitCommit", "buildDate"} {
+			if s, _ := ver[k].(string); s == "" {
+				t.Errorf("platform/version %s is empty: %v", k, ver)
+			}
+		}
+		if gv, _ := ver["goVersion"].(string); !strings.HasPrefix(gv, "go") {
+			t.Errorf("platform/version goVersion = %q, want the runtime go version (go...)", gv)
+		}
+
+		code, cfg := do(http.MethodGet, "/v1/admin/platform/config", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/platform/config: status %d (%v)", code, cfg)
+		}
+		// §25.3: the effective merged running configuration. The
+		// backend-wiring entries reflect the live posture booted here
+		// (both Postgres and Redis configured), proving the endpoint
+		// serves the effective config rather than a static default. No
+		// value carries a raw DSN or password: the config surfaces only
+		// booleans for the backends, never the connection secrets.
+		entries, _ := cfg["config"].([]any)
+		if len(entries) == 0 {
+			t.Fatalf("platform/config carried no entries: %v", cfg)
+		}
+		effective := map[string]string{}
+		for _, e := range entries {
+			entry, _ := e.(map[string]any)
+			k, _ := entry["key"].(string)
+			v, _ := entry["value"].(string)
+			effective[k] = v
+			if strings.Contains(v, pg.DSN) {
+				t.Errorf("platform/config entry %q leaks the raw Postgres DSN: %q", k, v)
+			}
+		}
+		if effective["gateway.postgres"] != "true" {
+			t.Errorf("platform/config gateway.postgres = %q, want true (Postgres is wired)", effective["gateway.postgres"])
+		}
+		if effective["gateway.redis"] != "true" {
+			t.Errorf("platform/config gateway.redis = %q, want true (Redis is wired)", effective["gateway.redis"])
+		}
+	})
+
+	// ---- Capacity Recommendations ----
+	// §25.3: immediately after boot every ring buffer is empty, so no
+	// per-category recommendation is generated and the response's
+	// degradation envelope reports "degraded" with the compiled-in
+	// threshold source. This is the data-starved signal an agent uses to
+	// distinguish a starved window from a healthy platform with no issues.
+	t.Run("recommendations", func(t *testing.T) {
+		code, resp := do(http.MethodGet, "/v1/admin/recommendations", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/recommendations: status %d (%v)", code, resp)
+		}
+		recs, _ := resp["recommendations"].([]any)
+		if len(recs) != 0 {
+			t.Errorf("post-restart recommendations = %v, want empty (ring buffers start empty)", recs)
+		}
+		deg, _ := resp["degradation"].(map[string]any)
+		if deg == nil {
+			t.Fatalf("recommendations response carried no degradation envelope: %v", resp)
+		}
+		if lvl, _ := deg["level"].(string); lvl != "degraded" {
+			t.Errorf("degradation level = %q, want degraded (no rule has data yet)", lvl)
+		}
+		if src, _ := deg["thresholdSource"].(string); src != "compiled-in-defaults" {
+			t.Errorf("degradation thresholdSource = %q, want compiled-in-defaults", src)
+		}
+		if warns, _ := deg["warnings"].([]any); len(warns) == 0 {
+			t.Errorf("data-starved degradation carried no warning: %v", deg)
+		}
+
+		// §25.3: an unrecognized ?category= is a client error.
+		code, bad := do(http.MethodGet, "/v1/admin/recommendations?category=bogus", "platform", "platform-admin", nil)
+		if code != http.StatusBadRequest {
+			t.Fatalf("recommendations?category=bogus: status %d, want 400 (%v)", code, bad)
+		}
+		errObj, _ := bad["error"].(map[string]any)
+		if errObj == nil || errObj["code"] != "UNKNOWN_RECOMMENDATION_CATEGORY" {
+			t.Errorf("unknown category error code = %v, want UNKNOWN_RECOMMENDATION_CATEGORY", bad["error"])
+		}
+
+		// A recognized category narrows the result; it is accepted (200)
+		// and, with empty windows, returns no entries.
+		code, filtered := do(http.MethodGet, "/v1/admin/recommendations?category=warm_pool_sizing", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("recommendations?category=warm_pool_sizing: status %d, want 200 (%v)", code, filtered)
+		}
+		if recs, _ := filtered["recommendations"].([]any); len(recs) != 0 {
+			t.Errorf("filtered recommendations = %v, want empty (windows are starved)", recs)
+		}
+	})
+
+	// ---- Gateway Event Buffer ----
+	// §25.3: emitting a real operational event (opening a circuit breaker
+	// records a circuit_breaker_opened event) lands it in the in-memory
+	// buffer with a monotonic uint64 id. Polling the buffer surfaces the
+	// event and a cursor; re-polling with that cursor returns no matching
+	// events, proving the monotonic cursor round-trip an ops poller relies
+	// on to iterate forward without replay.
+	t.Run("event_buffer_cursor", func(t *testing.T) {
+		const breaker = "rt-echo-buffer-e2e"
+		code, opened := do(http.MethodPost, "/v1/admin/circuit-breakers/"+breaker+"/open", "platform", "platform-admin",
+			map[string]any{
+				"reason":     "buffer round-trip (e2e)",
+				"limit_tier": "runtime",
+				"scope":      map[string]any{"runtime": "echo"},
+			})
+		if code != http.StatusOK {
+			t.Fatalf("POST /v1/admin/circuit-breakers/%s/open: status %d (%v)", breaker, code, opened)
+		}
+
+		// Read the buffer, narrowed to the emitted event type.
+		code, page := do(http.MethodGet, "/v1/admin/events/buffer?eventType=circuit_breaker_opened", "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/events/buffer: status %d (%v)", code, page)
+		}
+		evs, _ := page["events"].([]any)
+		if len(evs) == 0 {
+			t.Fatalf("event buffer returned no circuit_breaker_opened event after the breaker opened: %v", page)
+		}
+		last, _ := evs[len(evs)-1].(map[string]any)
+		inner, _ := last["event"].(map[string]any)
+		if typ, _ := inner["type"].(string); !strings.HasSuffix(typ, ".circuit_breaker_opened") {
+			t.Errorf("buffered event type = %q, want a dev.lenny.circuit_breaker_opened record", typ)
+		}
+		pag, _ := page["pagination"].(map[string]any)
+		if pag == nil {
+			t.Fatalf("event buffer page carried no pagination envelope: %v", page)
+		}
+		if gap, _ := pag["gapDetected"].(bool); gap {
+			t.Errorf("fresh buffer poll reported gapDetected; the cursor was never evicted: %v", pag)
+		}
+		cursor, _ := pag["cursor"].(float64)
+		if cursor < 1 {
+			t.Fatalf("buffer cursor = %v, want a monotonic id >= 1", pag["cursor"])
+		}
+
+		// §25.3: polling forward from the returned cursor yields no further
+		// circuit_breaker_opened events — the cursor advanced past the last
+		// one and the poll does not replay it. The cursor is stable at the
+		// requested position when no new matching event has arrived.
+		sinceParam := int64(cursor)
+		code, next := do(http.MethodGet,
+			"/v1/admin/events/buffer?eventType=circuit_breaker_opened&since="+strconv.FormatInt(sinceParam, 10), "platform", "platform-admin", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /v1/admin/events/buffer?since=%d: status %d (%v)", sinceParam, code, next)
+		}
+		if evs, _ := next["events"].([]any); len(evs) != 0 {
+			t.Errorf("re-poll from cursor %d returned %d events, want 0 (no replay past the cursor)", sinceParam, len(evs))
+		}
+		nextPag, _ := next["pagination"].(map[string]any)
+		if gap, _ := nextPag["gapDetected"].(bool); gap {
+			t.Errorf("re-poll from a live cursor reported gapDetected: %v", nextPag)
+		}
+		if c, _ := nextPag["cursor"].(float64); int64(c) != sinceParam {
+			t.Errorf("re-poll cursor = %v, want it to hold at the requested %d when no new event arrived", nextPag["cursor"], sinceParam)
+		}
+	})
 }
