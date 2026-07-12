@@ -35,6 +35,12 @@ type MinIOOptions struct {
 	// StartupTimeout caps how long we wait for the container to become
 	// ready. Defaults to 60 seconds.
 	StartupTimeout time.Duration
+	// Env supplies extra environment variables merged over the container's
+	// default MINIO_ROOT_USER / MINIO_ROOT_PASSWORD. A caller that needs
+	// server-side encryption (SSE-S3 / SSE-KMS) enables MinIO's built-in
+	// KMS here, for example
+	// Env: {"MINIO_KMS_SECRET_KEY": "key-name:<base64-32-byte-key>"}.
+	Env map[string]string
 }
 
 // MinIO is the handle returned by StartMinIO.
@@ -70,15 +76,20 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
 	defer cancel()
 
+	env := map[string]string{
+		"MINIO_ROOT_USER":     minioTestAccessKey,
+		"MINIO_ROOT_PASSWORD": minioTestSecretKey,
+	}
+	for k, v := range opts.Env {
+		env[k] = v
+	}
+
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        opts.Image,
 			Cmd:          []string{"server", "/data"},
 			ExposedPorts: []string{"9000/tcp"},
-			Env: map[string]string{
-				"MINIO_ROOT_USER":     minioTestAccessKey,
-				"MINIO_ROOT_PASSWORD": minioTestSecretKey,
-			},
+			Env:          env,
 			WaitingFor: wait.ForHTTP("/minio/health/live").
 				WithPort("9000/tcp").
 				WithStartupTimeout(opts.StartupTimeout),
@@ -122,5 +133,20 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		Bucket:    opts.Bucket,
 		Client:    client,
 		container: container,
+	}
+}
+
+// Stop terminates the MinIO container mid-test so a caller can inject a
+// genuine MinIO outage: subsequent client operations fail to connect
+// rather than returning success. It is the testcontainers analogue of the
+// tier-8 "scale the MinIO Deployment to zero" injection, used by the
+// §25.11 backup-degradation upload-failure test. The t.Cleanup registered
+// by StartMinIO tolerates a double Terminate.
+func (m *MinIO) Stop(t testing.TB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := m.container.Terminate(ctx); err != nil {
+		t.Fatalf("MinIO.Stop: terminate: %v", err)
 	}
 }

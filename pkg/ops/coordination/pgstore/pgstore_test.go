@@ -243,6 +243,54 @@ func TestPgReconcileSplitBrainRedisWins_spec_25_4(t *testing.T) {
 	}
 }
 
+// spec: §25.4 line 2266 — when the pre-outage Postgres lock is not
+// expired and the post-outage Redis lock has expired by clock, Postgres
+// wins: the Redis lock is discarded and the Postgres lock is retained
+// with its pre-outage epoch. The conflict is logged with a non-active
+// loser.
+func TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4(t *testing.T) {
+	s, pool, ctx := setup(t)
+	// Pre-outage Postgres lock on pool:p (active), held by alice at epoch 0.
+	mustAcquire(t, s, ctx, "pool:p", "alice", 300)
+
+	now := time.Now().UTC()
+	redisLocks := []coordination.Lock{
+		// Post-outage Redis lock on the same scope, already expired by clock
+		// at reconciliation time (acquiredAt/expiresAt both in the past).
+		{
+			ID: "lock-r1", Scope: "pool:p", Operation: "scale", AcquiredBy: "bob",
+			AcquiredAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-1 * time.Hour), Epoch: 6,
+		},
+	}
+	out, err := s.Reconcile(ctx, 6, redisLocks, now)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if out.Epoch != 6 {
+		t.Errorf("reconciled epoch = %d, want 6 (MAX)", out.Epoch)
+	}
+	if len(out.Conflicts) != 1 || out.Conflicts[0].Winner != "pre_outage" || out.Conflicts[0].LoserWasActive {
+		t.Fatalf("conflicts = %+v, want one pre_outage winner with a non-active loser", out.Conflicts)
+	}
+	// pool:p stays alice's at the pre-outage epoch 0; the expired Redis lock
+	// is not copied in.
+	all, err := s.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].AcquiredBy != "alice" || all[0].Epoch != 0 {
+		t.Errorf("after reconcile = %+v, want alice/epoch0 (Postgres wins, pre-outage epoch retained)", all)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM ops_lock_conflicts WHERE winner='pre_outage' AND NOT loser_was_active`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("ops_lock_conflicts pre_outage/non-active rows = %d, want 1", rows)
+	}
+}
+
 // TestPgServerTime_spec_25_4 asserts the exported ServerTime reads the
 // Postgres now() at time zone 'UTC' clock the Postgres-Redis clock-skew
 // sampler compares against the Redis TIME clock. The embedded Postgres

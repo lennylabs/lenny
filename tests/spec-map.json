@@ -3033,11 +3033,13 @@
         "tests/tier3_contract/ops_endpoints/drift_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
+        "tests/tier3_contract/ops_endpoints/backup_test.go",
         "tests/tier3_contract/ops_endpoints/helpers_test.go"
       ],
       "packages": [
         "cmd/lenny-ops",
         "pkg/ops/opsserver",
+        "pkg/ops/backup",
         "pkg/ops/diagnostics",
         "pkg/ops/coordination",
         "pkg/ops/escalation",
@@ -3108,9 +3110,22 @@
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
+        "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
+        "tests/tier2_component/coordination/tier_transition_test.go::TestTierTransitionSplitBrainReconciliation_spec_25_4",
         "tests/tier4_integration/ops_service_e2e_test.go",
         "tests/tier8_chaos/escalation_retry_test.go",
-        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4"
+        "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsHealthzAnonymousAdmitted_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingAdmitsPlatformAdmin_spec_25_4_1567",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminPlatformLockForbidden_spec_25_4_2128",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsScopeClaimNarrowsBelowRoleCeiling_spec_25_4_1569",
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsNetworkPolicyPosture_spec_25_4",
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsEgressBoundToAllowlist_spec_25_4",
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsDenyAllIngress_spec_25_4",
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPINoPlaintextHandshake_spec_25_4"
       ],
       "packages": [
         "cmd/lenny-ops"
@@ -3230,13 +3245,17 @@
       "title": "Backup and Restore API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/ops/backup/backup_test.go"
+        "pkg/ops/backup/backup_test.go",
+        "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
+        "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",
+        "tests/tier4_integration/backup_degradation_test.go::TestBackupJobCreationFailsWhenKubernetesAPIDown",
+        "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown"
       ],
       "packages": [
         "pkg/operability/backup"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status."
     },
     "25.12": {
       "title": "MCP Management Server",
