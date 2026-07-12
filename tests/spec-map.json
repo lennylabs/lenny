@@ -3057,6 +3057,7 @@
       "tests": [
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
+        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestOpsUnreachableFromAgentPod_spec_25_1",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
       ],
