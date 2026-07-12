@@ -3160,11 +3160,13 @@
       "tests": [
         "tests/tier3_contract/ops_endpoints/upgrade_test.go",
         "pkg/ops/opsserver/platform_upgrade_test.go",
-        "pkg/ops/upgradeservice/upgradeservice_test.go"
+        "pkg/ops/upgradeservice/upgradeservice_test.go",
+        "tests/tier2_component/observability/version_aggregation_test.go"
       ],
       "packages": [
         "pkg/operability/lifecycle",
         "pkg/ops/upgradeservice",
+        "pkg/ops/versionsource",
         "pkg/ops/opsserver"
       ],
       "blocked_until_phase": "14",

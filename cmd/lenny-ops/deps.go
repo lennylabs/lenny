@@ -19,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -59,6 +58,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/registryservice"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepg "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
+	"github.com/lennylabs/lenny/pkg/ops/versionsource"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
@@ -2072,12 +2072,12 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 	}
 	if gatewayURL != "" && gw != nil {
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"gateway", buildVersion, gatewayVersionFunc(gw, gatewayURL),
+			"gateway", buildVersion, versionsource.Gateway(gw, gatewayURL),
 		))
 	}
 	if clientset != nil {
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"controllers", buildVersion, controllerVersionFunc(clientset, namespace),
+			"controllers", buildVersion, versionsource.Controller(clientset, namespace),
 		))
 	}
 	if pool != nil {
@@ -2086,7 +2086,7 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 		// value yet (drift detection for it lands with the embedded
 		// required-schema constant). It is reported for introspection.
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
-			"postgres-schema", "", schemaVersionFunc(pool),
+			"postgres-schema", "", versionsource.Schema(pool),
 		))
 	}
 	return upgradeservice.NewVersionAggregator(upgradeservice.VersionAggregatorOptions{
@@ -2094,76 +2094,6 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 		Sources:         sources,
 		Gauge:           setPlatformVersionDrift,
 	})
-}
-
-// gatewayVersionFunc resolves the gateway binary version via the §25.3
-// GET /v1/admin/platform/version endpoint — the GatewayClient.GetVersion
-// call site §25.8 names.
-func gatewayVersionFunc(client *http.Client, gatewayURL string) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			strings.TrimRight(gatewayURL, "/")+"/v1/admin/platform/version", nil)
-		if err != nil {
-			return "", err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", err
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("gateway version endpoint returned HTTP %d", resp.StatusCode)
-		}
-		var body struct {
-			GatewayVersion string `json:"gatewayVersion"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			return "", fmt.Errorf("decode gateway version: %w", err)
-		}
-		if body.GatewayVersion == "" {
-			return "", errors.New("gateway reported an empty version")
-		}
-		return body.GatewayVersion, nil
-	}
-}
-
-// schemaVersionFunc resolves the Postgres schema version per §25.8 (the
-// value `SELECT version FROM schema_migrations ORDER BY version DESC
-// LIMIT 1` reports). The version column is cast to text so an integer
-// migration counter and a string version both scan cleanly.
-func schemaVersionFunc(pool *pgxpool.Pool) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		var v string
-		err := pool.QueryRow(ctx,
-			"SELECT version::text FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&v)
-		if err != nil {
-			return "", err
-		}
-		return v, nil
-	}
-}
-
-// controllerVersionFunc resolves the controller Deployment version from
-// the image tag of the `lenny-controller` Deployment's `controller`
-// container (the chart names them in charts/lenny/templates/controller-
-// deployment.yaml).
-func controllerVersionFunc(clientset *kubernetes.Clientset, namespace string) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		dep, err := clientset.AppsV1().Deployments(namespace).Get(ctx, "lenny-controller", metav1.GetOptions{})
-		if err != nil {
-			return "", err
-		}
-		for _, c := range dep.Spec.Template.Spec.Containers {
-			if c.Name != "controller" {
-				continue
-			}
-			if i := strings.LastIndex(c.Image, ":"); i >= 0 && i < len(c.Image)-1 {
-				return c.Image[i+1:], nil
-			}
-			return "", fmt.Errorf("controller image %q has no tag", c.Image)
-		}
-		return "", errors.New("lenny-controller Deployment has no controller container")
-	}
 }
 
 // upgradeCheckJob is the §25.8 / §25.4 line 1338 platform_upgrade_check

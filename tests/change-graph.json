@@ -257,6 +257,10 @@
       "unit": ["pkg/observability/tracing/..."],
       "component": ["tests/tier2_component/observability/..."]
     },
+    "pkg/ops/versionsource": {
+      "unit": ["pkg/ops/versionsource/..."],
+      "component": ["tests/tier2_component/observability/version_aggregation_test.go"]
+    },
     "pkg/alerting/rules": {
       "unit": ["pkg/alerting/rules/..."],
       "component": ["tests/tier2_component/alerting/..."]
