@@ -544,3 +544,42 @@ func TestAuditSummaryInvalidGroupBy_spec_25_9_3661(t *testing.T) {
 		t.Fatalf("invalid groupBy: status %d, want 400", rr.Code)
 	}
 }
+
+// TestListAuditEventsCorrelatesLennyOpsOperationID drives the §25.9
+// ?operationId= correlation filter against an audit row tagged the way
+// the lenny-ops operability emitters tag it. Every lenny-ops audit
+// emitter (backup/restore, platform upgrade, drift reconcile, doctor fix,
+// diagnostics, and the me/inventory server) merges the caller
+// X-Lenny-Operation-ID onto the audit payload under the "operationId"
+// key, so a post-incident ?operationId= query must return those rows to
+// reconstruct a multi-subsystem remediation. The row here is a
+// backup.created payload exactly as pkg/ops/backup emits it.
+//
+// spec: §25.9 line 3707 ("audit events tagged with the same operation ID
+// are grouped in queries with ?operationId="); §25.1 line 121 (every
+// audit event produced during a request includes the operation id,
+// "enabling post-incident analysis of multi-step remediations").
+func TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707(t *testing.T) {
+	// The correlation key the lenny-ops emitters write (camelCase
+	// operationId) does not match the key the §25.9 filter reads (snake
+	// operation_id), so ?operationId= returns none of the lenny-ops
+	// operability audit rows. Whether the fix normalizes the ~8 emitters
+	// to operation_id or teaches the §25.9 filter to accept both keys is
+	// an open cross-service convention decision left for human review;
+	// kept non-blocking until it is resolved.
+	t.Skip("open gap: lenny-ops audit emitters tag rows with camelCase operationId, which the §25.9 payload.operation_id correlation filter never matches")
+
+	const operationID = "550e8400-e29b-41d4-a716-446655440000"
+	ts := auditTestClock.Add(-time.Hour)
+	backend := &craftedAuditLog{rows: craftChain(
+		"platform",
+		[3]any{"backup.created", `{"operationId":"` + operationID + `","type":"full"}`, ts},
+	)}
+	router := newCraftedRouter(backend, &recordingSink{})
+	since := "since=" + ts.Add(-time.Hour).Format(time.RFC3339)
+
+	_, env := listAudit(t, router, "operationId="+operationID+"&"+since)
+	if len(env.Items) != 1 {
+		t.Fatalf("?operationId= returned %d items, want 1 (§25.9 must group the lenny-ops backup row tagged with that operation id)", len(env.Items))
+	}
+}
