@@ -653,7 +653,8 @@
         "pkg/gateway/sessionserver/interactions_test.go",
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
-        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor"
+        "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -664,7 +665,8 @@
       "title": "Retry and Resume",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
-        "pkg/checkpoint/..."
+        "pkg/checkpoint/...",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
       ],
       "packages": [
         "pkg/session/resume",
@@ -755,7 +757,8 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "tests/tier2_component/stores/delegationpolicystore_test.go",
-        "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866"
+        "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
+        "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -1038,7 +1041,8 @@
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/...",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
       ],
       "packages": [
         "pkg/gateway"
@@ -1615,6 +1619,7 @@
         "tests/tier2_component/stores/miniostore_test.go",
         "tests/tier2_component/stores/artifactcatalog_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
+        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
         "tests/tier2_component/preflight/minio_sse_test.go"
       ],
       "packages": [
@@ -1690,7 +1695,8 @@
         "tests/tier9_security/ssrf_test.go",
         "tests/tier9_security/store_helpers_test.go",
         "tests/tier9_security/tenant_isolation_test.go",
-        "tests/tier9_security/credential_leakage_test.go"
+        "tests/tier9_security/credential_leakage_test.go",
+        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed"
       ],
       "packages": [
         "pkg/compliance/dataclassification"
