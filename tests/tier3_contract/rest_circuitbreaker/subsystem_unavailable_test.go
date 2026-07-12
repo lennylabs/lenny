@@ -54,6 +54,13 @@ func openUploadBreaker(t *testing.T) *subsystem.Breaker {
 // can trip to half-open or open state — returning 503 for uploads —
 // while the Stream Proxy and MCP Fabric continue serving normally. This
 // is the primary mechanism for partial gateway degradation."
+//
+// diagnosis: An open Upload Handler subsystem breaker did not surface
+// as a 503 SUBSYSTEM_UNAVAILABLE (retryable) envelope on the upload
+// endpoint, or the Stream Proxy attach on the same gateway did not keep
+// serving. Either the per-subsystem wire mapping regressed or the
+// partial-degradation isolation broke and one open subsystem now takes
+// the whole gateway down.
 func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(64)
