@@ -113,6 +113,17 @@ func TestRotationHappyPath(t *testing.T) {
 	if tok == "" {
 		t.Fatal("missing access_token")
 	}
+	// RFC 8693 §2.2.1 requires issued_token_type and token_type on a
+	// successful exchange. Per §13.3 the issued_token_type matches the
+	// requested token type (JWT for a rotation of a JWT subject), and the
+	// Token Service issues Bearer tokens.
+	// spec: §13.3 (Response issued_token_type matches requested_token_type)
+	if it, _ := body["issued_token_type"].(string); it != "urn:ietf:params:oauth:token-type:jwt" {
+		t.Errorf("issued_token_type: want urn:ietf:params:oauth:token-type:jwt, got %q", it)
+	}
+	if tt, _ := body["token_type"].(string); tt != "Bearer" {
+		t.Errorf("token_type: want Bearer, got %q", tt)
+	}
 	out, err := signer.Verify(tok)
 	if err != nil {
 		t.Fatalf("verify issued token: %v", err)

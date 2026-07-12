@@ -1904,6 +1904,8 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestMissingCallerRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestUnsupportedGrantTypeRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
+        "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestSuccessEnvelopeMatchesRFC8693",
+        "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestErrorEnvelopeMatchesRFC8693",
         "tests/tier3_contract/oauth_token/...",
         "tests/tier2_component/securitycaches/propagation_test.go",
         "tests/tier2_component/stores/connectorcredstore_test.go",
