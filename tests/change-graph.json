@@ -443,7 +443,17 @@
       "contract": ["tests/tier3_contract/rest_openai_responses/..."]
     },
     "tests/testdata/mcp": {
-      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."]
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/mcp_runtimes/..."]
+    },
+    "tests/testinfra/mcpschema": {
+      "contract": ["tests/tier3_contract/mcp_runtimes/..."]
+    },
+    "pkg/gateway/mcpfabric/mcpruntimes": {
+      "unit": ["pkg/gateway/mcpfabric/mcpruntimes/..."],
+      "contract": ["tests/tier3_contract/mcp_runtimes/..."]
+    },
+    "cmd/runtimes/mcp-reference": {
+      "contract": ["tests/tier3_contract/mcp_runtimes/..."]
     },
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],

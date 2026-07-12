@@ -149,6 +149,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/gateway/...",
+        "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPRuntimeEndpointExchangeConformsToSchema",
+        "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPSchemaValidatorRejectsNonConformingFrames",
         "tests/tier4_integration/subsystem_isolation_test.go::TestUploadHandlerSaturationDoesNotStarveOtherSubsystems",
         "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
       ],
