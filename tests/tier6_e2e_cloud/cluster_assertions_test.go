@@ -41,27 +41,32 @@ import (
 const lennySystem = "lenny-system"
 
 // kube returns a Clientset for the cluster the operator's kubeconfig
-// points at, or skips when the kubeconfig is missing / invalid. The
-// operator typically populates the kubeconfig via
+// points at, or skips the calling test when the kubeconfig is missing,
+// invalid, or points at an unreachable cluster. It skips (via t.Skip)
+// rather than returning nil so a torn-down cluster or a stale kubeconfig
+// — while the provider CLI session that requireCloud checks is still
+// valid — degrades every suite to a clean, diagnosable skip instead of a
+// nil-pointer panic at the first call site that dereferences the
+// clientset. The operator typically populates the kubeconfig via
 // `aws eks update-kubeconfig --name <release>-eks` which
 // scripts/cloud/aws/up.sh runs automatically.
 func kube(t *testing.T) *kubernetes.Clientset {
 	t.Helper()
 	cfg, err := loadKubeconfig()
 	if err != nil {
-		t.Logf("kube: load kubeconfig: %v (run aws eks update-kubeconfig)", err)
+		t.Skipf("kube: load kubeconfig: %v (run aws eks update-kubeconfig)", err)
 		return nil
 	}
 	cli, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		t.Logf("kube: build clientset: %v", err)
+		t.Skipf("kube: build clientset: %v", err)
 		return nil
 	}
 	// Ping the API server so a stale kubeconfig short-circuits early.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := cli.Discovery().ServerVersion(); err != nil {
-		t.Logf("kube: cluster unreachable: %v", err)
+		t.Skipf("kube: cluster unreachable: %v", err)
 		return nil
 	}
 	_ = ctx
@@ -642,6 +647,55 @@ func describeValueFrom(vf *corev1.EnvVarSource) string {
 		return "fieldRef/" + vf.FieldRef.FieldPath
 	default:
 		return "unknown"
+	}
+}
+
+// spec: 12.6 (TESTING.md tier-6 deployment matrix — the cloud suite runs
+// per provider against the provider's cluster, and every suite obtains its
+// clientset from the shared kube() helper). This test pins kube()'s
+// documented contract that a missing, invalid, or unreachable kubeconfig
+// skips the calling test rather than returning a nil clientset the caller
+// then dereferences. Without the skip, a torn-down cluster or a stale
+// kubeconfig (with the provider CLI session still valid) crashes the whole
+// deployment-matrix suite with a nil-pointer panic instead of a clean,
+// diagnosable skip.
+// diagnosis: TestKubeSkipsWhenKubeconfigInvalid failing means kube() no
+// longer honors its skip-on-unreachable contract; the tier-6 suites would
+// resume panicking with a nil-pointer dereference against an unreachable
+// cluster instead of skipping. Check that each failure branch in kube()
+// calls t.Skip rather than returning a nil clientset.
+func TestKubeSkipsWhenKubeconfigInvalid(t *testing.T) {
+	// Force loadKubeconfig to fail deterministically in every
+	// environment: clear the in-cluster service-host env so
+	// rest.InClusterConfig short-circuits (ErrNotInCluster), then point
+	// KUBECONFIG at a file that cannot parse. This exercises the
+	// load-kubeconfig skip branch; the clientset-build and
+	// unreachable-API-server branches share the same t.Skip pattern.
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "")
+	bad := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(bad, []byte("not: [a: valid: kubeconfig"), 0o600); err != nil {
+		t.Fatalf("write invalid kubeconfig fixture: %v", err)
+	}
+	t.Setenv("KUBECONFIG", bad)
+
+	reachedBody := false
+	ok := t.Run("invalid-kubeconfig", func(st *testing.T) {
+		cli := kube(st)
+		// kube() must skip (runtime.Goexit) before returning. Reaching
+		// this line means it returned instead — historically nil, which
+		// every call site dereferences into a nil-pointer panic.
+		reachedBody = true
+		if cli == nil {
+			st.Fatal("kube returned a nil clientset instead of skipping")
+		}
+	})
+
+	if reachedBody {
+		t.Fatal("kube did not skip on an invalid kubeconfig; execution continued past kube() (a real call site would nil-dereference and panic)")
+	}
+	if !ok {
+		t.Fatal("kube subtest reported a failure; expected a clean skip")
 	}
 }
 
