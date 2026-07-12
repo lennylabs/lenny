@@ -222,6 +222,7 @@
         "pkg/checkpoint/checkpoint_test.go::TestFreshnessCheckRejectsStale",
         "tests/tier2_component/stores/evictionfallback_test.go",
         "tests/tier2_component/stores/partialmanifeststore_test.go",
+        "tests/tier2_component/stores/partialcleanup_component_test.go",
         "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
         "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
         "tests/tier8_chaos/node_drain_during_minio_outage_test.go",
