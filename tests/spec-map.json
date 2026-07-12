@@ -257,7 +257,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/controller/warmpool/...",
-        "pkg/controller/poolscaling/..."
+        "pkg/controller/poolscaling/...",
+        "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6"
       ],
       "packages": [
         "pkg/controller/warmpool",
