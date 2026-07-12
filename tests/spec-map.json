@@ -3167,7 +3167,8 @@
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/gateway/externalapi/admin/audit_query_test.go"
+        "pkg/gateway/externalapi/admin/audit_query_test.go",
+        "tests/tier4_integration/ops_endpoints_test.go"
       ],
       "packages": [
         "pkg/operability/audit"
@@ -3180,7 +3181,8 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/drift/drift_test.go",
-        "tests/tier3_contract/ops_endpoints/drift_against_target_test.go"
+        "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
+        "tests/tier4_integration/ops_endpoints_test.go"
       ],
       "packages": [
         "pkg/operability/drift"
