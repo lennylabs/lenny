@@ -300,7 +300,9 @@
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6",
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeNoCapNoDrain_spec_4_6",
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePrecedesDrainRequest_spec_4_6",
-        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4"
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4",
+        "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueDispositionDrainsAsPodsFreeOnRealPool",
+        "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool"
       ],
       "packages": [
         "pkg/controller/warmpool",
