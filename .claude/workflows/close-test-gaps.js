@@ -498,7 +498,7 @@ const verifyBatchPrompt = [
   '1. Find the commit this branch was cut from: `baseSha=$(git merge-base HEAD <the branch it was cut from, typically the branch this run started on>)`. Run `lenny-test run --since "$baseSha" --dry-run` (dry-run only, do not run it for real) and report which tiers it resolves to, so a human knows what the follow-up full pass needs to cover.',
   '2. Run `lenny-test coverage --diff "$baseSha"` and report the changed-line coverage percentage against the 80% floor.',
   '3. Run `lenny-test validate-maps` and fix any spec-map/change-graph drift this batch introduced (small fixes only, e.g. registering a new test file under the right spec-map section — when editing tests/spec-map.json by script rather than by hand, preserve its existing formatting, for example Python\'s json.dump needs ensure_ascii=False or every non-ASCII spec character gets escaped and the diff balloons; commit the fix separately from anything else).',
-  '4. Do NOT merge this branch into anything and do NOT push. This batch is reviewed by a human before merge, per this repo\'s git workflow rules.',
+  '4. Do NOT merge this branch into anything and do NOT push from within this batch. The orchestrating session that launched this workflow merges and pushes the branch itself, after it runs the full `lenny-test run` regression pass this phase cannot (which is why merging cannot happen here). Leave the branch as-is.',
   '',
   'RETURN: dryRunTiers (array of tier names the full pass needs to cover), coveragePct (number or null if not computed), validateMapsClean (boolean), notes (string).',
 ].join('\n')
