@@ -3080,6 +3080,7 @@
         "pkg/events/auditbearing_test.go::TestOperationalEventInlineOCSFWireForm",
         "pkg/events/auditbearing_test.go::TestOperationalEventEmptyExtensionsRoundTrip",
         "tests/tier2_component/healthchecks/...",
+        "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
       ],
@@ -3095,6 +3096,7 @@
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
+        "tests/tier4_integration/ops_service_e2e_test.go",
         "tests/tier8_chaos/escalation_retry_test.go"
       ],
       "packages": [
@@ -3166,7 +3168,10 @@
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/gateway/externalapi/admin/audit_query_test.go"
+        "pkg/gateway/externalapi/admin/audit_query_test.go",
+        "tests/tier2_component/auditstore/admin_query_test.go",
+        "tests/tier4_integration/ops_endpoints_test.go",
+        "tests/tier4_integration/audit_deferred_reconcile_test.go"
       ],
       "packages": [
         "pkg/operability/audit"
@@ -3179,7 +3184,9 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/drift/drift_test.go",
-        "tests/tier3_contract/ops_endpoints/drift_against_target_test.go"
+        "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
+        "tests/tier4_integration/ops_endpoints_test.go",
+        "tests/tier4_integration/drift_reconcile_test.go"
       ],
       "packages": [
         "pkg/operability/drift"
