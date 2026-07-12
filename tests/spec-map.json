@@ -732,7 +732,8 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "pkg/delegation/lease/lease_test.go::TestResolveMaxDepthApplies82BisPrecedence",
         "pkg/delegation/lease/lease_test.go::TestEnforcePolicyCeilingCapsResolved",
-        "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling"
+        "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling",
+        "tests/tier4_integration/multi_agent_testbed_test.go::TestMultiAgentDelegationTestbedPerHopInvariants"
       ],
       "packages": [
         "pkg/delegation/cycle",
