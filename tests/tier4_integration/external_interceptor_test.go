@@ -165,6 +165,115 @@ func TestExternalInterceptorModifyThroughGateway_spec_4_8(t *testing.T) {
 	}
 }
 
+// bootstrapEchoTenant bootstraps the acme tenant with the echo runtime
+// but, unlike bootstrapEchoSession, does not create a session. A caller
+// that expects the session-create path itself to be rejected uses this
+// so the rejection is not masked by a session that already exists.
+func bootstrapEchoTenant(t *testing.T, do func(method, path, roles string, body any) (int, map[string]any)) {
+	t.Helper()
+	code, _ := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
+		"tenants":  []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
+		"runtimes": []map[string]any{{"name": "echo", "image": "lenny/echo@sha256:abc", "labels": map[string]string{"tier": "test"}}},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("bootstrap: status %d", code)
+	}
+}
+
+// spec: §4.8 — "If any immutable field differs, the gateway rejects the
+// `MODIFY` with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` (category:
+// `POLICY`, HTTP 400) ... the original pre-modification payload is
+// preserved and no subsequent interceptors see the illegal modification.
+// This enforcement is not bypassable by the interceptor; it runs inside
+// the gateway process after the gRPC response is received." The §15.1
+// error catalog fixes the surface: `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`
+// | `POLICY` | 400, with `details.interceptor_ref`, `details.phase`, and
+// `details.violated_fields` included. `tenant_id` is immutable at the
+// PreRoute phase (§4.8 phase table PreRoute row: "May **not** alter
+// `tenant_id` or `user_id`").
+// diagnosis: the gateway did not enforce per-phase immutability across
+// the real gRPC boundary — a deployer-supplied external interceptor was
+// able to rewrite the authenticated tenant_id via a MODIFY returned over
+// the wire, or the gateway surfaced the rejection with the wrong error
+// code/status. Either is an identity/tenant-isolation defect on the
+// deployer-facing interceptor contract; a tier-1 in-process fake cannot
+// catch a regression in the subprocess dial or the wire round-trip.
+func TestExternalInterceptorModifyImmutableTenantThroughGateway_spec_4_8(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	t.Skip("spec-faithful assertion for an OPEN test-gap: the PreRoute session-create surface rejects the immutable-field MODIFY (the enforcement works across the gRPC boundary) but returns 403 INTERCEPTOR_REJECTED with the code in details.interceptorCode rather than the §15.1 400 INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION with details.violated_fields; awaiting a human decision on the error-envelope contract before this can assert green")
+
+	// The default external-interceptor priority is 500, so the interceptor
+	// runs in the at-or-above-ExperimentRouter PreRoute segment whose
+	// content payload is the serialized routeTaskSpec carrying the
+	// authenticated tenant_id and user_id. The stub returns a MODIFY that
+	// rewrites tenant_id (acme -> globex) while leaving the mutable
+	// requested_runtime and the immutable user_id untouched, so the only
+	// immutable field that differs is tenant_id.
+	modified, _ := json.Marshal(map[string]any{
+		"tenant_id":         "globex",
+		"user_id":           "alice@acme.com",
+		"requested_runtime": "echo",
+	})
+	stub := stubinterceptor.Start(t, stubinterceptor.Modify(modified))
+
+	gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo",
+		"--external-interceptor=name=tenant-rewriter,endpoint="+stub.Addr()+",phase=PreRoute")
+	do := interceptorReq(t, gw.BaseURL())
+	bootstrapEchoTenant(t, do)
+
+	code, resp := do(http.MethodPost, "/v1/sessions/start", "", map[string]any{
+		"runtimeRef": "echo",
+		"userId":     "alice@acme.com",
+	})
+	// spec: §15.1 — INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION is HTTP 400.
+	if code != http.StatusBadRequest {
+		t.Fatalf("create with immutable-field MODIFY: status %d (%v), want 400", code, resp)
+	}
+	errBody, _ := resp["error"].(map[string]any)
+	if errBody == nil {
+		t.Fatalf("immutable-violation response missing error envelope: %v", resp)
+	}
+	if c, _ := errBody["code"].(string); c != "INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION" {
+		t.Errorf("error code = %q, want INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION", c)
+	}
+	if cat, _ := errBody["category"].(string); cat != "POLICY" {
+		t.Errorf("error category = %q, want POLICY", cat)
+	}
+	details, _ := errBody["details"].(map[string]any)
+	if details == nil {
+		t.Fatalf("immutable-violation response missing details: %v", errBody)
+	}
+	if got, _ := details["phase"].(string); got != "PreRoute" {
+		t.Errorf("details.phase = %q, want PreRoute", got)
+	}
+	vf, _ := details["violated_fields"].([]any)
+	foundTenant := false
+	for _, f := range vf {
+		if s, _ := f.(string); s == "tenant_id" {
+			foundTenant = true
+		}
+	}
+	if !foundTenant {
+		t.Errorf("details.violated_fields = %v, want it to name tenant_id", details["violated_fields"])
+	}
+
+	// The gateway dialed the stub over the wire and forwarded the PreRoute
+	// payload carrying the original (pre-MODIFY) authenticated tenant_id.
+	// The enforcement runs inside the gateway after the gRPC response, so
+	// the illegal MODIFY was rejected rather than applied.
+	reqs := stub.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("interceptor stub received no gRPC request; the gateway did not invoke the external interceptor")
+	}
+	last := reqs[len(reqs)-1]
+	if last.GetPhase() != "PreRoute" {
+		t.Errorf("forwarded phase = %q, want PreRoute", last.GetPhase())
+	}
+	if !strings.Contains(string(last.GetContent()), `"tenant_id":"acme"`) {
+		t.Errorf("forwarded content %q did not carry the original authenticated tenant_id acme", last.GetContent())
+	}
+}
+
 // spec: §4.8 — "If any interceptor returns `REJECT`, the chain
 // short-circuits immediately ... The rejection reason is logged and
 // returned to the caller." The PostAgentOutput phase MODIFY column adds
