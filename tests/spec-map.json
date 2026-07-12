@@ -377,7 +377,8 @@
         "tests/tier2_component/stores/credentialpoolstore_test.go",
         "tests/tier2_component/stores/credleasestore_test.go",
         "tests/tier2_component/translators/anthropic_translator_test.go",
-        "tests/tier4_integration/credential_test.go"
+        "tests/tier4_integration/credential_test.go",
+        "tests/tier4_integration/llm_proxy_roundtrip_test.go"
       ],
       "packages": [
         "pkg/credential",
