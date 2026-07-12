@@ -430,6 +430,7 @@
         "tests/tier4_integration/admission_gate_order_test.go",
         "tests/tier4_integration/interceptor_weakening_cooldown_test.go",
         "tests/tier4_integration/send_message_scan_test.go",
+        "tests/tier4_integration/export_scan_test.go",
         "tests/tier3_contract/interceptor_proto/contract_test.go"
       ],
       "packages": [
