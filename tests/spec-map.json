@@ -3026,6 +3026,8 @@
       "tests": [
         "tests/tier3_contract/ops_endpoints/conventions_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_test.go",
+        "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
+        "tests/tier3_contract/ops_endpoints/diagnostics_scope_test.go",
         "tests/tier3_contract/ops_endpoints/locks_test.go",
         "tests/tier3_contract/ops_endpoints/escalations_test.go",
         "tests/tier3_contract/ops_endpoints/drift_test.go",
@@ -3081,6 +3083,15 @@
         "pkg/events/auditbearing_test.go::TestOperationalEventInlineOCSFWireForm",
         "pkg/events/auditbearing_test.go::TestOperationalEventEmptyExtensionsRoundTrip",
         "tests/tier2_component/healthchecks/...",
+        "cmd/lenny-gateway/health_without_prometheus_test.go::TestHealthDegradesFromInProcessRegistryWithoutPrometheus_spec_25_3_450",
+        "tests/tier3_contract/ops_endpoints/health_auth_test.go::TestHealthEndpointsRequireAdminRole",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsResponseWireContract",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsPostRestartDegradedEnvelope",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsUnknownCategoryErrorEnvelope",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsUnavailableErrorEnvelope",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestEventBufferPageWireContract",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformVersionWireContract",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformConfigRedactionWireContract",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
@@ -3138,7 +3149,9 @@
         "pkg/ops/diagnostics/chain_test.go",
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/auditrate/auditrate_test.go",
-        "tests/tier2_component/stores/diagnostics_prodsource_test.go"
+        "tests/tier2_component/stores/diagnostics_prodsource_test.go",
+        "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
+        "tests/tier4_integration/diagnostics_test.go"
       ],
       "packages": [
         "pkg/operability/diag"

@@ -52,9 +52,12 @@ func (s *Server) withOpsAuth(mux http.Handler, cfg *AuthConfig) http.Handler {
 	opts.RequireAuth = true
 
 	// Order after the bearer is verified: rate limit (per sub) -> role gate
-	// -> mux. Rate limiting runs first so an authenticated-but-unauthorized
-	// caller is still back-pressured.
-	inner := requireAdminRole(mux)
+	// -> scope gate -> mux. Rate limiting runs first so an authenticated-
+	// but-unauthorized caller is still back-pressured. The §25.1 scope gate
+	// sits inside the role gate and before the mux so a scope-narrowed token
+	// is rejected with 403 SCOPE_FORBIDDEN before any admin handler runs at
+	// its full role ceiling (spec: §25.1 lines 92-94, enforcement point 1).
+	inner := requireAdminRole(s.scopeEnforce(mux))
 	if cfg.RateLimiter != nil {
 		inner = cfg.RateLimiter.Wrap(inner)
 	}

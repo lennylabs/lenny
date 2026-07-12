@@ -65,6 +65,7 @@
     "pkg/gateway/externalapi/admin": {
       "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
+      "contract": ["tests/tier3_contract/gateway_ops/..."],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
     "pkg/gateway/externalapi/openapi": {
