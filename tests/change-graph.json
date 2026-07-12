@@ -339,6 +339,7 @@
     },
     "pkg/tokenservice": {
       "unit": ["pkg/tokenservice/..."],
+      "component": ["tests/tier2_component/stores/tokencache_test.go"],
       "contract": ["tests/tier3_contract/oauth_token/..."]
     },
     "cmd/lenny-test": {
