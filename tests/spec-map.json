@@ -419,6 +419,7 @@
         "pkg/gateway/policy/interceptor/...",
         "pkg/gateway/mcpfabric/delegationpolicystore/...",
         "pkg/gateway/mcpfabric/mcptools/predelegation_test.go",
+        "tests/tier2_component/stores/interceptorstore_test.go",
         "tests/tier4_integration/external_interceptor_test.go"
       ],
       "packages": [
