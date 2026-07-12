@@ -171,7 +171,8 @@
         "tests/tier3_contract/rest_idempotency/idempotency_test.go",
         "tests/tier3_contract/rest_sessions/sessions_test.go",
         "tests/tier4_integration/idempotency_test.go",
-        "tests/tier4_integration/session_lifecycle_test.go"
+        "tests/tier4_integration/session_lifecycle_test.go",
+        "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres"
       ],
       "packages": [
         "pkg/session",
