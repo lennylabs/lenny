@@ -3185,7 +3185,8 @@
       "tests": [
         "pkg/ops/runbooks/runbooks_test.go",
         "pkg/ops/runbooks/steps_test.go",
-        "pkg/ops/opsserver/runbooks_test.go"
+        "pkg/ops/opsserver/runbooks_test.go",
+        "tests/tier2_component/runbooks/index_load_test.go"
       ],
       "packages": [
         "pkg/operability/runbooks"
