@@ -3134,7 +3134,8 @@
         "tests/tier9_security/ops_network_policy_test.go::TestOpsEgressBoundToAllowlist_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsDenyAllIngress_spec_25_4",
-        "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPINoPlaintextHandshake_spec_25_4"
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPINoPlaintextHandshake_spec_25_4",
+        "tests/tier0_static/gateway_admin_tls_listener_test.go::TestGatewayAdminTLSListenerDistinctFromLLMProxy"
       ],
       "packages": [
         "cmd/lenny-ops"
