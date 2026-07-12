@@ -9,6 +9,7 @@
 package stores_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -108,4 +109,61 @@ func TestMinIOStoreContract(t *testing.T) {
 			t.Errorf("Probe: %v", err)
 		}
 	})
+}
+
+// spec: 4.5, 12.5
+// diagnosis: the §4.5 interface-level tenant-prefix guard failed to
+// reject a foreign-tenant URI before issuing an S3 call against the
+// real MinIO backend. §4.5 requires that every method validating a
+// supplied tenant_id against the path prefix reject a mismatch
+// "without reaching MinIO". A blobstore.TenantScoped store bound to
+// "acme" must return ErrCrossTenant from Put/Get/Stat/Copy/
+// DeleteByTenant for a "globex" URI, and the object must never appear
+// in the underlying MinIO bucket.
+func TestMinIOStoreTenantPrefixRejectsCrossTenant(t *testing.T) {
+	inner, _ := startMinIOStore(t)
+	// The gateway constructs this wrapper from the resolved request
+	// tenant; a call built from foreign-tenant input cannot reach the
+	// real S3 backend behind it.
+	scoped := blobstore.NewTenantScoped("acme", inner)
+
+	foreign := blobstore.URI{
+		TenantID:   "globex",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  "s_x",
+		PartID:     "p_x",
+		TTL:        time.Hour,
+		Encoding:   blobstore.Encoding,
+	}
+
+	if _, err := scoped.Put(foreign, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Put cross-tenant: got %v, want ErrCrossTenant", err)
+	}
+	if _, _, err := scoped.Get(foreign); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Get cross-tenant: got %v, want ErrCrossTenant", err)
+	}
+	if _, err := scoped.Stat(foreign); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Stat cross-tenant: got %v, want ErrCrossTenant", err)
+	}
+
+	// A Copy whose destination names a foreign tenant is rejected even
+	// though the source passes the acme caller-tenant gate.
+	src := foreign
+	src.TenantID = "acme"
+	if err := scoped.Copy(src, foreign); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Copy cross-tenant dst: got %v, want ErrCrossTenant", err)
+	}
+
+	// A bulk delete for a tenant other than the bound one is rejected
+	// before any object is touched.
+	if _, err := scoped.DeleteByTenant(context.Background(), "globex"); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("DeleteByTenant(globex) on acme-scoped store: got %v, want ErrCrossTenant", err)
+	}
+
+	// The guard rejects before issuing any S3 call: the foreign object
+	// never reached MinIO, so a direct Stat on the underlying store
+	// returns ErrNotFound rather than a stored blob.
+	if _, err := inner.Stat(foreign); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("inner Stat foreign: got %v, want ErrNotFound (guard must reject before S3)", err)
+	}
 }
