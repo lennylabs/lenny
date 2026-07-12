@@ -73,6 +73,12 @@ type Error struct {
 	// SplitBrain is set on a REMEDIATION_LOCK_CONFLICT raised by the
 	// §25.4 deterministic split-brain resolution rule.
 	SplitBrain bool
+	// Winner and WinnerHolder are set alongside SplitBrain: the §25.4
+	// resolution outcome ("pre_outage") and the acquiredBy that retained
+	// the scope, so the losing holder learns who won on its next call.
+	// spec: §25.4 (split-brain 409 carries winner and winnerHolder).
+	Winner       string
+	WinnerHolder string
 }
 
 // Error implements error.
@@ -97,6 +103,18 @@ func CodeOf(err error) string {
 func IsSplitBrain(err error) bool {
 	var e *Error
 	return errors.As(err, &e) && e.SplitBrain
+}
+
+// SplitBrainDetails returns the winner and winnerHolder carried by a §25.4
+// split-brain conflict error, or empty strings when err is not one. The
+// HTTP layer attaches them to the 409 REMEDIATION_LOCK_CONFLICT details so
+// the losing holder learns the resolution outcome (§25.4 line 2267).
+func SplitBrainDetails(err error) (winner, winnerHolder string) {
+	var e *Error
+	if errors.As(err, &e) && e.SplitBrain {
+		return e.Winner, e.WinnerHolder
+	}
+	return "", ""
 }
 
 // Lock is the §25.4 remediation-lock record. The JSON tags match the

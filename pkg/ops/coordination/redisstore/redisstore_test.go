@@ -99,6 +99,35 @@ func TestRedisReleaseExtendIdentity_spec_25_4(t *testing.T) {
 	}
 }
 
+// spec: §25.4 line 2267 — RemoveByID drops a losing split-brain Redis lock
+// regardless of holder (the reconciliation removes it once the pre-outage
+// Postgres holder has won); a missing id is a no-op.
+func TestRedisRemoveByID_spec_25_4(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	lock := acquire(t, s, "pool:p", "bob", 300)
+
+	// Removing an unknown id is a no-op and leaves the live lock intact.
+	if err := s.RemoveByID(ctx, "lock-unknown"); err != nil {
+		t.Fatalf("remove unknown id: %v", err)
+	}
+	if _, err := s.Get(ctx, lock.ID); err != nil {
+		t.Fatalf("live lock disturbed by unrelated remove: %v", err)
+	}
+
+	// Removing the lock by id drops it regardless of holder identity.
+	if err := s.RemoveByID(ctx, lock.ID); err != nil {
+		t.Fatalf("remove by id: %v", err)
+	}
+	if _, err := s.Get(ctx, lock.ID); coordination.CodeOf(err) != coordination.ErrCodeNotFound {
+		t.Errorf("get after remove = %v, want NOT_FOUND", err)
+	}
+	// The scope is free again.
+	if again := acquire(t, s, "pool:p", "carol", 300); again.AcquiredBy != "carol" {
+		t.Errorf("re-acquire after remove = %+v, want carol", again)
+	}
+}
+
 // spec: §25.4 lines 2282-2295 — Steal records the prior holder and bumps
 // the revision.
 func TestRedisSteal_spec_25_4(t *testing.T) {

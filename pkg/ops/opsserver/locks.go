@@ -37,7 +37,15 @@ func writeLockError(w http.ResponseWriter, err error) {
 	}
 	body := conventions.NewError(code, mapping.category, err.Error())
 	if coordination.IsSplitBrain(err) {
-		body.Error.Details = map[string]any{"splitBrain": true}
+		details := map[string]any{"splitBrain": true}
+		// §25.4 line 2267: the split-brain 409 carries the resolution
+		// outcome and the retained holder so the losing holder learns who
+		// won.
+		if winner, winnerHolder := coordination.SplitBrainDetails(err); winner != "" {
+			details["winner"] = winner
+			details["winnerHolder"] = winnerHolder
+		}
+		body.Error.Details = details
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(mapping.status)

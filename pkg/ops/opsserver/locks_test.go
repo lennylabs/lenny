@@ -4,6 +4,7 @@ package opsserver_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,50 @@ func TestAcquireLockConflictReturns409(t *testing.T) {
 	errObj, _ := body["error"].(map[string]any)
 	if errObj["code"] != "REMEDIATION_LOCK_CONFLICT" || errObj["category"] != "POLICY" {
 		t.Errorf("error = %v, want REMEDIATION_LOCK_CONFLICT/POLICY", errObj)
+	}
+}
+
+// splitBrainLocks is a RemediationLockService whose Extend returns the
+// §25.4 split-brain conflict, so the HTTP error mapping can be asserted.
+type splitBrainLocks struct {
+	coordination.RemediationLockService
+}
+
+func (splitBrainLocks) Extend(_ context.Context, lockID string, _ int) (*coordination.Lock, error) {
+	return nil, &coordination.Error{
+		Code:         coordination.ErrCodeConflict,
+		Message:      "lock " + lockID + " lost a split-brain resolution",
+		SplitBrain:   true,
+		Winner:       "pre_outage",
+		WinnerHolder: "alice",
+	}
+}
+
+// TestExtendSplitBrainConflictCarriesDetails asserts the §25.4 line 2267
+// split-brain 409: a losing holder's heartbeat returns
+// REMEDIATION_LOCK_CONFLICT whose details carry splitBrain:true,
+// winner:"pre_outage", and winnerHolder set to the pre-outage acquiredBy.
+func TestExtendSplitBrainConflictCarriesDetails(t *testing.T) {
+	srv := opsserver.New(opsserver.Options{Locks: splitBrainLocks{}})
+	rec, body := doJSON(t, srv, http.MethodPatch, "/v1/admin/remediation-locks/lock-loser",
+		map[string]string{"X-Lenny-Caller": "bob"},
+		map[string]any{"ttlSeconds": 300})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%v", rec.Code, body)
+	}
+	errObj, _ := body["error"].(map[string]any)
+	if errObj["code"] != "REMEDIATION_LOCK_CONFLICT" {
+		t.Fatalf("error code = %v, want REMEDIATION_LOCK_CONFLICT", errObj["code"])
+	}
+	details, _ := errObj["details"].(map[string]any)
+	if details["splitBrain"] != true {
+		t.Errorf("details.splitBrain = %v, want true", details["splitBrain"])
+	}
+	if details["winner"] != "pre_outage" {
+		t.Errorf("details.winner = %v, want pre_outage", details["winner"])
+	}
+	if details["winnerHolder"] != "alice" {
+		t.Errorf("details.winnerHolder = %v, want alice", details["winnerHolder"])
 	}
 }
 

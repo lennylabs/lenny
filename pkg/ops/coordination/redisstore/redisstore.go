@@ -276,6 +276,30 @@ func (s *Store) Steal(ctx context.Context, lockID string, req coordination.Steal
 // contract and always reports zero reaped.
 func (s *Store) Reap(_ context.Context) (int, error) { return 0, nil }
 
+// RemoveByID drops the lock with lockID from Redis regardless of holder.
+// The §25.4 reconciliation calls it to remove a losing split-brain Redis
+// lock once the pre-outage Postgres holder has won ("The Redis lock is
+// removed", line 2267), so a later Postgres outage cannot resurface the
+// stale lock. The delete is the same atomic id-matched CAS as Release, so a
+// steal that re-keyed the scope is not clobbered; a lock that has already
+// expired or been re-keyed is a no-op.
+//
+// spec: §25.4 line 2267.
+func (s *Store) RemoveByID(ctx context.Context, lockID string) error {
+	lock, err := s.readByID(ctx, lockID)
+	if err != nil {
+		return unavailable(err)
+	}
+	if lock == nil {
+		return nil
+	}
+	if _, err := releaseScript.Run(ctx, s.client,
+		[]string{scopeKey(lock.Scope), idxKey(lockID)}, lockID).Result(); err != nil {
+		return unavailable(err)
+	}
+	return nil
+}
+
 // Epoch returns the §25.4 ops:lock-epoch:current value, defaulting to 0.
 func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 	v, err := s.client.Get(ctx, epochKey).Uint64()
