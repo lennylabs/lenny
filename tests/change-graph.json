@@ -314,6 +314,10 @@
       "unit": ["pkg/adapter/..."],
       "contract": ["tests/tier3_contract/adapter_jsonl/..."]
     },
+    "schemas/lenny-interceptor.proto": {
+      "static": ["tests/tier0_static/schemas_test.go"],
+      "contract": ["tests/tier3_contract/interceptor_proto/..."]
+    },
     "schemas/lenny-adapter-jsonl.schema.json": {
       "static": ["tests/tier0_static/schemas_test.go"],
       "contract": ["tests/tier3_contract/adapter_jsonl/..."],
