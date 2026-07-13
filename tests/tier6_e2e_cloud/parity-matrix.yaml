@@ -126,3 +126,19 @@ capabilities:
       gke: planned
       eks: planned
       aks: planned
+
+  # ArtifactStore cross-region replication residency: the runtime
+  # residency preflight's provider-native jurisdiction-tag probe
+  # (s3:GetBucketTagging or provider equivalent) against a real
+  # destination bucket, the same-jurisdiction `active` state, and the
+  # cross-jurisdiction fail-closed suspension
+  # (suspended_residency_violation + ARTIFACT_REPLICATION_REGION_UNRESOLVABLE).
+  # Exercised by TestCloudArtifactReplicationResidency; tier-1/tier-2
+  # cover only the FakeDriver, so no provider validates the provider-native
+  # path yet.
+  - name: artifact_replication_residency
+    spec_section: "25.11"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
