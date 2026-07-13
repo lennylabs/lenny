@@ -226,6 +226,73 @@ func TestRestoreStatusContract(t *testing.T) {
 	}
 }
 
+// TestRestoreStatusProgressContract pins the §25.11 requirement that
+// GET /v1/admin/restore/{id}/status carries the §25.2 canonical progress
+// envelope. The spec is explicit: "The response includes the canonical
+// progress envelope (Section 25.2): totalSteps = shard count + 1 (the
+// post-restore gateway restart), currentStep = the shard currently being
+// restored or "gateway-restart", etaSeconds derived from
+// linear_extrapolation over completed shards + historical_p50 for the
+// gateway restart phase." The status endpoint must serve the same
+// progress object the Operations Inventory carries for the restore.
+//
+// spec: 25.11 (GET /v1/admin/restore/{id}/status — "The response includes
+// the canonical progress envelope (Section 25.2): totalSteps = shard
+// count + 1 ... currentStep = the shard currently being restored or
+// \"gateway-restart\" ... etaSeconds derived from linear_extrapolation
+// over completed shards + historical_p50 for the gateway restart phase"),
+// 25.2 (canonical progress envelope — totalSteps, currentStep, etaSeconds)
+// diagnosis: The restore status body omitted the canonical progress
+// envelope. Agents poll this endpoint to render restore progress and an
+// ETA without recomputing from raw shardStates; a missing progress
+// object forces every agent to reconstruct totalSteps and the ETA
+// itself, defeating the uniform progress contract §25.2 mandates across
+// long-running operations.
+func TestRestoreStatusProgressContract(t *testing.T) {
+	t.Skip("open TEST-GAPS finding: the restore-status handler does not yet build the §25.11 canonical progress envelope; closing it is a product change (progress field on RestoreState plus the linear_extrapolation-over-shards + gateway-restart historical_p50 etaSeconds computation) pending a human decision on the ETA-method combination and the gateway-restart baseline source")
+
+	srv := backupServer(t)
+	created := createBackup(t, srv)
+	id, _ := created["id"].(string)
+	rec, exec := request(t, srv, http.MethodPost, "/v1/admin/restore/execute", nil,
+		map[string]any{"backupId": id, "confirm": true})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("restore execute status = %d, want 202; body=%v", rec.Code, exec)
+	}
+	restoreID, _ := exec["restoreId"].(string)
+	if restoreID == "" {
+		t.Fatalf("execute returned no restoreId: %v", exec)
+	}
+	rec, body := request(t, srv, http.MethodGet,
+		"/v1/admin/restore/"+restoreID+"/status", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore status = %d, want 200; body=%v", rec.Code, body)
+	}
+	assertJSONContentType(t, rec)
+
+	progress, ok := body["progress"].(map[string]any)
+	if !ok {
+		t.Fatalf("restore status is missing the §25.2 progress envelope; body=%v", body)
+	}
+	// §25.2 progress envelope fields the restore endpoint must populate.
+	assertFields(t, "progress", progress, "totalSteps", "currentStep", "etaSeconds")
+
+	// §25.11: totalSteps = shard count + 1 (the post-restore gateway restart).
+	shardStates, ok := body["shardStates"].(map[string]any)
+	if !ok {
+		t.Fatalf("restore status is missing shardStates; body=%v", body)
+	}
+	wantTotal := float64(len(shardStates) + 1)
+	if got, _ := progress["totalSteps"].(float64); got != wantTotal {
+		t.Errorf("progress.totalSteps = %v, want shard count + 1 = %v", progress["totalSteps"], wantTotal)
+	}
+	// §25.11: currentStep is the shard currently being restored or
+	// "gateway-restart"; it is never empty while a progress envelope exists.
+	if step, _ := progress["currentStep"].(string); step == "" {
+		t.Errorf("progress.currentStep is empty; want a shard id or %q", "gateway-restart")
+	}
+}
+
 // TestBackupErrorEnvelopeContract pins the §25.2 canonical error envelope
 // and the §25.11 canonical error code for the documented not-found
 // failures on the backup and restore endpoints.
