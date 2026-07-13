@@ -3266,7 +3266,8 @@
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupJobCreationFailsWhenKubernetesAPIDown",
-        "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown"
+        "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown",
+        "tests/tier5_e2e_kind/backup_test.go::TestBackupImageProvidesPostgresClientTools"
       ],
       "packages": [
         "pkg/operability/backup"
