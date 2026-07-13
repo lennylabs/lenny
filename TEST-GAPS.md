@@ -157,7 +157,7 @@ Across 132 audited units: **1648 findings** — 503 High, 738 Medium, 258 Low, 1
 - [§25.5 Operational Event Stream](#t-25.5) — 6H 7M 3L 1I — No tier3/4/5/6/8/9 test exercises the event stream; SSE/poll still lacks a Redis source (retention purge now resolved); read endpoints are platform-admin-only vs the tenant-scoped-caller rule, and UpdateSubscription filter patching is unasserted.
 - [§25.6 Diagnostic Endpoints](#t-25.6) — 5H 11M 6L 0I — Auto-remediation now implemented+unit-tested (was High); tier4/5 live-service, REST scope, degradation-matrix gaps remain High; new: /healthz-vs-health-summary probe, unimplemented pool K8s fallback + MetricSource wiring, stale audit-stub comments, and the metricsSource-field spec contradiction
 - [§25.7 Operational Runbooks Engine](#t-25.7) — 2H 4M 2L 1I — MCP runbook tools now drop all 5 Path A filters (openapi.json declares no query params); still no inventory/authz test
-- [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 10M 2L 3I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test; new gaps: status progress omits the §25.2 canonical envelope, version/full drops CRD/Helm sources, no compiled-in release-channel key, TESTING.md change-graph example dangling refs
+- [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 10M 3L 3I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test; new gaps: status progress omits the §25.2 canonical envelope, version/full drops CRD/Helm sources, no compiled-in release-channel key, TESTING.md change-graph example dangling refs
 - [§25.9-25.10 Audit Log Query API and Config Drift Detection](#t-25.9-25.10) — 5H 8M 2L 1I — §25.9 audit query endpoints and drift reconcile/deferred-write reconciliation still lack real-Postgres/gateway integration tests
 - [§25.11 Backup and Restore API](#t-25.11) — 4H 7M 3L 2I — Backup/restore round-trip, tier3/4/5/6/8/9 gaps remain open; two findings downgraded by new component tests.
 - [§25.12 MCP Management Server](#t-25.12) — 7H 7M 3L 2I — Build-time openapi-to-mcp generator landed (T-25.12.1 resolved); gateway-proxy routing still absent so new admin tools can't dispatch
@@ -9529,6 +9529,13 @@ Counts: 6 High, 7 Medium, 2 Low, 2 Info.
 - **Gap:** TESTING.md:325 lists `tests/tier0_static/schema_lint_test.go`, which does not exist (`find tests -name schema_lint_test.go` returns nothing; the real file is `tests/tier0_static/schemas_test.go`). TESTING.md:318 lists `tests/tier4_integration/checkpoint_resume_test.go`, but that file lives at `tests/tier5_e2e_kind/checkpoint_resume_test.go`. These are illustrative doc-example entries (not in the live `change-graph.json`), so lower impact than the `migration_upgrade_test.go` case, but they are the same class of dangling and mistiered reference in the same TESTING.md JSON block.
 - **Dependencies:** none — doc-example correction.
 - **Suggested test:** Correct the TESTING.md change-graph example to reference `tests/tier0_static/schemas_test.go` and the tier5 `checkpoint_resume_test.go` path, and extend the tier0 manifest-integrity check (per T-25.8.7 / T-10.5.11) to cover paths named in the TESTING.md change-graph example.
+
+### - [ ] T-25.8.22 — Migration test embeds a TEST-GAPS finding id in a source comment [Low] — OPEN
+- **Spec/Doc:** `code-best-practices.md` (`// spec: §X.Y` citation convention); the `platform_registry_config` migration backs the §25.8 runtime registry API.
+- **Existing tests:** `migrations/platform_registry_config_test.go::TestPlatformRegistryConfigMigration_spec_25_8`.
+- **Gap:** `migrations/platform_registry_config_test.go:15` contains the comment "...only the Secret name. F-25.8.6." The project convention forbids putting a finding id (anything that is not a durable spec-section reference) into test code or comments; the comment should cite only `// spec: §X.Y` or describe the behavior in prose.
+- **Dependencies:** none — comment correction.
+- **Suggested test:** Remove the `F-25.8.6.` reference from the comment, leaving the existing `// spec: §25.8` citation and the behavioral prose intact.
 
 ## §25.9-25.10 Audit Log Query API and Config Drift Detection <a id="t-25.9-25.10"></a>
 **Spec file:** `spec/25_agent-operability.md`
