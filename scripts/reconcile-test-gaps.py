@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Reconcile TEST-GAPS.md after a merge or edit.
 
 The integrator runs this on every integration; a runner or proposal worker
