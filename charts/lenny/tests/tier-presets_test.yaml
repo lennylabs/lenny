@@ -282,6 +282,76 @@ tests:
             name: LENNY_CAPACITY_TIER
             value: "tier3"
 
+  # spec: §25.13 lines 4735-4769 — the tier-dependent alert-threshold
+  # defaults are set by the tier preset files, with tighter thresholds at
+  # higher tiers. The §25.13 excerpts pin the tier-2 row (queue depth 10,
+  # p99 latency 2.0s) and the tier-3 row (queue depth 5, p99 latency 1.0s).
+  # The gateway publishes these as env-fed Prometheus gauges
+  # (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS)
+  # so the bundled alert expressions resolve scalar(...) against the
+  # tier-tuned values. These assertions catch an accidental preset edit
+  # that loosens a threshold at a higher tier.
+  - it: tier2 preset pins the §25.13 tier-2 gateway alert thresholds
+    values:
+      - ../presets/values-tier2.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD
+            value: "10"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS
+            value: "2"
+
+  - it: tier3 preset pins the tighter §25.13 tier-3 gateway alert thresholds
+    values:
+      - ../presets/values-tier3.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD
+            value: "5"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS
+            value: "1"
+
+  # spec: §25.13 line 4727-4732 — Tier 1 carries the loosest defaults in
+  # the tier matrix (base values.yaml, no preset override). Pinning them
+  # guards the ordering invariant that Tier 2 and Tier 3 are strictly
+  # tighter than the Tier 1 base.
+  - it: tier1 preset leaves the loosest base gateway alert thresholds
+    values:
+      - ../presets/values-tier1.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD
+            value: "20"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS
+            value: "3"
+
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
 # annotation `required` guard render in this suite.

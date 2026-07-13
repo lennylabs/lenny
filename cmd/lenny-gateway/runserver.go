@@ -43,11 +43,16 @@ func (w *gatewayWiring) runServers() {
 	alertingOverrideCount := f.alertingOverrideCount
 	auditHardFailOnDrift := f.auditHardFailOnDrift
 
-	// §16.1 line 713 / §25.13 lines 4833–4835 — register the bundled-
-	// alerting observability surface so an operator's chart inputs and
-	// per-rule in-process eval latency become visible on /metrics.
-	// F-25.13.3.
-	alertingMx, err := alertingmetrics.New(nil)
+	// spec: §16.1 lines 713/723 / §25.13 lines 4833–4840 — register the
+	// bundled-alerting observability surface on the gateway's own metric
+	// registry (the one gwMetrics.Handler() serves at /metrics) so an
+	// operator's chart inputs and per-rule in-process eval latency become
+	// visible on the endpoint they scrape. §16.1 adds these gauges to the
+	// platform metric registry, and §25.13 says they let operators verify
+	// their bundling configuration is in effect; the DefaultRegisterer is
+	// not served by the gateway's /metrics handler, so the gauges must
+	// register on w.gwMetrics.Registerer() to be observable. F-25.13.3.
+	alertingMx, err := alertingmetrics.New(w.gwMetrics.Registerer())
 	if err != nil {
 		log.Fatalf("lenny-gateway: §25.13 alerting metrics: %v", err)
 	}
