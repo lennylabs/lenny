@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/diagnostics_connectivity.json",
+  "title": "ConnectivityReport response body (spec 25.6)",
+  "description": "The GET /v1/admin/diagnostics/connectivity response. Pins the ConnectivityReport struct: the aggregate healthy verdict and the per-dependency probe results (name, reachable, durationMs, and the optional detail). additionalProperties is false so a renamed or dropped field fails the contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["healthy", "dependencies"],
+  "properties": {
+    "healthy": { "type": "boolean" },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "reachable", "durationMs"],
+        "properties": {
+          "name": { "type": "string" },
+          "reachable": { "type": "boolean" },
+          "durationMs": { "type": "integer" },
+          "detail": { "type": "string" }
+        }
+      }
+    }
+  }
+}

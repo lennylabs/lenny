@@ -10,7 +10,10 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
+	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
 
@@ -84,6 +87,68 @@ func TestSignalsFromPodLastTermination_spec_25_6_2899(t *testing.T) {
 	}}
 	if sig := signalsFromPod(pod); sig.ExitCode != 1 {
 		t.Fatalf("want last-termination exit 1, got %+v", sig)
+	}
+}
+
+// TestK8sReaderSignalsOOM drives the K8sReader end to end against a fake
+// clientset: an OOM-killed pod in the reader's namespace yields the OOM
+// signal and its exit code through the real client query, not just the
+// pure mapping function. spec: §25.6 line 2893 (K8s fallback reads pod
+// .status.containerStatuses[].state.terminated for exit code and reason
+// including OOMKilled).
+func TestK8sReaderSignalsOOM_spec_25_6_2893(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "lenny-system"},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 137, Reason: "OOMKilled",
+			}},
+		}}},
+	})
+	r := NewK8sReader(cs, "lenny-system")
+	sig, found, err := r.Signals(context.Background(), "pod-1")
+	if err != nil || !found {
+		t.Fatalf("want found OOM pod, got found=%v err=%v", found, err)
+	}
+	if sig.ExitCode != 137 || !sig.OOMKilled {
+		t.Fatalf("want OOM signals through the client, got %+v", sig)
+	}
+}
+
+// TestK8sReaderSignalsGarbageCollected covers the not-found path: a pod
+// that no longer exists in the API (garbage-collected after the session
+// failed) returns found=false with no error, so the caller reports a
+// clean not-found rather than a degraded diagnosis. spec: §25.6 line 2892
+// (the fallback attempts to locate the pod and reads its status directly).
+func TestK8sReaderSignalsGarbageCollected_spec_25_6_2892(t *testing.T) {
+	r := NewK8sReader(k8sfake.NewSimpleClientset(), "lenny-system")
+	sig, found, err := r.Signals(context.Background(), "gone")
+	if err != nil {
+		t.Fatalf("garbage-collected pod must not error, got %v", err)
+	}
+	if found || (sig != diagnostics.Signals{}) {
+		t.Fatalf("want clean not-found with zero signals, got found=%v sig=%+v", found, sig)
+	}
+}
+
+// TestK8sReaderNamespaceScoping confirms the reader queries only its own
+// namespace: a pod with the same name in a different namespace is not
+// returned, and a reader scoped to that namespace finds it. spec: §25.6
+// line 2892 (reads the pod via the K8s API in the agent namespace).
+func TestK8sReaderNamespaceScoping_spec_25_6_2892(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "other-ns"},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}},
+		}}},
+	})
+
+	if _, found, err := NewK8sReader(cs, "lenny-system").Signals(context.Background(), "pod-1"); err != nil || found {
+		t.Fatalf("pod in other-ns must be invisible to lenny-system reader, got found=%v err=%v", found, err)
+	}
+	sig, found, err := NewK8sReader(cs, "other-ns").Signals(context.Background(), "pod-1")
+	if err != nil || !found || sig.ExitCode != 1 {
+		t.Fatalf("reader scoped to other-ns must find the pod, got found=%v sig=%+v err=%v", found, sig, err)
 	}
 }
 
