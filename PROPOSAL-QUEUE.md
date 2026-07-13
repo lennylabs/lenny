@@ -49,7 +49,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-01 — Checkpoint produce-store-restore round-trip and eviction trigger — §4.4/§4.6/§6.2/§10.1
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-A
 - **findings:** T-4.4.12, T-4.4.13, T-4.4.14, T-4.6.4, T-JRN.9, T-DEP.5, T-4.2.1
 - **root spec gap:** §4.4 promises a workspace can survive pod loss, but the whole produce→store→restore pipeline is unwired and the architecture is undecided: does the pod-side adapter talk to MinIO directly (requiring §13 pod-side credential/egress delivery) or stream to the gateway, and what are the object-key layout, the atomic metadata/manifest record, and the eviction-trigger mechanism.
 - **proposal scope:** Decide the checkpoint sink/source architecture and pod-side MinIO credential delivery; the object-key layout and atomic metadata plus partial-manifest schema (including `manifest_reason='terminated_during_resume'` and the generation counters); the eviction-checkpoint trigger seam (pod-eviction watcher vs preStop self-checkpoint); and `POST /v1/sessions/{id}/resume`, with the MinIO-outage fallback to minimal Postgres state.
@@ -57,7 +57,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-02 — Operational event-stream read source, tenant filtering, and MCP subscription — §25.5/§25.12
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-A
 - **findings:** T-25.5.1, T-25.5.5, T-25.5.6, T-25.5.7, T-25.12.6
 - **root spec gap:** The §25.5 read side never consumes the Redis `ops:events:stream`, so the transparent Redis→gateway-buffer fallback, delivery-time tenant filtering, gap-detection on real eviction, the full `EventStreamService` interface (caller identity, `UpdateSubscription`/`ListDeliveries` cursor), and MCP-native subscription have no data source or defined caller-tenant/RBAC plumbing.
 - **proposal scope:** Define the Redis XREAD/XRANGE read source with mid-stream source switching and cross-source cursor translation; the delivery-time tenant-filter rule plus caller-identity/RBAC threading on the SSE/poll read endpoints; the `EventStreamService` caller-signature and cursor-pagination contract; and the MCP `notifications/subscribe`/`message` streaming transport and payload schema layered on that source.
@@ -65,7 +65,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-03 — MCP management tool dispatch, identity/scope forwarding, and capability classification — §25.12/§25.4
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-A
 - **findings:** T-25.12.2, T-25.12.3, T-25.12.7, T-STD.8
 - **root spec gap:** The `/mcp/management` tools/call surface has no routing predicate to split ops-owned vs gateway-proxied tools, no identity/scope forwarding (the JWT `scope` claim and `Authorization` header are dropped on both the internal REST replay and gateway proxy), and no data source for the operability-vs-admin capability classification.
 - **proposal scope:** Decide the ops-vs-gateway routing marker (e.g. `x-lenny-owner`/`x-lenny-scope-group` OpenAPI extension vs a `RouteSchemas` predicate); the identity-forwarding transport (per-call identity override plus raw status/body passthrough, dev-header propagation); the RFC 9068 scope-claim bridging into enforcement; and the closed/illustrative capability domain classification.
