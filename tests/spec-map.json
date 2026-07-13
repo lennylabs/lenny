@@ -3213,7 +3213,7 @@
       "title": "Operational Runbooks",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/ops/runbooks/runbooks_test.go",
+        "pkg/ops/runbooks/index_test.go",
         "pkg/ops/runbooks/steps_test.go",
         "pkg/ops/opsserver/runbooks_test.go",
         "pkg/gateway/operability/health/runbook_bundle_test.go",
@@ -3225,7 +3225,7 @@
         "tests/tier4_integration/runbook_discovery_test.go"
       ],
       "packages": [
-        "pkg/operability/runbooks"
+        "pkg/ops/runbooks"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.7 Operational Runbooks. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."

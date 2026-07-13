@@ -2,7 +2,104 @@
 
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// specMapTestFilesFixture builds a temp repo root with the given test
+// files present on disk, a spec-map.json whose sections list the given
+// test references, an exceptions file exempting exceptSection, and a
+// pending file exempting pendingPath. It returns the check result.
+func specMapTestFilesFixture(t *testing.T, sections map[string][]string, present []string, exceptSection, pendingPath string) checkResult {
+	t.Helper()
+	root := t.TempDir()
+	for _, p := range present {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", full, err)
+		}
+		if err := os.WriteFile(full, []byte("package p\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", full, err)
+		}
+	}
+	doc := map[string]any{"version": 1, "sections": map[string]any{}}
+	secs := doc["sections"].(map[string]any)
+	for name, tests := range sections {
+		secs[name] = map[string]any{"tests": tests}
+	}
+	specMapPath := filepath.Join(root, "spec-map.json")
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal spec-map: %v", err)
+	}
+	if err := os.WriteFile(specMapPath, raw, 0o644); err != nil {
+		t.Fatalf("write spec-map: %v", err)
+	}
+
+	exceptionsPath := filepath.Join(root, "spec-map-exceptions.yaml")
+	body := "version: 1\nexceptions:\n"
+	if exceptSection != "" {
+		body += "  - section: \"" + exceptSection + "\"\n    reason: deferred\n    justification: test fixture.\n"
+	}
+	if err := os.WriteFile(exceptionsPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write exceptions: %v", err)
+	}
+	pendingFile := filepath.Join(root, "spec-map-pending.txt")
+	if err := os.WriteFile(pendingFile, []byte(pendingPath+"\n"), 0o644); err != nil {
+		t.Fatalf("write pending: %v", err)
+	}
+	return validateSpecMapTestFiles(specMapPath, exceptionsPath, pendingFile, root)
+}
+
+// TestValidateSpecMapTestFiles pins the spec-map test-file existence
+// gate: a concrete `.go` reference under a non-exempt section must
+// resolve on disk, a `::TestName` selector is stripped before the file
+// is probed, a directory or package reference is not required to be a
+// file, and both the exceptions-section and pending-path channels
+// suppress a missing-file report.
+func TestValidateSpecMapTestFiles(t *testing.T) {
+	// All references resolve: pass.
+	r := specMapTestFilesFixture(t,
+		map[string][]string{"1.1": {"pkg/foo/foo_test.go", "pkg/foo/foo_test.go::TestBar"}},
+		[]string{"pkg/foo/foo_test.go"}, "", "")
+	expectPass(t, r)
+
+	// A missing file under a non-exempt section fails, and names the
+	// dangling reference.
+	r = specMapTestFilesFixture(t,
+		map[string][]string{"1.2": {"pkg/foo/missing_test.go"}},
+		nil, "", "")
+	expectFail(t, r, "1.2", "pkg/foo/missing_test.go")
+
+	// A `::TestName` selector on a missing file is stripped before the
+	// probe and still fails.
+	r = specMapTestFilesFixture(t,
+		map[string][]string{"1.3": {"pkg/foo/missing_test.go::TestX"}},
+		nil, "", "")
+	expectFail(t, r, "pkg/foo/missing_test.go")
+
+	// A missing file whose section is exempt passes.
+	r = specMapTestFilesFixture(t,
+		map[string][]string{"1.4": {"pkg/foo/missing_test.go"}},
+		nil, "1.4", "")
+	expectPass(t, r)
+
+	// A missing file listed in the pending file passes.
+	r = specMapTestFilesFixture(t,
+		map[string][]string{"1.5": {"pkg/foo/missing_test.go"}},
+		nil, "", "pkg/foo/missing_test.go")
+	expectPass(t, r)
+
+	// A non-.go directory reference is not required to resolve to a
+	// file.
+	r = specMapTestFilesFixture(t,
+		map[string][]string{"1.6": {"tests/tier2_component/foo"}},
+		nil, "", "")
+	expectPass(t, r)
+}
 
 // TestHasNotImplementedSkipAfter pins the §17.9 skip-prefix
 // allowlist. The validate-diagnosis subcommand treats a test as
