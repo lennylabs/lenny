@@ -3124,6 +3124,7 @@
         "tests/tier2_component/coordination/tier_transition_test.go::TestSplitBrainLosingHolderReceives409_spec_25_4",
         "tests/tier4_integration/ops_service_e2e_test.go",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
@@ -3193,6 +3194,7 @@
         "pkg/ops/runbooks/runbooks_test.go",
         "pkg/ops/runbooks/steps_test.go",
         "pkg/ops/opsserver/runbooks_test.go",
+        "pkg/gateway/operability/health/runbook_bundle_test.go",
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier4_integration/runbook_discovery_test.go"
       ],
@@ -3230,6 +3232,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/gateway/externalapi/admin/audit_query_test.go",
+        "pkg/gateway/externalapi/admin/audit_query_filter_test.go::TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707",
         "tests/tier2_component/auditstore/admin_query_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/audit_deferred_reconcile_test.go",
@@ -3264,7 +3267,8 @@
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupJobCreationFailsWhenKubernetesAPIDown",
-        "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown"
+        "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown",
+        "tests/tier5_e2e_kind/backup_test.go::TestBackupImageProvidesPostgresClientTools"
       ],
       "packages": [
         "pkg/operability/backup"
@@ -3300,7 +3304,8 @@
       "title": "lenny-ctl Extensions",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E"
       ],
       "packages": [
         "cmd/lenny-ctl"
