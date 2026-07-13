@@ -3257,6 +3257,8 @@
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
+        "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationCreatePathTierProgressionAgainstRealStores",
+        "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationReconciliationFlushPreservesRecordAgainstRealStores",
         "tests/tier8_chaos/ops_leader_failover_test.go::TestOpsLeaderElectionFailover",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
