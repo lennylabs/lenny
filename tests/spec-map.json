@@ -3214,6 +3214,7 @@
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsUnknownCategoryErrorEnvelope",
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsUnavailableErrorEnvelope",
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestEventBufferPageWireContract",
+        "tests/tier3_contract/cloudevents/ops_events_buffer_test.go::TestGatewayEventBufferCloudEventsConformance",
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformVersionWireContract",
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformConfigRedactionWireContract",
         "tests/tier4_integration/ops_endpoints_test.go",
