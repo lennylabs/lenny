@@ -3366,6 +3366,8 @@
         "tests/tier3_contract/ops_endpoints/upgrade_test.go",
         "pkg/ops/opsserver/platform_upgrade_test.go",
         "pkg/ops/upgradeservice/upgradeservice_test.go",
+        "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
+        "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
         "tests/tier2_component/observability/version_aggregation_test.go",
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
