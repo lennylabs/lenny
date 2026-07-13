@@ -67,7 +67,8 @@ func TestLennyCtlOperabilityCommandsE2E(t *testing.T) {
 	})
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
-	ops := opsprocess.StartWith(t,
+	ops := opsprocess.StartWith(
+		t,
 		"--postgres-dsn="+pg.DSN,
 		"--redis-url=redis://"+rd.Addr+"/0",
 		"--redis-allow-insecure",
