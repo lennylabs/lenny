@@ -23,6 +23,7 @@
 package observability_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/prometheus/promql/parser"
 	"gopkg.in/yaml.v3"
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
@@ -385,6 +387,151 @@ func TestRenderedRuleGroupIsWellFormed(t *testing.T) {
 			if r.Labels["severity"] == "" {
 				t.Errorf("rendered rule %q has no severity label", r.Alert)
 			}
+		}
+	}
+}
+
+// renderedConfigMap is the chart-rendered rules ConfigMap. Only the data
+// map matters to the rule-file cross-check.
+type renderedConfigMap struct {
+	Kind string            `yaml:"kind"`
+	Data map[string]string `yaml:"data"`
+}
+
+// helmTemplateRulesConfigMap renders the rules manifest with
+// monitoring.format=configmap and returns the embedded rules.yaml payload.
+// Unlike the PrometheusRule path, the ConfigMap format is selected
+// explicitly, so no --api-versions is needed: the operator-CRD degrade
+// (§16.9 R8) applies only when the configured format is prometheusrule.
+func helmTemplateRulesConfigMap(t *testing.T, root string) string {
+	t.Helper()
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skipf("helm not on PATH: %v", err)
+	}
+	chart := filepath.Join(root, "charts", "lenny")
+	// The same render-time `required`/`fail` guards the PrometheusRule
+	// render satisfies apply here (see helmTemplatePrometheusRule): the
+	// §10.3 spiffeTrustDomain required value and the §13.2 coredns.clusterIP
+	// fail guard.
+	args := []string{
+		"template", chart,
+		"--show-only", "templates/prometheusrule.yaml",
+		"--set", "global.spiffeTrustDomain=lenny-test",
+		"--set", "coredns.clusterIP=10.96.0.53",
+		"--set", "monitoring.format=configmap",
+	}
+	out, err := exec.Command(helm, args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	var cm renderedConfigMap
+	if err := yaml.Unmarshal(out, &cm); err != nil {
+		t.Fatalf("unmarshal rendered ConfigMap: %v\n%s", err, out)
+	}
+	if cm.Kind != "ConfigMap" {
+		t.Fatalf("rendered kind = %q, want ConfigMap", cm.Kind)
+	}
+	payload, ok := cm.Data["rules.yaml"]
+	if !ok {
+		t.Fatalf("rendered ConfigMap has no data[\"rules.yaml\"] key")
+	}
+	return payload
+}
+
+// promRuleFile mirrors the standard Prometheus rule-file document: a
+// top-level `groups:` list, each group carrying `rules:` with the
+// alerting-rule fields. It is deliberately the rule-file structure, not
+// the PrometheusRule CRD (which nests the same groups under
+// apiVersion/kind/metadata/spec). Decoding the ConfigMap payload into
+// this struct with KnownFields(true) rejects a leaked CRD manifest,
+// because its top-level apiVersion/kind/metadata/spec keys are unknown
+// here.
+type promRuleFile struct {
+	Groups []struct {
+		Name  string `yaml:"name"`
+		Rules []struct {
+			Alert       string            `yaml:"alert"`
+			Expr        string            `yaml:"expr"`
+			For         string            `yaml:"for"`
+			Labels      map[string]string `yaml:"labels"`
+			Annotations map[string]string `yaml:"annotations"`
+		} `yaml:"rules"`
+	} `yaml:"groups"`
+}
+
+// spec: 25.13 (the ConfigMap emits the same rules in standard Prometheus rule-file YAML)
+// diagnosis: The ConfigMap the chart renders for vanilla-Prometheus
+//
+//	deployers (monitoring.format=configmap) does not carry a
+//	loadable Prometheus rule file in data["rules.yaml"]. §25.13
+//	line 4721 requires the ConfigMap, mountable into the
+//	Prometheus pod's rule_files directory, to hold "the same
+//	rules in standard Prometheus YAML format" — a top-level
+//	`groups:` document whose rules[] carry alert/expr/for. A
+//	regression that spliced the PrometheusRule CRD
+//	(apiVersion/kind/spec.groups) into the ConfigMap payload, or
+//	otherwise emitted a file Prometheus cannot load, is caught
+//	here: the payload is decoded with KnownFields and every expr
+//	is parsed by the same promql parser Prometheus loads rules
+//	with.
+func TestRulesConfigMapIsLoadablePrometheusRuleFile(t *testing.T) {
+	root := repoRoot(t)
+	payload := helmTemplateRulesConfigMap(t, root)
+
+	// Decode the embedded string as a Prometheus rule file. KnownFields
+	// makes an unexpected top-level key (the apiVersion/kind/metadata/spec
+	// of a leaked CRD manifest, for example) a hard error rather than a
+	// silently ignored field, so only a genuine rule-file document passes.
+	//
+	// spec: §25.13 line 4721 — "The ConfigMap can be mounted into the
+	// Prometheus pod's `rule_files` directory. The chart emits the same
+	// rules in standard Prometheus YAML format."
+	dec := yaml.NewDecoder(bytes.NewReader([]byte(payload)))
+	dec.KnownFields(true)
+	var file promRuleFile
+	if err := dec.Decode(&file); err != nil {
+		t.Fatalf("data[\"rules.yaml\"] is not a standard Prometheus rule file: %v\npayload:\n%s", err, payload)
+	}
+	if len(file.Groups) == 0 {
+		t.Fatalf("parsed rule file has no groups; want a top-level `groups:` document\npayload:\n%s", payload)
+	}
+
+	// Every parsed group must carry alerting rules whose alert and expr are
+	// present and whose expr parses as PromQL — the loadability guarantee a
+	// rule_files entry must meet. parser.ParseExpr is the same expression
+	// parser Prometheus uses when it loads a rule file.
+	renderedNames := map[string]bool{}
+	for _, g := range file.Groups {
+		if g.Name == "" {
+			t.Error("a rule group has no name")
+		}
+		if len(g.Rules) == 0 {
+			t.Errorf("rule group %q has no rules", g.Name)
+		}
+		for _, r := range g.Rules {
+			if r.Alert == "" {
+				t.Errorf("rule group %q has a rule with no alert name", g.Name)
+			}
+			if r.Expr == "" {
+				t.Errorf("rule %q has an empty expr", r.Alert)
+			}
+			if _, err := parser.ParseExpr(r.Expr); err != nil {
+				t.Errorf("rule %q expr does not parse as PromQL: %v", r.Alert, err)
+			}
+			renderedNames[r.Alert] = true
+		}
+	}
+
+	// The spec sentence requires "the same rules" as the operator path, so
+	// every §16.5 catalog alert must appear in the ConfigMap payload. This
+	// pins the ConfigMap output to the shared catalog rather than accepting
+	// any well-formed but divergent rule file.
+	//
+	// spec: §25.13 line 4721 — "The chart emits the same rules ..."
+	for _, r := range rules.Catalog() {
+		if !renderedNames[r.Name] {
+			t.Errorf("§16.5 catalog alert %q is missing from the rendered ConfigMap rules.yaml", r.Name)
 		}
 	}
 }
