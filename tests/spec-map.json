@@ -3375,7 +3375,8 @@
         "cmd/lenny-ops/cert_manager_source_test.go::TestCertManagerSource_HealthDerivation_spec_25_8",
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
-        "tests/tier10_conformance/release_channel_manifest_test.go"
+        "tests/tier10_conformance/release_channel_manifest_test.go",
+        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable"
       ],
       "packages": [
         "pkg/upgrade",
@@ -3412,7 +3413,8 @@
         "pkg/drift/drift_test.go",
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
-        "tests/tier4_integration/drift_reconcile_test.go"
+        "tests/tier4_integration/drift_reconcile_test.go",
+        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable"
       ],
       "packages": [
         "pkg/ops/driftservice"
