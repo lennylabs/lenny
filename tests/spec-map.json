@@ -3122,6 +3122,8 @@
         "pkg/ops/opsserver/locks_test.go::TestExtendSplitBrainConflictCarriesDetails",
         "tests/tier2_component/coordination/tier_transition_test.go::TestTierTransitionSplitBrainReconciliation_spec_25_4",
         "tests/tier2_component/coordination/tier_transition_test.go::TestSplitBrainLosingHolderReceives409_spec_25_4",
+        "tests/tier2_component/coordination/clockskew_test.go::TestClockSkewSamplerRealStoresNearZero_spec_25_4",
+        "tests/tier2_component/coordination/clockskew_test.go::TestClockSkewSamplerRealStoresAlertFires_spec_25_4",
         "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyStoreOutage_spec_25_4",
         "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyTierRequiredKey_spec_25_4",
         "tests/tier4_integration/ops_service_e2e_test.go",
