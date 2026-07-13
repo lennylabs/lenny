@@ -80,15 +80,18 @@ import (
 // spec: §17.4 (the in-cluster control plane on the cross-platform
 // substrate), §4.7 (the in-cluster gateway dials the agent pod's in-cluster
 // IP over the adapter boundary), §5.2 (the PoolWarmingUp initial-fill
-// window) — exercises the embedded quick-start: bring the stack up, assert
-// the embedded Kubernetes substrate is healthy (the real-Kubernetes path
-// rather than the controller-sim fallback), assert every rendered
-// control-plane pod (gateway, controller, lenny-ops) reached Ready, create
-// a session against the auto-seeded echo runtime (retrying across the §5.2
-// PoolWarmingUp initial-fill window while the single-pod pool warms),
-// register and place a custom sidecar-model runtime to prove placement is
-// runtime-agnostic, exercise the warm persisted-substrate bring-up, and
-// tear the stack down.
+// window), §15.4 (the synchronous send_message delivery_receipt), §15.4.1
+// (the echo contract), §26 (the echo runtime `lenny up` runs out of the
+// box) — exercises the embedded quick-start: bring the stack up, assert the
+// embedded Kubernetes substrate is healthy (the real-Kubernetes path rather
+// than the controller-sim fallback), assert every rendered control-plane
+// pod (gateway, controller, lenny-ops) reached Ready, create a session
+// against the auto-seeded echo runtime (retrying across the §5.2
+// PoolWarmingUp initial-fill window while the single-pod pool warms), drive
+// one prompt round-trip through the running session so the journey reaches
+// a working session rather than a merely-placed pod, register and place a
+// custom sidecar-model runtime to prove placement is runtime-agnostic,
+// exercise the warm persisted-substrate bring-up, and tear the stack down.
 //
 // diagnosis: a failure means the documented `lenny up` → `session new` →
 // `lenny down` quick-start did not complete end to end through the real
@@ -208,6 +211,19 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 	sid := newSessionToleratingWarmup(t, bin, home, rt)
 	t.Logf("lenny session new: created %s", sid)
 
+	// The placed session must process a turn, not merely exist: the
+	// developer's local-dev journey ends at a working session, so drive one
+	// prompt round-trip through the running pod. `lenny session send`
+	// delivers a message over the §15.2 lenny/send_message tool; against a
+	// running session the gateway returns the §15.4 synchronous
+	// delivery_receipt with status `delivered`, and the credential-free echo
+	// runtime (the §26 runtime `lenny up` runs out of the box) echoes the
+	// input back over the §15.4.1 contract. Session creation alone proves
+	// placement; this proves the placed pod accepts and answers a turn end to
+	// end over the §4.7 adapter boundary. spec: §15.4, §15.4.1, §17.4, §26,
+	// §4.7.
+	sendPromptToPlacedSession(t, bin, home, sid)
+
 	// Custom-sidecar-runtime leg (S5/C2): the in-cluster control plane places
 	// any runtime over the §4.7 boundary, not echo alone. The leg imports a
 	// genuine sidecar-model runtime image (runtime-echo, which dials the
@@ -316,6 +332,39 @@ func newSessionToleratingWarmup(t *testing.T, bin, home, rt string) string {
 		"(echo is the auto-seeded runnable runtime; set %s to another runtime only if its image is pullable on this host)",
 		rt, warmupWindow, last.ExitCode, last.Stdout, last.Stderr, embedded.RuntimeEnv)
 	return "" // unreachable: t.Fatalf stops the test
+}
+
+// sendPromptToPlacedSession drives one prompt round-trip against a placed,
+// running session through `lenny session send <id> <message>`. The §15.4
+// contract is that every send_message call returns a synchronous
+// delivery_receipt; against a running session the status is `delivered`, so
+// the CLI exits 0 and prints the receipt (and, for the echo runtime, the
+// echoed response parts per §15.4.1) to stdout. This is the difference
+// between a placed pod and a working session: a non-zero exit means the
+// running session did not accept the turn (an unavailable inbox or a failed
+// §4.7 callback to the pod), and an empty reply means the synchronous
+// receipt the CLI always prints was missing.
+//
+// The assertion keys on the zero exit and a non-empty reply rather than the
+// echo runtime's `[echo seq=N] ...` text marker, which is transient runtime
+// output the spec does not pin; a delivered receipt against the real placed
+// echo pod is the faithful proof that the auto-seeded credential-free
+// runtime processes a turn out of the box. spec: §15.4 (synchronous
+// delivery_receipt), §15.4.1 (the echo contract), §17.4 / §26 (echo runs
+// out of the box), §4.7.
+func sendPromptToPlacedSession(t *testing.T, bin, home, sid string) {
+	t.Helper()
+	const prompt = "hello from the quick-start"
+	res := embedded.Run(t, bin, home, 2*time.Minute, "session", "send", sid, prompt)
+	if res.ExitCode != 0 {
+		t.Fatalf("lenny session send %s %q: exit %d; the placed echo session did not accept the turn\n"+
+			"stdout:\n%s\nstderr:\n%s", sid, prompt, res.ExitCode, res.Stdout, res.Stderr)
+	}
+	if strings.TrimSpace(res.Stdout) == "" {
+		t.Fatalf("lenny session send %s: empty reply; the §15.4 synchronous delivery_receipt "+
+			"must be returned on a running session\nstderr:\n%s", sid, res.Stderr)
+	}
+	t.Logf("lenny session send: turn delivered to %s; reply: %s", sid, strings.TrimSpace(res.Stdout))
 }
 
 // embeddedComponentHealthy reports whether the `lenny status` table marks
