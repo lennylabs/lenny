@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/mcp/mcptoolgen"
@@ -201,7 +202,9 @@ func TestGeneratedDestructiveToolsClassified_spec_25_12(t *testing.T) {
 		}
 	}
 	// The nonDestructive filter drops every destructive tool.
-	filtered := reg.FilterForList(mcp.Capabilities{NonDestructive: true}, nil)
+	// An absent scope claim (empty Set) permits every scope, so this
+	// exercises the capability filter alone.
+	filtered := reg.FilterForList(mcp.Capabilities{NonDestructive: true}, scopes.Set{})
 	for _, tool := range filtered {
 		if tool.Category == mcp.CategoryDestructive {
 			t.Errorf("nonDestructive filter kept the destructive tool %q", tool.Name)

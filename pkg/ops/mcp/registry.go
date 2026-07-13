@@ -2,7 +2,11 @@
 
 package mcp
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/lennylabs/lenny/pkg/common/scopes"
+)
 
 // Registry is the §25.12 management-tool inventory: the set of MCP
 // tools the management server exposes via tools/list and dispatches via
@@ -60,10 +64,16 @@ type Capabilities struct {
 
 // FilterForList returns the tools to show in a §25.12 tools/list
 // response under the given capability declaration intersected with the
-// caller's permitted scopes. permittedScopes is the set of x-lenny-scope
-// values the caller's JWT scope claim authorizes; a nil set means every
-// scope is permitted (the v1 default before scope middleware lands).
-func (r *Registry) FilterForList(caps Capabilities, permittedScopes map[string]bool) []Tool {
+// caller's scope claim. callerScopes is the caller's §25.1 scope Set;
+// filtering is always intersected with it, so a tool the claim does not
+// permit is dropped regardless of the capability declaration. An absent
+// claim (callerScopes.Present()==false) permits every scope per the
+// §25.1 absent-claim semantics, so no scope narrowing applies.
+//
+// spec: §25.12 (Capability Negotiation) — "Filtering is ALWAYS
+// intersected with the caller's scope claim (tools not permitted by
+// scope are filtered out regardless of capability declaration)."
+func (r *Registry) FilterForList(caps Capabilities, callerScopes scopes.Set) []Tool {
 	out := make([]Tool, 0, len(r.order))
 	for _, name := range r.order {
 		t := r.byName[name]
@@ -80,8 +90,9 @@ func (r *Registry) FilterForList(caps Capabilities, permittedScopes map[string]b
 			continue
 		}
 		// §25.12: capability filtering is always intersected with the
-		// caller's scope claim.
-		if permittedScopes != nil && !permittedScopes[t.Scope] {
+		// caller's scope claim. Matches honors the §25.1 wildcard rules
+		// and returns true for every scope when the claim is absent.
+		if !callerScopes.Matches(t.Scope) {
 			continue
 		}
 		out = append(out, t)

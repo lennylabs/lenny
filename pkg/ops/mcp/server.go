@@ -152,7 +152,7 @@ func (s *Server) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 		// MCP lifecycle notifications: acknowledged, no result.
 		return rpcResponse{}
 	case "tools/list":
-		return rpcResponse{Result: s.handleToolsList(req)}
+		return rpcResponse{Result: s.handleToolsList(r, req)}
 	case "tools/call":
 		return s.handleToolsCall(r, req)
 	default:
@@ -174,11 +174,19 @@ func (s *Server) handleInitialize(rpcRequest) map[string]any {
 }
 
 // handleToolsList answers the §25.12 tools/list method. It filters the
-// inventory by the caller's declared capabilities; §25.12 keeps this a
-// UX convenience, so it does not enforce scope as a security boundary.
-func (s *Server) handleToolsList(req rpcRequest) map[string]any {
+// inventory by the caller's declared capabilities intersected with the
+// caller's scope claim. §25.12 keeps capability filtering a UX
+// convenience, but the scope intersection is mandatory: tools the
+// caller's scope claim does not permit are filtered out regardless of
+// the capability declaration.
+//
+// spec: §25.12 — "Filtering is ALWAYS intersected with the caller's
+// scope claim (tools not permitted by scope are filtered out regardless
+// of capability declaration)."
+func (s *Server) handleToolsList(r *http.Request, req rpcRequest) map[string]any {
 	caps := capabilitiesFromParams(req.Params)
-	tools := s.registry.FilterForList(caps, nil)
+	callerScopes, _ := requestScopes(r)
+	tools := s.registry.FilterForList(caps, callerScopes)
 	list := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		list = append(list, toolDescriptor(t))
