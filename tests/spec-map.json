@@ -3159,7 +3159,7 @@
         "pkg/ops/coordination",
         "pkg/ops/escalation",
         "pkg/ops/driftservice",
-        "pkg/ops/mcpmgmt",
+        "pkg/ops/mcp",
         "pkg/ops/runbooks",
         "pkg/drift",
         "pkg/remediationlock"
@@ -3221,7 +3221,8 @@
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
       ],
       "packages": [
-        "pkg/gateway/ops"
+        "pkg/gateway/operability/health",
+        "pkg/gateway/operability/recommendations"
       ],
       "blocked_until_phase": "4.5"
     },
@@ -3280,7 +3281,7 @@
       "title": "Operational Event Stream",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "tests/tier2_component/stores/eventsubscriptionstore_test.go::TestEventSubscriptionStoreContract",
+        "pkg/ops/eventsubscription/pgstore/pgstore_test.go::TestPgStoreRoundTrip_spec_25_5",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",

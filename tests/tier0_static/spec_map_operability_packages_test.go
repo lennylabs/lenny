@@ -10,8 +10,60 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
+
+// readSpecMapExceptedSections returns the set of spec-section ids listed
+// in tests/spec-map-exceptions.yaml. A section listed there is exempt as
+// a whole (its feature is deferred or non-normative), so its packages
+// may name a directory that a later phase ships.
+func readSpecMapExceptedSections(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map-exceptions.yaml"))
+	if err != nil {
+		t.Fatalf("read spec-map-exceptions.yaml: %v", err)
+	}
+	var doc struct {
+		Exceptions []struct {
+			Section string `yaml:"section"`
+		} `yaml:"exceptions"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse spec-map-exceptions.yaml: %v", err)
+	}
+	out := map[string]bool{}
+	for _, e := range doc.Exceptions {
+		out[e.Section] = true
+	}
+	return out
+}
+
+// readSpecMapPendingPaths returns the set of repo-relative paths listed
+// in tests/spec-map-pending.txt. A path listed there is a reference
+// committed ahead of the file, or a known stale reference awaiting
+// repair under a separately tracked finding, and is tolerated by the
+// existence guards.
+func readSpecMapPendingPaths(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map-pending.txt"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out
+		}
+		t.Fatalf("read spec-map-pending.txt: %v", err)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out[line] = true
+	}
+	return out
+}
 
 // readSpecMapPackages returns, per section id, the `packages` list
 // recorded in tests/spec-map.json.
@@ -106,5 +158,63 @@ func TestOperabilityImplementationPackagesExist(t *testing.T) {
 		if err != nil || !info.IsDir() {
 			t.Errorf("operability implementation package %q does not exist as a directory on disk: %v", p, err)
 		}
+	}
+}
+
+// spec: 25.2 (architecture overview: the operability surface splits
+//
+//	between gateway-side endpoints and the lenny-ops service, each
+//	implemented in a real pkg/gateway or pkg/ops package), 25.3
+//	(gateway-side ops endpoints)
+//
+// diagnosis: A §25 spec-map `packages` entry names a directory that does
+//
+//	not exist on disk. TESTING.md defines tests/spec-map.json as mapping
+//	"every spec section to the tests, packages, migrations, and chart
+//	templates that encode it"; a packages entry that resolves to no
+//	directory encodes nothing, so the coverage and impact tooling keyed
+//	on the packages field points at a nonexistent package and can
+//	neither report its coverage nor tie an edit of it back to its spec
+//	section. The lenny-test validate-maps test-file existence guard
+//	probes only the tests[] .go references, so a stale packages[] path
+//	escapes it. Every packages entry under a non-exempt §25 section must
+//	resolve to a real directory (gateway-side ops under
+//	pkg/gateway/operability/*, the lenny-ops service under pkg/ops/*);
+//	repoint a dangling entry at the package on disk.
+func TestOperabilityPackageReferencesResolveOnDisk(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	excepted := readSpecMapExceptedSections(t, root)
+	pending := readSpecMapPendingPaths(t, root)
+
+	dangling := []string{}
+	for id, pkgs := range readSpecMapPackages(t) {
+		// Scope: the §25 agent-operability sections this guard owns.
+		if id != "25" && !strings.HasPrefix(id, "25.") {
+			continue
+		}
+		// A section exempt as a whole (deferred or non-normative) may
+		// name a package a later phase ships; do not probe it.
+		if excepted[id] {
+			continue
+		}
+		for _, p := range pkgs {
+			// A path committed ahead of the code, or a known stale
+			// reference tracked separately, is tolerated.
+			if pending[p] {
+				continue
+			}
+			info, err := os.Stat(filepath.Join(root, p))
+			if err != nil || !info.IsDir() {
+				dangling = append(dangling, id+" → "+p)
+			}
+		}
+	}
+	sort.Strings(dangling)
+	if len(dangling) > 0 {
+		t.Errorf("spec-map.json §25 `packages` entries point at directories that do not exist on disk "+
+			"(gateway-side ops lives under pkg/gateway/operability/*, the lenny-ops service under pkg/ops/*): %s",
+			strings.Join(dangling, "; "))
 	}
 }
