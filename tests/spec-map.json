@@ -3301,7 +3301,9 @@
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
-        "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown"
+        "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
+        "tests/tier4_integration/event_stream_test.go::TestOpsEventStreamReadSurfaceE2E",
+        "tests/tier4_integration/event_stream_test.go::TestOpsEventSubscriptionWebhookSSRFE2E"
       ],
       "packages": [
         "pkg/ops/events",
