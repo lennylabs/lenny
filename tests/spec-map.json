@@ -3253,6 +3253,8 @@
         "tests/tier2_component/coordination/clockskew_test.go::TestClockSkewSamplerRealStoresAlertFires_spec_25_4",
         "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyStoreOutage_spec_25_4",
         "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyTierRequiredKey_spec_25_4",
+        "tests/tier3_contract/ops_endpoints/upgrade_idempotency_test.go::TestPlatformUpgradeProceedReplayDoesNotDoubleAdvance",
+        "tests/tier3_contract/ops_endpoints/upgrade_idempotency_test.go::TestPlatformUpgradeProceedKeyHonoredUnderLongRunningTTL",
         "tests/tier4_integration/ops_service_e2e_test.go",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
@@ -3366,10 +3368,16 @@
         "tests/tier3_contract/ops_endpoints/upgrade_test.go",
         "pkg/ops/opsserver/platform_upgrade_test.go",
         "pkg/ops/upgradeservice/upgradeservice_test.go",
+        "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
+        "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
         "tests/tier2_component/observability/version_aggregation_test.go",
+        "tests/tier2_component/observability/upgrade_check_cron_test.go",
+        "cmd/lenny-ops/cert_manager_source_test.go::TestCertManagerSource_HealthDerivation_spec_25_8",
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
-        "tests/tier10_conformance/release_channel_manifest_test.go"
+        "tests/tier10_conformance/release_channel_manifest_test.go",
+        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff"
       ],
       "packages": [
         "pkg/upgrade",
@@ -3406,7 +3414,8 @@
         "pkg/drift/drift_test.go",
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
-        "tests/tier4_integration/drift_reconcile_test.go"
+        "tests/tier4_integration/drift_reconcile_test.go",
+        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable"
       ],
       "packages": [
         "pkg/ops/driftservice"

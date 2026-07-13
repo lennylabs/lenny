@@ -12,7 +12,7 @@ import (
 // (GET/PUT /v1/admin/platform/registry). The PUT persists url, overrides,
 // pull_secret_name, and require_digest so the change survives a restart and
 // takes effect on the next image resolution. The pull-secret value is never
-// stored; only the Secret name. F-25.8.6.
+// stored; only the Secret name.
 func TestPlatformRegistryConfigMigration_spec_25_8(t *testing.T) {
 	b, err := FS.ReadFile("0135_platform_registry_config.up.sql")
 	if err != nil {
