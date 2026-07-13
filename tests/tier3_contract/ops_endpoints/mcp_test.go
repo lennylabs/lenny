@@ -8,6 +8,7 @@ package ops_endpoints_test
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 
@@ -327,13 +328,95 @@ func TestRunbookIndexFilterContract(t *testing.T) {
 	}
 }
 
-// TestRunbookStepsContract confirms GET /v1/admin/runbooks/{name}/steps
-// returns the §25.7 structured access-pathed steps.
+// TestRunbookIndexFullTextAndRequiresFilterContract confirms GET
+// /v1/admin/runbooks honors the §25.7 Path A `q` full-text filter and
+// the `requires` capability filter at the wire level. The `q` filter is
+// a case-insensitive AND across the query's whitespace-separated terms,
+// each of which must appear in the runbook's symptoms, tags, or title;
+// the `requires` filter narrows to runbooks whose requires[] lists the
+// named capability.
 //
-// spec: 25.7 (GET /v1/admin/runbooks/{name}/steps — structured steps)
-// diagnosis: The runbook steps endpoint returned no steps or a step
-// missing its access paths. An agent picks the access path matching its
-// capability without parsing the runbook markdown.
+// spec: 25.7 (runbook index — Path A `q` full-text and `requires`
+// filters). The spec table (spec/25_agent-operability.md lines
+// 3148-3149) defines `?requires=admin-api` matching `requires[]` "filter
+// to runbooks the agent can execute" and `?q=image+pull+failure` as
+// "Full-text search across symptoms[], tags[], and runbook title".
+//
+// diagnosis: The runbook index dropped or mis-wired the `q` or
+// `requires` query parameter. An agent narrows the index to runbooks it
+// can execute with ?requires= and does open-ended discovery with ?q=; a
+// query-string wiring regression in handleListRunbooks would strand both
+// paths.
+func TestRunbookIndexFullTextAndRequiresFilterContract(t *testing.T) {
+	srv := opsServer(t)
+
+	count := func(url string) int {
+		t.Helper()
+		rec, body := request(t, srv, http.MethodGet, url, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body=%v", url, rec.Code, body)
+		}
+		books, _ := body["runbooks"].([]any)
+		return len(books)
+	}
+
+	// requires: the fixture runbook lists admin-api, so a matching
+	// capability keeps it and a capability it does not list drops it.
+	if got := count("/v1/admin/runbooks?requires=admin-api"); got != 1 {
+		t.Errorf("?requires=admin-api returned %d runbooks, want 1", got)
+	}
+	if got := count("/v1/admin/runbooks?requires=cluster-access"); got != 0 {
+		t.Errorf("?requires=cluster-access returned %d runbooks, want 0 (fixture does not list it)", got)
+	}
+
+	// q single term: "scaling" is one of the fixture's tags, which the
+	// full-text filter searches, so the runbook matches.
+	if got := count("/v1/admin/runbooks?q=scaling"); got != 1 {
+		t.Errorf("?q=scaling returned %d runbooks, want 1 (tag match)", got)
+	}
+
+	// q full-text across the searched fields: "session" comes from
+	// symptoms and "scaling" from tags, so the single runbook must match
+	// terms drawn from two different searched fields.
+	if got := count("/v1/admin/runbooks?q=session+scaling"); got != 1 {
+		t.Errorf("?q=session+scaling returned %d runbooks, want 1 (symptoms + tags match)", got)
+	}
+
+	// q multi-term AND: every term must match. "scaling" is a tag but
+	// "kubernetes" appears in no searched field, so the AND fails and the
+	// runbook is excluded.
+	if got := count("/v1/admin/runbooks?q=scaling+kubernetes"); got != 0 {
+		t.Errorf("?q=scaling+kubernetes returned %d runbooks, want 0 (AND excludes the unmatched term)", got)
+	}
+
+	// A term present in none of the searched fields matches nothing.
+	if got := count("/v1/admin/runbooks?q=nonexistent"); got != 0 {
+		t.Errorf("?q=nonexistent returned %d runbooks, want 0", got)
+	}
+}
+
+// TestRunbookStepsContract confirms GET /v1/admin/runbooks/{name}/steps
+// returns the §25.7 structured access-pathed steps, and pins the
+// serialized keys and casing of the access-path objects to the
+// documented schema. The /steps response is a wire contract an external
+// agent parses without an LLM, so the field names and casing are part of
+// the contract: an `api` path carries {access, method, path} and a
+// `kubectl` path carries {access, requires, commands}. A JSON-tag rename
+// on the underlying step type would silently break every non-LLM
+// consumer; asserting only a non-empty paths array would not catch it.
+//
+// spec: 25.7 (GET /v1/admin/runbooks/{name}/steps — structured steps).
+// The documented sample (spec/25_agent-operability.md) serializes the
+// api path as {"access": "api", "method": "GET", "path":
+// "/v1/admin/diagnostics/pools/{name}"} and the kubectl path as
+// {"access": "kubectl", "requires": "cluster-access", "commands":
+// [...]}.
+// diagnosis: The runbook steps endpoint returned no steps, a step
+// missing its access paths, or an access-path object whose serialized
+// keys drifted from the documented schema (a JSON-tag rename on the
+// step/access-path type). An agent picks the access path matching its
+// capability by reading these exact keys without parsing the runbook
+// markdown.
 func TestRunbookStepsContract(t *testing.T) {
 	srv := opsServer(t)
 	rec, body := request(t, srv, http.MethodGet, "/v1/admin/runbooks/warm-pool-exhaustion/steps", nil, nil)
@@ -345,10 +428,71 @@ func TestRunbookStepsContract(t *testing.T) {
 		t.Fatalf("steps = %v, want a non-empty step list", body["steps"])
 	}
 	step, _ := steps[0].(map[string]any)
+	// Every step carries the documented top-level keys.
+	if _, ok := step["id"].(string); !ok {
+		t.Errorf("step is missing the string id key: %v", step)
+	}
+	if _, ok := step["title"].(string); !ok {
+		t.Errorf("step is missing the string title key: %v", step)
+	}
 	paths, ok := step["paths"].([]any)
 	if !ok || len(paths) == 0 {
 		t.Fatalf("step paths = %v, want the access-path variants", step["paths"])
 	}
+
+	// Index the access-path objects by their documented "access" key.
+	byAccess := map[string]map[string]any{}
+	for _, raw := range paths {
+		p, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("access path is not a JSON object: %v", raw)
+		}
+		access, ok := p["access"].(string)
+		if !ok || access == "" {
+			t.Fatalf("access path is missing the string access key: %v", p)
+		}
+		byAccess[access] = p
+	}
+
+	// The api path carries {access, method, path} with the documented
+	// casing. method and path are the fields an agent issues the request
+	// with, so their exact keys are load-bearing.
+	api, ok := byAccess["api"]
+	if !ok {
+		t.Fatalf("steps response has no api access path; got access keys %v", accessKeys(byAccess))
+	}
+	if got, _ := api["method"].(string); got != "GET" {
+		t.Errorf("api path method = %v, want the documented \"GET\" under the \"method\" key", api["method"])
+	}
+	if got, _ := api["path"].(string); got == "" {
+		t.Errorf("api path is missing the documented \"path\" key: %v", api)
+	}
+
+	// The kubectl path carries {access, requires, commands} with the
+	// documented casing. requires names the capability the agent must
+	// hold; commands is the ordered command list it runs.
+	kubectl, ok := byAccess["kubectl"]
+	if !ok {
+		t.Fatalf("steps response has no kubectl access path; got access keys %v", accessKeys(byAccess))
+	}
+	if got, _ := kubectl["requires"].(string); got != "cluster-access" {
+		t.Errorf("kubectl path requires = %v, want the documented \"cluster-access\" under the \"requires\" key", kubectl["requires"])
+	}
+	cmds, ok := kubectl["commands"].([]any)
+	if !ok || len(cmds) == 0 {
+		t.Errorf("kubectl path is missing the documented non-empty \"commands\" array: %v", kubectl)
+	}
+}
+
+// accessKeys returns the sorted "access" keys present in an access-path
+// index, for a legible failure message when a documented path is absent.
+func accessKeys(byAccess map[string]map[string]any) []string {
+	keys := make([]string, 0, len(byAccess))
+	for k := range byAccess {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // TestRunbookStepsNotFoundContract confirms an unknown runbook name

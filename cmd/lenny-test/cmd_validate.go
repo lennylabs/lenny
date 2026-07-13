@@ -48,6 +48,8 @@ func runValidateMaps(args []string) int {
 		validateChangeGraphFileExistence(changeGraphPath, root),
 		validateTestFilesMapped(specMapPath, root),
 		validateSpecMapCoverage(specMapPath, exceptionsPath),
+		validateSpecMapTestFiles(specMapPath, exceptionsPath,
+			filepath.Join(root, "tests", "spec-map-pending.txt"), root),
 		validateGroupsYAML(groupsPath),
 		validateGroupsSubsetsYAML(subsetsPath),
 		validateSpecMapExceptionsYAML(exceptionsPath),
@@ -451,6 +453,84 @@ func validateSpecMapCoverage(specMapPath, exceptionsPath string) checkResult {
 	}
 	return newResult("spec-map coverage", true,
 		fmt.Sprintf("%d section(s); every section has a test reference or an exception", len(doc.Sections)))
+}
+
+// validateSpecMapTestFiles confirms every concrete test-file path
+// listed under a section's `tests` array resolves to an extant file
+// on disk. A dangling reference (a rename or a typo left in the map)
+// silently drops a section's coverage: `lenny-test --spec <section>`
+// selects a file that is not there, and a maintainer reading the map
+// believes a suite exists that does not. TESTING.md ("maps every
+// spec section to the tests ... that encode it"; validate-maps is the
+// spec-map integrity gate) requires the references to be real.
+//
+// Only entries that name a concrete `.go` file are checked; a
+// directory or package glob is not required to resolve to a file. A
+// trailing `::TestName` selector is stripped before the file is
+// probed. Two exemption channels keep the check reliable while later
+// phases are still landing:
+//
+//   - A section listed in tests/spec-map-exceptions.yaml is skipped:
+//     its feature is deferred or non-normative, so its tests may not
+//     exist yet (the same sections validateSpecMapCoverage exempts
+//     from the has-a-test rule).
+//   - An individual path listed in tests/spec-map-pending.txt is
+//     skipped, mirroring the change-graph-pending.txt channel, for a
+//     reference committed ahead of the file or awaiting repair under
+//     a separately tracked finding.
+//
+// Package (`packages`) references are not probed here: many name a
+// package that a later phase ships, and distinguishing a deferred
+// package from a stale one is not reliable from the path alone.
+func validateSpecMapTestFiles(specMapPath, exceptionsPath, pendingPath, root string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("spec-map test files", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("spec-map test files", false, err.Error())
+	}
+	excepted := readExceptionSections(exceptionsPath)
+	pending := readPendingPaths(pendingPath)
+	missing := []string{}
+	for section, entry := range doc.Sections {
+		if excepted[section] {
+			continue
+		}
+		for _, t := range entry.Tests {
+			path := t
+			if i := strings.Index(path, "::"); i >= 0 {
+				path = path[:i]
+			}
+			if !strings.HasSuffix(path, ".go") {
+				continue
+			}
+			if pending[path] {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+				missing = append(missing, fmt.Sprintf("%s → %s", section, path))
+			}
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		preview := missing
+		if len(preview) > 5 {
+			preview = append(append([]string{}, preview[:5]...),
+				fmt.Sprintf("... (%d more)", len(missing)-5))
+		}
+		return newResult("spec-map test files", false,
+			fmt.Sprintf("%d test-file reference(s) point at missing files: %s",
+				len(missing), strings.Join(preview, "; ")))
+	}
+	return newResult("spec-map test files", true,
+		"every concrete test-file reference resolves on disk")
 }
 
 // readPendingPaths reads tests/change-graph-pending.txt — one path

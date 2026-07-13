@@ -3152,7 +3152,8 @@
         "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsDenyAllIngress_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPINoPlaintextHandshake_spec_25_4",
-        "tests/tier0_static/gateway_admin_tls_listener_test.go::TestGatewayAdminTLSListenerDistinctFromLLMProxy"
+        "tests/tier0_static/gateway_admin_tls_listener_test.go::TestGatewayAdminTLSListenerDistinctFromLLMProxy",
+        "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal"
       ],
       "packages": [
         "cmd/lenny-ops"
@@ -3212,15 +3213,19 @@
       "title": "Operational Runbooks",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "pkg/ops/runbooks/runbooks_test.go",
+        "pkg/ops/runbooks/index_test.go",
         "pkg/ops/runbooks/steps_test.go",
         "pkg/ops/opsserver/runbooks_test.go",
         "pkg/gateway/operability/health/runbook_bundle_test.go",
+        "pkg/gateway/externalapi/openapi/openapi_test.go::TestRunbookIndexAdvertisesPathAFilters_spec_25_7",
+        "pkg/ops/mcp/server_test.go::TestToolsListReturnsTheInventory",
         "tests/tier2_component/runbooks/index_load_test.go",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go",
+        "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
         "tests/tier4_integration/runbook_discovery_test.go"
       ],
       "packages": [
-        "pkg/operability/runbooks"
+        "pkg/ops/runbooks"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.7 Operational Runbooks. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
