@@ -85,7 +85,8 @@ func TestPromptJourneyAcrossAuthModes(t *testing.T) {
 			default:
 				t.Fatalf("unknown auth cell %q", cell["auth"])
 			}
-		})
+		},
+	)
 }
 
 // uniqueAuthJourneyTenant returns a per-run synthetic tenant id that
