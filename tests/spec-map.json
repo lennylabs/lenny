@@ -2630,7 +2630,9 @@
     "17.1": {
       "title": "Kubernetes Resources",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "tests/tier9_security/tls_test.go::TestOpsServingCertificateReady"
+      ],
       "packages": [],
       "chart_templates": [
         "charts/lenny/templates/"
@@ -3263,6 +3265,7 @@
         "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsDenyAllIngress_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPINoPlaintextHandshake_spec_25_4",
+        "tests/tier9_security/tls_test.go::TestOpsServingCertificateReady",
         "tests/tier0_static/gateway_admin_tls_listener_test.go::TestGatewayAdminTLSListenerDistinctFromLLMProxy",
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal"
       ],
