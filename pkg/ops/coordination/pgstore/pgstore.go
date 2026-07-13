@@ -158,11 +158,17 @@ func (s *Store) ActiveLocks(ctx context.Context) ([]coordination.Lock, error) {
 }
 
 // Get returns a single §25.4 lock, or REMEDIATION_LOCK_NOT_FOUND when the
-// id is unknown or the lock has expired.
+// id is unknown or the lock has expired. When the id is that of a lock that
+// lost a split-brain resolution to a still-active pre-outage holder, it
+// returns the 409 split-brain conflict instead so the losing holder learns
+// the outcome (§25.4 line 2267).
 func (s *Store) Get(ctx context.Context, lockID string) (*coordination.Lock, error) {
 	lock, err := scanLock(s.pool.QueryRow(ctx,
 		`SELECT `+columns+` FROM ops_remediation_locks WHERE id = $1 AND expires_at > now()`, lockID))
 	if errors.Is(err, pgx.ErrNoRows) {
+		if sb := s.splitBrainLoserConflict(ctx, lockID); sb != nil {
+			return nil, sb
+		}
 		return nil, &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
 	}
 	if err != nil {
@@ -211,6 +217,13 @@ func (s *Store) notFoundOrNotOwned(ctx context.Context, lockID, caller string) e
 	err := s.pool.QueryRow(ctx,
 		`SELECT acquired_by FROM ops_remediation_locks WHERE id = $1 AND expires_at > now()`, lockID).Scan(&owner)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// The lock is not a live Postgres row. If its id lost a split-brain
+		// resolution to a still-active pre-outage holder, surface the 409
+		// split-brain conflict so the losing holder's heartbeat/release
+		// learns the outcome rather than a bare not-found (§25.4 line 2267).
+		if sb := s.splitBrainLoserConflict(ctx, lockID); sb != nil {
+			return sb
+		}
 		return &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
 	}
 	if err != nil {
@@ -222,6 +235,39 @@ func (s *Store) notFoundOrNotOwned(ctx context.Context, lockID, caller string) e
 	// Owner matches but the earlier mutation affected no rows: report
 	// not-found rather than claim a phantom failure.
 	return &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
+}
+
+// splitBrainLoserConflict returns the §25.4 split-brain 409 for a lock id
+// that lost a both-active resolution to a pre-outage holder, or nil when
+// the id is not a recorded losing lock. The reconciliation logs each such
+// resolution to ops_lock_conflicts with the losing (post-outage) lock in
+// post_outage_lock; a losing holder that heartbeats, releases, or fetches
+// its removed lock is told winner:"pre_outage" and the retained holder
+// rather than a bare not-found (§25.4 line 2267, line 2271: "always
+// notified via the heartbeat path").
+func (s *Store) splitBrainLoserConflict(ctx context.Context, lockID string) *coordination.Error {
+	var winnerHolder string
+	err := s.pool.QueryRow(ctx, `
+		SELECT pre_outage_lock->>'acquiredBy'
+		FROM ops_lock_conflicts
+		WHERE winner = 'pre_outage'
+		  AND loser_was_active
+		  AND post_outage_lock->>'id' = $1
+		ORDER BY detected_at DESC
+		LIMIT 1`, lockID).Scan(&winnerHolder)
+	if err != nil {
+		// No recorded conflict for this id (ErrNoRows), or the store is
+		// unreachable: fall back to the caller's not-found path rather than
+		// inventing a split-brain.
+		return nil
+	}
+	return &coordination.Error{
+		Code:         coordination.ErrCodeConflict,
+		Message:      "lock " + lockID + " lost a split-brain resolution to the pre-outage holder " + winnerHolder,
+		SplitBrain:   true,
+		Winner:       "pre_outage",
+		WinnerHolder: winnerHolder,
+	}
 }
 
 // Steal takes over a §25.4 lock: caller becomes acquiredBy, the prior
@@ -398,6 +444,7 @@ func (s *Store) resolveSplitBrain(ctx context.Context, tx pgx.Tx, pre, post coor
 		conflict.Winner = "post_outage"
 		conflict.WinnerHolder = post.AcquiredBy
 		conflict.LoserHolder = pre.AcquiredBy
+		conflict.LoserLockID = pre.ID
 		conflict.LoserWasActive = false
 	case postExpired:
 		// Postgres wins: the expired Redis lock is discarded, the Postgres
@@ -405,13 +452,17 @@ func (s *Store) resolveSplitBrain(ctx context.Context, tx pgx.Tx, pre, post coor
 		conflict.Winner = "pre_outage"
 		conflict.WinnerHolder = pre.AcquiredBy
 		conflict.LoserHolder = post.AcquiredBy
+		conflict.LoserLockID = post.ID
 		conflict.LoserWasActive = false
 	default:
-		// Both active: pre-outage (Postgres) wins; the Redis holder is
-		// notified on its next heartbeat/list/release.
+		// Both active: pre-outage (Postgres) wins; the losing Redis lock is
+		// removed and its holder is notified with the split-brain 409 on its
+		// next heartbeat/list/release (§25.4 line 2267). The conflict row
+		// (below) keyed on the losing lock id drives that notification.
 		conflict.Winner = "pre_outage"
 		conflict.WinnerHolder = pre.AcquiredBy
 		conflict.LoserHolder = post.AcquiredBy
+		conflict.LoserLockID = post.ID
 		conflict.LoserWasActive = true
 	}
 

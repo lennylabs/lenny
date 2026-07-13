@@ -273,6 +273,38 @@
       "unit": ["pkg/ops/versionsource/..."],
       "component": ["tests/tier2_component/observability/version_aggregation_test.go"]
     },
+    "pkg/ops/opsserver": {
+      "unit": ["pkg/ops/opsserver/..."],
+      "component": [
+        "tests/tier2_component/runbooks/index_load_test.go",
+        "tests/tier2_component/opsidem/outage_test.go"
+      ],
+      "contract": ["tests/tier3_contract/ops_endpoints/..."]
+    },
+    "tests/tier3_contract/ops_endpoints": {
+      "unit": ["pkg/ops/opsserver/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/..."]
+    },
+    "pkg/ops/diagnostics": {
+      "unit": ["pkg/ops/diagnostics/..."],
+      "component": [
+        "tests/tier2_component/stores/diagnostics_prodsource_test.go",
+        "tests/tier2_component/opsaudit/diagnostics_audit_durable_test.go"
+      ],
+      "contract": ["tests/tier3_contract/ops_endpoints/..."],
+      "integration": ["tests/tier4_integration/diagnostics_test.go"]
+    },
+    "pkg/ops/opsidem": {
+      "unit": ["pkg/ops/opsidem/..."],
+      "component": ["tests/tier2_component/opsidem/outage_test.go"]
+    },
+    "pkg/ops/runbooks": {
+      "unit": ["pkg/ops/runbooks/..."],
+      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+    },
+    "docs/runbooks": {
+      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+    },
     "pkg/releasechannel": {
       "unit": ["pkg/releasechannel/..."],
       "integration": ["tests/tier4_integration/release_channel_fetch_test.go"],

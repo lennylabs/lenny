@@ -58,9 +58,18 @@ type ToolResult struct {
 // ops handlers.
 type Invoker interface {
 	// Invoke runs the tool with the given arguments and returns the
-	// result. tool is the resolved registry entry; args is the raw
-	// arguments object from the tools/call request.
-	Invoke(tool Tool, args json.RawMessage) (ToolResult, error)
+	// result. ctx is the context of the originating /mcp/management
+	// request; it carries the caller's verified principal, scope claim,
+	// and correlation values so an in-process replay is subject to the
+	// §25.4 role gate and §25.1 scope gate against the real caller rather
+	// than an anonymous one. tool is the resolved registry entry; args is
+	// the raw arguments object from the tools/call request.
+	//
+	// spec: §25.12 — "Every MCP tool invocation that passes the scope
+	// check is translated into a REST call ... That REST call passes
+	// through the standard OIDC/JWT middleware and role-based
+	// authorization check."
+	Invoke(ctx context.Context, tool Tool, args json.RawMessage) (ToolResult, error)
 }
 
 // Server is the §25.12 MCP Management Server. It serves the management
@@ -234,7 +243,7 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 	if s.invoker == nil {
 		return endpointUnavailable(tool)
 	}
-	result, err := s.invoker.Invoke(tool, p.Arguments)
+	result, err := s.invoker.Invoke(r.Context(), tool, p.Arguments)
 	if err != nil {
 		return rpcResponse{Error: &rpcError{
 			Code: errEndpointUnavailable, Message: err.Error(),

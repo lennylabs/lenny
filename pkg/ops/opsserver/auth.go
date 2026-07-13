@@ -57,7 +57,19 @@ func (s *Server) withOpsAuth(mux http.Handler, cfg *AuthConfig) http.Handler {
 	// sits inside the role gate and before the mux so a scope-narrowed token
 	// is rejected with 403 SCOPE_FORBIDDEN before any admin handler runs at
 	// its full role ceiling (spec: §25.1 lines 92-94, enforcement point 1).
-	inner := requireAdminRole(s.scopeEnforce(mux))
+	postAuth := requireAdminRole(s.scopeEnforce(mux))
+	// §25.12: the MCP invoker replays a mapped tool request against this
+	// post-authentication chain with the caller's already-verified
+	// principal on the request context, so the in-process replay passes
+	// the same §25.4 role gate and §25.1 scope gate as a direct REST call
+	// ("passes through the standard OIDC/JWT middleware and role-based
+	// authorization check"). The replay excludes the bearer verifier
+	// (there is no bearer to forward in-process) and the per-service-
+	// account rate limiter (the outer /mcp/management request already
+	// charged the caller's token budget; re-charging on the replay would
+	// double-count).
+	s.mcpReplay = postAuth
+	inner := postAuth
 	if cfg.RateLimiter != nil {
 		inner = cfg.RateLimiter.Wrap(inner)
 	}

@@ -8,6 +8,30 @@ import (
 	"time"
 )
 
+// Query-path cursorKind values (§25.4 Storage Tiers, Query Path). The
+// durable Postgres tier keyset-paginates over the ops_escalations ordering
+// and stamps CursorKindPK; the Redis scan and in-memory buffer paginate by
+// limit only, with no continuation cursor, and stamp CursorKindNone.
+//
+// spec: §25.4 lines 2427-2429.
+const (
+	CursorKindPK   = "pk"
+	CursorKindNone = "none"
+)
+
+// ListPage is the result of a §25.4 escalation query-path List: one page of
+// records newest-first plus the canonical pagination metadata the list
+// endpoint returns in its envelope. NextCursor is an opaque continuation
+// token, empty on the CursorKindNone paths and on the final Postgres page.
+//
+// spec: §25.4 lines 2425-2429 (Storage Tiers, Query Path).
+type ListPage struct {
+	Items      []Escalation
+	NextCursor string
+	HasMore    bool
+	CursorKind string
+}
+
 // ErrStoreUnavailable signals that an escalation Store's backend is
 // unreachable. The tiered Service treats it as "fall to the next tier"
 // on the create path and "skip this store" on the query path, matching
@@ -39,9 +63,13 @@ type Store interface {
 	Put(ctx context.Context, esc Escalation) error
 	// Get returns the escalation by id, or (nil, nil) when absent.
 	Get(ctx context.Context, id string) (*Escalation, error)
-	// List returns the escalations matching f, newest-first, capped by
-	// limit (a non-positive limit applies no cap).
-	List(ctx context.Context, f Filter, limit int) ([]Escalation, error)
+	// List returns the escalations matching f, newest-first, as one page
+	// capped by limit (a non-positive limit applies no cap). cursor is an
+	// opaque continuation token from a prior page's NextCursor; an empty
+	// cursor starts at the head. The returned ListPage carries the store's
+	// CursorKind and, on the durable Postgres tier, a NextCursor and
+	// HasMore that let a caller advance page by page (§25.4 query path).
+	List(ctx context.Context, f Filter, cursor string, limit int) (ListPage, error)
 	// SetStatus moves the escalation's lifecycle status, stamping the
 	// updated/acknowledged/resolved timestamps from now. It returns
 	// (nil, nil) when the escalation is absent.

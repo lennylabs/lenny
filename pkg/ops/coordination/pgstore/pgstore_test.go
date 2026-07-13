@@ -214,6 +214,52 @@ func TestPgReconcileSplitBrainPreOutageWins_spec_25_4(t *testing.T) {
 	}
 }
 
+// spec: §25.4 line 2267, line 2271 — after a both-active resolution the
+// losing (post-outage Redis) holder is notified with the split-brain 409 on
+// its next heartbeat/release/get: Get, Extend, and Release on the losing
+// lock id return REMEDIATION_LOCK_CONFLICT with splitBrain:true,
+// winner:"pre_outage", and winnerHolder set to the pre-outage acquiredBy,
+// rather than a bare not-found.
+func TestPgSplitBrainLoserNotifiedOnNextCall_spec_25_4(t *testing.T) {
+	s, _, ctx := setup(t)
+	mustAcquire(t, s, ctx, "pool:p", "alice", 300) // pre-outage winner
+
+	now := time.Now().UTC()
+	redisLocks := []coordination.Lock{{
+		ID: "lock-loser", Scope: "pool:p", Operation: "scale", AcquiredBy: "bob",
+		AcquiredAt: now, ExpiresAt: now.Add(5 * time.Minute), Epoch: 4,
+	}}
+	if _, err := s.Reconcile(ctx, 4, redisLocks, now); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	assertSplitBrain := func(label string, err error) {
+		t.Helper()
+		if coordination.CodeOf(err) != coordination.ErrCodeConflict {
+			t.Errorf("%s error code = %q, want REMEDIATION_LOCK_CONFLICT", label, coordination.CodeOf(err))
+		}
+		if !coordination.IsSplitBrain(err) {
+			t.Errorf("%s IsSplitBrain = false, want true", label)
+		}
+		w, h := coordination.SplitBrainDetails(err)
+		if w != "pre_outage" || h != "alice" {
+			t.Errorf("%s split-brain details = (%q,%q), want (pre_outage,alice)", label, w, h)
+		}
+	}
+
+	_, getErr := s.Get(ctx, "lock-loser")
+	assertSplitBrain("get", getErr)
+	_, extErr := s.Extend(ctx, "lock-loser", 300, "bob")
+	assertSplitBrain("extend", extErr)
+	relErr := s.Release(ctx, "lock-loser", "bob")
+	assertSplitBrain("release", relErr)
+
+	// An unrelated unknown lock id still returns a bare not-found.
+	if _, err := s.Get(ctx, "lock-unknown"); coordination.CodeOf(err) != coordination.ErrCodeNotFound {
+		t.Errorf("unknown lock get = %v, want NOT_FOUND", err)
+	}
+}
+
 // spec: §25.4 lines 2259-2260 — when the pre-outage Postgres lock is
 // expired by clock, the Redis lock wins and replaces the Postgres row.
 func TestPgReconcileSplitBrainRedisWins_spec_25_4(t *testing.T) {

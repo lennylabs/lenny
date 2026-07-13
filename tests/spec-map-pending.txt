@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+#
+# Spec-map `tests[]` file references that the spec-map test-file
+# existence check (lenny-test validate-maps) tolerates even though the
+# file is not present on disk. An entry is either committed ahead of
+# the change that adds the file, or a known stale reference awaiting
+# repair under a separately tracked finding.
+#
+# Format: one repo-relative path per line, matching the spec-map
+# `tests[]` entry exactly with any trailing `::TestName` selector
+# removed. `#` starts a comment.
+#
+# Drop an entry once the matching file ships or the reference is
+# corrected. A section listed in tests/spec-map-exceptions.yaml is
+# exempt as a whole and does not need an entry here.
+
+# Section 5.2 references a stateless-mode concurrency suite that is
+# absent on disk (the tier-4 file was migrated during the S19 stale-
+# fixture cleanup). Tracked for repair separately; not this file's to
+# fix.
+tests/tier4_integration/concurrent_stateless_test.go

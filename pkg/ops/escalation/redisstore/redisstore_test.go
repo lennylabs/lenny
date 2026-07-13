@@ -86,20 +86,29 @@ func TestRedisStoreListFilterAndPending_spec_25_4(t *testing.T) {
 	_ = s.Put(ctx, sample("esc-old", escalation.SeverityWarning, escalation.StatusOpen, base))
 	_ = s.Put(ctx, sample("esc-new", escalation.SeverityCritical, escalation.StatusOpen, base.Add(time.Minute)))
 
-	all, err := s.List(ctx, escalation.Filter{}, 0)
+	allPage, err := s.List(ctx, escalation.Filter{}, "", 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
+	all := allPage.Items
 	if len(all) != 2 || all[0].ID != "esc-new" {
 		t.Errorf("list = %v, want newest-first [esc-new, esc-old]", ids(all))
 	}
-	crit, _ := s.List(ctx, escalation.Filter{Severity: "critical"}, 0)
-	if len(crit) != 1 || crit[0].ID != "esc-new" {
+	if allPage.CursorKind != escalation.CursorKindNone {
+		t.Errorf("cursorKind = %q, want %q on the Redis scan path", allPage.CursorKind, escalation.CursorKindNone)
+	}
+	critPage, _ := s.List(ctx, escalation.Filter{Severity: "critical"}, "", 0)
+	if crit := critPage.Items; len(crit) != 1 || crit[0].ID != "esc-new" {
 		t.Errorf("severity filter = %v, want [esc-new]", ids(crit))
 	}
-	limited, _ := s.List(ctx, escalation.Filter{}, 1)
-	if len(limited) != 1 {
-		t.Errorf("limit=1 returned %d, want 1", len(limited))
+	// A page limit below the match count reports HasMore but no cursor: the
+	// Redis path paginates by limit only (§25.4 line 2428).
+	limited, _ := s.List(ctx, escalation.Filter{}, "", 1)
+	if len(limited.Items) != 1 {
+		t.Errorf("limit=1 returned %d, want 1", len(limited.Items))
+	}
+	if !limited.HasMore || limited.NextCursor != "" {
+		t.Errorf("limit=1 page = {hasMore:%v cursor:%q}, want hasMore=true with no cursor", limited.HasMore, limited.NextCursor)
 	}
 
 	// Both records are unemitted, so PendingEmission returns both; SetEmitted
@@ -128,7 +137,7 @@ func TestRedisStoreUnavailableOnOutage_spec_25_4(t *testing.T) {
 	if err == nil || err != escalation.ErrStoreUnavailable {
 		t.Fatalf("put after outage = %v, want ErrStoreUnavailable", err)
 	}
-	if _, err := s.List(ctx, escalation.Filter{}, 0); err != escalation.ErrStoreUnavailable {
+	if _, err := s.List(ctx, escalation.Filter{}, "", 0); err != escalation.ErrStoreUnavailable {
 		t.Errorf("list after outage = %v, want ErrStoreUnavailable", err)
 	}
 }

@@ -407,7 +407,16 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	epoch := s.epoch
 	s.mu.Unlock()
 	s.metrics.SetOutageEpoch(epoch)
+	remover, _ := s.redis.(redisLockRemover)
 	for _, c := range out.Conflicts {
+		// §25.4 line 2267: when the pre-outage Postgres holder wins over a
+		// still-active post-outage Redis lock, the losing Redis lock is
+		// removed so a later Postgres outage cannot resurface it. The losing
+		// holder is separately notified with the split-brain 409 (recorded in
+		// ops_lock_conflicts) on its next heartbeat/list/release.
+		if remover != nil && c.Winner == "pre_outage" && c.LoserWasActive && c.LoserLockID != "" {
+			_ = remover.RemoveByID(ctx, c.LoserLockID)
+		}
 		s.metrics.SplitBrainDetected(scopePattern(c.Scope))
 		if s.audit != nil {
 			s.audit.LockEvent(ctx, AuditLockSplitBrainDetected, Lock{Scope: c.Scope, AcquiredBy: c.WinnerHolder}, map[string]any{

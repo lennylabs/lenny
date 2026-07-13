@@ -4732,6 +4732,10 @@ spec:
             - --ops-roll-timeout-seconds=600
             - --gateway-roll-timeout-seconds=1200
             - --controller-roll-timeout-seconds=600
+            # §25.8 upgrade-check consumer: fetch the release manifest over
+            # HTTP from the configured channel and verify its Ed25519
+            # X-Lenny-Release-Signature before trusting it.
+            - --release-channel-url=https://releases.lenny.dev/v1/latest
           env:
             - name: POD_NAME
               valueFrom:

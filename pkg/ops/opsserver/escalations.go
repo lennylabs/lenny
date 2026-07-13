@@ -117,20 +117,22 @@ func (s *Server) handleListEscalations(w http.ResponseWriter, r *http.Request) {
 			conventions.CategoryPermanent, err.Error())
 		return
 	}
-	escs, err := s.escalations.List(r.Context(), escalation.Filter{
+	page, err := s.escalations.List(r.Context(), escalation.Filter{
 		Status:   q.Get("status"),
 		Severity: q.Get("severity"),
 		Since:    params.Since,
-	}, params.Limit)
+	}, params.Cursor, params.Limit)
 	if err != nil {
 		writeEscalationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items": escs,
+		"items": page.Items,
 		"pagination": conventions.Pagination{
-			HasMore: false,
-			Limit:   params.Limit,
+			Cursor:     page.NextCursor,
+			HasMore:    page.HasMore,
+			Limit:      params.Limit,
+			CursorKind: page.CursorKind,
 		},
 	})
 }

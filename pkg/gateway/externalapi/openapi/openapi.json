@@ -4263,6 +4263,13 @@
         "x-lenny-scope": "tools:runbooks:read",
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "operability",
+        "parameters": [
+          { "name": "alert",     "in": "query", "schema": { "type": "string" }, "description": "§25.7 Path A — match runbook triggers[].alert (e.g. WarmPoolExhausted)." },
+          { "name": "component", "in": "query", "schema": { "type": "string" }, "description": "§25.7 Path A — match runbook components[] (e.g. warmPools)." },
+          { "name": "tag",       "in": "query", "schema": { "type": "string" }, "description": "§25.7 Path A — match runbook tags[] (e.g. scaling)." },
+          { "name": "requires",  "in": "query", "schema": { "type": "string" }, "description": "§25.7 Path A — match runbook requires[]; narrows to runbooks the caller can execute (e.g. admin-api)." },
+          { "name": "q",         "in": "query", "schema": { "type": "string" }, "description": "§25.7 Path A — full-text search across symptoms[], tags[], and runbook title." }
+        ],
         "responses": { "200": { "description": "OK" } }
       }
     },

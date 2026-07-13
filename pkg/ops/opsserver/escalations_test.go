@@ -95,6 +95,46 @@ func TestListEscalationsFiltersByStatus(t *testing.T) {
 	}
 }
 
+// TestListEscalationsPaginationReportsMore seeds more escalations than the
+// requested page limit and asserts the §25.4 canonical pagination envelope
+// reports hasMore=true. The spec's query path requires the envelope's
+// hasMore to reflect whether more records exist beyond the page ("hasMore
+// reflects whether more records exist"), so a limit smaller than the total
+// must not report the page as terminal.
+//
+// spec: §25.4 lines 2427-2429 (Storage Tiers, Query Path); §25.4 Pagination
+// envelope (hasMore reflects whether more records exist).
+// diagnosis: a failure means the escalation list envelope hardcodes
+// hasMore=false and never advertises additional pages, so an agent paging
+// the escalation history can never learn there is more to fetch.
+func TestListEscalationsPaginationReportsMore_spec_25_4(t *testing.T) {
+	srv := escalationServer()
+	for i := 0; i < 3; i++ {
+		doJSON(t, srv, http.MethodPost, "/v1/admin/escalations", nil,
+			map[string]any{"severity": "warning", "summary": "buffered escalation"})
+	}
+	rec, body := doJSON(t, srv, http.MethodGet, "/v1/admin/escalations?limit=2", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("page returned %d escalations, want limit=2", len(items))
+	}
+	pg, _ := body["pagination"].(map[string]any)
+	if pg == nil {
+		t.Fatal("response missing the pagination envelope")
+	}
+	if more, _ := pg["hasMore"].(bool); !more {
+		t.Errorf("hasMore = %v, want true (3 escalations exist, page limit is 2)", pg["hasMore"])
+	}
+	// The in-memory Tier 3 buffer is the "none" query-path cursorKind
+	// (§25.4 line 2428: limit-only, no continuation cursor).
+	if kind, _ := pg["cursorKind"].(string); kind != "none" {
+		t.Errorf("cursorKind = %q, want \"none\" for the in-memory buffer path", kind)
+	}
+}
+
 func TestUpdateEscalationToResolved(t *testing.T) {
 	srv := escalationServer()
 	_, esc := doJSON(t, srv, http.MethodPost, "/v1/admin/escalations", nil,

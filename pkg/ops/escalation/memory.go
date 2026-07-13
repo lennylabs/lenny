@@ -64,9 +64,12 @@ func (m *MemStore) Get(_ context.Context, id string) (*Escalation, error) {
 	return cloneEscalation(esc), nil
 }
 
-// List returns the buffered escalations matching f, newest-first, capped
-// by limit.
-func (m *MemStore) List(_ context.Context, f Filter, limit int) ([]Escalation, error) {
+// List returns the buffered escalations matching f, newest-first, as one
+// page capped by limit. The in-memory buffer is the CursorKindNone query
+// path: it paginates by limit only and reports HasMore when more matching
+// records exist beyond the page, but issues no continuation cursor
+// (§25.4 line 2429).
+func (m *MemStore) List(_ context.Context, f Filter, _ string, limit int) (ListPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	statuses := csvSet(f.Status)
@@ -85,10 +88,11 @@ func (m *MemStore) List(_ context.Context, f Filter, limit int) ([]Escalation, e
 		out = append(out, *cloneEscalation(esc))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	if limit > 0 && len(out) > limit {
+	hasMore := limit > 0 && len(out) > limit
+	if hasMore {
 		out = out[:limit]
 	}
-	return out, nil
+	return ListPage{Items: out, HasMore: hasMore, CursorKind: CursorKindNone}, nil
 }
 
 // SetStatus moves the escalation to status and stamps the lifecycle

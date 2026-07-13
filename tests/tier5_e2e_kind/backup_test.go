@@ -204,3 +204,125 @@ spec:
 		time.Sleep(3 * time.Second)
 	}
 }
+
+// postgresClientTools are the executables the §25.11 backup and restore
+// Jobs shell out to. The backup Job dumps each shard with pg_dump; the
+// restore/verify Job reads the dump with pg_restore and applies a
+// redacted plain-format dump with psql. All three are resolved on PATH
+// by the lenny-backup runner (pkg/ops/backup/runner), so the
+// lenny-backup image must package them.
+var postgresClientTools = []string{"pg_dump", "pg_restore", "psql"}
+
+// spec: 25.11
+// diagnosis: the lenny-backup image does not provide the Postgres client
+// tools the §25.11 backup/restore Job shells out to. The §25.11 Job
+// runs pg_dump against each shard (Full backup step 1) and pg_restore /
+// psql to restore and verify. The lenny-backup runner resolves these on
+// PATH, so a lenny-backup image that omits them fails every backup Job
+// at "pg_dump: executable file not found in $PATH". This test schedules
+// a pod from the loaded lenny-backup image that execs each tool and
+// asserts the container runs it to a clean exit rather than failing to
+// start.
+func TestBackupImageProvidesPostgresClientTools(t *testing.T) {
+	// Held non-blocking: the lenny-backup image is built from the
+	// generic distroless/static base and packages none of pg_dump,
+	// pg_restore, or psql, so the §25.11 backup and restore Jobs cannot
+	// execute as built. The image must ship the Postgres client tools
+	// before this assertion can pass; that packaging change is a still-
+	// open coverage gap awaiting a human decision on the base image and
+	// pinned Postgres client version.
+	t.Skip("lenny-backup image omits pg_dump/pg_restore/psql; the §25.11 backup and restore Jobs " +
+		"cannot run until the image packages the Postgres client tools")
+
+	c := kind.InstallLenny(t)
+	for _, tool := range postgresClientTools {
+		tool := tool
+		t.Run(tool, func(t *testing.T) {
+			assertBackupImageRunsTool(t, c, tool)
+		})
+	}
+}
+
+// assertBackupImageRunsTool schedules a pod that runs the lenny-backup
+// image with its command overridden to `<tool> --version` and
+// imagePullPolicy: Never, then waits for the container to terminate. A
+// packaged tool prints its version and exits 0, so the container
+// terminates with reason Completed and exit code 0. A missing tool makes
+// the kubelet fail to start the container (terminated reason StartError
+// or a Waiting RunContainerError / CreateContainerError with an
+// "executable file not found in $PATH" message), which fails the test.
+// The pod carries the same §13.1 security context the backup Job uses so
+// the assertion reflects the real Job's runtime.
+func assertBackupImageRunsTool(t *testing.T, c *kind.Cluster, tool string) {
+	t.Helper()
+	pod := "t5-backup-tool-" + tool
+	manifest := `apiVersion: v1
+kind: Pod
+metadata:
+  name: ` + pod + `
+  namespace: lenny-system
+  labels:
+    lenny.dev/test: tier5-backup-tool
+spec:
+  nodeName: lenny-e2e-worker
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: tool
+      image: lenny-backup:e2e
+      imagePullPolicy: Never
+      command: ["` + tool + `"]
+      args: ["--version"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: ["ALL"]
+`
+	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
+	if out, err := c.ApplyStdin(t, manifest); err != nil {
+		t.Fatalf("failed to schedule the lenny-backup %s-check pod: %v\n%s", tool, err, out)
+	}
+
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		waitReason, _ := c.KubectlOut(
+			t, "-n", t5SystemNS, "get", "pod", pod,
+			"-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}",
+		)
+		termReason, _ := c.KubectlOut(
+			t, "-n", t5SystemNS, "get", "pod", pod,
+			"-o", "jsonpath={.status.containerStatuses[0].state.terminated.reason}",
+		)
+		exitCode, _ := c.KubectlOut(
+			t, "-n", t5SystemNS, "get", "pod", pod,
+			"-o", "jsonpath={.status.containerStatuses[0].state.terminated.exitCode}",
+		)
+		wr := strings.TrimSpace(waitReason)
+		tr := strings.TrimSpace(termReason)
+		switch {
+		case wr == "RunContainerError" || wr == "CreateContainerError" || wr == "ErrImageNeverPull":
+			desc, _ := c.KubectlOut(t, "-n", t5SystemNS, "describe", "pod", pod)
+			t.Fatalf("§25.11 violation: the lenny-backup image cannot run %q — the kubelet reports "+
+				"the container Waiting with %q. The §25.11 backup/restore Job shells out to %q, so the "+
+				"lenny-backup image must package it.\n--- describe ---\n%s", tool, wr, tool, desc)
+		case tr != "":
+			if tr != "Completed" || strings.TrimSpace(exitCode) != "0" {
+				desc, _ := c.KubectlOut(t, "-n", t5SystemNS, "describe", "pod", pod)
+				t.Fatalf("§25.11 violation: the lenny-backup image could not run %q — the container "+
+					"terminated with reason %q, exit code %q (a packaged tool prints --version and exits "+
+					"0). The §25.11 backup/restore Job depends on %q.\n--- describe ---\n%s",
+					tool, tr, strings.TrimSpace(exitCode), tool, desc)
+			}
+			t.Logf("§25.11: the lenny-backup image runs %q (terminated Completed, exit 0)", tool)
+			return
+		}
+		if time.Now().After(deadline) {
+			desc, _ := c.KubectlOut(t, "-n", t5SystemNS, "describe", "pod", pod)
+			t.Fatalf("§25.11: the lenny-backup %s-check pod did not terminate within 90s (last waiting "+
+				"reason %q); cannot confirm the image runs %q\n--- describe ---\n%s", tool, wr, tool, desc)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}

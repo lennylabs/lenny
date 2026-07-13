@@ -4,6 +4,7 @@ package mcp_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ type fakeInvoker struct {
 	called string
 }
 
-func (f *fakeInvoker) Invoke(tool mcp.Tool, _ json.RawMessage) (mcp.ToolResult, error) {
+func (f *fakeInvoker) Invoke(_ context.Context, tool mcp.Tool, _ json.RawMessage) (mcp.ToolResult, error) {
 	f.called = tool.Name
 	return f.result, f.err
 }
@@ -79,9 +80,31 @@ func TestToolsListReturnsTheInventory(t *testing.T) {
 		"admin.health", "lenny_diagnostics_session", "lenny_drift_report",
 		"lenny_lock_acquire", "lenny_escalation_create",
 		"lenny_operations_list", "lenny_operation_get",
+		// spec: §25.7 Runbook Discovery / §25.12 Tool Inventory — the three
+		// runbook-index tools are part of the operability surface every
+		// MCP-capable agent discovers through tools/list.
+		"lenny_runbooks_list", "lenny_runbooks_get", "lenny_runbook_steps",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list is missing %s", want)
+		}
+	}
+	// The three runbook tools share the §25.7 read scope tools:runbooks:read
+	// so a caller with that scope can list, fetch, and step through runbooks.
+	byName := map[string]map[string]any{}
+	for _, tv := range tools {
+		tm, _ := tv.(map[string]any)
+		if n, ok := tm["name"].(string); ok {
+			byName[n] = tm
+		}
+	}
+	for _, want := range []string{"lenny_runbooks_list", "lenny_runbooks_get", "lenny_runbook_steps"} {
+		tm := byName[want]
+		if tm == nil {
+			continue // already reported missing above
+		}
+		if got := tm["x-lenny-scope"]; got != "tools:runbooks:read" {
+			t.Errorf("%s x-lenny-scope = %v, want tools:runbooks:read", want, got)
 		}
 	}
 	// Each tool carries the §25.12 x-lenny-* extension metadata.
