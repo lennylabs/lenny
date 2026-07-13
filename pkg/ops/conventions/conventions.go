@@ -149,9 +149,15 @@ type Degradation struct {
 
 // Pagination is the §25.4 response envelope for a paginated list.
 type Pagination struct {
-	Cursor      string `json:"cursor,omitempty"`
-	HasMore     bool   `json:"hasMore"`
-	Limit       int    `json:"limit"`
+	Cursor  string `json:"cursor,omitempty"`
+	HasMore bool   `json:"hasMore"`
+	Limit   int    `json:"limit"`
+	// CursorKind names the continuation-token family this endpoint's page
+	// was produced by (§25.4 Pagination: "redis-stream-id", "buffer-seq",
+	// "timestamp", "pk", "none", etc.). Agents MUST treat the cursor as
+	// opaque; the kind lets an agent detect a source transition. Omitted
+	// when the endpoint does not classify its cursor.
+	CursorKind  string `json:"cursorKind,omitempty"`
 	GapDetected bool   `json:"gapDetected,omitempty"`
 }
 

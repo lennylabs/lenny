@@ -338,20 +338,24 @@ func (s *Service) Get(ctx context.Context, id string) (*Escalation, error) {
 	return nil, &Error{Code: ErrCodeNotFound, Message: "no escalation " + id}
 }
 
-// List returns the §25.4 escalations matching the filter, newest-first,
-// read from the highest reachable store (§25.4 query-path tiering).
-func (s *Service) List(ctx context.Context, f Filter, limit int) ([]Escalation, error) {
+// List returns one page of the §25.4 escalations matching the filter,
+// newest-first, read from the highest reachable store (§25.4 query-path
+// tiering). The returned page's CursorKind and NextCursor reflect the store
+// that served it: the durable Postgres tier keyset-paginates ("pk"), while
+// the Redis scan and in-memory buffer paginate by limit only ("none").
+// cursor continues a prior page produced by the same tier.
+func (s *Service) List(ctx context.Context, f Filter, cursor string, limit int) (ListPage, error) {
 	for _, st := range s.allStores() {
-		list, err := st.List(ctx, f, limit)
+		page, err := st.List(ctx, f, cursor, limit)
 		if errors.Is(err, ErrStoreUnavailable) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return ListPage{}, err
 		}
-		return list, nil
+		return page, nil
 	}
-	return nil, nil
+	return ListPage{}, nil
 }
 
 // Update moves a §25.4 escalation to a new lifecycle status
