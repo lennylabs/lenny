@@ -99,12 +99,13 @@ func TestHashChainPerTenantIsolation(t *testing.T) {
 	}
 }
 
-// TestHashChainRechainAfterRedaction — a §12.8 GDPR redaction
-// rewrites a row in place; the verifier reports ChainRechainedPostOutage
-// (lawful) rather than ChainBroken when a valid receipt is attached.
+// TestHashChainRedactionIsLawfulNotBroken — a §12.8 GDPR redaction
+// rewrites a row in place; the verifier reports the lawful redacted_gdpr
+// state rather than ChainBroken when a valid receipt is attached.
 //
-// spec: 11.7 (audit redaction receipt path)
-func TestHashChainRechainAfterRedaction(t *testing.T) {
+// spec: §25.9 line 3678 (redacted_gdpr, accompanied by a signed
+// RedactionReceipt, is an authorized discontinuity distinct from broken).
+func TestHashChainRedactionIsLawfulNotBroken(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")
 	c.Append("e1", json.RawMessage(`{"pii":"alice@acme.com"}`), ts())
@@ -117,8 +118,8 @@ func TestHashChainRechainAfterRedaction(t *testing.T) {
 		t.Fatalf("Redact: %v", err)
 	}
 	res := c.Verify()
-	if res.Integrity != ChainRechainedPostOutage {
-		t.Errorf("lawful redaction: got %q (%s), want rechained", res.Integrity, res.Detail)
+	if res.Integrity != ChainRedactedGDPR {
+		t.Errorf("lawful redaction: got %q (%s), want redacted_gdpr", res.Integrity, res.Detail)
 	}
 }
 
@@ -331,6 +332,38 @@ func TestVerifyRowsLawfulRedaction(t *testing.T) {
 	got := c.VerifyRows()
 	if got[1] != ChainRedactedGDPR {
 		t.Errorf("redacted row = %q, want redacted_gdpr", got[1])
+	}
+}
+
+// TestVerifyLawfulRedactionReportsRedactedGDPR — a lawfully-receipted
+// §12.8 GDPR redaction is reported by the collapsed Verify() as
+// redacted_gdpr, matching the per-row classifyRow/VerifyRows verdict.
+// §25.9 defines redacted_gdpr (an authorized in-place PII rewrite under a
+// signed RedactionReceipt) and rechained_post_outage (a post-outage
+// deferred-writes rechain) as distinct chainIntegrityReport buckets with
+// different operator meanings, so a GDPR redaction must not be collapsed
+// into the post-outage bucket.
+//
+// spec: §25.9 line 3678 (redacted_gdpr is the authorized-discontinuity
+// bucket, accompanied by a signed RedactionReceipt).
+func TestVerifyLawfulRedactionReportsRedactedGDPR(t *testing.T) {
+	t.Parallel()
+	c := NewChain("acme")
+	c.Append("e1", json.RawMessage(`{"pii":"alice@acme.com"}`), ts())
+	c.Append("e2", json.RawMessage(`{"n":2}`), ts())
+
+	if err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), RedactionReceipt{
+		Signature: "kms-sig-abc",
+	}); err != nil {
+		t.Fatalf("Redact: %v", err)
+	}
+	res := c.Verify()
+	if res.Integrity != ChainRedactedGDPR {
+		t.Errorf("lawful GDPR redaction: got %q (%s), want redacted_gdpr", res.Integrity, res.Detail)
+	}
+	// The collapsed verdict must agree with the per-row classification.
+	if rows := c.VerifyRows(); rows[1] != ChainRedactedGDPR {
+		t.Errorf("per-row verdict for redacted row = %q, want redacted_gdpr", rows[1])
 	}
 }
 

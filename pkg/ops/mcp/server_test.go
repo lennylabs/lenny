@@ -132,6 +132,37 @@ func TestToolsListReadOnlyFilterExcludesMutatingTools(t *testing.T) {
 	}
 }
 
+func TestToolsListIntersectsCapabilityFilterWithScopeClaim(t *testing.T) {
+	srv := mcp.NewServer(&fakeInvoker{})
+	// spec: §25.12 (Capability Negotiation) — "Filtering is ALWAYS
+	// intersected with the caller's scope claim (tools not permitted by
+	// scope are filtered out regardless of capability declaration)." A
+	// caller whose scope claim is tools:health:read declares no capability
+	// filters, so on the capability axis every tool would list; the scope
+	// intersection must still drop tools the claim does not permit.
+	_, resp := rpc(t, srv, map[string]string{"X-Lenny-Scope": "tools:health:read"},
+		map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+		})
+	result, _ := resp["result"].(map[string]any)
+	tools, _ := result["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatal("tools/list returned an empty inventory for a scope-restricted caller")
+	}
+	names := toolNames(tools)
+	// admin.health carries x-lenny-scope tools:health:read, which the
+	// caller's claim permits, so it survives the intersection.
+	if !names["admin.health"] {
+		t.Error("scope intersection dropped admin.health, which tools:health:read permits")
+	}
+	// lenny_lock_acquire carries x-lenny-scope tools:locks:write, which the
+	// caller's claim does not permit; §25.12 requires it be filtered out
+	// even though the caller declared no capability filter that would.
+	if names["lenny_lock_acquire"] {
+		t.Error("scope intersection kept lenny_lock_acquire, outside the caller's tools:health:read claim")
+	}
+}
+
 func TestToolsCallDispatchesThroughTheInvoker(t *testing.T) {
 	inv := &fakeInvoker{result: mcp.ToolResult{
 		Status: 200, Body: json.RawMessage(`{"status":"healthy"}`),
