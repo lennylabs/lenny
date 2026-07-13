@@ -3429,6 +3429,7 @@
       "tests": [
         "pkg/ops/backup/backup_test.go",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
+        "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupJobCreationFailsWhenKubernetesAPIDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown",
