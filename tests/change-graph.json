@@ -274,6 +274,15 @@
       "unit": ["pkg/ops/opsserver/..."],
       "contract": ["tests/tier3_contract/ops_endpoints/..."]
     },
+    "pkg/ops/diagnostics": {
+      "unit": ["pkg/ops/diagnostics/..."],
+      "component": [
+        "tests/tier2_component/stores/diagnostics_prodsource_test.go",
+        "tests/tier2_component/opsaudit/diagnostics_audit_durable_test.go"
+      ],
+      "contract": ["tests/tier3_contract/ops_endpoints/..."],
+      "integration": ["tests/tier4_integration/diagnostics_test.go"]
+    },
     "pkg/ops/opsidem": {
       "unit": ["pkg/ops/opsidem/..."],
       "component": ["tests/tier2_component/opsidem/outage_test.go"]
