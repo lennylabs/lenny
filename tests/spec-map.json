@@ -3240,6 +3240,7 @@
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
         "pkg/ops/opsserver/escalations_test.go::TestListEscalationsPaginationReportsMore_spec_25_4",
         "pkg/ops/escalation/pgstore/pgstore_test.go::TestPgStoreKeysetPagination_spec_25_4",
+        "pkg/ops/escalation/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
@@ -3257,7 +3258,12 @@
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
+        "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationCreatePathTierProgressionAgainstRealStores",
+        "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationReconciliationFlushPreservesRecordAgainstRealStores",
         "tests/tier8_chaos/ops_leader_failover_test.go::TestOpsLeaderElectionFailover",
+        "tests/tier8_chaos/ops_lock_no_coordination_test.go::TestOpsLockMultiReplicaRejectsUncoordinatedAcquireUnderDualOutage",
+        "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnRealPostgresConnectionError",
+        "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnGatewayAuth401",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsHealthzAnonymousAdmitted_spec_25_4_1567",
@@ -3433,7 +3439,8 @@
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallCarriesCallerPrincipal_spec_25_12",
-        "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallRejectsNonAdminRole_spec_25_12"
+        "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallRejectsNonAdminRole_spec_25_12",
+        "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas"
       ],
       "packages": [
         "pkg/ops/mcp"

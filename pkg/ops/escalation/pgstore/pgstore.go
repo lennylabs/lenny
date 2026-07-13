@@ -49,16 +49,43 @@ const columns = `id, severity, source, operation_id, alert_name, runbook_name, s
 func (s *Store) Tier() string { return escalation.PersistenceDurablePostgres }
 
 // classifyErr maps a pgx connection/transport failure to
-// escalation.ErrStoreUnavailable (the §25.4 Postgres-outage case),
-// leaving a server-side query error (PgError — the database responded)
+// escalation.ErrStoreUnavailable (the §25.4 Postgres-outage case), so the
+// tiered Service falls through to the Redis or in-memory tier instead of
+// returning an internal error. A genuine server-side query error (a PgError
+// the database answered with, such as a constraint violation) is left
 // intact for the caller to surface.
+//
+// A connection refused before pgx wraps a PgError is the common outage
+// signal and is handled by the default branch. A Postgres administrator
+// shutdown or failover window is different: the server answers an in-flight
+// request with a FATAL PgError before the connection drops. Those codes are
+// still "Postgres is down" for the purpose of the §25.4 degraded-mode
+// fall-through, so classifyErr treats the operator_intervention codes
+// (57P01 admin_shutdown, 57P02 crash_shutdown, 57P03 cannot_connect_now)
+// and the connection-exception class (08) as store-unavailable rather than
+// surfacing them.
+//
+// spec: §25.4 lines 2422-2434 (Storage Tiers, Query Path degraded
+// fall-through when Postgres is down).
 func classifyErr(err error) error {
 	if err == nil {
 		return nil
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		return err
+		switch {
+		case strings.HasPrefix(pgErr.Code, "08"):
+			// Class 08 — connection exception (08000, 08003, 08006, etc.).
+			return escalation.ErrStoreUnavailable
+		case pgErr.Code == "57P01", pgErr.Code == "57P02", pgErr.Code == "57P03":
+			// admin_shutdown, crash_shutdown, cannot_connect_now — the backend
+			// is terminating or not yet accepting connections, both of which a
+			// shutdown or failover produces.
+			return escalation.ErrStoreUnavailable
+		default:
+			// The database answered with a query-level error; surface it.
+			return err
+		}
 	}
 	return escalation.ErrStoreUnavailable
 }
