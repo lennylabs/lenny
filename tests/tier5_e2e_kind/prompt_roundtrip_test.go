@@ -55,6 +55,22 @@ func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
 
+	runEchoPromptJourney(ctx, t, d, tenant)
+}
+
+// runEchoPromptJourney drives the §7.1 steps 16-18 prompt round-trip on
+// an already-provisioned tenant: it starts a session on the echo pool,
+// attaches the AttachSession event stream, sends a prompt, and asserts
+// the real pod's echoed output returns both in the synchronous
+// POST /messages response and over the bidirectional stream proxy. It is
+// the reusable core of TestPromptRoundTripsToRealPodAndReturnsContent so
+// the same journey can be replayed across auth modes
+// (prompt_journey_auth_modes_test.go) without duplicating the
+// assertions. The caller owns tenant provisioning; d's session-surface
+// auth (dev headers or a §10.2 Bearer) is whatever d was constructed
+// with.
+func runEchoPromptJourney(ctx context.Context, t *testing.T, d *sessiondriver.Driver, tenant string) {
+	t.Helper()
 	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
 	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
 		// §4.6 warm pool never settled an idle pod within the retry
