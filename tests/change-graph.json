@@ -507,6 +507,94 @@
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
       "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."]
+    },
+    "pkg/ops/auditrate": {
+      "unit": ["pkg/ops/auditrate/..."],
+      "component": ["tests/tier2_component/opsaudit/diagnostics_audit_durable_test.go"]
+    },
+    "pkg/ops/backup": {
+      "unit": ["pkg/ops/backup/..."],
+      "component": ["tests/tier2_component/opsidem/outage_test.go"],
+      "contract": ["tests/tier3_contract/ops_endpoints/backup_test.go"],
+      "integration": ["tests/tier4_integration/backup_degradation_test.go"]
+    },
+    "pkg/ops/baselinestore": {
+      "unit": ["pkg/ops/baselinestore/..."]
+    },
+    "pkg/ops/configservice": {
+      "unit": ["pkg/ops/configservice/..."]
+    },
+    "pkg/ops/conventions": {
+      "unit": ["pkg/ops/conventions/..."],
+      "contract": ["tests/tier3_contract/gateway_ops/endpoints_test.go", "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go", "tests/tier3_contract/ops_endpoints/diagnostics_schema_test.go"]
+    },
+    "pkg/ops/coordination": {
+      "unit": ["pkg/ops/coordination/..."],
+      "component": ["tests/tier2_component/coordination/clockskew_test.go", "tests/tier2_component/coordination/tier_transition_test.go"],
+      "contract": ["tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go", "tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go", "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go"]
+    },
+    "pkg/ops/doctor": {
+      "unit": ["pkg/ops/doctor/..."]
+    },
+    "pkg/ops/driftservice": {
+      "unit": ["pkg/ops/driftservice/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]
+    },
+    "pkg/ops/escalation": {
+      "unit": ["pkg/ops/escalation/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]
+    },
+    "pkg/ops/events": {
+      "unit": ["pkg/ops/events/..."],
+      "contract": ["tests/tier3_contract/cloudevents/ops_event_stream_test.go", "tests/tier3_contract/ops_endpoints/events_test.go"]
+    },
+    "pkg/ops/eventsubscription": {
+      "unit": ["pkg/ops/eventsubscription/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/events_test.go"]
+    },
+    "pkg/ops/gateway": {
+      "unit": ["pkg/ops/gateway/..."]
+    },
+    "pkg/ops/mcp": {
+      "unit": ["pkg/ops/mcp/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go"]
+    },
+    "pkg/ops/me": {
+      "unit": ["pkg/ops/me/..."]
+    },
+    "pkg/ops/metrics": {
+      "unit": ["pkg/ops/metrics/..."]
+    },
+    "pkg/ops/operations": {
+      "unit": ["pkg/ops/operations/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/openapi_conformance_test.go"]
+    },
+    "pkg/ops/opsaudit": {
+      "unit": ["pkg/ops/opsaudit/..."],
+      "component": ["tests/tier2_component/opsaudit/diagnostics_audit_durable_test.go", "tests/tier2_component/opsaudit/opsaudit_durable_test.go"]
+    },
+    "pkg/ops/opsinventory": {
+      "unit": ["pkg/ops/opsinventory/..."]
+    },
+    "pkg/ops/opsservice": {
+      "unit": ["pkg/ops/opsservice/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/events_test.go"],
+      "integration": ["tests/tier4_integration/escalation_webhook_under_outage_test.go"]
+    },
+    "pkg/ops/platformassets": {
+      "unit": ["pkg/ops/platformassets/..."]
+    },
+    "pkg/ops/probe": {
+      "unit": ["pkg/ops/probe/..."]
+    },
+    "pkg/ops/registryservice": {
+      "unit": ["pkg/ops/registryservice/..."]
+    },
+    "pkg/ops/upgradeservice": {
+      "unit": ["pkg/ops/upgradeservice/..."],
+      "component": ["tests/tier2_component/observability/version_aggregation_test.go"],
+      "contract": ["tests/tier3_contract/ops_endpoints/upgrade_test.go"],
+      "integration": ["tests/tier4_integration/release_channel_fetch_test.go"]
     }
   }
 }

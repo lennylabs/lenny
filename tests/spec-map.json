@@ -3159,7 +3159,7 @@
         "pkg/ops/coordination",
         "pkg/ops/escalation",
         "pkg/ops/driftservice",
-        "pkg/ops/mcpmgmt",
+        "pkg/ops/mcp",
         "pkg/ops/runbooks",
         "pkg/drift",
         "pkg/remediationlock"
@@ -3190,13 +3190,15 @@
       "tests": [
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
-        "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance"
+        "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist"
       ],
       "packages": [
-        "pkg/operability"
+        "pkg/ops/conventions"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.2 Architecture Overview. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.2 Architecture Overview. The API conventions shared by every operability endpoint (the canonical degradation and error envelopes and pagination) are implemented in pkg/ops/conventions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
     },
     "25.3": {
       "title": "Gateway-Side Ops Endpoints",
@@ -3219,7 +3221,8 @@
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
       ],
       "packages": [
-        "pkg/gateway/ops"
+        "pkg/gateway/operability/health",
+        "pkg/gateway/operability/recommendations"
       ],
       "blocked_until_phase": "4.5"
     },
@@ -3230,6 +3233,8 @@
         "pkg/ops/opsserver/opsserver_test.go",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsserverSelectsContractTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsEndpointsSuiteSelectsContractTier",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsPackagesWithSuiteSelectUnitTier",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsDedicatedSuitesSelectHigherTiers",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
@@ -3278,7 +3283,7 @@
       "title": "Operational Event Stream",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "tests/tier2_component/stores/eventsubscriptionstore_test.go::TestEventSubscriptionStoreContract",
+        "pkg/ops/eventsubscription/pgstore/pgstore_test.go::TestPgStoreRoundTrip_spec_25_5",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
@@ -3291,13 +3296,15 @@
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown"
       ],
       "packages": [
-        "pkg/operability/events",
+        "pkg/ops/events",
         "pkg/ops/eventsubscription",
         "pkg/ops/eventsubscription/pgstore",
-        "pkg/ops/opsservice"
+        "pkg/ops/opsservice",
+        "pkg/ops/opsserver",
+        "pkg/webhookdelivery"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker."
+      "notes": "§25.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. pkg/ops/events is the read surface over the Redis stream and in-memory buffer; pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
     },
     "25.6": {
       "title": "Diagnostic Endpoints",
@@ -3381,7 +3388,7 @@
         "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
       ],
       "packages": [
-        "pkg/operability/audit"
+        "pkg/ops/opsaudit"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.9 Audit Log Query API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
@@ -3396,7 +3403,7 @@
         "tests/tier4_integration/drift_reconcile_test.go"
       ],
       "packages": [
-        "pkg/operability/drift"
+        "pkg/ops/driftservice"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.10 Configuration Drift Detection. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
@@ -3413,7 +3420,7 @@
         "tests/tier5_e2e_kind/backup_test.go::TestBackupImageProvidesPostgresClientTools"
       ],
       "packages": [
-        "pkg/operability/backup"
+        "pkg/ops/backup"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status."
@@ -3429,7 +3436,7 @@
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallRejectsNonAdminRole_spec_25_12"
       ],
       "packages": [
-        "pkg/operability/mcp"
+        "pkg/ops/mcp"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.12 MCP Management Server. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
