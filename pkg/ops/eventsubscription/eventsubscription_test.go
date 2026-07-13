@@ -66,7 +66,7 @@ func TestServiceCreateSecretLifecycle_spec_25_5(t *testing.T) {
 	}
 
 	// The read-view omits secret material entirely.
-	got, _ := svc.Get(context.Background(), rev.ID)
+	got, _ := svc.Get(context.Background(), rev.ID, platformAdmin)
 	if got.SecretFingerprint != rev.SecretFingerprint {
 		t.Errorf("view fingerprint = %q, want %q", got.SecretFingerprint, rev.SecretFingerprint)
 	}
@@ -191,14 +191,14 @@ func TestServiceListDeliveries_spec_25_5(t *testing.T) {
 			t.Fatalf("RecordDelivery: %v", err)
 		}
 	}
-	got, err := svc.ListDeliveries(context.Background(), rev.ID, 0)
+	got, err := svc.ListDeliveries(context.Background(), rev.ID, 0, platformAdmin)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("ListDeliveries = %d (%v), want 2", len(got), err)
 	}
 	if got[0].ID < got[1].ID {
 		t.Errorf("deliveries not newest-first: %v", got)
 	}
-	if _, err := svc.ListDeliveries(context.Background(), "missing", 0); es.CodeOf(err) != es.ErrCodeNotFound {
+	if _, err := svc.ListDeliveries(context.Background(), "missing", 0, platformAdmin); es.CodeOf(err) != es.ErrCodeNotFound {
 		t.Errorf("ListDeliveries missing err = %v, want SUBSCRIPTION_NOT_FOUND", err)
 	}
 }

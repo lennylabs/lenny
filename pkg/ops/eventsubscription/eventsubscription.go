@@ -396,8 +396,26 @@ func (s *Service) Create(ctx context.Context, req CreateRequest, caller Caller) 
 	return Reveal{Subscription: rec.View(), Secret: secret, SecretRotationWarning: secretRotationWarning}, nil
 }
 
-// Get reads one subscription by id, redacted.
-func (s *Service) Get(ctx context.Context, id string) (Subscription, error) {
+// canAccess reports whether caller may read or mutate rec. Tenancy
+// restricts resources independently of scope: a platform-admin may act on
+// any subscription, and a tenant-admin may act only on subscriptions its
+// own tenant created (matched by created_by_tenant_id). spec: §25.4 ("a
+// tenant-admin caller is still constrained to its tenant regardless of
+// scope ... tenancy restricts resources ... both are enforced
+// independently"), §25.5 (tenant isolation).
+func canAccess(caller Caller, rec Record) bool {
+	if caller.PlatformAdmin {
+		return true
+	}
+	return caller.TenantID != "" && rec.CreatedByTenantID == caller.TenantID
+}
+
+// Get reads one subscription by id, redacted. A tenant-admin that does not
+// own the subscription receives SUBSCRIPTION_NOT_FOUND rather than the
+// record: the resource is not visible to it, mirroring the operations-list
+// tenant-visibility model and avoiding an existence oracle. spec: §25.4,
+// §25.5 (tenant isolation).
+func (s *Service) Get(ctx context.Context, id string, caller Caller) (Subscription, error) {
 	if s == nil || s.Store == nil {
 		return Subscription{}, storeUnavailable()
 	}
@@ -408,11 +426,17 @@ func (s *Service) Get(ctx context.Context, id string) (Subscription, error) {
 	if err != nil {
 		return Subscription{}, err
 	}
+	if !canAccess(caller, rec) {
+		return Subscription{}, notFound(id)
+	}
 	return rec.View(), nil
 }
 
-// List returns every subscription, redacted, sorted by id.
-func (s *Service) List(ctx context.Context) ([]Subscription, error) {
+// List returns the subscriptions the caller may see, redacted, sorted by
+// id. A platform-admin sees every subscription; a tenant-admin sees only
+// the subscriptions its own tenant created. spec: §25.4, §25.5 (tenant
+// isolation).
+func (s *Service) List(ctx context.Context, caller Caller) ([]Subscription, error) {
 	if s == nil || s.Store == nil {
 		return nil, storeUnavailable()
 	}
@@ -422,6 +446,9 @@ func (s *Service) List(ctx context.Context) ([]Subscription, error) {
 	}
 	out := make([]Subscription, 0, len(recs))
 	for _, r := range recs {
+		if !canAccess(caller, r) {
+			continue
+		}
 		out = append(out, r.View())
 	}
 	return out, nil
@@ -460,6 +487,12 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest, call
 	}
 	now := s.now()
 	rec, err := s.Store.Update(ctx, id, func(r *Record) error {
+		// A tenant-admin may only mutate its own tenant's subscription; a
+		// non-owner sees the record as absent. spec: §25.4, §25.5 (tenant
+		// isolation).
+		if !canAccess(caller, *r) {
+			return notFound(id)
+		}
 		if req.CallbackURL != nil {
 			r.CallbackURL = *req.CallbackURL
 		}
@@ -520,6 +553,12 @@ func (s *Service) RotateSecret(ctx context.Context, id string, caller Caller) (R
 	}
 	now := s.now()
 	rec, err := s.Store.Update(ctx, id, func(r *Record) error {
+		// A tenant-admin may only rotate its own tenant's subscription; a
+		// non-owner sees the record as absent. spec: §25.4, §25.5 (tenant
+		// isolation).
+		if !canAccess(caller, *r) {
+			return notFound(id)
+		}
 		r.PreviousSecretFingerprint = r.SecretFingerprint
 		r.SecretHash = HashSecret(secret)
 		r.SecretFingerprint = Fingerprint(secret)
@@ -553,6 +592,17 @@ func (s *Service) Delete(ctx context.Context, id string, caller Caller) error {
 	}
 	if id == "" {
 		return &Error{Code: ErrCodeNotFound, Message: "id is required"}
+	}
+	// A tenant-admin may only delete its own tenant's subscription. Confirm
+	// ownership before removing the row so a non-owner sees the record as
+	// absent and cannot delete another tenant's subscription. spec: §25.4,
+	// §25.5 (tenant isolation).
+	existing, err := s.Store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !canAccess(caller, existing) {
+		return notFound(id)
 	}
 	rec, err := s.Store.Delete(ctx, id)
 	if err != nil {
@@ -591,7 +641,7 @@ func (s *Service) fireSecret(subID, secret string, generation int64) {
 // ListDeliveries returns the recent delivery attempts for a
 // subscription, newest-first, bounded by limit (default 100, max 1000).
 // spec: §25.5 line 2569.
-func (s *Service) ListDeliveries(ctx context.Context, id string, limit int) ([]Delivery, error) {
+func (s *Service) ListDeliveries(ctx context.Context, id string, limit int, caller Caller) ([]Delivery, error) {
 	if s == nil || s.Store == nil {
 		return nil, storeUnavailable()
 	}
@@ -604,10 +654,15 @@ func (s *Service) ListDeliveries(ctx context.Context, id string, limit int) ([]D
 	if limit > 1000 {
 		limit = 1000
 	}
-	// Confirm the subscription exists so a missing id is a 404 rather
-	// than an empty list.
-	if _, err := s.Store.Get(ctx, id); err != nil {
+	// Confirm the subscription exists and the caller owns it so a missing
+	// id or a cross-tenant id is a 404 rather than an empty list or another
+	// tenant's delivery history. spec: §25.4, §25.5 (tenant isolation).
+	rec, err := s.Store.Get(ctx, id)
+	if err != nil {
 		return nil, err
+	}
+	if !canAccess(caller, rec) {
+		return nil, notFound(id)
 	}
 	return s.Store.ListDeliveries(ctx, id, limit)
 }
