@@ -415,7 +415,7 @@ func TestOpsAdminAPITLSHandshakeCompletes_spec_25_4(t *testing.T) {
 	}
 
 	if tls+tlsErr+plaintext == 0 {
-		t.Fatalf("no lenny_ops_admin_api_tls_handshake_total attempts recorded within the poll window; the "+
+		t.Fatalf("no lenny_ops_admin_api_tls_handshake_total attempts recorded within the poll window; the " +
 			"GatewayClient made no admin-API request, so a completed TLS handshake cannot be verified")
 	}
 	if plaintext > 0 {
