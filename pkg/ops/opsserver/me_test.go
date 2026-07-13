@@ -284,6 +284,49 @@ func TestAuthorizedTools(t *testing.T) {
 	}
 }
 
+// TestAuthorizedToolsTenantAdminEventSubscriptions pins the §25.4
+// discovery contract for a tenant-admin: /v1/admin/me/authorized-tools
+// lists every tool the caller's role can actually invoke. The §25.5
+// event-subscription endpoints admit a tenant-admin (a tenant-admin may
+// create, list, get, update, and delete subscriptions scoped to its own
+// tenant), so those tools must appear in the tenant-admin's effective
+// tool surface rather than being reported as platform-admin-only.
+//
+// spec: §25.4 (authorized-tools "pre-filtered to the tools the caller's
+// roles and scope claim authorize"), §25.5 ("A tenant-admin may only
+// create subscriptions with tenantFilter: {their-tenant}").
+func TestAuthorizedToolsTenantAdminEventSubscriptions(t *testing.T) {
+	srv, _ := meServer()
+	p := tenantAdmin("ta-events", "t-12345")
+	rec, body := getAuthed(t, srv, "/v1/admin/me/authorized-tools", &p)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools = %v, want a list", body["tools"])
+	}
+	present := make(map[string]bool, len(tools))
+	for _, raw := range tools {
+		entry, _ := raw.(map[string]any)
+		if name, _ := entry["tool"].(string); name != "" {
+			present[name] = true
+		}
+	}
+	want := []string{
+		"lenny_event_subscription_create",
+		"lenny_event_subscription_delete",
+		"lenny_event_subscription_get",
+		"lenny_event_subscription_update",
+		"lenny_event_subscriptions_list",
+	}
+	for _, name := range want {
+		if !present[name] {
+			t.Errorf("tenant-admin authorized-tools omits %q, but the §25.5 handler admits a tenant-admin to it", name)
+		}
+	}
+}
+
 // spec §25.4 line 1575: /v1/admin/me/operations is the actor=me alias and
 // returns only the caller's own operations.
 func TestMeOperationsAlias(t *testing.T) {

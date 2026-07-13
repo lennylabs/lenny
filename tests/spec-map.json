@@ -3241,11 +3241,13 @@
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
+        "pkg/ops/opsserver/me_test.go::TestAuthorizedToolsTenantAdminEventSubscriptions",
         "pkg/ops/opsserver/escalations_test.go::TestListEscalationsPaginationReportsMore_spec_25_4",
         "pkg/ops/escalation/pgstore/pgstore_test.go::TestPgStoreKeysetPagination_spec_25_4",
         "pkg/ops/escalation/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
+        "pkg/ops/coordination/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgSplitBrainLoserNotifiedOnNextCall_spec_25_4",
         "pkg/ops/coordination/redisstore/redisstore_test.go::TestRedisRemoveByID_spec_25_4",
@@ -3281,9 +3283,12 @@
         "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsDenyAllIngress_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPINoPlaintextHandshake_spec_25_4",
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPITLSHandshakeCompletes_spec_25_4",
         "tests/tier9_security/tls_test.go::TestOpsServingCertificateReady",
         "tests/tier0_static/gateway_admin_tls_listener_test.go::TestGatewayAdminTLSListenerDistinctFromLLMProxy",
-        "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal"
+        "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
+        "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsRunningRestore",
+        "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsFailedRestore"
       ],
       "packages": [
         "cmd/lenny-ops"
