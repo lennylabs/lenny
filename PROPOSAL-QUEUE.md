@@ -48,7 +48,7 @@ that edits `TEST-GAPS.md`.
 Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-01 — Checkpoint produce-store-restore round-trip and eviction trigger — §4.4/§4.6/§6.2/§10.1
-- **status:** open
+- **status:** claimed:proposal-A@2026-07-13T20:57:17Z
 - **assigned:** proposal-A
 - **findings:** T-4.4.12, T-4.4.13, T-4.4.14, T-4.6.4, T-JRN.9, T-DEP.5, T-4.2.1
 - **root spec gap:** §4.4 promises a workspace can survive pod loss, but the whole produce→store→restore pipeline is unwired and the architecture is undecided: does the pod-side adapter talk to MinIO directly (requiring §13 pod-side credential/egress delivery) or stream to the gateway, and what are the object-key layout, the atomic metadata/manifest record, and the eviction-trigger mechanism.
