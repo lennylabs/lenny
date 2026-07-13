@@ -547,11 +547,15 @@
     },
     "pkg/ops/events": {
       "unit": ["pkg/ops/events/..."],
-      "contract": ["tests/tier3_contract/cloudevents/ops_event_stream_test.go", "tests/tier3_contract/ops_endpoints/events_test.go"]
+      "component": ["tests/tier2_component/eventstream/event_stream_gap_test.go"],
+      "contract": ["tests/tier3_contract/cloudevents/ops_event_stream_test.go", "tests/tier3_contract/ops_endpoints/events_test.go"],
+      "integration": ["tests/tier4_integration/event_stream_test.go"]
     },
     "pkg/ops/eventsubscription": {
       "unit": ["pkg/ops/eventsubscription/..."],
-      "contract": ["tests/tier3_contract/ops_endpoints/events_test.go"]
+      "contract": ["tests/tier3_contract/ops_endpoints/events_test.go"],
+      "integration": ["tests/tier4_integration/event_subscription_cold_start_test.go", "tests/tier4_integration/event_stream_test.go"],
+      "security": ["tests/tier9_security/event_webhook_ssrf_test.go"]
     },
     "pkg/ops/gateway": {
       "unit": ["pkg/ops/gateway/..."]
@@ -581,7 +585,14 @@
       "unit": ["pkg/ops/opsservice/..."],
       "component": ["tests/tier2_component/observability/upgrade_check_cron_test.go"],
       "contract": ["tests/tier3_contract/ops_endpoints/events_test.go"],
-      "integration": ["tests/tier4_integration/escalation_webhook_under_outage_test.go"]
+      "integration": ["tests/tier4_integration/escalation_webhook_under_outage_test.go", "tests/tier4_integration/event_subscription_cold_start_test.go", "tests/tier4_integration/event_stream_test.go"],
+      "security": ["tests/tier9_security/event_webhook_ssrf_test.go"]
+    },
+    "pkg/webhookdelivery": {
+      "unit": ["pkg/webhookdelivery/..."],
+      "contract": ["tests/tier3_contract/cloudevents/ops_event_stream_test.go", "tests/tier3_contract/ops_endpoints/events_test.go"],
+      "integration": ["tests/tier4_integration/escalation_webhook_under_outage_test.go", "tests/tier4_integration/event_subscription_cold_start_test.go", "tests/tier4_integration/event_stream_test.go"],
+      "security": ["tests/tier9_security/event_webhook_ssrf_test.go"]
     },
     "pkg/ops/platformassets": {
       "unit": ["pkg/ops/platformassets/..."]
