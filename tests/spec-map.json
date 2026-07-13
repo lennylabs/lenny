@@ -3369,6 +3369,7 @@
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
         "tests/tier2_component/observability/version_aggregation_test.go",
+        "cmd/lenny-ops/cert_manager_source_test.go::TestCertManagerSource_HealthDerivation_spec_25_8",
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go"
