@@ -3261,6 +3261,8 @@
         "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationReconciliationFlushPreservesRecordAgainstRealStores",
         "tests/tier8_chaos/ops_leader_failover_test.go::TestOpsLeaderElectionFailover",
         "tests/tier8_chaos/ops_lock_no_coordination_test.go::TestOpsLockMultiReplicaRejectsUncoordinatedAcquireUnderDualOutage",
+        "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnRealPostgresConnectionError",
+        "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnGatewayAuth401",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsHealthzAnonymousAdmitted_spec_25_4_1567",
