@@ -220,11 +220,16 @@ var opsRouteSchemas = []RouteSchema{
 	// §25.5 operational event stream (SSE + poll) and webhook subscriptions.
 	{"GET", "/v1/admin/events", "Poll the operational event stream", "", "tools:events:read", "platform-admin", operabilityCategory, "200"},
 	{"GET", "/v1/admin/events/stream", "Server-sent operational event stream", "", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"GET", "/v1/admin/event-subscriptions", "List webhook event subscriptions", "lenny_event_subscriptions_list", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"POST", "/v1/admin/event-subscriptions", "Create a webhook event subscription", "lenny_event_subscription_create", "tools:events:write", "platform-admin", operabilityCategory, "201"},
-	{"GET", "/v1/admin/event-subscriptions/{id}", "Get a webhook event subscription", "lenny_event_subscription_get", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"PUT", "/v1/admin/event-subscriptions/{id}", "Update a webhook event subscription", "lenny_event_subscription_update", "tools:events:write", "platform-admin", operabilityCategory, "200"},
-	{"DELETE", "/v1/admin/event-subscriptions/{id}", "Delete a webhook event subscription", "lenny_event_subscription_delete", "tools:events:write", "platform-admin", operabilityCategory, "204"},
+	// spec: §25.5 — a tenant-admin may create, list, get, update, and delete
+	// subscriptions scoped to its own tenant, so the tool's required-role
+	// ceiling is tenant-admin (the value callerHasToolRole reads as "admits
+	// platform-admin and tenant-admin"), keeping the §25.4 authorized-tools
+	// discovery surface accurate for a tenant-admin caller.
+	{"GET", "/v1/admin/event-subscriptions", "List webhook event subscriptions", "lenny_event_subscriptions_list", "tools:events:read", "tenant-admin", operabilityCategory, "200"},
+	{"POST", "/v1/admin/event-subscriptions", "Create a webhook event subscription", "lenny_event_subscription_create", "tools:events:write", "tenant-admin", operabilityCategory, "201"},
+	{"GET", "/v1/admin/event-subscriptions/{id}", "Get a webhook event subscription", "lenny_event_subscription_get", "tools:events:read", "tenant-admin", operabilityCategory, "200"},
+	{"PUT", "/v1/admin/event-subscriptions/{id}", "Update a webhook event subscription", "lenny_event_subscription_update", "tools:events:write", "tenant-admin", operabilityCategory, "200"},
+	{"DELETE", "/v1/admin/event-subscriptions/{id}", "Delete a webhook event subscription", "lenny_event_subscription_delete", "tools:events:write", "tenant-admin", operabilityCategory, "204"},
 	{"GET", "/v1/admin/event-subscriptions/{id}/deliveries", "List a subscription's webhook deliveries", "", "tools:events:read", "platform-admin", operabilityCategory, "200"},
 	{"POST", "/v1/admin/event-subscriptions/{id}/rotate-secret", "Rotate a subscription's signing secret", "", "tools:events:write", "platform-admin", operabilityCategory, "200"},
 
