@@ -3253,6 +3253,8 @@
         "tests/tier2_component/coordination/clockskew_test.go::TestClockSkewSamplerRealStoresAlertFires_spec_25_4",
         "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyStoreOutage_spec_25_4",
         "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyTierRequiredKey_spec_25_4",
+        "tests/tier3_contract/ops_endpoints/upgrade_idempotency_test.go::TestPlatformUpgradeProceedReplayDoesNotDoubleAdvance",
+        "tests/tier3_contract/ops_endpoints/upgrade_idempotency_test.go::TestPlatformUpgradeProceedKeyHonoredUnderLongRunningTTL",
         "tests/tier4_integration/ops_service_e2e_test.go",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
