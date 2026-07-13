@@ -20,6 +20,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -281,8 +282,16 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		return "", fmt.Errorf("miniostore: stat before put %s: %w", key, err)
 	}
 	opts := minio.PutObjectOptions{ContentType: mimeType}
+	// t4Write records whether this write is a T4 (requireKey) write so
+	// the PutObject error handler below can fail closed with
+	// ErrClassificationControlViolation when the backend rejects the
+	// SSE-KMS request because the tenant-scoped key is unavailable.
+	//
+	// spec: §12.5 (T4 per-tenant KMS key lifecycle, bullet 2).
+	var t4Write bool
 	if s.sseResolver != nil {
 		keyID, requireKey, err := s.sseResolver(u.TenantID)
+		t4Write = requireKey
 		switch {
 		case err != nil && requireKey:
 			// §12.5 ll. 303: T4 tenant whose key is unreachable at
@@ -331,6 +340,21 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 			return u.String(), nil
 		} else {
 			lastErr = err
+			// §12.5 bullet 2: a T4 write whose tenant-scoped KMS key is
+			// unavailable at write time (operator disabled or deleted it
+			// out-of-band, or the KMS backend rejected the request —
+			// MinIO surfaces these under the `kms:` error-code prefix,
+			// e.g. `kms:KeyNotFound`) MUST fail closed with
+			// CLASSIFICATION_CONTROL_VIOLATION. The store does not retry
+			// and does not fall back to the deployment-wide SSE key,
+			// because a silent downgrade would violate the T4
+			// cryptographic-erasure property. Checked before the
+			// transient classification so a KMS-coded 5xx also fails
+			// closed rather than entering the retry loop.
+			if t4Write && isKMSError(err) {
+				s.fireKMSUnavailable(u.TenantID)
+				return "", fmt.Errorf("%w: tenant=%s: put %s: %v", ErrClassificationControlViolation, u.TenantID, key, err)
+			}
 			if !isTransientPutError(err) {
 				et := classifyPutError(err)
 				if s.onArtifactUploadError != nil {
@@ -429,6 +453,21 @@ func classifyPutError(err error) string {
 		return "quota_exceeded"
 	}
 	return "other"
+}
+
+// isKMSError reports whether a MinIO object-write error is a KMS-class
+// failure — the server rejected the SSE-KMS request because the named
+// key is missing, disabled, or the KMS backend was unreachable. MinIO
+// namespaces these under the `kms:` S3 error-code prefix (for example
+// `kms:KeyNotFound` when a tenant-scoped key has been deleted or
+// disabled out-of-band). On a T4 (requireKey) write this is the §12.5
+// fail-closed CLASSIFICATION_CONTROL_VIOLATION trigger: the tenant's
+// key is unavailable at write time, so the write must be rejected
+// rather than downgraded to the deployment-wide key.
+//
+// spec: §12.5 (T4 per-tenant KMS key lifecycle, bullet 2).
+func isKMSError(err error) bool {
+	return strings.HasPrefix(minio.ToErrorResponse(err).Code, "kms:")
 }
 
 // fireKMSUnavailable invokes the gateway-registered hook on a
@@ -537,8 +576,15 @@ func (s *Store) Copy(src, dst blobstore.URI) error {
 	}
 	srcOpts := minio.CopySrcOptions{Bucket: s.bucket, Object: srcKey}
 	dstOpts := minio.CopyDestOptions{Bucket: s.bucket, Object: dstKey}
+	// t4Write records whether the destination tenant is T4, so the
+	// CopyObject error handler below fails closed when the backend
+	// rejects the SSE-KMS rewrap because the tenant key is unavailable.
+	//
+	// spec: §12.5 (T4 per-tenant KMS key lifecycle, bullet 2).
+	var t4Write bool
 	if s.sseResolver != nil {
 		keyID, requireKey, err := s.sseResolver(dst.TenantID)
+		t4Write = requireKey
 		switch {
 		case err != nil && requireKey:
 			s.fireKMSUnavailable(dst.TenantID)
@@ -562,6 +608,14 @@ func (s *Store) Copy(src, dst blobstore.URI) error {
 		}
 	}
 	if _, err := s.client.CopyObject(ctx, dstOpts, srcOpts); err != nil {
+		// §12.5 bullet 2: a T4 derive whose tenant-scoped KMS key is
+		// unavailable at rewrap time fails closed with
+		// CLASSIFICATION_CONTROL_VIOLATION rather than silently copying
+		// under a weaker key, matching the Put fail-closed path above.
+		if t4Write && isKMSError(err) {
+			s.fireKMSUnavailable(dst.TenantID)
+			return fmt.Errorf("%w: tenant=%s: copy %s -> %s: %v", ErrClassificationControlViolation, dst.TenantID, srcKey, dstKey, err)
+		}
 		return fmt.Errorf("miniostore: copy %s -> %s: %w", srcKey, dstKey, err)
 	}
 	return nil

@@ -189,7 +189,13 @@ func TestAdmissionDirectModeIsolation(t *testing.T) {
 	// with the default spiffeBinding) must be admitted. This drives a
 	// real AdmissionReview through the webhook Service and proves the
 	// webhook plane is reachable and admits a valid template. The apply
-	// is a server-side dry-run so nothing persists.
+	// is a server-side dry-run so nothing persists, and it impersonates
+	// the PoolScalingController service account: the
+	// lenny-pool-config-validator webhook also fires on SandboxTemplate
+	// CREATE and admits spec writes only from that principal
+	// (Postgres-authoritative pool config), so an unimpersonated write is
+	// rejected with UNAUTHORIZED_POOL_CONFIG_WRITE before the
+	// direct-mode-isolation webhook this test exercises is reached.
 	const goodTemplate = `apiVersion: lenny.dev/v1alpha1
 kind: SandboxTemplate
 metadata:
@@ -200,7 +206,7 @@ spec:
   deliveryMode: proxy
   isolationProfile: sandboxed
 `
-	out, err := dryRunApply(t, c, goodTemplate)
+	out, err := dryRunApplyAsPoolScalingController(t, c, goodTemplate)
 	if err != nil {
 		t.Fatalf("API server rejected a §4.9-compliant SandboxTemplate; "+
 			"the %s webhook is over-broad or its Service is unreachable.\noutput:\n%s", webhook, out)
@@ -343,6 +349,7 @@ spec:
   securityContext:
     runAsNonRoot: true
     fsGroup: 65534
+    supplementalGroups: [65534]
     seccompProfile:
       type: RuntimeDefault
   containers:
@@ -392,6 +399,7 @@ spec:
   securityContext:
     runAsNonRoot: true
     fsGroup: 65534
+    supplementalGroups: [65534]
     seccompProfile:
       type: RuntimeDefault
   containers:

@@ -83,6 +83,7 @@
         "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
         "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
         "tests/tier2_component/stores/tenantaccessstore_test.go",
+        "tests/tier4_integration/ops_event_emission_test.go",
         "tests/tier5_e2e_kind/etcd_encryption_test.go",
         "charts/lenny/tests/etcd-encryption_test.yaml"
       ],
@@ -115,11 +116,45 @@
         "charts/lenny/templates/etcd-encryption.yaml"
       ]
     },
+    "4.0": {
+      "title": "Agent Operability Additions",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/upgrade/upgrade_test.go::TestAdvanceEmitsUpgradeProgressedOnEveryTransition",
+        "pkg/upgrade/upgrade_test.go::TestAdvanceWithNilEmitterStillTransitions",
+        "pkg/upgrade/upgrade_test.go::TestAdvanceRollbackEmitsRolledBackPhase",
+        "pkg/controller/warmpool/poolphase_test.go::TestReconcileEmitsPoolStateChangedOnTransition",
+        "pkg/controller/warmpool/poolphase_test.go::TestReconcileNoEmitOnStablePhase",
+        "pkg/controller/warmpool/poolphase_test.go::TestReconcileEmitsExhaustedWithWarningSeverity",
+        "pkg/gateway/externalapi/admin/breakers_test.go::TestOpenBreakerEmitsStateChangedAuditPayload_spec_16_7_673",
+        "pkg/gateway/externalapi/admin/breakers_test.go::TestCloseBreakerEmitsStateChangedAuditPayload_spec_16_7_673",
+        "pkg/gateway/externalapi/admin/eventbuffer_test.go::TestEventBufferSurfacesCircuitBreakerEvent",
+        "pkg/gateway/sessionserver/opsevent_internal_test.go::TestRecordSessionCompletedEmitsSessionFailed",
+        "pkg/gateway/credentials/credentialserver/credentialserver_audit_test.go::TestRotateEmitsCredentialRotated_F491",
+        "tests/tier4_integration/ops_event_emission_test.go"
+      ],
+      "packages": [
+        "pkg/events",
+        "pkg/upgrade",
+        "pkg/controller/warmpool",
+        "pkg/gateway/externalapi/admin",
+        "pkg/gateway/sessionserver",
+        "pkg/gateway/credentials/credentialserver"
+      ],
+      "blocked_until_phase": "4.5",
+      "notes": "§4.0 states the normative EventEmitter wiring on existing subsystems: each listed subsystem takes EventEmitter as a constructor dependency and calls Emit(ctx, event) at the documented state-change point. The unit tests pin each subsystem's emission (upgrade state machine → upgrade_progressed; warm pool state manager → pool_state_changed; circuit breaker handler → circuit_breaker_opened/closed; session manager → session_failed; credential server → credential_rotated). The tier-4 integration test drives a real state change through the live gateway to a delivered operational event. Without this entry the emission call sites had no spec-map linkage, so a dropped Emit would not surface as a coverage gap."
+    },
     "4.1": {
       "title": "Edge Gateway Replicas",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "pkg/gateway/..."
+        "pkg/gateway/...",
+        "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPRuntimeEndpointExchangeConformsToSchema",
+        "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPSchemaValidatorRejectsNonConformingFrames",
+        "tests/tier4_integration/subsystem_isolation_test.go::TestUploadHandlerSaturationDoesNotStarveOtherSubsystems",
+        "tests/tier3_contract/rest_circuitbreaker/subsystem_unavailable_test.go::TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes",
+        "pkg/gateway/sessionserver/upload_breaker_convergence_test.go::TestUploadHandlerBreakerConvergesAcrossReplicasUnderBlobStoreOutage",
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
       ],
       "packages": [
         "pkg/gateway"
@@ -131,11 +166,14 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/session/...",
+        "tests/tier2_component/stores/partial_manifest_terminated_during_resume_test.go::TestPartialManifestTerminatedDuringResume",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/rest_idempotency/idempotency_test.go",
         "tests/tier3_contract/rest_sessions/sessions_test.go",
         "tests/tier4_integration/idempotency_test.go",
-        "tests/tier4_integration/session_lifecycle_test.go"
+        "tests/tier4_integration/session_lifecycle_test.go",
+        "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres",
+        "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway"
       ],
       "packages": [
         "pkg/session",
@@ -149,8 +187,15 @@
       "tests": [
         "pkg/tokenexchange/...",
         "pkg/credential/...",
+        "pkg/gateway/credentials/credassign/token_service_degraded_modes_test.go::TestTokenServiceOutageDifferentiatedDegradation",
+        "cmd/lenny-token-service/mtls_test.go::TestTokenServiceGRPCRequiresClientMTLS",
+        "cmd/lenny-token-service/spiffe_test.go::TestSPIFFEAuditInterceptorAttributesPerReplicaIdentity",
+        "tests/tier2_component/stores/tokencache_test.go::TestTokenCacheEncryptedAtRestOnRealRedis",
+        "tests/tier2_component/stores/tokencache_test.go::TestTokenCacheTTLExpiryOnRealRedis",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/oauth_token/oauth_token_record_test.go",
+        "tests/tier4_integration/oauth_token_proxy_test.go::TestOAuthTokenExchangeProxiedToDeployedTokenService",
+        "tests/tier4_integration/oauth_token_proxy_test.go::TestOAuthTokenSurfaceUnmountedWithoutProxy",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore",
         "tests/tier6_e2e_cloud/aws_resources_test.go"
@@ -177,10 +222,19 @@
         "pkg/checkpoint/checkpoint_test.go::TestFreshnessCheckRejectsStale",
         "tests/tier2_component/stores/evictionfallback_test.go",
         "tests/tier2_component/stores/partialmanifeststore_test.go",
+        "tests/tier2_component/stores/partialcleanup_component_test.go",
         "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
+        "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
+        "tests/tier8_chaos/node_drain_during_minio_outage_test.go",
+        "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointWritesMetadataOnlyAfterMinIOUpload",
+        "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails",
+        "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackMinIOOutageWritesPostgresMinimalState",
+        "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackTotalLossWhenBothStoresDown",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
-        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState"
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState",
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles"
       ],
       "packages": [
         "pkg/store/event",
@@ -194,6 +248,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier2_component/stores/gcsstore_test.go",
+        "tests/tier2_component/stores/s3store_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudCSI"
       ],
       "packages": [
@@ -206,7 +262,9 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/controller/warmpool/...",
-        "pkg/controller/poolscaling/..."
+        "pkg/controller/poolscaling/...",
+        "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6",
+        "tests/tier5_e2e_kind/node_drain_checkpoint_test.go::TestNodeDrainCheckpointsActiveSession"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -229,7 +287,9 @@
         "tests/tier2_component/stores/agentpodstatestore_test.go",
         "tests/tier8_chaos/concurrency_test.go",
         "tests/tier8_chaos/leader_election_test.go",
+        "tests/tier8_chaos/adr007_leader_kill_claim_test.go::TestLeaderKillMidClaimNoDoubleAssignment",
         "tests/tier8_chaos/live_session_test.go",
+        "tests/tier8_chaos/warm_pod_eviction_test.go::TestWarmPodEvictionProactiveReplacement",
         "tests/tier2_component/stores/crdpodregistry_claim_test.go::TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1",
         "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash",
         "tests/tier8_chaos/reserved_hold_holder_crash_test.go::TestOrphanGCReclaimsReservedClaimAfterHolderCrash",
@@ -242,7 +302,11 @@
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6",
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimeNoCapNoDrain_spec_4_6",
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePrecedesDrainRequest_spec_4_6",
-        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4"
+        "pkg/controller/warmpool/pod_reconciler_manager_test.go::TestPodReconcileHostSchedulableFollowsCordonUncordon_spec_4_6",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4",
+        "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueDispositionDrainsAsPodsFreeOnRealPool",
+        "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestFallbackDoubleClaimFencedByDeterministicName"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -298,7 +362,14 @@
         "pkg/admission/ownership/ownership_test.go::TestOwnerSdkWarmCircuitBreakerOverridesDefault",
         "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix",
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
-        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC"
+        "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
+        "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusReReadsAndNeverForcesOnSSAConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -319,7 +390,12 @@
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
         "tests/tier3_contract/rest_pools/nonce_only_wire_test.go::TestAdminPoolAcknowledgeNonceOnlyAuthRoundTrips",
         "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
+        "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
         "tests/tier8_chaos/nonce_only_degradation_test.go",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7",
+        "tests/tier4_integration/credential_lifecycle_test.go::TestCredentialLifecycleAssignRotateRebindRevokeTerminate",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
@@ -334,7 +410,13 @@
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReportSessionScrubMissingIDs_spec_4_7",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubIncrementsAndLeaks_spec_4_7",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterSessionScrubMissingPodFailsClosed_spec_4_7",
-        "pkg/adapter/gatewaylink_test.go::TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2"
+        "pkg/adapter/gatewaylink_test.go::TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2",
+        "pkg/adapter/peercredselftest_test.go::TestPeercredSelftest_spec_4_7_passes_on_loopback",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestPassesUnderRuncAndGvisor",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestFaultCrashLoops",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPRejectsNonceLessAdversary_spec_4_7",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestConnectorMCPRejectsNonceLessAdversary_spec_4_7",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7"
       ],
       "packages": [
         "pkg/adapter",
@@ -353,7 +435,16 @@
       "tests": [
         "pkg/gateway/policy/interceptor/...",
         "pkg/gateway/mcpfabric/delegationpolicystore/...",
-        "pkg/gateway/mcpfabric/mcptools/predelegation_test.go"
+        "pkg/gateway/mcpfabric/mcptools/predelegation_test.go",
+        "tests/tier2_component/stores/interceptorstore_test.go",
+        "tests/tier2_component/gateway_subsystems/llm_proxy_interceptor_test.go",
+        "tests/tier4_integration/external_interceptor_test.go",
+        "tests/tier4_integration/admission_gate_order_test.go",
+        "tests/tier4_integration/interceptor_weakening_cooldown_test.go",
+        "tests/tier4_integration/send_message_scan_test.go",
+        "tests/tier4_integration/export_scan_test.go",
+        "tests/tier3_contract/interceptor_proto/contract_test.go",
+        "tests/tier8_chaos/interceptor_fail_open_escalation_test.go::TestInterceptorFailOpenEscalationOverGRPC_spec_4_8"
       ],
       "packages": [
         "pkg/gateway/interceptors",
@@ -373,14 +464,22 @@
         "pkg/credential/credential_test.go::TestRotationTriggerCountsAgainstBudget",
         "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
         "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
+        "pkg/gateway/credentials/credrenewal/credrenewal_test.go::TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9",
         "tests/tier2_component/stores/credentialstore_test.go",
         "tests/tier2_component/stores/credentialpoolstore_test.go",
         "tests/tier2_component/stores/credleasestore_test.go",
         "tests/tier2_component/translators/anthropic_translator_test.go",
+        "tests/tier4_integration/credential_denylist_proxy_test.go",
+        "tests/tier4_integration/credential_fallback_test.go",
+        "tests/tier4_integration/credential_pool_revocation_propagation_test.go",
+        "tests/tier4_integration/credential_lifecycle_test.go",
         "tests/tier4_integration/credential_test.go",
         "tests/tier4_integration/llm_proxy_roundtrip_test.go",
+        "tests/tier2_component/gateway_subsystems/llm_proxy_test.go",
         "tests/tier8_chaos/testbed_partition_test.go",
-        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
+        "tests/tier5_e2e_kind/admission_credential_multitenant_test.go",
+        "tests/tier9_security/lease_spiffe_replay_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -758,7 +857,8 @@
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
         "tests/tier2_component/stores/delegationpolicystore_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
-        "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility"
+        "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility",
+        "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -1042,7 +1142,8 @@
         "tests/tier2_component/stores/coordleasestore_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/...",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
-        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
       ],
       "packages": [
         "pkg/gateway"
@@ -1451,7 +1552,8 @@
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenOperationTypeBreakerRejects",
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenBreakerWithDifferentScopeDoesNotMatch",
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestFirstOpenMatchWins",
-        "tests/tier2_component/breakers/..."
+        "tests/tier2_component/breakers/...",
+        "tests/tier4_integration/admission_gate_order_test.go"
       ],
       "packages": [
         "pkg/circuitbreaker",
@@ -1483,6 +1585,7 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
         "tests/tier3_contract/ocsf_audit/published_schema_test.go",
+        "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier8_chaos/audit_chain_test.go",
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
@@ -1617,10 +1720,12 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier2_component/stores/miniostore_sse_kms_test.go",
         "tests/tier2_component/stores/artifactcatalog_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
-        "tests/tier2_component/preflight/minio_sse_test.go"
+        "tests/tier2_component/preflight/minio_sse_test.go",
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -1798,6 +1903,7 @@
         "tests/tier9_security/admission_label_immutability_test.go",
         "tests/tier9_security/admission_security_test.go",
         "tests/tier9_security/image_signing_test.go",
+        "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
       ],
       "packages": [
@@ -1851,6 +1957,8 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestMissingCallerRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestUnsupportedGrantTypeRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
+        "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestSuccessEnvelopeMatchesRFC8693",
+        "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestErrorEnvelopeMatchesRFC8693",
         "tests/tier3_contract/oauth_token/...",
         "tests/tier2_component/securitycaches/propagation_test.go",
         "tests/tier2_component/stores/connectorcredstore_test.go",
@@ -2456,7 +2564,8 @@
         "pkg/tokenservice/exchange_type_test.go::TestRejectedExchangeCarriesExchangeType_spec_16_7",
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationEmitsExchangeAndRevokeAudit",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
-        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound"
+        "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound",
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
       ],
       "packages": [
         "pkg/observability/audit"
@@ -3169,6 +3278,7 @@
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
         "pkg/ops/opsserver/event_subscriptions_test.go",
+        "tests/tier3_contract/ops_endpoints/events_test.go",
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",

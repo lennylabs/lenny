@@ -111,7 +111,8 @@ func TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E(t *testing.T) {
 		t.Fatalf("seed session + pods: %v", err)
 	}
 
-	ops := opsprocess.StartWith(t,
+	ops := opsprocess.StartWith(
+		t,
 		"--postgres-dsn="+pg.DSN,
 		"--redis-url=redis://"+rd.Addr+"/0",
 		"--redis-allow-insecure",

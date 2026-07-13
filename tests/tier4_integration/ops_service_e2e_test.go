@@ -57,7 +57,8 @@ func TestOpsServiceRemediationLockPersistenceE2E(t *testing.T) {
 	// live surface.
 	const installationID = "11111111-2222-3333-4444-555555555555"
 	const tier = "tier2"
-	ops := opsprocess.StartWith(t,
+	ops := opsprocess.StartWith(
+		t,
 		"--postgres-dsn="+pg.DSN,
 		"--redis-url=redis://"+rd.Addr+"/0",
 		"--redis-allow-insecure",

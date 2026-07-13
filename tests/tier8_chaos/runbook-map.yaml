@@ -268,8 +268,12 @@ runbooks:
     test: TestRedisClusterDegraded
     severity: P1
     coverage: extended
+  # The CheckpointStale alert fires when checkpoint writes stall or fail;
+  # the dedicated §4.4 scenario for that failure mode is a MinIO outage
+  # during a checkpoint write (TestMinIOOutageDuringCheckpoint), not the
+  # generic gateway-liveness MinIO-unavailable probe.
   checkpoint-stale:
-    test: TestMinIOUnavailable
+    test: TestMinIOOutageDuringCheckpoint
     severity: P1
     coverage: extended
   circuit-breaker-open:
@@ -377,8 +381,13 @@ runbooks:
     test: TestRuntimeUpgradeStuck
     severity: P1
     coverage: extended
+  # The SessionEvictionTotalLoss alert fires when an eviction checkpoint
+  # cannot land in MinIO or Postgres; the dedicated §4.4 scenario is the
+  # MinIO-outage-during-checkpoint eviction-fallback / total-loss path
+  # (TestMinIOOutageDuringCheckpoint), not the generic MinIO-unavailable
+  # gateway-liveness probe.
   session-eviction-loss:
-    test: TestMinIOUnavailable
+    test: TestMinIOOutageDuringCheckpoint
     severity: P1
     coverage: extended
   slo-session-availability:

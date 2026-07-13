@@ -18,9 +18,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/adapter/credfile"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/tests/testinfra/proxylease"
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )
@@ -152,5 +156,100 @@ func TestLLMProxyRejectsUnknownLeaseToken(t *testing.T) {
 	}
 	if _, ok := upstream.LastRequest(); ok {
 		t.Fatal("the proxy forwarded an unauthenticated request upstream")
+	}
+}
+
+// spec: 4.9 (LLM reverse proxy: "The real upstream API key never leaves
+//
+//	the gateway process; it never enters the agent pod's memory,
+//	environment, filesystem, or network path." The pod receives a lease
+//	token and proxyUrl instead of a materialized upstream key.)
+//
+// diagnosis: the §4.9 proxy-mode credential-isolation guarantee diverged.
+//
+//	A proxy-mode session's pod-facing credential material (what the
+//	adapter materializes into the pod's credentials.json) carried the
+//	real upstream key, or the same key was absent from the upstream
+//	request the gateway forwards. Either half is a breach: the pod must
+//	receive only the opaque lease token and proxyUrl on its filesystem,
+//	while the real key appears only on the gateway-to-upstream network
+//	call. A regression here lets a compromised agent pod read the real
+//	upstream credential off its own credential file, defeating the
+//	reason proxy mode exists.
+func TestLLMProxyRealUpstreamKeyNeverEntersPod(t *testing.T) {
+	upstream := llmprovider.New(t)
+	// A recognizably-real Anthropic-style key so a substring scan of the
+	// pod-facing bytes is unambiguous if it ever leaks.
+	const realKey = "sk-ant-upstream-only-never-to-pod"
+	fx := proxylease.Start(t, proxylease.Options{
+		UpstreamBaseURL: upstream.URL(),
+		UpstreamKey:     realKey,
+		TenantID:        "acme",
+		SessionID:       "s-proxy-isolation",
+	})
+
+	// ---- filesystem: the pod's materialized credential file holds no
+	// real upstream key ----
+	// credfile.Write is the production adapter writer; the bytes it lands
+	// in dir are byte-identical to the pod's tmpfs credentials.json, so a
+	// scan of them is a faithful check of the §4.9 "never enters the
+	// agent pod's filesystem" clause.
+	dir := t.TempDir()
+	if err := credfile.Write(dir, []*adapterv1.CredentialLease{fx.PodCredentialLease}); err != nil {
+		t.Fatalf("materialize pod credential file: %v", err)
+	}
+	fileBytes, err := os.ReadFile(filepath.Join(dir, credfile.FileName))
+	if err != nil {
+		t.Fatalf("read pod credential file: %v", err)
+	}
+	if bytes.Contains(fileBytes, []byte(realKey)) {
+		t.Fatalf("the real upstream key leaked into the pod credential file; proxy mode must deliver only the lease token:\n%s", fileBytes)
+	}
+	// Positive control: proxy mode delivers the opaque lease token and the
+	// proxyUrl to the pod in place of the key, so the pod's SDK can reach
+	// the proxy. Their presence confirms the file is a real proxy-mode
+	// credential and the absence of realKey above is not because the file
+	// is empty or malformed.
+	if !bytes.Contains(fileBytes, []byte(fx.LeaseToken)) {
+		t.Fatalf("proxy-mode credential file is missing the lease token; got:\n%s", fileBytes)
+	}
+	if !bytes.Contains(fileBytes, []byte(`"deliveryMode": "proxy"`)) {
+		t.Fatalf("pod credential file is not proxy-mode; got:\n%s", fileBytes)
+	}
+
+	// ---- network: the same key is injected on the gateway-to-upstream
+	// request while the pod authenticates only with the lease token ----
+	reqBody := `{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"ping-iso"}]}`
+	req, err := http.NewRequest(http.MethodPost, fx.ProxyMessagesURL, strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("build proxy request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// The pod holds only the lease token; it never sees the real key, so
+	// the real key cannot appear on the pod's own request.
+	req.Header.Set("x-api-key", fx.LeaseToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("issue proxy request: %v", err)
+	}
+	respRaw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("proxy request: status %d, body %s", resp.StatusCode, respRaw)
+	}
+
+	up, ok := upstream.LastRequest()
+	if !ok {
+		t.Fatal("the upstream provider stub received no request; the proxy did not forward")
+	}
+	if got := up.Header.Get("x-api-key"); got != realKey {
+		t.Fatalf("upstream received x-api-key %q, want the injected real key %q", got, realKey)
+	}
+	// The real key must reach only the upstream: it must be absent from
+	// the response streamed back to the pod (network path back into the
+	// pod).
+	if bytes.Contains(respRaw, []byte(realKey)) {
+		t.Fatal("the real upstream key leaked to the agent pod in the proxy response")
 	}
 }

@@ -247,7 +247,8 @@ func TestAdminAuditQueryOverPostgres(t *testing.T) {
 		}
 		rr := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, asPlatformAdmin(
-			httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/99?tenantId=acme", nil)))
+			httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/99?tenantId=acme", nil),
+		))
 		if rr.Code != http.StatusNotFound {
 			t.Errorf("get missing seq: status %d, want 404", rr.Code)
 		}
