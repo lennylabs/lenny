@@ -3216,6 +3216,8 @@
         "pkg/ops/runbooks/steps_test.go",
         "pkg/ops/opsserver/runbooks_test.go",
         "pkg/gateway/operability/health/runbook_bundle_test.go",
+        "pkg/gateway/externalapi/openapi/openapi_test.go::TestRunbookIndexAdvertisesPathAFilters_spec_25_7",
+        "pkg/ops/mcp/server_test.go::TestToolsListReturnsTheInventory",
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier4_integration/runbook_discovery_test.go"

@@ -387,6 +387,41 @@ func TestSessionsListUsesCanonicalPaginationEnvelope_spec_15_1_1228(t *testing.T
 	}
 }
 
+// spec: §25.7 Runbook Discovery, Path A — "Query parameters for filtering
+// (all optional, combinable)" lists `alert`, `component`, `tag`, `requires`,
+// and `q` for GET /v1/admin/runbooks. §25.12 OpenAPI Schema Discovery requires
+// the served document to advertise every filter parameter so SDK generators
+// and MCP tooling see the runbook index's filtering surface. Without these in
+// openapi.json the endpoint reads as taking no arguments, and a document
+// consumer cannot discover that runbooks can be narrowed by alert, component,
+// tag, executable-capability, or full-text query.
+func TestRunbookIndexAdvertisesPathAFilters_spec_25_7(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	get, _ := parsed["paths"].(map[string]any)["/v1/admin/runbooks"].(map[string]any)["get"].(map[string]any)
+	if get == nil {
+		t.Fatal("paths./v1/admin/runbooks.get missing from openapi.json")
+	}
+	rawParams, _ := get["parameters"].([]any)
+	paramNames := map[string]bool{}
+	for _, p := range rawParams {
+		pm, _ := p.(map[string]any)
+		if pm["in"] != "query" {
+			continue
+		}
+		paramNames[pm["name"].(string)] = true
+	}
+	// The five Path A filters. Each is an optional, combinable query param.
+	for _, want := range []string{"alert", "component", "tag", "requires", "q"} {
+		if !paramNames[want] {
+			t.Errorf("GET /v1/admin/runbooks must advertise the %q filter query param (§25.7 Path A)", want)
+		}
+	}
+}
+
 func TestDocumentReturnsCopy(t *testing.T) {
 	a := openapi.Document()
 	b := openapi.Document()
