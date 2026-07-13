@@ -1800,8 +1800,10 @@
         "tests/tier9_security/ssrf_test.go",
         "tests/tier9_security/store_helpers_test.go",
         "tests/tier9_security/tenant_isolation_test.go",
+        "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier9_security/credential_leakage_test.go",
-        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed"
+        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
         "pkg/compliance/dataclassification"
@@ -3303,6 +3305,7 @@
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
+        "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/event_stream_test.go::TestOpsEventStreamReadSurfaceE2E",
         "tests/tier4_integration/event_stream_test.go::TestOpsEventSubscriptionWebhookSSRFE2E",
@@ -3421,7 +3424,8 @@
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/drift_reconcile_test.go",
-        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable"
+        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
         "pkg/ops/driftservice"
@@ -3457,9 +3461,17 @@
       "tests": [
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementScopeForbiddenSweep_spec_25_12",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E",
+        "tests/tier5_e2e_kind/mcp_management_e2e_test.go::TestMCPManagementServerOnDeployedOps",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallCarriesCallerPrincipal_spec_25_12",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallRejectsNonAdminRole_spec_25_12",
+        "pkg/ops/opsserver/mcp_correlation_test.go::TestMCPManagementMetaOperationIDPropagatesToLock_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestToolInputOperationIDPropagates_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestMetaOperationIDPropagates_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestToolInputOperationIDWinsOverMeta_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
+        "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
         "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas"
       ],
       "packages": [
