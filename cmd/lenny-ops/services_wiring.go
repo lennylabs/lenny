@@ -320,9 +320,11 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 	// §25.4 Operations Inventory: a scatter-gather view over the wired
 	// subsystem sources. The lock, escalation, and platform-upgrade
 	// adapters project their live records; the §25.10 drift reconcile
-	// tracker is already an operations.Source. The backup/restore,
-	// idempotency, and webhook-delivery kinds plug in as their subsystems
-	// expose enumeration. F-25.4.3.
+	// tracker is already an operations.Source; the §25.11 restore adapter
+	// projects ops_restore_state rows under kind restore so a running or
+	// failed restore appears on GET /v1/admin/operations alongside its own
+	// status endpoint. The backup, idempotency, and webhook-delivery kinds
+	// plug in as their subsystems expose enumeration. F-25.4.3.
 	// spec: §25.4 (Operations Inventory `resources.audit`) — the
 	// gateway-resident §25.9 audit-events query the audit link targets is
 	// joined to the gateway base URL so the discovery hop resolves against
@@ -332,6 +334,7 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 		opsinventory.NewLockSource(w.lockSvc, gatewayURL),
 		opsinventory.NewEscalationSource(w.escalationSvc, gatewayURL),
 		opsinventory.NewUpgradeSource(w.upgradeSvc, gatewayURL),
+		opsinventory.NewRestoreSource(w.backupSvc, gatewayURL),
 		w.driftSvc.ReconcileSource(),
 	)
 	// §25.2 lines 357-396: enrich every in-progress operation's Progress
