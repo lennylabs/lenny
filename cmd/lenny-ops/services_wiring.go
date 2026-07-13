@@ -324,7 +324,7 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 	// projects ops_restore_state rows under kind restore so a running or
 	// failed restore appears on GET /v1/admin/operations alongside its own
 	// status endpoint. The backup, idempotency, and webhook-delivery kinds
-	// plug in as their subsystems expose enumeration. F-25.4.3.
+	// plug in as their subsystems expose enumeration.
 	// spec: §25.4 (Operations Inventory `resources.audit`) — the
 	// gateway-resident §25.9 audit-events query the audit link targets is
 	// joined to the gateway base URL so the discovery hop resolves against
