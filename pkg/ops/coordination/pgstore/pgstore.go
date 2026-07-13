@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -69,16 +70,43 @@ func (s *Store) ServerTime(ctx context.Context) (time.Time, error) {
 }
 
 // classifyErr maps a pgx connection/transport failure to
-// coordination.ErrStoreUnavailable (the §25.4 Postgres-outage case),
-// leaving a server-side query error (PgError — the database responded)
-// intact for the caller to surface.
+// coordination.ErrStoreUnavailable (the §25.4 Postgres-outage case), so the
+// tiered Service falls the remediation lock from the Postgres tier to the
+// Redis tier instead of returning a hard error. A genuine server-side query
+// error (a PgError the database answered with, such as a constraint
+// violation) is left intact for the caller to surface.
+//
+// A connection refused before pgx wraps a PgError is the common outage
+// signal and is handled by the default branch. A Postgres administrator
+// shutdown or failover window is different: the server answers an in-flight
+// request with a FATAL PgError before the connection drops. Those codes are
+// still "Postgres is unreachable" for the purpose of the §25.4 tier
+// fall-through, so classifyErr treats the operator_intervention codes
+// (57P01 admin_shutdown, 57P02 crash_shutdown, 57P03 cannot_connect_now)
+// and the connection-exception class (08) as store-unavailable rather than
+// surfacing them.
+//
+// spec: §25.4 lines 2170-2178 (Storage Tiers; attempts storage tiers in
+// order, falling back on failure; Tier 2 Redis when Postgres unreachable).
 func classifyErr(err error) error {
 	if err == nil {
 		return nil
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		return err
+		switch {
+		case strings.HasPrefix(pgErr.Code, "08"):
+			// Class 08 — connection exception (08000, 08003, 08006, etc.).
+			return coordination.ErrStoreUnavailable
+		case pgErr.Code == "57P01", pgErr.Code == "57P02", pgErr.Code == "57P03":
+			// admin_shutdown, crash_shutdown, cannot_connect_now — the backend
+			// is terminating or not yet accepting connections, both of which a
+			// shutdown or failover produces.
+			return coordination.ErrStoreUnavailable
+		default:
+			// The database answered with a query-level error; surface it.
+			return err
+		}
 	}
 	return coordination.ErrStoreUnavailable
 }
