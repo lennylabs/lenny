@@ -121,7 +121,7 @@ Across 132 audited units: **1624 findings** — 501 High, 723 Medium, 251 Low, 1
 - [§13.4 Upload Security](#t-13.4) — 4H 4M 2L 1I — Archive extraction moved gateway-side and trust-boundary/metric gaps closed; wire-contract, tier9, and cross-deployment coverage still thin
 - [§13.5 Delegation Chain Content Security](#t-13.5) — 3H 5M 2L 1I — No integration/e2e/contract/chaos coverage of §13.5 content-security phases through the wired gateway binary
 - [§14 Workspace Plan Schema](#t-14) — 3H 6M 2L 1I — §14 workspace plan: all 12 findings still open; no suggested test files landed on disk since 2026-06-03
-- [§15.1 REST API](#t-15.1) — 4H 6M 2L 1I — Admin REST plane still lacks real-OIDC/Postgres component tests; OpenAPI/scope/dryRun gaps closed, pagination/etag now unit-only.
+- [§15.1 REST API](#t-15.1) — 4H 6M 3L 1I — Admin REST plane still lacks real-OIDC/Postgres component tests; OpenAPI/scope/dryRun gaps closed, pagination/etag now unit-only.
 - [§15.2 MCP API](#t-15.2) — 7H 4M 2L 1I — MCP streaming (attach_session, SSE, per-kind projection, resume) now implemented and tested; the §15.2.1 third-party matrix, validate-gate wiring, coordinator-handoff reattach, and MCP schema conformance remain open.
 - [§15.3 Internal Control API (Custom Protocol)](#t-15.3) — 2H 2M 1L 1I — Gateway-dials-pod-adapter mTLS handshake still unverified above unit level; only the reverse callback channel gained a real test
 - [§15.4 Runtime Adapter Specification](#t-15.4) — 5H 9M 2L 1I — High-severity gaps remain: no Kind/cloud e2e adapter transport, MCP/REST/A2A fidelity untested, blob-dereference path unverified.
@@ -6250,6 +6250,13 @@ Counts: 4 High, 6 Medium, 2 Low, 1 Info.
 - **Gap:** No component-or-higher gap for the error envelope or rate-limit headers per se; the catalog is centralized and unit-tested (including the error codes added since the baseline) and the wire envelope is sampled at tier3. This entry records that the large error-code catalog (the conditions under which each code is returned) is not individually exercised end to end, which is acceptable because each producing handler asserts its own code at unit tier. No new suite is required beyond the per-feature findings above (for example T-15.1.3 for `SCOPE_FORBIDDEN` and T-15.1.7 for `POOL_DRAINING`).
 - **Dependencies:** none — buildable today.
 - **Suggested test:** No standalone suite required; ensure each per-feature integration test added under the findings above asserts the specific error code and HTTP status from the catalog rather than only the status family.
+
+### - [ ] T-15.1.14 — Tier6 cloud session-lifecycle test tolerates a 500 EXECUTOR_FAILURE and never proves echoed content on the cloud data path [Low] — OPEN
+- **Spec/Doc:** `POST /v1/sessions/{id}/messages` (`EndpointMessages`) is allowed in any non-terminal session state. (spec/15_external-api-surface.md)
+- **Existing tests:** `tests/tier6_e2e_cloud/session_lifecycle_test.go` sends `POST /v1/sessions/{id}/messages` on a never-started session and accepts `http.StatusInternalServerError` alongside 200/202/409 (the switch at the "§15.1 EndpointMessages allows any non-terminal state" comment). `tests/tier5_e2e_kind/prompt_roundtrip_test.go` is the now-green tier5 analogue that starts the session and asserts echoed output.
+- **Gap:** The tier6 cloud leg never `/start`s the session before sending `/messages` and never asserts the runtime's echoed output, and it tolerates a `500 EXECUTOR_FAILURE` as a passing result. The cloud data path is therefore never proven to carry a prompt through to an echoed response. Target tier: tier6 e2e (cloud).
+- **Dependencies:** Requires a live cloud cluster to verify.
+- **Suggested test:** In `tests/tier6_e2e_cloud/session_lifecycle_test.go`, `/start` the session before `POST /v1/sessions/{id}/messages`, drop `http.StatusInternalServerError` from the accepted statuses, and assert the response output contains the echo prefix, mirroring `tests/tier5_e2e_kind/prompt_roundtrip_test.go`.
 
 ## §15.2 MCP API <a id="t-15.2"></a>
 **Spec file:** `spec/15_external-api-surface.md`
