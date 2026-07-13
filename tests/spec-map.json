@@ -3460,6 +3460,11 @@
         "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallCarriesCallerPrincipal_spec_25_12",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallRejectsNonAdminRole_spec_25_12",
+        "pkg/ops/opsserver/mcp_correlation_test.go::TestMCPManagementMetaOperationIDPropagatesToLock_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestToolInputOperationIDPropagates_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestMetaOperationIDPropagates_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestToolInputOperationIDWinsOverMeta_spec_25_12",
+        "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas"
       ],
       "packages": [

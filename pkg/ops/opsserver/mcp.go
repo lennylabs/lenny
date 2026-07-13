@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
+	"github.com/lennylabs/lenny/pkg/observability/correlation"
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 )
 
@@ -77,6 +78,26 @@ func (i *opsInvoker) Invoke(ctx context.Context, tool mcp.Tool, args json.RawMes
 	// fallback: when a principal is on the context the handlers attribute
 	// to the principal's subject, not this header.
 	req.Header.Set("X-Lenny-Caller", "mcp-management")
+	// §25.12 Headers and Correlation: carry the operation ID and agent
+	// name the MCP adapter derived from the tools/call request (tool input
+	// operationId or _meta.operationId, and clientInfo.name) onto the
+	// replayed REST request as the standard correlation headers, so the
+	// underlying call is tied to the remediation effort the same way a
+	// direct REST call with these headers would be. The values ride on the
+	// inherited context; project them onto the request headers so the REST
+	// call carries them explicitly.
+	//
+	// spec: §25.12 — "X-Lenny-Operation-ID from the tool input's optional
+	// operationId field (if present) OR from ... _meta.operationId ... →
+	// same HTTP header on REST calls." and "X-Lenny-Agent-Name from the MCP
+	// clientInfo.name → same HTTP header on REST calls."
+	fields := correlation.From(ctx)
+	if fields.OperationID != "" {
+		req.Header.Set(correlation.HeaderOperationID, fields.OperationID)
+	}
+	if fields.AgentName != "" {
+		req.Header.Set(correlation.HeaderAgentName, fields.AgentName)
+	}
 	rec := httptest.NewRecorder()
 	i.server.mcpReplay.ServeHTTP(rec, req)
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/common/scopes"
+	"github.com/lennylabs/lenny/pkg/observability/correlation"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
@@ -199,10 +200,24 @@ func toolDescriptor(t Tool) map[string]any {
 	}
 }
 
-// toolsCallParams is the §25.12 tools/call request params.
+// toolsCallParams is the §25.12 tools/call request params. Beyond the
+// tool name and arguments it carries the §25.12 correlation sources the
+// adapter propagates onto the underlying REST call: the MCP request
+// metadata (_meta.operationId) and the client identity (clientInfo.name).
 type toolsCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	// Meta is the MCP per-request metadata object (_meta). §25.12 reads
+	// operationId from it as the fallback correlation token when the tool
+	// input omits its own operationId field.
+	Meta struct {
+		OperationID string `json:"operationId"`
+	} `json:"_meta"`
+	// ClientInfo names the calling MCP client. §25.12 maps clientInfo.name
+	// to the X-Lenny-Agent-Name correlation value on the REST call.
+	ClientInfo struct {
+		Name string `json:"name"`
+	} `json:"clientInfo"`
 }
 
 // handleToolsCall answers the §25.12 tools/call method: it resolves the
@@ -243,7 +258,27 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 	if s.invoker == nil {
 		return endpointUnavailable(tool)
 	}
-	result, err := s.invoker.Invoke(r.Context(), tool, p.Arguments)
+	// §25.12 Headers and Correlation: derive the operation ID and agent
+	// name the adapter propagates onto the underlying REST call, and carry
+	// them on the context the invoker replays with so the correlation
+	// values reach the REST handler (and any outbound REST header). The
+	// operation ID comes from the tool input's operationId field when
+	// present, otherwise from the _meta.operationId request metadata; the
+	// tool input wins on conflict. The agent name comes from clientInfo.name.
+	//
+	// spec: §25.12 — "X-Lenny-Operation-ID from the tool input's optional
+	// operationId field (if present) OR from ... _meta.operationId ...
+	// When both are provided, the tool input field wins." and
+	// "X-Lenny-Agent-Name from the MCP clientInfo.name".
+	ctx := r.Context()
+	derived := correlation.Fields{
+		OperationID: operationIDFromArgs(p.Arguments, p.Meta.OperationID),
+		AgentName:   p.ClientInfo.Name,
+	}
+	if !derived.IsEmpty() {
+		ctx = correlation.With(ctx, correlation.From(ctx).Merge(derived))
+	}
+	result, err := s.invoker.Invoke(ctx, tool, p.Arguments)
 	if err != nil {
 		return rpcResponse{Error: &rpcError{
 			Code: errEndpointUnavailable, Message: err.Error(),
@@ -254,6 +289,25 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 		return endpointUnavailable(tool)
 	}
 	return rpcResponse{Result: toolCallResult(result)}
+}
+
+// operationIDFromArgs resolves the §25.12 operation-ID correlation token
+// for a tool call. The tool input's operationId field wins when present;
+// otherwise the _meta.operationId request-metadata fallback applies.
+//
+// spec: §25.12 (Headers and Correlation) — "X-Lenny-Operation-ID from the
+// tool input's optional operationId field (if present) OR from ...
+// _meta.operationId ... When both are provided, the tool input field wins."
+func operationIDFromArgs(args json.RawMessage, metaOperationID string) string {
+	if len(args) > 0 {
+		var a struct {
+			OperationID string `json:"operationId"`
+		}
+		if json.Unmarshal(args, &a) == nil && a.OperationID != "" {
+			return a.OperationID
+		}
+	}
+	return metaOperationID
 }
 
 // toolCallResult maps a §25.12 ToolResult to the MCP tools/call result
