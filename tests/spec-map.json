@@ -3444,10 +3444,12 @@
     "25.13": {
       "title": "Bundled Alerting Rules",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier4_integration/alerting_metrics_exposition_test.go::TestAlertingMetricsExposedOnGatewayScrape"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840)."
     },
     "25.14": {
       "title": "lenny-ctl Extensions",
