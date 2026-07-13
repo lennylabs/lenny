@@ -3435,7 +3435,8 @@
         "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown",
         "tests/tier5_e2e_kind/backup_test.go::TestBackupImageProvidesPostgresClientTools",
         "tests/tier9_security/backup_isolation_test.go::TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11",
-        "tests/tier9_security/backup_isolation_test.go::TestBackupJobEgressBoundToAllowlist_spec_25_11"
+        "tests/tier9_security/backup_isolation_test.go::TestBackupJobEgressBoundToAllowlist_spec_25_11",
+        "tests/tier6_e2e_cloud/artifact_replication_residency_test.go::TestCloudArtifactReplicationResidency"
       ],
       "packages": [
         "pkg/ops/backup"
