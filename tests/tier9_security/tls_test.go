@@ -139,6 +139,26 @@ func TestWebhookCABundlesPopulated(t *testing.T) {
 	}
 }
 
+// spec: 25.4 (TLS, NET-070), 17.1 (row 21 chart-rendered secrets)
+// diagnosis: the §25.4 admin-API TLS serving material for lenny-ops did
+// not issue. §17.1 row 21 requires that when ops.tls.internalEnabled is
+// true and cert-manager is present, "a Certificate object renders the
+// TLS secret automatically". The e2e overlay enables
+// ops.tls.certManager, so the chart renders a lenny-ops-tls Certificate
+// anchored to the self-signed webhook Issuer. A missing or un-Ready
+// Certificate means cert-manager could not materialize the lenny-ops-tls
+// Secret, so the NET-070 admin-API TLS link between lenny-ops and the
+// gateway has no serving/client identity. Unlike the §10.3 internal-mTLS
+// PKI, this leaf is gated by ops.tls (independent of mtls.enabled), so it
+// is expected present on every non-dev-profile install.
+func TestOpsServingCertificateReady(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	certReady := conditionReadiness(t, c, "certificates.cert-manager.io")
+	assertReady(t, certReady, "Certificate", "lenny-ops-tls", "§25.4/NET-070 ops admin-API TLS serving leaf")
+	t.Logf("§25.4 ops admin-API TLS: lenny-ops-tls Certificate Ready")
+}
+
 // assertReady fails the test when the named resource is absent from the
 // readiness map or its Ready condition is not "True".
 func assertReady(t *testing.T, ready map[string]string, kind, name, role string) {
