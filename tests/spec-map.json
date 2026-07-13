@@ -3447,6 +3447,7 @@
       "tests": [
         "tests/tier4_integration/alerting_metrics_exposition_test.go::TestAlertingMetricsExposedOnGatewayScrape",
         "pkg/alerting/inproceval/inproceval_test.go::TestBundledUniversalAlertsFireOnTriggerCondition_spec_25_13",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRulesConfigMapIsLoadablePrometheusRuleFile",
         "charts/lenny/tests/tier-presets_test.yaml"
       ],
       "packages": [],
