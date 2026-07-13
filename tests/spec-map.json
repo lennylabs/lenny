@@ -3453,7 +3453,8 @@
       "title": "Failure Mode Analysis",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "tests/tier8_chaos/ops_survives_gateway_outage_test.go::TestOpsSurfaceSurvivesGatewayOutageEndToEnd"
+        "tests/tier8_chaos/ops_survives_gateway_outage_test.go::TestOpsSurfaceSurvivesGatewayOutageEndToEnd",
+        "tests/tier4_integration/ops_dual_store_degraded_test.go::TestOpsDualStoreDegradedInMemoryFallback"
       ],
       "packages": [],
       "blocked_until_phase": "14",
