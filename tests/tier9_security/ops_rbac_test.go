@@ -42,11 +42,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
@@ -261,6 +263,102 @@ func TestOpsTenantAdminPlatformLockForbidden_spec_25_4_2128(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 	if rec.Code == http.StatusForbidden {
 		t.Fatalf("tenant-admin own-tenant pool lock unexpectedly forbidden: body=%s", rec.Body.String())
+	}
+}
+
+// fixedDriftRunning is a RunningStateReader returning a fixed running
+// state so a reached drift handler produces a full platform-wide drift
+// report. The running state is platform-scoped (it spans every tenant's
+// pools/runtimes/tenants); the drift service applies no tenant filter.
+type fixedDriftRunning struct{ state map[string]any }
+
+func (f fixedDriftRunning) RunningState(context.Context, string) (map[string]any, error) {
+	return f.state, nil
+}
+
+// authedDriftOpsServer returns a real *opsserver.Server with the §25.4
+// auth gate and a live §25.10 drift service seeded so a request that
+// clears authorization reaches a handler that returns the platform-wide
+// drift report. A drift call that is correctly isolated never reaches
+// that handler as a tenant-admin.
+func authedDriftOpsServer(t *testing.T) (*opsserver.Server, *jwt.HMACSigner) {
+	t.Helper()
+	signer := jwt.NewHMACSigner("ops-rbac-test", []byte("ops-rbac-test-secret"))
+	store := driftservice.NewMemSnapshotStore()
+	if err := store.Put(context.Background(), driftservice.Snapshot{
+		ID:           driftservice.SnapshotLive,
+		DesiredState: map[string]any{"pools": map[string]any{"platform-pool": map[string]any{"minWarm": float64(5)}}},
+		Source:       driftservice.SourceHelmValues, WrittenAt: time.Now().UTC(), WrittenBy: "helm",
+	}); err != nil {
+		t.Fatalf("seed drift snapshot: %v", err)
+	}
+	drift := driftservice.NewService(store, fixedDriftRunning{
+		state: map[string]any{"pools": map[string]any{"platform-pool": map[string]any{"minWarm": float64(15)}}},
+	})
+	srv := opsserver.New(opsserver.Options{
+		Locks: coordination.NewMemStore(),
+		Drift: drift,
+		Auth: &opsserver.AuthConfig{
+			Options:     authmw.Options{Verifier: signer},
+			RateLimiter: opsserver.NewRateLimiter(1000, 1000),
+		},
+	})
+	return srv, signer
+}
+
+// spec: §12.9.1 (TESTING.md) — "for each store and each operation,
+// attempt cross-tenant reads and writes through every code path (...,
+// drift detection, lenny-ops endpoints). Every attempt must fail with
+// the documented isolation error." §25.10 configuration drift is a
+// platform-scoped operation: GET /v1/admin/drift compares the desired
+// snapshot against running state spanning every tenant's pools,
+// runtimes, and tenant configs, and the drift service applies no tenant
+// filter. A tenant-admin therefore has no tenant-scoped drift view; a
+// tenant-admin drift call is inherently a cross-tenant read of platform
+// state and must fail with the documented isolation error rather than
+// return the platform-wide drift report.
+//
+// diagnosis: a tenant-admin reached the §25.10 drift surface and
+// received the platform-wide drift report (or reconcile preview) rather
+// than the §12.9.1 documented isolation error. A single tenant's admin
+// can enumerate every tenant's pool/runtime/tenant configuration through
+// drift detection, and drive a platform-wide reconcile, breaching the
+// §12.9.1 cross-tenant isolation guarantee for the drift code path.
+func TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1(t *testing.T) {
+	// The §12.9.1 matrix names drift detection as a cross-tenant-rejection
+	// code path, but §25.10 defines drift as platform-scoped with no
+	// tenant dimension and no isolation error, while §25.4 line 1567
+	// admits tenant-admin on every lenny-ops endpoint. The control this
+	// test asserts (deny a tenant-admin the platform-scoped drift surface,
+	// mirroring the §25.4 line 2128 LOCK_SCOPE_FORBIDDEN control for
+	// platform-scoped locks) is not yet defined by the spec. Left skipped
+	// until the spec resolves how drift enforces cross-tenant isolation.
+	t.Skip("drift cross-tenant isolation control is unresolved: §12.9.1 lists drift among cross-tenant-rejection paths, but §25.10 defines no per-tenant drift model or isolation error and §25.4 admits tenant-admin; pending a spec decision on the documented isolation error for the drift surface")
+
+	srv, signer := authedDriftOpsServer(t)
+	tenantAdmin := mintOpsRBACToken(t, signer, "carol@acme.com", "acme", "", auth.RoleTenantAdmin)
+
+	// A tenant-admin reading platform-wide drift must be denied, not
+	// handed the platform report.
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/drift?scope=pools", nil)
+	req.Header.Set("Authorization", "Bearer "+tenantAdmin)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("tenant-admin GET /v1/admin/drift: status = %d, want 403 (documented isolation error); "+
+			"a tenant-admin received the platform-wide drift report; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// A tenant-admin driving a platform-wide reconcile must be denied too.
+	req = httptest.NewRequest(http.MethodPost, "/v1/admin/drift/reconcile",
+		bytes.NewReader([]byte(`{"scope":"all"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tenantAdmin)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("tenant-admin POST /v1/admin/drift/reconcile: status = %d, want 403 (documented isolation error); "+
+			"a tenant-admin drove a platform-wide reconcile; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

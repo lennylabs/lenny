@@ -1802,7 +1802,8 @@
         "tests/tier9_security/tenant_isolation_test.go",
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier9_security/credential_leakage_test.go",
-        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed"
+        "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
         "pkg/compliance/dataclassification"
@@ -3423,7 +3424,8 @@
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/drift_reconcile_test.go",
-        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable"
+        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
         "pkg/ops/driftservice"
