@@ -3376,7 +3376,8 @@
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go",
-        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable"
+        "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff"
       ],
       "packages": [
         "pkg/upgrade",
