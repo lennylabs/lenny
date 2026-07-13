@@ -3240,6 +3240,7 @@
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
         "pkg/ops/opsserver/escalations_test.go::TestListEscalationsPaginationReportsMore_spec_25_4",
         "pkg/ops/escalation/pgstore/pgstore_test.go::TestPgStoreKeysetPagination_spec_25_4",
+        "pkg/ops/escalation/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
