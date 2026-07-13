@@ -147,7 +147,7 @@ func TestOpsLeaderElectionFailover(t *testing.T) {
 	// starts immediately after the delete so a window where both replicas
 	// were unavailable would be caught. §25.4 Trade-Offs: "PodDisruptionBudget
 	// (minAvailable: 1) ensures at least one replica is up."
-	var minObservedHealthy = pdbCurrentHealthy(t, c, opsPDB)
+	minObservedHealthy := pdbCurrentHealthy(t, c, opsPDB)
 
 	// Assert: a surviving replica acquires the Lease. The holderIdentity
 	// must change to a different identity than the dead leader's.
