@@ -38,7 +38,8 @@ func TestAlertingMetricsExposedOnGatewayScrape(t *testing.T) {
 	// lenny_alerting_rules_bundled{format}=1 for each rendered format;
 	// requesting both formats renders two label series. The operator's
 	// override count feeds lenny_alerting_rule_overrides.
-	gw := gateway.StartWith(t,
+	gw := gateway.StartWith(
+		t,
 		"--alerting-bundle-formats", "prometheusrule,configmap",
 		"--alerting-override-count", "2",
 	)
