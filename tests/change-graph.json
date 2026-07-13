@@ -264,7 +264,14 @@
     },
     "pkg/ops/opsserver": {
       "unit": ["pkg/ops/opsserver/..."],
-      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+      "component": [
+        "tests/tier2_component/runbooks/index_load_test.go",
+        "tests/tier2_component/opsidem/outage_test.go"
+      ]
+    },
+    "pkg/ops/opsidem": {
+      "unit": ["pkg/ops/opsidem/..."],
+      "component": ["tests/tier2_component/opsidem/outage_test.go"]
     },
     "pkg/ops/runbooks": {
       "unit": ["pkg/ops/runbooks/..."],
