@@ -3116,6 +3116,8 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/opsserver/opsserver_test.go",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsserverSelectsContractTier",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsEndpointsSuiteSelectsContractTier",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
