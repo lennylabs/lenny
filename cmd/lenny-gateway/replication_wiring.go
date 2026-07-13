@@ -233,7 +233,7 @@ func runReplicationController(ctx context.Context, ctrl *replication.Controller,
 // gap between replication batches, and re-samples the lag/failure gauges.
 // onTick, when non-nil, is invoked after each tick's preflight and measure
 // complete; it is a test seam for observing tick processing synchronously and
-// is nil in production. F-12.5.20.
+// is nil in production.
 func runReplicationControllerLoop(ctx context.Context, ctrl *replication.Controller, logf func(string, ...any), tick <-chan time.Time, onTick func()) {
 	if err := ctrl.Configure(ctx); err != nil {
 		logf("lenny-gateway: §25.11 artifact replication initial configure: %v", err)
