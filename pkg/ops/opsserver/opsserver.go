@@ -291,6 +291,13 @@ type Options struct {
 	IdempotencyStandardTTL    time.Duration
 	IdempotencyLongRunningTTL time.Duration
 
+	// IdempotencyNow overrides the clock the §25.4 idempotency middleware
+	// reads when it stamps a record's created_at/expires_at and when it
+	// decides whether an existing record is still live. A nil value uses
+	// the real clock. Injecting a steppable clock lets a test exercise the
+	// 24h standard versus 7d long-running TTL windows without waiting.
+	IdempotencyNow func() time.Time
+
 	// Inventory backs the §25.4 Operations Inventory endpoints
 	// (GET /v1/admin/operations, /operations/{id}) and the
 	// /v1/admin/me/operations alias. A nil inventory leaves the
@@ -377,6 +384,9 @@ func New(opts Options) *Server {
 			// a zero value lets opsidem.New apply the built-in 24h/7d. F-25.4.9.
 			StandardTTL:    opts.IdempotencyStandardTTL,
 			LongRunningTTL: opts.IdempotencyLongRunningTTL,
+			// A nil Now leaves opsidem.New to apply the real clock; tests
+			// inject a steppable clock to cross the TTL windows deterministically.
+			Now: opts.IdempotencyNow,
 		})
 	}
 	// §25.9 diagnostics-audit rate limiting: when configured, the §25.6
