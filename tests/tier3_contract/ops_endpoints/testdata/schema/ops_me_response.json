@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/ops_me_response.json",
+  "title": "GET /v1/admin/me response (spec 25.4)",
+  "description": "The single-call caller-discovery body served by lenny-ops. Pins the whole response body — the identity, authorization, token, platform, capabilities, and links blocks and the capability field names — rather than probing individual fields, so a renamed or dropped field or a wrong type fails the contract.",
+  "type": "object",
+  "required": ["identity", "authorization", "token", "platform", "capabilities", "links"],
+  "properties": {
+    "identity": {
+      "type": "object",
+      "required": ["sub"],
+      "properties": {
+        "sub": { "type": "string" },
+        "displayName": { "type": "string" },
+        "callerType": { "type": "string" },
+        "issuer": { "type": "string" }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "required": ["roles", "tenantScope", "scope", "authorizedLockScopes", "subjectToGuards"],
+      "properties": {
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "tenantScope": { "type": "string" },
+        "scope": { "type": "string" },
+        "authorizedLockScopes": { "type": "array", "items": { "type": "string" } },
+        "subjectToGuards": {
+          "type": "object",
+          "required": ["confirmRequiredFor", "acknowledgeDataLossRequiredFor"],
+          "properties": {
+            "confirmRequiredFor": { "type": "array", "items": { "type": "string" } },
+            "acknowledgeDataLossRequiredFor": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "token": { "type": "object" },
+    "platform": { "type": "object" },
+    "capabilities": {
+      "type": "object",
+      "required": [
+        "prometheusAvailable",
+        "bundledRulesLoaded",
+        "opsReplicas",
+        "mtlsInternal",
+        "lockMemoryTier",
+        "tenantFiltering",
+        "mcpManagementServer",
+        "openApiAvailable",
+        "headlessServiceFallback"
+      ],
+      "properties": {
+        "prometheusAvailable": { "type": "boolean" },
+        "bundledRulesLoaded": { "type": "boolean" },
+        "opsReplicas": { "type": "integer" },
+        "mtlsInternal": { "type": "boolean" },
+        "lockMemoryTier": { "type": "string" },
+        "tenantFiltering": { "type": "boolean" },
+        "mcpManagementServer": { "type": "boolean" },
+        "openApiAvailable": { "type": "boolean" },
+        "headlessServiceFallback": { "type": "boolean" }
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

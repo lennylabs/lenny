@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/ops_operations_page.json",
+  "title": "GET /v1/admin/operations page (spec 25.4)",
+  "description": "The Operations Inventory list envelope: an operations array of canonical operation records plus the Section 25.2 pagination envelope. Pins each operation record's field names and types and the pagination fields, so a renamed or dropped field or a wrong type fails the contract.",
+  "type": "object",
+  "required": ["operations", "pagination"],
+  "properties": {
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operationId", "kind", "status", "startedBy", "startedAt", "progress", "resources", "cancellable"],
+        "properties": {
+          "operationId": { "type": "string" },
+          "kind": { "type": "string" },
+          "status": { "type": "string" },
+          "startedBy": { "type": "string" },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "timeoutAt": { "type": "string", "format": "date-time" },
+          "progress": { "type": ["object", "null"] },
+          "correlatedOperations": { "type": "array" },
+          "resources": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "cancellable": { "type": "boolean" }
+        }
+      }
+    },
+    "pagination": {
+      "type": "object",
+      "required": ["hasMore", "limit"],
+      "properties": {
+        "cursor": { "type": "string" },
+        "hasMore": { "type": "boolean" },
+        "limit": { "type": "integer" },
+        "cursorKind": { "type": "string" }
+      }
+    }
+  }
+}

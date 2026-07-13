@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/ops_lock.json",
+  "title": "Remediation Lock response body (spec 25.4)",
+  "description": "The canonical Lock envelope returned by acquire, get, extend, and steal on /v1/admin/remediation-locks. Pins every server-authoritative field an agent reads for ownership and expiry, so a renamed field, a dropped timestamp, or a wrong type fails the contract.",
+  "type": "object",
+  "required": ["id", "scope", "operation", "acquiredBy", "acquiredAt", "expiresAt", "lockStore", "epoch", "revision"],
+  "properties": {
+    "id": { "type": "string" },
+    "scope": { "type": "string" },
+    "operation": { "type": "string" },
+    "acquiredBy": { "type": "string" },
+    "operationId": { "type": "string" },
+    "acquiredAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "lockStore": { "type": "string", "enum": ["postgres", "redis", "memory"] },
+    "epoch": { "type": "integer" },
+    "revision": { "type": "integer" },
+    "stolenFrom": { "type": "string" }
+  }
+}
