@@ -1800,6 +1800,7 @@
         "tests/tier9_security/ssrf_test.go",
         "tests/tier9_security/store_helpers_test.go",
         "tests/tier9_security/tenant_isolation_test.go",
+        "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier9_security/credential_leakage_test.go",
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed"
       ],
@@ -3303,6 +3304,7 @@
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
+        "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/event_stream_test.go::TestOpsEventStreamReadSurfaceE2E",
         "tests/tier4_integration/event_stream_test.go::TestOpsEventSubscriptionWebhookSSRFE2E",
@@ -3457,6 +3459,7 @@
       "tests": [
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementScopeForbiddenSweep_spec_25_12",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E",
         "tests/tier5_e2e_kind/mcp_management_e2e_test.go::TestMCPManagementServerOnDeployedOps",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallCarriesCallerPrincipal_spec_25_12",
