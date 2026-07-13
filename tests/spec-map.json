@@ -3297,10 +3297,12 @@
         "pkg/ops/events",
         "pkg/ops/eventsubscription",
         "pkg/ops/eventsubscription/pgstore",
-        "pkg/ops/opsservice"
+        "pkg/ops/opsservice",
+        "pkg/ops/opsserver",
+        "pkg/webhookdelivery"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker."
+      "notes": "§25.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. pkg/ops/events is the read surface over the Redis stream and in-memory buffer; pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
     },
     "25.6": {
       "title": "Diagnostic Endpoints",
