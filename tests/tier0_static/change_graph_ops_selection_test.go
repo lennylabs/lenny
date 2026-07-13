@@ -215,3 +215,45 @@ func TestChangeGraphOpsDedicatedSuitesSelectHigherTiers(t *testing.T) {
 		}
 	}
 }
+
+// spec: 25.5 (operational event stream; webhook delivery and SSRF protections)
+// diagnosis: One of the §25.5 event-stream packages resolves to a tier
+//
+//	set that omits a higher tier its own tests occupy, so a diff to that
+//	package no longer selects its component/contract/integration/security
+//	§25.5 suite under `lenny-test --changed`/`--since`. The §25.5 event
+//	stream (`lenny-ops` reads the Redis stream and exposes SSE, polling,
+//	and webhook delivery) is implemented across pkg/ops/events,
+//	pkg/ops/eventsubscription, pkg/ops/opsservice, and pkg/webhookdelivery;
+//	each is pinned by suites at these tiers: the tier-2 eventstream
+//	component suite, the tier-3 cloudevents/ops_endpoints contract suites,
+//	the tier-4 event_stream / event_subscription_cold_start /
+//	escalation_webhook_under_outage integration suites, and the tier-9
+//	event_webhook_ssrf security suite. pkg/webhookdelivery in particular
+//	sits outside pkg/ops, so no pkg/ops-scoped guard covers it. When
+//	tests/change-graph.json under-maps one of these packages, an SSRF,
+//	webhook-outage, or CloudEvents-contract regression in that package
+//	ships untested. Add the missing tier mapping in
+//	tests/change-graph.json for the package named in the failure.
+func TestChangeGraphEventStreamPackagesSelectHigherTiers(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		pkg   string
+		tiers []string
+	}{
+		{"pkg/ops/events", []string{"unit", "component", "contract", "integration"}},
+		{"pkg/ops/eventsubscription", []string{"unit", "contract", "integration", "security"}},
+		{"pkg/ops/opsservice", []string{"integration", "security"}},
+		{"pkg/webhookdelivery", []string{"unit", "contract", "integration", "security"}},
+	}
+	for _, tc := range cases {
+		tiers := resolveChangeGraphTiers(t, tc.pkg+"/change.go")
+		for _, want := range tc.tiers {
+			if !tiers[want] {
+				t.Errorf("a change to %s resolved to tiers %v; its §25.5 event-stream tests occupy the %s tier, so the resolution must include %q",
+					tc.pkg, sortedKeys(tiers), want, want)
+			}
+		}
+	}
+}
