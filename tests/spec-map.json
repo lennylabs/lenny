@@ -3295,6 +3295,7 @@
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
+        "pkg/ops/opsservice/webhookloop_emit_test.go::TestWebhookWorkerDoesNotRedeliverDeliveryFailureToFailingSubscription",
         "pkg/ops/opsserver/event_subscriptions_test.go",
         "tests/tier3_contract/ops_endpoints/events_test.go",
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
