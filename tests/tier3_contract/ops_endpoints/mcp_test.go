@@ -327,6 +327,73 @@ func TestRunbookIndexFilterContract(t *testing.T) {
 	}
 }
 
+// TestRunbookIndexFullTextAndRequiresFilterContract confirms GET
+// /v1/admin/runbooks honors the §25.7 Path A `q` full-text filter and
+// the `requires` capability filter at the wire level. The `q` filter is
+// a case-insensitive AND across the query's whitespace-separated terms,
+// each of which must appear in the runbook's symptoms, tags, or title;
+// the `requires` filter narrows to runbooks whose requires[] lists the
+// named capability.
+//
+// spec: 25.7 (runbook index — Path A `q` full-text and `requires`
+// filters). The spec table (spec/25_agent-operability.md lines
+// 3148-3149) defines `?requires=admin-api` matching `requires[]` "filter
+// to runbooks the agent can execute" and `?q=image+pull+failure` as
+// "Full-text search across symptoms[], tags[], and runbook title".
+//
+// diagnosis: The runbook index dropped or mis-wired the `q` or
+// `requires` query parameter. An agent narrows the index to runbooks it
+// can execute with ?requires= and does open-ended discovery with ?q=; a
+// query-string wiring regression in handleListRunbooks would strand both
+// paths.
+func TestRunbookIndexFullTextAndRequiresFilterContract(t *testing.T) {
+	srv := opsServer(t)
+
+	count := func(url string) int {
+		t.Helper()
+		rec, body := request(t, srv, http.MethodGet, url, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body=%v", url, rec.Code, body)
+		}
+		books, _ := body["runbooks"].([]any)
+		return len(books)
+	}
+
+	// requires: the fixture runbook lists admin-api, so a matching
+	// capability keeps it and a capability it does not list drops it.
+	if got := count("/v1/admin/runbooks?requires=admin-api"); got != 1 {
+		t.Errorf("?requires=admin-api returned %d runbooks, want 1", got)
+	}
+	if got := count("/v1/admin/runbooks?requires=cluster-access"); got != 0 {
+		t.Errorf("?requires=cluster-access returned %d runbooks, want 0 (fixture does not list it)", got)
+	}
+
+	// q single term: "scaling" is one of the fixture's tags, which the
+	// full-text filter searches, so the runbook matches.
+	if got := count("/v1/admin/runbooks?q=scaling"); got != 1 {
+		t.Errorf("?q=scaling returned %d runbooks, want 1 (tag match)", got)
+	}
+
+	// q full-text across the searched fields: "session" comes from
+	// symptoms and "scaling" from tags, so the single runbook must match
+	// terms drawn from two different searched fields.
+	if got := count("/v1/admin/runbooks?q=session+scaling"); got != 1 {
+		t.Errorf("?q=session+scaling returned %d runbooks, want 1 (symptoms + tags match)", got)
+	}
+
+	// q multi-term AND: every term must match. "scaling" is a tag but
+	// "kubernetes" appears in no searched field, so the AND fails and the
+	// runbook is excluded.
+	if got := count("/v1/admin/runbooks?q=scaling+kubernetes"); got != 0 {
+		t.Errorf("?q=scaling+kubernetes returned %d runbooks, want 0 (AND excludes the unmatched term)", got)
+	}
+
+	// A term present in none of the searched fields matches nothing.
+	if got := count("/v1/admin/runbooks?q=nonexistent"); got != 0 {
+		t.Errorf("?q=nonexistent returned %d runbooks, want 0", got)
+	}
+}
+
 // TestRunbookStepsContract confirms GET /v1/admin/runbooks/{name}/steps
 // returns the §25.7 structured access-pathed steps.
 //

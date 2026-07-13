@@ -3217,6 +3217,7 @@
         "pkg/ops/opsserver/runbooks_test.go",
         "pkg/gateway/operability/health/runbook_bundle_test.go",
         "tests/tier2_component/runbooks/index_load_test.go",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier4_integration/runbook_discovery_test.go"
       ],
       "packages": [
