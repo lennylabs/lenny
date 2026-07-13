@@ -145,6 +145,146 @@ func TestGatewayDocumentCoversLennyOpsRoutes(t *testing.T) {
 	}
 }
 
+// TestOperabilityResponsesCarrySchemas enforces the §25.12 "OpenAPI Schema
+// Discovery" requirement that the single served document includes response
+// schemas for the entire operability surface, and that the §25.2 operability
+// error envelope is modeled as a referenceable component. §25.12: "The document
+// includes: All request/response schemas (including the canonical degradation
+// envelope, pagination, and error envelopes from Section 25.2)." A response
+// object carrying only a `description` and no `content`/`schema` does not
+// include a response schema, so an SDK generator or a DevOps agent reading the
+// operability surface through the gateway OpenAPI cannot type the response
+// body. §25.2's error envelope classifies every error under a `category` that
+// is one of TRANSIENT, PERMANENT, POLICY, or AUTH; a document that models no
+// component with those enum values leaves the operability error envelope
+// undocumented.
+//
+// spec: §25.12 (OpenAPI schema discovery — all request/response schemas),
+// §25.2 (canonical error envelope: category one of
+// TRANSIENT|PERMANENT|POLICY|AUTH).
+// diagnosis: The F-COV-3 merge emits status-code-only operability responses
+// (a `description` with no `content`/`schema`), or no component models the
+// §25.2 operability error envelope. Add a response-body schema to the
+// operability route emission and model the operability error envelope so the
+// served document types the operability surface an agent discovers through the
+// gateway OpenAPI.
+func TestOperabilityResponsesCarrySchemas(t *testing.T) {
+	t.Skip("served OpenAPI emits operability routes with status-code-only responses and models no operability error envelope; closing the gap needs a spec decision on per-route response schemas and the error-category taxonomy (§25.2 AUTH vs §16.3/§15.1 UPSTREAM)")
+
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	paths, _ := parsed["paths"].(map[string]any)
+
+	schemas := opsserver.RouteSchemas()
+	if len(schemas) == 0 {
+		t.Fatal("opsserver.RouteSchemas() returned nothing — the lenny-ops schema-emission surface is empty")
+	}
+	for _, r := range schemas {
+		item, ok := paths[r.Path].(map[string]any)
+		if !ok {
+			// Presence is covered by TestGatewayDocumentCoversLennyOpsRoutes;
+			// this test only asserts the schema depth of documented routes.
+			continue
+		}
+		op, ok := item[strings.ToLower(r.Method)].(map[string]any)
+		if !ok {
+			continue
+		}
+		responses, _ := op["responses"].(map[string]any)
+		if !anyResponseCarriesSchema(responses) {
+			t.Errorf("operability route %s %s: no response carries a content schema (bare status-code description only)", r.Method, r.Path)
+		}
+	}
+
+	// §25.2 / §25.12: the operability error envelope (category one of
+	// TRANSIENT|PERMANENT|POLICY|AUTH) must be modeled as a component so a
+	// referenceable error schema exists for operability error responses.
+	components, _ := parsed["components"].(map[string]any)
+	compSchemas, _ := components["schemas"].(map[string]any)
+	if !anySchemaModelsOperabilityErrorCategories(compSchemas) {
+		t.Errorf("no component schema models the §25.2 operability error envelope: none carries a category enum containing both PERMANENT and POLICY")
+	}
+}
+
+// anyResponseCarriesSchema reports whether at least one response entry in an
+// operation's `responses` object declares a body schema
+// (`content.<mediaType>.schema`) rather than only a `description`.
+func anyResponseCarriesSchema(responses map[string]any) bool {
+	for _, raw := range responses {
+		resp, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := resp["content"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, mt := range content {
+			media, ok := mt.(map[string]any)
+			if !ok {
+				continue
+			}
+			if _, ok := media["schema"]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// anySchemaModelsOperabilityErrorCategories reports whether any component
+// schema declares a `category` enum that contains both PERMANENT and POLICY,
+// the §25.2 operability error-envelope categories the §15.1 gateway Error
+// component omits. It recurses one level into object properties so a wrapping
+// envelope ({"error": {"category": {"enum": [...]}}}) is recognized.
+func anySchemaModelsOperabilityErrorCategories(schemas map[string]any) bool {
+	for _, raw := range schemas {
+		if schemaHasOperabilityErrorCategoryEnum(raw) {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaHasOperabilityErrorCategoryEnum(raw any) bool {
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	props, ok := obj["properties"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if cat, ok := props["category"].(map[string]any); ok {
+		if enumHas(cat["enum"], "PERMANENT") && enumHas(cat["enum"], "POLICY") {
+			return true
+		}
+	}
+	// Recurse into nested property schemas (e.g. the "error" wrapper).
+	for _, p := range props {
+		if schemaHasOperabilityErrorCategoryEnum(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func enumHas(raw any, want string) bool {
+	values, ok := raw.([]any)
+	if !ok {
+		return false
+	}
+	for _, v := range values {
+		if s, ok := v.(string); ok && s == want {
+			return true
+		}
+	}
+	return false
+}
+
 // stripWildcard removes the trailing `...` catch-all marker Go's
 // http.ServeMux uses on a multi-segment wildcard (`{ref...}`), which
 // OpenAPI documents as a plain `{ref}` template. The comparison stays
