@@ -367,8 +367,15 @@ func (c *Chain) Verify() VerifyResult {
 		}
 		prevRedacted = thisRedacted
 	}
+	// A lawfully-receipted §12.8 GDPR redaction is the redacted_gdpr
+	// chainIntegrity bucket, distinct from rechained_post_outage (the
+	// post-outage deferred-writes rechain). The collapsed verdict must
+	// agree with the per-row classifyRow/VerifyRows classification so a
+	// consumer tallying the §25.9 chainIntegrityReport does not miscount a
+	// GDPR redaction as an outage rechain.
+	// spec: §25.9 (redacted_gdpr is the authorized-discontinuity bucket).
 	if redactionSeen {
-		return VerifyResult{Integrity: ChainRechainedPostOutage, Detail: "chain contains lawful GDPR redactions"}
+		return VerifyResult{Integrity: ChainRedactedGDPR, Detail: "chain contains lawful GDPR redactions"}
 	}
 	return VerifyResult{Integrity: ChainVerified}
 }
