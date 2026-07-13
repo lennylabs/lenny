@@ -105,6 +105,52 @@ func TestListEscalationsFilterContract(t *testing.T) {
 	}
 }
 
+// TestListEscalationsPaginationEnvelopeContract confirms GET /v1/admin/-
+// escalations returns the §25.4 canonical pagination envelope with a
+// hasMore that reflects whether more records exist beyond the page and a
+// cursorKind naming the query-path family that served it. The in-memory
+// buffer is the "none" path: hasMore signals more records but no
+// continuation cursor is issued.
+//
+// spec: 25.4 (Storage Tiers, Query Path; Pagination envelope: hasMore
+// reflects whether more records exist, cursorKind "none" on the non-durable
+// scan path)
+// diagnosis: The escalation list envelope hardcoded hasMore or omitted
+// cursorKind, so an agent paging the escalation history could not tell that
+// more records remained nor which cursor family produced the page.
+func TestListEscalationsPaginationEnvelopeContract(t *testing.T) {
+	srv := opsServer(t)
+	for i := 0; i < 3; i++ {
+		request(t, srv, http.MethodPost, "/v1/admin/escalations", nil,
+			map[string]any{"severity": "info", "summary": "seeded"})
+	}
+	rec, body := request(t, srv, http.MethodGet, "/v1/admin/escalations?limit=2", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("page returned %d escalations, want limit=2", len(items))
+	}
+	pg, ok := body["pagination"].(map[string]any)
+	if !ok {
+		t.Fatal("response missing the pagination envelope")
+	}
+	if more, _ := pg["hasMore"].(bool); !more {
+		t.Errorf("hasMore = %v, want true (3 records, limit 2)", pg["hasMore"])
+	}
+	if kind, _ := pg["cursorKind"].(string); kind != "none" {
+		t.Errorf("cursorKind = %q, want \"none\" for the in-memory query path", kind)
+	}
+	if limit, _ := pg["limit"].(float64); int(limit) != 2 {
+		t.Errorf("limit echoed = %v, want 2", pg["limit"])
+	}
+	// The "none" path issues no continuation cursor.
+	if cur, present := pg["cursor"]; present && cur != "" {
+		t.Errorf("cursor = %v, want none on the in-memory path", cur)
+	}
+}
+
 // TestUpdateEscalationStatusContract confirms PUT /v1/admin/-
 // escalations/{id} moves an escalation through the §25.4 lifecycle and
 // stamps the lifecycle timestamps.

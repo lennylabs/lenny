@@ -156,12 +156,12 @@ func (s *EscalationSource) List(ctx context.Context, _ operations.Filter) ([]ope
 	// An empty filter returns every escalation; the Inventory applies its
 	// own status filter over the merged result. MaxPageLimit bounds the
 	// projection.
-	escs, err := s.svc.List(ctx, escalation.Filter{}, maxEscalations)
+	page, err := s.svc.List(ctx, escalation.Filter{}, "", maxEscalations)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]operations.Operation, 0, len(escs))
-	for _, e := range escs {
+	out := make([]operations.Operation, 0, len(page.Items))
+	for _, e := range page.Items {
 		kind, status := escalationKindStatus(e)
 		out = append(out, operations.Operation{
 			OperationID: e.ID,

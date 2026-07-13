@@ -56,17 +56,17 @@ func (f *fakeStore) Get(_ context.Context, id string) (*escalation.Escalation, e
 	return &cp, nil
 }
 
-func (f *fakeStore) List(_ context.Context, _ escalation.Filter, _ int) ([]escalation.Escalation, error) {
+func (f *fakeStore) List(_ context.Context, _ escalation.Filter, _ string, _ int) (escalation.ListPage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.down {
-		return nil, escalation.ErrStoreUnavailable
+		return escalation.ListPage{}, escalation.ErrStoreUnavailable
 	}
 	out := make([]escalation.Escalation, 0, len(f.recs))
 	for _, e := range f.recs {
 		out = append(out, e)
 	}
-	return out, nil
+	return escalation.ListPage{Items: out, CursorKind: escalation.CursorKindNone}, nil
 }
 
 func (f *fakeStore) SetStatus(_ context.Context, id, status string, now time.Time) (*escalation.Escalation, error) {
@@ -266,8 +266,8 @@ func TestFlushPromotesBufferedToPostgres_spec_25_4(t *testing.T) {
 		t.Errorf("second flush promoted %d, want 0 (buffer drained)", n2)
 	}
 	// The escalation is still listable (now from Postgres).
-	if list, _ := s.List(context.Background(), escalation.Filter{}, 0); len(list) != 1 {
-		t.Errorf("list returned %d after flush, want 1", len(list))
+	if list, _ := s.List(context.Background(), escalation.Filter{}, "", 0); len(list.Items) != 1 {
+		t.Errorf("list returned %d after flush, want 1", len(list.Items))
 	}
 }
 
@@ -288,8 +288,8 @@ func TestFlushStopsWhenNoDurableStoreReachable_spec_25_4(t *testing.T) {
 		t.Errorf("flushed %d while Postgres down, want 0", n)
 	}
 	// Record is still readable from the in-memory tier.
-	if list, _ := s.List(context.Background(), escalation.Filter{}, 0); len(list) != 1 {
-		t.Errorf("buffered record lost: list returned %d, want 1", len(list))
+	if list, _ := s.List(context.Background(), escalation.Filter{}, "", 0); len(list.Items) != 1 {
+		t.Errorf("buffered record lost: list returned %d, want 1", len(list.Items))
 	}
 }
 

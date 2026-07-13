@@ -85,12 +85,14 @@ func (s *Store) Get(ctx context.Context, id string) (*escalation.Escalation, err
 }
 
 // List scans the escalation keyspace, filters, and returns the matching
-// records newest-first capped by limit. Pagination is by limit only
-// (§25.4 line 2422 cursorKind "none" on the Redis query path).
-func (s *Store) List(ctx context.Context, f escalation.Filter, limit int) ([]escalation.Escalation, error) {
+// records newest-first as one page capped by limit. The Redis scan is the
+// CursorKindNone query path: it paginates by limit only and reports
+// HasMore when more matching records exist beyond the page, but issues no
+// continuation cursor (§25.4 line 2428, cursorKind "none").
+func (s *Store) List(ctx context.Context, f escalation.Filter, _ string, limit int) (escalation.ListPage, error) {
 	all, err := s.scanAll(ctx)
 	if err != nil {
-		return nil, unavailable(err)
+		return escalation.ListPage{}, unavailable(err)
 	}
 	statuses := csvSet(f.Status)
 	severities := csvSet(f.Severity)
@@ -108,10 +110,11 @@ func (s *Store) List(ctx context.Context, f escalation.Filter, limit int) ([]esc
 		out = append(out, esc)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	if limit > 0 && len(out) > limit {
+	hasMore := limit > 0 && len(out) > limit
+	if hasMore {
 		out = out[:limit]
 	}
-	return out, nil
+	return escalation.ListPage{Items: out, HasMore: hasMore, CursorKind: escalation.CursorKindNone}, nil
 }
 
 // SetStatus moves the escalation to status and re-persists it with a

@@ -264,7 +264,19 @@
     },
     "pkg/ops/opsserver": {
       "unit": ["pkg/ops/opsserver/..."],
-      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+      "component": [
+        "tests/tier2_component/runbooks/index_load_test.go",
+        "tests/tier2_component/opsidem/outage_test.go"
+      ],
+      "contract": ["tests/tier3_contract/ops_endpoints/..."]
+    },
+    "tests/tier3_contract/ops_endpoints": {
+      "unit": ["pkg/ops/opsserver/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/..."]
+    },
+    "pkg/ops/opsidem": {
+      "unit": ["pkg/ops/opsidem/..."],
+      "component": ["tests/tier2_component/opsidem/outage_test.go"]
     },
     "pkg/ops/runbooks": {
       "unit": ["pkg/ops/runbooks/..."],

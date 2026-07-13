@@ -136,14 +136,16 @@ func TestListFiltersByStatusAndSeverity(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	open, err := s.List(context.Background(), escalation.Filter{Status: "open"}, 0)
+	openPage, err := s.List(context.Background(), escalation.Filter{Status: "open"}, "", 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
+	open := openPage.Items
 	if len(open) != 1 || open[0].Summary != "warning-open" {
 		t.Errorf("status=open filter returned %v, want just warning-open", summaries(open))
 	}
-	crit, _ := s.List(context.Background(), escalation.Filter{Severity: "critical"}, 0)
+	critPage, _ := s.List(context.Background(), escalation.Filter{Severity: "critical"}, "", 0)
+	crit := critPage.Items
 	if len(crit) != 1 || crit[0].Summary != "critical-open" {
 		t.Errorf("severity=critical filter returned %v, want just critical-open", summaries(crit))
 	}
@@ -156,14 +158,14 @@ func TestListIsNewestFirstAndRespectsLimit(t *testing.T) {
 		s.SetClock(func() time.Time { return base.Add(time.Duration(i) * time.Minute) })
 		create(t, s, escalation.SeverityInfo, "e")
 	}
-	all, _ := s.List(context.Background(), escalation.Filter{}, 0)
+	all := listItems(t, s, escalation.Filter{}, 0)
 	if len(all) != 3 {
 		t.Fatalf("got %d escalations, want 3", len(all))
 	}
 	if !all[0].CreatedAt.After(all[2].CreatedAt) {
 		t.Error("list is not newest-first")
 	}
-	limited, _ := s.List(context.Background(), escalation.Filter{}, 2)
+	limited := listItems(t, s, escalation.Filter{}, 2)
 	if len(limited) != 2 {
 		t.Errorf("limited list returned %d, want 2", len(limited))
 	}
@@ -176,7 +178,7 @@ func TestBufferEvictsOldestBeyondCapacity(t *testing.T) {
 	for i := 0; i < 105; i++ {
 		create(t, s, escalation.SeverityInfo, "e")
 	}
-	all, _ := s.List(context.Background(), escalation.Filter{}, 0)
+	all := listItems(t, s, escalation.Filter{}, 0)
 	if len(all) != 100 {
 		t.Errorf("buffer holds %d escalations, want the 100-entry cap", len(all))
 	}
@@ -188,4 +190,16 @@ func summaries(escs []escalation.Escalation) []string {
 		out[i] = e.Summary
 	}
 	return out
+}
+
+// listItems runs the query-path List from the head and returns the page's
+// records, failing the test on error. It keeps the pagination-agnostic
+// assertions terse.
+func listItems(t *testing.T, s *escalation.Service, f escalation.Filter, limit int) []escalation.Escalation {
+	t.Helper()
+	page, err := s.List(context.Background(), f, "", limit)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	return page.Items
 }

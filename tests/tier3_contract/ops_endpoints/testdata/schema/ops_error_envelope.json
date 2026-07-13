@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.test/schemas/ops_error_envelope.json",
+  "title": "Canonical operability error envelope (spec 25.2)",
+  "description": "The error envelope every operability endpoint returns on failure. Pins the inner error object's code, category, message, and retryable fields and constrains category to the four Section 25.2 categories, so a renamed field, a wrong type, or a category outside the taxonomy fails the contract.",
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "required": ["code", "category", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "category": {
+          "type": "string",
+          "enum": ["TRANSIENT", "PERMANENT", "POLICY", "AUTH"]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "suggestedRetryAfter": { "type": "string" },
+        "details": { "type": "object" },
+        "documentationUrl": { "type": "string" }
+      }
+    }
+  }
+}

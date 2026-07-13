@@ -17,6 +17,7 @@ package pgstore
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -97,8 +98,15 @@ func (s *Store) Get(ctx context.Context, id string) (*escalation.Escalation, err
 	return esc, nil
 }
 
-// List returns the escalations matching f, newest-first, capped by limit.
-func (s *Store) List(ctx context.Context, f escalation.Filter, limit int) ([]escalation.Escalation, error) {
+// List returns the escalations matching f, newest-first, as one page. The
+// durable Postgres tier is the §25.4 CursorKindPK query path: it keyset-
+// paginates over the (created_at, id) ordering. A non-empty cursor
+// continues after the row it encodes; the page reports HasMore and a
+// NextCursor when more matching rows follow, so a caller can advance page
+// by page (§25.4 line 2427, "full query with pagination").
+//
+// spec: §25.4 lines 2425-2429.
+func (s *Store) List(ctx context.Context, f escalation.Filter, cursor string, limit int) (escalation.ListPage, error) {
 	query := `SELECT ` + columns + ` FROM ops_escalations`
 	var conds []string
 	var args []any
@@ -114,28 +122,84 @@ func (s *Store) List(ctx context.Context, f escalation.Filter, limit int) ([]esc
 		args = append(args, f.Since)
 		conds = append(conds, "created_at >= $"+itoa(len(args)))
 	}
+	if cursor != "" {
+		curTime, curID, err := decodeCursor(cursor)
+		if err != nil {
+			return escalation.ListPage{}, &escalation.Error{
+				Code: escalation.ErrCodeInvalid, Message: "cursor is not a valid continuation token",
+			}
+		}
+		// Keyset continuation. ORDER BY created_at DESC, id DESC gives a
+		// strictly-descending (created_at, id) tuple (id is the primary
+		// key, so the tuple is unique); the next page is the rows whose
+		// tuple sorts strictly after the cursor's, expressed as a row-value
+		// comparison so the composite index is usable.
+		args = append(args, curTime)
+		tsIdx := len(args)
+		args = append(args, curID)
+		idIdx := len(args)
+		conds = append(conds, "(created_at, id) < ($"+itoa(tsIdx)+", $"+itoa(idIdx)+")")
+	}
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY created_at DESC, id DESC"
+	// Over-fetch one row so the presence of a next page is known without a
+	// second count query; the extra row is trimmed before returning.
 	if limit > 0 {
-		args = append(args, limit)
+		args = append(args, limit+1)
 		query += " LIMIT $" + itoa(len(args))
 	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, classifyErr(err)
+		return escalation.ListPage{}, classifyErr(err)
 	}
 	defer rows.Close()
 	var out []escalation.Escalation
 	for rows.Next() {
 		esc, err := scanEscalation(rows)
 		if err != nil {
-			return nil, classifyErr(err)
+			return escalation.ListPage{}, classifyErr(err)
 		}
 		out = append(out, *esc)
 	}
-	return out, classifyErr(rows.Err())
+	if err := rows.Err(); err != nil {
+		return escalation.ListPage{}, classifyErr(err)
+	}
+	page := escalation.ListPage{Items: out, CursorKind: escalation.CursorKindPK}
+	if limit > 0 && len(out) > limit {
+		page.HasMore = true
+		page.Items = out[:limit]
+		last := page.Items[len(page.Items)-1]
+		page.NextCursor = encodeCursor(last.CreatedAt, last.ID)
+	}
+	return page, nil
+}
+
+// encodeCursor renders an opaque keyset continuation token for the row
+// ending a page: the created_at instant (nanosecond-precise UTC) and the
+// primary-key id, which together are unique. Agents MUST NOT parse it.
+func encodeCursor(t time.Time, id string) string {
+	raw := t.UTC().Format(time.RFC3339Nano) + "\x00" + id
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeCursor reverses encodeCursor, returning the row-key the token
+// encodes. A token this store did not produce is a malformed-cursor error.
+func decodeCursor(cursor string) (time.Time, string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	sep := strings.IndexByte(string(raw), 0)
+	if sep < 0 {
+		return time.Time{}, "", errors.New("cursor missing key separator")
+	}
+	t, err := time.Parse(time.RFC3339Nano, string(raw[:sep]))
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	return t, string(raw[sep+1:]), nil
 }
 
 // SetStatus moves the escalation to status, stamping the lifecycle

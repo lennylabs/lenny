@@ -3035,6 +3035,7 @@
         "tests/tier3_contract/ops_endpoints/drift_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
+        "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/backup_test.go",
         "tests/tier3_contract/ops_endpoints/helpers_test.go"
       ],
@@ -3076,7 +3077,8 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
-        "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E"
+        "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
+        "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance"
       ],
       "packages": [
         "pkg/operability"
@@ -3114,6 +3116,13 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/opsserver/opsserver_test.go",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsserverSelectsContractTier",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsEndpointsSuiteSelectsContractTier",
+        "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
+        "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
+        "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
+        "pkg/ops/opsserver/escalations_test.go::TestListEscalationsPaginationReportsMore_spec_25_4",
+        "pkg/ops/escalation/pgstore/pgstore_test.go::TestPgStoreKeysetPagination_spec_25_4",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
@@ -3122,6 +3131,10 @@
         "pkg/ops/opsserver/locks_test.go::TestExtendSplitBrainConflictCarriesDetails",
         "tests/tier2_component/coordination/tier_transition_test.go::TestTierTransitionSplitBrainReconciliation_spec_25_4",
         "tests/tier2_component/coordination/tier_transition_test.go::TestSplitBrainLosingHolderReceives409_spec_25_4",
+        "tests/tier2_component/coordination/clockskew_test.go::TestClockSkewSamplerRealStoresNearZero_spec_25_4",
+        "tests/tier2_component/coordination/clockskew_test.go::TestClockSkewSamplerRealStoresAlertFires_spec_25_4",
+        "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyStoreOutage_spec_25_4",
+        "tests/tier2_component/opsidem/outage_test.go::TestOpsIdempotencyTierRequiredKey_spec_25_4",
         "tests/tier4_integration/ops_service_e2e_test.go",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
