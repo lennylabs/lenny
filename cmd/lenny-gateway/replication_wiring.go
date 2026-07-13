@@ -221,6 +221,20 @@ func splitMinioEndpoint(endpoint string) (host string, secure bool) {
 // tick so a freshly-drifted region is caught (resume stays operator-
 // driven). F-12.5.20.
 func runReplicationController(ctx context.Context, ctrl *replication.Controller, logf func(string, ...any)) {
+	t := time.NewTicker(ctrl.ResidencyTickInterval())
+	defer t.Stop()
+	runReplicationControllerLoop(ctx, ctrl, logf, t.C, nil)
+}
+
+// runReplicationControllerLoop runs the startup configure/measure and then
+// the §25.11 residency-preflight tick loop, reading ticks from tick. On each
+// tick it re-runs the residency preflight (PreflightAll) so a post-load
+// jurisdiction-tag drift or DNS rebinding is caught even across a long idle
+// gap between replication batches, and re-samples the lag/failure gauges.
+// onTick, when non-nil, is invoked after each tick's preflight and measure
+// complete; it is a test seam for observing tick processing synchronously and
+// is nil in production. F-12.5.20.
+func runReplicationControllerLoop(ctx context.Context, ctrl *replication.Controller, logf func(string, ...any), tick <-chan time.Time, onTick func()) {
 	if err := ctrl.Configure(ctx); err != nil {
 		logf("lenny-gateway: §25.11 artifact replication initial configure: %v", err)
 	}
@@ -230,19 +244,19 @@ func runReplicationController(ctx context.Context, ctrl *replication.Controller,
 	if err := ctrl.MeasureAll(ctx); err != nil {
 		logf("lenny-gateway: §25.11 artifact replication initial lag measure: %v", err)
 	}
-	tick := ctrl.ResidencyTickInterval()
-	t := time.NewTicker(tick)
-	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-tick:
 			if err := ctrl.PreflightAll(ctx); err != nil {
 				logf("lenny-gateway: §25.11 artifact replication residency preflight: %v", err)
 			}
 			if err := ctrl.MeasureAll(ctx); err != nil {
 				logf("lenny-gateway: §25.11 artifact replication lag measure: %v", err)
+			}
+			if onTick != nil {
+				onTick()
 			}
 		}
 	}
