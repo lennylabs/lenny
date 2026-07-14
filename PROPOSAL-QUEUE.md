@@ -24,8 +24,9 @@ writer of this file); clusters are grouped so each worker stays within a coheren
 spec area, keeping two workers off the same spec sections and code and minimizing
 integration conflicts. Current split: proposal-A holds the checkpoint and §25
 clusters (C-01–C-03), proposal-B holds the §4.9 credential-leasing clusters
-(C-04–C-06); the integrator extends each worker's assignments from the remaining
-clusters as its branches land.
+(C-04–C-06) and the eviction-trigger cluster C-22 (which depends on proposal-A's
+C-01, so B works C-04–C-06 first); the integrator extends each worker's
+assignments from the remaining clusters as its branches land.
 
 **Status lifecycle** (per cluster):
 
@@ -53,12 +54,12 @@ that edits `TEST-GAPS.md`.
 
 Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
-### C-01 — Checkpoint produce-store-restore round-trip and eviction trigger — §4.4/§4.6/§6.2/§10.1
-- **status:** open
+### C-01 — Checkpoint produce-store-restore round-trip — §4.4/§6.2/§10.1
+- **status:** claimed:proposal-A — converging proposal 0037. Not yet in-review: the first attempt never converged. Proposal 0036 is withdrawn (renamed/retained; its status note explains why). Goes to in-review:0037 when the current loop converges.
 - **assigned:** proposal-A
-- **findings:** T-4.4.12, T-4.4.13, T-4.4.14, T-4.6.4, T-JRN.9, T-DEP.5, T-4.2.1
-- **root spec gap:** §4.4 promises a workspace can survive pod loss, but the whole produce→store→restore pipeline is unwired and the architecture is undecided: does the pod-side adapter talk to MinIO directly (requiring §13 pod-side credential/egress delivery) or stream to the gateway, and what are the object-key layout, the atomic metadata/manifest record, and the eviction-trigger mechanism.
-- **proposal scope:** Decide the checkpoint sink/source architecture and pod-side MinIO credential delivery; the object-key layout and atomic metadata plus partial-manifest schema (including `manifest_reason='terminated_during_resume'` and the generation counters); the eviction-checkpoint trigger seam (pod-eviction watcher vs preStop self-checkpoint); and `POST /v1/sessions/{id}/resume`, with the MinIO-outage fallback to minimal Postgres state.
+- **findings:** T-4.4.12, T-4.4.13, T-JRN.9, T-DEP.5, T-4.2.1
+- **root spec gap:** §4.4 promises a workspace can survive pod loss, but the produce→store→restore data pipeline is unwired and the architecture is undecided: does the pod-side adapter talk to MinIO directly (requiring §13 pod-side credential/egress delivery) or stream to the gateway, and what are the object-key layout and the atomic metadata/manifest record. (Split 2026-07-14: the eviction *trigger* is a separate root gap, moved to C-22 with T-4.4.14 and T-4.6.4.)
+- **proposal scope:** Decide the checkpoint sink/source architecture and pod-side MinIO credential delivery; the object-key layout and atomic metadata plus partial-manifest schema (including `manifest_reason='terminated_during_resume'` and the generation counters); and `POST /v1/sessions/{id}/resume`, with the MinIO-outage fallback to minimal Postgres state. T-JRN.9's checkpoint-then-resume journey closes here for the periodic-loop-driven variant (drive the checkpoint from the periodic loop, then delete the pod — no eviction trigger needed); the node-drain-driven variant is tracked under T-4.6.4 in C-22.
 - **severity:** High
 
 ### C-02 — Operational event-stream read source, tenant filtering, and MCP subscription — §25.5/§25.12
@@ -220,6 +221,40 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **root spec gap:** `spec/18_build-sequence.md` Phase-5 exit criteria still names the retired `tests/tier3_contract/rest_openai_completions/` directory (renamed to `rest_openai_chat/`); the fix is editorial but any spec edit goes through the proposal pipeline.
 - **proposal scope:** Correct the one-line stale path reference in `spec/18_build-sequence.md`; editorial, no behavioral change. Low priority; batch with a neighboring §18 proposal if one arises.
 - **severity:** Low
+
+### C-22 — Agent-pod eviction-checkpoint trigger and its prerequisites — §4.4/§4.6.1/§10.1
+- **status:** open
+- **assigned:** proposal-B
+- **findings:** T-4.4.14, T-4.6.4
+- **root spec gap:** §4.6.1 (spec/04:489) makes a preStop hook on every agent pod
+  the primary protection against voluntary disruption, but no code path drives a
+  checkpoint when an individual agent pod is terminated by a node drain, the
+  kubelet Eviction API, a cluster upgrade, or a direct delete. `checkpoint.TriggerEviction`
+  is selected by no caller and `triggerForSource` returns `TriggerPeriodic` on
+  every arm. The trigger is blocked by four prerequisites that are each standing
+  product defects in their own right, so it cannot be built as a wiring change.
+- **proposal scope:** Land the prerequisites, then the trigger. (1) Slot-aware
+  checkpointing: `CheckpointRequest` carries no `slot_id` and `checkpointRoots()`
+  is pod-global, so pods on `maxConcurrentSessions > 1` pools cannot be
+  checkpointed at all today, on any trigger. (2) Coordinator resolution for a
+  pod-originated signal, which lands on an arbitrary replica while only the lease
+  holder can checkpoint, and `leasestore.Acquire` has no compare-and-steal.
+  (3) The agent-pod termination-grace budget, which needs 160s (90s tier cap +
+  60s Postgres fallback + 10s drain margin) against a 120s default; the 240/300s
+  figures §4.4 cites are the gateway pod's. (4) A container-termination story for
+  the runtime container, whose preStop hook execs a `lenny-adapter` binary its
+  third-party image does not contain. Then choose the trigger seam (pod-to-gateway
+  termination signal vs gateway-side pod informer) and fix `triggerForSource` so
+  `TriggerEviction` reaches the metric label and the eviction retry budget.
+  Analysis and design space are drafted in
+  `proposals/0038_draft_agent-pod-eviction-checkpoint-trigger.md`.
+- **severity:** High
+- **depends on:** C-01 (the checkpoint data path must settle first; the trigger
+  drives the pipeline C-01 wires)
+- **integrator note:** The "gateway-side pod informer needs new RBAC" objection is
+  false — the gateway ClusterRole already grants pods get/list/watch cluster-wide.
+  Reject or choose the informer on per-replica ownership and dedup, plus the race
+  against the kubelet grace period, not on RBAC.
 
 ---
 
