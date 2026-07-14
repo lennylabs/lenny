@@ -3473,6 +3473,25 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
+  # §25.8 Version Aggregation — read-only access to the release
+  # namespace's helm.sh/release.v1 Secret the Helm-chart-version source
+  # resolves the deployed chart version from. delete is additionally
+  # needed by the §25.6 certManagerExpiring auto-remediation, which
+  # forces cert-manager re-issuance by deleting the Certificate's
+  # backing Secret (spec/25_agent-operability.md, certManagerExpiring
+  # remediation row).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "delete"]
+  # §25.6 certManagerExpiring detection and remediation — lists
+  # Certificates to find one within the 7-day expiry window
+  # (cert-manager healthy) and patches the issue-temporary-certificate
+  # annotation to force re-issuance once its backing Secret is deleted
+  # above. Also backs the §25.8 cert_manager self-health check's
+  # Certificate listing (k8sadapters.go certManagerSource).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "watch", "patch"]
   # §25.4 lines 1094-1096 — Lease reads for leader-election visibility.
   # The mutating lease lifecycle lives on the lenny-ops-leader-election
   # Role (ops-deployment.yaml); this read grant matches the spec rule.
@@ -4732,6 +4751,10 @@ spec:
             - --ops-roll-timeout-seconds=600
             - --gateway-roll-timeout-seconds=1200
             - --controller-roll-timeout-seconds=600
+            # §25.8 Version Aggregation: the running Helm release name, so
+            # the Helm-chart-version source reads the helm.sh/release.v1
+            # Secret for this install rather than a hardcoded default.
+            - --helm-release-name=lenny
             # §25.8 upgrade-check consumer: fetch the release manifest over
             # HTTP from the configured channel and verify its Ed25519
             # X-Lenny-Release-Signature before trusting it.
