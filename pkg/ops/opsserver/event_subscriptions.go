@@ -142,7 +142,7 @@ func (s *Server) handleCreateEventSubscription(w http.ResponseWriter, r *http.Re
 // GET /v1/admin/event-subscriptions. The redacted read-view omits the
 // secret. spec: §25.5 line 2713.
 func (s *Server) handleListEventSubscriptions(w http.ResponseWriter, r *http.Request) {
-	subs, err := s.eventSubscriptions.List(r.Context())
+	subs, err := s.eventSubscriptions.List(r.Context(), subscriptionCaller(r))
 	if err != nil {
 		writeEventSubscriptionError(w, err)
 		return
@@ -153,7 +153,7 @@ func (s *Server) handleListEventSubscriptions(w http.ResponseWriter, r *http.Req
 // handleGetEventSubscription implements
 // GET /v1/admin/event-subscriptions/{id}.
 func (s *Server) handleGetEventSubscription(w http.ResponseWriter, r *http.Request) {
-	sub, err := s.eventSubscriptions.Get(r.Context(), r.PathValue("id"))
+	sub, err := s.eventSubscriptions.Get(r.Context(), r.PathValue("id"), subscriptionCaller(r))
 	if err != nil {
 		writeEventSubscriptionError(w, err)
 		return
@@ -210,7 +210,7 @@ func (s *Server) handleListEventSubscriptionDeliveries(w http.ResponseWriter, r 
 			limit = n
 		}
 	}
-	deliveries, err := s.eventSubscriptions.ListDeliveries(r.Context(), r.PathValue("id"), limit)
+	deliveries, err := s.eventSubscriptions.ListDeliveries(r.Context(), r.PathValue("id"), limit, subscriptionCaller(r))
 	if err != nil {
 		writeEventSubscriptionError(w, err)
 		return
