@@ -76,7 +76,8 @@ func getCrossTenantRedis(t *testing.T, router *admin.Router, query string) *http
 	t.Helper()
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, asPlatformAdmin(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events"+query, nil)))
+		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events"+query, nil),
+	))
 	return rr
 }
 

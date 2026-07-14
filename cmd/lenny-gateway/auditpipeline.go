@@ -171,7 +171,8 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		var auditScatterCache admin.ScatterGatherCache
 		if w.redisClient != nil {
 			auditScatterCache = admin.NewRedisScatterGatherCache(
-				w.concernRedis.For(storerouter.RedisConcernCachePubSub), nil)
+				w.concernRedis.For(storerouter.RedisConcernCachePubSub), nil,
+			)
 			log.Printf("lenny-gateway: §25.9 cross-tenant audit scatter-gather cache backed by Redis (TTL=5m, shared across replicas)")
 		} else {
 			auditScatterCache = admin.NewMemScatterGatherCache(nil)

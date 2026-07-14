@@ -144,7 +144,8 @@ func TestDiagnosticsAuditRateLimit_DropsAreCountedNotChained_spec_25_9_3704(t *t
 	// §16.7 event type and the resolved service account (anonymous, as the
 	// httptest requests carry no principal or agent-name correlation).
 	if got := testutil.ToFloat64(
-		rateLimited.WithLabelValues("diagnostics.credential_pool_diagnosed", "anonymous")); got != 1 {
+		rateLimited.WithLabelValues("diagnostics.credential_pool_diagnosed", "anonymous"),
+	); got != 1 {
 		t.Errorf("lenny_audit_rate_limited_total{credential_pool_diagnosed,anonymous} = %v, want 1", got)
 	}
 	// No other label combination was dropped, so the counter has exactly one
