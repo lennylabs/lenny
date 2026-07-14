@@ -1588,6 +1588,7 @@
         "tests/tier3_contract/ocsf_audit/published_schema_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFTranslatedRecordsSatisfyPublishedBaseEventSchema",
         "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFDeadLetterReceiptSatisfiesPublishedBaseEventSchema",
+        "tests/tier3_contract/ocsf_audit/per_class_required_test.go::TestOCSFPerClassRequiredAttributesPresent",
         "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
@@ -1785,7 +1786,8 @@
         "tests/tier2_component/stores/memorystore_preflight_test.go",
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
         "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
-        "tests/tier4_integration/erasure_job_test.go"
+        "tests/tier4_integration/erasure_job_test.go",
+        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable"
       ],
       "packages": [
         "pkg/store",
@@ -3406,6 +3408,7 @@
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier4_integration/drift_target_snapshot_promote_test.go::TestUpgradePromotesTargetSnapshotToLiveDurable",
         "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry"
@@ -3433,6 +3436,7 @@
         "tests/tier2_component/auditstore/scatter_redis_cache_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/audit_deferred_reconcile_test.go",
+        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable",
         "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
       ],
       "packages": [
@@ -3452,6 +3456,7 @@
         "tests/tier4_integration/drift_reconcile_test.go",
         "tests/tier4_integration/drift_gatewayreader_http_test.go::TestGatewayReaderRunningStateAgainstLiveGatewayE2E",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier4_integration/drift_target_snapshot_promote_test.go::TestUpgradePromotesTargetSnapshotToLiveDurable",
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [

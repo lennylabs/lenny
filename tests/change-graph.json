@@ -170,6 +170,11 @@
       "unit": ["pkg/audit/..."],
       "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
     },
+    "pkg/audit/ocsf": {
+      "unit": ["pkg/audit/ocsf/..."],
+      "contract": ["tests/tier3_contract/ocsf_audit/..."],
+      "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
+    },
     "pkg/circuitbreaker": {
       "unit": ["pkg/circuitbreaker/..."],
       "component": ["tests/tier2_component/policy/..."],
