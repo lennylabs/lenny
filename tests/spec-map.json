@@ -2816,6 +2816,7 @@
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
         "pkg/common/registry/resolver_test.go",
+        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
         "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
       ],
       "packages": [],
@@ -3411,7 +3412,8 @@
         "tests/tier4_integration/drift_target_snapshot_promote_test.go::TestUpgradePromotesTargetSnapshotToLiveDurable",
         "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
-        "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry"
+        "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry",
+        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender"
       ],
       "packages": [
         "pkg/upgrade",
