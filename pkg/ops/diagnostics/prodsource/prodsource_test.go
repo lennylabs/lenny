@@ -347,3 +347,57 @@ func TestSourceSessionPostgresUnreachableKubernetesFallback_spec_25_6_2918(t *te
 		t.Fatalf("want an unavailable error when both Postgres and Kubernetes are unreachable")
 	}
 }
+
+// TestSourcePoolPostgresUnreachableKubernetesFallback pins the §25.6 pool
+// diagnosis Postgres-unreachable Kubernetes fallback: when the
+// agent_pod_state read fails, pool diagnosis must list the pool's pods via
+// the Kubernetes API (label selector lenny.dev/pool={name}) and rebuild the
+// PodCountBreakdown from pod state, returning a partial result whose
+// degradation envelope reports actualSource "kubernetes" and primarySource
+// "postgres", rather than propagating the raw Postgres error (which the HTTP
+// layer maps to 500). When both Postgres and Kubernetes are unreachable the
+// diagnosis is unavailable and the HTTP layer maps it to 503.
+//
+// This test is skipped: the production Source implements no list-by-pool
+// fallback, and building it faithfully is blocked on an unresolved
+// cross-section contradiction. The spec derives the four-bucket breakdown
+// (Warming, Idle, Claimed, Failed) from .status.phase and a
+// lenny.dev/pod-state label, but the platform stamps no such label. It
+// stamps the coarse lenny.dev/state label (pkg/sandbox/state), which carries
+// only idle, active, and draining: warming and failed carry no label and
+// claimed collapses into active, so the coarse label plus pod phase cannot
+// reconstruct the four buckets. Un-skip once the platform records a pod-state
+// label vocabulary the K8s fallback can key on to rebuild the breakdown.
+//
+// spec: §25.6 lines 2899 (K8s fallback: list pods by lenny.dev/pool={name},
+// derive the state breakdown from .status.phase and lenny.dev/pod-state),
+// 2918 (Postgres unreachable → 207 DIAGNOSTICS_PARTIAL,
+// degradation.actualSource="kubernetes", primarySource="postgres"), 2922
+// (both Postgres and Kubernetes unreachable → 503).
+func TestSourcePoolPostgresUnreachableKubernetesFallback_spec_25_6_2899(t *testing.T) {
+	t.Skip("Postgres-unreachable Kubernetes fallback for the pool pod-count breakdown is unimplemented: the spec derives the breakdown from a lenny.dev/pod-state label that no product code stamps (the platform stamps only the coarse lenny.dev/state, which cannot reconstruct the Warming/Idle/Claimed/Failed buckets); blocked on the pod-state label-vocabulary reconciliation")
+
+	// Postgres unreachable, Kubernetes reachable: the pod-count breakdown is
+	// served from the K8s API as a partial result.
+	s := &Source{PG: &fakePG{countsErr: errors.New("connection refused")}}
+	rec, err := s.Pool(context.Background(), "acme-pool")
+	if err != nil {
+		t.Fatalf("want K8s fallback, got propagated error: %v", err)
+	}
+	if !rec.Found {
+		t.Fatalf("want the pool served from the Kubernetes fallback, got not-found")
+	}
+	if rec.Degradation == nil {
+		t.Fatalf("want a degradation envelope on the Postgres-unreachable fallback")
+	}
+	if rec.Degradation.ActualSource != "kubernetes" || rec.Degradation.PrimarySource != "postgres" {
+		t.Fatalf("want actualSource=kubernetes primarySource=postgres, got %+v", rec.Degradation)
+	}
+
+	// Both Postgres and Kubernetes unreachable: no fallback source, so the
+	// diagnosis is unavailable (the HTTP layer maps this to 503).
+	both := &Source{PG: &fakePG{countsErr: errors.New("connection refused")}}
+	if _, err := both.Pool(context.Background(), "acme-pool"); err == nil {
+		t.Fatalf("want an unavailable error when both Postgres and Kubernetes are unreachable")
+	}
+}
