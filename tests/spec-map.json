@@ -3342,6 +3342,7 @@
         "pkg/ops/auditrate/auditrate_test.go",
         "tests/tier2_component/stores/diagnostics_prodsource_test.go",
         "tests/tier2_component/opsaudit/diagnostics_audit_durable_test.go",
+        "tests/tier2_component/opsaudit/diagnostics_rate_limit_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_schema_test.go",
