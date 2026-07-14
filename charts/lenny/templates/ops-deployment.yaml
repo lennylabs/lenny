@@ -253,6 +253,10 @@ spec:
             - --ops-roll-timeout-seconds={{ .Values.platform.upgrade.opsRollTimeoutSeconds }}
             - --gateway-roll-timeout-seconds={{ .Values.platform.upgrade.gatewayRollTimeoutSeconds }}
             - --controller-roll-timeout-seconds={{ .Values.platform.upgrade.controllerRollTimeoutSeconds }}
+            # §25.8 Version Aggregation: the running Helm release name, so
+            # the Helm-chart-version source reads the helm.sh/release.v1
+            # Secret for this install rather than a hardcoded default.
+            - --helm-release-name={{ .Release.Name }}
             {{- with .Values.platform.releaseChannel.url }}
             # §25.8 upgrade-check consumer: fetch the release manifest over
             # HTTP from the configured channel and verify its Ed25519

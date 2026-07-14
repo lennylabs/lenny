@@ -62,6 +62,18 @@ tests:
             resources: ["configmaps"]
             verbs: ["get", "list", "watch"]
 
+  - it: grants the §25.8 namespace Role read-only Secret access for the Helm-chart-version source
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch"]
+
   - it: grants the §25.4 ClusterRole CRD, lenny.dev, and Node reads
     documentSelector:
       path: kind

@@ -3,9 +3,10 @@ The §25.4 lenny-ops authorization bindings beyond leader election
 (§25.4 lines 1066-1115). lenny-ops drives platform operations through
 the Kubernetes API: it patches Deployments for upgrades, scales them,
 reads pod logs and events for diagnostics, creates and deletes backup
-Jobs, reads ConfigMaps for runtime config, and reads CRDs, lenny.dev
-custom resources, and Nodes for version introspection and drift
-detection. The ServiceAccount and the leader-election Role live in
+Jobs, reads ConfigMaps for runtime config, reads the release namespace's
+helm.sh/release.v1 Secret for §25.8 version aggregation, and reads
+CRDs, lenny.dev custom resources, and Nodes for version introspection
+and drift detection. The ServiceAccount and the leader-election Role live in
 ops-deployment.yaml; this file adds the namespace Role
 lenny-ops-namespace (release-namespace-scoped, where possible) and the
 ClusterRole lenny-ops-cluster (for the genuinely cluster-scoped CRD and
@@ -49,6 +50,12 @@ rules:
   # (the bundled alerting-rules ConfigMap and platform config).
   - apiGroups: [""]
     resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # §25.8 Version Aggregation — read-only access to the release
+  # namespace's helm.sh/release.v1 Secret the Helm-chart-version source
+  # resolves the deployed chart version from.
+  - apiGroups: [""]
+    resources: ["secrets"]
     verbs: ["get", "list", "watch"]
   # §25.4 lines 1094-1096 — Lease reads for leader-election visibility.
   # The mutating lease lifecycle lives on the lenny-ops-leader-election

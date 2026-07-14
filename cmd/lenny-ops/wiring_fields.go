@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -61,6 +62,7 @@ type opsWiringFields struct {
 	redisClient   redis.UniversalClient
 	clientset     *kubernetes.Clientset
 	dynClient     dynamic.Interface
+	apiextClient  apiextensionsclientset.Interface
 	gatewayHTTP   *http.Client
 	probes        map[string]probe.Func
 	storeRouter   *storerouter.SingleShardRouter

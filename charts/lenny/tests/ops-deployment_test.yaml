@@ -121,6 +121,17 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --controller-roll-timeout-seconds=600
 
+  - it: renders the §25.8 Helm release name for the Helm-chart-version source
+    release:
+      name: my-lenny-release
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --helm-release-name=my-lenny-release
+
   - it: passes a runtime registry override and pull secret to §25.8 lenny-ops
     set:
       platform.registry.url: mirror.internal/lenny
