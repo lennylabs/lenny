@@ -161,7 +161,21 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		// result cache (opt-out via --audit-scatter-gather-cache-enabled).
 		// The in-memory dev chain (below) has no scatter reader, so its
 		// platform-admin no-tenantId query stays single-tenant. F-25.9.11.
-		auditScatterCache := admin.NewMemScatterGatherCache(nil)
+		//
+		// spec: §25.9 (Query Limits and Scatter-Gather) — the cache is "in
+		// Redis for 5 minutes". A multi-replica deployment must share the
+		// cache across replicas, so back it with the cache/pub-sub Redis
+		// concern when Redis is configured. Without Redis (the single-replica
+		// dev/test gateway) fall back to the in-process cache; its entries
+		// are per-replica, which is coherent only at a single replica.
+		var auditScatterCache admin.ScatterGatherCache
+		if w.redisClient != nil {
+			auditScatterCache = admin.NewRedisScatterGatherCache(
+				w.concernRedis.For(storerouter.RedisConcernCachePubSub), nil)
+			log.Printf("lenny-gateway: §25.9 cross-tenant audit scatter-gather cache backed by Redis (TTL=5m, shared across replicas)")
+		} else {
+			auditScatterCache = admin.NewMemScatterGatherCache(nil)
+		}
 		wireAudit = func(rt *admin.Router) *admin.Router {
 			return rt.WithAuditLog(pgAudit).
 				WithAuditScatter(pgAudit).
