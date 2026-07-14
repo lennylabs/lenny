@@ -3346,6 +3346,7 @@
         "pkg/ops/diagnostics/bottleneck_test.go",
         "pkg/ops/diagnostics/chain_test.go",
         "pkg/ops/diagnostics/prodsource/readers_test.go",
+        "pkg/ops/diagnostics/prodsource/prodsource_test.go",
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/opsserver/diagnostics_test.go",
         "pkg/ops/opsserver/diagnostics_audit_test.go",

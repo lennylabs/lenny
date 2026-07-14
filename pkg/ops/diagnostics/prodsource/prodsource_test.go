@@ -156,6 +156,55 @@ func TestSourceSessionNoPodNoDegradation_spec_25_6_2890(t *testing.T) {
 	}
 }
 
+// TestSourceSessionSetupCommandFailed drives the §25.6 session cause
+// chain for a session whose workspace setup command exited non-zero,
+// reproducing the state the gateway persists for that failure: the
+// session row carries the §7.3 terminal reason "setup_command_failed"
+// (failure_class "runtime", per failureClassForReason), it was never
+// assigned a pod that carries a terminated exit expressing the setup
+// failure, and no reader records a §25.6 setup-phase signal. The §25.6
+// cause chain must classify SETUP_COMMAND_FAILED rather than leaving the
+// failure unexplained or reporting a bare POD_CRASH.
+//
+// This is skipped because the production data source cannot produce the
+// classification end to end: the §25.6 cross-reference derives
+// SETUP_COMMAND_FAILED from "exit code 1 + setup phase", but neither the
+// Postgres reader (agent_pod_state has no setup-phase column) nor the
+// Kubernetes reader populates the setup-phase signal, and the
+// session-state cross-reference maps only the budget and credential
+// terminal reasons. Which production signal identifies the setup phase
+// is an open spec/product decision.
+//
+// spec: §25.6 (cause chain: "exit code 1 + setup phase →
+// SETUP_COMMAND_FAILED"; "the same fields (exit code, OOM flag,
+// container state) are available from both sources"), §7.3
+// (setup_command_failed non-retryable terminal reason).
+func TestSourceSessionSetupCommandFailed_spec_25_6(t *testing.T) {
+	t.Skip("SETUP_COMMAND_FAILED is unreachable through the production data source: no reader populates the §25.6 setup-phase signal and the session-state cross-reference does not map the setup_command_failed terminal reason; blocked on the spec/product decision on which production signal identifies the setup phase")
+
+	src := &Source{PG: &fakePG{session: SessionRow{
+		SessionID: "s-setup", State: "failed",
+		FailureClass: "runtime", FailureReason: "setup_command_failed",
+		Found: true,
+	}}}
+	diag, err := diagnostics.NewService(src).DiagnoseSession(context.Background(), "s-setup")
+	if err != nil {
+		t.Fatalf("DiagnoseSession: %v", err)
+	}
+	setupFound := false
+	for _, e := range diag.CauseChain {
+		switch e.Category {
+		case diagnostics.CategorySetupCommandFailed:
+			setupFound = true
+		case diagnostics.CategoryPodCrash:
+			t.Fatalf("setup-command failure misclassified as POD_CRASH: %+v", diag.CauseChain)
+		}
+	}
+	if !setupFound {
+		t.Fatalf("want SETUP_COMMAND_FAILED in the cause chain, got %+v", diag.CauseChain)
+	}
+}
+
 // TestSourceSessionNilPG — with no Postgres the session diagnosis reports
 // not-found (cold start) rather than panicking. spec: §25.6 line 2885.
 func TestSourceSessionNilPG_spec_25_6_2885(t *testing.T) {
