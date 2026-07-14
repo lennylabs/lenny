@@ -329,9 +329,15 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (*RunReport, err
 	if err != nil {
 		return nil, err
 	}
-	byCode := make(map[string]Detected, len(detected))
+	// A finding code can be detected on more than one independent resource
+	// (two Certificates within 7 days of expiry both raise
+	// certManagerExpiring). Group every detection under its code so each
+	// resource is remediated and reported; keying by code alone would drop
+	// all but one detection and leave the rest unfixed. spec: §25.6 lines
+	// 2949, 2968, 2985.
+	byCode := make(map[string][]Detected, len(detected))
 	for _, d := range detected {
-		byCode[d.Code] = d
+		byCode[d.Code] = append(byCode[d.Code], d)
 	}
 
 	// targets is the ordered set of finding codes to report on. When the
@@ -344,7 +350,7 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (*RunReport, err
 
 	if !req.Fix {
 		for _, code := range targets {
-			report.Findings = append(report.Findings, o.readOnlyResult(code, byCode))
+			report.Findings = append(report.Findings, o.readOnlyResults(code, byCode)...)
 		}
 		return report, nil
 	}
@@ -360,15 +366,16 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (*RunReport, err
 	})
 
 	for _, code := range targets {
-		res := o.applyOne(ctx, opID, code, byCode)
-		report.Findings = append(report.Findings, res)
-		switch res.Result {
-		case resultApplied:
-			report.AppliedCount++
-		case resultFailed:
-			report.FailedCount++
-		default: // skipped, manual
-			report.SkippedCount++
+		for _, res := range o.applyCode(ctx, opID, code, byCode) {
+			report.Findings = append(report.Findings, res)
+			switch res.Result {
+			case resultApplied:
+				report.AppliedCount++
+			case resultFailed:
+				report.FailedCount++
+			default: // skipped, manual
+				report.SkippedCount++
+			}
 		}
 	}
 
@@ -383,7 +390,9 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (*RunReport, err
 		},
 	})
 
-	report.Progress = o.terminalProgress(started, len(targets))
+	// Each remediation acted on is a progress step, so total is the number
+	// of per-resource outcomes rather than the number of finding codes.
+	report.Progress = o.terminalProgress(started, len(report.Findings))
 	return report, nil
 }
 
@@ -402,39 +411,58 @@ func (o *Orchestrator) scopeTargets(requested []string, detected []Detected) []s
 	return dedupePreserveOrder(out)
 }
 
-// readOnlyResult builds the read-only report entry for one finding.
-func (o *Orchestrator) readOnlyResult(code string, byCode map[string]Detected) FindingResult {
+// readOnlyResults builds the read-only report entries for one finding
+// code. A code can be detected on several resources, so this returns one
+// entry per detected resource (or a single not_detected/manual entry when
+// the code is absent or non-fixable).
+func (o *Orchestrator) readOnlyResults(code string, byCode map[string][]Detected) []FindingResult {
 	if !IsFixable(code) {
-		return FindingResult{Finding: code, Remediation: remediationManual, Result: resultManual}
+		return []FindingResult{{Finding: code, Remediation: remediationManual, Result: resultManual}}
 	}
-	d, present := byCode[code]
-	if !present {
+	ds := byCode[code]
+	if len(ds) == 0 {
 		// A fixable finding the caller asked about but that is not present:
 		// report it as detected:false via a skipped/not_detected entry so
 		// the read-only report is complete.
-		return FindingResult{Finding: code, Remediation: remediationAuto, Result: resultSkipped, Reason: reasonNotDetected}
+		return []FindingResult{{Finding: code, Remediation: remediationAuto, Result: resultSkipped, Reason: reasonNotDetected}}
 	}
-	return FindingResult{
-		Finding:     code,
-		Resource:    d.Resource,
-		Remediation: remediationAuto,
-		Result:      resultDetected,
-		Detail:      d.Detail,
+	out := make([]FindingResult, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, FindingResult{
+			Finding:     code,
+			Resource:    d.Resource,
+			Remediation: remediationAuto,
+			Result:      resultDetected,
+			Detail:      d.Detail,
+		})
 	}
+	return out
+}
+
+// applyCode runs the remediation for every resource detected under one
+// finding code, returning one report entry per resource. A code that is
+// absent or non-fixable yields a single not_detected/manual entry.
+func (o *Orchestrator) applyCode(ctx context.Context, opID, code string, byCode map[string][]Detected) []FindingResult {
+	if !IsFixable(code) {
+		o.emitSkip(opID, code, "", reasonNotFixable)
+		return []FindingResult{{Finding: code, Remediation: remediationManual, Result: resultManual, Reason: reasonNotFixable}}
+	}
+	ds := byCode[code]
+	if len(ds) == 0 {
+		o.emitSkip(opID, code, "", reasonNotDetected)
+		return []FindingResult{{Finding: code, Remediation: remediationAuto, Result: resultSkipped, Reason: reasonNotDetected}}
+	}
+	out := make([]FindingResult, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, o.applyOne(ctx, opID, d))
+	}
+	return out
 }
 
 // applyOne runs the §25.6 guardrails and, when they pass, the remediation
-// for one finding, emitting the matching audit event.
-func (o *Orchestrator) applyOne(ctx context.Context, opID, code string, byCode map[string]Detected) FindingResult {
-	if !IsFixable(code) {
-		o.emitSkip(opID, code, "", reasonNotFixable)
-		return FindingResult{Finding: code, Remediation: remediationManual, Result: resultManual, Reason: reasonNotFixable}
-	}
-	d, present := byCode[code]
-	if !present {
-		o.emitSkip(opID, code, "", reasonNotDetected)
-		return FindingResult{Finding: code, Remediation: remediationAuto, Result: resultSkipped, Reason: reasonNotDetected}
-	}
+// for one detected resource, emitting the matching audit event.
+func (o *Orchestrator) applyOne(ctx context.Context, opID string, d Detected) FindingResult {
+	code := d.Code
 	base := FindingResult{Finding: code, Resource: d.Resource, Remediation: remediationAuto, Detail: d.Detail}
 
 	if o.cfg.MaintenanceMode != nil && o.cfg.MaintenanceMode() {
