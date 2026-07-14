@@ -3,6 +3,7 @@
 package opsserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -72,7 +73,7 @@ func (s *Server) handleUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		s.writeUpgradeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, upgradeStatusBody(st))
+	writeJSON(w, http.StatusAccepted, upgradeStatusBody(r.Context(), s.upgrade, st))
 }
 
 // preflightBody is the POST /v1/admin/platform/upgrade/preflight request.
@@ -196,7 +197,7 @@ func (s *Server) handleUpgradeVerify(w http.ResponseWriter, r *http.Request) {
 
 // upgradeTransition runs a mutating upgrade transition and writes the
 // resulting state or the classified error.
-func (s *Server) upgradeTransition(w http.ResponseWriter, _ *http.Request, fn func() (upgradeservice.State, error)) {
+func (s *Server) upgradeTransition(w http.ResponseWriter, r *http.Request, fn func() (upgradeservice.State, error)) {
 	if s.upgrade == nil {
 		s.upgradeUnavailable(w)
 		return
@@ -206,7 +207,7 @@ func (s *Server) upgradeTransition(w http.ResponseWriter, _ *http.Request, fn fu
 		s.writeUpgradeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, upgradeStatusBody(st))
+	writeJSON(w, http.StatusOK, upgradeStatusBody(r.Context(), s.upgrade, st))
 }
 
 // handleUpgradeStatus serves GET /v1/admin/platform/upgrade/status.
@@ -225,7 +226,7 @@ func (s *Server) handleUpgradeStatus(w http.ResponseWriter, r *http.Request) {
 			conventions.CategoryPermanent, "no platform upgrade has been started")
 		return
 	}
-	writeJSON(w, http.StatusOK, upgradeStatusBody(st))
+	writeJSON(w, http.StatusOK, upgradeStatusBody(r.Context(), s.upgrade, st))
 }
 
 // handleUpgradeCheck serves GET /v1/admin/platform/upgrade-check.
@@ -278,9 +279,10 @@ func upgradeReason(r *http.Request) string {
 }
 
 // upgradeStatusBody renders the §25.8 upgrade-status response: the
-// singleton state plus the §25.8 line 357 progress object and the
-// canonical rollbackable flag the agent reads before calling rollback.
-func upgradeStatusBody(st upgradeservice.State) map[string]any {
+// singleton state plus the §25.2 canonical progress envelope (§25.8 line
+// 3496) and the canonical rollbackable flag the agent reads before
+// calling rollback.
+func upgradeStatusBody(ctx context.Context, svc *upgradeservice.Service, st upgradeservice.State) map[string]any {
 	return map[string]any{
 		"operationId":   st.OperationID,
 		"phase":         string(st.Phase),
@@ -295,7 +297,7 @@ func upgradeStatusBody(st upgradeservice.State) map[string]any {
 		"reason":        st.Reason,
 		"error":         st.Error,
 		"active":        st.Active(),
-		"progress":      st.Progress(),
+		"progress":      svc.FullProgress(ctx, st),
 	}
 }
 

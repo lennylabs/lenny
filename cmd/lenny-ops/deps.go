@@ -1677,8 +1677,10 @@ func buildBaselineStore(pool *pgxpool.Pool) operations.BaselineStore {
 }
 
 // opsBaselineRecorder adapts a §25.2 operations.BaselineStore onto the
-// upgradeservice.BaselineRecorder seam (string kind) so the upgrade
-// orchestrator records the platform_upgrade completion duration without
+// upgradeservice.BaselineRecorder and upgradeservice.BaselineReader seams
+// (string kind) so the upgrade orchestrator records the platform_upgrade
+// completion duration, and looks up the current baseline for the
+// GET /upgrade/status historical_p50 ETA (§25.2 line 393-394), without
 // importing the operations.Kind enum.
 type opsBaselineRecorder struct{ store operations.BaselineStore }
 
@@ -1687,6 +1689,17 @@ func (r opsBaselineRecorder) RecordCompletion(ctx context.Context, kind string, 
 		return nil
 	}
 	return r.store.RecordCompletion(ctx, operations.Kind(kind), dur)
+}
+
+func (r opsBaselineRecorder) Lookup(ctx context.Context, kind string) (p50 time.Duration, sampleSize int, found bool, err error) {
+	if r.store == nil {
+		return 0, 0, false, nil
+	}
+	b, ok, err := r.store.Lookup(ctx, operations.Kind(kind))
+	if err != nil || !ok {
+		return 0, 0, false, err
+	}
+	return b.P50, b.SampleSize, true, nil
 }
 
 // setPlatformUpgradeAvailable is the upgradeservice.AvailabilityGauge
@@ -1751,8 +1764,9 @@ func buildUpgradeService(store upgradeservice.Store, drift *driftservice.Service
 		Audit:   upgradeAuditSink(recorder),
 		// §25.2 line 393: fold the upgrade's completion duration into the
 		// historical baseline table so a later upgrade gets a historical_p50
-		// ETA.
-		Baselines: opsBaselineRecorder{store: baselines},
+		// ETA, and read it back for the GET /upgrade/status progress envelope.
+		Baselines:      opsBaselineRecorder{store: baselines},
+		BaselineReader: opsBaselineRecorder{store: baselines},
 	}
 	if drift != nil {
 		opts.DriftManager = drift
