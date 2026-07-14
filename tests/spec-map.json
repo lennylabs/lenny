@@ -3445,14 +3445,17 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/drift/drift_test.go",
+        "pkg/ops/driftservice/gatewayreader/gatewayreader_test.go",
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/drift_reconcile_test.go",
+        "tests/tier4_integration/drift_gatewayreader_http_test.go::TestGatewayReaderRunningStateAgainstLiveGatewayE2E",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
-        "pkg/ops/driftservice"
+        "pkg/ops/driftservice",
+        "pkg/ops/driftservice/gatewayreader"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.10 Configuration Drift Detection. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
