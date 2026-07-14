@@ -5,6 +5,7 @@ package opsserver_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,6 +142,30 @@ func TestDriftReportCallerDesiredBodySurvivesStoreOutage(t *testing.T) {
 	errObj, _ := body2["error"].(map[string]any)
 	if errObj["code"] != "DRIFT_DESIRED_STATE_MISSING" {
 		t.Errorf("no-body error code = %v, want DRIFT_DESIRED_STATE_MISSING", errObj["code"])
+	}
+}
+
+// TestDriftReportMalformedBodyReturns400 pins the §25.10 caller-supplied
+// desired-body validation branch: a request whose body is present but is
+// not valid JSON is a §25.2 VALIDATION_ERROR (HTTP 400, PERMANENT category),
+// distinct from the empty-body snapshot path and the well-formed
+// caller-desired path. An empty body decodes to io.EOF and is treated as
+// "no caller-supplied desired"; only a genuinely malformed body fails
+// closed here.
+//
+// spec: §25.10 (Drift Detection Logic) — caller-supplied {"desired": {...}}
+// body; §25.2 — the canonical VALIDATION_ERROR envelope for a malformed
+// request body.
+func TestDriftReportMalformedBodyReturns400(t *testing.T) {
+	srv := driftServer(t,
+		map[string]any{"pools": map[string]any{}},
+		map[string]any{"pools": map[string]any{}})
+	rec := do(srv, http.MethodGet, "/v1/admin/drift", `{"desired": {not valid json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed-body status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "VALIDATION_ERROR") {
+		t.Errorf("malformed-body error envelope = %s, want code VALIDATION_ERROR", rec.Body.String())
 	}
 }
 
