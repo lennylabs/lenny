@@ -86,7 +86,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-05 — Credential-revocation deny-list semantics under a shared multi-replica store — §4.9
-- **status:** open
+- **status:** claimed:proposal-B@2026-07-14T16:12:37Z
 - **assigned:** proposal-B
 - **findings:** T-4.9.3
 - **root spec gap:** Both user and pool revocation remove the lease globally from the shared Postgres store, so a post-revocation request returns `LEASE_TOKEN_INVALID` rather than the spec-mandated `CREDENTIAL_REVOKED`, and the startup rebuild never seeds user-shaped deny-list entries.
