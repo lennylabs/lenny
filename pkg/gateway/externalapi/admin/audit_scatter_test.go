@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
@@ -44,6 +45,45 @@ func twoTenantRows() []audit.Row {
 func crossTenantRouter(t *testing.T, reader *fakeScatterReader, cacheEnabled bool) *admin.Router {
 	t.Helper()
 	router, _ := newAuditQueryRouter(t)
+	cache := admin.NewMemScatterGatherCache(func() time.Time {
+		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	})
+	return router.WithAuditScatter(reader).WithScatterGatherCache(cache, cacheEnabled)
+}
+
+// capturingAuditSink records every admin audit event the Router emits so a
+// test can inspect the §25.9 audit.query_executed receipt payload directly,
+// before OCSF translation.
+type capturingAuditSink struct {
+	events []admin.AuditEvent
+}
+
+func (c *capturingAuditSink) EmitAdminEvent(_ context.Context, e admin.AuditEvent) {
+	c.events = append(c.events, e)
+}
+
+// queryExecutedReceipts returns the recorded audit.query_executed events in
+// emission order.
+func (c *capturingAuditSink) queryExecutedReceipts() []admin.AuditEvent {
+	var out []admin.AuditEvent
+	for _, e := range c.events {
+		if e.Type == "audit.query_executed" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// crossTenantRouterWithSink builds the cross-tenant router with a capturing
+// audit sink so the emitted audit.query_executed receipt is inspectable.
+func crossTenantRouterWithSink(t *testing.T, reader *fakeScatterReader, cacheEnabled bool, sink admin.AuditSink) *admin.Router {
+	t.Helper()
+	store := tenantstore.NewMemory()
+	chains := audit.NewChainSet()
+	router := admin.NewRouter(store, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: sink,
+	}).WithAuditChains(chains)
 	cache := admin.NewMemScatterGatherCache(func() time.Time {
 		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	})
@@ -114,6 +154,56 @@ func TestListAuditEventsCrossTenantCachesResults_spec_25_9_3709(t *testing.T) {
 	}
 	if first.Body.String() != second.Body.String() {
 		t.Errorf("cached body differs from fresh body")
+	}
+}
+
+// TestCrossTenantQueryAuditReceiptRecordsCacheAndShards covers §25.9 line
+// 3754: the audit.query_executed receipt "includes ... cache hit/miss,
+// shards touched". A first cross-tenant query runs the scatter fan-out and
+// records cacheHit=false; the repeated identical query served from the
+// 5-minute result cache records cacheHit=true. Both record the shard
+// fan-out width (1 for the v1 single-shard AllAuditShards).
+//
+// spec: §25.9 line 3754 (audit.query_executed includes cache hit/miss and
+// shards touched)
+// diagnosis: the audit-of-audit receipt misreports cross-tenant query cost.
+// If cacheHit is hardcoded, an operator auditing query cost cannot
+// distinguish a cached (cheap) query from a fresh scatter fan-out
+// (expensive), and shardsTouched no longer reflects the real read fan-out.
+func TestCrossTenantQueryAuditReceiptRecordsCacheAndShards_spec_25_9_3754(t *testing.T) {
+	reader := &fakeScatterReader{rows: twoTenantRows()}
+	sink := &capturingAuditSink{}
+	router := crossTenantRouterWithSink(t, reader, true, sink)
+
+	// First query: cache miss, real scatter fan-out.
+	if rr := getCrossTenant(t, router, ""); rr.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// Second identical query: served from the 5-minute result cache.
+	if rr := getCrossTenant(t, router, ""); rr.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if reader.calls != 1 {
+		t.Fatalf("scatter reader calls = %d, want 1 (second served from cache)", reader.calls)
+	}
+
+	receipts := sink.queryExecutedReceipts()
+	if len(receipts) != 2 {
+		t.Fatalf("audit.query_executed receipts = %d, want 2", len(receipts))
+	}
+	if got := receipts[0].Detail["cacheHit"]; got != false {
+		t.Errorf("first receipt cacheHit = %v, want false (scatter fan-out ran)", got)
+	}
+	if got := receipts[1].Detail["cacheHit"]; got != true {
+		t.Errorf("second receipt cacheHit = %v, want true (served from cache)", got)
+	}
+	for i, rec := range receipts {
+		if got := rec.Detail["crossTenant"]; got != true {
+			t.Errorf("receipt[%d] crossTenant = %v, want true", i, got)
+		}
+		if got := rec.Detail["shardsTouched"]; got != 1 {
+			t.Errorf("receipt[%d] shardsTouched = %v, want 1", i, got)
+		}
 	}
 }
 

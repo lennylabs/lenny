@@ -3410,6 +3410,7 @@
       "tests": [
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "pkg/gateway/externalapi/admin/audit_query_filter_test.go::TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707",
+        "pkg/gateway/externalapi/admin/audit_scatter_test.go::TestCrossTenantQueryAuditReceiptRecordsCacheAndShards_spec_25_9_3754",
         "tests/tier2_component/auditstore/admin_query_test.go",
         "tests/tier2_component/auditstore/scatter_redis_cache_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
