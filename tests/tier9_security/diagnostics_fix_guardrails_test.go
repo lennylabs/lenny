@@ -182,6 +182,12 @@ func TestDiagnosticsRunFixThroughREST_NotAllowedSkips_spec_25_6_2976(t *testing.
 // three skip assertions above are exercising a request that would
 // otherwise succeed, not a request the handler rejects for an unrelated
 // reason.
+//
+// diagnosis: a failure here means the fix=true happy path over the REST
+// endpoint does not apply a detected, allowed, non-opted-out finding when
+// no guardrail should block it. That also invalidates the three skip
+// assertions above, which rely on this control case to prove they skip a
+// request that would otherwise be applied.
 func TestDiagnosticsRunFixThroughREST_AppliesWhenGuardrailsClear(t *testing.T) {
 	rem := &diagFixRemediator{detected: []doctor.Detected{
 		{Code: doctor.FindingCoreDNSStuckEndpoint, Resource: "kube-system/coredns"},
