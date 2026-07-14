@@ -18,8 +18,14 @@ the `assigned:` field. A worker takes only clusters assigned to it (or, with a
 single worker, any `open` cluster), and works highest-severity-first. When a
 worker's branch lands, the integrator marks the cluster `landed:<proposal>` and
 tops up that worker's assignments so it never idles on merge latency. With more
-than one proposal worker, partition by spec-section range instead, so no two
-workers can hold the same cluster.
+than one proposal worker, the integrator assigns each a disjoint set of clusters
+(explicit per-cluster assignment is race-free because the integrator is the sole
+writer of this file); clusters are grouped so each worker stays within a coherent
+spec area, keeping two workers off the same spec sections and code and minimizing
+integration conflicts. Current split: proposal-A holds the checkpoint and §25
+clusters (C-01–C-03), proposal-B holds the §4.9 credential-leasing clusters
+(C-04–C-06); the integrator extends each worker's assignments from the remaining
+clusters as its branches land.
 
 **Status lifecycle** (per cluster):
 
@@ -73,7 +79,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-04 — Token Service unavailability guard in the credential renewal path — §4.9
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-B
 - **findings:** T-4.9.7, T-4.9.24
 - **root spec gap:** §4.9 requires that while `now < ExpiresAt` and the Token Service breaker is open, the renewal worker extend the adapter-side lease timer and reschedule instead of triggering the Fallback Flow, but no adapter mechanism exists to extend a direct-mode lease without a re-mint.
 - **proposal scope:** Define the adapter protocol surface to extend a direct-mode lease's expiry by one buffer without delivering a replacement; how the worker learns breaker-open state; and whether the extension may cap at or exceed the original `expiresAt` against the "key must not outlive the lease" invariant.
@@ -81,7 +87,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-05 — Credential-revocation deny-list semantics under a shared multi-replica store — §4.9
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-B
 - **findings:** T-4.9.3
 - **root spec gap:** Both user and pool revocation remove the lease globally from the shared Postgres store, so a post-revocation request returns `LEASE_TOKEN_INVALID` rather than the spec-mandated `CREDENTIAL_REVOKED`, and the startup rebuild never seeds user-shaped deny-list entries.
 - **proposal scope:** Decide whether revocation should stop removing the lease and rely on the deny list (so `CREDENTIAL_REVOKED` is reachable in the shared-store topology) or whether that contract is single-binary only, and specify the user-credential startup-rebuild query across the credential stores.
@@ -89,7 +95,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-06 — Multi-tenant admission enforcement for delivery-mode/isolation combinations — §4.9
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-B
 - **findings:** T-4.9.6
 - **root spec gap:** The spec mandates admin-API pool-registration rejections (`DirectModeStandardIsolationMultiTenantRejected`, proxy+`spiffeBinding:disabled`) and a `lenny-preflight` CredentialPool scan in multi-tenant mode, but these enforcement points are unimplemented.
 - **proposal scope:** Add the warm-pool-controller admin-API registration-rejection layer and the preflight spiffeBinding scan as product features (a BUILD gap routed through implement-proposal rather than a test-only fix).

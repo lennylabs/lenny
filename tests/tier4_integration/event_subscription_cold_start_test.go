@@ -79,7 +79,8 @@ func TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable(t *testing.T)
 	// unreachable at cold start" condition the spec names.
 	deadDSN := fmt.Sprintf("postgres://postgres:postgres@127.0.0.1:%d/lenny_test?sslmode=disable", closedLoopbackPort(t))
 
-	opsprocess.StartWith(t,
+	opsprocess.StartWith(
+		t,
 		"--postgres-dsn="+deadDSN,
 		"--redis-url=redis://"+rd.Addr+"/0",
 		"--redis-allow-insecure",
