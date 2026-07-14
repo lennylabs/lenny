@@ -3288,7 +3288,9 @@
         "tests/tier0_static/gateway_admin_tls_listener_test.go::TestGatewayAdminTLSListenerDistinctFromLLMProxy",
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
         "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsRunningRestore",
-        "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsFailedRestore"
+        "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsFailedRestore",
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsRunningBackup",
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsVerifyingBackup"
       ],
       "packages": [
         "cmd/lenny-ops"
