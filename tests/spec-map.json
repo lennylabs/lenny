@@ -3407,6 +3407,7 @@
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier4_integration/drift_target_snapshot_promote_test.go::TestUpgradePromotesTargetSnapshotToLiveDurable",
         "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry"
@@ -3453,6 +3454,7 @@
         "tests/tier4_integration/drift_reconcile_test.go",
         "tests/tier4_integration/drift_gatewayreader_http_test.go::TestGatewayReaderRunningStateAgainstLiveGatewayE2E",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier4_integration/drift_target_snapshot_promote_test.go::TestUpgradePromotesTargetSnapshotToLiveDurable",
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
