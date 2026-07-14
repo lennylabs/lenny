@@ -216,6 +216,124 @@ func TestOpsDriftEndpointsAgainstPostgresE2E(t *testing.T) {
 	}
 }
 
+// TestOpsDriftDegradesUnderPostgresOutage boots cmd/lenny-ops against a
+// real Postgres and terminates that Postgres mid-test, exercising the
+// §25.10 Degradation matrix end to end against a genuine store outage
+// rather than a unit-level failing-store stub. It asserts the two
+// documented down-states: a GET /v1/admin/drift that carries a
+// caller-supplied {"desired": {...}} body keeps returning 200 with
+// desiredStateSource: "caller" (the running state is read from the
+// gateway, and the desired state comes from the caller, so the report has
+// no Postgres dependency), while the same request with no body fails
+// closed with 503 DRIFT_DESIRED_STATE_MISSING. Before the outage the
+// no-body request returns the cold-start 404, so the 404->503 transition
+// proves the outage is observed rather than a pre-existing empty snapshot.
+//
+// spec: §25.10 Degradation — "Postgres down, caller supplies desired
+// body: Drift detection runs normally — the running state is read from
+// the gateway admin API (no Postgres dependency), and the desired state
+// comes from the caller. The response includes \"desiredStateSource\":
+// \"caller\". This enables GitOps agents that carry their own desired
+// state to continue drift checks during a Postgres outage. Postgres down,
+// no desired body: Drift detection returns 503 DRIFT_DESIRED_STATE_MISSING".
+// diagnosis: a failure means the §25.10 Postgres-outage degradation does
+// not hold against a real store outage under a running lenny-ops. Either
+// the caller-supplied-desired GitOps path did not survive the outage
+// (the GET handler coupled the desired side to the Postgres snapshot store
+// even when the caller supplied its own), or the no-body path did not
+// fail closed with 503 DRIFT_DESIRED_STATE_MISSING once the snapshot
+// store became unreachable.
+func TestOpsDriftDegradesUnderPostgresOutage(t *testing.T) {
+	opsprocess.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	ops := opsprocess.StartWith(
+		t,
+		"--postgres-dsn="+pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--redis-allow-insecure",
+	)
+	base := ops.BaseURL()
+
+	// driftGet issues GET /v1/admin/drift with an optional caller-supplied
+	// desired body and returns the status and decoded body. This lenny-ops
+	// runs with no --gateway-url, so the running-state collector degrades
+	// to the empty running state; the desired side is the axis under test.
+	driftGet := func(desired map[string]any) (int, map[string]any) {
+		t.Helper()
+		var reader io.Reader
+		if desired != nil {
+			b, _ := json.Marshal(map[string]any{"desired": desired})
+			reader = bytes.NewReader(b)
+		}
+		req, _ := http.NewRequest(http.MethodGet, base+"/v1/admin/drift", reader)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+		req.Header.Set("X-Lenny-Roles", "platform-admin")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /v1/admin/drift: %v", err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &out)
+		}
+		return resp.StatusCode, out
+	}
+
+	desired := map[string]any{
+		"pools": map[string]any{
+			"acme-default": map[string]any{"minWarm": float64(2), "runtime": "echo"},
+		},
+	}
+
+	// --- Preconditions (Postgres UP) ---------------------------------
+
+	// The caller-supplied path resolves its desired side from the body and
+	// reports desiredStateSource: caller while the store is reachable.
+	if code, body := driftGet(desired); code != http.StatusOK {
+		t.Fatalf("precondition: GET /v1/admin/drift with desired body status %d, want 200 (%v)", code, body)
+	} else if src, _ := body["desiredStateSource"].(string); src != "caller" {
+		t.Fatalf("precondition: desiredStateSource = %q, want caller (%v)", src, body)
+	}
+	// With no snapshot seeded and the store reachable, the no-body path is
+	// the §25.10 cold-start 404 — distinct from the 503 outage case below.
+	if code, body := driftGet(nil); code != http.StatusNotFound {
+		t.Fatalf("precondition: no-body GET /v1/admin/drift status %d, want 404 cold-start (%v)", code, body)
+	}
+
+	// --- Inject: terminate Postgres ----------------------------------
+
+	pg.Stop(t)
+
+	// --- Assert (Postgres DOWN) --------------------------------------
+
+	// The caller-supplied desired body has no Postgres dependency, so the
+	// GitOps path keeps returning 200 with desiredStateSource: caller.
+	if code, body := driftGet(desired); code != http.StatusOK {
+		t.Errorf("during outage: GET /v1/admin/drift with desired body status %d, want 200 "+
+			"(the caller-supplied GitOps path must survive a Postgres outage); body=%v", code, body)
+	} else if src, _ := body["desiredStateSource"].(string); src != "caller" {
+		t.Errorf("during outage: desiredStateSource = %q, want caller; body=%v", src, body)
+	}
+	// The no-body path resolves its desired side from the snapshot store,
+	// which is now unreachable, so it fails closed with 503.
+	code, body := driftGet(nil)
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("during outage: no-body GET /v1/admin/drift status %d, want 503 DRIFT_DESIRED_STATE_MISSING; body=%v", code, body)
+	}
+	if errObj, _ := body["error"].(map[string]any); errObj["code"] != "DRIFT_DESIRED_STATE_MISSING" {
+		t.Errorf("during outage: no-body error code = %v, want DRIFT_DESIRED_STATE_MISSING", body["error"])
+	}
+}
+
 // TestGatewayAuditQueryEndpointsE2E boots cmd/lenny-gateway and exercises
 // the §25.9 audit-log query surface: after a session lifecycle writes
 // audit rows, GET /v1/admin/audit-events returns the OCSF egress envelope
