@@ -287,7 +287,8 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 		*w.f.registryURL, *w.f.registryPullSecret, *w.f.registryRequireDigest, *w.f.registryOverrides,
 	), w.auditRecorder)
 	// §25.8 upgrade preflight (Phase 1 safety gates) and OpsRoll watchdog.
-	w.upgradePreflighter = buildPreflighter(w.upgradeStore, w.pgPool)
+	w.upgradePreflighter = buildPreflighter(w.upgradeStore, w.pgPool,
+		time.Duration(*w.f.registryPullCheckTimeout)*time.Second)
 	w.upgradeWatchdog = buildWatchdog(w.upgradeSvc, upgradeservice.WatchdogConfig{
 		OpsRollTimeout:        time.Duration(*w.f.opsRollTimeout) * time.Second,
 		GatewayRollTimeout:    time.Duration(*w.f.gatewayRollTimeout) * time.Second,
@@ -302,8 +303,8 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 	// component sources lenny-ops can reach; it also raises the
 	// lenny_platform_version_drift gauge on each aggregation.
 	w.versionAggregator = buildVersionAggregator(
-		buildVersion, *w.f.gatewayURL, w.gatewayHTTP, w.pgPool, w.clientset,
-		envOr("POD_NAMESPACE", *w.f.leaderElectNS),
+		buildVersion, *w.f.gatewayURL, w.gatewayHTTP, w.pgPool, w.clientset, w.apiextClient,
+		envOr("POD_NAMESPACE", *w.f.leaderElectNS), *w.f.helmReleaseName,
 	)
 	// §25.8 config diff/apply: the operator surface over the gateway's own
 	// config API. Wired only when a gateway client exists; otherwise the

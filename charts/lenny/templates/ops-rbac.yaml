@@ -3,9 +3,12 @@ The §25.4 lenny-ops authorization bindings beyond leader election
 (§25.4 lines 1066-1115). lenny-ops drives platform operations through
 the Kubernetes API: it patches Deployments for upgrades, scales them,
 reads pod logs and events for diagnostics, creates and deletes backup
-Jobs, reads ConfigMaps for runtime config, and reads CRDs, lenny.dev
-custom resources, and Nodes for version introspection and drift
-detection. The ServiceAccount and the leader-election Role live in
+Jobs, reads ConfigMaps for runtime config, reads the release namespace's
+helm.sh/release.v1 Secret for §25.8 version aggregation, reads and
+patches cert-manager Certificates and deletes their backing Secrets for
+the §25.6 certManagerExpiring auto-remediation, and reads CRDs,
+lenny.dev custom resources, and Nodes for version introspection
+and drift detection. The ServiceAccount and the leader-election Role live in
 ops-deployment.yaml; this file adds the namespace Role
 lenny-ops-namespace (release-namespace-scoped, where possible) and the
 ClusterRole lenny-ops-cluster (for the genuinely cluster-scoped CRD and
@@ -50,6 +53,25 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
+  # §25.8 Version Aggregation — read-only access to the release
+  # namespace's helm.sh/release.v1 Secret the Helm-chart-version source
+  # resolves the deployed chart version from. delete is additionally
+  # needed by the §25.6 certManagerExpiring auto-remediation, which
+  # forces cert-manager re-issuance by deleting the Certificate's
+  # backing Secret (spec/25_agent-operability.md, certManagerExpiring
+  # remediation row).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "delete"]
+  # §25.6 certManagerExpiring detection and remediation — lists
+  # Certificates to find one within the 7-day expiry window
+  # (cert-manager healthy) and patches the issue-temporary-certificate
+  # annotation to force re-issuance once its backing Secret is deleted
+  # above. Also backs the §25.8 cert_manager self-health check's
+  # Certificate listing (k8sadapters.go certManagerSource).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "watch", "patch"]
   # §25.4 lines 1094-1096 — Lease reads for leader-election visibility.
   # The mutating lease lifecycle lives on the lenny-ops-leader-election
   # Role (ops-deployment.yaml); this read grant matches the spec rule.

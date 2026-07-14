@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/upgrade"
 )
@@ -145,17 +146,16 @@ type State struct {
 // Active reports whether the upgrade is still in flight (not terminal).
 func (s State) Active() bool { return !upgrade.IsTerminal(s.Phase) }
 
-// Progress returns the §25.2 canonical progress object for the upgrade:
-// the machine-readable phase identifier, the numeric step counts, and a
-// human-readable detail. A terminal upgrade reports the full step count.
-//
-// spec: §25.2 (progress envelope), §25.8 (upgrade progress).
-func (s State) Progress() map[string]any {
+// stepAndDetail returns the §25.2 1-based completedSteps index and the
+// human-readable currentStepDetail for s, shared by Progress and
+// FullProgress so the two envelopes never disagree on the descriptive
+// fields.
+func (s State) stepAndDetail() (step int, detail string) {
 	step, ok := upgrade.StepNumber(s.Phase)
 	if !ok {
 		step = upgrade.TotalSteps
 	}
-	detail := fmt.Sprintf("phase %s", s.Phase)
+	detail = fmt.Sprintf("phase %s", s.Phase)
 	switch {
 	case s.Phase == upgrade.Complete:
 		detail = "upgrade complete"
@@ -164,6 +164,16 @@ func (s State) Progress() map[string]any {
 	case s.Paused:
 		detail = "Waiting for operator to call /upgrade/proceed"
 	}
+	return step, detail
+}
+
+// Progress returns the §25.2 canonical progress object for the upgrade:
+// the machine-readable phase identifier, the numeric step counts, and a
+// human-readable detail. A terminal upgrade reports the full step count.
+//
+// spec: §25.2 (progress envelope), §25.8 (upgrade progress).
+func (s State) Progress() map[string]any {
+	step, detail := s.stepAndDetail()
 	// §25.2: currentStep is the machine-readable step identifier — the
 	// phase name (e.g. "OpsRoll"), matching the canonical Progress
 	// envelope and the §25.4 Operations Inventory. The 1-based numeric
@@ -175,6 +185,79 @@ func (s State) Progress() map[string]any {
 		"totalSteps":        upgrade.TotalSteps,
 		"currentStepDetail": detail,
 	}
+}
+
+// FullProgress returns the §25.2 canonical progress envelope for the
+// upgrade, including the fields Progress leaves out: percent, etaSeconds,
+// etaMethod, lastProgressAt, and stalledForSeconds. It is the envelope
+// GET /v1/admin/platform/upgrade/status serves (§25.8 line 3496).
+//
+// percent is always derived from the step count (§25.2 line 387). The
+// ETA and stall fields are computed only while the upgrade is active
+// (not paused, not terminal): a paused upgrade is awaiting an explicit
+// operator proceed by design and a terminal one has finished, so neither
+// has a meaningful remaining-time estimate or stall signal (§25.2 line
+// 391; compare the §25.8 line 1733 paused example, which reports
+// etaMethod "none" and stalledForSeconds null despite a populated
+// lastProgressAt). While active, the ETA prefers historical_p50 (once
+// ops_operation_baselines has samples for platform_upgrade) and
+// otherwise falls back to fixed_phase_durations — the two methods §25.8
+// line 3496 names for this endpoint. The step-count percent is deliberately
+// kept out of the operations.Compute() ETA-selection inputs: Compute's
+// generic fallback chain prefers linear_extrapolation over
+// fixed_phase_durations whenever a percent and a start time are both
+// present, which is correct for the size/rate-based kinds that chain
+// serves (backup, restore) but not for platform_upgrade, whose spec'd
+// method chain is historical_p50 then fixed_phase_durations only.
+//
+// spec: §25.2 (progress envelope, lines 357-401), §25.8 line 3496
+// (platform-upgrade progress).
+func (s *Service) FullProgress(ctx context.Context, st State) conventions.Progress {
+	step, detail := st.stepAndDetail()
+	total := upgrade.TotalSteps
+	percent := float64(step) * 100.0 / float64(total)
+
+	p := conventions.Progress{
+		CurrentStep:       string(st.Phase),
+		CurrentStepDetail: detail,
+		CompletedSteps:    &step,
+		TotalSteps:        &total,
+		Percent:           &percent,
+		EtaMethod:         conventions.EtaNone,
+	}
+	if !st.StartedAt.IsZero() {
+		p.StartedAt = st.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if !st.UpdatedAt.IsZero() {
+		p.LastProgressAt = st.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+
+	active := st.Active() && !st.Paused
+	if !active {
+		return p
+	}
+
+	in := operations.ETAInputs{
+		Now:             s.now().UTC(),
+		StartedAt:       st.StartedAt,
+		LastProgressAt:  st.UpdatedAt,
+		ExpectedCadence: operations.ExpectedCadence(operations.KindPlatformUpgrade),
+		FixedPhaseDuration: operations.FixedPhaseDuration(
+			operations.KindPlatformUpgrade, string(st.Phase),
+		),
+	}
+	if s.baselineReader != nil {
+		if p50, sampleSize, found, err := s.baselineReader.Lookup(ctx, string(operations.KindPlatformUpgrade)); err == nil && found {
+			in.HistoricalP50 = p50
+			in.SampleSize = sampleSize
+		}
+	}
+	eta := operations.Compute(in)
+	p.EtaSeconds = eta.EtaSeconds
+	p.EtaConfidence = eta.EtaConfidence
+	p.EtaMethod = eta.EtaMethod
+	p.StalledForSeconds = eta.StalledForSeconds
+	return p
 }
 
 // Store persists the §25.8 platform_upgrade_state singleton. lenny-ops
@@ -284,6 +367,10 @@ type Service struct {
 	// §25.2 ops_operation_baselines table; nil skips the record. spec:
 	// §25.2 line 393.
 	baselines BaselineRecorder
+	// baselineReader looks up the current platform_upgrade baseline for
+	// the FullProgress historical_p50 ETA selection; nil leaves the ETA
+	// chain at fixed_phase_durations (or none).
+	baselineReader BaselineReader
 
 	mu sync.Mutex // serializes the read-modify-write of the singleton
 }
@@ -297,6 +384,19 @@ type Service struct {
 // operation completion").
 type BaselineRecorder interface {
 	RecordCompletion(ctx context.Context, kind string, dur time.Duration) error
+}
+
+// BaselineReader looks up the current §25.2 historical baseline for a
+// kind (the same string-kind seam as BaselineRecorder) so the direct
+// upgrade-status envelope can select the historical_p50 ETA method once
+// ops_operation_baselines has enough platform_upgrade samples. found is
+// false when no completion of the kind has been recorded yet, in which
+// case the caller falls through to fixed_phase_durations.
+//
+// spec: §25.2 line 394 ("a kind with sample_size >= 3 receive[s]
+// etaMethod historical_p50").
+type BaselineReader interface {
+	Lookup(ctx context.Context, kind string) (p50 time.Duration, sampleSize int, found bool, err error)
 }
 
 // Options configures a Service.
@@ -319,6 +419,10 @@ type Options struct {
 	// Baselines records the upgrade's completion duration into the §25.2
 	// historical baseline table. A nil recorder skips it.
 	Baselines BaselineRecorder
+	// BaselineReader looks up the current platform_upgrade baseline so
+	// FullProgress can select historical_p50 once samples exist. A nil
+	// reader leaves the ETA chain at fixed_phase_durations (or none).
+	BaselineReader BaselineReader
 }
 
 // New returns a Service over opts. It panics when Store is nil, which is
@@ -335,7 +439,10 @@ func New(opts Options) *Service {
 	if newID == nil {
 		newID = func() string { return "upgrade-" + uuid.NewString() }
 	}
-	return &Service{store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, drift: opts.DriftManager, now: now, newID: newID, baselines: opts.Baselines}
+	return &Service{
+		store: opts.Store, emitter: opts.Emitter, audit: opts.Audit, drift: opts.DriftManager,
+		now: now, newID: newID, baselines: opts.Baselines, baselineReader: opts.BaselineReader,
+	}
 }
 
 // StartRequest is the POST /v1/admin/platform/upgrade/start body.

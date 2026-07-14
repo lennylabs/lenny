@@ -279,7 +279,8 @@
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier2_component/opsidem/outage_test.go"
       ],
-      "contract": ["tests/tier3_contract/ops_endpoints/..."]
+      "contract": ["tests/tier3_contract/ops_endpoints/..."],
+      "security": ["tests/tier9_security/diagnostics_fix_guardrails_test.go"]
     },
     "tests/tier3_contract/ops_endpoints": {
       "unit": ["pkg/ops/opsserver/..."],
@@ -535,7 +536,9 @@
       "contract": ["tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go", "tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go", "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go"]
     },
     "pkg/ops/doctor": {
-      "unit": ["pkg/ops/doctor/..."]
+      "unit": ["pkg/ops/doctor/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_fix_test.go"],
+      "security": ["tests/tier9_security/diagnostics_fix_guardrails_test.go"]
     },
     "pkg/ops/driftservice": {
       "unit": ["pkg/ops/driftservice/..."],

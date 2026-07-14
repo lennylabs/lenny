@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -59,6 +60,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepg "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/versionsource"
+	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
@@ -1677,8 +1679,10 @@ func buildBaselineStore(pool *pgxpool.Pool) operations.BaselineStore {
 }
 
 // opsBaselineRecorder adapts a §25.2 operations.BaselineStore onto the
-// upgradeservice.BaselineRecorder seam (string kind) so the upgrade
-// orchestrator records the platform_upgrade completion duration without
+// upgradeservice.BaselineRecorder and upgradeservice.BaselineReader seams
+// (string kind) so the upgrade orchestrator records the platform_upgrade
+// completion duration, and looks up the current baseline for the
+// GET /upgrade/status historical_p50 ETA (§25.2 line 393-394), without
 // importing the operations.Kind enum.
 type opsBaselineRecorder struct{ store operations.BaselineStore }
 
@@ -1687,6 +1691,17 @@ func (r opsBaselineRecorder) RecordCompletion(ctx context.Context, kind string, 
 		return nil
 	}
 	return r.store.RecordCompletion(ctx, operations.Kind(kind), dur)
+}
+
+func (r opsBaselineRecorder) Lookup(ctx context.Context, kind string) (p50 time.Duration, sampleSize int, found bool, err error) {
+	if r.store == nil {
+		return 0, 0, false, nil
+	}
+	b, ok, err := r.store.Lookup(ctx, operations.Kind(kind))
+	if err != nil || !ok {
+		return 0, 0, false, err
+	}
+	return b.P50, b.SampleSize, true, nil
 }
 
 // setPlatformUpgradeAvailable is the upgradeservice.AvailabilityGauge
@@ -1751,8 +1766,9 @@ func buildUpgradeService(store upgradeservice.Store, drift *driftservice.Service
 		Audit:   upgradeAuditSink(recorder),
 		// §25.2 line 393: fold the upgrade's completion duration into the
 		// historical baseline table so a later upgrade gets a historical_p50
-		// ETA.
-		Baselines: opsBaselineRecorder{store: baselines},
+		// ETA, and read it back for the GET /upgrade/status progress envelope.
+		Baselines:      opsBaselineRecorder{store: baselines},
+		BaselineReader: opsBaselineRecorder{store: baselines},
 	}
 	if drift != nil {
 		opts.DriftManager = drift
@@ -1845,17 +1861,23 @@ func (c pgConnChecker) HasFreeConnections(context.Context) (bool, string, error)
 }
 
 // buildPreflighter constructs the §25.8 upgrade preflighter over the
-// shared upgrade store (so it sees an in-flight upgrade) and the Postgres
-// connection gate. The platform-health and image-pullability gates are
-// left unconfigured in v1 (the live gateway-health probe and registry HEAD
-// check are documented follow-ons); the preflighter degrades those gates
-// to skipped and still returns the resolved image plan as a preview.
+// shared upgrade store (so it sees an in-flight upgrade), the Postgres
+// connection gate, and the registry image-pullability gate (spec line
+// 3500: a HEAD request to the OCI Distribution manifest endpoint per
+// target image). Every Pullable observation is recorded on the
+// lenny_platform_image_pull_check_duration_seconds histogram (line 3619).
+// The platform-health gate is left unconfigured in v1 (the live
+// gateway-health probe is a documented follow-on); the preflighter
+// degrades that gate to skipped and still returns the resolved image plan
+// as a preview.
 //
 // spec: §25.8 Phase 1 (lines 3496-3503).
-func buildPreflighter(store upgradeservice.Store, pool *pgxpool.Pool) *upgradeservice.Preflighter {
+func buildPreflighter(store upgradeservice.Store, pool *pgxpool.Pool, pullCheckTimeout time.Duration) *upgradeservice.Preflighter {
 	return upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{
-		Store: store,
-		Conns: pgConnChecker{pool: pool},
+		Store:         store,
+		Conns:         pgConnChecker{pool: pool},
+		Images:        upgradeservice.NewRegistryImagePullChecker(pullCheckTimeout),
+		ImageDuration: recordImagePullCheck,
 	})
 }
 
@@ -2124,19 +2146,23 @@ func setPlatformVersionDrift(count int) {
 }
 
 // buildVersionAggregator constructs the §25.8 GET
-// /v1/admin/platform/version/full aggregator over the component sources
-// lenny-ops can reach: the compiled-in lenny-ops build version (always),
-// the gateway binary version (over HTTP, F-25.8.4 GatewayClient.GetVersion
-// call site), the controller Deployment image tag (over the K8s API),
-// and the Postgres schema migration version (over the connection pool).
-// A source the deployment cannot reach degrades its component to
-// unavailable in the report rather than failing the whole aggregation
-// (the §25.8 partial-data degradation model). The CRD-version and
-// Helm-chart-version sources are the documented follow-on additions; the
-// aggregator accepts them as further VersionSource implementations.
+// /v1/admin/platform/version/full aggregator over the six component
+// sources lenny-ops can reach: the compiled-in lenny-ops build version
+// (always), the gateway binary version (over HTTP, F-25.8.4
+// GatewayClient.GetVersion call site), the controller Deployment image
+// tag (over the K8s API), the installed CRDs' `lenny.dev/schema-version`
+// annotation (over the apiextensions API), the deployed Helm release's
+// chart version (from the helm.sh/release.v1 Secret), and the Postgres
+// schema migration version (over the connection pool). A source the
+// deployment cannot reach degrades its component to unavailable in the
+// report rather than failing the whole aggregation (the §25.8
+// partial-data degradation model).
 //
 // spec: §25.8 Version Aggregation (line 3364).
-func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, pool *pgxpool.Pool, clientset *kubernetes.Clientset, namespace string) *upgradeservice.VersionAggregator {
+func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, pool *pgxpool.Pool,
+	clientset *kubernetes.Clientset, apiextClient apiextensionsclientset.Interface,
+	namespace, helmReleaseName string,
+) *upgradeservice.VersionAggregator {
 	sources := []upgradeservice.VersionSource{
 		// lenny-ops is the reference: its current version is the required
 		// version, so it never drifts and anchors the report.
@@ -2152,6 +2178,24 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 	if clientset != nil {
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
 			"controllers", buildVersion, versionsource.Controller(clientset, namespace),
+		))
+		// Helm labels the currently-deployed release's helm.sh/release.v1
+		// Secret in the release namespace; the chart version it reports has
+		// no compiled-in required value (the chart and the binary version
+		// independently, per Chart.yaml), so it is reported for
+		// introspection like postgres-schema.
+		sources = append(sources, upgradeservice.NewFuncVersionSource(
+			"helm-chart", "", versionsource.HelmChart(clientset, namespace, helmReleaseName),
+		))
+	}
+	if apiextClient != nil {
+		// The installed CRDs' lenny.dev/schema-version annotation is
+		// compared against the same CurrentCRDSchemaVersion the §10 line
+		// 443 preflight check and the controllers' own startup self-check
+		// require, so a stale CRD after a `helm upgrade` (Helm does not
+		// update CRDs on upgrade) surfaces as drift here too.
+		sources = append(sources, upgradeservice.NewFuncVersionSource(
+			"crd-schema", preflight.CurrentCRDSchemaVersion, versionsource.CRD(apiextClient),
 		))
 	}
 	if pool != nil {

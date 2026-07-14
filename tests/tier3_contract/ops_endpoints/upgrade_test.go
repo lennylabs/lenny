@@ -254,3 +254,71 @@ func TestPlatformUpgradeStartRequiresIdempotencyKey(t *testing.T) {
 		t.Errorf("phase = %v, want %q", body["phase"], upgrade.Preflight)
 	}
 }
+
+// TestPlatformUpgradeStatusReportsCanonicalProgressEnvelope pins the
+// §25.2/§25.8 progress-envelope contract on GET /upgrade/status: the
+// response's progress object is the full §25.2 canonical envelope, not
+// only the descriptive phase/step fields. The upgrade orchestrator is
+// operator-paced (§25.8): a freshly started upgrade is immediately
+// "awaiting the first proceed", the same paused-steady-state the §25.8
+// line 1733 canonical example depicts (a GatewayRoll upgrade with
+// currentStepDetail "Waiting for operator to call /upgrade/proceed").
+// In that state the envelope reports a numeric percent derived from the
+// step count and a lastProgressAt timestamp, while etaSeconds,
+// etaMethod, and stalledForSeconds carry the "no estimate" values the
+// same canonical example shows (etaMethod "none", etaSeconds and
+// stalledForSeconds null) — present as envelope keys rather than
+// omitted.
+//
+// spec: 25.8 ("GET /v1/admin/platform/upgrade/status and the Operations
+// Inventory (Section 25.4) return the canonical progress envelope
+// (Section 25.2)"; the line 1733 example: a paused platform_upgrade
+// operation with progress.percent 65, progress.etaSeconds null,
+// progress.etaMethod "none", progress.lastProgressAt populated,
+// progress.stalledForSeconds null), 25.2 (percent — "Operations with
+// discrete steps use completedSteps / totalSteps * 100"; lastProgressAt
+// — "when progress last advanced"; stalledForSeconds — "populated when
+// now() - lastProgressAt exceeds the operation kind's expected cadence
+// ... null when advancing normally")
+// diagnosis: The direct upgrade-status endpoint served only the bare
+// phase/step-count fields instead of the full §25.2 canonical progress
+// envelope. An agent that reads percent, etaSeconds, etaMethod, or
+// stalledForSeconds off this endpoint (rather than the Operations
+// Inventory) sees them silently absent instead of populated with the
+// canonical envelope's "no estimate yet" representation.
+func TestPlatformUpgradeStatusReportsCanonicalProgressEnvelope(t *testing.T) {
+	srv := upgradeOpsServer(t)
+	request(t, srv, http.MethodPost, "/v1/admin/platform/upgrade/start", nil,
+		map[string]any{"version": "1.6.0"})
+
+	rec, body := request(t, srv, http.MethodGet, "/v1/admin/platform/upgrade/status", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	prog := upgradeProgressField(t, body)
+
+	percent, ok := prog["percent"].(float64)
+	if !ok {
+		t.Fatalf("progress.percent missing or not numeric: %v", prog["percent"])
+	}
+	wantPercent := 1.0 / float64(upgrade.TotalSteps) * 100
+	if percent < wantPercent-0.01 || percent > wantPercent+0.01 {
+		t.Errorf("progress.percent = %v, want ~%v (completedSteps/totalSteps*100 for step 1 of %d)",
+			percent, wantPercent, upgrade.TotalSteps)
+	}
+
+	if method, _ := prog["etaMethod"].(string); method != "none" {
+		t.Errorf("progress.etaMethod = %q, want %q while awaiting the first proceed", method, "none")
+	}
+	if v, ok := prog["etaSeconds"]; !ok || v != nil {
+		t.Errorf("progress.etaSeconds = %v (present=%v), want the key present and null while awaiting proceed", v, ok)
+	}
+	if v, ok := prog["stalledForSeconds"]; !ok || v != nil {
+		t.Errorf("progress.stalledForSeconds = %v (present=%v), want the key present and null", v, ok)
+	}
+
+	lastProgressAt, ok := prog["lastProgressAt"].(string)
+	if !ok || lastProgressAt == "" {
+		t.Errorf("progress.lastProgressAt missing or empty: %v", prog["lastProgressAt"])
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -136,6 +137,7 @@ func (w *opsWiring) buildDependencies() {
 	// election — a single-process degraded mode for local development.
 	var clientset *kubernetes.Clientset
 	var dynClient dynamic.Interface
+	var apiextClient apiextensionsclientset.Interface
 	if cfg, err := ctrlconfig.GetConfig(); err != nil {
 		log.Printf("lenny-ops: no Kubernetes config (%v); running without leader election", err)
 	} else if cs, err := kubernetes.NewForConfig(cfg); err != nil {
@@ -150,9 +152,20 @@ func (w *opsWiring) buildDependencies() {
 		} else {
 			dynClient = dc
 		}
+		// The §25.8 version-aggregation CRD source reads the
+		// `lenny.dev/schema-version` annotation on the installed CRDs
+		// through the apiextensions clientset; a build failure leaves the
+		// CRD-version component out of the report rather than failing
+		// startup.
+		if ac, err := apiextensionsclientset.NewForConfig(cfg); err != nil {
+			log.Printf("lenny-ops: build apiextensions clientset: %v; CRD-version source disabled", err)
+		} else {
+			apiextClient = ac
+		}
 	}
 	w.clientset = clientset
 	w.dynClient = dynClient
+	w.apiextClient = apiextClient
 
 	// The §25.4 dependency probes feed the readiness signal and the
 	// §25.6 connectivity diagnostic.
