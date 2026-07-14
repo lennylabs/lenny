@@ -3351,11 +3351,17 @@
         "tests/tier3_contract/ops_endpoints/diagnostics_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_schema_test.go",
-        "tests/tier4_integration/diagnostics_test.go"
+        "tests/tier4_integration/diagnostics_test.go",
+        "tests/tier5_e2e_kind/diagnostics_fix_test.go",
+        "tests/tier9_security/diagnostics_fix_guardrails_test.go"
       ],
       "packages": [
         "pkg/ops/diagnostics",
-        "pkg/ops/opsserver"
+        "pkg/ops/opsserver",
+        "pkg/ops/doctor"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/ops-rbac.yaml"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.6 Diagnostic Endpoints. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
