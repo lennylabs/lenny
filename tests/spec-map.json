@@ -1587,6 +1587,7 @@
         "tests/tier3_contract/ocsf_audit/published_schema_test.go",
         "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier4_integration/audit_pipeline_test.go",
+        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
         "tests/tier8_chaos/audit_chain_test.go",
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
         "tests/tier9_security/write_before_issue_failclosed_test.go"
@@ -3178,7 +3179,8 @@
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestOpsSurvivesGatewayOutage",
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestGatewayHealthSummarySurvivesOpsOutage",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
-        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
+        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
+        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF"
       ],
       "packages": [
         "pkg/gateway/externalapi/admin"
