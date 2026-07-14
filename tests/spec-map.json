@@ -1786,7 +1786,8 @@
         "tests/tier2_component/stores/memorystore_preflight_test.go",
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
         "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
-        "tests/tier4_integration/erasure_job_test.go"
+        "tests/tier4_integration/erasure_job_test.go",
+        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable"
       ],
       "packages": [
         "pkg/store",
@@ -3435,6 +3436,7 @@
         "tests/tier2_component/auditstore/scatter_redis_cache_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/audit_deferred_reconcile_test.go",
+        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable",
         "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
       ],
       "packages": [
