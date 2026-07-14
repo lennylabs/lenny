@@ -1845,17 +1845,23 @@ func (c pgConnChecker) HasFreeConnections(context.Context) (bool, string, error)
 }
 
 // buildPreflighter constructs the §25.8 upgrade preflighter over the
-// shared upgrade store (so it sees an in-flight upgrade) and the Postgres
-// connection gate. The platform-health and image-pullability gates are
-// left unconfigured in v1 (the live gateway-health probe and registry HEAD
-// check are documented follow-ons); the preflighter degrades those gates
-// to skipped and still returns the resolved image plan as a preview.
+// shared upgrade store (so it sees an in-flight upgrade), the Postgres
+// connection gate, and the registry image-pullability gate (spec line
+// 3500: a HEAD request to the OCI Distribution manifest endpoint per
+// target image). Every Pullable observation is recorded on the
+// lenny_platform_image_pull_check_duration_seconds histogram (line 3619).
+// The platform-health gate is left unconfigured in v1 (the live
+// gateway-health probe is a documented follow-on); the preflighter
+// degrades that gate to skipped and still returns the resolved image plan
+// as a preview.
 //
 // spec: §25.8 Phase 1 (lines 3496-3503).
-func buildPreflighter(store upgradeservice.Store, pool *pgxpool.Pool) *upgradeservice.Preflighter {
+func buildPreflighter(store upgradeservice.Store, pool *pgxpool.Pool, pullCheckTimeout time.Duration) *upgradeservice.Preflighter {
 	return upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{
-		Store: store,
-		Conns: pgConnChecker{pool: pool},
+		Store:         store,
+		Conns:         pgConnChecker{pool: pool},
+		Images:        upgradeservice.NewRegistryImagePullChecker(pullCheckTimeout),
+		ImageDuration: recordImagePullCheck,
 	})
 }
 

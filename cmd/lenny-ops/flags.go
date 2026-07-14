@@ -73,6 +73,7 @@ type opsFlags struct {
 	registryPullSecret               *string
 	registryRequireDigest            *bool
 	registryOverrides                *string
+	registryPullCheckTimeout         *int
 	opsRollTimeout                   *int
 	gatewayRollTimeout               *int
 	controllerRollTimeout            *int
@@ -306,6 +307,11 @@ func (f *opsFlags) registerUpgradeFlags() {
 	f.registryOverrides = flag.String("registry-overrides", os.Getenv("LENNY_PLATFORM_REGISTRY_OVERRIDES"),
 		"§25.8 platform.registry.overrides as a JSON object mapping component short name to "+
 			"full image reference. Override via LENNY_PLATFORM_REGISTRY_OVERRIDES.")
+	f.registryPullCheckTimeout = flag.Int("registry-pull-check-timeout-seconds",
+		envInt("LENNY_PLATFORM_REGISTRY_PULL_CHECK_TIMEOUT_SECONDS", 10),
+		"§25.8 line 3500 timeout for the upgrade-preflight image-pullability HEAD request "+
+			"(including any anonymous Bearer-token exchange) against the target registry, per image. "+
+			"Override via LENNY_PLATFORM_REGISTRY_PULL_CHECK_TIMEOUT_SECONDS.")
 	// §25.8 platform.upgrade.* roll timeouts for the OpsRoll watchdog.
 	f.opsRollTimeout = flag.Int("ops-roll-timeout-seconds", envInt("LENNY_PLATFORM_OPS_ROLL_TIMEOUT_SECONDS", 600),
 		"§25.8 platform.upgrade.opsRollTimeoutSeconds: the OpsRoll watchdog auto-rollback timeout.")

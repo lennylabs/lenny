@@ -287,7 +287,8 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 		*w.f.registryURL, *w.f.registryPullSecret, *w.f.registryRequireDigest, *w.f.registryOverrides,
 	), w.auditRecorder)
 	// §25.8 upgrade preflight (Phase 1 safety gates) and OpsRoll watchdog.
-	w.upgradePreflighter = buildPreflighter(w.upgradeStore, w.pgPool)
+	w.upgradePreflighter = buildPreflighter(w.upgradeStore, w.pgPool,
+		time.Duration(*w.f.registryPullCheckTimeout)*time.Second)
 	w.upgradeWatchdog = buildWatchdog(w.upgradeSvc, upgradeservice.WatchdogConfig{
 		OpsRollTimeout:        time.Duration(*w.f.opsRollTimeout) * time.Second,
 		GatewayRollTimeout:    time.Duration(*w.f.gatewayRollTimeout) * time.Second,
