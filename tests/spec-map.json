@@ -1586,6 +1586,8 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
         "tests/tier3_contract/ocsf_audit/published_schema_test.go",
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFTranslatedRecordsSatisfyPublishedBaseEventSchema",
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFDeadLetterReceiptSatisfiesPublishedBaseEventSchema",
         "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
@@ -3422,6 +3424,7 @@
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestAdminAuditEventsListItemsSatisfyPublishedBaseEventSchema",
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "pkg/gateway/externalapi/admin/audit_query_filter_test.go::TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707",
         "pkg/gateway/externalapi/admin/audit_scatter_test.go::TestCrossTenantQueryAuditReceiptRecordsCacheAndShards_spec_25_9_3754",
