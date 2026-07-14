@@ -5,17 +5,23 @@
 // Tier-2 component test that exercises the concrete §25.8 version
 // aggregation sources against real backing services: the gateway
 // version over HTTP (an httptest stand-in for GET
-// /v1/admin/platform/version), the controller Deployment image tag over
-// a real kube-apiserver (envtest), and the Postgres schema-migration
-// version over an embedded Postgres. Unit tests cover the pure
-// aggregator; this test pins the SQL query, the Deployment image-tag
-// parse, and the gateway HTTP decode that lenny-ops wires, so a
-// regression in any one of them fails here rather than shipping silently.
+// /v1/admin/platform/version), the controller Deployment image tag, the
+// installed CRDs' lenny.dev/schema-version annotation, and a
+// helm.sh/release.v1 Secret's chart version over a real kube-apiserver
+// (envtest), and the Postgres schema-migration version over an embedded
+// Postgres. Unit tests cover the pure aggregator; this test pins the SQL
+// query, the Deployment image-tag parse, the CRD annotation read, the
+// Helm release Secret decode, and the gateway HTTP decode that
+// lenny-ops wires, so a regression in any one of them fails here rather
+// than shipping silently.
 
 package observability_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,30 +31,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/ops/versionsource"
+	"github.com/lennylabs/lenny/pkg/preflight"
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // spec: §25.8 Version Aggregation — "GET /v1/admin/platform/version/full
 // aggregates: Gateway binary metadata from GatewayClient.GetVersion();
-// Controller Deployment versions from K8s API; Postgres schema version
-// from SELECT version FROM schema_migrations ORDER BY version DESC LIMIT
-// 1. When any component's current version does not match the compiled-in
-// required version, the response includes versionDrift: true and each
-// drifted component includes drift: true and requiredAction."
+// ... Controller Deployment versions from K8s API. CRD versions from
+// K8s API. Helm chart version from K8s API (helm.sh/release.v1 Secret).
+// Postgres schema version from SELECT version FROM schema_migrations
+// ORDER BY version DESC LIMIT 1. When any component's current version
+// does not match the compiled-in required version, the response
+// includes versionDrift: true and each drifted component includes
+// drift: true and requiredAction."
 //
 // diagnosis: a failure means one of the concrete version sources no
 // longer reads its real backing service correctly: the gateway HTTP call
-// or its gatewayVersion decode, the schema_migrations SQL query, or the
-// lenny-controller Deployment image-tag parse. Inspect
-// pkg/ops/versionsource against the gateway version handler, the
-// migrations table shape, and charts/lenny/templates/controller-
-// deployment.yaml container/Deployment names.
+// or its gatewayVersion decode, the schema_migrations SQL query, the
+// lenny-controller Deployment image-tag parse, the CRD
+// lenny.dev/schema-version annotation read, or the helm.sh/release.v1
+// Secret decode. Inspect pkg/ops/versionsource against the gateway
+// version handler, the migrations table shape, charts/lenny/templates/
+// controller-deployment.yaml container/Deployment names, the
+// charts/lenny/crds annotation, and the Helm 3 release-secret encoding
+// (gzip + base64 JSON under the "release" data key).
 func TestVersionAggregationOverRealSources(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
@@ -136,11 +149,47 @@ func TestVersionAggregationOverRealSources(t *testing.T) {
 		t.Fatalf("create lenny-controller Deployment: %v", err)
 	}
 
+	// CRD-version source: envtest.Start already installed the real
+	// charts/lenny/crds manifests (see tests/testinfra/envtest), each
+	// carrying the lenny.dev/schema-version annotation the chart ships
+	// (preflight.CurrentCRDSchemaVersion), so no fixture CRDs are needed.
+	apiextClient, err := apiextensionsclientset.NewForConfig(env.RESTConfig())
+	if err != nil {
+		t.Fatalf("apiextensions client: %v", err)
+	}
+
+	// Helm-chart-version source: a real Secret in the shape Helm 3's
+	// Secret storage backend writes — type helm.sh/release.v1, the
+	// owner/name/status labels the driver selects by, and a "release"
+	// data key holding gzip(json(release))'s base64 text.
+	const helmReleaseName = "test-release"
+	const chartVersion = "3.2.1-test"
+	helmSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sh.helm.release.v1." + helmReleaseName + ".v1",
+			Namespace: ns,
+			Labels: map[string]string{
+				"owner":   "helm",
+				"name":    helmReleaseName,
+				"status":  "deployed",
+				"version": "1",
+			},
+		},
+		Type: corev1.SecretType("helm.sh/release.v1"),
+		Data: map[string][]byte{
+			"release": encodeHelmReleaseSecret(t, chartVersion),
+		},
+	}
+	if _, err := clientset.CoreV1().Secrets(ns).Create(ctx, helmSecret, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create helm.sh/release.v1 secret: %v", err)
+	}
+
 	// Assemble the aggregator over the concrete sources exactly as
 	// lenny-ops wires them: ops anchors the report at buildVersion, the
-	// gateway/controllers sources are required to match buildVersion, and
-	// the schema source carries no required value (it is a migration
-	// counter, reported for introspection).
+	// gateway/controllers/crd-schema sources are required to match their
+	// compiled-in expectation, and the schema and helm-chart sources
+	// carry no required value (a migration counter and an independently
+	// versioned chart respectively), reported for introspection.
 	newAgg := func() *upgradeservice.VersionAggregator {
 		return upgradeservice.NewVersionAggregator(upgradeservice.VersionAggregatorOptions{
 			PlatformVersion: buildVersion,
@@ -150,6 +199,8 @@ func TestVersionAggregationOverRealSources(t *testing.T) {
 				}),
 				upgradeservice.NewFuncVersionSource("gateway", buildVersion, versionsource.Gateway(gw.Client(), gw.URL)),
 				upgradeservice.NewFuncVersionSource("controllers", buildVersion, versionsource.Controller(clientset, ns)),
+				upgradeservice.NewFuncVersionSource("crd-schema", preflight.CurrentCRDSchemaVersion, versionsource.CRD(apiextClient)),
+				upgradeservice.NewFuncVersionSource("helm-chart", "", versionsource.HelmChart(clientset, ns, helmReleaseName)),
 				upgradeservice.NewFuncVersionSource("postgres-schema", "", versionsource.Schema(pool)),
 			},
 		})
@@ -166,6 +217,8 @@ func TestVersionAggregationOverRealSources(t *testing.T) {
 		"ops":             buildVersion,
 		"gateway":         buildVersion,
 		"controllers":     buildVersion,
+		"crd-schema":      preflight.CurrentCRDSchemaVersion,
+		"helm-chart":      chartVersion,
 		"postgres-schema": "42",
 	} {
 		c, ok := comps[name]
@@ -186,9 +239,12 @@ func TestVersionAggregationOverRealSources(t *testing.T) {
 		t.Errorf("DriftCount = %d, want 0", report.DriftCount)
 	}
 
-	// Drift: point the controller Deployment at an older image tag. The
-	// §25.8 contract requires versionDrift: true and the drifted
-	// component to carry drift: true and a requiredAction.
+	// Drift: point the controller Deployment at an older image tag, and
+	// stamp every installed CRD's schema-version annotation to a stale
+	// value (the realistic §10 line 438 "Helm does not update CRDs on
+	// helm upgrade" scenario — every CRD stays uniformly stale, not one
+	// out of several). The §25.8 contract requires versionDrift: true and
+	// each drifted component to carry drift: true and a requiredAction.
 	dep, err = clientset.AppsV1().Deployments(ns).Get(ctx, "lenny-controller", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get Deployment for update: %v", err)
@@ -196,6 +252,16 @@ func TestVersionAggregationOverRealSources(t *testing.T) {
 	dep.Spec.Template.Spec.Containers[0].Image = "registry.example.com/lenny-controllers:1.0.0"
 	if _, err := clientset.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("update Deployment image: %v", err)
+	}
+	for _, name := range preflight.LennyCRDNames {
+		crd, err := apiextClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("get CRD %q for update: %v", name, err)
+		}
+		crd.Annotations[preflight.CRDSchemaVersionAnnotation] = "0"
+		if _, err := apiextClient.ApiextensionsV1().CustomResourceDefinitions().Update(ctx, crd, metav1.UpdateOptions{}); err != nil {
+			t.Fatalf("stamp stale schema-version on CRD %q: %v", name, err)
+		}
 	}
 
 	drifted := newAgg().Aggregate(ctx)
@@ -210,17 +276,65 @@ func TestVersionAggregationOverRealSources(t *testing.T) {
 	if ctrl.RequiredAction == "" {
 		t.Errorf("controllers: RequiredAction empty, want a drift remediation action")
 	}
+	crdSchema := dc["crd-schema"]
+	if !crdSchema.Available || crdSchema.Current != "0" {
+		t.Fatalf("crd-schema after annotation change: Available=%v Current=%q, want available \"0\"", crdSchema.Available, crdSchema.Current)
+	}
+	if !crdSchema.Drift {
+		t.Errorf("crd-schema: Drift = false, want true (current 0 != required %s)", preflight.CurrentCRDSchemaVersion)
+	}
+	if crdSchema.RequiredAction == "" {
+		t.Errorf("crd-schema: RequiredAction empty, want a drift remediation action")
+	}
 	if !drifted.VersionDrift {
-		t.Errorf("VersionDrift = false, want true after controller drift")
+		t.Errorf("VersionDrift = false, want true after controller and CRD drift")
 	}
-	if drifted.DriftCount != 1 {
-		t.Errorf("DriftCount = %d, want 1 (only controllers drifted)", drifted.DriftCount)
+	if drifted.DriftCount != 2 {
+		t.Errorf("DriftCount = %d, want 2 (controllers and crd-schema drifted)", drifted.DriftCount)
 	}
-	// The schema source carries no required value, so it never drifts
-	// even though "42" does not equal the build version.
+	// The schema and helm-chart sources carry no required value, so
+	// neither ever drifts even though their reported values do not equal
+	// the build version.
 	if dc["postgres-schema"].Drift {
 		t.Errorf("postgres-schema drifted; a source with no required version must not drift")
 	}
+	if dc["helm-chart"].Drift {
+		t.Errorf("helm-chart drifted; a source with no required version must not drift")
+	}
+	if dc["helm-chart"].Current != chartVersion {
+		t.Errorf("helm-chart: Current = %q, want %q (unaffected by the controller/CRD drift)", dc["helm-chart"].Current, chartVersion)
+	}
+}
+
+// encodeHelmReleaseSecret builds the base64(gzip(json)) payload Helm 3's
+// Secret storage backend writes under a helm.sh/release.v1 Secret's
+// "release" data key, carrying only the chart.metadata.version field the
+// §25.8 Helm-chart-version source reads.
+func encodeHelmReleaseSecret(t *testing.T, chartVersion string) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"name": "test-release",
+		"info": map[string]any{"status": "deployed"},
+		"chart": map[string]any{
+			"metadata": map[string]any{
+				"name":    "lenny",
+				"version": chartVersion,
+			},
+		},
+		"version": 1,
+	})
+	if err != nil {
+		t.Fatalf("marshal fake helm release: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gz := gzip.NewWriter(&gzBuf)
+	if _, err := gz.Write(body); err != nil {
+		t.Fatalf("gzip fake helm release: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+	return []byte(base64.StdEncoding.EncodeToString(gzBuf.Bytes()))
 }
 
 // byName indexes components by their Name for assertion lookup.

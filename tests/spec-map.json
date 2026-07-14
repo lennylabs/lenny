@@ -1586,6 +1586,8 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
         "tests/tier3_contract/ocsf_audit/published_schema_test.go",
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFTranslatedRecordsSatisfyPublishedBaseEventSchema",
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFDeadLetterReceiptSatisfiesPublishedBaseEventSchema",
         "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier4_integration/audit_pipeline_test.go",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
@@ -3351,11 +3353,17 @@
         "tests/tier3_contract/ops_endpoints/diagnostics_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_schema_test.go",
-        "tests/tier4_integration/diagnostics_test.go"
+        "tests/tier4_integration/diagnostics_test.go",
+        "tests/tier5_e2e_kind/diagnostics_fix_test.go",
+        "tests/tier9_security/diagnostics_fix_guardrails_test.go"
       ],
       "packages": [
         "pkg/ops/diagnostics",
-        "pkg/ops/opsserver"
+        "pkg/ops/opsserver",
+        "pkg/ops/doctor"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/ops-rbac.yaml"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.6 Diagnostic Endpoints. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
@@ -3397,7 +3405,9 @@
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
-        "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff"
+        "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
+        "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
+        "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry"
       ],
       "packages": [
         "pkg/upgrade",
@@ -3414,6 +3424,7 @@
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestAdminAuditEventsListItemsSatisfyPublishedBaseEventSchema",
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "pkg/gateway/externalapi/admin/audit_query_filter_test.go::TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707",
         "pkg/gateway/externalapi/admin/audit_scatter_test.go::TestCrossTenantQueryAuditReceiptRecordsCacheAndShards_spec_25_9_3754",
@@ -3434,14 +3445,17 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/drift/drift_test.go",
+        "pkg/ops/driftservice/gatewayreader/gatewayreader_test.go",
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/drift_reconcile_test.go",
+        "tests/tier4_integration/drift_gatewayreader_http_test.go::TestGatewayReaderRunningStateAgainstLiveGatewayE2E",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
-        "pkg/ops/driftservice"
+        "pkg/ops/driftservice",
+        "pkg/ops/driftservice/gatewayreader"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.10 Configuration Drift Detection. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
