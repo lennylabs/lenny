@@ -323,8 +323,10 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 	// tracker is already an operations.Source; the §25.11 restore adapter
 	// projects ops_restore_state rows under kind restore so a running or
 	// failed restore appears on GET /v1/admin/operations alongside its own
-	// status endpoint. The backup, idempotency, and webhook-delivery kinds
-	// plug in as their subsystems expose enumeration.
+	// status endpoint; the §25.11 backup adapter projects ops_backups rows
+	// under kind backup (running/verifying) and backup_verification
+	// (verifying). The idempotency and webhook-delivery kinds plug in as
+	// their subsystems expose enumeration.
 	// spec: §25.4 (Operations Inventory `resources.audit`) — the
 	// gateway-resident §25.9 audit-events query the audit link targets is
 	// joined to the gateway base URL so the discovery hop resolves against
@@ -335,6 +337,7 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 		opsinventory.NewEscalationSource(w.escalationSvc, gatewayURL),
 		opsinventory.NewUpgradeSource(w.upgradeSvc, gatewayURL),
 		opsinventory.NewRestoreSource(w.backupSvc, gatewayURL),
+		opsinventory.NewBackupSource(w.backupSvc, gatewayURL),
 		w.driftSvc.ReconcileSource(),
 	)
 	// §25.2 lines 357-396: enrich every in-progress operation's Progress
