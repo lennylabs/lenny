@@ -3199,6 +3199,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsDegradedToHealthyOnFirstSampleTransition",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
