@@ -3230,7 +3230,8 @@
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformConfigRedactionWireContract",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
-        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
+        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey"
       ],
       "packages": [
         "pkg/gateway/operability/health",
