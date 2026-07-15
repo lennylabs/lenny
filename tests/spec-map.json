@@ -3184,6 +3184,7 @@
         "tests/tier9_security/ops_agent_pod_boundary_test.go::TestOpsUnreachableFromAgentPod_spec_25_1",
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestOpsSurvivesGatewayOutage",
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestGatewayHealthSummarySurvivesOpsOutage",
+        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF"
@@ -3203,7 +3204,8 @@
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
-        "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist"
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
+        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy"
       ],
       "packages": [
         "pkg/ops/conventions"

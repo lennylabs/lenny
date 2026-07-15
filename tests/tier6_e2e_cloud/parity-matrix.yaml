@@ -142,3 +142,17 @@ capabilities:
       gke: planned
       eks: planned
       aks: planned
+
+  # lenny-ops operability surface: the chart-deployed lenny-ops
+  # Deployment is Ready and its /readyz + /v1/admin/diagnostics/
+  # connectivity responses report Postgres and the Kubernetes API (and,
+  # when the cloud install is wired to a managed cache, Redis) as
+  # reachable from outside the cluster. Exercised by
+  # TestCloudOpsSurfaceHealthy against the managed RDS / ElastiCache
+  # provisioning path on AWS; no provider run has validated it live yet.
+  - name: ops_operability_surface
+    spec_section: "25.1"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
