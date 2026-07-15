@@ -3548,7 +3548,8 @@
       "tests": [
         "tests/tier8_chaos/ops_survives_gateway_outage_test.go::TestOpsSurfaceSurvivesGatewayOutageEndToEnd",
         "tests/tier4_integration/ops_dual_store_degraded_test.go::TestOpsDualStoreDegradedInMemoryFallback",
-        "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown"
+        "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
+        "tests/tier4_integration/webhook_dual_outage_buffer_delivery_test.go::TestWebhookDeliveredFromGatewayBufferDuringDualOutage"
       ],
       "packages": [],
       "blocked_until_phase": "14",
