@@ -170,6 +170,11 @@
       "unit": ["pkg/audit/..."],
       "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
     },
+    "pkg/audit/ocsf": {
+      "unit": ["pkg/audit/ocsf/..."],
+      "contract": ["tests/tier3_contract/ocsf_audit/..."],
+      "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
+    },
     "pkg/circuitbreaker": {
       "unit": ["pkg/circuitbreaker/..."],
       "component": ["tests/tier2_component/policy/..."],
@@ -411,7 +416,8 @@
     "charts/lenny/": {
       "static": [
         "charts/lenny/tests/...",
-        "tests/tier0_static/helm_lint_test.go"
+        "tests/tier0_static/helm_lint_test.go",
+        "tests/tier0_static/airgap_registry_render_test.go"
       ],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
@@ -561,7 +567,8 @@
       "security": ["tests/tier9_security/event_webhook_ssrf_test.go"]
     },
     "pkg/ops/gateway": {
-      "unit": ["pkg/ops/gateway/..."]
+      "unit": ["pkg/ops/gateway/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/event_buffer_fanout_test.go"]
     },
     "pkg/ops/mcp": {
       "unit": ["pkg/ops/mcp/..."],

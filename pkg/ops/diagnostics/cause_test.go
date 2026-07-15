@@ -16,6 +16,19 @@ func TestClassifyPodFailureOOM(t *testing.T) {
 	}
 }
 
+func TestClassifyPodFailureExit137WithoutOOMReason(t *testing.T) {
+	// spec: §25.6 (cause-chain cross-reference: "exit code 137 + OOM
+	// reason → OOM_KILLED"). The OOM reason is a required conjunct: a
+	// container terminated with exit code 137 but no OOM reason (for
+	// example reported as reason=Error) does not satisfy the OOM
+	// cross-reference and classifies as the generic POD_CRASH. Exit code
+	// 137 alone does not promote a failure to OOM_KILLED.
+	got, ok := diagnostics.ClassifyPodFailure(diagnostics.Signals{ExitCode: 137, OOMKilled: false})
+	if !ok || got != diagnostics.CategoryPodCrash {
+		t.Errorf("ClassifyPodFailure(exit 137, no OOM reason) = %q, %v; want POD_CRASH, true", got, ok)
+	}
+}
+
 func TestClassifyPodFailureSetupCommand(t *testing.T) {
 	// §25.6: exit code 1 during the setup phase is a setup-command failure.
 	got, ok := diagnostics.ClassifyPodFailure(diagnostics.Signals{ExitCode: 1, InSetupPhase: true})

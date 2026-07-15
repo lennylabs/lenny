@@ -193,6 +193,78 @@ func TestRecommendationsPostRestartDegradedEnvelope(t *testing.T) {
 	}
 }
 
+// TestRecommendationsDegradedToHealthyOnFirstSampleTransition pins the
+// §25.2 canonical-envelope state transition against one long-lived
+// service instance: the same WindowStore and CapacityService serve the
+// endpoint twice, first while every ring buffer is empty and again
+// immediately after one rule's source metric records a sample. The
+// envelope must flip from degraded to healthy across that single
+// session, distinct from the sibling tests that only pin each state in
+// isolation against a freshly constructed service.
+//
+// spec: §25.2 (Omitted when healthy) — "an endpoint whose data quality
+// also depends on in-process history reports \"level\": \"degraded\"
+// while it holds no history at all and returns to \"level\": \"healthy\"
+// once any of its rules records a sample".
+// diagnosis: a failure means the recommendations handler's degradation
+// envelope does not actually flip when the backing store gains its
+// first sample — a stale-envelope, memoization, or marshal/omitempty
+// regression that a fresh-per-test harness would not catch because it
+// never observes the same service instance across the transition.
+func TestRecommendationsDegradedToHealthyOnFirstSampleTransition(t *testing.T) {
+	store := recommendations.NewWindowStore(7 * 24 * time.Hour)
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: fixedClock}).
+		WithRecommendations(recommendations.NewCapacityService(store))
+
+	// Before any sample is recorded, the store is empty and the envelope
+	// reports degraded.
+	rr, raw := get(t, router, "/v1/admin/recommendations")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("pre-sample: status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+	deg, ok := raw["degradation"].(map[string]any)
+	if !ok {
+		t.Fatalf("pre-sample: body missing §25.2 `degradation` envelope: %v", raw)
+	}
+	if deg["level"] != string(conventions.DegradationDegraded) {
+		t.Fatalf("pre-sample: degradation.level = %v, want %q", deg["level"], conventions.DegradationDegraded)
+	}
+	if recs, ok := raw["recommendations"].([]any); !ok || len(recs) != 0 {
+		t.Errorf("pre-sample: recommendations = %v, want an empty array", raw["recommendations"])
+	}
+
+	// Record one sample for a rule's source metric, at a value that
+	// stays under the rule's threshold so the transition under test is
+	// isolated to the envelope, not a newly triggered recommendation.
+	store.Record("lenny_gateway_cpu_utilization_ratio", nil, 0.10)
+
+	// The same router/service/store now reports healthy on the very next
+	// request.
+	rr, raw = get(t, router, "/v1/admin/recommendations")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("post-sample: status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+	deg, ok = raw["degradation"].(map[string]any)
+	if !ok {
+		t.Fatalf("post-sample: body missing §25.2 `degradation` envelope: %v", raw)
+	}
+	if deg["level"] != string(conventions.DegradationHealthy) {
+		t.Errorf("post-sample: degradation.level = %v, want %q", deg["level"], conventions.DegradationHealthy)
+	}
+	if _, present := deg["warnings"]; present {
+		t.Errorf("post-sample: degradation.warnings should be omitted once healthy, got %v", deg["warnings"])
+	}
+
+	// The production type round-trips both states faithfully.
+	var resp recommendations.RecommendationsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode RecommendationsResponse: %v", err)
+	}
+	if resp.Degradation == nil || resp.Degradation.Level != conventions.DegradationHealthy {
+		t.Errorf("decoded response degradation = %+v, want healthy", resp.Degradation)
+	}
+}
+
 // TestRecommendationsUnknownCategoryErrorEnvelope pins the §25.3
 // UNKNOWN_RECOMMENDATION_CATEGORY 400 against the §25.2 canonical error
 // envelope: a `code`/`category`/`message`/`retryable` object under a

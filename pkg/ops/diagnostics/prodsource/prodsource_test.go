@@ -156,6 +156,55 @@ func TestSourceSessionNoPodNoDegradation_spec_25_6_2890(t *testing.T) {
 	}
 }
 
+// TestSourceSessionSetupCommandFailed drives the §25.6 session cause
+// chain for a session whose workspace setup command exited non-zero,
+// reproducing the state the gateway persists for that failure: the
+// session row carries the §7.3 terminal reason "setup_command_failed"
+// (failure_class "runtime", per failureClassForReason), it was never
+// assigned a pod that carries a terminated exit expressing the setup
+// failure, and no reader records a §25.6 setup-phase signal. The §25.6
+// cause chain must classify SETUP_COMMAND_FAILED rather than leaving the
+// failure unexplained or reporting a bare POD_CRASH.
+//
+// This is skipped because the production data source cannot produce the
+// classification end to end: the §25.6 cross-reference derives
+// SETUP_COMMAND_FAILED from "exit code 1 + setup phase", but neither the
+// Postgres reader (agent_pod_state has no setup-phase column) nor the
+// Kubernetes reader populates the setup-phase signal, and the
+// session-state cross-reference maps only the budget and credential
+// terminal reasons. Which production signal identifies the setup phase
+// is an open spec/product decision.
+//
+// spec: §25.6 (cause chain: "exit code 1 + setup phase →
+// SETUP_COMMAND_FAILED"; "the same fields (exit code, OOM flag,
+// container state) are available from both sources"), §7.3
+// (setup_command_failed non-retryable terminal reason).
+func TestSourceSessionSetupCommandFailed_spec_25_6(t *testing.T) {
+	t.Skip("SETUP_COMMAND_FAILED is unreachable through the production data source: no reader populates the §25.6 setup-phase signal and the session-state cross-reference does not map the setup_command_failed terminal reason; blocked on the spec/product decision on which production signal identifies the setup phase")
+
+	src := &Source{PG: &fakePG{session: SessionRow{
+		SessionID: "s-setup", State: "failed",
+		FailureClass: "runtime", FailureReason: "setup_command_failed",
+		Found: true,
+	}}}
+	diag, err := diagnostics.NewService(src).DiagnoseSession(context.Background(), "s-setup")
+	if err != nil {
+		t.Fatalf("DiagnoseSession: %v", err)
+	}
+	setupFound := false
+	for _, e := range diag.CauseChain {
+		switch e.Category {
+		case diagnostics.CategorySetupCommandFailed:
+			setupFound = true
+		case diagnostics.CategoryPodCrash:
+			t.Fatalf("setup-command failure misclassified as POD_CRASH: %+v", diag.CauseChain)
+		}
+	}
+	if !setupFound {
+		t.Fatalf("want SETUP_COMMAND_FAILED in the cause chain, got %+v", diag.CauseChain)
+	}
+}
+
 // TestSourceSessionNilPG — with no Postgres the session diagnosis reports
 // not-found (cold start) rather than panicking. spec: §25.6 line 2885.
 func TestSourceSessionNilPG_spec_25_6_2885(t *testing.T) {
@@ -344,6 +393,60 @@ func TestSourceSessionPostgresUnreachableKubernetesFallback_spec_25_6_2918(t *te
 	// diagnosis is unavailable (the HTTP layer maps this to 503).
 	both := &Source{PG: &fakePG{sessionErr: errors.New("connection refused")}}
 	if _, err := both.Session(context.Background(), "s1"); err == nil {
+		t.Fatalf("want an unavailable error when both Postgres and Kubernetes are unreachable")
+	}
+}
+
+// TestSourcePoolPostgresUnreachableKubernetesFallback pins the §25.6 pool
+// diagnosis Postgres-unreachable Kubernetes fallback: when the
+// agent_pod_state read fails, pool diagnosis must list the pool's pods via
+// the Kubernetes API (label selector lenny.dev/pool={name}) and rebuild the
+// PodCountBreakdown from pod state, returning a partial result whose
+// degradation envelope reports actualSource "kubernetes" and primarySource
+// "postgres", rather than propagating the raw Postgres error (which the HTTP
+// layer maps to 500). When both Postgres and Kubernetes are unreachable the
+// diagnosis is unavailable and the HTTP layer maps it to 503.
+//
+// This test is skipped: the production Source implements no list-by-pool
+// fallback, and building it faithfully is blocked on an unresolved
+// cross-section contradiction. The spec derives the four-bucket breakdown
+// (Warming, Idle, Claimed, Failed) from .status.phase and a
+// lenny.dev/pod-state label, but the platform stamps no such label. It
+// stamps the coarse lenny.dev/state label (pkg/sandbox/state), which carries
+// only idle, active, and draining: warming and failed carry no label and
+// claimed collapses into active, so the coarse label plus pod phase cannot
+// reconstruct the four buckets. Un-skip once the platform records a pod-state
+// label vocabulary the K8s fallback can key on to rebuild the breakdown.
+//
+// spec: §25.6 lines 2899 (K8s fallback: list pods by lenny.dev/pool={name},
+// derive the state breakdown from .status.phase and lenny.dev/pod-state),
+// 2918 (Postgres unreachable → 207 DIAGNOSTICS_PARTIAL,
+// degradation.actualSource="kubernetes", primarySource="postgres"), 2922
+// (both Postgres and Kubernetes unreachable → 503).
+func TestSourcePoolPostgresUnreachableKubernetesFallback_spec_25_6_2899(t *testing.T) {
+	t.Skip("Postgres-unreachable Kubernetes fallback for the pool pod-count breakdown is unimplemented: the spec derives the breakdown from a lenny.dev/pod-state label that no product code stamps (the platform stamps only the coarse lenny.dev/state, which cannot reconstruct the Warming/Idle/Claimed/Failed buckets); blocked on the pod-state label-vocabulary reconciliation")
+
+	// Postgres unreachable, Kubernetes reachable: the pod-count breakdown is
+	// served from the K8s API as a partial result.
+	s := &Source{PG: &fakePG{countsErr: errors.New("connection refused")}}
+	rec, err := s.Pool(context.Background(), "acme-pool")
+	if err != nil {
+		t.Fatalf("want K8s fallback, got propagated error: %v", err)
+	}
+	if !rec.Found {
+		t.Fatalf("want the pool served from the Kubernetes fallback, got not-found")
+	}
+	if rec.Degradation == nil {
+		t.Fatalf("want a degradation envelope on the Postgres-unreachable fallback")
+	}
+	if rec.Degradation.ActualSource != "kubernetes" || rec.Degradation.PrimarySource != "postgres" {
+		t.Fatalf("want actualSource=kubernetes primarySource=postgres, got %+v", rec.Degradation)
+	}
+
+	// Both Postgres and Kubernetes unreachable: no fallback source, so the
+	// diagnosis is unavailable (the HTTP layer maps this to 503).
+	both := &Source{PG: &fakePG{countsErr: errors.New("connection refused")}}
+	if _, err := both.Pool(context.Background(), "acme-pool"); err == nil {
 		t.Fatalf("want an unavailable error when both Postgres and Kubernetes are unreachable")
 	}
 }

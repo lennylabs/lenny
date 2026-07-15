@@ -49,6 +49,31 @@ func TestSignalsFromPodOOM_spec_25_6_2899(t *testing.T) {
 	}
 }
 
+// TestSignalsFromPodExit137NoOOMReason maps a container terminated with
+// exit code 137 but a non-OOM reason (reason=Error) to the exit code
+// without setting the OOM signal, so classification yields the generic
+// POD_CRASH. The §25.6 cause-chain cross-reference requires the OOM
+// reason ("exit code 137 + OOM reason → OOM_KILLED"); exit code 137
+// alone does not participate in OOM classification. spec: §25.6 line
+// 2896 (cause-chain cross-reference), line 2893 (reads terminated exit
+// code and reason).
+func TestSignalsFromPodExit137NoOOMReason_spec_25_6_2896(t *testing.T) {
+	pod := &corev1.Pod{Status: corev1.PodStatus{
+		ContainerStatuses: []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 137, Reason: "Error",
+			}},
+		}},
+	}}
+	sig := signalsFromPod(pod)
+	if sig.ExitCode != 137 || sig.OOMKilled {
+		t.Fatalf("want exit 137 with OOM signal unset, got %+v", sig)
+	}
+	if got, ok := diagnostics.ClassifyPodFailure(sig); !ok || got != diagnostics.CategoryPodCrash {
+		t.Fatalf("exit 137 without OOM reason classifies as %q (ok=%v), want POD_CRASH", got, ok)
+	}
+}
+
 // TestSignalsFromPodImagePull maps an image-pull waiting reason to the
 // image-pull signal. spec: §25.6 lines 2899-2906.
 func TestSignalsFromPodImagePull_spec_25_6_2899(t *testing.T) {

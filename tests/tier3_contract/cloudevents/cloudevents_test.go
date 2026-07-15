@@ -17,11 +17,16 @@
 package cloudevents_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/alerting/rules"
+	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
@@ -232,5 +237,94 @@ func TestCloudEventsInlineOCSFWireForm(t *testing.T) {
 	}
 	if got := asObject["class_uid"]; got == nil {
 		t.Errorf("inline OCSF record lost its class_uid field on the wire: %s", raw)
+	}
+}
+
+// alwaysActiveExpr is an evaluator.ExprEvaluator whose Active call always
+// reports true, driving a rule straight into StateFiring on the first
+// tick after its For window elapses.
+type alwaysActiveExpr struct{}
+
+func (alwaysActiveExpr) Active(context.Context, string) (bool, error) { return true, nil }
+
+// spec: 25.17 (End-to-End Operational Example, Step 1: Observe — Event
+// Arrives)
+// diagnosis: §25.17 Step 1 shows the WarmPoolExhausted alert_fired
+// event's `data` payload carrying severity, alertName, labels, runbook,
+// and a suggestedAction object with action, endpoint, body, and
+// reasoning. A payload-field rename or drop here breaks the watchdog's
+// Step 2 decision step, which reads these fields directly off the SSE
+// event without a follow-up call.
+func TestCloudEventsAlertFiredPayloadFields(t *testing.T) {
+	var rule rules.Rule
+	for _, r := range rules.Catalog() {
+		if r.Name == "WarmPoolExhausted" {
+			rule = r
+			break
+		}
+	}
+	if rule.Name == "" {
+		t.Fatal("WarmPoolExhausted not in the §16.5 catalog")
+	}
+
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "gw-7f4c2a1e")
+	onFired, onResolved := evaluator.EmitCallbacks(evaluator.EventEmitOptions{
+		Emitter: em,
+		Source:  "//lenny.dev/gateway/gw-7f4c2a1e",
+	})
+	ev := evaluator.New([]rules.Rule{rule}, alwaysActiveExpr{}, evaluator.Options{
+		OnFired: onFired, OnResolved: onResolved,
+	})
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ev.Tick(context.Background(), t0)
+	// The rule's For is 60s; the second tick past that sustain window
+	// crosses the pending -> firing edge and emits alert_fired.
+	ev.Tick(context.Background(), t0.Add(2*time.Minute))
+
+	page := buf.Query(0, events.EventFilter{EventType: "alert_fired"}, 100)
+	if len(page.Events) != 1 {
+		t.Fatalf("alert_fired emitted %d events, want 1", len(page.Events))
+	}
+	envelope := page.Events[0].Event
+	if envelope.Type != "dev.lenny.alert_fired" {
+		t.Errorf("type = %q, want dev.lenny.alert_fired", envelope.Type)
+	}
+
+	var data struct {
+		Severity        string `json:"severity"`
+		AlertName       string `json:"alertName"`
+		Runbook         string `json:"runbook"`
+		SuggestedAction *struct {
+			Action    string          `json:"action"`
+			Endpoint  string          `json:"endpoint"`
+			Body      json.RawMessage `json:"body,omitempty"`
+			Reasoning string          `json:"reasoning"`
+		} `json:"suggestedAction"`
+	}
+	if err := json.Unmarshal(envelope.Data, &data); err != nil {
+		t.Fatalf("alert_fired data payload: %v", err)
+	}
+
+	if data.Severity != "critical" {
+		t.Errorf("data.severity = %q, want critical", data.Severity)
+	}
+	if data.AlertName != "WarmPoolExhausted" {
+		t.Errorf("data.alertName = %q, want WarmPoolExhausted", data.AlertName)
+	}
+	if data.Runbook != "warm-pool-exhaustion" {
+		t.Errorf("data.runbook = %q, want warm-pool-exhaustion", data.Runbook)
+	}
+	if data.SuggestedAction == nil {
+		t.Fatal("data.suggestedAction is absent, want a well-formed remediation hint")
+	}
+	if data.SuggestedAction.Action != "SCALE_WARM_POOL" {
+		t.Errorf("data.suggestedAction.action = %q, want SCALE_WARM_POOL", data.SuggestedAction.Action)
+	}
+	if data.SuggestedAction.Endpoint == "" {
+		t.Error("data.suggestedAction.endpoint is empty, want the remediation PUT route")
+	}
+	if data.SuggestedAction.Reasoning == "" {
+		t.Error("data.suggestedAction.reasoning is empty, want the human-readable rationale")
 	}
 }
