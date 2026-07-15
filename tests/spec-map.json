@@ -3516,7 +3516,8 @@
         "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
         "pkg/ops/mcp/naming_test.go::TestToolNamesFollowLennyDomainActionPattern_spec_25_12",
-        "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas"
+        "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",
+        "tests/tier8_chaos/mcp_management_gateway_outage_test.go::TestMCPManagementGatewayOwnedToolDuringGatewayOutage"
       ],
       "packages": [
         "pkg/ops/mcp"
