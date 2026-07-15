@@ -567,7 +567,8 @@
       "security": ["tests/tier9_security/event_webhook_ssrf_test.go"]
     },
     "pkg/ops/gateway": {
-      "unit": ["pkg/ops/gateway/..."]
+      "unit": ["pkg/ops/gateway/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/event_buffer_fanout_test.go"]
     },
     "pkg/ops/mcp": {
       "unit": ["pkg/ops/mcp/..."],

@@ -3184,6 +3184,7 @@
         "tests/tier9_security/ops_agent_pod_boundary_test.go::TestOpsUnreachableFromAgentPod_spec_25_1",
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestOpsSurvivesGatewayOutage",
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestGatewayHealthSummarySurvivesOpsOutage",
+        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF"
@@ -3199,10 +3200,12 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsDegradedToHealthyOnFirstSampleTransition",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
-        "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist"
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
+        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy"
       ],
       "packages": [
         "pkg/ops/conventions"
@@ -3229,7 +3232,8 @@
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformConfigRedactionWireContract",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
-        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
+        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey"
       ],
       "packages": [
         "pkg/gateway/operability/health",
@@ -3298,7 +3302,10 @@
         "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsRunningRestore",
         "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsFailedRestore",
         "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsRunningBackup",
-        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsVerifyingBackup"
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsVerifyingBackup",
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress"
       ],
       "packages": [
         "cmd/lenny-ops"
@@ -3509,7 +3516,8 @@
         "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
         "pkg/ops/mcp/naming_test.go::TestToolNamesFollowLennyDomainActionPattern_spec_25_12",
-        "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas"
+        "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",
+        "tests/tier8_chaos/mcp_management_gateway_outage_test.go::TestMCPManagementGatewayOwnedToolDuringGatewayOutage"
       ],
       "packages": [
         "pkg/ops/mcp"
@@ -3570,11 +3578,12 @@
       "title": "End-to-End Operational Example",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
+        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields"
       ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review."
+      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review. The tier-3 contract test pins the Step 1 alert_fired event's `data` payload — severity, alertName, runbook, and a well-formed suggestedAction (action, endpoint, reasoning) — produced end to end through the real §16.5 WarmPoolExhausted rule and the evaluator's EmitCallbacks wiring, so a payload-field rename or drop breaks the test before it reaches a watchdog agent."
     },
     "26": {
       "title": "Reference Runtime Catalog",
