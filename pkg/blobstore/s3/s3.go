@@ -81,6 +81,16 @@ type Config struct {
 	// SSEKeyResolver, when set, picks the per-object SSE-KMS key id.
 	// A nil resolver lets the bucket default apply.
 	SSEKeyResolver SSEKeyResolver
+
+	// UsePathStyle forces path-style addressing (`host/bucket/key`)
+	// instead of the SDK's default virtual-hosted style
+	// (`bucket.host/key`). Production AWS S3 leaves this false. An
+	// S3-compatible object store reached by IP or bare host (MinIO,
+	// LocalStack) cannot place the bucket in a DNS label, so it requires
+	// path-style addressing; the presign client inherits the setting so
+	// a §13.2 grant against such a backend is signed for the path-style
+	// URL the grantee will call.
+	UsePathStyle bool
 }
 
 // Store implements blobstore.Store + blobstore.Tombstoner over S3.
@@ -199,7 +209,9 @@ func New(cfg Config) (*Store, error) {
 	if _, err := cfg.AWSConfig.Credentials.Retrieve(context.Background()); err != nil {
 		return nil, fmt.Errorf("blobstore/s3: resolve AWS credentials: %w", err)
 	}
-	cli := s3.NewFromConfig(cfg.AWSConfig)
+	cli := s3.NewFromConfig(cfg.AWSConfig, func(o *s3.Options) {
+		o.UsePathStyle = cfg.UsePathStyle
+	})
 	return &Store{
 		client:   cli,
 		presign:  s3.NewPresignClient(cli),

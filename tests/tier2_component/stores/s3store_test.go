@@ -31,22 +31,17 @@ import (
 
 func startS3Store(t *testing.T) *s3.Store {
 	t.Helper()
-	// pkg/blobstore/s3 constructs its client with s3.NewFromConfig and no
-	// options, so it always uses virtual-hosted-style addressing
-	// (bucket.host). An S3-compatible emulator reachable only at an IP or
-	// bare-host endpoint (MinIO, LocalStack) requires path-style
-	// addressing, which the store exposes no knob to enable. Until the
-	// store surfaces a path-style / endpoint-resolver option, this
-	// real-backend contract cannot address a local emulator; the
-	// assertions below stay ready for when it does.
-	t.Skip("pkg/blobstore/s3 exposes no path-style addressing knob, so it cannot reach an S3-compatible emulator at an IP endpoint; real-backend component coverage is blocked pending that product config decision")
+	// An S3-compatible emulator reachable only at an IP or bare-host
+	// endpoint (MinIO, LocalStack) cannot place the bucket in a DNS label,
+	// so it requires path-style addressing. Config.UsePathStyle enables it,
+	// which lets this real-backend contract address the local emulator.
 	mc := containers.StartMinIO(t, containers.MinIOOptions{})
 	awscfg := awssdk.Config{
 		Region:       "us-east-1",
 		Credentials:  credentials.NewStaticCredentialsProvider(mc.AccessKey, mc.SecretKey, ""),
 		BaseEndpoint: awssdk.String("http://" + mc.Endpoint),
 	}
-	store, err := s3.New(s3.Config{AWSConfig: awscfg, Bucket: mc.Bucket})
+	store, err := s3.New(s3.Config{AWSConfig: awscfg, Bucket: mc.Bucket, UsePathStyle: true})
 	if err != nil {
 		t.Fatalf("s3.New: %v", err)
 	}

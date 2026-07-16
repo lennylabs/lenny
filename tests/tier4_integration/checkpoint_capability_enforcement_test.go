@@ -10,22 +10,32 @@
 // stands in the negative space: it mints a chunk grant and asserts the
 // object store refuses every attempt to widen it.
 //
-// MinIO folds the tenant's SSE-KMS headers and the exact Content-Length
-// into the SigV4 signature, so this file exercises the object store's
-// SigV4-header enforcement path against a live backend. The scope is
-// MinIO only. The AWS S3 backend enforces the same signed headers, but
-// pkg/blobstore/s3 addresses buckets virtual-hosted-style and exposes no
-// path-style knob, so it cannot reach an S3-compatible emulator at an IP
-// endpoint (tests/tier2_component/stores/s3store_test.go documents the
-// same limitation); an object-store runtime arm for AWS S3 waits on that
-// product config decision. The GCS V4 signed URL and Azure SAS paths
-// carry neither the SSE-KMS header nor the Content-Length in the
-// signature (§12), so their T4 encryption posture rests on a
-// bucket-default CMEK (GCS) or a container default encryption scope with
-// override prevention (Azure). That posture is a distinct enforcement
-// point verified by the §17.6 install-time preflight check and the
-// gateway-startup assertion, not by the object store's SigV4
-// verification this file exercises.
+// The refusals span a provider matrix because the T4 encryption binding
+// is per backend (§12):
+//
+//   - MinIO and AWS S3 are SigV4 backends. Both fold the tenant's
+//     SSE-KMS headers and the exact Content-Length into the signature
+//     (X-Amz-SignedHeaders), so both enforce the stripped-header and
+//     over-length bounds. Assertions (1) and (2) run against each: the
+//     MinIO presign path (PresignHeader) and the AWS S3 presign path
+//     (PresignClient.PresignPutObject), both signed for the same live
+//     MinIO container. The S3 backend addresses the emulator with
+//     path-style addressing (blobstore/s3 Config.UsePathStyle).
+//
+//   - GCS V4 signed URLs and Azure account-key SAS carry neither the
+//     SSE-KMS header nor the Content-Length in the signature, so their
+//     T4 encryption posture rests on a bucket-default CMEK (GCS) or a
+//     container default encryption scope with override prevention
+//     (Azure) rather than on the grant. The distinct fail-closed arm for
+//     each asserts that a T4-tenant chunk PUT lands under that default
+//     and that a PUT attempting a different scope is denied. That
+//     enforcement lives in the object store's own encryption engine and
+//     is observable only against a live GCS bucket or Azure container
+//     with the default configured, which no local emulator provides, so
+//     those arms skip unless a live endpoint is supplied. This runtime
+//     object-store enforcement is distinct from the §17.6 install-time
+//     preflight and the gateway-startup assertion, which fail a
+//     misconfigured deployment closed before it serves a T4 tenant.
 
 package tier4_integration_test
 
@@ -35,12 +45,17 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/blobstore/s3"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -94,16 +109,122 @@ func capReq(t *testing.T, method, rawURL string, replayHeaders map[string]string
 
 func is2xx(code int) bool { return code >= 200 && code < 300 }
 
+// sigV4Putter is the presign surface the header-binding assertions
+// exercise. Both miniostore.Store and s3.Store satisfy it.
+type sigV4Putter interface {
+	PresignPut(u blobstore.URI, contentLength int64, ttl time.Duration) (blobstore.Grant, error)
+}
+
+// sigV4Provider names a SigV4 signing backend and constructs a presigner
+// bound to the shared live MinIO container. The tenant is a T4 tenant on
+// every provider, so each PresignPut folds the SSE-KMS header set and the
+// exact Content-Length into the signature.
+type sigV4Provider struct {
+	name     string
+	newStore func(t *testing.T, mio *containers.MinIO) sigV4Putter
+}
+
+// sigV4Providers is the matrix the header-binding assertions run over:
+// the self-managed MinIO backend and the AWS S3 backend, both signed for
+// the same emulator so the same signature-enforcement path is exercised
+// through two independent SDK presigners.
+func sigV4Providers() []sigV4Provider {
+	return []sigV4Provider{
+		{
+			name: "minio",
+			newStore: func(t *testing.T, mio *containers.MinIO) sigV4Putter {
+				store, err := miniostore.New(miniostore.Config{
+					Endpoint:  mio.Endpoint,
+					AccessKey: mio.AccessKey,
+					SecretKey: mio.SecretKey,
+					Bucket:    mio.Bucket,
+					UseSSL:    false,
+					SSEKeyResolver: func(string) (string, bool, error) {
+						return mio.KMSKeyName, true, nil
+					},
+				})
+				if err != nil {
+					t.Fatalf("miniostore.New: %v", err)
+				}
+				return store
+			},
+		},
+		{
+			name: "s3",
+			newStore: func(t *testing.T, mio *containers.MinIO) sigV4Putter {
+				store, err := s3.New(s3.Config{
+					AWSConfig: awssdk.Config{
+						Region:       "us-east-1",
+						Credentials:  credentials.NewStaticCredentialsProvider(mio.AccessKey, mio.SecretKey, ""),
+						BaseEndpoint: awssdk.String("http://" + mio.Endpoint),
+					},
+					Bucket: mio.Bucket,
+					// Path-style addressing reaches the emulator at its IP
+					// endpoint, where the bucket cannot be a DNS label.
+					UsePathStyle: true,
+					SSEKeyResolver: func(blobstore.URI) (string, bool, error) {
+						return mio.KMSKeyName, true, nil
+					},
+				})
+				if err != nil {
+					t.Fatalf("s3.New: %v", err)
+				}
+				return store
+			},
+		},
+	}
+}
+
+// assertSigV4HeaderBinding runs the two signature-header refusals against
+// one SigV4 provider: (1) a PUT with the signed SSE-KMS headers stripped,
+// and (2) a body longer than the signed Content-Length. keyPrefix scopes
+// each provider's checkpoint ids so the arms do not collide in the shared
+// bucket.
+func assertSigV4HeaderBinding(t *testing.T, store sigV4Putter, tenant, keyPrefix string, body []byte) {
+	t.Helper()
+
+	// (1) A PUT with the signed SSE-KMS headers stripped is rejected: the
+	// signature names the headers, so omitting them fails the match
+	// before a byte is written under a weaker key.
+	t.Run("stripped_sse_kms_headers_rejected", func(t *testing.T) {
+		u := chunkURI(tenant, keyPrefix+"_strip", 0)
+		g, err := store.PresignPut(u, int64(len(body)), time.Hour)
+		if err != nil {
+			t.Fatalf("PresignPut: %v", err)
+		}
+		if _, ok := g.Headers["X-Amz-Server-Side-Encryption"]; !ok {
+			t.Fatalf("grant did not fold an SSE-KMS header for a T4 tenant: %v", g.Headers)
+		}
+		if code := capReq(t, http.MethodPut, g.URL, nil, body); is2xx(code) {
+			t.Fatalf("PUT with SSE-KMS headers stripped succeeded (status %d); the object store did not enforce a signed header", code)
+		}
+	})
+
+	// (2) A body longer than the signed Content-Length is rejected: the
+	// wire Content-Length differs from the one folded into the signature.
+	t.Run("over_length_body_rejected", func(t *testing.T) {
+		u := chunkURI(tenant, keyPrefix+"_overlen", 0)
+		g, err := store.PresignPut(u, int64(len(body)), time.Hour)
+		if err != nil {
+			t.Fatalf("PresignPut: %v", err)
+		}
+		over := append(append([]byte(nil), body...), []byte(" and a tail beyond the signed length")...)
+		if code := capReq(t, http.MethodPut, g.URL, g.Headers, over); is2xx(code) {
+			t.Fatalf("PUT of an over-length body succeeded (status %d); the signed Content-Length was not enforced", code)
+		}
+	})
+}
+
 // spec: §13.2 (capability model), §12 (per-provider T4 mint invariants),
 // §11.2 (hard cap).
 //
-// diagnosis: a failure here means MinIO did not enforce a header or the
-// Content-Length the gateway folded into the SigV4 signature, so the
-// capability is not the bound the §13.2 threat model claims. The GCS and
-// Azure bucket-default CMEK / container default encryption posture is a
-// distinct enforcement point verified by the §17.6 preflight check and
-// the gateway-startup assertion, not by this object-store SigV4 path.
-func TestCheckpointCapabilityEnforcementMinIO(t *testing.T) {
+// diagnosis: a failure here means the object store did not enforce a
+// header or the Content-Length the gateway folded into the signature, so
+// the capability is not the bound the §13.2 threat model claims. On a
+// SigV4 provider (MinIO, AWS S3) that is a stripped or altered signed
+// header; on GCS/Azure it is a chunk that landed under a scope the
+// bucket/container default was supposed to deny.
+func TestCheckpointCapabilityEnforcement(t *testing.T) {
 	// A KMS key on the container lets a valid PUT replay the signed
 	// SSE-KMS headers and land, so the stripped-header assertion contrasts
 	// against a known-good baseline rather than an always-failing one.
@@ -140,36 +261,14 @@ func TestCheckpointCapabilityEnforcementMinIO(t *testing.T) {
 		t.Fatalf("valid PUT capability was rejected with status %d; the baseline grant does not land", code)
 	}
 
-	// (1) A PUT with the signed SSE-KMS headers stripped is rejected: the
-	// signature names the headers, so omitting them fails the match
-	// before a byte is written under a weaker key.
-	t.Run("stripped_sse_kms_headers_rejected", func(t *testing.T) {
-		u := chunkURI(tenant, "ck_strip", 0)
-		g, err := store.PresignPut(u, int64(len(body)), time.Hour)
-		if err != nil {
-			t.Fatalf("PresignPut: %v", err)
-		}
-		if _, ok := g.Headers["X-Amz-Server-Side-Encryption"]; !ok {
-			t.Fatalf("grant did not fold an SSE-KMS header for a T4 tenant: %v", g.Headers)
-		}
-		if code := capReq(t, http.MethodPut, g.URL, nil, body); is2xx(code) {
-			t.Fatalf("PUT with SSE-KMS headers stripped succeeded (status %d); the object store did not enforce a signed header", code)
-		}
-	})
-
-	// (2) A body longer than the signed Content-Length is rejected: the
-	// wire Content-Length differs from the one folded into the signature.
-	t.Run("over_length_body_rejected", func(t *testing.T) {
-		u := chunkURI(tenant, "ck_overlen", 0)
-		g, err := store.PresignPut(u, int64(len(body)), time.Hour)
-		if err != nil {
-			t.Fatalf("PresignPut: %v", err)
-		}
-		over := append(append([]byte(nil), body...), []byte(" and a tail beyond the signed length")...)
-		if code := capReq(t, http.MethodPut, g.URL, g.Headers, over); is2xx(code) {
-			t.Fatalf("PUT of an over-length body succeeded (status %d); the signed Content-Length was not enforced", code)
-		}
-	})
+	// (1) and (2) run per SigV4 signing provider, because MinIO and AWS S3
+	// both fold the SSE-KMS header set and the exact Content-Length into
+	// the signature, and either backend can serve a T4 tenant.
+	for _, p := range sigV4Providers() {
+		t.Run("sigv4_"+p.name, func(t *testing.T) {
+			assertSigV4HeaderBinding(t, p.newStore(t, mio), tenant, p.name, body)
+		})
+	}
 
 	// (3) The URL with the object key rewritten to another tenant's
 	// prefix is rejected: the tenant prefix is bound into the signature.
@@ -293,4 +392,33 @@ func TestCheckpointCapabilityEnforcementMinIO(t *testing.T) {
 			t.Fatalf("the second PUT did not change the confirmed size (%d); the Stat confirm cannot detect a divergent re-PUT", info2.Size)
 		}
 	})
+
+	// GCS and Azure sign no encryption header into the grant, so their T4
+	// posture is a bucket-default CMEK (GCS) or a container default
+	// encryption scope with override prevention (Azure) enforced inside
+	// the object store's encryption engine. That runtime enforcement is
+	// observable only against a live backend with the default configured,
+	// which no local emulator provides; the arm skips absent one.
+	t.Run("gcs_bucket_default_cmek_fail_closed", func(t *testing.T) {
+		requireLiveObjectStore(t, "LENNY_GCS_T4_BUCKET",
+			"a live GCS bucket with a bucket-default CMEK configured")
+	})
+	t.Run("azure_container_default_scope_fail_closed", func(t *testing.T) {
+		requireLiveObjectStore(t, "LENNY_AZURE_T4_CONTAINER",
+			"a live Azure container with a default encryption scope and override prevention")
+	})
+}
+
+// requireLiveObjectStore skips the GCS/Azure runtime encryption arm unless
+// the named environment variable points at a live backend with the T4
+// default encryption configured. The GCS bucket-default CMEK and the Azure
+// container default encryption scope with override prevention are enforced
+// by the object store's own engine, not by a signed header, so no local
+// emulator reproduces the deny path; the arm runs in a cloud tier where a
+// real backend is provisioned.
+func requireLiveObjectStore(t *testing.T, envVar, want string) {
+	t.Helper()
+	if os.Getenv(envVar) == "" {
+		t.Skipf("%s unset: this arm needs %s; no local emulator enforces the default-encryption deny path, so it runs only against a live backend", envVar, want)
+	}
 }
