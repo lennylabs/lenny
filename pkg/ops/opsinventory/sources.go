@@ -310,6 +310,16 @@ func upgradeProgress(st upgradeservice.State) *conventions.Progress {
 	if detail, ok := raw["currentStepDetail"].(string); ok {
 		p.CurrentStepDetail = detail
 	}
+	// §25.2 line 387 / §25.8 line 3496: percent is derived from the phase
+	// step count, mirroring the direct GET /v1/admin/platform/upgrade/status
+	// envelope (upgradeservice.FullProgress) so the two surfaces agree. The
+	// Inventory's ETA enrichment deliberately keeps this percent out of the
+	// platform_upgrade ETA selection (a phase index is not a rate/size
+	// signal); it is a descriptive field only.
+	if p.CompletedSteps != nil && p.TotalSteps != nil && *p.TotalSteps > 0 {
+		pct := float64(*p.CompletedSteps) * 100.0 / float64(*p.TotalSteps)
+		p.Percent = &pct
+	}
 	// §25.2 lines 387-391: stamp startedAt and lastProgressAt so the
 	// Inventory's progress enrichment can derive the historical_p50 ETA
 	// and the cadence-relative stalledForSeconds. UpdatedAt is the time of

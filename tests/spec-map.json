@@ -3421,7 +3421,10 @@
         "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry",
-        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender"
+        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesFixedPhaseDurations",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta"
       ],
       "packages": [
         "pkg/upgrade",
