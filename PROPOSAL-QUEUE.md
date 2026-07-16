@@ -195,7 +195,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-18 — Interceptor MODIFY immutable-field error envelope — §4.8/§15.1
-- **status:** claimed:proposal-C@2026-07-16T19:55:24Z
+- **status:** in-review:0039
 - **assigned:** proposal-C
 - **findings:** T-4.8.9
 - **root spec gap:** The spec mandates HTTP 400 with top-level `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` and `details.violated_fields`, but the session-create surface returns HTTP 403 `INTERCEPTOR_REJECTED` (deliberately, pinned by two tier-1 tests), so the client-facing envelope diverges from the catalog.
