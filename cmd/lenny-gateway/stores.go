@@ -1151,6 +1151,21 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 //
 // spec: §4.1 gateway subsystem seams; §12.4 Redis topology; §11.6 breakers;
 // §10.1 coordination; §11.1/§11.2 quota.
+// outstandingReservationSource adapts the checkpoint manifest store's
+// SumOutstandingReservations to a storagequota.LiveBytesSource so
+// ReservationAwareLiveBytes can fold outstanding checkpoint reservations into
+// the durable artifact_store byte sum. A nil store yields a nil source, which
+// degrades the composed seam to the bare artifact_store sum. Taking the method
+// value only when the store is non-nil avoids a method-value-on-nil panic.
+//
+// spec: §11.2 reservation-aware rebuild; §12.4 line 222.
+func outstandingReservationSource(m partialmanifeststore.Store) storagequota.LiveBytesSource {
+	if m == nil {
+		return nil
+	}
+	return m.SumOutstandingReservations
+}
+
 func (w *gatewayWiring) buildRedisAndQuota() {
 	f := w.f
 	capacityTier := f.capacityTier
@@ -1176,6 +1191,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	sessions := w.sessions
 	tenants := w.tenants
 	artifactCatalog := w.artifactCatalog
+	partialManifests := w.partialManifests
 
 	// Circuit-breaker state goes to Redis when --redis-url is set, so
 	// an operator-opened breaker survives a restart and stays
@@ -1306,23 +1322,36 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// is Lua-atomic.
 		storageRedis := storagequotaredis.New(concernRedis.For(storerouter.RedisConcernQuota))
 		storageCounter = storageRedis
-		// §12.4 line 210: when the durable artifact catalog is wired,
+		// §12.4 line 222: when the durable artifact catalog is wired,
 		// front the Redis counter with the Postgres-fallback failover so a
 		// Redis outage degrades upload pre-checks to the authoritative
-		// SUM(artifact_size_bytes) instead of breaking uploads, and a
+		// Postgres-derived total instead of breaking uploads, and a
 		// simultaneous Postgres outage fails closed (ErrUnavailable → 503).
-		// On Redis recovery the reconciler below writes the sum back so the
+		// On Redis recovery the reconciler below writes the total back so the
 		// Lua fast path resumes. Without a catalog (dev/in-memory) the bare
 		// Redis store keeps the prior fail-on-Redis-error behavior.
+		//
+		// spec: §11.2 / §12.4 line 222 — the LiveBytesSource is the
+		// reservation-aware seam (SumLiveBytes + SumOutstandingReservations)
+		// composed once here and shared by the during-outage Failover
+		// enforcement read, the RecoveryReconciler recovery-edge rebuild, and
+		// the startup Rehydrate, so a tenant's outstanding checkpoint
+		// reservations count against its quota during a Redis outage and are
+		// re-added on every rebuild the guarded relative Adjust runs after.
 		if artifactCatalog != nil {
-			storageCounter = storagequota.NewFailover(storageRedis, artifactCatalog.SumLiveBytes, nil)
+			liveBytes := storagequota.ReservationAwareLiveBytes(
+				artifactCatalog.SumLiveBytes,
+				outstandingReservationSource(partialManifests),
+			)
+			w.storageLiveBytes = liveBytes
+			storageCounter = storagequota.NewFailover(storageRedis, liveBytes, nil)
 			storageRecoveryReconciler = &storagequota.RecoveryReconciler{
 				Probe: func(ctx context.Context) bool {
 					return redisconn.PingWithTimeout(redisClient, 2*time.Second) == nil
 				},
 				Primary: storageRedis,
 				Tenants: (tenantsLister{tenants}).ListTenants,
-				SizeOf:  artifactCatalog.SumLiveBytes,
+				SizeOf:  liveBytes,
 				Logf:    log.Printf,
 			}
 		}
@@ -1395,7 +1424,6 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	redisClient := w.redisClient
 	concernRedis := w.concernRedis
 	tenants := w.tenants
-	artifactCatalog := w.artifactCatalog
 	blobsCataloged := w.blobsCataloged
 	storageCounter := w.storageCounter
 	billing := w.billing
@@ -1457,17 +1485,20 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	// setter. F-11.2.9.
 	if blobsCataloged != nil {
 		blobsCataloged.SetQuotaReleaser(storageCounter)
-		// §11 line 37 Redis-restart rehydration: reconstruct each tenant's
-		// storage counter from the authoritative sum of live artifact bytes
-		// in Postgres (same recovery path as the token quota counters). A
-		// per-tenant fault is logged and skipped so one tenant cannot block
-		// startup. Runs before the HTTP listener accepts traffic, so no
-		// reservation races the absolute Set.
-		if artifactCatalog != nil {
+		// §11.2 Redis-restart rehydration: reconstruct each tenant's storage
+		// counter from the authoritative Postgres byte total (live artifact
+		// bytes plus outstanding checkpoint reservations, through the
+		// reservation-aware seam composed in buildRedisAndQuota) so the
+		// rebuilt counter already holds every unreleased reservation the
+		// guarded relative Adjust will later release (same recovery path as
+		// the token quota counters). A per-tenant fault is logged and skipped
+		// so one tenant cannot block startup. Runs before the HTTP listener
+		// accepts traffic, so no reservation races the absolute Set.
+		if w.storageLiveBytes != nil {
 			rehydrateCtx, cancelRehydrate := context.WithTimeout(context.Background(), 30*time.Second)
 			if ids, lerr := (tenantsLister{tenants}).ListTenants(rehydrateCtx); lerr != nil {
 				log.Printf("lenny-gateway: §11 storage-quota rehydration: list tenants: %v", lerr)
-			} else if rerr := storagequota.Rehydrate(rehydrateCtx, storageCounter, ids, artifactCatalog.SumLiveBytes); rerr != nil {
+			} else if rerr := storagequota.Rehydrate(rehydrateCtx, storageCounter, ids, w.storageLiveBytes); rerr != nil {
 				log.Printf("lenny-gateway: §11 storage-quota rehydration: %v", rerr)
 			} else if len(ids) > 0 {
 				log.Printf("lenny-gateway: §11 storage-quota counters rehydrated from artifact_store for %d tenants", len(ids))

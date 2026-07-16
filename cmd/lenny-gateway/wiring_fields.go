@@ -312,38 +312,45 @@ type gatewayWiringFields struct {
 	sessions                    sessionstore.Store
 	sessionSrv                  *sessionserver.Server
 	storageCounter              storagequota.Counter
-	storageRecoveryReconciler   *storagequota.RecoveryReconciler
-	subsystemMetrics            *subsystem.Metrics
-	tenants                     tenantstore.Store
-	tokenServiceSubsystem       *subsystem.Subsystem
-	transcripts                 transcriptstore.Store
-	uploadRotator               *uploadtoken.Rotator
-	uploadSubsystem             *subsystem.Subsystem
-	uploadTracker               *uploadtoken.MemoryTracker
-	wd                          *watchdog.Watchdog
-	billingTier                 *redisstream.Tier
-	connectorStateStore         *connectoroauth.MemoryStateStore
-	deadlockManager             *deadlock.Manager
-	dsMonitor                   *dualstore.Monitor
-	pools                       poolstore.Store
-	treeArchive                 treearchive.Store
-	userPodTerminateProp        *podterminateprop.Propagator
-	blobsCataloged              *cataloging.Store
-	quotaBudgetTracker          *quotabudget.Tracker
-	quotaCheckpointSvc          *quotacheckpoint.Service
-	quotaFailOpenAccum          *quotafailopen.Accumulator
-	sessionUsage                sessionusage.Store
-	treeBudgetConcrete          *treebudget.Reserver
-	artifactCatalog             artifactcatalog.Store
-	blobs                       blobstore.Store
-	credRenewalWorker           *credrenewal.Worker
-	credentialPools             credentialpoolstore.Store
-	evals                       evalstore.Store
-	immediateGCSweep            func(ctx context.Context, tenantID string)
-	partialManifests            partialmanifeststore.Store
-	securityBus                 *pubsub.Bus
-	memories                    memorystore.Store
-	memoryBackendLabel          string
+	// storageLiveBytes is the reservation-aware §12.4 LiveBytesSource seam
+	// (live artifact_store bytes plus outstanding checkpoint reservations)
+	// buildRedisAndQuota composes once and every storage-counter consumer
+	// shares: the during-outage Failover enforcement read, the
+	// RecoveryReconciler recovery-edge rebuild, and the startup Rehydrate.
+	// Nil when no Postgres artifact catalog is wired.
+	storageLiveBytes          storagequota.LiveBytesSource
+	storageRecoveryReconciler *storagequota.RecoveryReconciler
+	subsystemMetrics          *subsystem.Metrics
+	tenants                   tenantstore.Store
+	tokenServiceSubsystem     *subsystem.Subsystem
+	transcripts               transcriptstore.Store
+	uploadRotator             *uploadtoken.Rotator
+	uploadSubsystem           *subsystem.Subsystem
+	uploadTracker             *uploadtoken.MemoryTracker
+	wd                        *watchdog.Watchdog
+	billingTier               *redisstream.Tier
+	connectorStateStore       *connectoroauth.MemoryStateStore
+	deadlockManager           *deadlock.Manager
+	dsMonitor                 *dualstore.Monitor
+	pools                     poolstore.Store
+	treeArchive               treearchive.Store
+	userPodTerminateProp      *podterminateprop.Propagator
+	blobsCataloged            *cataloging.Store
+	quotaBudgetTracker        *quotabudget.Tracker
+	quotaCheckpointSvc        *quotacheckpoint.Service
+	quotaFailOpenAccum        *quotafailopen.Accumulator
+	sessionUsage              sessionusage.Store
+	treeBudgetConcrete        *treebudget.Reserver
+	artifactCatalog           artifactcatalog.Store
+	blobs                     blobstore.Store
+	credRenewalWorker         *credrenewal.Worker
+	credentialPools           credentialpoolstore.Store
+	evals                     evalstore.Store
+	immediateGCSweep          func(ctx context.Context, tenantID string)
+	partialManifests          partialmanifeststore.Store
+	securityBus               *pubsub.Bus
+	memories                  memorystore.Store
+	memoryBackendLabel        string
 
 	// tokenServiceConn is the §4.3 token-service gRPC connection. buildStores
 	// dials it; runGateway closes it on exit (the original deferred close is

@@ -52,24 +52,66 @@ type Counter interface {
 	Set(ctx context.Context, tenantID string, value int64) error
 }
 
-// LiveBytesSource returns the authoritative sum of a tenant's active
-// (non-deleted) artifact bytes from the durable §12.5 artifact_store.
-// Rehydrate reads it to reconstruct a per-tenant counter after a Redis
-// restart. artifactcatalog.Store.SumLiveBytes satisfies it.
+// LiveBytesSource returns a tenant's durable storage byte total from
+// Postgres. In production it is the reservation-aware sum
+// ReservationAwareLiveBytes composes: the authoritative sum of active
+// (non-deleted) §12.5 artifact_store bytes plus the outstanding checkpoint
+// reservations that have no artifact_store row yet. Rehydrate and the
+// §12.4 during-outage Failover read both go through this one seam so the
+// enforcement path and the rebuild path agree.
 //
-// spec: §11 line 37.
+// spec: §11.2 rehydrate formula; §12.4 during-outage enforcement read.
 type LiveBytesSource func(ctx context.Context, tenantID string) (int64, error)
 
-// Rehydrate reconstructs per-tenant storage counters from the durable
-// artifact_store byte sums after a Redis restart (§11 line 37,
-// "the gateway rehydrates per-tenant storage counters from the sum of
-// artifact_size_bytes across active (non-deleted) artifacts in
-// Postgres"). For each tenant it reads the live-byte sum and Sets the
-// counter to it. A per-tenant read or write failure is collected and
-// the sweep continues so one tenant's fault does not abort the rest;
-// the joined error is returned for the caller to log.
+// ReservationAwareLiveBytes folds a tenant's outstanding checkpoint
+// reservations into its durable artifact_store byte sum, yielding the one
+// reservation-aware LiveBytesSource seam the §12.4 during-outage Failover
+// read, the RecoveryReconciler recovery-edge rebuild, and the startup
+// Rehydrate all share. An outstanding reservation has no artifact_store row,
+// so a rebuild that summed liveBytes alone would drop it, and the guarded
+// relative Adjust that later releases the reservation would then remove bytes
+// belonging to the tenant's other live artifacts and fail the quota gate
+// open. Both component reads target Postgres; either error surfaces so the
+// caller can fail the enforcement read closed rather than under-count.
+// artifactcatalog.Store.SumLiveBytes and the manifest store's
+// SumOutstandingReservations satisfy the two arguments. A nil component
+// degrades to the other alone.
 //
-// spec: §11 line 37 — same recovery path as token quota counters.
+// spec: §11.2 reservation-aware rebuild; §12.4 line 222.
+func ReservationAwareLiveBytes(liveBytes, outstandingReservations LiveBytesSource) LiveBytesSource {
+	switch {
+	case liveBytes == nil:
+		return outstandingReservations
+	case outstandingReservations == nil:
+		return liveBytes
+	}
+	return func(ctx context.Context, tenantID string) (int64, error) {
+		live, err := liveBytes(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("storagequota: live bytes %s: %w", tenantID, err)
+		}
+		reserved, err := outstandingReservations(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("storagequota: outstanding reservations %s: %w", tenantID, err)
+		}
+		return live + reserved, nil
+	}
+}
+
+// Rehydrate reconstructs per-tenant storage counters from the durable
+// Postgres byte sums after a Redis restart. For each tenant it reads
+// sizeOf and Sets the counter to it. When sizeOf is the reservation-aware
+// seam ReservationAwareLiveBytes composes, the absolute value written is
+// SUM(artifact_size_bytes over active artifact_store rows) plus the
+// outstanding checkpoint reservations, so the counter holds every
+// reservation that has not been released and the guarded relative Adjust
+// that later releases one is correct after the rebuild. A per-tenant read
+// or write failure is collected and the sweep continues so one tenant's
+// fault does not abort the rest; the joined error is returned for the
+// caller to log.
+//
+// spec: §11.2 reservation-aware rebuild — same recovery path as token
+// quota counters.
 func Rehydrate(ctx context.Context, c Counter, tenants []string, sizeOf LiveBytesSource) error {
 	if c == nil || sizeOf == nil {
 		return nil
