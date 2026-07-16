@@ -16,6 +16,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -539,6 +540,44 @@ func TestFailedCheckpointStillObservesDuration(t *testing.T) {
 	}
 	if len(metrics.calls) != 1 {
 		t.Fatalf("ObserveCheckpointDuration on failure: want 1 call, got %d", len(metrics.calls))
+	}
+}
+
+// spec: §4.4 line 254 — the lenny_checkpoint_duration_seconds trigger
+// label is sourced from the trigger the caller threads into the
+// snapshot, so a non-periodic trigger such as the gateway preStop
+// drain's checkpoint.TriggerEviction is stamped verbatim. The retired
+// source-to-trigger switch reported every checkpoint as periodic, so it
+// would have emitted trigger="periodic" here.
+func TestSnapshotStampsTheCallerSuppliedTrigger(t *testing.T) {
+	srv := adapter.New("checkpointer-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = stubRuntime{}
+	srv.Checkpoints = stubSink{id: "ckpt-evict"}
+	client := dialAdapter(t, srv)
+	if err := client.StartSession(context.Background(), adapterclient.StartSessionParams{SessionID: "s1", Runtime: "echo"}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", Adapter: client})
+	store := memstore.New()
+	runningSession(t, store, "acme", "s1")
+
+	metrics := &captureMetrics{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Metrics:  metrics,
+	}
+	if err := cp.Snapshot(context.Background(), "acme", "s1", sessionstore.WorkspaceSnapshotCheckpoint, checkpoint.TriggerEviction); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(metrics.calls) != 1 {
+		t.Fatalf("ObserveCheckpointDuration: want 1 call, got %d", len(metrics.calls))
+	}
+	if got := metrics.calls[0].trigger; got != string(checkpoint.TriggerEviction) {
+		t.Errorf("duration histogram trigger label = %q, want %q", got, checkpoint.TriggerEviction)
 	}
 }
 
