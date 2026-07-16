@@ -3458,6 +3458,7 @@
         "tests/tier2_component/observability/version_aggregation_test.go",
         "tests/tier2_component/observability/upgrade_check_cron_test.go",
         "cmd/lenny-ops/cert_manager_source_test.go::TestCertManagerSource_HealthDerivation_spec_25_8",
+        "cmd/lenny-ops/release_channel_trust_anchor_test.go::TestStockChartReleaseChannelHasCompiledInTrustAnchor_spec_25_8",
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go",
@@ -3581,13 +3582,16 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier4_integration/alerting_metrics_exposition_test.go::TestAlertingMetricsExposedOnGatewayScrape",
+        "tests/tier4_integration/alerting_rules_prometheus_firing_test.go::TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions",
         "pkg/alerting/inproceval/inproceval_test.go::TestBundledUniversalAlertsFireOnTriggerCondition_spec_25_13",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRulesConfigMapIsLoadablePrometheusRuleFile",
+        "tests/tier11_docs/alerting_docs_reference_test.go::TestDocsAlertingRulesYAMLIsLoadablePrometheusRuleFile",
+        "tests/tier11_docs/alerting_docs_reference_test.go::TestRoutingRecommendationsNameAllSeverities",
         "charts/lenny/tests/tier-presets_test.yaml"
       ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
+      "notes": "§25.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The complementary tier-4 firing test renders the shared catalog to a Prometheus rule file and runs `promtool test rules` (the Prometheus rule engine, in a prom/prometheus container) across simulated time, driving the triggering metric conditions of the Prometheus-only alerts that the in-process fallback declines (rate: RedisUnavailable, `unless on()` join: WarmPoolExhausted, time(): BackupOverdue, increase(): BackupFailed, histogram_quantile: CheckpointDurationHigh) past their For windows and asserting each fires with its rendered severity label and annotations, so a broken rendered expression that would silently fail to page is caught (§25.13 lines 4676-4682). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
     },
     "25.14": {
       "title": "lenny-ctl Extensions",
