@@ -827,3 +827,179 @@ func TestGatewaySideOpsEndpointsE2E(t *testing.T) {
 		}
 	})
 }
+
+// TestOpsRemediationIdempotencyReplayAgainstPostgresE2E boots cmd/lenny-ops
+// against a real Postgres and Redis and replays a remediation mutation
+// (POST /v1/admin/remediation-locks, the §25.4 lock-acquire remediation)
+// with a repeated Idempotency-Key. It asserts the second call is a no-op
+// served from the Postgres-backed ops_idempotency_keys store rather than
+// re-executed: the replay returns the byte-identical first response with
+// X-Lenny-Idempotent-Replay: true and the same lock id, no second lock is
+// created, and exactly one completed row for the (key, caller_id) exists in
+// Postgres. Acquiring the same scope under a different key returns 409
+// REMEDIATION_LOCK_CONFLICT, proving the acquire is non-convergent and the
+// replay's success came from the cache rather than a fresh execution. It
+// also confirms the §25.4 (key, caller_id) binding: the same key under a
+// different caller does not replay the first caller's response.
+//
+// spec: §25.4 Idempotency — "Mutating endpoints (POST, PUT) accept an
+// optional Idempotency-Key header (caller-generated UUID). When present:
+// 1. lenny-ops looks up (key, caller_id) in ops_idempotency_keys
+// (Postgres). 2. If found and completed: returns the stored response
+// without re-executing." And §25.1 — "Remediation endpoints are
+// idempotent and accept an optional Idempotency-Key header." And the
+// (key, caller_id) binding: "Two different callers using the same UUID
+// receive independent idempotency behavior — one caller cannot replay
+// another caller's operation by guessing their key."
+// diagnosis: a failure means the cmd/lenny-ops composition root did not
+// thread the Postgres-backed §25.4 idempotency store through its
+// remediation mutations. Either the repeated key re-executed the lock
+// acquire instead of replaying the stored response (no X-Lenny-Idempotent-
+// Replay, a fresh lock id, or a second Postgres row), the completed
+// response was not persisted to ops_idempotency_keys, or the
+// (key, caller_id) binding leaked one caller's cached response to another.
+func TestOpsRemediationIdempotencyReplayAgainstPostgresE2E(t *testing.T) {
+	opsprocess.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	ops := opsprocess.StartWith(
+		t,
+		"--postgres-dsn="+pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--redis-allow-insecure",
+	)
+	base := ops.BaseURL()
+	ctx := context.Background()
+
+	// acquire issues POST /v1/admin/remediation-locks with the given
+	// Idempotency-Key and caller identity and returns the status, the raw
+	// body (so a replay can be compared byte-for-byte with the original),
+	// the decoded body, and the §25.4 idempotent-replay marker header.
+	acquire := func(key, caller string, body map[string]any) (int, []byte, map[string]any, string) {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, base+"/v1/admin/remediation-locks", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", caller)
+		req.Header.Set("X-Lenny-Caller", caller)
+		req.Header.Set("X-Lenny-Roles", "platform-admin")
+		if key != "" {
+			req.Header.Set("Idempotency-Key", key)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST /v1/admin/remediation-locks: %v", err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &out)
+		}
+		return resp.StatusCode, raw, out, resp.Header.Get("X-Lenny-Idempotent-Replay")
+	}
+
+	// completedRows counts the completed ops_idempotency_keys rows for this
+	// (key, caller_id) pair, proving the response was recorded durably in
+	// Postgres (not an in-process cache).
+	completedRows := func(key, caller string) int {
+		t.Helper()
+		var n int
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM ops_idempotency_keys
+			 WHERE key = $1 AND caller_id = $2 AND status = 'completed'`,
+			key, caller).Scan(&n); err != nil {
+			t.Fatalf("db query ops_idempotency_keys: %v", err)
+		}
+		return n
+	}
+
+	const (
+		key    = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+		caller = "sa-prod-watchdog-01"
+		scope  = "pool:acme-default:scale"
+	)
+	lockBody := map[string]any{
+		"scope":      scope,
+		"operation":  "scale-warm-pool",
+		"ttlSeconds": 300,
+	}
+
+	// ---- first call: the lock acquire executes and is recorded ----
+	code, firstRaw, first, firstReplay := acquire(key, caller, lockBody)
+	if code != http.StatusCreated {
+		t.Fatalf("first acquire: status %d, want 201 (%s)", code, firstRaw)
+	}
+	if firstReplay == "true" {
+		t.Errorf("first acquire carried X-Lenny-Idempotent-Replay: true; the first call must execute, not replay")
+	}
+	lockID, _ := first["id"].(string)
+	if lockID == "" {
+		t.Fatalf("first acquire returned no lock id: %v", first)
+	}
+	if n := completedRows(key, caller); n != 1 {
+		t.Fatalf("ops_idempotency_keys completed rows for (key, caller) = %d, want 1 "+
+			"(the first response was not recorded to Postgres)", n)
+	}
+
+	// ---- replay: the repeated key returns the stored response, no-op ----
+	code, secondRaw, second, secondReplay := acquire(key, caller, lockBody)
+	if code != http.StatusCreated {
+		t.Fatalf("replay acquire: status %d, want the stored 201 (%s)", code, secondRaw)
+	}
+	if secondReplay != "true" {
+		t.Errorf("replay acquire: X-Lenny-Idempotent-Replay = %q, want true "+
+			"(the replay must be served from the store, not re-executed)", secondReplay)
+	}
+	if !bytes.Equal(firstRaw, secondRaw) {
+		t.Errorf("replay body differs from the stored first response:\n first=%s\nsecond=%s", firstRaw, secondRaw)
+	}
+	if id2, _ := second["id"].(string); id2 != lockID {
+		t.Errorf("replay lock id = %q, want the cached %q (a fresh execution would mint a new id)", id2, lockID)
+	}
+	// The replay re-executing would have inserted a second row; the count
+	// must stay at exactly one completed row for the (key, caller).
+	if n := completedRows(key, caller); n != 1 {
+		t.Errorf("ops_idempotency_keys completed rows after replay = %d, want 1 (the replay re-executed and re-recorded)", n)
+	}
+
+	// ---- non-convergence: a fresh key on the held scope conflicts ----
+	// Proving the acquire is non-convergent establishes that the replay's
+	// 201 came from the cached record: a genuine re-execution of the held
+	// scope would return 409, not the original success.
+	code, freshRaw, fresh, _ := acquire("11111111-2222-3333-4444-555555555555", caller, lockBody)
+	if code != http.StatusConflict {
+		t.Fatalf("acquire held scope under a fresh key: status %d, want 409 REMEDIATION_LOCK_CONFLICT (%s)", code, freshRaw)
+	}
+	if errObj, _ := fresh["error"].(map[string]any); errObj["code"] != "REMEDIATION_LOCK_CONFLICT" {
+		t.Errorf("held-scope conflict error code = %v, want REMEDIATION_LOCK_CONFLICT", fresh["error"])
+	}
+
+	// ---- caller binding: the same key under a different caller does not
+	//      replay the first caller's response (§25.4 (key, caller_id)) ----
+	// The first caller's row is live (completed, unexpired), so a distinct
+	// caller reusing the same UUID is rejected with the §25.4 line-2087
+	// 403 IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER rather than replaying the
+	// first caller's response — the guard that "one caller cannot replay
+	// another caller's operation by guessing their key."
+	code, otherRaw, other, otherReplay := acquire(key, "sa-prod-watchdog-02", lockBody)
+	if otherReplay == "true" {
+		t.Errorf("cross-caller reuse replayed the first caller's response (X-Lenny-Idempotent-Replay: true); " +
+			"the (key, caller_id) binding leaked across callers")
+	}
+	if id, _ := other["id"].(string); id == lockID {
+		t.Errorf("cross-caller reuse returned the first caller's cached lock id %q", lockID)
+	}
+	if code != http.StatusForbidden {
+		t.Fatalf("cross-caller acquire: status %d, want 403 IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER, "+
+			"not a replay of the first caller's response (%s)", code, otherRaw)
+	}
+	if errObj, _ := other["error"].(map[string]any); errObj["code"] != "IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER" {
+		t.Errorf("cross-caller error code = %v, want IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER", other["error"])
+	}
+}

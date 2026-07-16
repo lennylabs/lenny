@@ -3187,7 +3187,8 @@
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
-        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF"
+        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
+        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E"
       ],
       "packages": [
         "pkg/gateway/externalapi/admin"
@@ -3276,6 +3277,7 @@
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
+        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
         "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationCreatePathTierProgressionAgainstRealStores",
         "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationReconciliationFlushPreservesRecordAgainstRealStores",
