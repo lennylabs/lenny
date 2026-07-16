@@ -518,10 +518,32 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		trigger:      trigger,
 		// Resolve the effective grant window from the bound pool's per-pool
 		// override at attempt time (§5.2). It bounds the grants the driver
-		// keeps outstanding ahead of confirmation.
-		window: c.grantWindowForPool(ctx, c.Pool),
+		// keeps outstanding ahead of confirmation. The pool is the session's
+		// own scheduled pool, read from its session-store row, rather than the
+		// static Checkpointer.Pool label, so the per-pool override applies per
+		// session across the sweep.
+		window: c.grantWindowForPool(ctx, c.poolForSession(ctx, tenantID, sessionID)),
 	}
 	return d.run()
+}
+
+// poolForSession resolves the pool a session is scheduled against from its
+// session-store row, so the driver reads that pool's per-pool
+// checkpointGrantWindow override at attempt time. A nil session store or a
+// read error yields the empty pool, which grantWindowForPool maps to the
+// deployment-wide default.
+//
+// spec: §5.2 — the checkpoint driver reads the bound pool's override at
+// attempt time.
+func (c *Checkpointer) poolForSession(ctx context.Context, tenantID, sessionID string) string {
+	if c.Sessions == nil {
+		return ""
+	}
+	row, err := c.Sessions.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return ""
+	}
+	return row.PoolRef
 }
 
 // chunkPrefix builds the §10.1 chunk_object_key_prefix under which an

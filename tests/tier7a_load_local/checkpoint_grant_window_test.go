@@ -176,10 +176,26 @@ type gwHarness struct {
 	sessions  sessionstore.Store
 }
 
+// gwHarnessCfg configures the gateway checkpoint harness. window is the
+// deployment-wide GrantWindow; poolRef and poolReader wire the per-pool
+// checkpointGrantWindow override so a test can assert the driver resolves the
+// session's own pool at attempt time.
+type gwHarnessCfg struct {
+	window     int
+	statDelay  time.Duration
+	deadline   time.Duration
+	poolRef    string
+	poolReader podsession.PoolPolicyReader
+}
+
 func newGWHarness(t *testing.T, adapter adapterv1.AdapterServer, window int, statDelay time.Duration) *gwHarness {
+	return newGWHarnessCfg(t, adapter, gwHarnessCfg{window: window, statDelay: statDelay})
+}
+
+func newGWHarnessCfg(t *testing.T, adapter adapterv1.AdapterServer, cfg gwHarnessCfg) *gwHarness {
 	t.Helper()
 	store := newGWStore()
-	store.statDelay = statDelay
+	store.statDelay = cfg.statDelay
 	presigner := &gwPresigner{store: store}
 	if s, ok := adapter.(*scriptAdapter); ok {
 		s.store = store
@@ -192,23 +208,29 @@ func newGWHarness(t *testing.T, adapter adapterv1.AdapterServer, window int, sta
 	sessions := memstore.New()
 	if err := sessions.Create(context.Background(), sessionstore.Session{
 		ID: gwSession, TenantID: gwTenant, State: session.StateRunning, RuntimeRef: "echo",
+		PoolRef: cfg.poolRef,
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
 	manifests := partialmanifeststore.NewMemoryStore(nil)
 	recorder := newCountingRecorder()
+	deadline := cfg.deadline
+	if deadline == 0 {
+		deadline = 10 * time.Second
+	}
 	cp := &checkpointer.Checkpointer{
-		Sessions:      sessions,
-		Registry:      registry,
-		Manifests:     manifests,
-		Quota:         storagequota.NewMemory(),
-		QuotaLimitFor: func(context.Context, string) (int64, error) { return 1 << 40, nil },
-		Presigner:     presigner,
-		ObjectStore:   store,
-		Cataloging:    recorder,
-		ChunkDeleter:  store,
-		GrantWindow:   window,
-		Deadline:      10 * time.Second,
+		Sessions:        sessions,
+		Registry:        registry,
+		Manifests:       manifests,
+		Quota:           storagequota.NewMemory(),
+		QuotaLimitFor:   func(context.Context, string) (int64, error) { return 1 << 40, nil },
+		Presigner:       presigner,
+		ObjectStore:     store,
+		Cataloging:      recorder,
+		ChunkDeleter:    store,
+		GrantWindow:     cfg.window,
+		PoolGrantWindow: cfg.poolReader,
+		Deadline:        deadline,
 	}
 	return &gwHarness{cp: cp, presigner: presigner, recorder: recorder, manifests: manifests, store: store, sessions: sessions}
 }
@@ -359,6 +381,51 @@ func TestGrantWindowBoundsOutstandingGrants(t *testing.T) {
 	}
 	if got := h.presigner.peak.Load(); got > int64(window) {
 		t.Errorf("peak outstanding grants = %d, want <= window %d", got, window)
+	}
+}
+
+// gwPoolReader is a podsession.PoolPolicyReader that returns a fixed
+// per-pool checkpointGrantWindow override for one named pool.
+type gwPoolReader struct {
+	pool   string
+	window int32
+}
+
+func (r gwPoolReader) PoolPolicy(_ context.Context, name string) (podsession.PoolPolicyMirror, bool, error) {
+	if name != r.pool {
+		return podsession.PoolPolicyMirror{}, false, nil
+	}
+	w := r.window
+	return podsession.PoolPolicyMirror{CheckpointGrantWindow: &w}, true, nil
+}
+
+// spec: §5.2 — the driver resolves the bound session's own pool at attempt
+// time and applies that pool's checkpointGrantWindow override, not the
+// static Checkpointer.Pool label. A session whose pool overrides the window
+// below the deployment-wide default is bounded by the override.
+// diagnosis: a failure here (more than the pool-override worth of grants
+// minted before the abort) means the driver resolved the window against an
+// empty pool and fell back to the deployment default, so the wired per-pool
+// override never takes effect in production.
+func TestResolvedPoolWindowOverridesDeploymentDefault(t *testing.T) {
+	const poolWindow = 2
+	const deploymentWindow = 8
+	adapter := &scriptAdapter{probeBytes: 100, chunkCount: poolWindow + 3, chunkLen: 10, pipelineAll: true}
+	h := newGWHarnessCfg(t, adapter, gwHarnessCfg{
+		window:     deploymentWindow,
+		deadline:   2 * time.Second,
+		poolRef:    "cp-pool",
+		poolReader: gwPoolReader{pool: "cp-pool", window: poolWindow},
+	})
+
+	if err := h.cp.Checkpoint(context.Background(), gwTenant, gwSession); err == nil {
+		t.Fatal("Checkpoint succeeded on a producer overrunning the pool-resolved window, want abort")
+	}
+	if got := h.presigner.minted.Load(); got != int64(poolWindow) {
+		t.Errorf("grants minted = %d, want the pool override %d, not the deployment default %d", got, poolWindow, deploymentWindow)
+	}
+	if got := h.presigner.peak.Load(); got > int64(poolWindow) {
+		t.Errorf("peak outstanding grants = %d, want <= pool override %d", got, poolWindow)
 	}
 }
 

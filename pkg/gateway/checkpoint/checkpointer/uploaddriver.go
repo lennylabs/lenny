@@ -179,10 +179,17 @@ type uploadDriver struct {
 	confirmedBytes int64            // sum of Stat-confirmed chunk sizes
 	confirmedCount int              // number of chunks Stat-confirmed
 	reservedBytes  int64            // the reservation taken from the probe
-	aborted        bool
-	abortReason    string
-	abortDetail    string
-	confirmWG      sync.WaitGroup
+	signedTotal    int64            // sum of Content-Lengths signed so far
+	// quotaCap is the ceiling on signedTotal: the attempt's reservation plus
+	// the tenant's remaining headroom (limit − prior usage). quotaCapSet is
+	// false on the dev-mode / test path where no reservation is taken, which
+	// disables the at-signing quota gate.
+	quotaCap    int64
+	quotaCapSet bool
+	aborted     bool
+	abortReason string
+	abortDetail string
+	confirmWG   sync.WaitGroup
 }
 
 // send issues one gateway → adapter frame under sendMu.
@@ -279,9 +286,17 @@ func (d *uploadDriver) reserve(probed int64) error {
 	if err != nil {
 		return fmt.Errorf("checkpointer: resolve storage limit: %w", err)
 	}
-	if _, err := c.Quota.Reserve(d.ctx, d.tenantID, probed, limit); err != nil {
+	prior, err := c.Quota.Reserve(d.ctx, d.tenantID, probed, limit)
+	if err != nil {
 		return fmt.Errorf("checkpointer: reserve checkpoint quota: %w", err)
 	}
+	// spec: §11.2 observation (2) — the sum of the attempt's signed
+	// Content-Lengths may not carry the tenant counter past its limit. The
+	// ceiling is the reservation plus the remaining tenant headroom
+	// (limit − prior usage), which equals limit − prior. onChunkReady
+	// enforces it before signing each grant.
+	d.quotaCap = limit - prior
+	d.quotaCapSet = true
 	return nil
 }
 
@@ -360,7 +375,19 @@ func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 				fmt.Sprintf("chunk %d exceeds grant window %d", index, d.window))
 			return
 		}
+		// spec: §11.2 observation (2) — refuse to sign a capability whose
+		// Content-Length would carry the attempt's granted total past its
+		// reservation plus the remaining tenant headroom. The refusal happens
+		// before signing, so a pod that declares more in-range chunks than it
+		// probed is bounded cumulatively rather than only per grant window.
+		if d.quotaCapSet && d.signedTotal+length > d.quotaCap {
+			d.mu.Unlock()
+			d.abort(partialmanifeststore.ReasonQuotaExceeded,
+				fmt.Sprintf("chunk %d granted total %d past quota cap %d", index, d.signedTotal+length, d.quotaCap))
+			return
+		}
 		d.outstanding++
+		d.signedTotal += length
 	}
 	d.signedLen[index] = length
 	d.mu.Unlock()
@@ -513,8 +540,10 @@ func (d *uploadDriver) onFailed(f *adapterv1.CheckpointFailed) (string, int64, e
 
 // onStreamError maps a transport-level stream error. A FailedPrecondition
 // is the adapter's workspace-size-probe rejection, which writes no
-// manifest row; every other error is a stream truncation that finalises
-// any intent row partial = true.
+// manifest row; a deadline fire finalises the intent row with
+// manifest_reason = 'timeout' so its row and chunks are retained for the
+// resume path; every other error is a stream truncation that finalises any
+// intent row partial = true and sweeps its chunks.
 func (d *uploadDriver) onStreamError(err error) (string, int64, error) {
 	c := d.c
 	if isSizeLimitReject(err) {
@@ -527,8 +556,17 @@ func (d *uploadDriver) onStreamError(err error) (string, int64, error) {
 		return "", 0, fmt.Errorf("%w: %v", errSizeLimit, err)
 	}
 	d.confirmWG.Wait()
-	// Only finalise a row that was written (probe seen).
-	if ferr := d.finaliseAbort(partialmanifeststore.ReasonStreamTruncated); ferr != nil {
+	// spec: §10.1 line 132 / §4.4 line 235 — a deadline fire is the recovery
+	// aid: finalise 'timeout' so finaliseAbort retains the row and chunks the
+	// resume path reassembles rather than sweeping them. A latched abort (a
+	// protocol violation or an over-size confirm) cancels the stream with
+	// context.Canceled, which this deadline check does not match, so those
+	// arms keep their own reason.
+	reason := partialmanifeststore.ReasonStreamTruncated
+	if isDeadline(err) || errors.Is(d.ctx.Err(), context.DeadlineExceeded) {
+		reason = partialmanifeststore.ReasonTimeout
+	}
+	if ferr := d.finaliseAbort(reason); ferr != nil {
 		return "", 0, ferr
 	}
 	return "", 0, fmt.Errorf("checkpointer: recv checkpoint frame: %w", err)
@@ -638,13 +676,17 @@ func (d *uploadDriver) releaseReservation() {
 }
 
 // chunkURI builds the object URI for chunk index under this attempt's
-// checkpoint prefix.
+// checkpoint prefix. The basename is `chunk-{n}.{chunk_encoding}` where
+// {n} is a zero-padded 5-digit monotonic index starting at `00000`, so the
+// signed key matches the §10.1 chunk-object layout the resume/reassembly
+// path enumerates and lexicographic list order tracks index order.
+// spec: §10.1 line 139 (zero-padded 5-digit chunk index).
 func (d *uploadDriver) chunkURI(index uint32) blobstore.URI {
 	return blobstore.URI{
 		TenantID:   d.tenantID,
 		ObjectType: blobstore.ObjectTypeCheckpoint,
 		SessionID:  d.sessionID,
-		PartID:     fmt.Sprintf("%s/chunk-%d.%s", d.checkpointID, index, d.c.chunkEncoding()),
+		PartID:     fmt.Sprintf("%s/chunk-%05d.%s", d.checkpointID, index, d.c.chunkEncoding()),
 		TTL:        d.c.capabilityTTL(),
 	}
 }
@@ -654,4 +696,10 @@ func (d *uploadDriver) chunkURI(index uint32) blobstore.URI {
 // returns before any grant is minted (spec: §4.4 line 255).
 func isSizeLimitReject(err error) bool {
 	return status.Code(err) == codes.FailedPrecondition
+}
+
+// isDeadline reports whether err is a gRPC DeadlineExceeded status, the
+// error the client stream returns when the attempt's own deadline fires.
+func isDeadline(err error) bool {
+	return status.Code(err) == codes.DeadlineExceeded
 }

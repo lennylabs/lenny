@@ -60,6 +60,50 @@ func TestCheckpointQuotaCapObservesOverSizeAgainstNonEnforcingStore(t *testing.T
 	}
 }
 
+// spec: §11.2 observation (2) — the gateway refuses to sign a chunk-upload
+// capability whose Content-Length would carry the attempt's granted total
+// past its reservation plus the remaining tenant headroom, and aborts with
+// quota_exceeded before signing. A pod that probes a small workspace then
+// declares more in-range chunks than it reserved is bounded cumulatively at
+// signing, not only by the grant window at any instant.
+// diagnosis: a failure here (the checkpoint succeeds, or the third grant is
+// minted) means the at-signing cumulative quota gate is absent and the only
+// bound left is the instantaneous grant window, so an attempt can sign and
+// write past its reservation with no quota_exceeded arm firing.
+func TestCheckpointRefusesToSignPastReservation(t *testing.T) {
+	// Probe reports 20 bytes and the tenant limit is 20, so the attempt's
+	// reservation is its whole budget (no remaining headroom). Three in-range
+	// 10-byte chunks (each <= chunk_size_bytes) sum to 30, past the 20-byte
+	// cap: the third declaration must be refused at signing.
+	adapter := &cpChunkedAdapter{
+		probeBytes:    20,
+		chunkLens:     []int64{10, 10, 10},
+		failAfter:     -1,
+		truncateAfter: -1,
+	}
+	h := newCPDriverHarness(t, adapter)
+	h.cp.QuotaLimitFor = func(context.Context, string) (int64, error) { return 20, nil }
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded on cumulative signed length past the reservation, want abort")
+	}
+	rec := h.latestManifest(t)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after an at-signing quota refusal")
+	}
+	if rec.ManifestReason != partialmanifeststore.ReasonQuotaExceeded {
+		t.Errorf("manifest_reason = %q, want quota_exceeded", rec.ManifestReason)
+	}
+	// The first two chunks were signed (cumulative 20 within the cap); the
+	// third was refused before signing, so no third capability was minted.
+	if got := adapter.grantCount(2); got != 0 {
+		t.Errorf("grants minted for chunk 2 = %d, want 0 (refused at signing)", got)
+	}
+	if got := adapter.grantCount(0); got != 1 {
+		t.Errorf("grants minted for chunk 0 = %d, want 1", got)
+	}
+}
+
 // spec: §10.1 line 139 / §13.2 — a ChunkReady whose declared length
 // exceeds the gateway-chosen chunk_size_bytes gets no capability, so the
 // overage a compromised pod can write is bounded by the grant window times

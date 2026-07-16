@@ -35,6 +35,7 @@ package tier4_integration_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
@@ -96,6 +97,46 @@ func TestCheckpointLeavesPartialAndSweepsChunksOnPutFailure(t *testing.T) {
 	}
 	if !h.deleter.sweptPrefix(rec.ChunkObjectKeyPrefix) {
 		t.Errorf("abort sweep did not run over prefix %q", rec.ChunkObjectKeyPrefix)
+	}
+}
+
+// spec: §10.1 line 132 / §4.4 line 235 — a deadline-fire abort finalises
+// manifest_reason = 'timeout' and RETAINS its row and confirmed chunks for
+// the resume path, rather than sweeping them the way a stream_truncated
+// abort does. A pod lost at the drain deadline must leave chunks to restore
+// from.
+// diagnosis: a failure here (reason stream_truncated, or the confirmed chunk
+// swept) means the deadline fire is misclassified, so the sweep destroys the
+// exact chunks the reassembly-on-resume path consumes and a pod lost at the
+// drain deadline has nothing to restore from.
+func TestCheckpointDeadlineFireRetainsChunksForResume(t *testing.T) {
+	adapter := &cpChunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		failAfter:     -1,
+		truncateAfter: -1,
+		stall:         true,
+		stallAfter:    0, // commit chunk 0, then go silent until the deadline fires
+	}
+	h := newCPDriverHarness(t, adapter)
+	h.cp.Deadline = 300 * time.Millisecond
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded despite the attempt deadline firing, want failure")
+	}
+	rec := h.latestManifest(t)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after a deadline fire")
+	}
+	if rec.ManifestReason != partialmanifeststore.ReasonTimeout {
+		t.Errorf("manifest_reason = %q, want timeout", rec.ManifestReason)
+	}
+	// The confirmed chunk is retained, not swept: the resume path reassembles it.
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got == 0 {
+		t.Errorf("objects under prefix = 0 after a timeout finalise, want the confirmed chunk retained")
+	}
+	if h.deleter.sweptPrefix(rec.ChunkObjectKeyPrefix) {
+		t.Errorf("timeout finalise swept prefix %q; a deadline-fire row is retained for resume", rec.ChunkObjectKeyPrefix)
 	}
 }
 

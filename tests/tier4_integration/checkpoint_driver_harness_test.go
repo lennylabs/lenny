@@ -61,6 +61,11 @@ type cpChunkedAdapter struct {
 	// truncateAfter >= 0 closes the stream (EOF) after that many chunks
 	// commit, without a Summary.
 	truncateAfter int
+	// stall, when true, blocks the stream after committing chunk stallAfter
+	// until the stream context is cancelled, standing in for a pod that goes
+	// silent so the gateway's own attempt deadline fires.
+	stall      bool
+	stallAfter int
 	// remintFor, when non-nil, requests a fresh grant for the listed index
 	// exactly once before committing it, standing in for a grant-expiry
 	// retry. remintObserved records the grants the gateway minted per index.
@@ -126,6 +131,12 @@ func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.
 			Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: idx}},
 		}); err != nil {
 			return err
+		}
+		if a.stall && i == a.stallAfter {
+			// Go silent so the gateway's attempt deadline fires: block until
+			// the gateway cancels the stream on its own timeout.
+			<-stream.Context().Done()
+			return stream.Context().Err()
 		}
 		if a.truncateAfter >= 0 && i >= a.truncateAfter {
 			return nil
