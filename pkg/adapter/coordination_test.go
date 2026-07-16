@@ -324,6 +324,46 @@ func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 	}
 }
 
+// TestCheckpointBarrierQuiescedMsIsTimeToQuiescence pins §10.1 line 167:
+// quiesced_ms is the time to reach quiescence measured inside the ack window,
+// not the full hold duration across the gateway-driven Checkpoint stream. The
+// barrier holds quiescence open for a wall-clock span before the stream
+// links and terminates; a pre-fix barrier measured time.Since(startedAt)
+// after that hold and reported the whole window instead.
+//
+// spec: §10.1 line 167.
+func TestCheckpointBarrierQuiescedMsIsTimeToQuiescence(t *testing.T) {
+	s := newFencedServer(t)
+	ctx := context.Background()
+	if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 3,
+	}); err != nil {
+		t.Fatalf("fence: %v", err)
+	}
+
+	resultCh := make(chan *adapterv1.CheckpointBarrierResponse, 1)
+	go func() {
+		resp, _ := s.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
+			SessionId: &adapterv1.SessionId{Value: "s1"}, BarrierId: "b1", CoordinationGeneration: 3,
+		})
+		resultCh <- resp
+	}()
+
+	waitBarrierWaiting(t, s)
+	// Hold the gateway-driven stream open well past any plausible
+	// time-to-quiescence before linking its id and completing it.
+	const hold = 200 * time.Millisecond
+	time.Sleep(hold)
+	s.barrier.link("gw-ckpt-1")
+	s.barrier.complete()
+
+	resp := <-resultCh
+	if resp.GetQuiescedMs() >= hold.Milliseconds()/2 {
+		t.Fatalf("quiesced_ms = %d, want the time-to-quiescence (well under the %d ms hold), not the whole held-stream window",
+			resp.GetQuiescedMs(), hold.Milliseconds())
+	}
+}
+
 // TestCheckpointBarrierEmptyCheckpointWhenNoStreamDriven verifies that a
 // barrier whose wall-clock window expires without the gateway driving a
 // Checkpoint stream returns an empty checkpoint_ref, so the gateway

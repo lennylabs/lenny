@@ -247,6 +247,10 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	s.coord.mu.Lock()
 	s.coord.quiesced = true
 	s.coord.mu.Unlock()
+	// spec: §10.1 line 167 — quiesced_ms is the time-to-quiescence measured
+	// inside the ack window, so it is captured the instant quiescence is
+	// reached, not across the held gateway-driven upload that follows.
+	quiescedMs := time.Since(startedAt).Milliseconds()
 	defer func() {
 		s.coord.mu.Lock()
 		s.coord.quiesced = false
@@ -264,19 +268,18 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	case <-ctx.Done():
 	}
 	checkpointRef := s.barrier.release()
-	elapsed := time.Since(startedAt).Milliseconds()
 
 	resp := &adapterv1.CheckpointBarrierResponse{
 		BarrierId:     barrierID,
 		CheckpointRef: checkpointRef,
-		QuiescedMs:    elapsed,
+		QuiescedMs:    quiescedMs,
 	}
 
 	// Mirror the response onto the §4.7 line 660 control stream so the
 	// gateway's barrier-target reconciler sees the ack without holding
 	// the synchronous RPC open. Drop-tolerant: if no control stream is
 	// attached the synchronous return is the gateway's signal.
-	s.EmitCheckpointBarrierAck(barrierID, checkpointRef, elapsed)
+	s.EmitCheckpointBarrierAck(barrierID, checkpointRef, quiescedMs)
 
 	return resp, nil
 }

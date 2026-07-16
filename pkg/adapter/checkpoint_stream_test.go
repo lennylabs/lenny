@@ -5,12 +5,15 @@ package adapter_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -122,6 +125,251 @@ func driveCheckpoint(t *testing.T, stream adapterv1.Adapter_CheckpointClient, si
 		case *adapterv1.CheckpointServerMessage_Failed:
 			return nil, m.Failed, probe
 		}
+	}
+}
+
+// lcFrame mirrors the fields of the §4.7 lifecycle JSONL frames the
+// external test needs to observe: the capability handshake, the
+// checkpoint_request/checkpoint_ready quiesce round-trip, and the terminal
+// checkpoint_complete carrying the checkpoint disposition.
+type lcFrame struct {
+	Type         string   `json:"type"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	CheckpointID string   `json:"checkpointId,omitempty"`
+	Status       string   `json:"status,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+}
+
+// fakeLifecycleRuntime plays the agent-runtime end of the §4.7 lifecycle
+// channel over a raw Unix socket so the checkpoint stream tests can drive
+// the cooperative quiesce handshake and read the checkpoint_complete frame.
+type fakeLifecycleRuntime struct {
+	t    *testing.T
+	conn net.Conn
+	dec  *json.Decoder
+	enc  *json.Encoder
+}
+
+func (fr *fakeLifecycleRuntime) read() lcFrame {
+	fr.t.Helper()
+	var f lcFrame
+	if err := fr.dec.Decode(&f); err != nil {
+		fr.t.Fatalf("fakeLifecycleRuntime read: %v", err)
+	}
+	return f
+}
+
+func (fr *fakeLifecycleRuntime) write(f lcFrame) {
+	fr.t.Helper()
+	if err := fr.enc.Encode(f); err != nil {
+		fr.t.Fatalf("fakeLifecycleRuntime write: %v", err)
+	}
+}
+
+// wireLifecycle attaches a running LifecycleChannel to s, dials it as a fake
+// Full-level runtime, and completes the capability handshake so the adapter's
+// Checkpoint stream runs the cooperative quiesce path.
+func wireLifecycle(t *testing.T, s *adapter.Server) *fakeLifecycleRuntime {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-lc-*")
+	if err != nil {
+		t.Fatalf("temp lifecycle dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "lc.sock")
+
+	lc, err := adapter.NewLifecycleChannel(sock)
+	if err != nil {
+		t.Fatalf("NewLifecycleChannel: %v", err)
+	}
+	s.Lifecycle = lc
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- lc.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = lc.Close()
+		<-runErr
+	})
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial lifecycle socket: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	fr := &fakeLifecycleRuntime{t: t, conn: conn, dec: json.NewDecoder(conn), enc: json.NewEncoder(conn)}
+	fr.enc.SetEscapeHTML(false)
+
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first lifecycle frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lcFrame{Type: "lifecycle_support", Capabilities: caps.Capabilities})
+	return fr
+}
+
+// answerQuiesceAndReadComplete answers the adapter's checkpoint_request with
+// checkpoint_ready and returns the terminal checkpoint_complete frame the
+// adapter emits after the stream ends. It runs on the runtime side of the
+// lifecycle socket while the caller drives the gRPC Checkpoint stream.
+func answerQuiesceAndReadComplete(fr *fakeLifecycleRuntime) <-chan lcFrame {
+	out := make(chan lcFrame, 1)
+	go func() {
+		req := fr.read()
+		if req.Type == "checkpoint_request" {
+			fr.write(lcFrame{Type: "checkpoint_ready", CheckpointID: req.CheckpointID})
+		}
+		out <- fr.read()
+	}()
+	return out
+}
+
+// spec: §4.4 line 241, §15.4.3 — a Full-level runtime quiesces cooperatively
+// across the chunked stream, and the adapter's checkpoint_complete frame
+// carries status "failed" with a reason when a chunk PUT is rejected by the
+// object store. A pre-fix adapter collapsed the terminal Failed frame to a
+// nil return and told the quiesced runtime status "ok", resuming it as if
+// the checkpoint had succeeded.
+func TestCheckpointStreamFullLevelReportsFailedComplete_spec_4_4_241(t *testing.T) {
+	transport := &recordingTransport{rejectStatus: 403, rejectCode: "SignatureDoesNotMatch"}
+	s := adapter.New("ckpt-full-fail")
+	s.WorkspaceRoot = t.TempDir()
+	s.StagingDir = t.TempDir()
+	s.CheckpointTransport = transport
+	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "notes.txt"), []byte("state"), 0o644); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	fr := wireLifecycle(t, s)
+	client, _ := adapterClient(t, s)
+	completeCh := answerQuiesceAndReadComplete(fr)
+
+	stream, err := client.Checkpoint(context.Background())
+	if err != nil {
+		t.Fatalf("open Checkpoint stream: %v", err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointClientMessage{
+		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   "gw-ckpt-full-fail",
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+			ChunkSizeBytes: 1 << 20,
+		}},
+	}); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+	_, failed, _ := driveCheckpoint(t, stream, nil)
+	if failed == nil {
+		t.Fatal("expected a CheckpointFailed frame on the object-store rejection")
+	}
+
+	done := <-completeCh
+	if done.Type != "checkpoint_complete" {
+		t.Fatalf("lifecycle frame = %q, want checkpoint_complete", done.Type)
+	}
+	if done.Status != "failed" {
+		t.Fatalf("checkpoint_complete status = %q, want failed (the quiesced runtime must not be told a rejected checkpoint succeeded)", done.Status)
+	}
+	if done.Reason == "" {
+		t.Fatal("checkpoint_complete on a failed checkpoint must carry a reason")
+	}
+}
+
+// spec: §4.4 line 241, §15.4.3 — on the success path the adapter emits
+// checkpoint_complete with status "ok" only after the Summary frame, so the
+// quiesced Full-level runtime resumes on a checkpoint that was actually
+// stored.
+func TestCheckpointStreamFullLevelReportsOkComplete_spec_4_4_241(t *testing.T) {
+	transport := &recordingTransport{}
+	s := adapter.New("ckpt-full-ok")
+	s.WorkspaceRoot = t.TempDir()
+	s.StagingDir = t.TempDir()
+	s.CheckpointTransport = transport
+	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "notes.txt"), []byte("state"), 0o644); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	fr := wireLifecycle(t, s)
+	client, _ := adapterClient(t, s)
+	completeCh := answerQuiesceAndReadComplete(fr)
+
+	stream, err := client.Checkpoint(context.Background())
+	if err != nil {
+		t.Fatalf("open Checkpoint stream: %v", err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointClientMessage{
+		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   "gw-ckpt-full-ok",
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+			ChunkSizeBytes: 1 << 20,
+		}},
+	}); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+	summary, failed, _ := driveCheckpoint(t, stream, nil)
+	if failed != nil {
+		t.Fatalf("checkpoint failed unexpectedly: %+v", failed)
+	}
+	if summary == nil {
+		t.Fatal("expected a Summary on the success path")
+	}
+
+	done := <-completeCh
+	if done.Type != "checkpoint_complete" {
+		t.Fatalf("lifecycle frame = %q, want checkpoint_complete", done.Type)
+	}
+	if done.Status != "ok" {
+		t.Fatalf("checkpoint_complete status = %q, want ok", done.Status)
+	}
+}
+
+// spec: §4.4 line 255 — the workspace-size probe runs before the quiescence
+// handshake, so an over-limit workspace aborts with FailedPrecondition
+// without ever quiescing the Full-level runtime. A pre-fix adapter issued
+// checkpoint_request (pausing the agent) before the size check, then resumed
+// it via the aborted checkpoint's complete frame: exactly the needless pause
+// the probe-before-quiesce rule prevents.
+func TestCheckpointStreamProbeBeforeQuiesce_spec_4_4_255(t *testing.T) {
+	transport := &recordingTransport{}
+	s := adapter.New("ckpt-probe-order")
+	s.WorkspaceRoot = t.TempDir()
+	s.StagingDir = t.TempDir()
+	s.CheckpointTransport = transport
+	s.WorkspaceSizeLimitBytes = 1 // any real workspace file is over-limit
+	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "big.txt"), []byte("this workspace is over the one-byte limit"), 0o644); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	fr := wireLifecycle(t, s)
+	client, _ := adapterClient(t, s)
+
+	// Watch the lifecycle socket: no checkpoint_request must arrive, because
+	// the size-limit abort precedes the quiescence handshake.
+	sawFrame := make(chan string, 1)
+	go func() {
+		_ = fr.conn.SetReadDeadline(time.Now().Add(750 * time.Millisecond))
+		var f lcFrame
+		if err := fr.dec.Decode(&f); err != nil {
+			sawFrame <- ""
+			return
+		}
+		sawFrame <- f.Type
+	}()
+
+	stream, err := client.Checkpoint(context.Background())
+	if err != nil {
+		t.Fatalf("open Checkpoint stream: %v", err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointClientMessage{
+		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   "gw-ckpt-oversize",
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+			ChunkSizeBytes: 1 << 20,
+		}},
+	}); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+	if _, rerr := stream.Recv(); status.Code(rerr) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition for an oversize workspace", status.Code(rerr))
+	}
+	if typ := <-sawFrame; typ == "checkpoint_request" {
+		t.Fatal("adapter quiesced the runtime before the size-limit abort; the probe must run before the quiescence handshake")
 	}
 }
 

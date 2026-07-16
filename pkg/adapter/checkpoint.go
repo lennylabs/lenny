@@ -112,35 +112,17 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 
 	trigger := checkpoint.TriggerFromProto(start.GetTrigger())
 
-	// spec: §4.4 — Full-level runtimes quiesce cooperatively over the
-	// lifecycle channel: checkpoint_request → checkpoint_ready before the
-	// first chunk is archived, checkpoint_complete after the stream ends.
-	// The runtime stays quiesced for the whole chunked archive.
-	if s.Lifecycle != nil {
-		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
-			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
-		}
-	}
-	completeStatus, completeReason := "ok", ""
-	if s.Lifecycle != nil {
-		defer func() {
-			_ = s.Lifecycle.CompleteCheckpoint(start.GetCheckpointId(), completeStatus, completeReason)
-		}()
-	}
-
-	// spec: §4.4 line 254 — probe the on-disk workspace size and report it
-	// first so the gateway reserves quota before minting any grant.
+	// spec: §4.4 line 254-255 — probe the on-disk workspace size and enforce
+	// the hard limit before the quiescence handshake. An over-limit workspace
+	// aborts with FailedPrecondition before any grant is minted and before
+	// the runtime is quiesced, so a checkpoint that cannot be taken never
+	// pauses the agent. The gateway maps the FailedPrecondition onto
+	// lenny_checkpoint_size_exceeded_total and the checkpoint.skipped event.
 	wsBytes, err := s.probeWorkspaceBytes()
 	if err != nil {
-		completeStatus, completeReason = "failed", "workspace size probe failed"
 		return status.Errorf(codes.Internal, "probe workspace size: %v", err)
 	}
-	// spec: §4.4 line 255 — a workspace over the hard limit aborts the
-	// checkpoint before any grant is minted; the gateway maps the
-	// FailedPrecondition onto lenny_checkpoint_size_exceeded_total and the
-	// checkpoint.skipped session event.
 	if serr := checkpoint.WorkspaceSizePreCheck(wsBytes, s.WorkspaceSizeLimitBytes); serr != nil {
-		completeStatus, completeReason = "failed", "workspace size limit exceeded"
 		return status.Errorf(codes.FailedPrecondition, "%s", serr.Error())
 	}
 	if serr := stream.Send(&adapterv1.CheckpointServerMessage{
@@ -148,23 +130,46 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 			Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: wsBytes},
 		},
 	}); serr != nil {
-		completeStatus, completeReason = "failed", "probe send failed"
 		return serr
 	}
 
-	if serr := s.streamChunks(ctx, stream, start, trigger); serr != nil {
+	// spec: §4.4 line 241 — Full-level runtimes quiesce cooperatively over
+	// the lifecycle channel: checkpoint_request → checkpoint_ready before the
+	// first chunk is archived, checkpoint_complete after the stream ends. The
+	// runtime stays quiesced for the whole chunked archive, and the completion
+	// frame carries status ok only when Summary is reached; a terminal Failed
+	// frame or a gateway Abort completes with status failed and the reason.
+	completeStatus, completeReason := "ok", ""
+	if s.Lifecycle != nil {
+		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
+			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
+		}
+		defer func() {
+			_ = s.Lifecycle.CompleteCheckpoint(start.GetCheckpointId(), completeStatus, completeReason)
+		}()
+	}
+
+	failReason, serr := s.streamChunks(ctx, stream, start, trigger)
+	if serr != nil {
 		completeStatus, completeReason = "failed", serr.Error()
 		return serr
+	}
+	if failReason != "" {
+		completeStatus, completeReason = "failed", failReason
 	}
 	return nil
 }
 
 // streamChunks archives the checkpoint bundle, slices it into fixed-size
 // chunks, and runs the ChunkReady → CheckpointGrant → PUT → ChunkCommitted
-// loop for each, closing with a CheckpointSummary. A rejected chunk PUT
-// terminates the stream with a CheckpointFailed frame (not a gRPC error)
-// so the gateway observes the object store's HTTP status and error code.
-func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, start *adapterv1.CheckpointStart, trigger checkpoint.Trigger) error {
+// loop for each, closing with a CheckpointSummary. A rejected chunk PUT or a
+// gateway Abort terminates the stream with a CheckpointFailed frame (not a
+// gRPC error) so the gateway observes the object store's HTTP status and
+// error code. It returns a non-empty failReason when the stream terminated
+// on a Failed frame or an Abort (so the caller reports a Full-level runtime a
+// failed checkpoint_complete) and an empty reason on the Summary success
+// path. A non-nil error is a gRPC-level failure of the stream itself.
+func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, start *adapterv1.CheckpointStart, trigger checkpoint.Trigger) (string, error) {
 	// Archive the bundle into a pipe. The goroutine keeps the recover() →
 	// re-panic semantics §4.4 mandates: silently recovering the checkpoint
 	// goroutine panic without signaling unhealthiness would leave the agent
@@ -195,25 +200,25 @@ func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_Chec
 	for {
 		chunk, more, rerr := readChunk(pr, chunkSize, checkpointBufferMemoryBytes, spill)
 		if rerr != nil {
-			return status.Errorf(codes.Internal, "archive workspace: %v", rerr)
+			return "", status.Errorf(codes.Internal, "archive workspace: %v", rerr)
 		}
 		if !more {
 			break
 		}
-		done, serr := s.uploadChunk(ctx, stream, index, chunk, budget)
+		failReason, serr := s.uploadChunk(ctx, stream, index, chunk, budget)
 		chunk.close()
 		if serr != nil {
-			return serr
+			return "", serr
 		}
-		if done {
+		if failReason != "" {
 			// A CheckpointFailed frame or a gateway Abort ended the stream.
-			return nil
+			return failReason, nil
 		}
 		total += chunk.len()
 		index++
 	}
 
-	return stream.Send(&adapterv1.CheckpointServerMessage{
+	return "", stream.Send(&adapterv1.CheckpointServerMessage{
 		Msg: &adapterv1.CheckpointServerMessage_Summary{
 			Summary: &adapterv1.CheckpointSummary{ChunkCount: index, TotalBytes: total},
 		},
@@ -221,26 +226,29 @@ func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_Chec
 }
 
 // uploadChunk declares one chunk, receives its grant (or a gateway Abort),
-// PUTs it within the §4.4 retry budget, and confirms it. It returns
-// done=true when the stream terminated on this chunk (a CheckpointFailed
-// frame the caller already sent, or a gateway Abort) so the loop stops
-// without emitting a Summary.
-func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, index uint32, chunk *chunkBuffer, budget checkpoint.RetryBudget) (bool, error) {
+// PUTs it within the §4.4 retry budget, and confirms it. It returns a
+// non-empty failReason when the stream terminated on this chunk (a
+// CheckpointFailed frame the caller already sent, or a gateway Abort) so the
+// loop stops without emitting a Summary and the Full-level runtime is told
+// the checkpoint failed. A successful ChunkCommitted returns an empty reason
+// and nil error; a non-nil error is a gRPC-level failure of the stream.
+func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, index uint32, chunk *chunkBuffer, budget checkpoint.RetryBudget) (string, error) {
 	if err := stream.Send(&adapterv1.CheckpointServerMessage{
 		Msg: &adapterv1.CheckpointServerMessage_ChunkReady{
 			ChunkReady: &adapterv1.ChunkReady{Index: index, Length: chunk.len()},
 		},
 	}); err != nil {
-		return false, err
+		return "", err
 	}
 
 	grant, aborted, err := s.awaitGrant(stream, index)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if aborted {
-		// spec: §4.4 — the adapter does not retry a PUT the gateway aborts.
-		return true, nil
+		// spec: §4.4 — the adapter does not retry a PUT the gateway aborts;
+		// the attempt terminates as a failed checkpoint.
+		return "checkpoint aborted by gateway", nil
 	}
 
 	deadline := time.Now().Add(budget.TotalBudget)
@@ -250,10 +258,10 @@ func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_Check
 	for {
 		httpStatus, code, retriable, perr := s.attemptPut(ctx, grant, chunk)
 		if perr != nil {
-			return false, status.Errorf(codes.Internal, "checkpoint PUT chunk %d: %v", index, perr)
+			return "", status.Errorf(codes.Internal, "checkpoint PUT chunk %d: %v", index, perr)
 		}
 		if httpStatus >= 200 && httpStatus < 300 {
-			return false, stream.Send(&adapterv1.CheckpointServerMessage{
+			return "", stream.Send(&adapterv1.CheckpointServerMessage{
 				Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{
 					ChunkCommitted: &adapterv1.ChunkCommitted{Index: index},
 				},
@@ -264,16 +272,16 @@ func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_Check
 			// spec: §4.4 — an object-store rejection terminates the stream
 			// with the HTTP status and error code so the gateway can map a
 			// kms:-coded rejection onto a classification-control violation.
-			return true, s.sendFailed(stream, index, "object store rejected chunk", httpStatus, code)
+			return s.failChunk(stream, index, "object store rejected chunk", httpStatus, code)
 		}
 		if !time.Now().Before(deadline) {
 			// spec: §4.4 lines 261-264 — retry budget exhausted; report the
 			// retry-exhausted failure so the gateway stamps
 			// lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}.
-			return true, s.sendFailed(stream, index, "retry_exhausted", lastStatus, lastCode)
+			return s.failChunk(stream, index, "retry_exhausted", lastStatus, lastCode)
 		}
 		if serr := sleepCtx(ctx, delay); serr != nil {
-			return false, serr
+			return "", serr
 		}
 		delay *= 2
 		if delay > budget.Cap {
@@ -287,14 +295,14 @@ func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_Check
 					ChunkReady: &adapterv1.ChunkReady{Index: index, Length: chunk.len()},
 				},
 			}); serr != nil {
-				return false, serr
+				return "", serr
 			}
 			fresh, aborted, gerr := s.awaitGrant(stream, index)
 			if gerr != nil {
-				return false, gerr
+				return "", gerr
 			}
 			if aborted {
-				return true, nil
+				return "checkpoint aborted by gateway", nil
 			}
 			grant = fresh
 		}
@@ -343,6 +351,17 @@ func (s *Server) attemptPut(ctx context.Context, grant *adapterv1.CheckpointGran
 		return httpStatus, errorCode, true, nil
 	}
 	return httpStatus, errorCode, false, nil
+}
+
+// failChunk terminates the stream with a CheckpointFailed frame and returns
+// the reason so the caller reports the Full-level runtime a failed
+// checkpoint_complete. It returns a non-nil error only when the Failed frame
+// itself could not be sent.
+func (s *Server) failChunk(stream adapterv1.Adapter_CheckpointServer, index uint32, reason string, httpStatus int, code string) (string, error) {
+	if err := s.sendFailed(stream, index, reason, httpStatus, code); err != nil {
+		return "", err
+	}
+	return reason, nil
 }
 
 // sendFailed terminates the stream with a CheckpointFailed frame.
