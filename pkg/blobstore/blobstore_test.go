@@ -104,8 +104,9 @@ func TestURIRoundTrip_CanonicalForm(t *testing.T) {
 // checkpoint key grammar: the part id is the nested
 // `{checkpoint_id}/chunk-{n}.{enc}` path, so ParseURI must treat every
 // segment after the session as the part id and String() must preserve
-// the separators. Against the pre-C1 parser this URI was rejected as a
-// 5-segment path and String() collapsed the slash into `%2F`.
+// the separators. The previous parser that split on a fixed 4-segment
+// form rejected this URI as a 5-segment path, and String() collapsed the
+// slash into `%2F`.
 //
 // spec: §10.1 (chunked checkpoint object key); §12.5 ll. 295.
 func TestURIRoundTrip_NestedCheckpointChunkKey(t *testing.T) {

@@ -5,16 +5,27 @@
 // Tier-4 integration test for the §13.2 presigned-checkpoint capability
 // model, driven against a live MinIO container rather than in-memory
 // fakes. The gateway mints a single-key, single-method, short-expiry
-// capability and hands it to an agent pod; the object store — not the
-// gateway — must enforce every bound the capability claims. This test
+// capability and hands it to an agent pod. The object store, rather than
+// the gateway, enforces every bound the capability claims. This test
 // stands in the negative space: it mints a chunk grant and asserts the
 // object store refuses every attempt to widen it.
 //
-// The capability is bound by signature, so the enforcement lives in the
-// object store's SigV4 verification, which only a real object store
-// exercises. This crosses the gateway's mint path (pkg/blobstore
-// Presigner) and the artifact store (real MinIO), which is the
-// multi-service surface the integration tier owns.
+// MinIO folds the tenant's SSE-KMS headers and the exact Content-Length
+// into the SigV4 signature, so this file exercises the object store's
+// SigV4-header enforcement path against a live backend. The scope is
+// MinIO only. The AWS S3 backend enforces the same signed headers, but
+// pkg/blobstore/s3 addresses buckets virtual-hosted-style and exposes no
+// path-style knob, so it cannot reach an S3-compatible emulator at an IP
+// endpoint (tests/tier2_component/stores/s3store_test.go documents the
+// same limitation); an object-store runtime arm for AWS S3 waits on that
+// product config decision. The GCS V4 signed URL and Azure SAS paths
+// carry neither the SSE-KMS header nor the Content-Length in the
+// signature (§12), so their T4 encryption posture rests on a
+// bucket-default CMEK (GCS) or a container default encryption scope with
+// override prevention (Azure). That posture is a distinct enforcement
+// point verified by the §17.6 install-time preflight check and the
+// gateway-startup assertion, not by the object store's SigV4
+// verification this file exercises.
 
 package tier4_integration_test
 
@@ -86,10 +97,12 @@ func is2xx(code int) bool { return code >= 200 && code < 300 }
 // spec: §13.2 (capability model), §12 (per-provider T4 mint invariants),
 // §11.2 (hard cap).
 //
-// diagnosis: a failure on a SigV4 provider means the object store did
-// not enforce a header the gateway signed; a failure on GCS/Azure means
-// the bucket/container default encryption was not configured or not
-// enforced, so the capability is not the bound the threat model claims.
+// diagnosis: a failure here means MinIO did not enforce a header or the
+// Content-Length the gateway folded into the SigV4 signature, so the
+// capability is not the bound the §13.2 threat model claims. The GCS and
+// Azure bucket-default CMEK / container default encryption posture is a
+// distinct enforcement point verified by the §17.6 preflight check and
+// the gateway-startup assertion, not by this object-store SigV4 path.
 func TestCheckpointCapabilityEnforcementMinIO(t *testing.T) {
 	// A KMS key on the container lets a valid PUT replay the signed
 	// SSE-KMS headers and land, so the stripped-header assertion contrasts
