@@ -3420,6 +3420,7 @@
         "tests/tier2_component/observability/version_aggregation_test.go",
         "tests/tier2_component/observability/upgrade_check_cron_test.go",
         "cmd/lenny-ops/cert_manager_source_test.go::TestCertManagerSource_HealthDerivation_spec_25_8",
+        "cmd/lenny-ops/release_channel_trust_anchor_test.go::TestStockChartReleaseChannelHasCompiledInTrustAnchor_spec_25_8",
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go",
