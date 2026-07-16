@@ -25,8 +25,12 @@ spec area, keeping two workers off the same spec sections and code and minimizin
 integration conflicts. Current split: proposal-A holds the checkpoint and §25
 clusters (C-01–C-03), proposal-B holds the §4.9 credential-leasing clusters
 (C-04–C-06) and the eviction-trigger cluster C-22 (which depends on proposal-A's
-C-01, so B works C-04–C-06 first); the integrator extends each worker's
-assignments from the remaining clusters as its branches land.
+C-01, so B works C-04–C-06 first), and proposal-C holds the two spec areas no
+other worker or the §25 closure machine touches: the interceptor error-envelope
+cluster C-18 (§4.8/§15.1) and the OpenSLO-export cluster C-19 (§16.10). The
+integrator extends each worker's assignments from the remaining clusters as its
+branches land, keeping each worker's lane clear of the others' active spec
+sections.
 
 **Status lifecycle** (per cluster):
 
@@ -192,7 +196,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-18 — Interceptor MODIFY immutable-field error envelope — §4.8/§15.1
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-C
 - **findings:** T-4.8.9
 - **root spec gap:** The spec mandates HTTP 400 with top-level `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` and `details.violated_fields`, but the session-create surface returns HTTP 403 `INTERCEPTOR_REJECTED` (deliberately, pinned by two tier-1 tests), so the client-facing envelope diverges from the catalog.
 - **proposal scope:** Decide whether to align the route/session-create surface to the spec envelope (and thread `violated_fields` across the connector/llmproxy/mcptools surfaces) or amend §4.8/§15.1 to ratify the wrapped-403 behavior; either way a client-visible status change and a shared `interceptor.Result` change need sign-off.
@@ -200,7 +204,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-19 — OpenSLO v1 export conformance and notification-target config — §16.10
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-C
 - **findings:** T-STD.6
 - **root spec gap:** The rendered OpenSLO documents violate the external OpenSLO v1 object model (two conditions per AlertPolicy, missing required `notificationTargets`, bare-string `alertPolicies`), and fixing the notification-targets requirement needs a deployer-facing config surface §16.10 does not define.
 - **proposal scope:** Add a §16.10 notification-target configuration surface and formalize the one-condition-per-policy split and `alertPolicyRef`-object references so the export validates against OpenSLO v1.
