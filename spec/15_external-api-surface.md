@@ -668,7 +668,7 @@ These rows do **not** consume active-session quota (they are terminal from birth
 | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `GET`  | `/v1/sessions/{id}/artifacts`        | List session artifacts                                                                                                               |
 | `GET`  | `/v1/sessions/{id}/artifacts/{path}` | Download a specific artifact/file                                                                                                    |
-| `GET`  | `/v1/sessions/{id}/workspace`        | Download workspace snapshot (tar.gz)                                                                                                 |
+| `GET`  | `/v1/sessions/{id}/workspace`        | Download workspace snapshot (tar.gz) (streamed from the checkpoint's chunk sequence)                                                 |
 | `GET`  | `/v1/sessions/{id}/transcript`       | Get session transcript (paginated)                                                                                                   |
 | `GET`  | `/v1/sessions/{id}/logs`             | Get session logs (paginated, streamable via SSE)                                                                                     |
 | `GET`  | `/v1/sessions/{id}/setup-output`     | Get setup command stdout/stderr                                                                                                      |
