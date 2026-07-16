@@ -333,7 +333,8 @@ func (s *Server) attemptPut(ctx context.Context, grant *adapterv1.CheckpointGran
 	}
 	defer func() { _ = body.Close() }()
 	httpStatus, errorCode, err = s.CheckpointTransport.PutChunk(
-		ctx, grant.GetUrl(), grant.GetHeaders(), grant.GetContentLength(), body)
+		ctx, grant.GetUrl(), grant.GetHeaders(), grant.GetContentLength(), body,
+	)
 	if err != nil {
 		// Transport-level failure (unreachable object store): retriable.
 		return 0, "", true, nil
