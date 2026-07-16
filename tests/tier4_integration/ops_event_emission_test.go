@@ -74,6 +74,102 @@ func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
 	}
 }
 
+// spec: §25.3 line 687 ("Health service → health_status_changed") and
+// line 706 ("health_status_changed | Aggregate health transitioned |
+// Old status, new status, triggering component"). The health service
+// emits the operational event when the aggregate health verdict
+// transitions between Reports, and the event carries the old and new
+// aggregate status. §25.3 line 677 fixes the in-memory ring buffer as
+// always written regardless of Redis availability, and §25.3 exposes it
+// at GET /v1/admin/events/buffer; §16.6 fixes the CloudEvents type as
+// dev.lenny.<short_name>.
+//
+// diagnosis: A failure means a real aggregate-health transition in the
+// live gateway does not deliver dev.lenny.health_status_changed to the
+// event-buffer consumer, or the delivered event's old/new status does
+// not match the observed transition. The health endpoint itself flipped
+// (the test reads the before/after verdict off GET /v1/admin/health), so
+// the break is in the OnTransition -> EventEmitter -> buffer wiring, not
+// in aggregate-health computation. Note the buffer write is documented
+// to succeed even with Redis unreachable, so a Redis outage inducing the
+// transition must not suppress the buffered event.
+func TestOpsEventEmissionHealthStatusChangedReachesBuffer(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+
+	// A live Redis backend is registered as a health checker on the
+	// aggregate, so terminating it forces a genuine aggregate-health
+	// transition rather than a synthetic one.
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	base := gw.BaseURL()
+
+	// Establish the baseline aggregate verdict. The first Report sets the
+	// baseline and fires no transition (§25.3), and it caches the healthy
+	// Redis probe for the per-replica probe-cache window.
+	baseline := getHealthStatus(t, base)
+	if baseline == "" {
+		t.Fatal("baseline GET /v1/admin/health returned an empty status")
+	}
+
+	// Inject a genuine Redis outage. Subsequent Redis probes fail to
+	// connect, so the aggregate verdict must transition away from the
+	// baseline once the probe cache expires.
+	rd.Stop(t)
+
+	// Poll the health endpoint until the aggregate verdict flips. Each GET
+	// re-runs the Aggregator's Report; once the probe cache expires the
+	// re-probe of the now-dead Redis pushes the aggregate off the
+	// baseline and fires the health_status_changed hook.
+	var observed string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if s := getHealthStatus(t, base); s != baseline {
+			observed = s
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if observed == "" {
+		t.Fatalf("aggregate health never transitioned away from %q after the Redis outage", baseline)
+	}
+
+	// The transition must have delivered dev.lenny.health_status_changed
+	// into the buffer, carrying the old and new aggregate status.
+	ev := waitForBufferEvent(t, base, "dev.lenny.health_status_changed")
+	if got := gjsonString(t, ev.Event.Data, "oldStatus"); got != baseline {
+		t.Errorf("health_status_changed data.oldStatus = %q, want %q (the observed baseline verdict)", got, baseline)
+	}
+	if got := gjsonString(t, ev.Event.Data, "newStatus"); got != observed {
+		t.Errorf("health_status_changed data.newStatus = %q, want %q (the observed post-outage verdict)", got, observed)
+	}
+}
+
+// getHealthStatus reads the aggregate verdict off the §25.3
+// GET /v1/admin/health full report. The health surface never returns
+// 5xx (§25.3), so a non-200 is a genuine failure.
+func getHealthStatus(t *testing.T, base string) string {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
+		base+"/v1/admin/health", nil)
+	adminHeaders(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get health: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get health: status %d, body=%s", resp.StatusCode, raw)
+	}
+	var report struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("decode health report: %v (body=%s)", err, raw)
+	}
+	return report.Status
+}
+
 // bufferEvent mirrors the fields of events.BufferedEvent this test
 // asserts on. It decodes the §25.3 GET /v1/admin/events/buffer page
 // without importing the product type, so the test pins the wire
