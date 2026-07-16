@@ -1000,10 +1000,14 @@ tests:
       # + LENNY_CLAIM_HOLD_TTL_SECONDS (§4.6.1 reserved hold —
       #   claimHoldTTLSeconds defaults to 10 and renders)
       # + LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS (§12.4 / §6.57 —
-      #   slotCounterPostgresFallbackMaxSeconds defaults to 60 and renders) = 82.
+      #   slotCounterPostgresFallbackMaxSeconds defaults to 60 and renders)
+      # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1 line 131 / §17.8.1 —
+      #   checkpointGrantWindow defaults to 4 and renders)
+      # + LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS (§13.2 / §17.8.1 —
+      #   checkpointCapabilityTTLSeconds defaults to 30 and renders) = 84.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 82
+          count: 84
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -3250,6 +3254,57 @@ tests:
           content:
             name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
             value: "120"
+
+  # §10.1 line 131 / §17.8.1 — checkpointGrantWindow defaults to 4 and
+  # renders into the gateway env so the checkpoint grant/confirm loop keeps
+  # at most that many chunk-upload capabilities outstanding at once.
+  - it: renders the default checkpointGrantWindow (4)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CHECKPOINT_GRANT_WINDOW
+            value: "4"
+  - it: renders an overridden checkpointGrantWindow
+    set:
+      gateway.checkpointGrantWindow: 8
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CHECKPOINT_GRANT_WINDOW
+            value: "8"
+  # §13.2 / §17.8.1 — checkpointCapabilityTTLSeconds defaults to 30 and
+  # renders into the gateway env so every gateway-minted presigned
+  # checkpoint capability expires after that window.
+  - it: renders the default checkpointCapabilityTTLSeconds (30)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS
+            value: "30"
+  - it: renders an overridden checkpointCapabilityTTLSeconds
+    set:
+      gateway.checkpointCapabilityTTLSeconds: 45
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS
+            value: "45"
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment

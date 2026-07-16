@@ -2413,6 +2413,20 @@ gateway:
   # of the three terms in the 240s grace-period budget (90s tier cap + 90s
   # BarrierAck + 30s stream drain). F-11.3.15.
   checkpointBarrierAckTimeoutSeconds: 90
+  # checkpointGrantWindow is the §10.1 line 131 / §17.8.1 deployment-wide
+  # default for the number of chunk-upload capabilities the gateway keeps
+  # outstanding at once while draining a session's workspace checkpoint. It
+  # bounds the pipelining depth and the worst-case unreconciled overage
+  # (checkpointGrantWindow × partialChunkSizeBytes) against a backend that
+  # ignores the signed Content-Length. A SandboxTemplate pool config value
+  # overrides this default per pool (§5.2). The gateway reads it from
+  # LENNY_CHECKPOINT_GRANT_WINDOW.
+  checkpointGrantWindow: 4
+  # checkpointCapabilityTTLSeconds is the §13.2 / §17.8.1 expiry, in
+  # seconds, of each gateway-minted presigned checkpoint upload or restore
+  # capability. The gateway reads it from
+  # LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS.
+  checkpointCapabilityTTLSeconds: 30
   # dualStoreUnavailableMaxSeconds is the §10.1 item-4 per-replica
   # countdown: when Postgres and Redis are simultaneously unreachable for
   # longer than this, sessions with no successful store interaction become
@@ -4085,6 +4099,12 @@ bootstrap:
   #   - name: echo-pool
   #     runtimeRef: echo
   #     warmCount: 2
+  #     # checkpointGrantWindow overrides the deployment-wide
+  #     # gateway.checkpointGrantWindow for this pool only (§5.2): the number
+  #     # of chunk-upload capabilities the gateway keeps outstanding while
+  #     # draining a session's workspace checkpoint. Omit to inherit the
+  #     # deployment-wide default. spec: §10.1 line 131; §17.8.1.
+  #     # checkpointGrantWindow: 8
   # users:
   #   - subject: alice@acme.com
   #     tenantId: acme

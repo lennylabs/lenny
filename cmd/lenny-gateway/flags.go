@@ -278,6 +278,8 @@ type gatewayFlags struct {
 	idempotencyGCIntervalSeconds            *int
 	idempotencyMaxBodyBytes                 *int64
 	checkpointJitterFraction                *float64
+	checkpointGrantWindow                   *int
+	checkpointCapabilityTTLSeconds          *int
 	noEnvPolicy                             *string
 	connectorOAuthCallbackURL               *string
 	connectorOAuthCA                        *string
@@ -1106,6 +1108,12 @@ func (f *gatewayFlags) registerArtifactFlags() {
 		"§11.5 line 277 cap on the request body the idempotency middleware buffers and hashes. A request larger than this is rejected with 413 BODY_TOO_LARGE before reaching the inner handler. Default 8 MiB covers the §11.5 critical operations (CreateSession ~10KB, FinalizeWorkspace and StartSession ~KB, Resume body that may carry a TaskResult). Operators raise it when their delegation payloads (taskInput) or replay/derive bodies exceed the default. Override via LENNY_IDEMPOTENCY_MAX_BODY_BYTES.")
 	f.checkpointJitterFraction = flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
 		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
+	f.checkpointGrantWindow = flag.Int("checkpoint-grant-window",
+		envInt("LENNY_CHECKPOINT_GRANT_WINDOW", checkpointer.DefaultGrantWindow),
+		"§10.1 line 131 / §17.8.1 checkpointGrantWindow: the number of chunk-upload capabilities the gateway keeps outstanding at once while draining a session's workspace checkpoint. It bounds both the pipelining depth and the worst-case unreconciled overage (checkpointGrantWindow × partialChunkSizeBytes) against a backend that ignores the signed Content-Length. Default 4; a pool config value overrides this deployment-wide default. Override via LENNY_CHECKPOINT_GRANT_WINDOW.")
+	f.checkpointCapabilityTTLSeconds = flag.Int("checkpoint-capability-ttl-seconds",
+		envInt("LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS", checkpointer.DefaultCapabilityTTLSeconds),
+		"§13.2 / §17.8.1 checkpointCapabilityTTLSeconds: the expiry, in seconds, of each gateway-minted presigned checkpoint upload or restore capability. Default 30. Override via LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS.")
 	f.noEnvPolicy = flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	f.connectorOAuthCallbackURL = flag.String("connector-oauth-callback-url", os.Getenv("LENNY_CONNECTOR_OAUTH_CALLBACK_URL"),

@@ -1657,6 +1657,8 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	agentNamespace := f.agentNamespace
 	checkpointInterval := f.checkpointInterval
 	checkpointJitterFraction := f.checkpointJitterFraction
+	checkpointGrantWindow := f.checkpointGrantWindow
+	checkpointCapabilityTTLSeconds := f.checkpointCapabilityTTLSeconds
 	claimHoldTTLSeconds := f.claimHoldTTLSeconds
 	clusterBurst := f.clusterBurst
 	clusterQPS := f.clusterQPS
@@ -1905,6 +1907,15 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// Metrics field is wired after gatewaymetrics.New() below
 			// so the §4.4 line 254 duration histogram is emitted.
 			Retention: checkpointRetention,
+			// §10.1 line 131 / §17.8.1 / §5.2 — the deployment-wide
+			// checkpointGrantWindow default and the presigned-capability
+			// TTL the grant/confirm loop signs into each grant. GrantWindow
+			// is the fallback the driver applies when a pool declares no
+			// per-pool override; PoolGrantWindow resolves that override from
+			// the §5.2 poolstore mirror.
+			GrantWindow:     *checkpointGrantWindow,
+			CapabilityTTL:   time.Duration(*checkpointCapabilityTTLSeconds) * time.Second,
+			PoolGrantWindow: sessionserver.NewPoolPolicyReader(pools),
 		}
 		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
 	}

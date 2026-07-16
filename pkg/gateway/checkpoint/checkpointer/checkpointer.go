@@ -33,6 +33,24 @@ var ErrNoBinding = errors.New("checkpointer: no pod binding for the session")
 // (default: 600s / 10 minutes)".
 const defaultInterval = 10 * time.Minute
 
+// DefaultGrantWindow is the §10.1 line 131 / §17.8.1 default for
+// `checkpointGrantWindow`: the gateway keeps at most this many
+// chunk-upload capabilities outstanding at once while draining a
+// session's workspace checkpoint. It bounds both the pipelining depth
+// and the worst-case unreconciled overage against a backend that does
+// not enforce the signed Content-Length.
+// spec: §17.8.1 — "Checkpoint grant window (checkpointGrantWindow) | 4
+// chunks".
+const DefaultGrantWindow = 4
+
+// DefaultCapabilityTTLSeconds is the §13.2 / §17.8.1 default for
+// `checkpointCapabilityTTLSeconds`: every gateway-minted presigned
+// checkpoint upload or restore capability expires this many seconds
+// after it is signed.
+// spec: §17.8.1 — "Checkpoint capability TTL
+// (checkpointCapabilityTTLSeconds) | 30 s".
+const DefaultCapabilityTTLSeconds = 30
+
 // DefaultJitterFraction is the §4.4 line 258 default for
 // `periodicCheckpointJitterFraction`: 0.2 spreads the first periodic
 // checkpoint uniformly across a 120-second window at the default
@@ -112,6 +130,73 @@ type Checkpointer struct {
 	// Level is the level-label value stamped onto the duration
 	// histogram. Empty falls back to checkpoint.LevelBasic.
 	Level checkpoint.Level
+	// GrantWindow is the deployment-wide default number of chunk-upload
+	// capabilities the checkpoint grant/confirm loop keeps outstanding at
+	// once. It is the fallback the loop applies when the session's pool
+	// declares no per-pool checkpointGrantWindow override. Zero selects
+	// DefaultGrantWindow.
+	// spec: §10.1 line 131 chunk-grant window; §17.8.1 checkpointGrantWindow
+	// default 4; §5.2 (deployment-wide default with per-pool override).
+	GrantWindow int
+	// CapabilityTTL is the expiry the loop signs into every presigned
+	// checkpoint upload and restore capability. Zero selects
+	// DefaultCapabilityTTLSeconds.
+	// spec: §13.2 checkpoint capability model; §17.8.1
+	// checkpointCapabilityTTLSeconds default 30 s.
+	CapabilityTTL time.Duration
+	// PoolGrantWindow resolves a session's pool to its per-pool
+	// checkpointGrantWindow override. The loop reads the override at
+	// checkpoint time and falls back to GrantWindow when the reader is nil,
+	// the pool has no mirror row, or the pool declares no override. It is
+	// the §5.2 poolstore-backed sessionPolicy mirror in production.
+	// spec: §5.2 (per-pool override of the deployment-wide default);
+	// §5.2 (pool config).
+	PoolGrantWindow podsession.PoolPolicyReader
+}
+
+// grantWindow returns the deployment-wide default checkpoint grant
+// window, applying DefaultGrantWindow when GrantWindow is unset.
+func (c *Checkpointer) grantWindow() int {
+	if c.GrantWindow > 0 {
+		return c.GrantWindow
+	}
+	return DefaultGrantWindow
+}
+
+// capabilityTTL returns the presigned-capability expiry the loop signs
+// into each grant, applying DefaultCapabilityTTLSeconds when
+// CapabilityTTL is unset.
+func (c *Checkpointer) capabilityTTL() time.Duration {
+	if c.CapabilityTTL > 0 {
+		return c.CapabilityTTL
+	}
+	return DefaultCapabilityTTLSeconds * time.Second
+}
+
+// grantWindowForPool resolves the effective checkpoint grant window for a
+// session bound to pool. It reads the pool's per-pool
+// checkpointGrantWindow override through PoolGrantWindow and falls back to
+// the deployment-wide default (grantWindow) when no reader is wired, the
+// pool has no mirror row, or the pool declares no override. A reader error
+// is treated as "no override" so a transient mirror-read failure degrades
+// to the deployment-wide default rather than aborting the checkpoint.
+//
+// spec: §5.2 — the checkpoint driver resolves the pool's override at
+// attempt time and falls back to the deployment-wide default when the pool
+// sets none; §5.2 (pool config).
+func (c *Checkpointer) grantWindowForPool(ctx context.Context, pool string) int {
+	def := c.grantWindow()
+	if c.PoolGrantWindow == nil || pool == "" {
+		return def
+	}
+	mirror, found, err := c.PoolGrantWindow.PoolPolicy(ctx, pool)
+	if err != nil || !found || mirror.CheckpointGrantWindow == nil {
+		return def
+	}
+	if w := int(*mirror.CheckpointGrantWindow); w > 0 {
+		return w
+	}
+	return def
 }
 
 // Run drives the periodic-checkpoint loop: every Interval it sweeps a

@@ -2311,6 +2311,22 @@ func (s *Server) poolPolicyReader() podsession.PoolPolicyReader {
 	return poolPolicyMirror{pools: s.pools}
 }
 
+// NewPoolPolicyReader adapts a §5.2 poolstore onto the
+// podsession.PoolPolicyReader the CRD resolver and the checkpoint driver
+// read the gateway-enforced sessionPolicy mirror through. It returns nil
+// when no pool store is wired so callers keep their CRD-derived defaults.
+// The gateway wiring shares one reader between ResolvePool and the
+// Checkpointer's per-pool checkpointGrantWindow lookup.
+//
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset); §10.1
+// (per-pool checkpointGrantWindow override).
+func NewPoolPolicyReader(pools poolstore.Store) podsession.PoolPolicyReader {
+	if pools == nil {
+		return nil
+	}
+	return poolPolicyMirror{pools: pools}
+}
+
 // poolPolicyMirror reads a pool's gateway-enforced §5.2 sessionPolicy
 // fields (maxConcurrentSessions, the service-mode maxConcurrent,
 // recycle.allowCrossTenantReuse, and recycle.maxPodUptimeSeconds) from
@@ -2334,6 +2350,14 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		return podsession.PoolPolicyMirror{}, false, fmt.Errorf("sessionserver: get pool %s: %w", name, err)
 	}
 	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
+	// spec: §10.1 line 131 / §5.2 — surface the per-pool
+	// checkpointGrantWindow override so the checkpoint driver's per-pool
+	// lookup reads the gateway-enforced value; nil leaves the driver on the
+	// deployment-wide default.
+	if p.CheckpointGrantWindow != nil {
+		w := int32(*p.CheckpointGrantWindow)
+		mirror.CheckpointGrantWindow = &w
+	}
 	if sp := p.SessionPolicy; sp != nil {
 		mirror.MaxConcurrentSessions = int32(sp.MaxConcurrentSessions)
 		// §5.2 / §4.6.1 pool-exhaustion disposition: fold the queue-vs-reject

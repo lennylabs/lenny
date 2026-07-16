@@ -91,6 +91,17 @@ spec:
                   workspace checkpoints for sessions in this pool.
                 format: int64
                 type: integer
+              checkpointGrantWindow:
+                description: |-
+                  CheckpointGrantWindow is the per-pool override for the number of
+                  chunk-upload capabilities the gateway keeps outstanding at once
+                  while draining this pool's workspace checkpoints. When unset the
+                  gateway falls back to its deployment-wide checkpointGrantWindow
+                  default. spec: §10.1 line 131 chunk-grant window; §17.8.1
+                  checkpointGrantWindow default 4.
+                format: int32
+                minimum: 1
+                type: integer
               deliveryMode:
                 description: DeliveryMode is the §4.9 credential delivery mode for
                   the pool.

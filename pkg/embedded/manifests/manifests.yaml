@@ -4163,6 +4163,19 @@ spec:
             # matches the §11.3 line 210 value and fits inside the grace period.
             - name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
               value: "90"
+            # §10.1 line 131 / §17.8.1 — checkpointGrantWindow: the number of
+            # chunk-upload capabilities the gateway keeps outstanding at once
+            # while draining a session's workspace checkpoint. It bounds the
+            # pipelining depth and the worst-case unreconciled overage against
+            # a backend that ignores the signed Content-Length. Default 4; a
+            # pool config value overrides this deployment-wide default.
+            - name: LENNY_CHECKPOINT_GRANT_WINDOW
+              value: "4"
+            # §13.2 / §17.8.1 — checkpointCapabilityTTLSeconds: the expiry of
+            # each gateway-minted presigned checkpoint upload or restore
+            # capability. Default 30.
+            - name: LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS
+              value: "30"
             # §10.1 item 4 — dualStoreUnavailableMaxSeconds: the
             # per-replica window after which sessions with no successful
             # store interaction become eligible for graceful termination
