@@ -67,8 +67,9 @@ func newDelegateMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Serve
 }
 
 // spec: §8.2 line 90 — the gateway runs the PreRoute chain on the
-// child's augmented TaskSpec. A REJECT blocks the delegation and no
-// child session is created.
+// child's augmented TaskSpec. A generic (non-immutable) REJECT blocks
+// the delegation, falls back to INTERCEPTOR_REJECTED, carries no
+// violated_fields, and creates no child session.
 func TestDelegateTaskPreRouteRejectBlocksChild(t *testing.T) {
 	chain := interceptor.NewChain()
 	if err := chain.Register(interceptor.PhasePreRoute, prerouteInterceptor{
@@ -81,8 +82,13 @@ func TestDelegateTaskPreRouteRejectBlocksChild(t *testing.T) {
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
-	if result["isError"] != true {
-		t.Errorf("a PreRoute REJECT should be a tool error: %+v", resp)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "INTERCEPTOR_REJECTED" {
+		t.Errorf("a generic PreRoute REJECT should fall back to INTERCEPTOR_REJECTED, got %v", env["code"])
+	}
+	details, _ := env["details"].(map[string]any)
+	if _, ok := details["violated_fields"]; ok {
+		t.Errorf("a generic PreRoute REJECT must not carry violated_fields: %+v", details)
 	}
 	if _, err := store.Get(context.Background(), "acme", "sess_child"); err == nil {
 		t.Error("a PreRoute-rejected delegation must not create a child session")
@@ -112,9 +118,11 @@ func TestDelegateTaskPreRouteModifyRewritesInput(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1048, line 1060 — a PreRoute MODIFY that alters the
-// authenticated tenant_id is rejected with
-// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION; no child is created.
+// spec: §8.2 (delegation PreRoute chain), §4.8, §15.1 — a PreRoute
+// MODIFY that alters the authenticated tenant_id is rejected with the
+// distinct INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION code carrying
+// details.violated_fields naming tenant_id, not a generic
+// INTERCEPTOR_REJECTED; no child is created.
 func TestDelegateTaskPreRouteModifyImmutableTenantRejected(t *testing.T) {
 	chain := interceptor.NewChain()
 	modified := []byte(`{"tenant_id":"globex","requested_runtime":"child-agent","input":"do work"}`)
@@ -128,8 +136,17 @@ func TestDelegateTaskPreRouteModifyImmutableTenantRejected(t *testing.T) {
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
-	if result["isError"] != true {
-		t.Errorf("a PreRoute MODIFY altering tenant_id should be a tool error: %+v", resp)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != interceptor.CodeInterceptorImmutableFieldViolation {
+		t.Errorf("code = %v, want %s", env["code"], interceptor.CodeInterceptorImmutableFieldViolation)
+	}
+	details, _ := env["details"].(map[string]any)
+	if details["phase"] != string(interceptor.PhasePreRoute) {
+		t.Errorf("details.phase = %v, want PreRoute", details["phase"])
+	}
+	violated, _ := details["violated_fields"].([]any)
+	if len(violated) != 1 || violated[0] != "tenant_id" {
+		t.Errorf("details.violated_fields = %v, want [tenant_id]", details["violated_fields"])
 	}
 	if _, err := store.Get(context.Background(), "acme", "sess_child"); err == nil {
 		t.Error("an immutable-field-violating MODIFY must not create a child session")
