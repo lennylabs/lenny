@@ -156,12 +156,13 @@ var prodMigrationSchema = []struct {
 	{migration: "0061", table: "sessions", columns: []string{
 		"last_successful_checkpoint_at",
 	}},
-	// 0062 creates the §4.4 lines 234 / 236 partial-checkpoint
-	// manifest table. The row is the recovery-aid the gateway writes
-	// when an eviction checkpoint exceeds the preStop tiered cap and
-	// the workspace upload is incomplete; the resume path uses it to
-	// drive the §10.1 partial-workspace reconstruction.
-	{migration: "0062", table: "session_partial_checkpoint_manifest", create: true},
+	// 0062 created the §4.4 lines 234 / 236 partial-checkpoint manifest
+	// table session_partial_checkpoint_manifest. Migration 0175 drops
+	// that table and creates checkpoint_manifest with the full §10.1
+	// column set in its place, so at head the 0062 table is absent; its
+	// forward and rollback contract is asserted through the 0175 entry
+	// below (whose .down.sql recreates the 0062 table). This comment
+	// keeps 0062 referenced by number for scripts/lint-migrations.sh.
 	// 0058 adds §4.3 / §13.3 per-dialect cap columns to issued_tokens:
 	// audiences TEXT[] and dialect_cap_applied_seconds INT.
 	{migration: "0058", table: "issued_tokens", columns: []string{
@@ -418,8 +419,12 @@ var prodMigrationSchema = []struct {
 	// EventStore tables.
 	{migration: "0149", table: "session_logs", create: true},
 	{migration: "0149", table: "stream_cursors", create: true},
-	// 0150 adds the §10.1 at-most-one-active-partial-manifest partial unique
-	// index to session_partial_checkpoint_manifest; no column added.
+	// 0150 added the §10.1 at-most-one-active-partial-manifest partial
+	// unique index partial_manifest_active_uniq to
+	// session_partial_checkpoint_manifest; migration 0175 supersedes it
+	// with the same-named index on checkpoint_manifest scoped to the
+	// §10.1 line 147 (session_id, slot_id) key. No column added; this
+	// comment keeps 0150 referenced for scripts/lint-migrations.sh.
 	// 0151 adds the §4.6.2 reconciliation_resume_epoch counter to
 	// sandbox_warm_pools.
 	{migration: "0151", table: "sandbox_warm_pools", columns: []string{"reconciliation_resume_epoch"}},
@@ -531,6 +536,17 @@ var prodMigrationSchema = []struct {
 	// sequences are asserted directly in
 	// migrations/0174_default_tenant_billing_audit_sequences_test.go.
 	// spec: §11.2.1, §11.7, §15.1, §10.2.
+	//
+	// 0175 drops session_partial_checkpoint_manifest (migration 0062) and
+	// its partial unique index (migration 0150) and creates
+	// checkpoint_manifest with the full §10.1 lines 141-151 column set,
+	// its tenant-guard trigger, ENABLE/FORCE RLS + lenny_tenant_isolation
+	// policy, and lenny_app grants. Its .down.sql recreates the 0062
+	// table and the 0150 index. The RLS apparatus and column-set
+	// specifics are asserted directly in the rls suite and in
+	// migrations/0175_checkpoint_manifest_test.go. spec: §10.1 lines
+	// 141-151, §12.3.
+	{migration: "0175", table: "checkpoint_manifest", create: true},
 }
 
 // spec: 12.2, 18.5
