@@ -3547,6 +3547,8 @@
         "tests/tier4_integration/alerting_rules_prometheus_firing_test.go::TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions",
         "pkg/alerting/inproceval/inproceval_test.go::TestBundledUniversalAlertsFireOnTriggerCondition_spec_25_13",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRulesConfigMapIsLoadablePrometheusRuleFile",
+        "tests/tier11_docs/alerting_docs_reference_test.go::TestDocsAlertingRulesYAMLIsLoadablePrometheusRuleFile",
+        "tests/tier11_docs/alerting_docs_reference_test.go::TestRoutingRecommendationsNameAllSeverities",
         "charts/lenny/tests/tier-presets_test.yaml"
       ],
       "packages": [],
