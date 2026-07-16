@@ -174,6 +174,12 @@ type uploadDriver struct {
 	trigger      checkpoint.Trigger
 	window       int // §5.2 effective grant window: max outstanding grants
 
+	// intentWritten records that onProbe committed the §10.1 intent row, so
+	// onChunkReady may mint a chunk capability. It is written and read only on
+	// the reader goroutine (onProbe then onChunkReady process sequentially),
+	// so it needs no lock.
+	intentWritten bool
+
 	// sendMu serialises stream.Send so the main reader loop and a confirm
 	// goroutine that latches an abort never issue two concurrent Sends,
 	// which the gRPC client stream forbids.
@@ -256,7 +262,6 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 	if rerr := d.reserve(probed); rerr != nil {
 		return rerr
 	}
-	d.reservedBytes = probed
 	if serr := d.supersedePriorAttempts(); serr != nil {
 		d.releaseReservation()
 		return serr
@@ -280,6 +285,12 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 		d.releaseReservation()
 		return fmt.Errorf("checkpointer: write intent row: %w", err)
 	}
+	// spec: §10.1 line 130 — only after the intent-row INSERT commits may the
+	// gateway mint a chunk-upload capability, so no chunk object can be
+	// orphaned under a checkpoint_id whose manifest row was never written.
+	// onChunkReady fences on this flag rather than trusting adapter frame
+	// order.
+	d.intentWritten = true
 	return nil
 }
 
@@ -306,6 +317,12 @@ func (d *uploadDriver) reserve(probed int64) error {
 	// enforces it before signing each grant.
 	d.quotaCap = limit - prior
 	d.quotaCapSet = true
+	// Record the reserved size only on the path that actually incremented the
+	// tenant counter, so a later release arm (reconcile, releaseReservation)
+	// decrements exactly what this attempt reserved and never a size it never
+	// took (spec: §11.2 line 35 — reservation release is exactly-once and
+	// guarded).
+	d.reservedBytes = probed
 	return nil
 }
 
@@ -358,6 +375,15 @@ func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 	c := d.c
 	index := cr.GetIndex()
 	length := cr.GetLength()
+	// spec: §10.1 line 130 — the gateway mints a chunk capability only after
+	// the intent-row INSERT commits. A ChunkReady seen before the Probe wrote
+	// the row (or on a manifest-disabled dev-mode path) gets no capability, so
+	// no PUT can orphan an object under a checkpoint_id with no manifest row.
+	if c.Manifests != nil && !d.intentWritten {
+		d.abort(partialmanifeststore.ReasonStreamTruncated,
+			fmt.Sprintf("chunk %d ready before the intent row was written", index))
+		return
+	}
 	if length <= 0 || length > c.chunkSize() {
 		d.abort(partialmanifeststore.ReasonStreamTruncated,
 			fmt.Sprintf("declared chunk %d length %d outside (0, %d]", index, length, c.chunkSize()))
@@ -685,20 +711,32 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 func (d *uploadDriver) reconcile(ctx context.Context, confirmed int64) {
 	c := d.c
 	rows, err := c.Manifests.ReleaseReservation(ctx, d.tenantID, d.checkpointID)
-	if err != nil || rows != 1 || c.Quota == nil {
+	if err != nil || rows != 1 {
+		return
+	}
+	// The guarded UPDATE above clears the row's reservation flag regardless.
+	// The counter decrement fires only when this attempt actually took a
+	// reservation: a config with Quota wired but QuotaLimitFor nil disables
+	// reservation by contract, so there is nothing to release even though the
+	// row carried a probed reserved_bytes.
+	if !d.quotaCapSet {
 		return
 	}
 	_ = c.Quota.Adjust(ctx, d.tenantID, -(d.reservedBytes - confirmed))
 }
 
-// releaseReservation releases the reservation on an early abort before
-// the intent row's counters are established.
+// releaseReservation releases the reservation on an early abort (a supersede
+// or intent-row Put failure) before the intent row's counters are
+// established. It decrements only when this attempt actually took a
+// reservation, matching the reserve() predicate: a config with Quota wired
+// but QuotaLimitFor nil disables reservation by contract, so no Reserve ran
+// and there is nothing to release (spec: §11.2 line 35 — reservation release
+// is exactly-once and guarded).
 func (d *uploadDriver) releaseReservation() {
-	c := d.c
-	if c.Quota == nil {
+	if !d.quotaCapSet {
 		return
 	}
-	_ = c.Quota.Adjust(d.ctx, d.tenantID, -d.reservedBytes)
+	_ = d.c.Quota.Adjust(d.ctx, d.tenantID, -d.reservedBytes)
 }
 
 // chunkURI builds the object URI for chunk index under this attempt's

@@ -516,6 +516,161 @@ func TestDriverAbortFinalisesOnDetachedContext_spec_10_1(t *testing.T) {
 	}
 }
 
+// spec: §11.2 line 35 — reservation release is exactly-once and guarded, and
+// a config with Quota wired but QuotaLimitFor nil disables reservation by
+// contract: no Reserve runs, so no abort-arm release may decrement the tenant
+// counter even though the intent row records a probed reserved_bytes.
+//
+// diagnosis: onProbe set d.reservedBytes unconditionally and reconcile guarded
+// only on Quota != nil, so an aborted checkpoint in the reservation-disabled
+// config decremented the counter by the unconfirmed probed size, drifting the
+// tenant's storage_bytes_used below its true value. Against the pre-fix code
+// the counter reads 80 (100 seeded minus a wrongful 20-byte release); the fix
+// keeps it at 100.
+func TestDriverAbortDoesNotReleaseWhenReservationDisabled_spec_11_2(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		truncateAfter: 0, // close after chunk 0 (10 bytes) commits, no Summary
+	}, 1<<30)
+	// Reservations disabled by contract: Quota is wired but no limit resolver.
+	h.cp.QuotaLimitFor = nil
+	// Seed the counter with unrelated tenant usage the abort must not touch.
+	if err := h.quota.Set(context.Background(), "acme", 100); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	used, _ := h.quota.Used(context.Background(), "acme")
+	if used != 100 {
+		t.Errorf("storage counter = %d, want 100 (no release when reservation is disabled)", used)
+	}
+}
+
+// failingPutManifests fails the intent-row Put so onProbe reaches its
+// early-abort releaseReservation arm.
+type failingPutManifests struct {
+	*partialmanifeststore.MemoryStore
+}
+
+func (s failingPutManifests) Put(context.Context, partialmanifeststore.Record) error {
+	return fmt.Errorf("failingPutManifests: put rejected")
+}
+
+// spec: §11.2 line 35 — the early-abort reservation release on an intent-row
+// Put failure is exactly-once and guarded: with reservation disabled
+// (QuotaLimitFor nil) no Reserve ran, so releaseReservation must not decrement
+// the tenant counter.
+//
+// diagnosis: releaseReservation guarded only on Quota == nil and adjusted by
+// the probed size that onProbe had stamped onto d.reservedBytes before any
+// Reserve, so a Put failure in the reservation-disabled config decremented the
+// counter for bytes never reserved. Against the pre-fix code the counter reads
+// 70 (100 seeded minus a wrongful 30-byte release); the fix keeps it at 100.
+func TestDriverEarlyAbortDoesNotReleaseWhenReservationDisabled_spec_11_2(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10},
+		truncateAfter: -1,
+	}, 1<<30)
+	h.cp.QuotaLimitFor = nil
+	h.cp.Manifests = failingPutManifests{h.manifests}
+	if err := h.quota.Set(context.Background(), "acme", 100); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded despite an intent-row Put failure, want failure")
+	}
+	used, _ := h.quota.Used(context.Background(), "acme")
+	if used != 100 {
+		t.Errorf("storage counter = %d, want 100 (no early-abort release when reservation is disabled)", used)
+	}
+}
+
+// preProbeChunkAdapter sends a ChunkReady before any Probe, so the intent row
+// is never written when the gateway processes the chunk. It records whether
+// the gateway responded with an Abort or wrongly minted a Grant.
+type preProbeChunkAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	reply chan string
+}
+
+func (a *preProbeChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+	if _, err := stream.Recv(); err != nil { // consume CheckpointStart
+		return err
+	}
+	if err := stream.Send(&adapterv1.CheckpointServerMessage{
+		Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: 0, Length: 10}},
+	}); err != nil {
+		return err
+	}
+	msg, err := stream.Recv()
+	if err != nil {
+		a.reply <- fmt.Sprintf("recv-err:%v", err)
+		return nil
+	}
+	switch {
+	case msg.GetAbort() != nil:
+		a.reply <- "abort:" + msg.GetAbort().GetReason()
+	case msg.GetGrant() != nil:
+		a.reply <- "grant"
+	default:
+		a.reply <- "other"
+	}
+	return nil
+}
+
+// spec: §10.1 line 130 — the gateway mints a chunk capability only after the
+// intent-row INSERT commits. A ChunkReady that arrives before the Probe wrote
+// the row gets an Abort, not a Grant, so no PUT can orphan an object under a
+// checkpoint_id with no manifest row.
+//
+// diagnosis: onChunkReady had no precondition check that onProbe committed the
+// row and relied on adapter frame ordering; a ChunkReady before the Probe
+// minted and sent a presigned PUT grant with no intent row, no reservation,
+// and the at-signing quota gate skipped. Against the pre-fix code the adapter
+// receives a Grant; the fix makes it receive a stream_truncated Abort.
+func TestDriverFencesChunkReadyOnIntentRow_spec_10_1(t *testing.T) {
+	adapter := &preProbeChunkAdapter{reply: make(chan string, 1)}
+	client := dialAdapter(t, adapter)
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: client})
+	sessions := memstore.New()
+	runningSession(t, sessions, "acme", "s1")
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	quota := storagequota.NewMemory()
+	cp := &checkpointer.Checkpointer{
+		Sessions:      sessions,
+		Registry:      registry,
+		Manifests:     manifests,
+		Quota:         quota,
+		QuotaLimitFor: func(context.Context, string) (int64, error) { return 1 << 30, nil },
+		Presigner:     presignerFake{},
+		ObjectStore:   blobstore.NewMemoryStore(time.Now),
+		Deadline:      5 * time.Second,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("Checkpoint succeeded on a pre-Probe ChunkReady, want failure")
+	}
+	select {
+	case got := <-adapter.reply:
+		if got != "abort:"+partialmanifeststore.ReasonStreamTruncated {
+			t.Errorf("adapter reply = %q, want an %s abort (no grant before the intent row)",
+				got, partialmanifeststore.ReasonStreamTruncated)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("adapter received no reply to its pre-Probe ChunkReady")
+	}
+	// No intent row was written, so no reservation was taken.
+	if _, err := manifests.LatestActive(context.Background(), "acme", "s1"); err == nil {
+		t.Error("a manifest row was written for a checkpoint whose Probe never ran")
+	}
+	if used, _ := quota.Used(context.Background(), "acme"); used != 0 {
+		t.Errorf("storage counter = %d, want 0 (no reservation before the intent row)", used)
+	}
+}
+
 // captureDriverMetrics records the driver's gateway-side counter fires.
 type captureDriverMetrics struct {
 	sizeExceeded   int
