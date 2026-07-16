@@ -13,14 +13,16 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -156,6 +158,63 @@ type Checkpointer struct {
 	// spec: §5.2 (per-pool override of the deployment-wide default);
 	// §5.2 (pool config).
 	PoolGrantWindow podsession.PoolPolicyReader
+	// Manifests persists the §10.1 checkpoint_manifest intent row, the
+	// monotonic chunk-confirm counter, the terminal finalisation, and the
+	// exactly-once reservation release. Nil disables the whole manifest
+	// side of the driver (dev-mode / degenerate test path); the snapshot
+	// still records the WorkspaceSnapshot from the adapter's Summary total.
+	// spec: §10.1 lines 130-141.
+	Manifests partialmanifeststore.Store
+	// Quota reserves the probed workspace size against the tenant's §11.2
+	// storage counter before any grant and reconciles it against the
+	// confirmed total on every terminal arm. Nil (or a nil QuotaLimitFor)
+	// disables reservation.
+	// spec: §11.2 (checkpoint quota reservation and reconciliation).
+	Quota StorageQuota
+	// QuotaLimitFor resolves the tenant's storage limit at reservation
+	// time. Nil disables reservation.
+	QuotaLimitFor func(ctx context.Context, tenantID string) (int64, error)
+	// Presigner mints one single-key presigned PUT capability per chunk in
+	// response to a ChunkReady. Required to serve a chunked producer; nil
+	// aborts a declared chunk.
+	// spec: §13.2 (capability model).
+	Presigner blobstore.Presigner
+	// ObjectStore confirms each committed chunk with Stat (the bytes
+	// actually written). Nil disables confirmation; the adapter's Summary
+	// total is then authoritative.
+	// spec: §11.2 (bytes-actually-written confirmation).
+	ObjectStore ObjectStat
+	// Cataloging inserts the §12.5 artifact_store catalog row for each
+	// confirmed chunk from its Stat-confirmed size. Nil skips cataloging.
+	// spec: §12.5 line 309.
+	Cataloging ChunkRecorder
+	// ChunkDeleter sweeps the chunk objects under a manifest's
+	// chunk_object_key_prefix on the abort and supersede arms. Nil skips
+	// the object-store sweep (dev-mode / test path).
+	// spec: §4.4 line 236 / §10.1 line 157.
+	ChunkDeleter PartialChunkDeleter
+	// DriverMetrics receives the gateway-side §4.4 / §10.1 counter
+	// increments the object-store call moving off the adapter transferred
+	// to the gateway. Nil disables the emissions.
+	// spec: §4.4 lines 254, 262; §10.1 supersede-on-write; §12.5 line 303.
+	DriverMetrics DriverMetrics
+	// SkippedEventFunc emits the §4.4 line 255 `checkpoint.skipped` session
+	// event when the adapter rejects the run at its workspace-size probe.
+	// Nil disables the emission.
+	// spec: §4.4 line 255.
+	SkippedEventFunc func(ctx context.Context, tenantID, sessionID, reason string)
+	// ChunkSizeBytes is the gateway-chosen fixed chunk size the driver
+	// signs into every grant and clamps every declared length against.
+	// Zero selects DefaultChunkSizeBytes.
+	// spec: §10.1 line 139 (fixed-size chunked-object model).
+	ChunkSizeBytes int64
+	// ChunkEncoding is the wire encoding the gateway declares in Start.
+	// Empty selects tar.
+	ChunkEncoding string
+
+	// flights holds the per-(session, slot) single-flight lock the driver
+	// acquires for the duration of one attempt. Lazily populated.
+	flights sync.Map
 }
 
 // grantWindow returns the deployment-wide default checkpoint grant
@@ -334,7 +393,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		return ErrNoBinding
 	}
 	startedAt := c.now()
-	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding.Adapter, trigger)
+	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding, tenantID, sessionID, trigger)
 	elapsed := c.now().Sub(startedAt).Seconds()
 	// spec: §4.4 line 254 — observe the duration histogram regardless
 	// of outcome so operators see slow checkpoints that also failed
@@ -396,10 +455,26 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 // ChunkReady, and ChunkCommitted frames advance the chunk grant/confirm
 // loop; the record path here waits for the terminal frame.
 //
+// The per-(session, slot) single-flight lock serialises a periodic
+// checkpoint against a concurrent seal of the same workspace so their
+// supersede / finalise manifest writes cannot interleave, and the driver
+// resolves the effective grant window from the bound pool at attempt time
+// (§5.2 per-pool checkpointGrantWindow override).
+//
 // spec: §10.1 lines 130-132 — the gateway mints the checkpoint_id, opens
 // the stream, and the adapter reports the confirmed byte total in
 // CheckpointSummary.
-func (c *Checkpointer) driveCheckpoint(ctx context.Context, client *adapterclient.Client, trigger checkpoint.Trigger) (string, int64, error) {
+func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.BindResult, tenantID, sessionID string, trigger checkpoint.Trigger) (string, int64, error) {
+	slotID := binding.SlotID
+	if slotID == "" {
+		slotID = partialmanifeststore.SlotDefault
+	}
+	// Serialise every attempt for this (session, slot) so the supersede set
+	// the intent-row transaction fences is stable for the duration of the
+	// attempt.
+	unlock := c.lockFlight(sessionID, slotID)
+	defer unlock()
+
 	// Cancel the stream on return so its RPC is torn down once the
 	// terminal frame is read. c.Deadline additionally bounds the whole
 	// attempt: a stalled stream cancels rather than blocking the sweep
@@ -411,7 +486,7 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, client *adapterclien
 		ctx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
-	stream, err := client.Checkpoint(ctx)
+	stream, err := binding.Adapter.Checkpoint(ctx)
 	if err != nil {
 		return "", 0, fmt.Errorf("open checkpoint stream: %w", err)
 	}
@@ -419,28 +494,41 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, client *adapterclien
 	start := &adapterv1.CheckpointClientMessage{
 		Msg: &adapterv1.CheckpointClientMessage_Start{
 			Start: &adapterv1.CheckpointStart{
-				CheckpointId: checkpointID,
-				Trigger:      trigger.Proto(),
-				DeadlineMs:   c.Deadline.Milliseconds(),
+				CheckpointId:   checkpointID,
+				Trigger:        trigger.Proto(),
+				ChunkSizeBytes: c.chunkSize(),
+				ChunkEncoding:  string(c.chunkEncoding()),
+				DeadlineMs:     c.Deadline.Milliseconds(),
 			},
 		},
 	}
 	if err := stream.Send(start); err != nil {
 		return "", 0, fmt.Errorf("send checkpoint start: %w", err)
 	}
-	for {
-		msg, err := stream.Recv()
-		if err != nil {
-			return "", 0, fmt.Errorf("recv checkpoint frame: %w", err)
-		}
-		if summary := msg.GetSummary(); summary != nil {
-			return checkpointID, summary.GetTotalBytes(), nil
-		}
-		if failed := msg.GetFailed(); failed != nil {
-			return "", 0, fmt.Errorf("adapter checkpoint failed: %s (http %d, code %q)",
-				failed.GetReason(), failed.GetHttpStatus(), failed.GetErrorCode())
-		}
+	d := &uploadDriver{
+		c:            c,
+		ctx:          ctx,
+		cancel:       cancel,
+		stream:       stream,
+		tenantID:     tenantID,
+		sessionID:    sessionID,
+		slotID:       slotID,
+		checkpointID: checkpointID,
+		prefix:       chunkPrefix(tenantID, sessionID, checkpointID),
+		trigger:      trigger,
+		// Resolve the effective grant window from the bound pool's per-pool
+		// override at attempt time (§5.2). It bounds the grants the driver
+		// keeps outstanding ahead of confirmation.
+		window: c.grantWindowForPool(ctx, c.Pool),
 	}
+	return d.run()
+}
+
+// chunkPrefix builds the §10.1 chunk_object_key_prefix under which an
+// attempt's chunk objects live:
+// /{tenant_id}/checkpoints/{session_id}/{checkpoint_id}/.
+func chunkPrefix(tenantID, sessionID, checkpointID string) string {
+	return fmt.Sprintf("/%s/%s/%s/%s/", tenantID, blobstore.ObjectTypeCheckpoint, sessionID, checkpointID)
 }
 
 // observeDuration emits the §4.4 line 254 histogram observation.

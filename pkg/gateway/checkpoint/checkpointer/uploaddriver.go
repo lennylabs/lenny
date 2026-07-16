@@ -1,0 +1,657 @@
+// SPDX-License-Identifier: MIT
+
+package checkpointer
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// DefaultChunkSizeBytes is the §10.1 `partialChunkSizeBytes` the gateway
+// signs into every chunk grant and clamps every adapter-declared chunk
+// length against: a fixed 16 MiB block. It gives every PUT an exact,
+// signable Content-Length and bounds the worst-case unreconciled overage
+// against a non-enforcing object store to `grantWindow × ChunkSizeBytes`.
+//
+// spec: §10.1 line 139 (fixed-size chunked-object model); §13.2 (the
+// residual-exposure bound).
+const DefaultChunkSizeBytes = 16 << 20
+
+// chunkMimeType is the content type recorded for every checkpoint chunk
+// object; the chunks are opaque tar (or tar.gz) blocks.
+const chunkMimeType = "application/octet-stream"
+
+// StorageQuota is the §11.2 reservation seam the upload driver reserves
+// the probed workspace size against before it mints any grant and
+// reconciles against the confirmed total on every terminal arm. The
+// production storagequota.Failover / storagequota.Memory satisfy it.
+//
+// spec: §11.2 (checkpoint quota reservation and reconciliation).
+type StorageQuota interface {
+	// Reserve increments the tenant counter by incoming, rejecting the
+	// reservation with storagequota.ErrQuotaExceeded when it would carry
+	// the tenant past limit. It returns the prior counter value.
+	Reserve(ctx context.Context, tenantID string, incoming, limit int64) (int64, error)
+	// Adjust applies a signed relative delta to the tenant counter,
+	// clamping at zero. The driver releases an aborted attempt's
+	// unconfirmed reservation with a negative delta.
+	Adjust(ctx context.Context, tenantID string, delta int64) error
+}
+
+// ObjectStat is the §11.2 confirm seam: the driver Stats each committed
+// chunk to read the byte count the object store actually wrote, which is
+// the "bytes actually written" the quota accounting keys on and the
+// defence-in-depth check against a body larger than the signed
+// Content-Length on a non-enforcing backend. blobstore.Store satisfies it.
+//
+// spec: §11.2 (bytes-actually-written confirmation).
+type ObjectStat interface {
+	Stat(u blobstore.URI) (blobstore.BlobInfo, error)
+}
+
+// ChunkRecorder is the §12.5 catalog seam: the driver inserts the
+// artifact_store row for each confirmed chunk from its Stat-confirmed
+// size, because a presigned PUT bypasses blobstore.Store.Put's own
+// cataloging path. cataloging.Store satisfies it.
+//
+// spec: §12.5 line 309 (every artifact_store row is inserted alongside
+// the bucket object).
+type ChunkRecorder interface {
+	RecordPut(u blobstore.URI, size int64, mimeType string) error
+}
+
+// DriverMetrics is the gateway-side telemetry the upload driver emits on
+// the §4.4 / §10.1 counters that the adapter no longer owns once the
+// object-store call moved off the adapter. gatewaymetrics.Metrics
+// satisfies it. A nil DriverMetrics disables the emissions.
+//
+// spec: §4.4 lines 254, 262; §10.1 supersede-on-write; §12.5 line 303.
+type DriverMetrics interface {
+	// IncCheckpointSizeExceeded stamps lenny_checkpoint_size_exceeded_total
+	// when the adapter's workspace-size probe rejects the run.
+	IncCheckpointSizeExceeded(pool, level string)
+	// IncCheckpointStorageFailure stamps
+	// lenny_checkpoint_storage_failure_total{reason="retry_exhausted"} when
+	// a chunk PUT fails past the §4.4 retry budget.
+	IncCheckpointStorageFailure(pool, level, trigger string)
+	// IncCheckpointPartialManifestsSuperseded stamps
+	// lenny_checkpoint_partial_manifests_superseded_total once per prior
+	// aborted attempt this attempt supersedes.
+	IncCheckpointPartialManifestsSuperseded(pool string)
+	// IncCheckpointKMSUnavailable stamps
+	// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"} on a
+	// kms:-coded object-store rejection.
+	IncCheckpointKMSUnavailable()
+}
+
+// lockFlight acquires the per-(session, slot) single-flight lock so a
+// periodic checkpoint and a concurrent seal of the same workspace cannot
+// interleave their supersede / finalise manifest writes. The returned
+// func releases the lock. The lock map is lazily populated so a
+// zero-value Checkpointer needs no constructor.
+//
+// spec: §10.1 supersede-on-write (the supersede set must be stable for
+// the duration of one attempt).
+func (c *Checkpointer) lockFlight(sessionID, slotID string) func() {
+	key := sessionID + "\x00" + slotID
+	actual, _ := c.flights.LoadOrStore(key, &sync.Mutex{})
+	mu := actual.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// chunkSize returns the gateway-chosen fixed chunk size, applying
+// DefaultChunkSizeBytes when ChunkSizeBytes is unset.
+func (c *Checkpointer) chunkSize() int64 {
+	if c.ChunkSizeBytes > 0 {
+		return c.ChunkSizeBytes
+	}
+	return DefaultChunkSizeBytes
+}
+
+// chunkEncoding returns the wire encoding the gateway declares in Start,
+// defaulting to tar.
+func (c *Checkpointer) chunkEncoding() partialmanifeststore.ChunkEncoding {
+	if c.ChunkEncoding != "" {
+		return partialmanifeststore.ChunkEncoding(c.ChunkEncoding)
+	}
+	return partialmanifeststore.ChunkEncodingTar
+}
+
+// levelLabel returns the level-label value stamped onto the driver's
+// telemetry, defaulting to checkpoint.LevelBasic.
+func (c *Checkpointer) levelLabel() string {
+	if c.Level != "" {
+		return string(c.Level)
+	}
+	return string(checkpoint.LevelBasic)
+}
+
+// errSizeLimit reports the adapter rejected the run at its workspace-size
+// probe (a gRPC FailedPrecondition before any grant). The driver maps it
+// onto lenny_checkpoint_size_exceeded_total and the checkpoint.skipped
+// session event and writes no manifest row.
+var errSizeLimit = errors.New("checkpointer: workspace size limit exceeded")
+
+// uploadDriver runs one §10.1 gateway-side grant/confirm attempt on the
+// open bidirectional Checkpoint stream. It reads the adapter's Probe,
+// reserves quota, writes the intent row, mints a bounded window of
+// presigned PUT capabilities in response to each ChunkReady, confirms
+// each committed chunk off the grant's critical path, and finalises the
+// manifest row on the terminal frame. Every abort arm finalises
+// partial = true with its manifest_reason and releases the reservation
+// the attempt did not keep.
+type uploadDriver struct {
+	c            *Checkpointer
+	ctx          context.Context
+	cancel       context.CancelFunc
+	stream       adapterv1.Adapter_CheckpointClient
+	tenantID     string
+	sessionID    string
+	slotID       string
+	checkpointID string
+	prefix       string
+	trigger      checkpoint.Trigger
+	window       int // §5.2 effective grant window: max outstanding grants
+
+	// sendMu serialises stream.Send so the main reader loop and a confirm
+	// goroutine that latches an abort never issue two concurrent Sends,
+	// which the gRPC client stream forbids.
+	sendMu sync.Mutex
+
+	// mu guards the confirm-side counters and the abort latch, which the
+	// per-ack confirm goroutines mutate concurrently with the main reader.
+	mu             sync.Mutex
+	signedLen      map[uint32]int64 // per-index Content-Length signed into the grant
+	acked          map[uint32]bool  // indices whose ChunkCommitted the reader saw
+	outstanding    int              // granted-but-not-yet-acked index count
+	confirmedBytes int64            // sum of Stat-confirmed chunk sizes
+	confirmedCount int              // number of chunks Stat-confirmed
+	reservedBytes  int64            // the reservation taken from the probe
+	aborted        bool
+	abortReason    string
+	abortDetail    string
+	confirmWG      sync.WaitGroup
+}
+
+// send issues one gateway → adapter frame under sendMu.
+func (d *uploadDriver) send(msg *adapterv1.CheckpointClientMessage) error {
+	d.sendMu.Lock()
+	defer d.sendMu.Unlock()
+	return d.stream.Send(msg)
+}
+
+// run drives the attempt to its terminal frame and returns the
+// gateway-minted checkpoint_id and the confirmed byte total on success,
+// or a wrapped error on any abort arm.
+func (d *uploadDriver) run() (string, int64, error) {
+	d.signedLen = map[uint32]int64{}
+	d.acked = map[uint32]bool{}
+	for {
+		msg, err := d.stream.Recv()
+		if err != nil {
+			return d.onStreamError(err)
+		}
+		switch {
+		case msg.GetProbe() != nil:
+			if perr := d.onProbe(msg.GetProbe()); perr != nil {
+				return "", 0, perr
+			}
+		case msg.GetChunkReady() != nil:
+			// onChunkReady latches an abort on a protocol violation and
+			// lets the loop reach the terminal finalisation path when the
+			// aborted stream closes, rather than returning without
+			// finalising the intent row.
+			d.onChunkReady(msg.GetChunkReady())
+		case msg.GetChunkCommitted() != nil:
+			d.onChunkCommitted(msg.GetChunkCommitted())
+		case msg.GetSummary() != nil:
+			return d.onSummary(msg.GetSummary())
+		case msg.GetFailed() != nil:
+			return d.onFailed(msg.GetFailed())
+		}
+	}
+}
+
+// onProbe reserves the probed workspace size against the tenant's storage
+// quota and writes the §10.1 intent row (partial = true,
+// manifest_reason = in_progress), superseding any prior aborted attempt
+// for the same (session, slot) first.
+func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
+	c := d.c
+	if c.Manifests == nil {
+		// No manifest store wired (dev-mode / degenerate test path): the
+		// attempt still records the WorkspaceSnapshot from the Summary
+		// total, but no intent row, reservation, or grant is minted.
+		return nil
+	}
+	probed := p.GetWorkspaceBytes()
+	if rerr := d.reserve(probed); rerr != nil {
+		return rerr
+	}
+	d.reservedBytes = probed
+	if serr := d.supersedePriorAttempts(); serr != nil {
+		d.releaseReservation()
+		return serr
+	}
+	now := c.now()
+	rec := partialmanifeststore.Record{
+		TenantID:             d.tenantID,
+		CheckpointID:         d.checkpointID,
+		SessionID:            d.sessionID,
+		SlotID:               d.slotID,
+		Partial:              true,
+		ManifestReason:       partialmanifeststore.ReasonInProgress,
+		ChunkObjectKeyPrefix: d.prefix,
+		ChunkSizeBytes:       c.chunkSize(),
+		ChunkEncoding:        c.chunkEncoding(),
+		ReservedBytes:        probed,
+		CheckpointStartedAt:  now,
+		CheckpointTimeoutAt:  now.Add(c.Deadline),
+	}
+	if err := c.Manifests.Put(d.ctx, rec); err != nil {
+		d.releaseReservation()
+		return fmt.Errorf("checkpointer: write intent row: %w", err)
+	}
+	return nil
+}
+
+// reserve increments the tenant storage counter by the probed size,
+// resolving the tenant's limit through QuotaLimitFor. A nil Quota or a
+// nil QuotaLimitFor skips the reservation (dev-mode / test path).
+func (d *uploadDriver) reserve(probed int64) error {
+	c := d.c
+	if c.Quota == nil || c.QuotaLimitFor == nil || probed <= 0 {
+		return nil
+	}
+	limit, err := c.QuotaLimitFor(d.ctx, d.tenantID)
+	if err != nil {
+		return fmt.Errorf("checkpointer: resolve storage limit: %w", err)
+	}
+	if _, err := c.Quota.Reserve(d.ctx, d.tenantID, probed, limit); err != nil {
+		return fmt.Errorf("checkpointer: reserve checkpoint quota: %w", err)
+	}
+	return nil
+}
+
+// supersedePriorAttempts releases any prior aborted attempt's reservation
+// while its row is still active, so the intent-row transaction that
+// soft-deletes it does not orphan the reservation, and emits the §10.1
+// supersede counter once per superseded row. The chunk-object sweep of a
+// superseded attempt runs through the shared abort/backstop path.
+func (d *uploadDriver) supersedePriorAttempts() error {
+	c := d.c
+	prior, err := c.Manifests.LatestActive(d.ctx, d.tenantID, d.sessionID)
+	if err != nil {
+		if errors.Is(err, partialmanifeststore.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("checkpointer: read prior active manifest: %w", err)
+	}
+	if prior.SlotID != d.slotID || prior.CheckpointID == d.checkpointID {
+		return nil
+	}
+	// Release the superseded attempt's outstanding reservation and sweep
+	// its chunk objects before Put soft-deletes the row inside the INSERT
+	// transaction (spec: §10.1 supersede-on-write).
+	if _, rerr := c.Manifests.ReleaseReservation(d.ctx, prior.TenantID, prior.CheckpointID); rerr == nil {
+		if c.Quota != nil {
+			_ = c.Quota.Adjust(d.ctx, prior.TenantID,
+				-(prior.ReservedBytes - prior.WorkspaceBytesUploaded))
+		}
+	}
+	if c.ChunkDeleter != nil && prior.ChunkObjectKeyPrefix != "" {
+		_, _ = c.ChunkDeleter.DeleteByPrefix(d.ctx, prior.ChunkObjectKeyPrefix)
+	}
+	if c.DriverMetrics != nil {
+		c.DriverMetrics.IncCheckpointPartialManifestsSuperseded(c.Pool)
+	}
+	return nil
+}
+
+// onChunkReady validates the adapter-declared chunk length against the
+// gateway-chosen chunk size, mints (or re-mints, on a grant-expiry retry)
+// a single-key presigned PUT capability at that exact length, and returns
+// it. A declared length outside (0, chunk_size_bytes] aborts the attempt
+// with stream_truncated before any capability is signed, so the bytes a
+// capability can carry are a gateway constant rather than a pod
+// self-report (spec: §10.1 line 139, §13.2 residual-exposure bound).
+func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
+	c := d.c
+	index := cr.GetIndex()
+	length := cr.GetLength()
+	if length <= 0 || length > c.chunkSize() {
+		d.abort(partialmanifeststore.ReasonStreamTruncated,
+			fmt.Sprintf("declared chunk %d length %d outside (0, %d]", index, length, c.chunkSize()))
+		return
+	}
+	if c.Presigner == nil {
+		d.abort(partialmanifeststore.ReasonStreamTruncated,
+			"no presigner configured for chunk grant")
+		return
+	}
+	d.mu.Lock()
+	prior, reMint := d.signedLen[index]
+	if reMint && prior != length {
+		d.mu.Unlock()
+		d.abort(partialmanifeststore.ReasonStreamTruncated,
+			fmt.Sprintf("chunk %d re-declared length %d != signed %d", index, length, prior))
+		return
+	}
+	// A re-mint (grant-expiry retry, spec: §4.4) re-signs the identical key
+	// and length without advancing the outstanding-grant count or taking a
+	// second reservation. A fresh index that would exceed the resolved
+	// window is a producer overrunning the pipeline bound and aborts.
+	if !reMint {
+		if d.window > 0 && d.outstanding >= d.window {
+			d.mu.Unlock()
+			d.abort(partialmanifeststore.ReasonStreamTruncated,
+				fmt.Sprintf("chunk %d exceeds grant window %d", index, d.window))
+			return
+		}
+		d.outstanding++
+	}
+	d.signedLen[index] = length
+	d.mu.Unlock()
+
+	uri := d.chunkURI(index)
+	grant, err := c.Presigner.PresignPut(uri, length, c.capabilityTTL())
+	if err != nil {
+		d.abort(partialmanifeststore.ReasonStreamTruncated,
+			fmt.Sprintf("sign chunk %d grant: %v", index, err))
+		return
+	}
+	send := &adapterv1.CheckpointClientMessage{
+		Msg: &adapterv1.CheckpointClientMessage_Grant{
+			Grant: &adapterv1.CheckpointGrant{
+				Index:         index,
+				Url:           grant.URL,
+				ContentLength: length,
+				Headers:       grant.Headers,
+			},
+		},
+	}
+	if serr := d.send(send); serr != nil {
+		d.abort(partialmanifeststore.ReasonStreamTruncated,
+			fmt.Sprintf("send chunk %d grant: %v", index, serr))
+	}
+}
+
+// onChunkCommitted confirms a committed chunk off the grant's critical
+// path: it Stats the object for the bytes actually written, records the
+// artifact_store catalog row, and advances the monotonic manifest
+// counter. Confirmation never gates the next grant (spec: §10.1 line 131,
+// §2 "confirmation does not gate the next grant"). A bytes-actually-written
+// count larger than the signed Content-Length aborts the attempt and
+// reconciles the excess (spec: §11.2, the quota-cap-without-server-
+// enforcement path).
+func (d *uploadDriver) onChunkCommitted(cc *adapterv1.ChunkCommitted) {
+	index := cc.GetIndex()
+	d.mu.Lock()
+	if d.acked[index] {
+		d.mu.Unlock()
+		return
+	}
+	d.acked[index] = true
+	// The ack releases the outstanding-grant slot (not the async confirm),
+	// so a lagging Stat never blocks the next grant.
+	if d.outstanding > 0 {
+		d.outstanding--
+	}
+	signed := d.signedLen[index]
+	d.mu.Unlock()
+	if d.c.ObjectStore == nil {
+		return
+	}
+	d.confirmWG.Add(1)
+	go d.confirmChunk(index, signed)
+}
+
+// confirmChunk runs one chunk's Stat + RecordPut + ConfirmChunk.
+func (d *uploadDriver) confirmChunk(index uint32, signed int64) {
+	defer d.confirmWG.Done()
+	c := d.c
+	uri := d.chunkURI(index)
+	info, err := c.ObjectStore.Stat(uri)
+	if err != nil {
+		// The object the ack claims is not present: treat as a truncated
+		// stream so the terminal verification fails closed.
+		d.abort(partialmanifeststore.ReasonStreamTruncated,
+			fmt.Sprintf("stat chunk %d: %v", index, err))
+		return
+	}
+	if c.Cataloging != nil {
+		_ = c.Cataloging.RecordPut(uri, info.Size, chunkMimeType)
+	}
+	d.mu.Lock()
+	d.confirmedBytes += info.Size
+	d.confirmedCount++
+	total := d.confirmedBytes
+	d.mu.Unlock()
+	if c.Manifests != nil {
+		_ = c.Manifests.ConfirmChunk(d.ctx, d.tenantID, d.checkpointID, int(index), total)
+	}
+	// spec: §11.2 — a body larger than the signed Content-Length on a
+	// non-enforcing backend is caught here, not by the object store. Abort
+	// and reconcile the excess into the counter.
+	if signed > 0 && info.Size > signed {
+		d.abort(partialmanifeststore.ReasonQuotaExceeded,
+			fmt.Sprintf("chunk %d wrote %d bytes past signed %d", index, info.Size, signed))
+	}
+}
+
+// onSummary verifies every confirmed byte matches the adapter's declared
+// total, finalises the manifest row complete (partial = false), and
+// reconciles the reservation against the confirmed total.
+func (d *uploadDriver) onSummary(s *adapterv1.CheckpointSummary) (string, int64, error) {
+	d.confirmWG.Wait()
+	d.mu.Lock()
+	aborted := d.aborted
+	reason := d.abortReason
+	confirmedBytes := d.confirmedBytes
+	confirmedCount := d.confirmedCount
+	d.mu.Unlock()
+	if aborted {
+		return d.terminalAbort(reason)
+	}
+	// spec: §10.1 — the terminal summary finalises complete only when
+	// every declared byte is Stat-confirmed. When no confirm seam is
+	// wired (dev-mode), the adapter's reported total is authoritative.
+	if d.c.ObjectStore != nil {
+		if confirmedBytes != s.GetTotalBytes() || confirmedCount != int(s.GetChunkCount()) {
+			return d.terminalAbort(partialmanifeststore.ReasonStreamTruncated)
+		}
+	}
+	total := s.GetTotalBytes()
+	if d.c.Manifests != nil {
+		if err := d.c.Manifests.Finalise(d.ctx, d.tenantID, d.checkpointID,
+			false, partialmanifeststore.ReasonComplete); err != nil {
+			return "", 0, fmt.Errorf("checkpointer: finalise complete: %w", err)
+		}
+		d.reconcile(confirmedBytes)
+	}
+	return d.checkpointID, total, nil
+}
+
+// onFailed maps a terminal CheckpointFailed frame. A kms:-coded rejection
+// is a §12.5 classification-control violation: fire the telemetry hook and
+// abort without retry. Every other rejection is a retry-exhausted storage
+// failure.
+func (d *uploadDriver) onFailed(f *adapterv1.CheckpointFailed) (string, int64, error) {
+	c := d.c
+	d.confirmWG.Wait()
+	if strings.HasPrefix(f.GetErrorCode(), "kms:") {
+		if c.DriverMetrics != nil {
+			c.DriverMetrics.IncCheckpointKMSUnavailable()
+		}
+		if err := d.finaliseAbort(partialmanifeststore.ReasonStreamTruncated); err != nil {
+			return "", 0, err
+		}
+		return "", 0, fmt.Errorf("checkpointer: chunk %d rejected: %s (%s): %w",
+			f.GetIndex(), f.GetReason(), f.GetErrorCode(), blobstore.ErrClassificationControlViolation)
+	}
+	if c.DriverMetrics != nil {
+		c.DriverMetrics.IncCheckpointStorageFailure(c.Pool, c.levelLabel(), string(d.trigger))
+	}
+	if err := d.finaliseAbort(partialmanifeststore.ReasonStreamTruncated); err != nil {
+		return "", 0, err
+	}
+	return "", 0, fmt.Errorf("checkpointer: adapter checkpoint failed: %s (http %d, code %q)",
+		f.GetReason(), f.GetHttpStatus(), f.GetErrorCode())
+}
+
+// onStreamError maps a transport-level stream error. A FailedPrecondition
+// is the adapter's workspace-size-probe rejection, which writes no
+// manifest row; every other error is a stream truncation that finalises
+// any intent row partial = true.
+func (d *uploadDriver) onStreamError(err error) (string, int64, error) {
+	c := d.c
+	if isSizeLimitReject(err) {
+		if c.DriverMetrics != nil {
+			c.DriverMetrics.IncCheckpointSizeExceeded(c.Pool, c.levelLabel())
+		}
+		if c.SkippedEventFunc != nil {
+			c.SkippedEventFunc(d.ctx, d.tenantID, d.sessionID, "workspace_size_limit")
+		}
+		return "", 0, fmt.Errorf("%w: %v", errSizeLimit, err)
+	}
+	d.confirmWG.Wait()
+	// Only finalise a row that was written (probe seen).
+	if ferr := d.finaliseAbort(partialmanifeststore.ReasonStreamTruncated); ferr != nil {
+		return "", 0, ferr
+	}
+	return "", 0, fmt.Errorf("checkpointer: recv checkpoint frame: %w", err)
+}
+
+// abort latches the first abort reason, sends the adapter a
+// CheckpointAbort so it stops retrying, and cancels the stream. It does
+// not finalise the manifest row: the terminal frame handler runs
+// finaliseAbort once the reader loop unwinds on the cancelled stream, so
+// the intent row is finalised exactly once regardless of whether the abort
+// was raised by the reader (a protocol violation) or by a confirm
+// goroutine (an over-size chunk).
+func (d *uploadDriver) abort(reason, detail string) {
+	d.mu.Lock()
+	if !d.aborted {
+		d.aborted = true
+		d.abortReason = reason
+		d.abortDetail = detail
+	}
+	d.mu.Unlock()
+	_ = d.send(&adapterv1.CheckpointClientMessage{
+		Msg: &adapterv1.CheckpointClientMessage_Abort{
+			Abort: &adapterv1.CheckpointAbort{Reason: reason},
+		},
+	})
+	if d.cancel != nil {
+		d.cancel()
+	}
+}
+
+// terminalAbort finalises the aborted intent row and returns the terminal
+// abort error so the whole checkpoint fails. It is the Summary-path
+// wrapper around finaliseAbort: onSummary reaches it when a confirm
+// goroutine latched an abort before the terminal frame, so the attempt
+// must not report success.
+func (d *uploadDriver) terminalAbort(reason string) (string, int64, error) {
+	if err := d.finaliseAbort(reason); err != nil {
+		return "", 0, err
+	}
+	d.mu.Lock()
+	latched := d.abortReason
+	detail := d.abortDetail
+	d.mu.Unlock()
+	if latched != "" {
+		reason = latched
+	}
+	if detail != "" {
+		return "", 0, fmt.Errorf("checkpointer: checkpoint aborted (%s): %s", reason, detail)
+	}
+	return "", 0, fmt.Errorf("checkpointer: checkpoint aborted: %s", reason)
+}
+
+// finaliseAbort finalises the intent row partial = true with reason and
+// releases the reservation the attempt did not keep, then sweeps the
+// chunk objects the aborted attempt wrote. It returns only a store error;
+// the caller constructs the terminal abort error.
+func (d *uploadDriver) finaliseAbort(reason string) error {
+	c := d.c
+	if c.Manifests == nil {
+		return nil
+	}
+	d.mu.Lock()
+	// The first latched abort reason wins: an over-size confirm that
+	// latched quota_exceeded must not be overwritten by the stream_truncated
+	// the reader's terminal path passes when the cancelled stream errors.
+	if d.aborted && d.abortReason != "" {
+		reason = d.abortReason
+	} else {
+		d.aborted = true
+		d.abortReason = reason
+	}
+	confirmed := d.confirmedBytes
+	d.mu.Unlock()
+	if err := c.Manifests.Finalise(d.ctx, d.tenantID, d.checkpointID, true, reason); err != nil {
+		return fmt.Errorf("checkpointer: finalise partial (%s): %w", reason, err)
+	}
+	d.reconcile(confirmed)
+	// A deadline-fire (timeout) row is retained for the resume path; every
+	// other abort arm's chunks are swept because no resume will consume
+	// them (spec: §10.1 line 157 / §3 abort-arm sweep).
+	if reason != partialmanifeststore.ReasonTimeout && c.ChunkDeleter != nil && d.prefix != "" {
+		_, _ = c.ChunkDeleter.DeleteByPrefix(d.ctx, d.prefix)
+	}
+	return nil
+}
+
+// reconcile releases the unconfirmed portion of the reservation exactly
+// once, so an aborted checkpoint charges the tenant only for the chunks
+// it confirmed and a complete one for its confirmed total.
+func (d *uploadDriver) reconcile(confirmed int64) {
+	c := d.c
+	rows, err := c.Manifests.ReleaseReservation(d.ctx, d.tenantID, d.checkpointID)
+	if err != nil || rows != 1 || c.Quota == nil {
+		return
+	}
+	_ = c.Quota.Adjust(d.ctx, d.tenantID, -(d.reservedBytes - confirmed))
+}
+
+// releaseReservation releases the reservation on an early abort before
+// the intent row's counters are established.
+func (d *uploadDriver) releaseReservation() {
+	c := d.c
+	if c.Quota == nil {
+		return
+	}
+	_ = c.Quota.Adjust(d.ctx, d.tenantID, -d.reservedBytes)
+}
+
+// chunkURI builds the object URI for chunk index under this attempt's
+// checkpoint prefix.
+func (d *uploadDriver) chunkURI(index uint32) blobstore.URI {
+	return blobstore.URI{
+		TenantID:   d.tenantID,
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  d.sessionID,
+		PartID:     fmt.Sprintf("%s/chunk-%d.%s", d.checkpointID, index, d.c.chunkEncoding()),
+		TTL:        d.c.capabilityTTL(),
+	}
+}
+
+// isSizeLimitReject reports whether err is the adapter's gRPC
+// FailedPrecondition workspace-size-probe rejection, which the adapter
+// returns before any grant is minted (spec: §4.4 line 255).
+func isSizeLimitReject(err error) bool {
+	return status.Code(err) == codes.FailedPrecondition
+}
