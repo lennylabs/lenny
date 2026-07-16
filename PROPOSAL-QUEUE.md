@@ -203,7 +203,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-19 — OpenSLO v1 export conformance and notification-target config — §16.10
-- **status:** claimed:proposal-C@2026-07-16T20:36:23Z
+- **status:** in-review:0040
 - **assigned:** proposal-C
 - **findings:** T-STD.6
 - **root spec gap:** The rendered OpenSLO documents violate the external OpenSLO v1 object model (two conditions per AlertPolicy, missing required `notificationTargets`, bare-string `alertPolicies`), and fixing the notification-targets requirement needs a deployer-facing config surface §16.10 does not define.
