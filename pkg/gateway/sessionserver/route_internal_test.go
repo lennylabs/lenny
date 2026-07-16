@@ -177,12 +177,27 @@ func TestRunRouteChainPostRouteModifyResolvedRuntimeRejected(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1052, §15.1 — a deliberate REJECT that is not an
-// immutable-field violation still surfaces as the generic 403
-// INTERCEPTOR_REJECTED envelope with the code in details.interceptorCode,
-// so the immutable-violation branch does not steal ordinary rejects.
+// codedRejectInterceptor returns a deliberate REJECT carrying a non-empty,
+// non-immutable interceptor code. It exercises the generic-reject branch's
+// demotion of the code into details.interceptorCode.
+type codedRejectInterceptor struct{ code string }
+
+func (codedRejectInterceptor) Name() string                       { return "coded-block" }
+func (codedRejectInterceptor) Priority() int32                    { return 150 }
+func (codedRejectInterceptor) Builtin() bool                      { return false }
+func (codedRejectInterceptor) FailPolicy() interceptor.FailPolicy { return interceptor.FailClosed }
+func (codedRejectInterceptor) Timeout() time.Duration             { return 0 }
+func (c codedRejectInterceptor) Intercept(context.Context, interceptor.Request) (interceptor.Result, error) {
+	return interceptor.Result{Action: interceptor.ActionReject, Reason: "denied", Code: c.code}, nil
+}
+
+// spec: §4.8 line 1052, §15.1 — a deliberate REJECT that carries a
+// non-immutable interceptor code still surfaces as the generic 403
+// INTERCEPTOR_REJECTED envelope with that code in details.interceptorCode,
+// so the immutable-violation branch does not steal an ordinary reject that
+// carries its own code.
 func TestRunRouteChainGenericRejectStays403(t *testing.T) {
-	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePreRoute, rejectInterceptor{})}
+	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePreRoute, codedRejectInterceptor{code: "SOME_POLICY_CODE"})}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", nil)
 	if _, ok := s.runRouteChain(rec, req, interceptor.PhasePreRoute, routeTaskSpec{TenantID: "acme"}); ok {
@@ -194,6 +209,9 @@ func TestRunRouteChainGenericRejectStays403(t *testing.T) {
 	body := decodeEnvelope(t, rec)
 	if body.Code != "INTERCEPTOR_REJECTED" {
 		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", body.Code)
+	}
+	if got := body.Details["interceptorCode"]; got != "SOME_POLICY_CODE" {
+		t.Errorf("details.interceptorCode = %v, want SOME_POLICY_CODE", got)
 	}
 	if _, ok := body.Details["violated_fields"]; ok {
 		t.Errorf("generic reject carried violated_fields: %v", body.Details["violated_fields"])
