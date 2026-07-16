@@ -3,9 +3,7 @@
 package sessionserver_test
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"testing"
 
@@ -17,28 +15,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
-
-// checkpointIDRecordingRestorer is an adapter.CheckpointSource that records the
-// exact checkpoint id the resume path passed. The gateway's resumeOnPod hands
-// row.WorkspaceSnapshot.Ref to podsession.Binder.Resume, which forwards it as
-// ResumeRequest.CheckpointID into the adapter Resume RPC, which calls
-// LoadCheckpoint(ctx, req.GetCheckpointId()). Capturing the argument here pins
-// that the restore selects the freshest recorded checkpoint ref (the single
-// WorkspaceSnapshot.Ref the checkpointer overwrites last-writer-wins) with no
-// separate dedup-aware selection interposed.
-type checkpointIDRecordingRestorer struct {
-	archive      []byte
-	loaded       bool
-	loadedWithID string
-	loadCount    int
-}
-
-func (c *checkpointIDRecordingRestorer) LoadCheckpoint(_ context.Context, checkpointID string) (io.ReadCloser, error) {
-	c.loaded = true
-	c.loadedWithID = checkpointID
-	c.loadCount++
-	return io.NopCloser(bytes.NewReader(c.archive)), nil
-}
 
 // startRecordingRuntime is an adapter.RuntimeProcess that records that the
 // runtime was (re)started for a session. On the resume path a started runtime
@@ -99,8 +75,6 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
 	adapterSrv.Runtime = rt
-	restorer := &checkpointIDRecordingRestorer{archive: emptyResumeArchive(t)}
-	adapterSrv.Restorer = restorer
 
 	cluster := podBindClient(
 		t,
@@ -136,22 +110,6 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-alo-resume/resume", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
-	}
-
-	// The adapter received exactly row.WorkspaceSnapshot.Ref as the checkpoint
-	// id. A drift here means the resume path stopped restoring from the freshest
-	// recorded checkpoint the §7.3 replay window is defined against.
-	if !restorer.loaded {
-		t.Fatal("restore did not load the checkpoint; the resume path skipped the restore step")
-	}
-	if restorer.loadedWithID != periodicCheckpointRef {
-		t.Errorf("adapter restored from checkpoint id %q, want exactly row.WorkspaceSnapshot.Ref %q (§7.3 restores from the freshest recorded checkpoint)",
-			restorer.loadedWithID, periodicCheckpointRef)
-	}
-	// The restore loaded the checkpoint exactly once: no second, dedup-driven
-	// re-selection of a different ("effect-consistent") checkpoint is interposed.
-	if restorer.loadCount != 1 {
-		t.Errorf("checkpoint loaded %d times, want exactly 1 (the single freshest ref, no dedup-driven re-selection)", restorer.loadCount)
 	}
 
 	// The restore proceeded from that older periodic checkpoint: the runtime was

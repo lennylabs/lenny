@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -815,11 +816,21 @@ func TestShutdownRecycleSurfacesRPCError(t *testing.T) {
 	}
 }
 
-// stubCheckpointSource is an adapter.CheckpointSource serving a fixed
-// checkpoint archive.
-type stubCheckpointSource struct{ archive []byte }
+// stubChunkTransport is an adapter.CheckpointTransport serving one fixed
+// checkpoint archive as a single presigned GET chunk on the resume path.
+type stubChunkTransport struct {
+	url     string
+	archive []byte
+}
 
-func (s stubCheckpointSource) LoadCheckpoint(context.Context, string) (io.ReadCloser, error) {
+func (s stubChunkTransport) PutChunk(context.Context, string, map[string]string, int64, io.Reader) (int, string, error) {
+	return 200, "", nil
+}
+
+func (s stubChunkTransport) GetChunk(_ context.Context, url string, _ map[string]string) (io.ReadCloser, error) {
+	if url != s.url {
+		return nil, fmt.Errorf("stubChunkTransport: no chunk for %q", url)
+	}
 	return io.NopCloser(bytes.NewReader(s.archive)), nil
 }
 
@@ -841,16 +852,20 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 		t.Fatalf("ArchiveTree: %v", err)
 	}
 
+	const chunkURL = "https://objectstore.example/chunk-0"
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
-	srv.Restorer = stubCheckpointSource{archive: archived.Bytes()}
+	srv.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
 
 	res, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
 		SessionID:    "sess-r",
 		Runtime:      "echo",
 		CheckpointID: "ckpt-1",
+		Chunks: []adapterclient.ChunkGrant{
+			{Index: 0, URL: chunkURL, Length: int64(archived.Len())},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -875,14 +890,19 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	var archived bytes.Buffer
-	if _, err := workspace.Archive(src, &archived); err != nil {
-		t.Fatalf("Archive: %v", err)
+	if _, err := workspace.ArchiveTree(
+		[]workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: src}},
+		&archived,
+	); err != nil {
+		t.Fatalf("ArchiveTree: %v", err)
 	}
 
+	const chunkURL = "https://objectstore.example/chunk-0"
+	chunks := []adapterclient.ChunkGrant{{Index: 0, URL: chunkURL, Length: int64(archived.Len())}}
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
-	srv.Restorer = stubCheckpointSource{archive: archived.Bytes()}
+	srv.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
 
 	// Healthy round-trip: a configured size limit above expected bytes
@@ -894,6 +914,7 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 		RecoveryGeneration:      7,
 		ExpectedWorkspaceBytes:  10,
 		WorkspaceSizeLimitBytes: 1024,
+		Chunks:                  chunks,
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -907,7 +928,7 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 	srv2 := adapter.New("adapter-test-build")
 	srv2.WorkspaceRoot = t.TempDir()
 	srv2.Runtime = &fakeRuntime{}
-	srv2.Restorer = stubCheckpointSource{archive: archived.Bytes()}
+	srv2.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl2 := dialAdapter(t, srv2)
 	if _, err := cl2.Resume(context.Background(), adapterclient.ResumeParams{
 		SessionID:               "sess-too-big",
@@ -915,22 +936,29 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 		CheckpointID:            "ckpt-1",
 		ExpectedWorkspaceBytes:  2048,
 		WorkspaceSizeLimitBytes: 1024,
+		Chunks:                  chunks,
 	}); err == nil {
 		t.Error("Resume with oversize expected_bytes succeeded, want pre-extraction refusal")
 	}
 }
 
-func TestResumeRejectsAMissingCheckpointSource(t *testing.T) {
+// spec: §13.2 — a resume that carries presigned chunk capabilities needs
+// the checkpoint transport to fetch them; without one the adapter refuses
+// the restore rather than silently restoring nothing.
+func TestResumeRejectsChunksWithoutTransport(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
-	// No Restorer configured: the adapter cannot restore a checkpoint.
+	// No CheckpointTransport configured: the adapter cannot fetch chunks.
 	cl := dialAdapter(t, srv)
 
 	if _, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
 		SessionID: "sess-r", Runtime: "echo", CheckpointID: "ckpt-1",
+		Chunks: []adapterclient.ChunkGrant{
+			{Index: 0, URL: "https://objectstore.example/chunk-0", Length: 1},
+		},
 	}); err == nil {
-		t.Error("Resume succeeded with no checkpoint source, want a failure")
+		t.Error("Resume succeeded with no checkpoint transport, want a failure")
 	}
 }
 

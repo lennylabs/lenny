@@ -6,11 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -216,30 +215,34 @@ func TestCheckpointBarrierRejectsGenerationMismatch(t *testing.T) {
 	}
 }
 
-// stubCheckpointSink is a deterministic CheckpointSink for tests.
-type stubCheckpointSink struct {
-	id  string
-	err error
-}
-
-func (s stubCheckpointSink) SaveCheckpoint(_ context.Context, _ string, r io.Reader) (string, error) {
-	if r != nil {
-		_, _ = io.Copy(io.Discard, r)
+// waitBarrierWaiting spins until the CheckpointBarrier RPC under test has
+// opened its quiesce-and-hold gate, so the test can link a checkpoint id
+// into it exactly as the gateway-driven Checkpoint stream would.
+func waitBarrierWaiting(t *testing.T, s *Server) {
+	t.Helper()
+	for i := 0; i < 1000; i++ {
+		s.barrier.mu.Lock()
+		waiting := s.barrier.waiting
+		s.barrier.mu.Unlock()
+		if waiting {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
-	return s.id, s.err
+	t.Fatal("CheckpointBarrier never opened its quiesce-and-hold gate")
 }
 
-// TestCheckpointBarrierAcksMatchedGeneration verifies the happy path:
-// fence sets generation N, barrier with N quiesces, emits the ack on
-// the control stream, and returns the synchronous mirror. spec:
-// §4.7 line 660, §10.1 lines 163-181.
-func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
+// TestCheckpointBarrierAcksEchoedCheckpointID verifies the §10.1 lines
+// 163-172 quiesce-and-hold contract: fence sets generation N, the barrier
+// with N quiesces and holds, and it returns only after the gateway-driven
+// Checkpoint stream terminates, echoing the checkpoint_id that stream
+// carried on its CheckpointStart. A pre-fix barrier that drove its own
+// in-adapter checkpoint would return an adapter-minted ref rather than the
+// gateway's id, or return before the stream ran.
+//
+// spec: §4.7 line 660, §10.1 lines 163-172.
+func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 	s := newFencedServer(t)
-	// Wire a stub checkpoint sink + workspace so flushBarrierCheckpoint
-	// returns a non-empty checkpoint_ref. WorkspaceRoot just needs to be
-	// non-empty for the gate to fire; the stub sink ignores the archive.
-	s.WorkspaceRoot = t.TempDir()
-	s.Checkpoints = stubCheckpointSink{id: "ck-1"}
 	ctx := context.Background()
 	if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 9,
@@ -259,17 +262,42 @@ func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 		s.controlMu.Unlock()
 	})
 
-	resp, err := s.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
-		SessionId: &adapterv1.SessionId{Value: "s1"}, BarrierId: "b1", CoordinationGeneration: 9,
-	})
-	if err != nil {
-		t.Fatalf("barrier: %v", err)
+	type barrierResult struct {
+		resp *adapterv1.CheckpointBarrierResponse
+		err  error
 	}
-	if resp.GetBarrierId() != "b1" {
-		t.Fatalf("barrier_id: got %q want b1", resp.GetBarrierId())
+	resultCh := make(chan barrierResult, 1)
+	go func() {
+		resp, err := s.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
+			SessionId: &adapterv1.SessionId{Value: "s1"}, BarrierId: "b1", CoordinationGeneration: 9,
+		})
+		resultCh <- barrierResult{resp, err}
+	}()
+
+	// The barrier holds quiescence; simulate the gateway-driven Checkpoint
+	// stream linking its minted id and terminating.
+	waitBarrierWaiting(t, s)
+	if !s.isQuiescedForBarrier() {
+		t.Fatal("barrier must hold quiescence while it waits for the stream")
 	}
-	if resp.GetCheckpointRef() != "ck-1" {
-		t.Fatalf("checkpoint_ref: got %q want ck-1", resp.GetCheckpointRef())
+	if !s.barrier.link("gw-ckpt-1") {
+		t.Fatal("Checkpoint stream could not link into the open barrier gate")
+	}
+	s.barrier.complete()
+
+	got := <-resultCh
+	if got.err != nil {
+		t.Fatalf("barrier: %v", got.err)
+	}
+	if got.resp.GetBarrierId() != "b1" {
+		t.Fatalf("barrier_id: got %q want b1", got.resp.GetBarrierId())
+	}
+	if got.resp.GetCheckpointRef() != "gw-ckpt-1" {
+		t.Fatalf("checkpoint_ref: got %q want the echoed gateway checkpoint_id gw-ckpt-1", got.resp.GetCheckpointRef())
+	}
+	// Quiescence is released only after the RPC returns.
+	if s.isQuiescedForBarrier() {
+		t.Fatal("quiescence must be released after the barrier returns")
 	}
 
 	// Confirm the ack landed on the control stream too. Fields match the
@@ -279,7 +307,7 @@ func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 		if ev.Type != eventCheckpointBarrierAck {
 			t.Fatalf("control event type: got %q", ev.Type)
 		}
-		if ev.BarrierID != "b1" || ev.CheckpointRef != "ck-1" {
+		if ev.BarrierID != "b1" || ev.CheckpointRef != "gw-ckpt-1" {
 			t.Fatalf("control event fields: %+v", ev)
 		}
 		// Round-trip JSON marshal so we exercise the wire encoding the
@@ -296,28 +324,30 @@ func TestCheckpointBarrierAcksMatchedGeneration(t *testing.T) {
 	}
 }
 
-// TestCheckpointBarrierEmptyCheckpointOnSinkError verifies that a
-// checkpoint sink failure does not abort the barrier; the ack carries
-// an empty checkpoint_ref so the gateway falls through to its existing
-// resume path. spec: §10.1 lines 163-181 — best-effort flush.
-func TestCheckpointBarrierEmptyCheckpointOnSinkError(t *testing.T) {
+// TestCheckpointBarrierEmptyCheckpointWhenNoStreamDriven verifies that a
+// barrier whose wall-clock window expires without the gateway driving a
+// Checkpoint stream returns an empty checkpoint_ref, so the gateway
+// finalises a partial manifest rather than blocking the drain. spec:
+// §10.1 lines 169-172 — partial-capture path.
+func TestCheckpointBarrierEmptyCheckpointWhenNoStreamDriven(t *testing.T) {
 	s := newFencedServer(t)
-	s.WorkspaceRoot = t.TempDir()
-	s.Checkpoints = stubCheckpointSink{err: errors.New("sink down")}
-	ctx := context.Background()
-	if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, CoordinationGeneration: 2,
 	}); err != nil {
 		t.Fatalf("fence: %v", err)
 	}
+	// A short-deadline context stands in for the barrier's wall-clock
+	// window; no Checkpoint stream is driven against the pod.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
 	resp, err := s.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
 		SessionId: &adapterv1.SessionId{Value: "s1"}, BarrierId: "b2", CoordinationGeneration: 2,
 	})
 	if err != nil {
-		t.Fatalf("barrier with failing sink should not error: %v", err)
+		t.Fatalf("barrier with no gateway-driven stream should not error: %v", err)
 	}
 	if resp.GetCheckpointRef() != "" {
-		t.Fatalf("expected empty checkpoint_ref on sink failure, got %q", resp.GetCheckpointRef())
+		t.Fatalf("expected empty checkpoint_ref when no stream was driven, got %q", resp.GetCheckpointRef())
 	}
 }
 

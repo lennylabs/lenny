@@ -186,6 +186,12 @@ func main() {
 	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
 		"§15.4.1 line 1826 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and sends SIGTERM. Default 10s.")
+	workspaceSizeLimitBytes := flag.Int64("workspace-size-limit-bytes",
+		envInt64Or("LENNY_WORKSPACE_SIZE_LIMIT_BYTES", 0),
+		"§4.4 hard workspace size limit: a checkpoint whose probed workspace exceeds this many bytes is aborted before any grant is minted. 0 disables the limit (the kubelet emptyDir guard is the backstop).")
+	objectStoreCABundle := flag.String("objectstore-ca-bundle",
+		os.Getenv("LENNY_OBJECTSTORE_CA_BUNDLE"),
+		"§13.2 path to the CA bundle the adapter trusts when it PUTs checkpoint chunks and GETs restore chunks against the object store over TLS; empty uses the system roots.")
 	flag.Parse()
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
@@ -267,6 +273,23 @@ func main() {
 	adapterSrv.ArtifactsRoot = *artifactsRoot
 	adapterSrv.SessionsRoot = *sessionsRoot
 	adapterSrv.StagingDir = *stagingDir
+	// spec: §4.4 / §13.2 — the checkpoint transport issues the per-chunk
+	// object-store PUT (checkpoint) and GET (resume restore) against the
+	// gateway-minted presigned capabilities. It trusts the object store's
+	// TLS certificate through the deployment CA bundle. The adapter holds
+	// no standing object-store credential; the presigned capability is its
+	// only authorization.
+	transport, err := adapter.NewHTTPCheckpointTransport(*objectStoreCABundle)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	adapterSrv.CheckpointTransport = transport
+	// spec: §4.4 lines 254-255 — the pre-checkpoint workspace-size probe
+	// reports the on-disk workspace bytes to the gateway (quota reservation)
+	// and aborts the checkpoint when the workspace exceeds the hard limit
+	// before any grant is minted. Zero leaves the limit disabled; the
+	// kubelet emptyDir guard is the backstop.
+	adapterSrv.WorkspaceSizeLimitBytes = *workspaceSizeLimitBytes
 	// spec: §10.1 lines 47-52 — the coordinator-loss hold window and the
 	// disk post-mortem path the adapter falls back to when no coordinator
 	// returns to receive the AdapterTerminating event.
@@ -415,6 +438,21 @@ func envIntOr(name string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		log.Printf("lenny-adapter: ignoring unparseable %s=%q", name, v)
+		return def
+	}
+	return n
+}
+
+// envInt64Or returns the int64 value of the named environment variable,
+// or def when the variable is unset or not parseable. spec: §4.4.
+func envInt64Or(name string, def int64) int64 {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		log.Printf("lenny-adapter: ignoring unparseable %s=%q", name, v)
 		return def

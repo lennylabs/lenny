@@ -107,14 +107,14 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
 	requirePoolReadyPods(t, c, taskModePoolName, 1)
-	t.Skip("precondition not met: cmd/lenny-adapter never wires a CheckpointSink (pkg/adapter/server.go " +
-		"Server.Checkpoints is left nil in every deployment, not only this Kind overlay), so every adapter " +
-		"Checkpoint RPC returns Unimplemented. The §7.1 seal-and-export step on /terminate calls Checkpoint " +
+	t.Skip("precondition not met: the gateway-side checkpoint driver that opens the §10.1 Checkpoint " +
+		"stream against the pod and mints per-chunk presigned grants is not yet wired on the live gateway, " +
+		"so no checkpoint completes end to end. The §7.1 seal-and-export step on /terminate calls Checkpoint " +
 		"for any session that ran on a bound pod (checkpointer.Seal no-ops only when this replica holds no " +
 		"live binding for the session at all) and, on exhausting its retry window, relabels the session " +
 		"failed/workspace_seal_timeout. §6.2 requires a failed session to always retire its pod regardless of " +
-		"sessionPolicy.recycle, so occupancy-zero recycling can never be observed end to end until a " +
-		"checkpoint sink is wired into the adapter binary — the same precondition gap " +
+		"sessionPolicy.recycle, so occupancy-zero recycling can never be observed end to end until the " +
+		"gateway-side checkpoint driver is wired — the same precondition gap " +
 		"tests/tier5_e2e_kind/checkpoint_resume_test.go already names for the eviction-checkpoint path. " +
 		"Verified directly: with sessionPolicy.recycle folding fixed (podsession.PoolPolicyMirror.Recycle), " +
 		"a session's own sessionIsolationLevel.podReuse correctly reports true, but Release still sends a " +

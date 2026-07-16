@@ -4,8 +4,6 @@ package adapter
 
 import (
 	"context"
-	"errors"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -47,6 +45,14 @@ func (s *Server) LastFencedGeneration() int64 {
 	s.coord.mu.Lock()
 	defer s.coord.mu.Unlock()
 	return s.coord.lastFenced
+}
+
+// isQuiesced reports whether the adapter is holding the §10.1 barrier
+// quiesced state. Exposed for tests.
+func (s *Server) isQuiescedForBarrier() bool {
+	s.coord.mu.Lock()
+	defer s.coord.mu.Unlock()
+	return s.coord.quiesced
 }
 
 // CoordinatorFence records the new coordination generation on the pod
@@ -118,17 +124,79 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	}, nil
 }
 
-// CheckpointBarrier implements the §4.7 line 631 / §10.1 graceful-drain
-// barrier RPC. The adapter validates the request's coordination
-// generation against the last fenced value, quiesces tool-call
-// dispatch, flushes a best-effort checkpoint, and acknowledges via
-// `CheckpointBarrierAck` on the LifecycleChannel control stream
-// (§4.7 line 660 — fields barrier_id, checkpoint_ref). The RPC return
-// value mirrors the ack so a synchronous caller has the same
-// information; the control-stream emit is the canonical surface for the
-// gateway's barrier-target reconciler.
+// barrierGate coordinates the §10.1 quiesce-and-hold CheckpointBarrier RPC
+// with the gateway-driven Checkpoint stream. CheckpointBarrier opens the
+// gate, holds quiescence, and blocks on the gate's done channel; the
+// Checkpoint stream handler links its gateway-minted checkpoint_id into an
+// open gate on CheckpointStart and signals the gate when the stream
+// terminates. The barrier then returns the ack echoing that checkpoint_id.
 //
-// spec: §4.7 line 631, §10.1 lines 163-181.
+// spec: §10.1 lines 163-172 — the adapter holds quiescence, the gateway
+// drives the Checkpoint stream against the held pod, and the ack the
+// adapter returns after that stream terminates is the completion signal.
+type barrierGate struct {
+	mu           sync.Mutex
+	waiting      bool
+	checkpointID string
+	done         chan struct{}
+	signaled     bool
+}
+
+// open marks a barrier waiting and returns the channel the linked stream
+// closes on termination.
+func (g *barrierGate) open() <-chan struct{} {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.waiting = true
+	g.checkpointID = ""
+	g.signaled = false
+	g.done = make(chan struct{})
+	return g.done
+}
+
+// release clears the waiting flag and returns the checkpoint_id the linked
+// stream recorded (empty when no stream linked before the barrier window
+// closed).
+func (g *barrierGate) release() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.waiting = false
+	return g.checkpointID
+}
+
+// link records id into an open gate and reports whether it linked (a
+// barrier is waiting). The Checkpoint stream calls it on CheckpointStart.
+func (g *barrierGate) link(id string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.waiting {
+		return false
+	}
+	g.checkpointID = id
+	return true
+}
+
+// complete signals the gate that the linked stream terminated, waking a
+// waiting barrier. It is idempotent and a no-op once the gate is released.
+func (g *barrierGate) complete() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.waiting && !g.signaled {
+		g.signaled = true
+		close(g.done)
+	}
+}
+
+// CheckpointBarrier implements the §4.7 line 631 / §10.1 graceful-drain
+// barrier RPC as a quiesce-and-hold barrier. The adapter validates the
+// request's coordination generation against the last fenced value,
+// quiesces tool-call dispatch, and holds the quiesced state open while the
+// gateway drives the Checkpoint stream against the held pod. It returns
+// the ack only after that stream terminates, echoing the gateway-minted
+// checkpoint_id the stream carried and reporting the time-to-quiescence in
+// quiesced_ms. The ack is mirrored onto the §4.7 line 660 control stream.
+//
+// spec: §4.7 line 631, §10.1 lines 163-172.
 func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.CheckpointBarrierRequest) (*adapterv1.CheckpointBarrierResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -159,9 +227,10 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 			"coordinator_handoff_stale: barrier generation %d does not match last fenced %d", gen, fenced)
 	}
 
-	// Mark quiesced for the wall-clock window; the timestamps drive the
-	// gateway-side `lenny_checkpoint_barrier_ack_duration_seconds`
-	// histogram so it can correlate barrier dispatch with ack arrival.
+	// Quiesce and hold: the quiesced state stays open across the
+	// gateway-driven Checkpoint stream and is released only on RPC return,
+	// so no new tool-call dispatch runs while the gateway drives the
+	// checkpoint (§10.1 line 163-166).
 	startedAt := time.Now()
 	s.coord.mu.Lock()
 	s.coord.quiesced = true
@@ -172,7 +241,17 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 		s.coord.mu.Unlock()
 	}()
 
-	checkpointRef := s.flushBarrierCheckpoint(ctx, sessionID)
+	// Hold quiescence until the gateway-driven Checkpoint stream terminates
+	// or the barrier's wall-clock window (the RPC context deadline the
+	// gateway sets from checkpointBarrierAckTimeoutSeconds) expires. An
+	// empty checkpoint_ref means the gateway drove no stream against the
+	// pod within the window; the gateway then finalises a partial manifest.
+	done := s.barrier.open()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	checkpointRef := s.barrier.release()
 	elapsed := time.Since(startedAt).Milliseconds()
 
 	resp := &adapterv1.CheckpointBarrierResponse{
@@ -188,40 +267,6 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	s.EmitCheckpointBarrierAck(barrierID, checkpointRef, elapsed)
 
 	return resp, nil
-}
-
-// flushBarrierCheckpoint runs a best-effort checkpoint during a §10.1
-// barrier dispatch. A checkpoint failure (sink unwired, archive error,
-// quiescence-handshake timeout) does not abort the barrier — the gateway
-// records the empty checkpoint_ref and falls through to its existing
-// resume path. The flush produces only the best-effort checkpoint_ref.
-func (s *Server) flushBarrierCheckpoint(ctx context.Context, sessionID string) string {
-	if s.Checkpoints == nil || s.WorkspaceRoot == "" {
-		return ""
-	}
-	// Bound the barrier-flush wall-clock; the gateway-side
-	// `checkpointBarrierAckTimeoutSeconds` is the authoritative deadline,
-	// but a malformed ctx without a deadline should not stall the
-	// adapter indefinitely.
-	bounded := ctx
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		bounded, cancel = context.WithTimeout(ctx, 90*time.Second)
-		defer cancel()
-	}
-	id, _, err := s.archiveAndStore(bounded, sessionID)
-	if err != nil {
-		// Mirror the §4.4 line 248 abort cleanup the regular Checkpoint
-		// path runs; the barrier path is otherwise indistinguishable
-		// from an eviction-trigger checkpoint to the partial-manifest
-		// cleaner.
-		s.runAbortCleanup(bounded, sessionID)
-		if errors.Is(err, io.ErrClosedPipe) {
-			return ""
-		}
-		return ""
-	}
-	return id
 }
 
 // EmitCheckpointBarrierAck queues the §4.7 line 660 CheckpointBarrierAck
