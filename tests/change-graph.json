@@ -319,7 +319,8 @@
     },
     "pkg/alerting/rules": {
       "unit": ["pkg/alerting/rules/..."],
-      "component": ["tests/tier2_component/alerting/..."]
+      "component": ["tests/tier2_component/alerting/..."],
+      "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
     },
     "tests/testinfra/mocks/otelcollector": {
       "unit": ["tests/testinfra/mocks/otelcollector/..."],
