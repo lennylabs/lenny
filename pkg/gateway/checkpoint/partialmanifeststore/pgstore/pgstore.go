@@ -230,6 +230,35 @@ func (s *Store) LatestActive(ctx context.Context, tenantID, sessionID string) (p
 	return out, nil
 }
 
+// LatestActiveForSlot returns the active partial row for
+// (tenantID, sessionID, slotID), the single slot the supersede path scopes
+// on (§10.1 line 137). partial_manifest_active_uniq admits at most one such
+// row, so the ORDER BY / LIMIT is defensive.
+func (s *Store) LatestActiveForSlot(ctx context.Context, tenantID, sessionID, slotID string) (partialmanifeststore.Record, error) {
+	var out partialmanifeststore.Record
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM checkpoint_manifest
+				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
+					AND partial = TRUE AND deleted_at IS NULL
+				ORDER BY coordination_generation DESC, created_at DESC LIMIT 1`,
+			tenantID, sessionID, slotID)
+		r, err := scanRow(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return partialmanifeststore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		out = r
+		return nil
+	})
+	if err != nil {
+		return partialmanifeststore.Record{}, err
+	}
+	return out, nil
+}
+
 // ConfirmChunk applies the §10.1 line 131 monotonic counter UPDATE under
 // the `deleted_at IS NULL` and `chunk_count < n + 1` guards.
 func (s *Store) ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error {

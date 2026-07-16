@@ -97,3 +97,58 @@ func TestCheckpointIntentRowCarriesSessionCoordinationGeneration(t *testing.T) {
 		t.Errorf("older row manifest_reason = %q, want superseded", older.ManifestReason)
 	}
 }
+
+// spec: §10.1 lines 137, 155 — the supersede predicate fences on
+// coordination_generation, so a stale coordinator (a lower generation) must
+// not release the reservation or sweep the chunk objects of a live newer
+// writer's active manifest; its own intent-row Put is rejected as stale.
+// diagnosis: a failure here (the higher-generation row's reservation
+// released, its row soft-deleted, or its chunk prefix swept) means the
+// gateway's supersede release ran destructively against a fenced newer
+// writer before its own Put rejected the write, orphaning the live writer's
+// reservation and chunks — the outcome the generation fence exists to
+// prevent.
+func TestCheckpointStaleCoordinatorDoesNotOrphanNewerWriter(t *testing.T) {
+	adapter := &cpChunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, failAfter: -1, truncateAfter: -1}
+	h := newCPDriverHarness(t, adapter)
+
+	// The session's committed generation is 3, but a newer coordinator has
+	// already written an active generation-7 manifest for the same
+	// (session, slot). This attempt reads the lagging generation-3 session row.
+	if _, err := h.sessions.Update(context.Background(), cpTenant, cpSession, func(row *sessionstore.Session) error {
+		row.CoordinationGeneration = 3
+		return nil
+	}); err != nil {
+		t.Fatalf("seed session generation: %v", err)
+	}
+	const newerPrefix = "/acme/checkpoints/s1/newer-writer/"
+	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
+		TenantID:               cpTenant,
+		CheckpointID:           "newer-writer",
+		SessionID:              cpSession,
+		SlotID:                 partialmanifeststore.SlotDefault,
+		CoordinationGeneration: 7,
+		ChunkObjectKeyPrefix:   newerPrefix,
+		ReservedBytes:          4096,
+	}); err != nil {
+		t.Fatalf("seed newer-generation active manifest: %v", err)
+	}
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("a stale generation-3 coordinator's Checkpoint succeeded, want a stale-generation rejection")
+	}
+
+	newer, err := h.manifests.Get(context.Background(), cpTenant, "newer-writer")
+	if err != nil {
+		t.Fatalf("get newer-generation row: %v", err)
+	}
+	if !newer.ReservationReleasedAt.IsZero() {
+		t.Errorf("newer writer's reservation was released by the stale coordinator, want untouched")
+	}
+	if !newer.DeletedAt.IsZero() {
+		t.Errorf("newer writer's active row was soft-deleted by the stale coordinator, want left active")
+	}
+	if h.deleter.sweptPrefix(newerPrefix) {
+		t.Errorf("newer writer's chunk prefix was swept by the stale coordinator, want untouched")
+	}
+}

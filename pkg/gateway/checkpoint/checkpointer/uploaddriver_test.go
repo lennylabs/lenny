@@ -180,6 +180,17 @@ func (d *prefixDeleter) sweptCount() int {
 	return len(d.swept)
 }
 
+func (d *prefixDeleter) sweptPrefix(prefix string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, p := range d.swept {
+		if p == prefix {
+			return true
+		}
+	}
+	return false
+}
+
 // driverHarness wires a Checkpointer with the full seam set over a
 // chunked adapter and an in-memory object store, manifest store, and
 // quota counter.
@@ -452,6 +463,144 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 	}
 	if m.superseded != 1 {
 		t.Errorf("supersede counter fired %d times, want 1", m.superseded)
+	}
+}
+
+// spec: §10.1 lines 137, 155 — the supersede predicate fences on
+// coordination_generation. A prior active row at a strictly higher
+// generation is a fenced newer writer, so a stale coordinator (a lower
+// incoming generation) must not release its reservation or sweep its chunk
+// objects; the stale attempt's own intent-row Put is rejected instead.
+//
+// diagnosis: supersedePriorAttempts released the prior row's reservation and
+// swept its chunk prefix under only a slot / checkpoint-id guard, with no
+// coordination_generation check, so a stale coordinator destroyed a live
+// newer writer's state before its own Put rejected the write as stale.
+// Against the pre-fix code the higher-generation row's reservation is
+// released and its prefix swept; the fix leaves both intact.
+func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
+	// The incoming attempt runs at the session's generation 0 (runningSession
+	// seeds generation 0), so it is stale against a prior active row at
+	// generation 1.
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30)
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+
+	const higherPrefix = "/acme/checkpoint/s1/cp-higher/"
+	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
+		TenantID:               "acme",
+		CheckpointID:           "cp-higher",
+		SessionID:              sid,
+		SlotID:                 partialmanifeststore.SlotDefault,
+		CoordinationGeneration: 1, // a fenced newer writer
+		ChunkObjectKeyPrefix:   higherPrefix,
+		ReservedBytes:          50,
+	}); err != nil {
+		t.Fatalf("seed higher-generation active row: %v", err)
+	}
+
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("stale-generation Checkpoint succeeded, want a stale-generation rejection")
+	}
+
+	// The higher-generation writer's state must be untouched: its reservation
+	// stays outstanding, its row active, its chunk prefix unswept, and no
+	// supersede counted.
+	rec, err := h.manifests.Get(context.Background(), "acme", "cp-higher")
+	if err != nil {
+		t.Fatalf("get higher-generation row: %v", err)
+	}
+	if !rec.ReservationReleasedAt.IsZero() {
+		t.Errorf("higher-generation row reservation released, want untouched by the stale coordinator")
+	}
+	if !rec.DeletedAt.IsZero() {
+		t.Errorf("higher-generation row soft-deleted, want left active")
+	}
+	if h.deleter.sweptPrefix(higherPrefix) {
+		t.Errorf("higher-generation row chunk prefix swept, want untouched")
+	}
+	if m.superseded != 0 {
+		t.Errorf("supersede counter fired %d times, want 0 (the stale attempt supersedes nothing)", m.superseded)
+	}
+}
+
+// spec: §10.1 line 137 — supersede is scoped to (session_id, slot_id). In a
+// multi-slot session the driver releases the prior active row for the exact
+// slot it is superseding, not a session-wide winner that may belong to a
+// different slot.
+//
+// diagnosis: supersedePriorAttempts resolved the prior row via the
+// session-scoped LatestActive, which returns the highest-generation row
+// across every slot. With a higher-generation row active on another slot,
+// the release skipped on the slot guard while Put still soft-deleted this
+// slot's prior row, leaking its reservation and orphaning its chunks.
+// Against the pre-fix code the target slot's row is never released; the fix
+// releases it and sweeps its chunks.
+func TestDriverSupersedeReleasesTargetSlotPriorRow_spec_10_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30)
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+
+	// The incoming attempt targets the default slot at generation 0. A prior
+	// active row sits on the default slot (the row it must supersede), and a
+	// higher-generation row sits on a different slot (the session-wide
+	// selector's winner).
+	const targetPrefix = "/acme/checkpoint/s1/cp-target/"
+	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
+		TenantID:             "acme",
+		CheckpointID:         "cp-target",
+		SessionID:            sid,
+		SlotID:               partialmanifeststore.SlotDefault,
+		ChunkObjectKeyPrefix: targetPrefix,
+		ReservedBytes:        40,
+	}); err != nil {
+		t.Fatalf("seed target-slot active row: %v", err)
+	}
+	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
+		TenantID:               "acme",
+		CheckpointID:           "cp-other",
+		SessionID:              sid,
+		SlotID:                 "slot-other",
+		CoordinationGeneration: 1, // higher generation: the session-wide selector's winner
+		ChunkObjectKeyPrefix:   "/acme/checkpoint/s1/cp-other/",
+		ReservedBytes:          40,
+	}); err != nil {
+		t.Fatalf("seed other-slot active row: %v", err)
+	}
+
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	// The target-slot prior row's reservation is released and its prefix swept.
+	target, err := h.manifests.Get(context.Background(), "acme", "cp-target")
+	if err != nil {
+		t.Fatalf("get target-slot row: %v", err)
+	}
+	if target.ReservationReleasedAt.IsZero() {
+		t.Errorf("target-slot prior row reservation not released; the supersede release missed it")
+	}
+	if !h.deleter.sweptPrefix(targetPrefix) {
+		t.Errorf("target-slot prior row chunk prefix not swept")
+	}
+	if m.superseded != 1 {
+		t.Errorf("supersede counter fired %d times, want 1", m.superseded)
+	}
+	// The other slot's row is untouched: it is a different slot the incoming
+	// attempt does not supersede.
+	other, err := h.manifests.Get(context.Background(), "acme", "cp-other")
+	if err != nil {
+		t.Fatalf("get other-slot row: %v", err)
+	}
+	if !other.ReservationReleasedAt.IsZero() {
+		t.Errorf("other-slot row reservation released, want untouched (different slot)")
+	}
+	if !other.DeletedAt.IsZero() {
+		t.Errorf("other-slot row soft-deleted, want left active (different slot)")
 	}
 }
 

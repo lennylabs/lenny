@@ -145,6 +145,43 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §10.1 line 137 — LatestActiveForSlot returns the active partial
+	// row for the exact (session, slot) the supersede path scopes on, not the
+	// session-wide highest-generation winner LatestActive returns.
+	t.Run("latest active is scoped to the slot", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		session := newUUID(t)
+		target := newUUID(t)
+		other := newUUID(t)
+		targetRow := manifestRow(time.Now().UTC(), tenant, target, session, 0)
+		targetRow.SlotID = "slot-0"
+		if err := store.Put(ctx, targetRow); err != nil {
+			t.Fatalf("Put slot-0: %v", err)
+		}
+		otherRow := manifestRow(time.Now().UTC(), tenant, other, session, 9)
+		otherRow.SlotID = "slot-1"
+		if err := store.Put(ctx, otherRow); err != nil {
+			t.Fatalf("Put slot-1: %v", err)
+		}
+		// The session-wide selector returns the higher-generation slot-1 row.
+		if latest, err := store.LatestActive(ctx, tenant, session); err != nil {
+			t.Fatalf("LatestActive: %v", err)
+		} else if latest.CheckpointID != other {
+			t.Fatalf("LatestActive = %q, want the higher-generation slot-1 row", latest.CheckpointID)
+		}
+		// The slot-scoped selector returns slot-0's own row.
+		got, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-0")
+		if err != nil {
+			t.Fatalf("LatestActiveForSlot slot-0: %v", err)
+		}
+		if got.CheckpointID != target {
+			t.Errorf("LatestActiveForSlot(slot-0) = %q, want the slot-0 row", got.CheckpointID)
+		}
+		if _, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActiveForSlot(empty slot): got %v, want ErrNotFound", err)
+		}
+	})
+
 	// spec: §10.1 line 131 — ConfirmChunk advances the counters
 	// monotonically under the `chunk_count < n + 1` guard.
 	t.Run("confirm chunk is monotonic", func(t *testing.T) {

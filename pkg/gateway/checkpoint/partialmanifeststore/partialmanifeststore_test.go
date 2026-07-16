@@ -249,6 +249,46 @@ func TestPutSupersedeScopedToSlot(t *testing.T) {
 	}
 }
 
+// spec: §10.1 line 137 — LatestActiveForSlot returns the active partial row
+// for the exact (session, slot) the supersede path scopes on, even when
+// another slot in the same session holds a higher-generation active row that
+// the session-wide LatestActive would return first.
+func TestLatestActiveForSlotIsSlotScoped(t *testing.T) {
+	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+
+	target := intentRow(clock, "acme", "cp-target", "s1", 0)
+	target.SlotID = "slot-0"
+	other := intentRow(clock, "acme", "cp-other", "s1", 9) // higher generation, different slot
+	other.SlotID = "slot-1"
+	if err := store.Put(context.Background(), target); err != nil {
+		t.Fatalf("Put slot-0: %v", err)
+	}
+	if err := store.Put(context.Background(), other); err != nil {
+		t.Fatalf("Put slot-1: %v", err)
+	}
+
+	// The session-wide selector returns the higher-generation slot-1 row.
+	if latest, err := store.LatestActive(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("LatestActive: %v", err)
+	} else if latest.CheckpointID != "cp-other" {
+		t.Fatalf("LatestActive = %q, want cp-other (the higher-generation row)", latest.CheckpointID)
+	}
+	// The slot-scoped selector returns slot-0's own row, not the winner.
+	got, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", "slot-0")
+	if err != nil {
+		t.Fatalf("LatestActiveForSlot slot-0: %v", err)
+	}
+	if got.CheckpointID != "cp-target" {
+		t.Errorf("LatestActiveForSlot(slot-0) = %q, want cp-target", got.CheckpointID)
+	}
+
+	// A slot with no active partial row returns ErrNotFound.
+	if _, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", "slot-2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("LatestActiveForSlot(empty slot) = %v, want ErrNotFound", err)
+	}
+}
+
 // spec: §10.1 line 131 — ConfirmChunk advances chunk_count and
 // workspace_bytes_uploaded monotonically under the `chunk_count < n + 1`
 // guard, so an out-of-order acknowledgement cannot decrement the counter.

@@ -194,6 +194,20 @@ type Store interface {
 	// spec: §10.1 line 157 — the resume-time cleaner selects partial rows.
 	LatestActive(ctx context.Context, tenantID, sessionID string) (Record, error)
 
+	// LatestActiveForSlot returns the active partial row for the single
+	// (tenantID, sessionID, slotID) the supersede path scopes on. The
+	// partial_manifest_active_uniq index admits at most one active partial
+	// row per (session, slot), so the result is that row when present. It
+	// carries the `partial = TRUE` predicate. Returns ErrNotFound when no
+	// active partial row exists for the slot. Unlike LatestActive, which is
+	// session-wide and returns an arbitrary slot's row on tied generations,
+	// this selector matches exactly the set Put supersedes, so a multi-slot
+	// session's supersede release never misses the target slot's prior row.
+	//
+	// spec: §10.1 line 137 — supersede is scoped to
+	// (tenant_id, session_id, slot_id).
+	LatestActiveForSlot(ctx context.Context, tenantID, sessionID, slotID string) (Record, error)
+
 	// ConfirmChunk advances the monotonic chunk_count / workspace_bytes
 	// counters as chunk n commits. It applies the §10.1 line 131
 	// conditional UPDATE (`chunk_count < n + 1` guard) so out-of-order
@@ -396,6 +410,32 @@ func (m *MemoryStore) LatestActive(_ context.Context, tenantID, sessionID string
 	found := false
 	for _, row := range m.rows {
 		if row.TenantID != tenantID || row.SessionID != sessionID {
+			continue
+		}
+		if !row.Partial || !row.DeletedAt.IsZero() {
+			continue
+		}
+		if !found || row.CoordinationGeneration > best.CoordinationGeneration {
+			best = row
+			found = true
+		}
+	}
+	if !found {
+		return Record{}, ErrNotFound
+	}
+	return best, nil
+}
+
+// LatestActiveForSlot returns the active partial row for
+// (tenantID, sessionID, slotID), the single slot the supersede path scopes
+// on.
+func (m *MemoryStore) LatestActiveForSlot(_ context.Context, tenantID, sessionID, slotID string) (Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best Record
+	found := false
+	for _, row := range m.rows {
+		if row.TenantID != tenantID || row.SessionID != sessionID || row.SlotID != slotID {
 			continue
 		}
 		if !row.Partial || !row.DeletedAt.IsZero() {

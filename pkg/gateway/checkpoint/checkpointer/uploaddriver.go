@@ -366,14 +366,29 @@ func (d *uploadDriver) reserve(probed int64) error {
 // superseded attempt runs through the shared abort/backstop path.
 func (d *uploadDriver) supersedePriorAttempts() error {
 	c := d.c
-	prior, err := c.Manifests.LatestActive(d.ctx, d.tenantID, d.sessionID)
+	// Scope the lookup to this attempt's exact (session, slot). A session-wide
+	// selector returns an arbitrary slot's row on tied generations, so in a
+	// concurrent-workspace session it can miss the row Put will supersede for
+	// this slot, leaking its reservation and orphaning its chunks.
+	// spec: §10.1 line 137 — supersede is scoped to (session_id, slot_id).
+	prior, err := c.Manifests.LatestActiveForSlot(d.ctx, d.tenantID, d.sessionID, d.slotID)
 	if err != nil {
 		if errors.Is(err, partialmanifeststore.ErrNotFound) {
 			return nil
 		}
 		return fmt.Errorf("checkpointer: read prior active manifest: %w", err)
 	}
-	if prior.SlotID != d.slotID || prior.CheckpointID == d.checkpointID {
+	if prior.CheckpointID == d.checkpointID {
+		return nil
+	}
+	// A prior active row at a strictly higher coordination_generation is a
+	// fenced newer writer: the intent-row Put will reject this stale attempt
+	// with ErrStaleGeneration rather than supersede it. Skip the destructive
+	// release so a stale coordinator never orphans the live newer writer's
+	// reservation and chunk objects, mirroring the store's own fence.
+	// spec: §10.1 lines 137, 155 — the supersede predicate fences on
+	// coordination_generation and rejects a write below a higher active row.
+	if prior.CoordinationGeneration > d.coordinationGen {
 		return nil
 	}
 	// Release the superseded attempt's outstanding reservation and sweep
