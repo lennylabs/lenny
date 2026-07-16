@@ -55,6 +55,18 @@ func (s *Server) isQuiescedForBarrier() bool {
 	return s.coord.quiesced
 }
 
+// BarrierWaiting reports whether a CheckpointBarrier RPC is currently
+// holding quiescence open, waiting for the gateway-driven Checkpoint
+// stream to link its checkpoint_id and terminate. A caller that observes
+// true can drive the Checkpoint stream against the held pod and know the
+// barrier's gate is open, so the stream's CheckpointStart links (§10.1
+// lines 163-172). Exposed for tests.
+func (s *Server) BarrierWaiting() bool {
+	s.barrier.mu.Lock()
+	defer s.barrier.mu.Unlock()
+	return s.barrier.waiting
+}
+
 // CoordinatorFence records the new coordination generation on the pod
 // per §4.7 line 632 / §10.1 lines 33-37. The fence is the precondition
 // the §10.1 handoff protocol uses to close the split-brain window: from
