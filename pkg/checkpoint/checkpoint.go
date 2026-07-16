@@ -3,9 +3,10 @@
 // Package checkpoint encodes the §4.4 checkpoint primitives that are
 // pure: the Level / Trigger / Outcome / ResumeMode enums, the
 // per-level consistency tag, the per-trigger retry budget, the
-// workspace-size pre-check (§4.4 "Hard workspace size limit"), and
-// the periodic-checkpoint freshness SLO (§4.4 "Checkpoint freshness
-// SLO").
+// workspace-size pre-check (§4.4 "Hard workspace size limit"), the
+// periodic-checkpoint freshness SLO (§4.4 "Checkpoint freshness
+// SLO"), and the Trigger ↔ wire-enum mapping the gateway carries in
+// the §10.1 CheckpointStart frame.
 //
 // The MinIO upload pipeline, the SIGSTOP/SIGCONT embedded-adapter
 // path, the eviction Postgres minimal-state fallback, and the
@@ -16,6 +17,8 @@ package checkpoint
 import (
 	"fmt"
 	"time"
+
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // Level reflects the runtime integration level from §15.4.3, used to
@@ -105,6 +108,42 @@ func (t Trigger) IsValid() bool {
 // budget path. Eviction triggers get the longer 30-second budget;
 // non-eviction triggers get ~5 seconds.
 func (t Trigger) IsEviction() bool { return t == TriggerEviction }
+
+// Proto maps the trigger onto the wire enum the gateway carries in the
+// CheckpointStart that opens a §4.7 / §10.1 Checkpoint stream, so the
+// adapter's retry-budget selection and the gateway's
+// `lenny_checkpoint_duration_seconds` label both key on the typed
+// trigger rather than an empty string. An unknown trigger maps to
+// CHECKPOINT_TRIGGER_UNSPECIFIED.
+func (t Trigger) Proto() adapterv1.CheckpointTrigger {
+	switch t {
+	case TriggerPeriodic:
+		return adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC
+	case TriggerPreScaleDown:
+		return adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PRE_SCALE_DOWN
+	case TriggerEviction:
+		return adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_EVICTION
+	default:
+		return adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_UNSPECIFIED
+	}
+}
+
+// TriggerFromProto is the inverse of Trigger.Proto: it maps the wire
+// enum the adapter received in CheckpointStart back onto the typed §4.4
+// trigger. CHECKPOINT_TRIGGER_UNSPECIFIED and any unrecognised value map
+// to the empty Trigger, which IsValid reports false.
+func TriggerFromProto(t adapterv1.CheckpointTrigger) Trigger {
+	switch t {
+	case adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC:
+		return TriggerPeriodic
+	case adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PRE_SCALE_DOWN:
+		return TriggerPreScaleDown
+	case adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_EVICTION:
+		return TriggerEviction
+	default:
+		return ""
+	}
+}
 
 // RetryBudget returns the §4.4 retry parameters for this trigger.
 // Initial delay, the per-attempt max delay (cap), and the total

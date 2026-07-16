@@ -28,6 +28,7 @@ import (
 
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -154,6 +155,68 @@ func (PodScrubOutcome) EnumDescriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{1}
 }
 
+// CheckpointTrigger mirrors the §4.4 pkg/checkpoint.Trigger enum. Each
+// trigger has a distinct retry budget and drives a distinct
+// `lenny_checkpoint_duration_seconds` label; the gateway carries the
+// typed trigger through the CheckpointStart that opens every checkpoint
+// stream so the adapter's retry-budget selection and the gateway's
+// telemetry both key on the request's trigger rather than an empty
+// string.
+type CheckpointTrigger int32
+
+const (
+	CheckpointTrigger_CHECKPOINT_TRIGGER_UNSPECIFIED CheckpointTrigger = 0
+	// Scheduled periodic checkpoint (`periodicCheckpointIntervalSeconds`).
+	CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC CheckpointTrigger = 1
+	// Pre-scale-down checkpoint before a PoolScalingController pod release.
+	CheckpointTrigger_CHECKPOINT_TRIGGER_PRE_SCALE_DOWN CheckpointTrigger = 2
+	// preStop-hook / drain-barrier checkpoint at pod termination.
+	CheckpointTrigger_CHECKPOINT_TRIGGER_EVICTION CheckpointTrigger = 3
+)
+
+// Enum value maps for CheckpointTrigger.
+var (
+	CheckpointTrigger_name = map[int32]string{
+		0: "CHECKPOINT_TRIGGER_UNSPECIFIED",
+		1: "CHECKPOINT_TRIGGER_PERIODIC",
+		2: "CHECKPOINT_TRIGGER_PRE_SCALE_DOWN",
+		3: "CHECKPOINT_TRIGGER_EVICTION",
+	}
+	CheckpointTrigger_value = map[string]int32{
+		"CHECKPOINT_TRIGGER_UNSPECIFIED":    0,
+		"CHECKPOINT_TRIGGER_PERIODIC":       1,
+		"CHECKPOINT_TRIGGER_PRE_SCALE_DOWN": 2,
+		"CHECKPOINT_TRIGGER_EVICTION":       3,
+	}
+)
+
+func (x CheckpointTrigger) Enum() *CheckpointTrigger {
+	p := new(CheckpointTrigger)
+	*p = x
+	return p
+}
+
+func (x CheckpointTrigger) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CheckpointTrigger) Descriptor() protoreflect.EnumDescriptor {
+	return file_lenny_adapter_proto_enumTypes[2].Descriptor()
+}
+
+func (CheckpointTrigger) Type() protoreflect.EnumType {
+	return &file_lenny_adapter_proto_enumTypes[2]
+}
+
+func (x CheckpointTrigger) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CheckpointTrigger.Descriptor instead.
+func (CheckpointTrigger) EnumDescriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{2}
+}
+
 type Error_Category int32
 
 const (
@@ -194,11 +257,11 @@ func (x Error_Category) String() string {
 }
 
 func (Error_Category) Descriptor() protoreflect.EnumDescriptor {
-	return file_lenny_adapter_proto_enumTypes[2].Descriptor()
+	return file_lenny_adapter_proto_enumTypes[3].Descriptor()
 }
 
 func (Error_Category) Type() protoreflect.EnumType {
-	return &file_lenny_adapter_proto_enumTypes[2]
+	return &file_lenny_adapter_proto_enumTypes[3]
 }
 
 func (x Error_Category) Number() protoreflect.EnumNumber {
@@ -321,11 +384,11 @@ func (x Error_ErrorCode) String() string {
 }
 
 func (Error_ErrorCode) Descriptor() protoreflect.EnumDescriptor {
-	return file_lenny_adapter_proto_enumTypes[3].Descriptor()
+	return file_lenny_adapter_proto_enumTypes[4].Descriptor()
 }
 
 func (Error_ErrorCode) Type() protoreflect.EnumType {
-	return &file_lenny_adapter_proto_enumTypes[3]
+	return &file_lenny_adapter_proto_enumTypes[4]
 }
 
 func (x Error_ErrorCode) Number() protoreflect.EnumNumber {
@@ -370,11 +433,11 @@ func (x InterruptRequest_Mode) String() string {
 }
 
 func (InterruptRequest_Mode) Descriptor() protoreflect.EnumDescriptor {
-	return file_lenny_adapter_proto_enumTypes[4].Descriptor()
+	return file_lenny_adapter_proto_enumTypes[5].Descriptor()
 }
 
 func (InterruptRequest_Mode) Type() protoreflect.EnumType {
-	return &file_lenny_adapter_proto_enumTypes[4]
+	return &file_lenny_adapter_proto_enumTypes[5]
 }
 
 func (x InterruptRequest_Mode) Number() protoreflect.EnumNumber {
@@ -422,11 +485,11 @@ func (x InterruptResponse_Status) String() string {
 }
 
 func (InterruptResponse_Status) Descriptor() protoreflect.EnumDescriptor {
-	return file_lenny_adapter_proto_enumTypes[5].Descriptor()
+	return file_lenny_adapter_proto_enumTypes[6].Descriptor()
 }
 
 func (InterruptResponse_Status) Type() protoreflect.EnumType {
-	return &file_lenny_adapter_proto_enumTypes[5]
+	return &file_lenny_adapter_proto_enumTypes[6]
 }
 
 func (x InterruptResponse_Status) Number() protoreflect.EnumNumber {
@@ -3623,28 +3686,36 @@ func (x *InterruptResponse) GetStatus() InterruptResponse_Status {
 	return InterruptResponse_STATUS_UNSPECIFIED
 }
 
-type CheckpointRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	DeadlineMs    int32                  `protobuf:"varint,2,opt,name=deadline_ms,json=deadlineMs,proto3" json:"deadline_ms,omitempty"`
+// CheckpointClientMessage is a gateway → adapter frame on the Checkpoint
+// stream. The gateway (the gRPC client) drives the exchange: it starts
+// the stream, mints per-chunk upload capabilities in response to the
+// adapter's chunk declarations, and can abort the attempt.
+type CheckpointClientMessage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*CheckpointClientMessage_Start
+	//	*CheckpointClientMessage_Grant
+	//	*CheckpointClientMessage_Abort
+	Msg           isCheckpointClientMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *CheckpointRequest) Reset() {
-	*x = CheckpointRequest{}
+func (x *CheckpointClientMessage) Reset() {
+	*x = CheckpointClientMessage{}
 	mi := &file_lenny_adapter_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *CheckpointRequest) String() string {
+func (x *CheckpointClientMessage) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*CheckpointRequest) ProtoMessage() {}
+func (*CheckpointClientMessage) ProtoMessage() {}
 
-func (x *CheckpointRequest) ProtoReflect() protoreflect.Message {
+func (x *CheckpointClientMessage) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3656,47 +3727,104 @@ func (x *CheckpointRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use CheckpointRequest.ProtoReflect.Descriptor instead.
-func (*CheckpointRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use CheckpointClientMessage.ProtoReflect.Descriptor instead.
+func (*CheckpointClientMessage) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{49}
 }
 
-func (x *CheckpointRequest) GetSessionId() *SessionId {
+func (x *CheckpointClientMessage) GetMsg() isCheckpointClientMessage_Msg {
 	if x != nil {
-		return x.SessionId
+		return x.Msg
 	}
 	return nil
 }
 
-func (x *CheckpointRequest) GetDeadlineMs() int32 {
+func (x *CheckpointClientMessage) GetStart() *CheckpointStart {
 	if x != nil {
-		return x.DeadlineMs
+		if x, ok := x.Msg.(*CheckpointClientMessage_Start); ok {
+			return x.Start
+		}
 	}
-	return 0
+	return nil
 }
 
-type CheckpointResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CheckpointId  string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	SizeBytes     int64                  `protobuf:"varint,2,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+func (x *CheckpointClientMessage) GetGrant() *CheckpointGrant {
+	if x != nil {
+		if x, ok := x.Msg.(*CheckpointClientMessage_Grant); ok {
+			return x.Grant
+		}
+	}
+	return nil
+}
+
+func (x *CheckpointClientMessage) GetAbort() *CheckpointAbort {
+	if x != nil {
+		if x, ok := x.Msg.(*CheckpointClientMessage_Abort); ok {
+			return x.Abort
+		}
+	}
+	return nil
+}
+
+type isCheckpointClientMessage_Msg interface {
+	isCheckpointClientMessage_Msg()
+}
+
+type CheckpointClientMessage_Start struct {
+	Start *CheckpointStart `protobuf:"bytes,1,opt,name=start,proto3,oneof"`
+}
+
+type CheckpointClientMessage_Grant struct {
+	Grant *CheckpointGrant `protobuf:"bytes,2,opt,name=grant,proto3,oneof"`
+}
+
+type CheckpointClientMessage_Abort struct {
+	Abort *CheckpointAbort `protobuf:"bytes,3,opt,name=abort,proto3,oneof"`
+}
+
+func (*CheckpointClientMessage_Start) isCheckpointClientMessage_Msg() {}
+
+func (*CheckpointClientMessage_Grant) isCheckpointClientMessage_Msg() {}
+
+func (*CheckpointClientMessage_Abort) isCheckpointClientMessage_Msg() {}
+
+// CheckpointStart opens the stream. It carries the gateway-minted
+// `checkpoint_id` (§10.1 line 130 — the adapter never mints one), the
+// typed trigger, the gateway-chosen chunk size and encoding, and the
+// applicable deadline.
+type CheckpointStart struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// checkpoint_id is the UUID the gateway minted for this attempt. The
+	// adapter echoes it back on CheckpointBarrierAck.checkpoint_ref for the
+	// barrier-window path.
+	CheckpointId string            `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	Trigger      CheckpointTrigger `protobuf:"varint,2,opt,name=trigger,proto3,enum=lenny.adapter.v1.CheckpointTrigger" json:"trigger,omitempty"`
+	// chunk_size_bytes is the exact block size the adapter buffers before
+	// declaring a chunk; the gateway rejects any declared length outside
+	// (0, chunk_size_bytes].
+	ChunkSizeBytes int64 `protobuf:"varint,3,opt,name=chunk_size_bytes,json=chunkSizeBytes,proto3" json:"chunk_size_bytes,omitempty"`
+	// chunk_encoding is `tar` or `tar.gz`, fixed for every chunk under this
+	// checkpoint_id.
+	ChunkEncoding string `protobuf:"bytes,4,opt,name=chunk_encoding,json=chunkEncoding,proto3" json:"chunk_encoding,omitempty"`
+	DeadlineMs    int64  `protobuf:"varint,5,opt,name=deadline_ms,json=deadlineMs,proto3" json:"deadline_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *CheckpointResponse) Reset() {
-	*x = CheckpointResponse{}
+func (x *CheckpointStart) Reset() {
+	*x = CheckpointStart{}
 	mi := &file_lenny_adapter_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *CheckpointResponse) String() string {
+func (x *CheckpointStart) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*CheckpointResponse) ProtoMessage() {}
+func (*CheckpointStart) ProtoMessage() {}
 
-func (x *CheckpointResponse) ProtoReflect() protoreflect.Message {
+func (x *CheckpointStart) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3708,23 +3836,590 @@ func (x *CheckpointResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use CheckpointResponse.ProtoReflect.Descriptor instead.
-func (*CheckpointResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use CheckpointStart.ProtoReflect.Descriptor instead.
+func (*CheckpointStart) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{50}
 }
 
-func (x *CheckpointResponse) GetCheckpointId() string {
+func (x *CheckpointStart) GetCheckpointId() string {
 	if x != nil {
 		return x.CheckpointId
 	}
 	return ""
 }
 
-func (x *CheckpointResponse) GetSizeBytes() int64 {
+func (x *CheckpointStart) GetTrigger() CheckpointTrigger {
 	if x != nil {
-		return x.SizeBytes
+		return x.Trigger
+	}
+	return CheckpointTrigger_CHECKPOINT_TRIGGER_UNSPECIFIED
+}
+
+func (x *CheckpointStart) GetChunkSizeBytes() int64 {
+	if x != nil {
+		return x.ChunkSizeBytes
 	}
 	return 0
+}
+
+func (x *CheckpointStart) GetChunkEncoding() string {
+	if x != nil {
+		return x.ChunkEncoding
+	}
+	return ""
+}
+
+func (x *CheckpointStart) GetDeadlineMs() int64 {
+	if x != nil {
+		return x.DeadlineMs
+	}
+	return 0
+}
+
+// CheckpointGrant is a single-chunk presigned PUT capability the gateway
+// signs in response to a ChunkReady. The adapter issues the PUT directly
+// against object storage.
+type CheckpointGrant struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Index uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	// url is the presigned PUT capability. Bearer-sensitive: redacted in
+	// logs.
+	Url string `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	// content_length is the exact byte count the gateway signed into the
+	// capability; the PUT must send exactly this many bytes.
+	ContentLength int64 `protobuf:"varint,3,opt,name=content_length,json=contentLength,proto3" json:"content_length,omitempty"`
+	// headers carries the exact name→value pairs the gateway folded into the
+	// SigV4 signature (the SSE-KMS header set and Content-Length on a T4
+	// backend). The adapter MUST replay every entry verbatim on the PUT and
+	// MUST NOT add or alter a signed header, or the object store rejects the
+	// PUT with SignatureDoesNotMatch. Empty when the backend signs no
+	// request headers.
+	Headers       map[string]string      `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointGrant) Reset() {
+	*x = CheckpointGrant{}
+	mi := &file_lenny_adapter_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointGrant) ProtoMessage() {}
+
+func (x *CheckpointGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointGrant.ProtoReflect.Descriptor instead.
+func (*CheckpointGrant) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *CheckpointGrant) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *CheckpointGrant) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *CheckpointGrant) GetContentLength() int64 {
+	if x != nil {
+		return x.ContentLength
+	}
+	return 0
+}
+
+func (x *CheckpointGrant) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *CheckpointGrant) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+// CheckpointAbort tells the adapter to stop the attempt; the adapter does
+// not retry a PUT the gateway aborts.
+type CheckpointAbort struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointAbort) Reset() {
+	*x = CheckpointAbort{}
+	mi := &file_lenny_adapter_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointAbort) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointAbort) ProtoMessage() {}
+
+func (x *CheckpointAbort) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointAbort.ProtoReflect.Descriptor instead.
+func (*CheckpointAbort) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *CheckpointAbort) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// CheckpointServerMessage is an adapter → gateway frame on the Checkpoint
+// stream.
+type CheckpointServerMessage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*CheckpointServerMessage_Probe
+	//	*CheckpointServerMessage_ChunkReady
+	//	*CheckpointServerMessage_ChunkCommitted
+	//	*CheckpointServerMessage_Summary
+	//	*CheckpointServerMessage_Failed
+	Msg           isCheckpointServerMessage_Msg `protobuf_oneof:"msg"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointServerMessage) Reset() {
+	*x = CheckpointServerMessage{}
+	mi := &file_lenny_adapter_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointServerMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointServerMessage) ProtoMessage() {}
+
+func (x *CheckpointServerMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointServerMessage.ProtoReflect.Descriptor instead.
+func (*CheckpointServerMessage) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *CheckpointServerMessage) GetMsg() isCheckpointServerMessage_Msg {
+	if x != nil {
+		return x.Msg
+	}
+	return nil
+}
+
+func (x *CheckpointServerMessage) GetProbe() *CheckpointProbe {
+	if x != nil {
+		if x, ok := x.Msg.(*CheckpointServerMessage_Probe); ok {
+			return x.Probe
+		}
+	}
+	return nil
+}
+
+func (x *CheckpointServerMessage) GetChunkReady() *ChunkReady {
+	if x != nil {
+		if x, ok := x.Msg.(*CheckpointServerMessage_ChunkReady); ok {
+			return x.ChunkReady
+		}
+	}
+	return nil
+}
+
+func (x *CheckpointServerMessage) GetChunkCommitted() *ChunkCommitted {
+	if x != nil {
+		if x, ok := x.Msg.(*CheckpointServerMessage_ChunkCommitted); ok {
+			return x.ChunkCommitted
+		}
+	}
+	return nil
+}
+
+func (x *CheckpointServerMessage) GetSummary() *CheckpointSummary {
+	if x != nil {
+		if x, ok := x.Msg.(*CheckpointServerMessage_Summary); ok {
+			return x.Summary
+		}
+	}
+	return nil
+}
+
+func (x *CheckpointServerMessage) GetFailed() *CheckpointFailed {
+	if x != nil {
+		if x, ok := x.Msg.(*CheckpointServerMessage_Failed); ok {
+			return x.Failed
+		}
+	}
+	return nil
+}
+
+type isCheckpointServerMessage_Msg interface {
+	isCheckpointServerMessage_Msg()
+}
+
+type CheckpointServerMessage_Probe struct {
+	Probe *CheckpointProbe `protobuf:"bytes,1,opt,name=probe,proto3,oneof"`
+}
+
+type CheckpointServerMessage_ChunkReady struct {
+	ChunkReady *ChunkReady `protobuf:"bytes,2,opt,name=chunk_ready,json=chunkReady,proto3,oneof"`
+}
+
+type CheckpointServerMessage_ChunkCommitted struct {
+	ChunkCommitted *ChunkCommitted `protobuf:"bytes,3,opt,name=chunk_committed,json=chunkCommitted,proto3,oneof"`
+}
+
+type CheckpointServerMessage_Summary struct {
+	Summary *CheckpointSummary `protobuf:"bytes,4,opt,name=summary,proto3,oneof"`
+}
+
+type CheckpointServerMessage_Failed struct {
+	Failed *CheckpointFailed `protobuf:"bytes,5,opt,name=failed,proto3,oneof"`
+}
+
+func (*CheckpointServerMessage_Probe) isCheckpointServerMessage_Msg() {}
+
+func (*CheckpointServerMessage_ChunkReady) isCheckpointServerMessage_Msg() {}
+
+func (*CheckpointServerMessage_ChunkCommitted) isCheckpointServerMessage_Msg() {}
+
+func (*CheckpointServerMessage_Summary) isCheckpointServerMessage_Msg() {}
+
+func (*CheckpointServerMessage_Failed) isCheckpointServerMessage_Msg() {}
+
+// CheckpointProbe is the first frame the adapter sends: the on-disk
+// workspace byte count the gateway reserves storage quota against before
+// it mints any grant (§11.2).
+type CheckpointProbe struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceBytes int64                  `protobuf:"varint,1,opt,name=workspace_bytes,json=workspaceBytes,proto3" json:"workspace_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CheckpointProbe) Reset() {
+	*x = CheckpointProbe{}
+	mi := &file_lenny_adapter_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointProbe) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointProbe) ProtoMessage() {}
+
+func (x *CheckpointProbe) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointProbe.ProtoReflect.Descriptor instead.
+func (*CheckpointProbe) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *CheckpointProbe) GetWorkspaceBytes() int64 {
+	if x != nil {
+		return x.WorkspaceBytes
+	}
+	return 0
+}
+
+// ChunkReady declares a chunk by index and exact byte length before the
+// gateway signs its grant.
+type ChunkReady struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Index         uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	Length        int64                  `protobuf:"varint,2,opt,name=length,proto3" json:"length,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChunkReady) Reset() {
+	*x = ChunkReady{}
+	mi := &file_lenny_adapter_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkReady) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkReady) ProtoMessage() {}
+
+func (x *ChunkReady) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkReady.ProtoReflect.Descriptor instead.
+func (*ChunkReady) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *ChunkReady) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *ChunkReady) GetLength() int64 {
+	if x != nil {
+		return x.Length
+	}
+	return 0
+}
+
+// ChunkCommitted acknowledges that the adapter completed the PUT for the
+// chunk at index; it is what tells the gateway to Stat the object and
+// record the confirmed size. Retained rather than folded into the next
+// ChunkReady because the last chunk has no successor.
+type ChunkCommitted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Index         uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChunkCommitted) Reset() {
+	*x = ChunkCommitted{}
+	mi := &file_lenny_adapter_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkCommitted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkCommitted) ProtoMessage() {}
+
+func (x *ChunkCommitted) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkCommitted.ProtoReflect.Descriptor instead.
+func (*ChunkCommitted) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *ChunkCommitted) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+// CheckpointSummary closes a successful stream: the total chunk count and
+// uploaded byte total the gateway verifies against its confirmed set
+// before finalising the manifest.
+type CheckpointSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChunkCount    uint32                 `protobuf:"varint,1,opt,name=chunk_count,json=chunkCount,proto3" json:"chunk_count,omitempty"`
+	TotalBytes    int64                  `protobuf:"varint,2,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointSummary) Reset() {
+	*x = CheckpointSummary{}
+	mi := &file_lenny_adapter_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointSummary) ProtoMessage() {}
+
+func (x *CheckpointSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointSummary.ProtoReflect.Descriptor instead.
+func (*CheckpointSummary) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *CheckpointSummary) GetChunkCount() uint32 {
+	if x != nil {
+		return x.ChunkCount
+	}
+	return 0
+}
+
+func (x *CheckpointSummary) GetTotalBytes() int64 {
+	if x != nil {
+		return x.TotalBytes
+	}
+	return 0
+}
+
+// CheckpointFailed terminates the stream on a failure the gateway cannot
+// otherwise observe because it no longer issues the object-store call: a
+// chunk PUT the object store rejected (carrying the object store's HTTP
+// status and error code so the gateway can map a `kms:`-coded rejection
+// onto a classification-control violation and keep the §12 fail-closed T4
+// posture), or a workspace-size-probe rejection before any grant is
+// minted.
+type CheckpointFailed struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	Index         uint32                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
+	HttpStatus    int32                  `protobuf:"varint,3,opt,name=http_status,json=httpStatus,proto3" json:"http_status,omitempty"`
+	ErrorCode     string                 `protobuf:"bytes,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointFailed) Reset() {
+	*x = CheckpointFailed{}
+	mi := &file_lenny_adapter_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointFailed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointFailed) ProtoMessage() {}
+
+func (x *CheckpointFailed) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointFailed.ProtoReflect.Descriptor instead.
+func (*CheckpointFailed) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *CheckpointFailed) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *CheckpointFailed) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *CheckpointFailed) GetHttpStatus() int32 {
+	if x != nil {
+		return x.HttpStatus
+	}
+	return 0
+}
+
+func (x *CheckpointFailed) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
 }
 
 type SignalDeadlineRequest struct {
@@ -3742,7 +4437,7 @@ type SignalDeadlineRequest struct {
 
 func (x *SignalDeadlineRequest) Reset() {
 	*x = SignalDeadlineRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[51]
+	mi := &file_lenny_adapter_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3754,7 +4449,7 @@ func (x *SignalDeadlineRequest) String() string {
 func (*SignalDeadlineRequest) ProtoMessage() {}
 
 func (x *SignalDeadlineRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[51]
+	mi := &file_lenny_adapter_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3767,7 +4462,7 @@ func (x *SignalDeadlineRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignalDeadlineRequest.ProtoReflect.Descriptor instead.
 func (*SignalDeadlineRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{51}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *SignalDeadlineRequest) GetSessionId() *SessionId {
@@ -3803,7 +4498,7 @@ type SignalDeadlineResponse struct {
 
 func (x *SignalDeadlineResponse) Reset() {
 	*x = SignalDeadlineResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[52]
+	mi := &file_lenny_adapter_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3815,7 +4510,7 @@ func (x *SignalDeadlineResponse) String() string {
 func (*SignalDeadlineResponse) ProtoMessage() {}
 
 func (x *SignalDeadlineResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[52]
+	mi := &file_lenny_adapter_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3828,7 +4523,7 @@ func (x *SignalDeadlineResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignalDeadlineResponse.ProtoReflect.Descriptor instead.
 func (*SignalDeadlineResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{52}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *SignalDeadlineResponse) GetDelivered() bool {
@@ -3892,13 +4587,23 @@ type ResumeRequest struct {
 	// legacy sessions); the assertion is purely a runtime template-drift
 	// guard.
 	ExpectedWorkspaceRoot string `protobuf:"bytes,12,opt,name=expected_workspace_root,json=expectedWorkspaceRoot,proto3" json:"expected_workspace_root,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// chunks carries one presigned single-key GET capability per chunk of
+	// the checkpoint being restored, in ascending index order (§10.1 line
+	// 155). The gateway resolves the chunk set from the manifest row it owns
+	// and mints one capability per index in [0, chunk_count); the adapter
+	// fetches each chunk directly from object storage and concatenates them
+	// into the single tar (or tar.gz) byte stream. The gateway has no byte
+	// channel to the adapter on the resume path, so the capabilities are the
+	// adapter's only means of reading the chunks; a fetch that outlives the
+	// grants' expiry is re-driven by re-calling Resume, which re-mints.
+	Chunks        []*ChunkGrant `protobuf:"bytes,13,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResumeRequest) Reset() {
 	*x = ResumeRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[53]
+	mi := &file_lenny_adapter_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3910,7 +4615,7 @@ func (x *ResumeRequest) String() string {
 func (*ResumeRequest) ProtoMessage() {}
 
 func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[53]
+	mi := &file_lenny_adapter_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3923,7 +4628,7 @@ func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRequest.ProtoReflect.Descriptor instead.
 func (*ResumeRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{53}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *ResumeRequest) GetSessionId() *SessionId {
@@ -4003,6 +4708,99 @@ func (x *ResumeRequest) GetExpectedWorkspaceRoot() string {
 	return ""
 }
 
+func (x *ResumeRequest) GetChunks() []*ChunkGrant {
+	if x != nil {
+		return x.Chunks
+	}
+	return nil
+}
+
+// ChunkGrant is a single presigned GET capability for one checkpoint
+// chunk on the Resume path. It differs from CheckpointGrant in carrying
+// the chunk's actual `length` rather than a signed Content-Length: a GET
+// capability signs no request body.
+type ChunkGrant struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Index  uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	Length int64                  `protobuf:"varint,2,opt,name=length,proto3" json:"length,omitempty"`
+	// url is the presigned GET capability. Bearer-sensitive: redacted in
+	// logs.
+	Url string `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	// headers carries any header the gateway signed into the GET capability,
+	// replayed verbatim by the adapter for the same signature-match reason
+	// as CheckpointGrant.headers. Normally empty on the read path because a
+	// GET capability signs no SSE-KMS headers.
+	Headers       map[string]string      `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChunkGrant) Reset() {
+	*x = ChunkGrant{}
+	mi := &file_lenny_adapter_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkGrant) ProtoMessage() {}
+
+func (x *ChunkGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkGrant.ProtoReflect.Descriptor instead.
+func (*ChunkGrant) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *ChunkGrant) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *ChunkGrant) GetLength() int64 {
+	if x != nil {
+		return x.Length
+	}
+	return 0
+}
+
+func (x *ChunkGrant) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *ChunkGrant) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *ChunkGrant) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 type ResumeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RestoredBytes int64                  `protobuf:"varint,1,opt,name=restored_bytes,json=restoredBytes,proto3" json:"restored_bytes,omitempty"` // uncompressed workspace bytes restored
@@ -4024,7 +4822,7 @@ type ResumeResponse struct {
 
 func (x *ResumeResponse) Reset() {
 	*x = ResumeResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[54]
+	mi := &file_lenny_adapter_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4036,7 +4834,7 @@ func (x *ResumeResponse) String() string {
 func (*ResumeResponse) ProtoMessage() {}
 
 func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[54]
+	mi := &file_lenny_adapter_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4049,7 +4847,7 @@ func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeResponse.ProtoReflect.Descriptor instead.
 func (*ResumeResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{54}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *ResumeResponse) GetRestoredBytes() int64 {
@@ -4091,7 +4889,7 @@ type CoordinatorFenceRequest struct {
 
 func (x *CoordinatorFenceRequest) Reset() {
 	*x = CoordinatorFenceRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[55]
+	mi := &file_lenny_adapter_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4103,7 +4901,7 @@ func (x *CoordinatorFenceRequest) String() string {
 func (*CoordinatorFenceRequest) ProtoMessage() {}
 
 func (x *CoordinatorFenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[55]
+	mi := &file_lenny_adapter_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4116,7 +4914,7 @@ func (x *CoordinatorFenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CoordinatorFenceRequest.ProtoReflect.Descriptor instead.
 func (*CoordinatorFenceRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{55}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *CoordinatorFenceRequest) GetSessionId() *SessionId {
@@ -4152,7 +4950,7 @@ type CoordinatorFenceResponse struct {
 
 func (x *CoordinatorFenceResponse) Reset() {
 	*x = CoordinatorFenceResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[56]
+	mi := &file_lenny_adapter_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4164,7 +4962,7 @@ func (x *CoordinatorFenceResponse) String() string {
 func (*CoordinatorFenceResponse) ProtoMessage() {}
 
 func (x *CoordinatorFenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[56]
+	mi := &file_lenny_adapter_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4177,7 +4975,7 @@ func (x *CoordinatorFenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CoordinatorFenceResponse.ProtoReflect.Descriptor instead.
 func (*CoordinatorFenceResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{56}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *CoordinatorFenceResponse) GetAccepted() bool {
@@ -4223,7 +5021,7 @@ type CheckpointBarrierRequest struct {
 
 func (x *CheckpointBarrierRequest) Reset() {
 	*x = CheckpointBarrierRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[57]
+	mi := &file_lenny_adapter_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4235,7 +5033,7 @@ func (x *CheckpointBarrierRequest) String() string {
 func (*CheckpointBarrierRequest) ProtoMessage() {}
 
 func (x *CheckpointBarrierRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[57]
+	mi := &file_lenny_adapter_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4248,7 +5046,7 @@ func (x *CheckpointBarrierRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointBarrierRequest.ProtoReflect.Descriptor instead.
 func (*CheckpointBarrierRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{57}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *CheckpointBarrierRequest) GetSessionId() *SessionId {
@@ -4275,11 +5073,13 @@ func (x *CheckpointBarrierRequest) GetBarrierId() string {
 // CheckpointBarrierResponse is the synchronous mirror of the
 // CheckpointBarrierAck event emitted on the LifecycleChannel control
 // stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
-// is the storage reference of the best-effort checkpoint flushed during
-// the barrier (empty when the adapter could not flush one — e.g.
-// checkpoint sink unwired or archive failed). quiesced_ms reports the
-// wall-clock the adapter spent quiescing the runtime; the gateway records
-// it on `lenny_checkpoint_barrier_ack_duration_seconds`.
+// echoes the gateway-minted `checkpoint_id` the adapter received in the
+// CheckpointStart of the barrier-window Checkpoint stream (§10.1 line 167);
+// empty when the gateway drove no stream against the pod. The adapter
+// returns the ack only after that gateway-driven stream terminates.
+// quiesced_ms reports the time-to-quiescence measured inside the ack
+// window; the gateway records it on
+// `lenny_checkpoint_barrier_ack_duration_seconds`.
 type CheckpointBarrierResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	BarrierId     string                 `protobuf:"bytes,1,opt,name=barrier_id,json=barrierId,proto3" json:"barrier_id,omitempty"`
@@ -4291,7 +5091,7 @@ type CheckpointBarrierResponse struct {
 
 func (x *CheckpointBarrierResponse) Reset() {
 	*x = CheckpointBarrierResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[58]
+	mi := &file_lenny_adapter_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4303,7 +5103,7 @@ func (x *CheckpointBarrierResponse) String() string {
 func (*CheckpointBarrierResponse) ProtoMessage() {}
 
 func (x *CheckpointBarrierResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[58]
+	mi := &file_lenny_adapter_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4316,7 +5116,7 @@ func (x *CheckpointBarrierResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointBarrierResponse.ProtoReflect.Descriptor instead.
 func (*CheckpointBarrierResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{58}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *CheckpointBarrierResponse) GetBarrierId() string {
@@ -4360,7 +5160,7 @@ type ExportSpec struct {
 
 func (x *ExportSpec) Reset() {
 	*x = ExportSpec{}
-	mi := &file_lenny_adapter_proto_msgTypes[59]
+	mi := &file_lenny_adapter_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4372,7 +5172,7 @@ func (x *ExportSpec) String() string {
 func (*ExportSpec) ProtoMessage() {}
 
 func (x *ExportSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[59]
+	mi := &file_lenny_adapter_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4385,7 +5185,7 @@ func (x *ExportSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportSpec.ProtoReflect.Descriptor instead.
 func (*ExportSpec) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{59}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ExportSpec) GetSource() string {
@@ -4414,7 +5214,7 @@ type ExportPathsRequest struct {
 
 func (x *ExportPathsRequest) Reset() {
 	*x = ExportPathsRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[60]
+	mi := &file_lenny_adapter_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4426,7 +5226,7 @@ func (x *ExportPathsRequest) String() string {
 func (*ExportPathsRequest) ProtoMessage() {}
 
 func (x *ExportPathsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[60]
+	mi := &file_lenny_adapter_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4439,7 +5239,7 @@ func (x *ExportPathsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportPathsRequest.ProtoReflect.Descriptor instead.
 func (*ExportPathsRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{60}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *ExportPathsRequest) GetSessionId() *SessionId {
@@ -4477,7 +5277,7 @@ type ExportedFile struct {
 
 func (x *ExportedFile) Reset() {
 	*x = ExportedFile{}
-	mi := &file_lenny_adapter_proto_msgTypes[61]
+	mi := &file_lenny_adapter_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4489,7 +5289,7 @@ func (x *ExportedFile) String() string {
 func (*ExportedFile) ProtoMessage() {}
 
 func (x *ExportedFile) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[61]
+	mi := &file_lenny_adapter_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4502,7 +5302,7 @@ func (x *ExportedFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportedFile.ProtoReflect.Descriptor instead.
 func (*ExportedFile) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{61}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *ExportedFile) GetPath() string {
@@ -4547,7 +5347,7 @@ type ExportPathsResponse struct {
 
 func (x *ExportPathsResponse) Reset() {
 	*x = ExportPathsResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[62]
+	mi := &file_lenny_adapter_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4559,7 +5359,7 @@ func (x *ExportPathsResponse) String() string {
 func (*ExportPathsResponse) ProtoMessage() {}
 
 func (x *ExportPathsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[62]
+	mi := &file_lenny_adapter_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4572,7 +5372,7 @@ func (x *ExportPathsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportPathsResponse.ProtoReflect.Descriptor instead.
 func (*ExportPathsResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{62}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *ExportPathsResponse) GetFiles() []*ExportedFile {
@@ -4608,7 +5408,7 @@ type ReportUsageRequest struct {
 
 func (x *ReportUsageRequest) Reset() {
 	*x = ReportUsageRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[63]
+	mi := &file_lenny_adapter_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4620,7 +5420,7 @@ func (x *ReportUsageRequest) String() string {
 func (*ReportUsageRequest) ProtoMessage() {}
 
 func (x *ReportUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[63]
+	mi := &file_lenny_adapter_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4633,7 +5433,7 @@ func (x *ReportUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportUsageRequest.ProtoReflect.Descriptor instead.
 func (*ReportUsageRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{63}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *ReportUsageRequest) GetSessionId() *SessionId {
@@ -4661,7 +5461,7 @@ type ReportUsageResponse struct {
 
 func (x *ReportUsageResponse) Reset() {
 	*x = ReportUsageResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[64]
+	mi := &file_lenny_adapter_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4673,7 +5473,7 @@ func (x *ReportUsageResponse) String() string {
 func (*ReportUsageResponse) ProtoMessage() {}
 
 func (x *ReportUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[64]
+	mi := &file_lenny_adapter_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4686,7 +5486,7 @@ func (x *ReportUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportUsageResponse.ProtoReflect.Descriptor instead.
 func (*ReportUsageResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{64}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *ReportUsageResponse) GetInputTokens() int64 {
@@ -4734,7 +5534,7 @@ type ShutdownRequest struct {
 
 func (x *ShutdownRequest) Reset() {
 	*x = ShutdownRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[65]
+	mi := &file_lenny_adapter_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4746,7 +5546,7 @@ func (x *ShutdownRequest) String() string {
 func (*ShutdownRequest) ProtoMessage() {}
 
 func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[65]
+	mi := &file_lenny_adapter_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4759,7 +5559,7 @@ func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownRequest.ProtoReflect.Descriptor instead.
 func (*ShutdownRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{65}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *ShutdownRequest) GetSessionId() *SessionId {
@@ -4829,7 +5629,7 @@ type RecycleScrub struct {
 
 func (x *RecycleScrub) Reset() {
 	*x = RecycleScrub{}
-	mi := &file_lenny_adapter_proto_msgTypes[66]
+	mi := &file_lenny_adapter_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4841,7 +5641,7 @@ func (x *RecycleScrub) String() string {
 func (*RecycleScrub) ProtoMessage() {}
 
 func (x *RecycleScrub) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[66]
+	mi := &file_lenny_adapter_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4854,7 +5654,7 @@ func (x *RecycleScrub) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecycleScrub.ProtoReflect.Descriptor instead.
 func (*RecycleScrub) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{66}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *RecycleScrub) GetPodId() string {
@@ -4888,7 +5688,7 @@ type ShutdownResponse struct {
 
 func (x *ShutdownResponse) Reset() {
 	*x = ShutdownResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[67]
+	mi := &file_lenny_adapter_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4900,7 +5700,7 @@ func (x *ShutdownResponse) String() string {
 func (*ShutdownResponse) ProtoMessage() {}
 
 func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[67]
+	mi := &file_lenny_adapter_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4913,7 +5713,7 @@ func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownResponse.ProtoReflect.Descriptor instead.
 func (*ShutdownResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{67}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *ShutdownResponse) GetExitedCleanly() bool {
@@ -4951,7 +5751,7 @@ type ConfigureWorkspaceRequest struct {
 
 func (x *ConfigureWorkspaceRequest) Reset() {
 	*x = ConfigureWorkspaceRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[68]
+	mi := &file_lenny_adapter_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4963,7 +5763,7 @@ func (x *ConfigureWorkspaceRequest) String() string {
 func (*ConfigureWorkspaceRequest) ProtoMessage() {}
 
 func (x *ConfigureWorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[68]
+	mi := &file_lenny_adapter_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4976,7 +5776,7 @@ func (x *ConfigureWorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigureWorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*ConfigureWorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{68}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *ConfigureWorkspaceRequest) GetSessionId() *SessionId {
@@ -5020,7 +5820,7 @@ type ConfigureWorkspaceResponse struct {
 
 func (x *ConfigureWorkspaceResponse) Reset() {
 	*x = ConfigureWorkspaceResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[69]
+	mi := &file_lenny_adapter_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5032,7 +5832,7 @@ func (x *ConfigureWorkspaceResponse) String() string {
 func (*ConfigureWorkspaceResponse) ProtoMessage() {}
 
 func (x *ConfigureWorkspaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[69]
+	mi := &file_lenny_adapter_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5045,7 +5845,7 @@ func (x *ConfigureWorkspaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigureWorkspaceResponse.ProtoReflect.Descriptor instead.
 func (*ConfigureWorkspaceResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{69}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *ConfigureWorkspaceResponse) GetRefusalReason() string {
@@ -5066,7 +5866,7 @@ type DemoteSDKRequest struct {
 
 func (x *DemoteSDKRequest) Reset() {
 	*x = DemoteSDKRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[70]
+	mi := &file_lenny_adapter_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5078,7 +5878,7 @@ func (x *DemoteSDKRequest) String() string {
 func (*DemoteSDKRequest) ProtoMessage() {}
 
 func (x *DemoteSDKRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[70]
+	mi := &file_lenny_adapter_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5091,7 +5891,7 @@ func (x *DemoteSDKRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DemoteSDKRequest.ProtoReflect.Descriptor instead.
 func (*DemoteSDKRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{70}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *DemoteSDKRequest) GetReason() string {
@@ -5112,7 +5912,7 @@ type DemoteSDKResponse struct {
 
 func (x *DemoteSDKResponse) Reset() {
 	*x = DemoteSDKResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[71]
+	mi := &file_lenny_adapter_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5124,7 +5924,7 @@ func (x *DemoteSDKResponse) String() string {
 func (*DemoteSDKResponse) ProtoMessage() {}
 
 func (x *DemoteSDKResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[71]
+	mi := &file_lenny_adapter_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5137,7 +5937,7 @@ func (x *DemoteSDKResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DemoteSDKResponse.ProtoReflect.Descriptor instead.
 func (*DemoteSDKResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{71}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *DemoteSDKResponse) GetDemoted() bool {
@@ -5162,7 +5962,7 @@ type NegotiateVersionRequest struct {
 
 func (x *NegotiateVersionRequest) Reset() {
 	*x = NegotiateVersionRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[72]
+	mi := &file_lenny_adapter_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5174,7 +5974,7 @@ func (x *NegotiateVersionRequest) String() string {
 func (*NegotiateVersionRequest) ProtoMessage() {}
 
 func (x *NegotiateVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[72]
+	mi := &file_lenny_adapter_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5187,7 +5987,7 @@ func (x *NegotiateVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NegotiateVersionRequest.ProtoReflect.Descriptor instead.
 func (*NegotiateVersionRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{72}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *NegotiateVersionRequest) GetAcceptedProtocolVersions() []string {
@@ -5231,7 +6031,7 @@ type NegotiateVersionResponse struct {
 
 func (x *NegotiateVersionResponse) Reset() {
 	*x = NegotiateVersionResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[73]
+	mi := &file_lenny_adapter_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5243,7 +6043,7 @@ func (x *NegotiateVersionResponse) String() string {
 func (*NegotiateVersionResponse) ProtoMessage() {}
 
 func (x *NegotiateVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[73]
+	mi := &file_lenny_adapter_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5256,7 +6056,7 @@ func (x *NegotiateVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NegotiateVersionResponse.ProtoReflect.Descriptor instead.
 func (*NegotiateVersionResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{73}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *NegotiateVersionResponse) GetSelectedProtocolVersion() string {
@@ -5309,7 +6109,7 @@ type GetObservedIntegrationLevelRequest struct {
 
 func (x *GetObservedIntegrationLevelRequest) Reset() {
 	*x = GetObservedIntegrationLevelRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[74]
+	mi := &file_lenny_adapter_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5321,7 +6121,7 @@ func (x *GetObservedIntegrationLevelRequest) String() string {
 func (*GetObservedIntegrationLevelRequest) ProtoMessage() {}
 
 func (x *GetObservedIntegrationLevelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[74]
+	mi := &file_lenny_adapter_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5334,7 +6134,7 @@ func (x *GetObservedIntegrationLevelRequest) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use GetObservedIntegrationLevelRequest.ProtoReflect.Descriptor instead.
 func (*GetObservedIntegrationLevelRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{74}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *GetObservedIntegrationLevelRequest) GetWaitMs() int32 {
@@ -5358,7 +6158,7 @@ type GetObservedIntegrationLevelResponse struct {
 
 func (x *GetObservedIntegrationLevelResponse) Reset() {
 	*x = GetObservedIntegrationLevelResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[75]
+	mi := &file_lenny_adapter_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5370,7 +6170,7 @@ func (x *GetObservedIntegrationLevelResponse) String() string {
 func (*GetObservedIntegrationLevelResponse) ProtoMessage() {}
 
 func (x *GetObservedIntegrationLevelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[75]
+	mi := &file_lenny_adapter_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5383,7 +6183,7 @@ func (x *GetObservedIntegrationLevelResponse) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use GetObservedIntegrationLevelResponse.ProtoReflect.Descriptor instead.
 func (*GetObservedIntegrationLevelResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{75}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *GetObservedIntegrationLevelResponse) GetObservedLevel() string {
@@ -5407,7 +6207,7 @@ type LifecycleChannelRequest struct {
 
 func (x *LifecycleChannelRequest) Reset() {
 	*x = LifecycleChannelRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[76]
+	mi := &file_lenny_adapter_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5419,7 +6219,7 @@ func (x *LifecycleChannelRequest) String() string {
 func (*LifecycleChannelRequest) ProtoMessage() {}
 
 func (x *LifecycleChannelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[76]
+	mi := &file_lenny_adapter_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5432,7 +6232,7 @@ func (x *LifecycleChannelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LifecycleChannelRequest.ProtoReflect.Descriptor instead.
 func (*LifecycleChannelRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{76}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *LifecycleChannelRequest) GetEnvelopeJson() []byte {
@@ -5451,7 +6251,7 @@ type LifecycleChannelResponse struct {
 
 func (x *LifecycleChannelResponse) Reset() {
 	*x = LifecycleChannelResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[77]
+	mi := &file_lenny_adapter_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5463,7 +6263,7 @@ func (x *LifecycleChannelResponse) String() string {
 func (*LifecycleChannelResponse) ProtoMessage() {}
 
 func (x *LifecycleChannelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[77]
+	mi := &file_lenny_adapter_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5476,7 +6276,7 @@ func (x *LifecycleChannelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LifecycleChannelResponse.ProtoReflect.Descriptor instead.
 func (*LifecycleChannelResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{77}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *LifecycleChannelResponse) GetEnvelopeJson() []byte {
@@ -5490,7 +6290,7 @@ var File_lenny_adapter_proto protoreflect.FileDescriptor
 
 const file_lenny_adapter_proto_rawDesc = "" +
 	"\n" +
-	"\x13lenny-adapter.proto\x12\x10lenny.adapter.v1\"V\n" +
+	"\x13lenny-adapter.proto\x12\x10lenny.adapter.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"V\n" +
 	"\x18ListPlatformToolsRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\"g\n" +
@@ -5766,23 +6566,66 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13STATUS_ACKNOWLEDGED\x10\x01\x12\x1c\n" +
 	"\x18STATUS_INTERRUPT_TIMEOUT\x10\x02\x12\x0f\n" +
-	"\vSTATUS_BUSY\x10\x03\"p\n" +
-	"\x11CheckpointRequest\x12:\n" +
+	"\vSTATUS_BUSY\x10\x03\"\xd1\x01\n" +
+	"\x17CheckpointClientMessage\x129\n" +
+	"\x05start\x18\x01 \x01(\v2!.lenny.adapter.v1.CheckpointStartH\x00R\x05start\x129\n" +
+	"\x05grant\x18\x02 \x01(\v2!.lenny.adapter.v1.CheckpointGrantH\x00R\x05grant\x129\n" +
+	"\x05abort\x18\x03 \x01(\v2!.lenny.adapter.v1.CheckpointAbortH\x00R\x05abortB\x05\n" +
+	"\x03msg\"\xe7\x01\n" +
+	"\x0fCheckpointStart\x12#\n" +
+	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12=\n" +
+	"\atrigger\x18\x02 \x01(\x0e2#.lenny.adapter.v1.CheckpointTriggerR\atrigger\x12(\n" +
+	"\x10chunk_size_bytes\x18\x03 \x01(\x03R\x0echunkSizeBytes\x12%\n" +
+	"\x0echunk_encoding\x18\x04 \x01(\tR\rchunkEncoding\x12\x1f\n" +
+	"\vdeadline_ms\x18\x05 \x01(\x03R\n" +
+	"deadlineMs\"\xa1\x02\n" +
+	"\x0fCheckpointGrant\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\rR\x05index\x12\x10\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12%\n" +
+	"\x0econtent_length\x18\x03 \x01(\x03R\rcontentLength\x12H\n" +
+	"\aheaders\x18\x04 \x03(\v2..lenny.adapter.v1.CheckpointGrant.HeadersEntryR\aheaders\x129\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x1f\n" +
-	"\vdeadline_ms\x18\x02 \x01(\x05R\n" +
-	"deadlineMs\"X\n" +
-	"\x12CheckpointResponse\x12#\n" +
-	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1d\n" +
+	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\")\n" +
+	"\x0fCheckpointAbort\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xe8\x02\n" +
+	"\x17CheckpointServerMessage\x129\n" +
+	"\x05probe\x18\x01 \x01(\v2!.lenny.adapter.v1.CheckpointProbeH\x00R\x05probe\x12?\n" +
+	"\vchunk_ready\x18\x02 \x01(\v2\x1c.lenny.adapter.v1.ChunkReadyH\x00R\n" +
+	"chunkReady\x12K\n" +
+	"\x0fchunk_committed\x18\x03 \x01(\v2 .lenny.adapter.v1.ChunkCommittedH\x00R\x0echunkCommitted\x12?\n" +
+	"\asummary\x18\x04 \x01(\v2#.lenny.adapter.v1.CheckpointSummaryH\x00R\asummary\x12<\n" +
+	"\x06failed\x18\x05 \x01(\v2\".lenny.adapter.v1.CheckpointFailedH\x00R\x06failedB\x05\n" +
+	"\x03msg\":\n" +
+	"\x0fCheckpointProbe\x12'\n" +
+	"\x0fworkspace_bytes\x18\x01 \x01(\x03R\x0eworkspaceBytes\":\n" +
 	"\n" +
-	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\x90\x01\n" +
+	"ChunkReady\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\rR\x05index\x12\x16\n" +
+	"\x06length\x18\x02 \x01(\x03R\x06length\"&\n" +
+	"\x0eChunkCommitted\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\rR\x05index\"U\n" +
+	"\x11CheckpointSummary\x12\x1f\n" +
+	"\vchunk_count\x18\x01 \x01(\rR\n" +
+	"chunkCount\x12\x1f\n" +
+	"\vtotal_bytes\x18\x02 \x01(\x03R\n" +
+	"totalBytes\"\x80\x01\n" +
+	"\x10CheckpointFailed\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x14\n" +
+	"\x05index\x18\x02 \x01(\rR\x05index\x12\x1f\n" +
+	"\vhttp_status\x18\x03 \x01(\x05R\n" +
+	"httpStatus\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x04 \x01(\tR\terrorCode\"\x90\x01\n" +
 	"\x15SignalDeadlineRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12!\n" +
 	"\fremaining_ms\x18\x02 \x01(\x05R\vremainingMs\x12\x18\n" +
 	"\atrigger\x18\x03 \x01(\tR\atrigger\"6\n" +
 	"\x16SignalDeadlineResponse\x12\x1c\n" +
-	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xc9\x05\n" +
+	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xff\x05\n" +
 	"\rResumeRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
@@ -5796,10 +6639,22 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x18expected_workspace_bytes\x18\n" +
 	" \x01(\x03R\x16expectedWorkspaceBytes\x12;\n" +
 	"\x1aworkspace_size_limit_bytes\x18\v \x01(\x03R\x17workspaceSizeLimitBytes\x126\n" +
-	"\x17expected_workspace_root\x18\f \x01(\tR\x15expectedWorkspaceRoot\x1aA\n" +
+	"\x17expected_workspace_root\x18\f \x01(\tR\x15expectedWorkspaceRoot\x124\n" +
+	"\x06chunks\x18\r \x03(\v2\x1c.lenny.adapter.v1.ChunkGrantR\x06chunks\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aR\atask_id\"|\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aR\atask_id\"\x88\x02\n" +
+	"\n" +
+	"ChunkGrant\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\rR\x05index\x12\x16\n" +
+	"\x06length\x18\x02 \x01(\x03R\x06length\x12\x10\n" +
+	"\x03url\x18\x03 \x01(\tR\x03url\x12C\n" +
+	"\aheaders\x18\x04 \x03(\v2).lenny.adapter.v1.ChunkGrant.HeadersEntryR\aheaders\x129\n" +
+	"\n" +
+	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"|\n" +
 	"\x0eResumeResponse\x12%\n" +
 	"\x0erestored_bytes\x18\x01 \x01(\x03R\rrestoredBytes\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12/\n" +
@@ -5907,7 +6762,12 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x0fPodScrubOutcome\x12!\n" +
 	"\x1dPOD_SCRUB_OUTCOME_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bPOD_SCRUB_OUTCOME_SUCCEEDED\x10\x01\x12\x1c\n" +
-	"\x18POD_SCRUB_OUTCOME_FAILED\x10\x022\xae\x12\n" +
+	"\x18POD_SCRUB_OUTCOME_FAILED\x10\x02*\xa0\x01\n" +
+	"\x11CheckpointTrigger\x12\"\n" +
+	"\x1eCHECKPOINT_TRIGGER_UNSPECIFIED\x10\x00\x12\x1f\n" +
+	"\x1bCHECKPOINT_TRIGGER_PERIODIC\x10\x01\x12%\n" +
+	"!CHECKPOINT_TRIGGER_PRE_SCALE_DOWN\x10\x02\x12\x1f\n" +
+	"\x1bCHECKPOINT_TRIGGER_EVICTION\x10\x032\xbd\x12\n" +
 	"\aAdapter\x12m\n" +
 	"\x10PrepareWorkspace\x12).lenny.adapter.v1.PrepareWorkspaceRequest\x1a*.lenny.adapter.v1.PrepareWorkspaceResponse\"\x00(\x01\x12n\n" +
 	"\x11FinalizeWorkspace\x12*.lenny.adapter.v1.FinalizeWorkspaceRequest\x1a+.lenny.adapter.v1.FinalizeWorkspaceResponse\"\x00\x12S\n" +
@@ -5919,9 +6779,9 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x11AssignCredentials\x12*.lenny.adapter.v1.AssignCredentialsRequest\x1a+.lenny.adapter.v1.AssignCredentialsResponse\"\x00\x12n\n" +
 	"\x11RotateCredentials\x12*.lenny.adapter.v1.RotateCredentialsRequest\x1a+.lenny.adapter.v1.RotateCredentialsResponse\"\x00\x12n\n" +
 	"\x11RevokeCredentials\x12*.lenny.adapter.v1.RevokeCredentialsRequest\x1a+.lenny.adapter.v1.RevokeCredentialsResponse\"\x00\x12V\n" +
-	"\tInterrupt\x12\".lenny.adapter.v1.InterruptRequest\x1a#.lenny.adapter.v1.InterruptResponse\"\x00\x12Y\n" +
+	"\tInterrupt\x12\".lenny.adapter.v1.InterruptRequest\x1a#.lenny.adapter.v1.InterruptResponse\"\x00\x12h\n" +
 	"\n" +
-	"Checkpoint\x12#.lenny.adapter.v1.CheckpointRequest\x1a$.lenny.adapter.v1.CheckpointResponse\"\x00\x12e\n" +
+	"Checkpoint\x12).lenny.adapter.v1.CheckpointClientMessage\x1a).lenny.adapter.v1.CheckpointServerMessage\"\x00(\x010\x01\x12e\n" +
 	"\x0eSignalDeadline\x12'.lenny.adapter.v1.SignalDeadlineRequest\x1a(.lenny.adapter.v1.SignalDeadlineResponse\"\x00\x12M\n" +
 	"\x06Resume\x12\x1f.lenny.adapter.v1.ResumeRequest\x1a .lenny.adapter.v1.ResumeResponse\"\x00\x12k\n" +
 	"\x10CoordinatorFence\x12).lenny.adapter.v1.CoordinatorFenceRequest\x1a*.lenny.adapter.v1.CoordinatorFenceResponse\"\x00\x12n\n" +
@@ -5954,234 +6814,260 @@ func file_lenny_adapter_proto_rawDescGZIP() []byte {
 	return file_lenny_adapter_proto_rawDescData
 }
 
-var file_lenny_adapter_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_lenny_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 84)
+var file_lenny_adapter_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
+var file_lenny_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 95)
 var file_lenny_adapter_proto_goTypes = []any{
 	(SessionScrubOutcome)(0),                    // 0: lenny.adapter.v1.SessionScrubOutcome
 	(PodScrubOutcome)(0),                        // 1: lenny.adapter.v1.PodScrubOutcome
-	(Error_Category)(0),                         // 2: lenny.adapter.v1.Error.Category
-	(Error_ErrorCode)(0),                        // 3: lenny.adapter.v1.Error.ErrorCode
-	(InterruptRequest_Mode)(0),                  // 4: lenny.adapter.v1.InterruptRequest.Mode
-	(InterruptResponse_Status)(0),               // 5: lenny.adapter.v1.InterruptResponse.Status
-	(*ListPlatformToolsRequest)(nil),            // 6: lenny.adapter.v1.ListPlatformToolsRequest
-	(*PlatformTool)(nil),                        // 7: lenny.adapter.v1.PlatformTool
-	(*ListPlatformToolsResponse)(nil),           // 8: lenny.adapter.v1.ListPlatformToolsResponse
-	(*CallPlatformToolRequest)(nil),             // 9: lenny.adapter.v1.CallPlatformToolRequest
-	(*CallPlatformToolResponse)(nil),            // 10: lenny.adapter.v1.CallPlatformToolResponse
-	(*ListSessionConnectorsRequest)(nil),        // 11: lenny.adapter.v1.ListSessionConnectorsRequest
-	(*SessionConnector)(nil),                    // 12: lenny.adapter.v1.SessionConnector
-	(*ListSessionConnectorsResponse)(nil),       // 13: lenny.adapter.v1.ListSessionConnectorsResponse
-	(*ListConnectorToolsRequest)(nil),           // 14: lenny.adapter.v1.ListConnectorToolsRequest
-	(*ListConnectorToolsResponse)(nil),          // 15: lenny.adapter.v1.ListConnectorToolsResponse
-	(*CallConnectorToolRequest)(nil),            // 16: lenny.adapter.v1.CallConnectorToolRequest
-	(*CallConnectorToolResponse)(nil),           // 17: lenny.adapter.v1.CallConnectorToolResponse
-	(*ReportSessionScrubRequest)(nil),           // 18: lenny.adapter.v1.ReportSessionScrubRequest
-	(*ReportSessionScrubResponse)(nil),          // 19: lenny.adapter.v1.ReportSessionScrubResponse
-	(*ReportPodScrubRequest)(nil),               // 20: lenny.adapter.v1.ReportPodScrubRequest
-	(*ReportPodScrubResponse)(nil),              // 21: lenny.adapter.v1.ReportPodScrubResponse
-	(*Error)(nil),                               // 22: lenny.adapter.v1.Error
-	(*SessionId)(nil),                           // 23: lenny.adapter.v1.SessionId
-	(*SlotId)(nil),                              // 24: lenny.adapter.v1.SlotId
-	(*WorkspacePlan)(nil),                       // 25: lenny.adapter.v1.WorkspacePlan
-	(*WorkspaceSource)(nil),                     // 26: lenny.adapter.v1.WorkspaceSource
-	(*GitAuth)(nil),                             // 27: lenny.adapter.v1.GitAuth
-	(*SetupCommand)(nil),                        // 28: lenny.adapter.v1.SetupCommand
-	(*ExperimentContext)(nil),                   // 29: lenny.adapter.v1.ExperimentContext
-	(*PrepareWorkspaceRequest)(nil),             // 30: lenny.adapter.v1.PrepareWorkspaceRequest
-	(*PrepareWorkspaceResponse)(nil),            // 31: lenny.adapter.v1.PrepareWorkspaceResponse
-	(*FinalizeWorkspaceRequest)(nil),            // 32: lenny.adapter.v1.FinalizeWorkspaceRequest
-	(*ArchivePolicy)(nil),                       // 33: lenny.adapter.v1.ArchivePolicy
-	(*FinalizeWorkspaceResponse)(nil),           // 34: lenny.adapter.v1.FinalizeWorkspaceResponse
-	(*WorkspacePlanWarning)(nil),                // 35: lenny.adapter.v1.WorkspacePlanWarning
-	(*RunSetupRequest)(nil),                     // 36: lenny.adapter.v1.RunSetupRequest
-	(*RunSetupResponse)(nil),                    // 37: lenny.adapter.v1.RunSetupResponse
-	(*SetupCommandOutput)(nil),                  // 38: lenny.adapter.v1.SetupCommandOutput
-	(*StartSessionRequest)(nil),                 // 39: lenny.adapter.v1.StartSessionRequest
-	(*SetupPolicy)(nil),                         // 40: lenny.adapter.v1.SetupPolicy
-	(*StartSessionResponse)(nil),                // 41: lenny.adapter.v1.StartSessionResponse
-	(*SendMessageRequest)(nil),                  // 42: lenny.adapter.v1.SendMessageRequest
-	(*SendMessageResponse)(nil),                 // 43: lenny.adapter.v1.SendMessageResponse
-	(*AttachRequest)(nil),                       // 44: lenny.adapter.v1.AttachRequest
-	(*AttachResponse)(nil),                      // 45: lenny.adapter.v1.AttachResponse
-	(*AssignCredentialsRequest)(nil),            // 46: lenny.adapter.v1.AssignCredentialsRequest
-	(*AssignCredentialsResponse)(nil),           // 47: lenny.adapter.v1.AssignCredentialsResponse
-	(*RotateCredentialsRequest)(nil),            // 48: lenny.adapter.v1.RotateCredentialsRequest
-	(*RotateCredentialsResponse)(nil),           // 49: lenny.adapter.v1.RotateCredentialsResponse
-	(*RevokeCredentialsRequest)(nil),            // 50: lenny.adapter.v1.RevokeCredentialsRequest
-	(*RevokeCredentialsResponse)(nil),           // 51: lenny.adapter.v1.RevokeCredentialsResponse
-	(*CredentialLease)(nil),                     // 52: lenny.adapter.v1.CredentialLease
-	(*InterruptRequest)(nil),                    // 53: lenny.adapter.v1.InterruptRequest
-	(*InterruptResponse)(nil),                   // 54: lenny.adapter.v1.InterruptResponse
-	(*CheckpointRequest)(nil),                   // 55: lenny.adapter.v1.CheckpointRequest
-	(*CheckpointResponse)(nil),                  // 56: lenny.adapter.v1.CheckpointResponse
-	(*SignalDeadlineRequest)(nil),               // 57: lenny.adapter.v1.SignalDeadlineRequest
-	(*SignalDeadlineResponse)(nil),              // 58: lenny.adapter.v1.SignalDeadlineResponse
-	(*ResumeRequest)(nil),                       // 59: lenny.adapter.v1.ResumeRequest
-	(*ResumeResponse)(nil),                      // 60: lenny.adapter.v1.ResumeResponse
-	(*CoordinatorFenceRequest)(nil),             // 61: lenny.adapter.v1.CoordinatorFenceRequest
-	(*CoordinatorFenceResponse)(nil),            // 62: lenny.adapter.v1.CoordinatorFenceResponse
-	(*CheckpointBarrierRequest)(nil),            // 63: lenny.adapter.v1.CheckpointBarrierRequest
-	(*CheckpointBarrierResponse)(nil),           // 64: lenny.adapter.v1.CheckpointBarrierResponse
-	(*ExportSpec)(nil),                          // 65: lenny.adapter.v1.ExportSpec
-	(*ExportPathsRequest)(nil),                  // 66: lenny.adapter.v1.ExportPathsRequest
-	(*ExportedFile)(nil),                        // 67: lenny.adapter.v1.ExportedFile
-	(*ExportPathsResponse)(nil),                 // 68: lenny.adapter.v1.ExportPathsResponse
-	(*ReportUsageRequest)(nil),                  // 69: lenny.adapter.v1.ReportUsageRequest
-	(*ReportUsageResponse)(nil),                 // 70: lenny.adapter.v1.ReportUsageResponse
-	(*ShutdownRequest)(nil),                     // 71: lenny.adapter.v1.ShutdownRequest
-	(*RecycleScrub)(nil),                        // 72: lenny.adapter.v1.RecycleScrub
-	(*ShutdownResponse)(nil),                    // 73: lenny.adapter.v1.ShutdownResponse
-	(*ConfigureWorkspaceRequest)(nil),           // 74: lenny.adapter.v1.ConfigureWorkspaceRequest
-	(*ConfigureWorkspaceResponse)(nil),          // 75: lenny.adapter.v1.ConfigureWorkspaceResponse
-	(*DemoteSDKRequest)(nil),                    // 76: lenny.adapter.v1.DemoteSDKRequest
-	(*DemoteSDKResponse)(nil),                   // 77: lenny.adapter.v1.DemoteSDKResponse
-	(*NegotiateVersionRequest)(nil),             // 78: lenny.adapter.v1.NegotiateVersionRequest
-	(*NegotiateVersionResponse)(nil),            // 79: lenny.adapter.v1.NegotiateVersionResponse
-	(*GetObservedIntegrationLevelRequest)(nil),  // 80: lenny.adapter.v1.GetObservedIntegrationLevelRequest
-	(*GetObservedIntegrationLevelResponse)(nil), // 81: lenny.adapter.v1.GetObservedIntegrationLevelResponse
-	(*LifecycleChannelRequest)(nil),             // 82: lenny.adapter.v1.LifecycleChannelRequest
-	(*LifecycleChannelResponse)(nil),            // 83: lenny.adapter.v1.LifecycleChannelResponse
-	nil,                                         // 84: lenny.adapter.v1.StartSessionRequest.LabelsEntry
-	nil,                                         // 85: lenny.adapter.v1.StartSessionRequest.TracingContextEntry
-	nil,                                         // 86: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
-	nil,                                         // 87: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
-	nil,                                         // 88: lenny.adapter.v1.ResumeRequest.TracingContextEntry
-	nil,                                         // 89: lenny.adapter.v1.ConfigureWorkspaceRequest.TracingContextEntry
+	(CheckpointTrigger)(0),                      // 2: lenny.adapter.v1.CheckpointTrigger
+	(Error_Category)(0),                         // 3: lenny.adapter.v1.Error.Category
+	(Error_ErrorCode)(0),                        // 4: lenny.adapter.v1.Error.ErrorCode
+	(InterruptRequest_Mode)(0),                  // 5: lenny.adapter.v1.InterruptRequest.Mode
+	(InterruptResponse_Status)(0),               // 6: lenny.adapter.v1.InterruptResponse.Status
+	(*ListPlatformToolsRequest)(nil),            // 7: lenny.adapter.v1.ListPlatformToolsRequest
+	(*PlatformTool)(nil),                        // 8: lenny.adapter.v1.PlatformTool
+	(*ListPlatformToolsResponse)(nil),           // 9: lenny.adapter.v1.ListPlatformToolsResponse
+	(*CallPlatformToolRequest)(nil),             // 10: lenny.adapter.v1.CallPlatformToolRequest
+	(*CallPlatformToolResponse)(nil),            // 11: lenny.adapter.v1.CallPlatformToolResponse
+	(*ListSessionConnectorsRequest)(nil),        // 12: lenny.adapter.v1.ListSessionConnectorsRequest
+	(*SessionConnector)(nil),                    // 13: lenny.adapter.v1.SessionConnector
+	(*ListSessionConnectorsResponse)(nil),       // 14: lenny.adapter.v1.ListSessionConnectorsResponse
+	(*ListConnectorToolsRequest)(nil),           // 15: lenny.adapter.v1.ListConnectorToolsRequest
+	(*ListConnectorToolsResponse)(nil),          // 16: lenny.adapter.v1.ListConnectorToolsResponse
+	(*CallConnectorToolRequest)(nil),            // 17: lenny.adapter.v1.CallConnectorToolRequest
+	(*CallConnectorToolResponse)(nil),           // 18: lenny.adapter.v1.CallConnectorToolResponse
+	(*ReportSessionScrubRequest)(nil),           // 19: lenny.adapter.v1.ReportSessionScrubRequest
+	(*ReportSessionScrubResponse)(nil),          // 20: lenny.adapter.v1.ReportSessionScrubResponse
+	(*ReportPodScrubRequest)(nil),               // 21: lenny.adapter.v1.ReportPodScrubRequest
+	(*ReportPodScrubResponse)(nil),              // 22: lenny.adapter.v1.ReportPodScrubResponse
+	(*Error)(nil),                               // 23: lenny.adapter.v1.Error
+	(*SessionId)(nil),                           // 24: lenny.adapter.v1.SessionId
+	(*SlotId)(nil),                              // 25: lenny.adapter.v1.SlotId
+	(*WorkspacePlan)(nil),                       // 26: lenny.adapter.v1.WorkspacePlan
+	(*WorkspaceSource)(nil),                     // 27: lenny.adapter.v1.WorkspaceSource
+	(*GitAuth)(nil),                             // 28: lenny.adapter.v1.GitAuth
+	(*SetupCommand)(nil),                        // 29: lenny.adapter.v1.SetupCommand
+	(*ExperimentContext)(nil),                   // 30: lenny.adapter.v1.ExperimentContext
+	(*PrepareWorkspaceRequest)(nil),             // 31: lenny.adapter.v1.PrepareWorkspaceRequest
+	(*PrepareWorkspaceResponse)(nil),            // 32: lenny.adapter.v1.PrepareWorkspaceResponse
+	(*FinalizeWorkspaceRequest)(nil),            // 33: lenny.adapter.v1.FinalizeWorkspaceRequest
+	(*ArchivePolicy)(nil),                       // 34: lenny.adapter.v1.ArchivePolicy
+	(*FinalizeWorkspaceResponse)(nil),           // 35: lenny.adapter.v1.FinalizeWorkspaceResponse
+	(*WorkspacePlanWarning)(nil),                // 36: lenny.adapter.v1.WorkspacePlanWarning
+	(*RunSetupRequest)(nil),                     // 37: lenny.adapter.v1.RunSetupRequest
+	(*RunSetupResponse)(nil),                    // 38: lenny.adapter.v1.RunSetupResponse
+	(*SetupCommandOutput)(nil),                  // 39: lenny.adapter.v1.SetupCommandOutput
+	(*StartSessionRequest)(nil),                 // 40: lenny.adapter.v1.StartSessionRequest
+	(*SetupPolicy)(nil),                         // 41: lenny.adapter.v1.SetupPolicy
+	(*StartSessionResponse)(nil),                // 42: lenny.adapter.v1.StartSessionResponse
+	(*SendMessageRequest)(nil),                  // 43: lenny.adapter.v1.SendMessageRequest
+	(*SendMessageResponse)(nil),                 // 44: lenny.adapter.v1.SendMessageResponse
+	(*AttachRequest)(nil),                       // 45: lenny.adapter.v1.AttachRequest
+	(*AttachResponse)(nil),                      // 46: lenny.adapter.v1.AttachResponse
+	(*AssignCredentialsRequest)(nil),            // 47: lenny.adapter.v1.AssignCredentialsRequest
+	(*AssignCredentialsResponse)(nil),           // 48: lenny.adapter.v1.AssignCredentialsResponse
+	(*RotateCredentialsRequest)(nil),            // 49: lenny.adapter.v1.RotateCredentialsRequest
+	(*RotateCredentialsResponse)(nil),           // 50: lenny.adapter.v1.RotateCredentialsResponse
+	(*RevokeCredentialsRequest)(nil),            // 51: lenny.adapter.v1.RevokeCredentialsRequest
+	(*RevokeCredentialsResponse)(nil),           // 52: lenny.adapter.v1.RevokeCredentialsResponse
+	(*CredentialLease)(nil),                     // 53: lenny.adapter.v1.CredentialLease
+	(*InterruptRequest)(nil),                    // 54: lenny.adapter.v1.InterruptRequest
+	(*InterruptResponse)(nil),                   // 55: lenny.adapter.v1.InterruptResponse
+	(*CheckpointClientMessage)(nil),             // 56: lenny.adapter.v1.CheckpointClientMessage
+	(*CheckpointStart)(nil),                     // 57: lenny.adapter.v1.CheckpointStart
+	(*CheckpointGrant)(nil),                     // 58: lenny.adapter.v1.CheckpointGrant
+	(*CheckpointAbort)(nil),                     // 59: lenny.adapter.v1.CheckpointAbort
+	(*CheckpointServerMessage)(nil),             // 60: lenny.adapter.v1.CheckpointServerMessage
+	(*CheckpointProbe)(nil),                     // 61: lenny.adapter.v1.CheckpointProbe
+	(*ChunkReady)(nil),                          // 62: lenny.adapter.v1.ChunkReady
+	(*ChunkCommitted)(nil),                      // 63: lenny.adapter.v1.ChunkCommitted
+	(*CheckpointSummary)(nil),                   // 64: lenny.adapter.v1.CheckpointSummary
+	(*CheckpointFailed)(nil),                    // 65: lenny.adapter.v1.CheckpointFailed
+	(*SignalDeadlineRequest)(nil),               // 66: lenny.adapter.v1.SignalDeadlineRequest
+	(*SignalDeadlineResponse)(nil),              // 67: lenny.adapter.v1.SignalDeadlineResponse
+	(*ResumeRequest)(nil),                       // 68: lenny.adapter.v1.ResumeRequest
+	(*ChunkGrant)(nil),                          // 69: lenny.adapter.v1.ChunkGrant
+	(*ResumeResponse)(nil),                      // 70: lenny.adapter.v1.ResumeResponse
+	(*CoordinatorFenceRequest)(nil),             // 71: lenny.adapter.v1.CoordinatorFenceRequest
+	(*CoordinatorFenceResponse)(nil),            // 72: lenny.adapter.v1.CoordinatorFenceResponse
+	(*CheckpointBarrierRequest)(nil),            // 73: lenny.adapter.v1.CheckpointBarrierRequest
+	(*CheckpointBarrierResponse)(nil),           // 74: lenny.adapter.v1.CheckpointBarrierResponse
+	(*ExportSpec)(nil),                          // 75: lenny.adapter.v1.ExportSpec
+	(*ExportPathsRequest)(nil),                  // 76: lenny.adapter.v1.ExportPathsRequest
+	(*ExportedFile)(nil),                        // 77: lenny.adapter.v1.ExportedFile
+	(*ExportPathsResponse)(nil),                 // 78: lenny.adapter.v1.ExportPathsResponse
+	(*ReportUsageRequest)(nil),                  // 79: lenny.adapter.v1.ReportUsageRequest
+	(*ReportUsageResponse)(nil),                 // 80: lenny.adapter.v1.ReportUsageResponse
+	(*ShutdownRequest)(nil),                     // 81: lenny.adapter.v1.ShutdownRequest
+	(*RecycleScrub)(nil),                        // 82: lenny.adapter.v1.RecycleScrub
+	(*ShutdownResponse)(nil),                    // 83: lenny.adapter.v1.ShutdownResponse
+	(*ConfigureWorkspaceRequest)(nil),           // 84: lenny.adapter.v1.ConfigureWorkspaceRequest
+	(*ConfigureWorkspaceResponse)(nil),          // 85: lenny.adapter.v1.ConfigureWorkspaceResponse
+	(*DemoteSDKRequest)(nil),                    // 86: lenny.adapter.v1.DemoteSDKRequest
+	(*DemoteSDKResponse)(nil),                   // 87: lenny.adapter.v1.DemoteSDKResponse
+	(*NegotiateVersionRequest)(nil),             // 88: lenny.adapter.v1.NegotiateVersionRequest
+	(*NegotiateVersionResponse)(nil),            // 89: lenny.adapter.v1.NegotiateVersionResponse
+	(*GetObservedIntegrationLevelRequest)(nil),  // 90: lenny.adapter.v1.GetObservedIntegrationLevelRequest
+	(*GetObservedIntegrationLevelResponse)(nil), // 91: lenny.adapter.v1.GetObservedIntegrationLevelResponse
+	(*LifecycleChannelRequest)(nil),             // 92: lenny.adapter.v1.LifecycleChannelRequest
+	(*LifecycleChannelResponse)(nil),            // 93: lenny.adapter.v1.LifecycleChannelResponse
+	nil,                                         // 94: lenny.adapter.v1.StartSessionRequest.LabelsEntry
+	nil,                                         // 95: lenny.adapter.v1.StartSessionRequest.TracingContextEntry
+	nil,                                         // 96: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
+	nil,                                         // 97: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
+	nil,                                         // 98: lenny.adapter.v1.CheckpointGrant.HeadersEntry
+	nil,                                         // 99: lenny.adapter.v1.ResumeRequest.TracingContextEntry
+	nil,                                         // 100: lenny.adapter.v1.ChunkGrant.HeadersEntry
+	nil,                                         // 101: lenny.adapter.v1.ConfigureWorkspaceRequest.TracingContextEntry
+	(*timestamppb.Timestamp)(nil),               // 102: google.protobuf.Timestamp
 }
 var file_lenny_adapter_proto_depIdxs = []int32{
-	23, // 0: lenny.adapter.v1.ListPlatformToolsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	7,  // 1: lenny.adapter.v1.ListPlatformToolsResponse.tools:type_name -> lenny.adapter.v1.PlatformTool
-	23, // 2: lenny.adapter.v1.CallPlatformToolRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 3: lenny.adapter.v1.ListSessionConnectorsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	12, // 4: lenny.adapter.v1.ListSessionConnectorsResponse.connectors:type_name -> lenny.adapter.v1.SessionConnector
-	23, // 5: lenny.adapter.v1.ListConnectorToolsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	7,  // 6: lenny.adapter.v1.ListConnectorToolsResponse.tools:type_name -> lenny.adapter.v1.PlatformTool
-	23, // 7: lenny.adapter.v1.CallConnectorToolRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 8: lenny.adapter.v1.ReportSessionScrubRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	24, // 9: lenny.adapter.v1.ReportSessionScrubRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	0,  // 10: lenny.adapter.v1.ReportSessionScrubRequest.outcome:type_name -> lenny.adapter.v1.SessionScrubOutcome
-	1,  // 11: lenny.adapter.v1.ReportPodScrubRequest.outcome:type_name -> lenny.adapter.v1.PodScrubOutcome
-	3,  // 12: lenny.adapter.v1.Error.code:type_name -> lenny.adapter.v1.Error.ErrorCode
-	2,  // 13: lenny.adapter.v1.Error.category:type_name -> lenny.adapter.v1.Error.Category
-	26, // 14: lenny.adapter.v1.WorkspacePlan.sources:type_name -> lenny.adapter.v1.WorkspaceSource
-	28, // 15: lenny.adapter.v1.WorkspacePlan.setup_commands:type_name -> lenny.adapter.v1.SetupCommand
-	27, // 16: lenny.adapter.v1.WorkspaceSource.auth:type_name -> lenny.adapter.v1.GitAuth
-	23, // 17: lenny.adapter.v1.PrepareWorkspaceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	24, // 18: lenny.adapter.v1.PrepareWorkspaceRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	23, // 19: lenny.adapter.v1.FinalizeWorkspaceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	25, // 20: lenny.adapter.v1.FinalizeWorkspaceRequest.workspace_plan:type_name -> lenny.adapter.v1.WorkspacePlan
-	33, // 21: lenny.adapter.v1.FinalizeWorkspaceRequest.archive_policy:type_name -> lenny.adapter.v1.ArchivePolicy
-	24, // 22: lenny.adapter.v1.FinalizeWorkspaceRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	35, // 23: lenny.adapter.v1.FinalizeWorkspaceResponse.workspace_plan_warnings:type_name -> lenny.adapter.v1.WorkspacePlanWarning
-	23, // 24: lenny.adapter.v1.RunSetupRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	28, // 25: lenny.adapter.v1.RunSetupRequest.setup_commands:type_name -> lenny.adapter.v1.SetupCommand
-	40, // 26: lenny.adapter.v1.RunSetupRequest.setup_policy:type_name -> lenny.adapter.v1.SetupPolicy
-	24, // 27: lenny.adapter.v1.RunSetupRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	38, // 28: lenny.adapter.v1.RunSetupResponse.outputs:type_name -> lenny.adapter.v1.SetupCommandOutput
-	23, // 29: lenny.adapter.v1.StartSessionRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	84, // 30: lenny.adapter.v1.StartSessionRequest.labels:type_name -> lenny.adapter.v1.StartSessionRequest.LabelsEntry
-	29, // 31: lenny.adapter.v1.StartSessionRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
-	85, // 32: lenny.adapter.v1.StartSessionRequest.tracing_context:type_name -> lenny.adapter.v1.StartSessionRequest.TracingContextEntry
-	24, // 33: lenny.adapter.v1.StartSessionRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	23, // 34: lenny.adapter.v1.SendMessageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	24, // 35: lenny.adapter.v1.SendMessageRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	23, // 36: lenny.adapter.v1.AttachRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	24, // 37: lenny.adapter.v1.AttachRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	23, // 38: lenny.adapter.v1.AssignCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	86, // 39: lenny.adapter.v1.AssignCredentialsRequest.leases:type_name -> lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
-	24, // 40: lenny.adapter.v1.AssignCredentialsRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	23, // 41: lenny.adapter.v1.RotateCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	87, // 42: lenny.adapter.v1.RotateCredentialsRequest.leases:type_name -> lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
-	24, // 43: lenny.adapter.v1.RotateCredentialsRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	23, // 44: lenny.adapter.v1.RevokeCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	24, // 45: lenny.adapter.v1.RevokeCredentialsRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	23, // 46: lenny.adapter.v1.InterruptRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	4,  // 47: lenny.adapter.v1.InterruptRequest.mode:type_name -> lenny.adapter.v1.InterruptRequest.Mode
-	5,  // 48: lenny.adapter.v1.InterruptResponse.status:type_name -> lenny.adapter.v1.InterruptResponse.Status
-	23, // 49: lenny.adapter.v1.CheckpointRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 50: lenny.adapter.v1.SignalDeadlineRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 51: lenny.adapter.v1.ResumeRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	29, // 52: lenny.adapter.v1.ResumeRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
-	88, // 53: lenny.adapter.v1.ResumeRequest.tracing_context:type_name -> lenny.adapter.v1.ResumeRequest.TracingContextEntry
-	23, // 54: lenny.adapter.v1.CoordinatorFenceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 55: lenny.adapter.v1.CheckpointBarrierRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 56: lenny.adapter.v1.ExportPathsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	65, // 57: lenny.adapter.v1.ExportPathsRequest.exports:type_name -> lenny.adapter.v1.ExportSpec
-	67, // 58: lenny.adapter.v1.ExportPathsResponse.files:type_name -> lenny.adapter.v1.ExportedFile
-	23, // 59: lenny.adapter.v1.ReportUsageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 60: lenny.adapter.v1.ShutdownRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	24, // 61: lenny.adapter.v1.ShutdownRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	72, // 62: lenny.adapter.v1.ShutdownRequest.recycle:type_name -> lenny.adapter.v1.RecycleScrub
-	23, // 63: lenny.adapter.v1.ConfigureWorkspaceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	29, // 64: lenny.adapter.v1.ConfigureWorkspaceRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
-	89, // 65: lenny.adapter.v1.ConfigureWorkspaceRequest.tracing_context:type_name -> lenny.adapter.v1.ConfigureWorkspaceRequest.TracingContextEntry
-	52, // 66: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
-	52, // 67: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
-	30, // 68: lenny.adapter.v1.Adapter.PrepareWorkspace:input_type -> lenny.adapter.v1.PrepareWorkspaceRequest
-	32, // 69: lenny.adapter.v1.Adapter.FinalizeWorkspace:input_type -> lenny.adapter.v1.FinalizeWorkspaceRequest
-	36, // 70: lenny.adapter.v1.Adapter.RunSetup:input_type -> lenny.adapter.v1.RunSetupRequest
-	39, // 71: lenny.adapter.v1.Adapter.StartSession:input_type -> lenny.adapter.v1.StartSessionRequest
-	74, // 72: lenny.adapter.v1.Adapter.ConfigureWorkspace:input_type -> lenny.adapter.v1.ConfigureWorkspaceRequest
-	42, // 73: lenny.adapter.v1.Adapter.SendMessage:input_type -> lenny.adapter.v1.SendMessageRequest
-	44, // 74: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachRequest
-	46, // 75: lenny.adapter.v1.Adapter.AssignCredentials:input_type -> lenny.adapter.v1.AssignCredentialsRequest
-	48, // 76: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
-	50, // 77: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
-	53, // 78: lenny.adapter.v1.Adapter.Interrupt:input_type -> lenny.adapter.v1.InterruptRequest
-	55, // 79: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointRequest
-	57, // 80: lenny.adapter.v1.Adapter.SignalDeadline:input_type -> lenny.adapter.v1.SignalDeadlineRequest
-	59, // 81: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
-	61, // 82: lenny.adapter.v1.Adapter.CoordinatorFence:input_type -> lenny.adapter.v1.CoordinatorFenceRequest
-	63, // 83: lenny.adapter.v1.Adapter.CheckpointBarrier:input_type -> lenny.adapter.v1.CheckpointBarrierRequest
-	66, // 84: lenny.adapter.v1.Adapter.ExportPaths:input_type -> lenny.adapter.v1.ExportPathsRequest
-	69, // 85: lenny.adapter.v1.Adapter.ReportUsage:input_type -> lenny.adapter.v1.ReportUsageRequest
-	71, // 86: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
-	76, // 87: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
-	78, // 88: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
-	80, // 89: lenny.adapter.v1.Adapter.GetObservedIntegrationLevel:input_type -> lenny.adapter.v1.GetObservedIntegrationLevelRequest
-	82, // 90: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
-	6,  // 91: lenny.adapter.v1.GatewayControl.ListPlatformTools:input_type -> lenny.adapter.v1.ListPlatformToolsRequest
-	9,  // 92: lenny.adapter.v1.GatewayControl.CallPlatformTool:input_type -> lenny.adapter.v1.CallPlatformToolRequest
-	11, // 93: lenny.adapter.v1.GatewayControl.ListSessionConnectors:input_type -> lenny.adapter.v1.ListSessionConnectorsRequest
-	14, // 94: lenny.adapter.v1.GatewayControl.ListConnectorTools:input_type -> lenny.adapter.v1.ListConnectorToolsRequest
-	16, // 95: lenny.adapter.v1.GatewayControl.CallConnectorTool:input_type -> lenny.adapter.v1.CallConnectorToolRequest
-	18, // 96: lenny.adapter.v1.GatewayControl.ReportSessionScrub:input_type -> lenny.adapter.v1.ReportSessionScrubRequest
-	20, // 97: lenny.adapter.v1.GatewayControl.ReportPodScrub:input_type -> lenny.adapter.v1.ReportPodScrubRequest
-	31, // 98: lenny.adapter.v1.Adapter.PrepareWorkspace:output_type -> lenny.adapter.v1.PrepareWorkspaceResponse
-	34, // 99: lenny.adapter.v1.Adapter.FinalizeWorkspace:output_type -> lenny.adapter.v1.FinalizeWorkspaceResponse
-	37, // 100: lenny.adapter.v1.Adapter.RunSetup:output_type -> lenny.adapter.v1.RunSetupResponse
-	41, // 101: lenny.adapter.v1.Adapter.StartSession:output_type -> lenny.adapter.v1.StartSessionResponse
-	75, // 102: lenny.adapter.v1.Adapter.ConfigureWorkspace:output_type -> lenny.adapter.v1.ConfigureWorkspaceResponse
-	43, // 103: lenny.adapter.v1.Adapter.SendMessage:output_type -> lenny.adapter.v1.SendMessageResponse
-	45, // 104: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachResponse
-	47, // 105: lenny.adapter.v1.Adapter.AssignCredentials:output_type -> lenny.adapter.v1.AssignCredentialsResponse
-	49, // 106: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
-	51, // 107: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse
-	54, // 108: lenny.adapter.v1.Adapter.Interrupt:output_type -> lenny.adapter.v1.InterruptResponse
-	56, // 109: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointResponse
-	58, // 110: lenny.adapter.v1.Adapter.SignalDeadline:output_type -> lenny.adapter.v1.SignalDeadlineResponse
-	60, // 111: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
-	62, // 112: lenny.adapter.v1.Adapter.CoordinatorFence:output_type -> lenny.adapter.v1.CoordinatorFenceResponse
-	64, // 113: lenny.adapter.v1.Adapter.CheckpointBarrier:output_type -> lenny.adapter.v1.CheckpointBarrierResponse
-	68, // 114: lenny.adapter.v1.Adapter.ExportPaths:output_type -> lenny.adapter.v1.ExportPathsResponse
-	70, // 115: lenny.adapter.v1.Adapter.ReportUsage:output_type -> lenny.adapter.v1.ReportUsageResponse
-	73, // 116: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
-	77, // 117: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
-	79, // 118: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
-	81, // 119: lenny.adapter.v1.Adapter.GetObservedIntegrationLevel:output_type -> lenny.adapter.v1.GetObservedIntegrationLevelResponse
-	83, // 120: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
-	8,  // 121: lenny.adapter.v1.GatewayControl.ListPlatformTools:output_type -> lenny.adapter.v1.ListPlatformToolsResponse
-	10, // 122: lenny.adapter.v1.GatewayControl.CallPlatformTool:output_type -> lenny.adapter.v1.CallPlatformToolResponse
-	13, // 123: lenny.adapter.v1.GatewayControl.ListSessionConnectors:output_type -> lenny.adapter.v1.ListSessionConnectorsResponse
-	15, // 124: lenny.adapter.v1.GatewayControl.ListConnectorTools:output_type -> lenny.adapter.v1.ListConnectorToolsResponse
-	17, // 125: lenny.adapter.v1.GatewayControl.CallConnectorTool:output_type -> lenny.adapter.v1.CallConnectorToolResponse
-	19, // 126: lenny.adapter.v1.GatewayControl.ReportSessionScrub:output_type -> lenny.adapter.v1.ReportSessionScrubResponse
-	21, // 127: lenny.adapter.v1.GatewayControl.ReportPodScrub:output_type -> lenny.adapter.v1.ReportPodScrubResponse
-	98, // [98:128] is the sub-list for method output_type
-	68, // [68:98] is the sub-list for method input_type
-	68, // [68:68] is the sub-list for extension type_name
-	68, // [68:68] is the sub-list for extension extendee
-	0,  // [0:68] is the sub-list for field type_name
+	24,  // 0: lenny.adapter.v1.ListPlatformToolsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	8,   // 1: lenny.adapter.v1.ListPlatformToolsResponse.tools:type_name -> lenny.adapter.v1.PlatformTool
+	24,  // 2: lenny.adapter.v1.CallPlatformToolRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24,  // 3: lenny.adapter.v1.ListSessionConnectorsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	13,  // 4: lenny.adapter.v1.ListSessionConnectorsResponse.connectors:type_name -> lenny.adapter.v1.SessionConnector
+	24,  // 5: lenny.adapter.v1.ListConnectorToolsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	8,   // 6: lenny.adapter.v1.ListConnectorToolsResponse.tools:type_name -> lenny.adapter.v1.PlatformTool
+	24,  // 7: lenny.adapter.v1.CallConnectorToolRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24,  // 8: lenny.adapter.v1.ReportSessionScrubRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	25,  // 9: lenny.adapter.v1.ReportSessionScrubRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	0,   // 10: lenny.adapter.v1.ReportSessionScrubRequest.outcome:type_name -> lenny.adapter.v1.SessionScrubOutcome
+	1,   // 11: lenny.adapter.v1.ReportPodScrubRequest.outcome:type_name -> lenny.adapter.v1.PodScrubOutcome
+	4,   // 12: lenny.adapter.v1.Error.code:type_name -> lenny.adapter.v1.Error.ErrorCode
+	3,   // 13: lenny.adapter.v1.Error.category:type_name -> lenny.adapter.v1.Error.Category
+	27,  // 14: lenny.adapter.v1.WorkspacePlan.sources:type_name -> lenny.adapter.v1.WorkspaceSource
+	29,  // 15: lenny.adapter.v1.WorkspacePlan.setup_commands:type_name -> lenny.adapter.v1.SetupCommand
+	28,  // 16: lenny.adapter.v1.WorkspaceSource.auth:type_name -> lenny.adapter.v1.GitAuth
+	24,  // 17: lenny.adapter.v1.PrepareWorkspaceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	25,  // 18: lenny.adapter.v1.PrepareWorkspaceRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	24,  // 19: lenny.adapter.v1.FinalizeWorkspaceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	26,  // 20: lenny.adapter.v1.FinalizeWorkspaceRequest.workspace_plan:type_name -> lenny.adapter.v1.WorkspacePlan
+	34,  // 21: lenny.adapter.v1.FinalizeWorkspaceRequest.archive_policy:type_name -> lenny.adapter.v1.ArchivePolicy
+	25,  // 22: lenny.adapter.v1.FinalizeWorkspaceRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	36,  // 23: lenny.adapter.v1.FinalizeWorkspaceResponse.workspace_plan_warnings:type_name -> lenny.adapter.v1.WorkspacePlanWarning
+	24,  // 24: lenny.adapter.v1.RunSetupRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	29,  // 25: lenny.adapter.v1.RunSetupRequest.setup_commands:type_name -> lenny.adapter.v1.SetupCommand
+	41,  // 26: lenny.adapter.v1.RunSetupRequest.setup_policy:type_name -> lenny.adapter.v1.SetupPolicy
+	25,  // 27: lenny.adapter.v1.RunSetupRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	39,  // 28: lenny.adapter.v1.RunSetupResponse.outputs:type_name -> lenny.adapter.v1.SetupCommandOutput
+	24,  // 29: lenny.adapter.v1.StartSessionRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	94,  // 30: lenny.adapter.v1.StartSessionRequest.labels:type_name -> lenny.adapter.v1.StartSessionRequest.LabelsEntry
+	30,  // 31: lenny.adapter.v1.StartSessionRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
+	95,  // 32: lenny.adapter.v1.StartSessionRequest.tracing_context:type_name -> lenny.adapter.v1.StartSessionRequest.TracingContextEntry
+	25,  // 33: lenny.adapter.v1.StartSessionRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	24,  // 34: lenny.adapter.v1.SendMessageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	25,  // 35: lenny.adapter.v1.SendMessageRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	24,  // 36: lenny.adapter.v1.AttachRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	25,  // 37: lenny.adapter.v1.AttachRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	24,  // 38: lenny.adapter.v1.AssignCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	96,  // 39: lenny.adapter.v1.AssignCredentialsRequest.leases:type_name -> lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
+	25,  // 40: lenny.adapter.v1.AssignCredentialsRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	24,  // 41: lenny.adapter.v1.RotateCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	97,  // 42: lenny.adapter.v1.RotateCredentialsRequest.leases:type_name -> lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
+	25,  // 43: lenny.adapter.v1.RotateCredentialsRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	24,  // 44: lenny.adapter.v1.RevokeCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	25,  // 45: lenny.adapter.v1.RevokeCredentialsRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	24,  // 46: lenny.adapter.v1.InterruptRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,   // 47: lenny.adapter.v1.InterruptRequest.mode:type_name -> lenny.adapter.v1.InterruptRequest.Mode
+	6,   // 48: lenny.adapter.v1.InterruptResponse.status:type_name -> lenny.adapter.v1.InterruptResponse.Status
+	57,  // 49: lenny.adapter.v1.CheckpointClientMessage.start:type_name -> lenny.adapter.v1.CheckpointStart
+	58,  // 50: lenny.adapter.v1.CheckpointClientMessage.grant:type_name -> lenny.adapter.v1.CheckpointGrant
+	59,  // 51: lenny.adapter.v1.CheckpointClientMessage.abort:type_name -> lenny.adapter.v1.CheckpointAbort
+	2,   // 52: lenny.adapter.v1.CheckpointStart.trigger:type_name -> lenny.adapter.v1.CheckpointTrigger
+	98,  // 53: lenny.adapter.v1.CheckpointGrant.headers:type_name -> lenny.adapter.v1.CheckpointGrant.HeadersEntry
+	102, // 54: lenny.adapter.v1.CheckpointGrant.expires_at:type_name -> google.protobuf.Timestamp
+	61,  // 55: lenny.adapter.v1.CheckpointServerMessage.probe:type_name -> lenny.adapter.v1.CheckpointProbe
+	62,  // 56: lenny.adapter.v1.CheckpointServerMessage.chunk_ready:type_name -> lenny.adapter.v1.ChunkReady
+	63,  // 57: lenny.adapter.v1.CheckpointServerMessage.chunk_committed:type_name -> lenny.adapter.v1.ChunkCommitted
+	64,  // 58: lenny.adapter.v1.CheckpointServerMessage.summary:type_name -> lenny.adapter.v1.CheckpointSummary
+	65,  // 59: lenny.adapter.v1.CheckpointServerMessage.failed:type_name -> lenny.adapter.v1.CheckpointFailed
+	24,  // 60: lenny.adapter.v1.SignalDeadlineRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24,  // 61: lenny.adapter.v1.ResumeRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	30,  // 62: lenny.adapter.v1.ResumeRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
+	99,  // 63: lenny.adapter.v1.ResumeRequest.tracing_context:type_name -> lenny.adapter.v1.ResumeRequest.TracingContextEntry
+	69,  // 64: lenny.adapter.v1.ResumeRequest.chunks:type_name -> lenny.adapter.v1.ChunkGrant
+	100, // 65: lenny.adapter.v1.ChunkGrant.headers:type_name -> lenny.adapter.v1.ChunkGrant.HeadersEntry
+	102, // 66: lenny.adapter.v1.ChunkGrant.expires_at:type_name -> google.protobuf.Timestamp
+	24,  // 67: lenny.adapter.v1.CoordinatorFenceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24,  // 68: lenny.adapter.v1.CheckpointBarrierRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24,  // 69: lenny.adapter.v1.ExportPathsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	75,  // 70: lenny.adapter.v1.ExportPathsRequest.exports:type_name -> lenny.adapter.v1.ExportSpec
+	77,  // 71: lenny.adapter.v1.ExportPathsResponse.files:type_name -> lenny.adapter.v1.ExportedFile
+	24,  // 72: lenny.adapter.v1.ReportUsageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24,  // 73: lenny.adapter.v1.ShutdownRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	25,  // 74: lenny.adapter.v1.ShutdownRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	82,  // 75: lenny.adapter.v1.ShutdownRequest.recycle:type_name -> lenny.adapter.v1.RecycleScrub
+	24,  // 76: lenny.adapter.v1.ConfigureWorkspaceRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	30,  // 77: lenny.adapter.v1.ConfigureWorkspaceRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
+	101, // 78: lenny.adapter.v1.ConfigureWorkspaceRequest.tracing_context:type_name -> lenny.adapter.v1.ConfigureWorkspaceRequest.TracingContextEntry
+	53,  // 79: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
+	53,  // 80: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
+	31,  // 81: lenny.adapter.v1.Adapter.PrepareWorkspace:input_type -> lenny.adapter.v1.PrepareWorkspaceRequest
+	33,  // 82: lenny.adapter.v1.Adapter.FinalizeWorkspace:input_type -> lenny.adapter.v1.FinalizeWorkspaceRequest
+	37,  // 83: lenny.adapter.v1.Adapter.RunSetup:input_type -> lenny.adapter.v1.RunSetupRequest
+	40,  // 84: lenny.adapter.v1.Adapter.StartSession:input_type -> lenny.adapter.v1.StartSessionRequest
+	84,  // 85: lenny.adapter.v1.Adapter.ConfigureWorkspace:input_type -> lenny.adapter.v1.ConfigureWorkspaceRequest
+	43,  // 86: lenny.adapter.v1.Adapter.SendMessage:input_type -> lenny.adapter.v1.SendMessageRequest
+	45,  // 87: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachRequest
+	47,  // 88: lenny.adapter.v1.Adapter.AssignCredentials:input_type -> lenny.adapter.v1.AssignCredentialsRequest
+	49,  // 89: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
+	51,  // 90: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
+	54,  // 91: lenny.adapter.v1.Adapter.Interrupt:input_type -> lenny.adapter.v1.InterruptRequest
+	56,  // 92: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointClientMessage
+	66,  // 93: lenny.adapter.v1.Adapter.SignalDeadline:input_type -> lenny.adapter.v1.SignalDeadlineRequest
+	68,  // 94: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
+	71,  // 95: lenny.adapter.v1.Adapter.CoordinatorFence:input_type -> lenny.adapter.v1.CoordinatorFenceRequest
+	73,  // 96: lenny.adapter.v1.Adapter.CheckpointBarrier:input_type -> lenny.adapter.v1.CheckpointBarrierRequest
+	76,  // 97: lenny.adapter.v1.Adapter.ExportPaths:input_type -> lenny.adapter.v1.ExportPathsRequest
+	79,  // 98: lenny.adapter.v1.Adapter.ReportUsage:input_type -> lenny.adapter.v1.ReportUsageRequest
+	81,  // 99: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
+	86,  // 100: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
+	88,  // 101: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
+	90,  // 102: lenny.adapter.v1.Adapter.GetObservedIntegrationLevel:input_type -> lenny.adapter.v1.GetObservedIntegrationLevelRequest
+	92,  // 103: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
+	7,   // 104: lenny.adapter.v1.GatewayControl.ListPlatformTools:input_type -> lenny.adapter.v1.ListPlatformToolsRequest
+	10,  // 105: lenny.adapter.v1.GatewayControl.CallPlatformTool:input_type -> lenny.adapter.v1.CallPlatformToolRequest
+	12,  // 106: lenny.adapter.v1.GatewayControl.ListSessionConnectors:input_type -> lenny.adapter.v1.ListSessionConnectorsRequest
+	15,  // 107: lenny.adapter.v1.GatewayControl.ListConnectorTools:input_type -> lenny.adapter.v1.ListConnectorToolsRequest
+	17,  // 108: lenny.adapter.v1.GatewayControl.CallConnectorTool:input_type -> lenny.adapter.v1.CallConnectorToolRequest
+	19,  // 109: lenny.adapter.v1.GatewayControl.ReportSessionScrub:input_type -> lenny.adapter.v1.ReportSessionScrubRequest
+	21,  // 110: lenny.adapter.v1.GatewayControl.ReportPodScrub:input_type -> lenny.adapter.v1.ReportPodScrubRequest
+	32,  // 111: lenny.adapter.v1.Adapter.PrepareWorkspace:output_type -> lenny.adapter.v1.PrepareWorkspaceResponse
+	35,  // 112: lenny.adapter.v1.Adapter.FinalizeWorkspace:output_type -> lenny.adapter.v1.FinalizeWorkspaceResponse
+	38,  // 113: lenny.adapter.v1.Adapter.RunSetup:output_type -> lenny.adapter.v1.RunSetupResponse
+	42,  // 114: lenny.adapter.v1.Adapter.StartSession:output_type -> lenny.adapter.v1.StartSessionResponse
+	85,  // 115: lenny.adapter.v1.Adapter.ConfigureWorkspace:output_type -> lenny.adapter.v1.ConfigureWorkspaceResponse
+	44,  // 116: lenny.adapter.v1.Adapter.SendMessage:output_type -> lenny.adapter.v1.SendMessageResponse
+	46,  // 117: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachResponse
+	48,  // 118: lenny.adapter.v1.Adapter.AssignCredentials:output_type -> lenny.adapter.v1.AssignCredentialsResponse
+	50,  // 119: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
+	52,  // 120: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse
+	55,  // 121: lenny.adapter.v1.Adapter.Interrupt:output_type -> lenny.adapter.v1.InterruptResponse
+	60,  // 122: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointServerMessage
+	67,  // 123: lenny.adapter.v1.Adapter.SignalDeadline:output_type -> lenny.adapter.v1.SignalDeadlineResponse
+	70,  // 124: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
+	72,  // 125: lenny.adapter.v1.Adapter.CoordinatorFence:output_type -> lenny.adapter.v1.CoordinatorFenceResponse
+	74,  // 126: lenny.adapter.v1.Adapter.CheckpointBarrier:output_type -> lenny.adapter.v1.CheckpointBarrierResponse
+	78,  // 127: lenny.adapter.v1.Adapter.ExportPaths:output_type -> lenny.adapter.v1.ExportPathsResponse
+	80,  // 128: lenny.adapter.v1.Adapter.ReportUsage:output_type -> lenny.adapter.v1.ReportUsageResponse
+	83,  // 129: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
+	87,  // 130: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
+	89,  // 131: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
+	91,  // 132: lenny.adapter.v1.Adapter.GetObservedIntegrationLevel:output_type -> lenny.adapter.v1.GetObservedIntegrationLevelResponse
+	93,  // 133: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
+	9,   // 134: lenny.adapter.v1.GatewayControl.ListPlatformTools:output_type -> lenny.adapter.v1.ListPlatformToolsResponse
+	11,  // 135: lenny.adapter.v1.GatewayControl.CallPlatformTool:output_type -> lenny.adapter.v1.CallPlatformToolResponse
+	14,  // 136: lenny.adapter.v1.GatewayControl.ListSessionConnectors:output_type -> lenny.adapter.v1.ListSessionConnectorsResponse
+	16,  // 137: lenny.adapter.v1.GatewayControl.ListConnectorTools:output_type -> lenny.adapter.v1.ListConnectorToolsResponse
+	18,  // 138: lenny.adapter.v1.GatewayControl.CallConnectorTool:output_type -> lenny.adapter.v1.CallConnectorToolResponse
+	20,  // 139: lenny.adapter.v1.GatewayControl.ReportSessionScrub:output_type -> lenny.adapter.v1.ReportSessionScrubResponse
+	22,  // 140: lenny.adapter.v1.GatewayControl.ReportPodScrub:output_type -> lenny.adapter.v1.ReportPodScrubResponse
+	111, // [111:141] is the sub-list for method output_type
+	81,  // [81:111] is the sub-list for method input_type
+	81,  // [81:81] is the sub-list for extension type_name
+	81,  // [81:81] is the sub-list for extension extendee
+	0,   // [0:81] is the sub-list for field type_name
 }
 
 func init() { file_lenny_adapter_proto_init() }
@@ -6189,13 +7075,25 @@ func file_lenny_adapter_proto_init() {
 	if File_lenny_adapter_proto != nil {
 		return
 	}
+	file_lenny_adapter_proto_msgTypes[49].OneofWrappers = []any{
+		(*CheckpointClientMessage_Start)(nil),
+		(*CheckpointClientMessage_Grant)(nil),
+		(*CheckpointClientMessage_Abort)(nil),
+	}
+	file_lenny_adapter_proto_msgTypes[53].OneofWrappers = []any{
+		(*CheckpointServerMessage_Probe)(nil),
+		(*CheckpointServerMessage_ChunkReady)(nil),
+		(*CheckpointServerMessage_ChunkCommitted)(nil),
+		(*CheckpointServerMessage_Summary)(nil),
+		(*CheckpointServerMessage_Failed)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lenny_adapter_proto_rawDesc), len(file_lenny_adapter_proto_rawDesc)),
-			NumEnums:      6,
-			NumMessages:   84,
+			NumEnums:      7,
+			NumMessages:   95,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

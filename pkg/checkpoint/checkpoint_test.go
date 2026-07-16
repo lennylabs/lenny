@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // testNow is the deterministic anchor every checkpoint test uses
@@ -197,5 +199,66 @@ func TestFreshnessCheckRejectsNeverCheckpointed(t *testing.T) {
 func TestFreshnessCheckTreatsZeroIntervalAsUnbounded(t *testing.T) {
 	if err := FreshnessCheck(testNow, time.Time{}, 0); err != nil {
 		t.Errorf("zero interval should be unbounded, got %v", err)
+	}
+}
+
+// TestTriggerProtoMirrorsEveryTrigger asserts the CheckpointTrigger wire
+// enum the gateway carries in the §10.1 CheckpointStart frame mirrors the
+// §4.4 Trigger set: every trigger maps to a distinct, non-UNSPECIFIED
+// wire value and round-trips back through TriggerFromProto. This pins the
+// mirror the gateway's grant/confirm driver and the
+// `lenny_checkpoint_duration_seconds` label depend on, so a Trigger added
+// without a matching wire value fails here.
+//
+// spec: §10.1 line 130 — the gateway carries the typed trigger in the
+// gateway-driven Checkpoint stream.
+func TestTriggerProtoMirrorsEveryTrigger(t *testing.T) {
+	seen := map[adapterv1.CheckpointTrigger]bool{}
+	for _, tr := range AllTriggers() {
+		pv := tr.Proto()
+		if pv == adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_UNSPECIFIED {
+			t.Errorf("Trigger %q maps to CHECKPOINT_TRIGGER_UNSPECIFIED, want a distinct wire value", tr)
+		}
+		if seen[pv] {
+			t.Errorf("Trigger %q maps to wire value %v already claimed by another trigger", tr, pv)
+		}
+		seen[pv] = true
+		if got := TriggerFromProto(pv); got != tr {
+			t.Errorf("round-trip Trigger %q -> %v -> %q, want %q", tr, pv, got, tr)
+		}
+	}
+	// The wire enum carries exactly the mirror set plus the zero value:
+	// one production value per §4.4 trigger and nothing else.
+	if len(seen) != len(AllTriggers()) {
+		t.Errorf("mapped %d distinct wire values, want %d (one per trigger)", len(seen), len(AllTriggers()))
+	}
+	if want := len(AllTriggers()) + 1; len(adapterv1.CheckpointTrigger_name) != want {
+		t.Errorf("CheckpointTrigger wire enum has %d values, want %d (UNSPECIFIED + one per §4.4 trigger)",
+			len(adapterv1.CheckpointTrigger_name), want)
+	}
+}
+
+// TestTriggerFromProtoUnspecifiedIsInvalid asserts the zero wire value
+// and an out-of-range value map to the empty Trigger, which IsValid
+// rejects, so the adapter fails closed on a CheckpointStart that carries
+// no recognised trigger rather than silently selecting a retry budget.
+func TestTriggerFromProtoUnspecifiedIsInvalid(t *testing.T) {
+	for _, pv := range []adapterv1.CheckpointTrigger{
+		adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_UNSPECIFIED,
+		adapterv1.CheckpointTrigger(99),
+	} {
+		got := TriggerFromProto(pv)
+		if got != "" || got.IsValid() {
+			t.Errorf("TriggerFromProto(%v) = %q (valid=%v), want the empty invalid Trigger", pv, got, got.IsValid())
+		}
+	}
+}
+
+// TestUnknownTriggerProtoIsUnspecified asserts a Trigger outside the §4.4
+// set maps to the wire zero value rather than aliasing a real one, so an
+// unrecognised trigger cannot be smuggled onto the wire as a valid one.
+func TestUnknownTriggerProtoIsUnspecified(t *testing.T) {
+	if got := Trigger("bogus").Proto(); got != adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_UNSPECIFIED {
+		t.Errorf("Trigger(\"bogus\").Proto() = %v, want CHECKPOINT_TRIGGER_UNSPECIFIED", got)
 	}
 }

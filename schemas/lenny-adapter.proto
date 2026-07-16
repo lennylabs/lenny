@@ -15,6 +15,8 @@ syntax = "proto3";
 
 package lenny.adapter.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1";
 
 // =====================================================================
@@ -97,10 +99,24 @@ service Adapter {
   // modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
   rpc Interrupt(InterruptRequest) returns (InterruptResponse) {}
 
-  // Checkpoint requests an immediate checkpoint of the current session
-  // state to the artifact store. Used for eviction, drain, and session
-  // suspend.
-  rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse) {}
+  // Checkpoint is the gateway-driven bidirectional grant/confirm stream
+  // that exports recoverable session state (§4.7 RPC table, §10.1). The
+  // gateway is the gRPC client and drives the exchange: it opens the
+  // stream with a CheckpointStart carrying the gateway-minted
+  // `checkpoint_id`, mints per-chunk presigned PUT capabilities
+  // (CheckpointGrant) up to `checkpointGrantWindow` ahead, and confirms
+  // each committed chunk. The adapter reports the workspace size probe
+  // (CheckpointProbe), declares each chunk by index and exact length
+  // (ChunkReady), PUTs the chunk bytes directly to object storage against
+  // the grant, acknowledges the commit (ChunkCommitted), and closes with
+  // CheckpointSummary. A chunk the object store rejects, or a probe that
+  // exceeds the workspace size limit, terminates the stream with
+  // CheckpointFailed carrying the object store's HTTP status and error
+  // code. The adapter never mints a `checkpoint_id`; the id the gateway
+  // sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+  // eviction, drain, periodic, and pre-scale-down checkpoints — this is
+  // the single upload path for every trigger.
+  rpc Checkpoint(stream CheckpointClientMessage) returns (stream CheckpointServerMessage) {}
 
   // SignalDeadline warns the running session's runtime that the session is
   // approaching its §11.3 line 240 deadline so the agent can checkpoint and
@@ -134,14 +150,18 @@ service Adapter {
   // CheckpointBarrier dispatches a barrier signal during gateway graceful
   // drain (§4.7 line 631, §10.1). The adapter validates the request's
   // `coordination_generation` against the last fenced generation, quiesces
-  // tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
-  // via `CheckpointBarrierAck` on the LifecycleChannel control stream
-  // (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`). The RPC
-  // return value mirrors the ack so a
-  // synchronous caller has the same information; the control-stream emit
-  // is the canonical surface for the gateway's barrier-target reconciler.
-  // The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
-  // is enforced by the gateway across all coordinated pods.
+  // tool-call dispatch, and holds the quiesced state open while the
+  // gateway drives the Checkpoint stream against the held pod. The adapter
+  // acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
+  // control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+  // only after that gateway-driven stream terminates, then releases
+  // quiescence. The RPC return value mirrors the ack so a synchronous
+  // caller has the same information; the control-stream emit is the
+  // canonical surface for the gateway's barrier-target reconciler.
+  // `checkpoint_ref` echoes the gateway-minted `checkpoint_id` the adapter
+  // received in the barrier-window Checkpoint stream. The single
+  // wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
+  // the gateway across all coordinated pods.
   rpc CheckpointBarrier(CheckpointBarrierRequest) returns (CheckpointBarrierResponse) {}
 
   // ExportPaths packages files from /workspace/current for delegation,
@@ -1018,14 +1038,136 @@ message InterruptResponse {
   }
 }
 
-message CheckpointRequest {
-  SessionId session_id = 1;
-  int32 deadline_ms = 2;
+// CheckpointTrigger mirrors the §4.4 pkg/checkpoint.Trigger enum. Each
+// trigger has a distinct retry budget and drives a distinct
+// `lenny_checkpoint_duration_seconds` label; the gateway carries the
+// typed trigger through the CheckpointStart that opens every checkpoint
+// stream so the adapter's retry-budget selection and the gateway's
+// telemetry both key on the request's trigger rather than an empty
+// string.
+enum CheckpointTrigger {
+  CHECKPOINT_TRIGGER_UNSPECIFIED = 0;
+  // Scheduled periodic checkpoint (`periodicCheckpointIntervalSeconds`).
+  CHECKPOINT_TRIGGER_PERIODIC = 1;
+  // Pre-scale-down checkpoint before a PoolScalingController pod release.
+  CHECKPOINT_TRIGGER_PRE_SCALE_DOWN = 2;
+  // preStop-hook / drain-barrier checkpoint at pod termination.
+  CHECKPOINT_TRIGGER_EVICTION = 3;
 }
 
-message CheckpointResponse {
+// CheckpointClientMessage is a gateway → adapter frame on the Checkpoint
+// stream. The gateway (the gRPC client) drives the exchange: it starts
+// the stream, mints per-chunk upload capabilities in response to the
+// adapter's chunk declarations, and can abort the attempt.
+message CheckpointClientMessage {
+  oneof msg {
+    CheckpointStart start = 1;
+    CheckpointGrant grant = 2;
+    CheckpointAbort abort = 3;
+  }
+}
+
+// CheckpointStart opens the stream. It carries the gateway-minted
+// `checkpoint_id` (§10.1 line 130 — the adapter never mints one), the
+// typed trigger, the gateway-chosen chunk size and encoding, and the
+// applicable deadline.
+message CheckpointStart {
+  // checkpoint_id is the UUID the gateway minted for this attempt. The
+  // adapter echoes it back on CheckpointBarrierAck.checkpoint_ref for the
+  // barrier-window path.
   string checkpoint_id = 1;
-  int64 size_bytes = 2;
+  CheckpointTrigger trigger = 2;
+  // chunk_size_bytes is the exact block size the adapter buffers before
+  // declaring a chunk; the gateway rejects any declared length outside
+  // (0, chunk_size_bytes].
+  int64 chunk_size_bytes = 3;
+  // chunk_encoding is `tar` or `tar.gz`, fixed for every chunk under this
+  // checkpoint_id.
+  string chunk_encoding = 4;
+  int64 deadline_ms = 5;
+}
+
+// CheckpointGrant is a single-chunk presigned PUT capability the gateway
+// signs in response to a ChunkReady. The adapter issues the PUT directly
+// against object storage.
+message CheckpointGrant {
+  uint32 index = 1;
+  // url is the presigned PUT capability. Bearer-sensitive: redacted in
+  // logs.
+  string url = 2;
+  // content_length is the exact byte count the gateway signed into the
+  // capability; the PUT must send exactly this many bytes.
+  int64 content_length = 3;
+  // headers carries the exact name→value pairs the gateway folded into the
+  // SigV4 signature (the SSE-KMS header set and Content-Length on a T4
+  // backend). The adapter MUST replay every entry verbatim on the PUT and
+  // MUST NOT add or alter a signed header, or the object store rejects the
+  // PUT with SignatureDoesNotMatch. Empty when the backend signs no
+  // request headers.
+  map<string, string> headers = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+// CheckpointAbort tells the adapter to stop the attempt; the adapter does
+// not retry a PUT the gateway aborts.
+message CheckpointAbort {
+  string reason = 1;
+}
+
+// CheckpointServerMessage is an adapter → gateway frame on the Checkpoint
+// stream.
+message CheckpointServerMessage {
+  oneof msg {
+    CheckpointProbe probe = 1;
+    ChunkReady chunk_ready = 2;
+    ChunkCommitted chunk_committed = 3;
+    CheckpointSummary summary = 4;
+    CheckpointFailed failed = 5;
+  }
+}
+
+// CheckpointProbe is the first frame the adapter sends: the on-disk
+// workspace byte count the gateway reserves storage quota against before
+// it mints any grant (§11.2).
+message CheckpointProbe {
+  int64 workspace_bytes = 1;
+}
+
+// ChunkReady declares a chunk by index and exact byte length before the
+// gateway signs its grant.
+message ChunkReady {
+  uint32 index = 1;
+  int64 length = 2;
+}
+
+// ChunkCommitted acknowledges that the adapter completed the PUT for the
+// chunk at index; it is what tells the gateway to Stat the object and
+// record the confirmed size. Retained rather than folded into the next
+// ChunkReady because the last chunk has no successor.
+message ChunkCommitted {
+  uint32 index = 1;
+}
+
+// CheckpointSummary closes a successful stream: the total chunk count and
+// uploaded byte total the gateway verifies against its confirmed set
+// before finalising the manifest.
+message CheckpointSummary {
+  uint32 chunk_count = 1;
+  int64 total_bytes = 2;
+}
+
+// CheckpointFailed terminates the stream on a failure the gateway cannot
+// otherwise observe because it no longer issues the object-store call: a
+// chunk PUT the object store rejected (carrying the object store's HTTP
+// status and error code so the gateway can map a `kms:`-coded rejection
+// onto a classification-control violation and keep the §12 fail-closed T4
+// posture), or a workspace-size-probe rejection before any grant is
+// minted.
+message CheckpointFailed {
+  string reason = 1;
+  uint32 index = 2;
+  int32 http_status = 3;
+  string error_code = 4;
 }
 
 message SignalDeadlineRequest {
@@ -1103,6 +1245,34 @@ message ResumeRequest {
   // legacy sessions); the assertion is purely a runtime template-drift
   // guard.
   string expected_workspace_root = 12;
+  // chunks carries one presigned single-key GET capability per chunk of
+  // the checkpoint being restored, in ascending index order (§10.1 line
+  // 155). The gateway resolves the chunk set from the manifest row it owns
+  // and mints one capability per index in [0, chunk_count); the adapter
+  // fetches each chunk directly from object storage and concatenates them
+  // into the single tar (or tar.gz) byte stream. The gateway has no byte
+  // channel to the adapter on the resume path, so the capabilities are the
+  // adapter's only means of reading the chunks; a fetch that outlives the
+  // grants' expiry is re-driven by re-calling Resume, which re-mints.
+  repeated ChunkGrant chunks = 13;
+}
+
+// ChunkGrant is a single presigned GET capability for one checkpoint
+// chunk on the Resume path. It differs from CheckpointGrant in carrying
+// the chunk's actual `length` rather than a signed Content-Length: a GET
+// capability signs no request body.
+message ChunkGrant {
+  uint32 index = 1;
+  int64 length = 2;
+  // url is the presigned GET capability. Bearer-sensitive: redacted in
+  // logs.
+  string url = 3;
+  // headers carries any header the gateway signed into the GET capability,
+  // replayed verbatim by the adapter for the same signature-match reason
+  // as CheckpointGrant.headers. Normally empty on the read path because a
+  // GET capability signs no SSE-KMS headers.
+  map<string, string> headers = 4;
+  google.protobuf.Timestamp expires_at = 5;
 }
 
 message ResumeResponse {
@@ -1168,11 +1338,13 @@ message CheckpointBarrierRequest {
 // CheckpointBarrierResponse is the synchronous mirror of the
 // CheckpointBarrierAck event emitted on the LifecycleChannel control
 // stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
-// is the storage reference of the best-effort checkpoint flushed during
-// the barrier (empty when the adapter could not flush one — e.g.
-// checkpoint sink unwired or archive failed). quiesced_ms reports the
-// wall-clock the adapter spent quiescing the runtime; the gateway records
-// it on `lenny_checkpoint_barrier_ack_duration_seconds`.
+// echoes the gateway-minted `checkpoint_id` the adapter received in the
+// CheckpointStart of the barrier-window Checkpoint stream (§10.1 line 167);
+// empty when the gateway drove no stream against the pod. The adapter
+// returns the ack only after that gateway-driven stream terminates.
+// quiesced_ms reports the time-to-quiescence measured inside the ack
+// window; the gateway records it on
+// `lenny_checkpoint_barrier_ack_duration_seconds`.
 message CheckpointBarrierResponse {
   string barrier_id = 1;
   string checkpoint_ref = 2;
