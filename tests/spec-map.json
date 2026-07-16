@@ -3225,7 +3225,8 @@
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
-        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF"
+        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
+        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E"
       ],
       "packages": [
         "pkg/gateway/externalapi/admin"
@@ -3314,6 +3315,7 @@
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
+        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
         "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationCreatePathTierProgressionAgainstRealStores",
         "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationReconciliationFlushPreservesRecordAgainstRealStores",
@@ -3431,6 +3433,8 @@
         "pkg/gateway/operability/health/runbook_bundle_test.go",
         "pkg/gateway/externalapi/openapi/openapi_test.go::TestRunbookIndexAdvertisesPathAFilters_spec_25_7",
         "pkg/ops/mcp/server_test.go::TestToolsListReturnsTheInventory",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListExposesNoOptionalFilters_spec_25_12",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListForwardsOptionalFilter_spec_25_12",
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
@@ -3552,6 +3556,8 @@
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E",
         "tests/tier5_e2e_kind/mcp_management_e2e_test.go::TestMCPManagementServerOnDeployedOps",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListExposesNoOptionalFilters_spec_25_12",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListForwardsOptionalFilter_spec_25_12",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallCarriesCallerPrincipal_spec_25_12",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallRejectsNonAdminRole_spec_25_12",
         "pkg/ops/opsserver/mcp_correlation_test.go::TestMCPManagementMetaOperationIDPropagatesToLock_spec_25_12",
@@ -3624,11 +3630,12 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
-        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields"
+        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields",
+        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadCarriesLabels"
       ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review. The tier-3 contract test pins the Step 1 alert_fired event's `data` payload — severity, alertName, runbook, and a well-formed suggestedAction (action, endpoint, reasoning) — produced end to end through the real §16.5 WarmPoolExhausted rule and the evaluator's EmitCallbacks wiring, so a payload-field rename or drop breaks the test before it reaches a watchdog agent."
+      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review. The tier-3 contract test pins the Step 1 alert_fired event's `data` payload — severity, alertName, runbook, and a well-formed suggestedAction (action, endpoint, reasoning) — produced end to end through the real §16.5 WarmPoolExhausted rule and the evaluator's EmitCallbacks wiring, so a payload-field rename or drop breaks the test before it reaches a watchdog agent. A companion contract test pins the alert_fired payload's `labels` field (the §25.7 / §25.17 examples carry \"labels\":{\"pool\":\"...\"}); it is a non-blocking skip because EmitCallbacks emits no labels key and the ExprEvaluator contract resolves a rule to a bool with no matched-series labels, so whether emit.go merges the rule's static Labels and whether ExprEvaluator surfaces matched-series labels is a product decision left for human review."
     },
     "26": {
       "title": "Reference Runtime Catalog",
