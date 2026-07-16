@@ -1193,6 +1193,23 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	artifactCatalog := w.artifactCatalog
 	partialManifests := w.partialManifests
 
+	// spec: §11.2 / §12.4 line 222 — the reservation-aware storage
+	// LiveBytesSource (SumLiveBytes + SumOutstandingReservations) is composed
+	// once here, whenever the Postgres artifact catalog is wired, and shared by
+	// the during-outage Failover enforcement read, the RecoveryReconciler
+	// recovery-edge rebuild, and the startup Rehydrate, so a tenant's
+	// outstanding checkpoint reservations count against its quota on every
+	// rebuild the guarded relative Adjust runs after. Composition is independent
+	// of Redis: a Postgres-catalog deployment without Redis still rebuilds its
+	// in-memory counter (folding outstanding reservations) at startup, so the
+	// counter does not start at zero and under-count after a restart.
+	if artifactCatalog != nil {
+		w.storageLiveBytes = storagequota.ReservationAwareLiveBytes(
+			artifactCatalog.SumLiveBytes,
+			outstandingReservationSource(partialManifests),
+		)
+	}
+
 	// Circuit-breaker state goes to Redis when --redis-url is set, so
 	// an operator-opened breaker survives a restart and stays
 	// consistent across replicas (§12.4). The §10.1 session-
@@ -1331,19 +1348,14 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// Lua fast path resumes. Without a catalog (dev/in-memory) the bare
 		// Redis store keeps the prior fail-on-Redis-error behavior.
 		//
-		// spec: §11.2 / §12.4 line 222 — the LiveBytesSource is the
-		// reservation-aware seam (SumLiveBytes + SumOutstandingReservations)
-		// composed once here and shared by the during-outage Failover
-		// enforcement read, the RecoveryReconciler recovery-edge rebuild, and
-		// the startup Rehydrate, so a tenant's outstanding checkpoint
+		// spec: §11.2 / §12.4 line 222 — the during-outage Failover
+		// enforcement read and the recovery-edge rebuild share the single
+		// reservation-aware LiveBytesSource composed above (whenever the
+		// artifact catalog is wired), so a tenant's outstanding checkpoint
 		// reservations count against its quota during a Redis outage and are
 		// re-added on every rebuild the guarded relative Adjust runs after.
 		if artifactCatalog != nil {
-			liveBytes := storagequota.ReservationAwareLiveBytes(
-				artifactCatalog.SumLiveBytes,
-				outstandingReservationSource(partialManifests),
-			)
-			w.storageLiveBytes = liveBytes
+			liveBytes := w.storageLiveBytes
 			storageCounter = storagequota.NewFailover(storageRedis, liveBytes, nil)
 			storageRecoveryReconciler = &storagequota.RecoveryReconciler{
 				Probe: func(ctx context.Context) bool {
@@ -1485,15 +1497,19 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	// setter. F-11.2.9.
 	if blobsCataloged != nil {
 		blobsCataloged.SetQuotaReleaser(storageCounter)
-		// §11.2 Redis-restart rehydration: reconstruct each tenant's storage
+		// §11.2 startup rehydration: reconstruct each tenant's storage
 		// counter from the authoritative Postgres byte total (live artifact
 		// bytes plus outstanding checkpoint reservations, through the
 		// reservation-aware seam composed in buildRedisAndQuota) so the
 		// rebuilt counter already holds every unreleased reservation the
 		// guarded relative Adjust will later release (same recovery path as
-		// the token quota counters). A per-tenant fault is logged and skipped
-		// so one tenant cannot block startup. Runs before the HTTP listener
-		// accepts traffic, so no reservation races the absolute Set.
+		// the token quota counters). Runs whenever the Postgres artifact
+		// catalog is wired, independent of Redis: a Postgres-catalog
+		// deployment without Redis rebuilds its in-memory counter here so it
+		// does not start at zero and under-count after a restart. A per-tenant
+		// fault is logged and skipped so one tenant cannot block startup. Runs
+		// before the HTTP listener accepts traffic, so no reservation races the
+		// absolute Set.
 		if w.storageLiveBytes != nil {
 			rehydrateCtx, cancelRehydrate := context.WithTimeout(context.Background(), 30*time.Second)
 			if ids, lerr := (tenantsLister{tenants}).ListTenants(rehydrateCtx); lerr != nil {
