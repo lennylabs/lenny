@@ -103,8 +103,8 @@ func errorType(body map[string]any) string {
 	return typ
 }
 
-// errorCode reads the REST error envelope's error.code field.
-func errorCode(body map[string]any) string {
+// openaiErrorCode reads the REST error envelope's error.code field.
+func openaiErrorCode(body map[string]any) string {
 	errObj, _ := body["error"].(map[string]any)
 	code, _ := errObj["code"].(string)
 	return code
@@ -206,7 +206,7 @@ func testChatCompletionsCrossTenant(t *testing.T, base string) {
 		t.Errorf("%s REST-read of %s's chat-completions session: got status %d, want 404 (cross-tenant isolation); body=%s",
 			crossTenantAttacker, crossTenantOwner, getStatus, getRaw)
 	}
-	if code := errorCode(getBody); code != "RESOURCE_NOT_FOUND" {
+	if code := openaiErrorCode(getBody); code != "RESOURCE_NOT_FOUND" {
 		t.Errorf("cross-tenant REST session read error.code = %q, want RESOURCE_NOT_FOUND; body=%s", code, getRaw)
 	}
 	if strings.Contains(string(getRaw), secret) {
