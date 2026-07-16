@@ -860,6 +860,27 @@ bootstrap:
         cleanupTimeoutSeconds: 30
 EOF
 
+# §25.4 line 1567 — "No anonymous access except /healthz." lenny-ops only
+# wires its authentication gate when a bearer-trust key is configured;
+# without it cmd/lenny-ops/main.go buildAuthConfig returns a nil
+# AuthConfig outside production and the operability surface admits
+# anonymous callers. Create the bearer-trust key Secret named by
+# security.oidc.bearerTrustKeySecret in e2e-values.yaml so the deployed
+# lenny-ops runs with a RequireAuth AuthConfig and the §25.4 auth gate is
+# exercised end-to-end. The Secret holds a §17.4 HMAC key file (keyId +
+# base64 secret) under data key `key`, the on-disk format
+# jwt.LoadHMACKeyFile parses; the chart mounts it at /etc/lenny/oidc/key
+# and passes --bearer-trust-hmac-key-file. The key is a fixed dev value:
+# the e2e callers authenticate through the dev-mode identity headers
+# (global.devMode: true keeps production=false), so no test mints a bearer
+# against this key. It exists only so the auth gate is wired and anonymous
+# callers are rejected. create --dry-run | apply keeps the step
+# idempotent across re-runs.
+log "creating the lenny-ops bearer-trust key Secret"
+kc -n lenny-system create secret generic lenny-e2e-bearer-trust-key \
+  --from-literal=key='{"keyId":"lenny-e2e-bearer-trust","secret":"bGVubnktZTJlLWJlYXJlci10cnVzdC1obWFjLWtleS0zMmJ5dGVz"}' \
+  --dry-run=client -o yaml | kc apply -f -
+
 # --server-side=false forces client-side apply. Helm 4 defaults to
 # server-side apply, whose strict (containerPort, protocol) list-map key
 # rejects the chart's named http+metrics ports sharing one containerPort
