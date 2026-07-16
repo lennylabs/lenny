@@ -153,6 +153,17 @@ func (c *Checkpointer) levelLabel() string {
 // session event and writes no manifest row.
 var errSizeLimit = errors.New("checkpointer: workspace size limit exceeded")
 
+// pendingChunk is a ChunkReady declaration the driver has validated but
+// deferred: minting its grant would exceed the outstanding-grant window, so
+// it waits in FIFO order for an ack to free a window slot (spec: §10.1 line
+// 131 — the gateway keeps at most `window` grants outstanding by pacing new
+// grants against acks rather than aborting a producer that pipelines its
+// declarations ahead).
+type pendingChunk struct {
+	index  uint32
+	length int64
+}
+
 // uploadDriver runs one §10.1 gateway-side grant/confirm attempt on the
 // open bidirectional Checkpoint stream. It reads the adapter's Probe,
 // reserves quota, writes the intent row, mints a bounded window of
@@ -173,6 +184,17 @@ type uploadDriver struct {
 	prefix       string
 	trigger      checkpoint.Trigger
 	window       int // §5.2 effective grant window: max outstanding grants
+	// coordinationGen and recoveryGen are the session's fenced coordinator
+	// generation and recovery counter at attempt time. onProbe writes them
+	// into the §10.1 intent row so the supersede fence rejects a stale
+	// coordinator and the resume selector picks the highest-generation row.
+	// baselineBytes is the session's last_checkpoint_workspace_bytes frozen
+	// as this attempt's resume-threshold denominator; nil denotes a session
+	// with no prior successful full checkpoint.
+	// spec: §10.1 lines 137, 155 (generation fence, resume selector, baseline).
+	coordinationGen int64
+	recoveryGen     int64
+	baselineBytes   *int64
 
 	// intentWritten records that onProbe committed the §10.1 intent row, so
 	// onChunkReady may mint a chunk capability. It is written and read only on
@@ -191,6 +213,7 @@ type uploadDriver struct {
 	signedLen      map[uint32]int64 // per-index Content-Length signed into the grant
 	acked          map[uint32]bool  // indices whose ChunkCommitted the reader saw
 	outstanding    int              // granted-but-not-yet-acked index count
+	pending        []pendingChunk   // declared chunks awaiting a free window slot
 	confirmedBytes int64            // sum of Stat-confirmed chunk sizes
 	confirmedCount int              // number of chunks Stat-confirmed
 	reservedBytes  int64            // the reservation taken from the probe
@@ -268,18 +291,28 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 	}
 	now := c.now()
 	rec := partialmanifeststore.Record{
-		TenantID:             d.tenantID,
-		CheckpointID:         d.checkpointID,
-		SessionID:            d.sessionID,
-		SlotID:               d.slotID,
-		Partial:              true,
-		ManifestReason:       partialmanifeststore.ReasonInProgress,
-		ChunkObjectKeyPrefix: d.prefix,
-		ChunkSizeBytes:       c.chunkSize(),
-		ChunkEncoding:        c.chunkEncoding(),
-		ReservedBytes:        probed,
-		CheckpointStartedAt:  now,
-		CheckpointTimeoutAt:  now.Add(c.Deadline),
+		TenantID:     d.tenantID,
+		CheckpointID: d.checkpointID,
+		SessionID:    d.sessionID,
+		SlotID:       d.slotID,
+		// spec: §10.1 lines 137, 155 — the intent row carries the session's
+		// coordinator generation and recovery counter so the supersede fence
+		// rejects a stale coordinator (an active row at a strictly higher
+		// generation) and the resume path selects the highest-generation row.
+		// BaselineFullCheckpointBytes freezes the session's
+		// last_checkpoint_workspace_bytes as the resume-threshold denominator;
+		// a nil pointer denotes no prior successful full checkpoint.
+		CoordinationGeneration:      d.coordinationGen,
+		RecoveryGeneration:          d.recoveryGen,
+		BaselineFullCheckpointBytes: d.baselineBytes,
+		Partial:                     true,
+		ManifestReason:              partialmanifeststore.ReasonInProgress,
+		ChunkObjectKeyPrefix:        d.prefix,
+		ChunkSizeBytes:              c.chunkSize(),
+		ChunkEncoding:               c.chunkEncoding(),
+		ReservedBytes:               probed,
+		CheckpointStartedAt:         now,
+		CheckpointTimeoutAt:         now.Add(c.Deadline),
 	}
 	if err := c.Manifests.Put(d.ctx, rec); err != nil {
 		d.releaseReservation()
@@ -365,12 +398,21 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 }
 
 // onChunkReady validates the adapter-declared chunk length against the
-// gateway-chosen chunk size, mints (or re-mints, on a grant-expiry retry)
-// a single-key presigned PUT capability at that exact length, and returns
-// it. A declared length outside (0, chunk_size_bytes] aborts the attempt
-// with stream_truncated before any capability is signed, so the bytes a
+// gateway-chosen chunk size, then either mints a single-key presigned PUT
+// capability at that exact length immediately when the outstanding-grant
+// window has a free slot or defers the declaration until an ack frees one.
+// A grant-expiry retry re-mints the identical key and length. A declared
+// length outside (0, chunk_size_bytes] aborts the attempt with
+// stream_truncated before any capability is signed, so the bytes a
 // capability can carry are a gateway constant rather than a pod
 // self-report (spec: §10.1 line 139, §13.2 residual-exposure bound).
+//
+// The window is enforced by backpressure, not by aborting: when a fresh
+// declaration would exceed the resolved window the driver queues it and
+// mints its grant once onChunkCommitted frees a slot, so a producer that
+// pipelines its declarations ahead of acks is paced rather than failed
+// (spec: §10.1 line 131 — the gateway keeps at most `window` grants
+// outstanding at a time).
 func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 	c := d.c
 	index := cr.GetIndex()
@@ -402,22 +444,42 @@ func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 			fmt.Sprintf("chunk %d re-declared length %d != signed %d", index, length, prior))
 		return
 	}
-	// A re-mint (grant-expiry retry, spec: §4.4) re-signs the identical key
-	// and length without advancing the outstanding-grant count or taking a
-	// second reservation. A fresh index that would exceed the resolved
-	// window is a producer overrunning the pipeline bound and aborts.
+	if reMint {
+		// A grant-expiry retry (spec: §4.4) re-signs the identical key and
+		// length without advancing the outstanding-grant count, taking a
+		// second reservation, or occupying a fresh window slot.
+		d.mu.Unlock()
+		d.mintGrant(index, length, true)
+		return
+	}
+	// A fresh index whose grant would exceed the resolved window waits for an
+	// ack to free a slot: queue it in declaration order and let
+	// onChunkCommitted mint it. Pacing the grant rather than aborting lets an
+	// adapter pipeline its declarations ahead of acks.
+	if d.window > 0 && d.outstanding >= d.window {
+		d.pending = append(d.pending, pendingChunk{index: index, length: length})
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
+	d.mintGrant(index, length, false)
+}
+
+// mintGrant signs a single-key presigned PUT capability for chunk index at
+// the exact signed Content-Length and sends it to the adapter. A fresh mint
+// takes a window slot, advances the signed total, and refuses to sign a
+// capability whose Content-Length would carry the attempt's granted total
+// past its reservation plus the remaining tenant headroom (spec: §11.2
+// observation (2)); a re-mint re-signs an already-granted index without
+// re-accounting so a grant-expiry retry costs no extra reservation or window
+// slot.
+func (d *uploadDriver) mintGrant(index uint32, length int64, reMint bool) {
+	c := d.c
 	if !reMint {
-		if d.window > 0 && d.outstanding >= d.window {
-			d.mu.Unlock()
-			d.abort(partialmanifeststore.ReasonStreamTruncated,
-				fmt.Sprintf("chunk %d exceeds grant window %d", index, d.window))
-			return
-		}
-		// spec: §11.2 observation (2) — refuse to sign a capability whose
-		// Content-Length would carry the attempt's granted total past its
-		// reservation plus the remaining tenant headroom. The refusal happens
-		// before signing, so a pod that declares more in-range chunks than it
-		// probed is bounded cumulatively rather than only per grant window.
+		d.mu.Lock()
+		// spec: §11.2 observation (2) — the refusal happens before signing, so
+		// a pod that declares more in-range chunks than it probed is bounded
+		// cumulatively rather than only per grant window.
 		if d.quotaCapSet && d.signedTotal+length > d.quotaCap {
 			d.mu.Unlock()
 			d.abort(partialmanifeststore.ReasonQuotaExceeded,
@@ -426,10 +488,9 @@ func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 		}
 		d.outstanding++
 		d.signedTotal += length
+		d.signedLen[index] = length
+		d.mu.Unlock()
 	}
-	d.signedLen[index] = length
-	d.mu.Unlock()
-
 	uri := d.chunkURI(index)
 	grant, err := c.Presigner.PresignPut(uri, length, c.capabilityTTL())
 	if err != nil {
@@ -451,6 +512,18 @@ func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 		d.abort(partialmanifeststore.ReasonStreamTruncated,
 			fmt.Sprintf("send chunk %d grant: %v", index, serr))
 	}
+}
+
+// popPendingLocked removes and returns the oldest deferred declaration under
+// d.mu, reporting whether one was waiting. The caller drops the lock before
+// minting so mintGrant can re-take it for the counter update.
+func (d *uploadDriver) popPendingLocked() (pendingChunk, bool) {
+	if len(d.pending) == 0 {
+		return pendingChunk{}, false
+	}
+	next := d.pending[0]
+	d.pending = d.pending[1:]
+	return next, true
 }
 
 // onChunkCommitted confirms a committed chunk off the grant's critical
@@ -475,7 +548,16 @@ func (d *uploadDriver) onChunkCommitted(cc *adapterv1.ChunkCommitted) {
 		d.outstanding--
 	}
 	signed := d.signedLen[index]
+	// The freed slot admits the oldest deferred declaration: minting it here,
+	// on the reader goroutine before the async confirm, is what paces the
+	// pipeline. The (window+1)th grant is minted only once an earlier chunk's
+	// ack frees a slot, and because the slot is released on the ack rather
+	// than on the confirm, a lagging Stat never blocks it.
+	next, hasNext := d.popPendingLocked()
 	d.mu.Unlock()
+	if hasNext {
+		d.mintGrant(next.index, next.length, false)
+	}
 	if d.c.ObjectStore == nil {
 		return
 	}

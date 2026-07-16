@@ -505,6 +505,11 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 	if err := stream.Send(start); err != nil {
 		return "", 0, fmt.Errorf("send checkpoint start: %w", err)
 	}
+	// Read the session row once for every value the attempt is scoped by: the
+	// pool (for the §5.2 per-pool grant-window override) and the §10.1
+	// coordinator/recovery generations and baseline the intent row is fenced
+	// and sized on.
+	sc := c.sessionCheckpointContext(ctx, tenantID, sessionID)
 	d := &uploadDriver{
 		c:            c,
 		ctx:          ctx,
@@ -522,28 +527,60 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		// own scheduled pool, read from its session-store row, rather than the
 		// static Checkpointer.Pool label, so the per-pool override applies per
 		// session across the sweep.
-		window: c.grantWindowForPool(ctx, c.poolForSession(ctx, tenantID, sessionID)),
+		window:          c.grantWindowForPool(ctx, sc.pool),
+		coordinationGen: sc.coordinationGen,
+		recoveryGen:     sc.recoveryGen,
+		baselineBytes:   sc.baselineBytes,
 	}
 	return d.run()
 }
 
-// poolForSession resolves the pool a session is scheduled against from its
-// session-store row, so the driver reads that pool's per-pool
-// checkpointGrantWindow override at attempt time. A nil session store or a
-// read error yields the empty pool, which grantWindowForPool maps to the
-// deployment-wide default.
+// sessionCheckpointContext is the slice of session-row state a checkpoint
+// attempt is scoped by: the pool it is scheduled against and the §10.1
+// generations and baseline the intent row is written with.
+type sessionCheckpointContext struct {
+	pool            string
+	coordinationGen int64
+	recoveryGen     int64
+	baselineBytes   *int64
+}
+
+// sessionCheckpointContext reads the session row once so the driver resolves
+// the bound pool's per-pool checkpointGrantWindow override (§5.2) and writes
+// the §10.1 intent row with the session's coordinator generation, recovery
+// counter, and last_checkpoint_workspace_bytes baseline. The supersede fence
+// rejects a stale coordinator on coordination_generation and the resume path
+// selects the highest-generation row, so pinning every intent row at
+// generation 0 would let a stale coordinator orphan a live newer writer's
+// active manifest. A nil session store or a read error yields the zero value
+// (empty pool → deployment-wide window, generation 0, no baseline), so a
+// transient read failure degrades to the deployment default rather than
+// aborting the checkpoint.
 //
-// spec: §5.2 — the checkpoint driver reads the bound pool's override at
-// attempt time.
-func (c *Checkpointer) poolForSession(ctx context.Context, tenantID, sessionID string) string {
+// spec: §5.2 (per-pool override); §10.1 lines 137, 155 (generation fence,
+// MAX(coordination_generation) resume selector, baseline denominator).
+func (c *Checkpointer) sessionCheckpointContext(ctx context.Context, tenantID, sessionID string) sessionCheckpointContext {
 	if c.Sessions == nil {
-		return ""
+		return sessionCheckpointContext{}
 	}
 	row, err := c.Sessions.Get(ctx, tenantID, sessionID)
 	if err != nil {
-		return ""
+		return sessionCheckpointContext{}
 	}
-	return row.PoolRef
+	sc := sessionCheckpointContext{
+		pool:            row.PoolRef,
+		coordinationGen: row.CoordinationGeneration,
+		recoveryGen:     row.RecoveryGeneration,
+	}
+	// A prior successful checkpoint recorded its compressed size as
+	// last_checkpoint_workspace_bytes; freeze it as this attempt's baseline.
+	// Nil is load-bearing: it denotes a session with no prior successful full
+	// checkpoint (§10.1 line 155).
+	if row.WorkspaceSnapshot != nil && row.WorkspaceSnapshot.Bytes > 0 {
+		b := row.WorkspaceSnapshot.Bytes
+		sc.baselineBytes = &b
+	}
+	return sc
 }
 
 // chunkPrefix builds the §10.1 chunk_object_key_prefix under which an

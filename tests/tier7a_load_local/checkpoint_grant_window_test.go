@@ -8,8 +8,9 @@
 // lock must hold:
 //
 //   - the resolved grant window bounds the grants the gateway keeps
-//     outstanding: a producer that overruns the window is aborted rather
-//     than granted past the bound;
+//     outstanding by backpressure: a producer that pipelines its
+//     declarations ahead of acks is paced, so the (window+1)th grant is
+//     minted only after an earlier chunk's ack frees a window slot;
 //   - a lagging Stat confirm never blocks the next grant (confirmation runs
 //     off the grant's critical path);
 //   - out-of-order chunk acknowledgements confirm each chunk exactly once;
@@ -17,8 +18,9 @@
 //     serialise on the single-flight lock rather than interleaving their
 //     manifest writes.
 //
-// spec: §10.1 line 131 (fire-and-forget confirm), §5.2
-// (checkpointGrantWindow), §10.1 supersede-on-write (single-flight).
+// spec: §10.1 line 131 (fire-and-forget confirm, at-most-window grants
+// outstanding), §5.2 (checkpointGrantWindow), §10.1 supersede-on-write
+// (single-flight).
 
 package tier7a_load_local_test
 
@@ -243,10 +245,20 @@ type scriptAdapter struct {
 	probeBytes int64
 	chunkCount int
 	chunkLen   int64
-	// pipelineAll declares every chunk before reading any grant (overruns
-	// the window). commitOrder overrides the ack order when set.
-	pipelineAll bool
-	commitOrder []uint32
+	// pipelineAhead declares every chunk before reading any grant, then paces
+	// itself against the window: it receives grants up to the window bound,
+	// then commits to free a slot for the next deferred grant. window is the
+	// gateway's resolved grant window the producer paces against.
+	// commitOrder overrides the ack order when set.
+	pipelineAhead bool
+	window        int
+	commitOrder   []uint32
+	// mintedAtFirstCommit records the number of grants the gateway had minted
+	// at the moment the producer sent its first ack, so a test can assert the
+	// gateway minted exactly `window` grants before any ack freed a slot (the
+	// backpressure ordering: the (window+1)th grant is minted only after the
+	// first is acked).
+	mintedAtFirstCommit atomic.Int64
 
 	store     *gwStore
 	presigner *gwPresigner
@@ -261,15 +273,21 @@ func (a *scriptAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Che
 	}); err != nil {
 		return err
 	}
-	if a.pipelineAll {
-		return a.runPipelined(stream)
+	if a.pipelineAhead {
+		return a.runPipelineAhead(stream)
 	}
 	return a.runOrdered(stream)
 }
 
-// runPipelined declares every chunk up front, then drains responses. The
-// gateway aborts once the outstanding count reaches the window.
-func (a *scriptAdapter) runPipelined(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+// runPipelineAhead declares every chunk up front, ahead of any ack, so the
+// gateway must pace its grants against the window by backpressure rather than
+// granting them all at once. It then slides the window forward: it receives
+// grants while a window slot is free and commits the oldest un-acked chunk to
+// free a slot for the next deferred grant, until every chunk is granted,
+// uploaded, and committed. It captures the gateway's grant count at the first
+// commit so a test can assert the (window+1)th grant was withheld until an
+// ack freed a slot.
+func (a *scriptAdapter) runPipelineAhead(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
 	for i := 0; i < a.chunkCount; i++ {
 		if err := stream.Send(&adapterv1.CheckpointServerMessage{
 			Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: a.chunkLen}},
@@ -277,15 +295,42 @@ func (a *scriptAdapter) runPipelined(stream grpc.BidiStreamingServer[adapterv1.C
 			return err
 		}
 	}
-	for {
-		msg, err := stream.Recv()
-		if err != nil {
-			return nil
+	received, committed := 0, 0
+	for committed < a.chunkCount {
+		if received < a.chunkCount && received-committed < a.window {
+			// A window slot is free, so the gateway has a grant waiting.
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			grant := msg.GetGrant()
+			if grant == nil {
+				return fmt.Errorf("expected grant, got %T", msg.GetMsg())
+			}
+			a.store.putFromGrant(grant.GetUrl(), a.chunkLen)
+			received++
+			continue
 		}
-		if msg.GetAbort() != nil {
-			return nil
+		// The window is full (or every chunk is granted): commit the oldest
+		// un-acked chunk to free a slot. The first commit is the point at
+		// which the gateway is allowed to mint the (window+1)th grant, so
+		// capture the grant count just before it.
+		if committed == 0 {
+			a.mintedAtFirstCommit.Store(a.presigner.minted.Load())
 		}
+		a.presigner.ackedOne()
+		if err := stream.Send(&adapterv1.CheckpointServerMessage{
+			Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: uint32(committed)}},
+		}); err != nil {
+			return err
+		}
+		committed++
 	}
+	return stream.Send(&adapterv1.CheckpointServerMessage{
+		Msg: &adapterv1.CheckpointServerMessage_Summary{Summary: &adapterv1.CheckpointSummary{
+			ChunkCount: uint32(a.chunkCount), TotalBytes: a.chunkLen * int64(a.chunkCount),
+		}},
+	})
 }
 
 // runOrdered runs the ChunkReady → Grant → PUT loop. When commitOrder is
@@ -365,22 +410,37 @@ func gwDial(t *testing.T, srv adapterv1.AdapterServer) *adapterclient.Client {
 	return cl
 }
 
-// spec: §5.2 / §10.1 — the resolved grant window bounds outstanding grants:
-// a producer that declares past the window before acking is aborted, and
-// the gateway never mints more than the window's worth of grants ahead.
+// spec: §5.2 / §10.1 line 131 — the resolved grant window bounds outstanding
+// grants by backpressure: a producer that pipelines every declaration ahead
+// of any ack is paced, not aborted. The gateway keeps at most `window` grants
+// outstanding, mints the (window+1)th grant only after the first chunk is
+// acked, and the attempt completes with every chunk granted and confirmed.
+// diagnosis: a failure here (Checkpoint returns an error, more than `window`
+// grants minted before the first ack, or peak outstanding above the window)
+// means the driver aborts a pipelining producer with stream_truncated instead
+// of pacing it, so a valid checkpoint whose adapter declares ahead of acks is
+// failed rather than backpressured.
 func TestGrantWindowBoundsOutstandingGrants(t *testing.T) {
 	const window = 3
-	adapter := &scriptAdapter{probeBytes: 100, chunkCount: window + 3, chunkLen: 10, pipelineAll: true}
+	const chunks = window + 3
+	adapter := &scriptAdapter{probeBytes: 100, chunkCount: chunks, chunkLen: 10, pipelineAhead: true, window: window}
 	h := newGWHarness(t, adapter, window, 0)
 
-	if err := h.cp.Checkpoint(context.Background(), gwTenant, gwSession); err == nil {
-		t.Fatal("Checkpoint succeeded on a producer overrunning the grant window, want abort")
+	if err := h.cp.Checkpoint(context.Background(), gwTenant, gwSession); err != nil {
+		t.Fatalf("Checkpoint on a pipelining producer, want the window to pace it: %v", err)
 	}
-	if got := h.presigner.minted.Load(); got != int64(window) {
-		t.Errorf("grants minted = %d, want exactly the window %d before the abort", got, window)
+	if got := adapter.mintedAtFirstCommit.Load(); got != int64(window) {
+		t.Errorf("grants minted before the first ack = %d, want exactly the window %d (the (window+1)th grant is deferred until an ack frees a slot)", got, window)
 	}
 	if got := h.presigner.peak.Load(); got > int64(window) {
 		t.Errorf("peak outstanding grants = %d, want <= window %d", got, window)
+	}
+	if got := h.presigner.minted.Load(); got != int64(chunks) {
+		t.Errorf("total grants minted = %d, want %d (every chunk granted once the pipeline drained)", got, chunks)
+	}
+	rec := manifestOf(t, h)
+	if rec.ChunkCount != chunks {
+		t.Errorf("chunk_count = %d, want %d", rec.ChunkCount, chunks)
 	}
 }
 
@@ -402,15 +462,19 @@ func (r gwPoolReader) PoolPolicy(_ context.Context, name string) (podsession.Poo
 // spec: §5.2 — the driver resolves the bound session's own pool at attempt
 // time and applies that pool's checkpointGrantWindow override, not the
 // static Checkpointer.Pool label. A session whose pool overrides the window
-// below the deployment-wide default is bounded by the override.
-// diagnosis: a failure here (more than the pool-override worth of grants
-// minted before the abort) means the driver resolved the window against an
-// empty pool and fell back to the deployment default, so the wired per-pool
-// override never takes effect in production.
+// below the deployment-wide default is paced by the override: the gateway
+// keeps at most poolWindow grants outstanding and mints the (poolWindow+1)th
+// only after the first ack.
+// diagnosis: a failure here (peak outstanding above the pool override, or more
+// than the pool override worth of grants minted before the first ack) means
+// the driver resolved the window against an empty pool and fell back to the
+// deployment default, so the wired per-pool override never takes effect in
+// production.
 func TestResolvedPoolWindowOverridesDeploymentDefault(t *testing.T) {
 	const poolWindow = 2
 	const deploymentWindow = 8
-	adapter := &scriptAdapter{probeBytes: 100, chunkCount: poolWindow + 3, chunkLen: 10, pipelineAll: true}
+	const chunks = poolWindow + 3
+	adapter := &scriptAdapter{probeBytes: 100, chunkCount: chunks, chunkLen: 10, pipelineAhead: true, window: poolWindow}
 	h := newGWHarnessCfg(t, adapter, gwHarnessCfg{
 		window:     deploymentWindow,
 		deadline:   2 * time.Second,
@@ -418,14 +482,17 @@ func TestResolvedPoolWindowOverridesDeploymentDefault(t *testing.T) {
 		poolReader: gwPoolReader{pool: "cp-pool", window: poolWindow},
 	})
 
-	if err := h.cp.Checkpoint(context.Background(), gwTenant, gwSession); err == nil {
-		t.Fatal("Checkpoint succeeded on a producer overrunning the pool-resolved window, want abort")
+	if err := h.cp.Checkpoint(context.Background(), gwTenant, gwSession); err != nil {
+		t.Fatalf("Checkpoint under a pool-resolved window, want it to pace the producer: %v", err)
 	}
-	if got := h.presigner.minted.Load(); got != int64(poolWindow) {
-		t.Errorf("grants minted = %d, want the pool override %d, not the deployment default %d", got, poolWindow, deploymentWindow)
+	if got := adapter.mintedAtFirstCommit.Load(); got != int64(poolWindow) {
+		t.Errorf("grants minted before the first ack = %d, want the pool override %d, not the deployment default %d", got, poolWindow, deploymentWindow)
 	}
 	if got := h.presigner.peak.Load(); got > int64(poolWindow) {
 		t.Errorf("peak outstanding grants = %d, want <= pool override %d", got, poolWindow)
+	}
+	if got := h.presigner.minted.Load(); got != int64(chunks) {
+		t.Errorf("total grants minted = %d, want %d once the pipeline drained", got, chunks)
 	}
 }
 
