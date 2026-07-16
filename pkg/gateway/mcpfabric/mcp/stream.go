@@ -29,6 +29,16 @@ const AttachToolName = "lenny/attach_session"
 // streaming test can shorten it. spec: §15.2 line 1333.
 var attachKeepAliveInterval = 20 * time.Second
 
+// attachSendTimeout is the §15 OutboundChannel bounded-error-policy
+// timeout (MaxOutboundSendTimeoutMs, default: 100 ms): a write that
+// would block because the subscriber's read loop is behind MUST
+// return within this bound so the caller can close the connection
+// instead of blocking indefinitely on a stalled client. A package var
+// (like attachKeepAliveInterval above) only so the streaming test can
+// shorten it. spec: §7.2 "SSE back-pressure policy"; §15 "Normative
+// back-pressure policy for OutboundChannel implementations".
+var attachSendTimeout = 100 * time.Millisecond
+
 // SessionEventSource is the read side of the §15.1 session event bus the
 // §15.2 Streamable HTTP SSE channel streams from. *sessionevents.Bus
 // satisfies it. Defining the interface here keeps the transport coupled
@@ -155,8 +165,7 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 		}
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	if _, ok := w.(http.Flusher); !ok {
 		s.WriteLennyError(w, req.ID, errInternal, "INTERNAL_ERROR",
 			"response writer does not support streaming", nil)
 		return
@@ -188,9 +197,19 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 	// single protocol-level gap_detected frame ahead of the backlog. The
 	// frame is a stream-control signal, not a SessionEvent, so it carries
 	// no `id:` line. Cursor 0 is a first attach and is never a gap.
+	//
+	// Every write from here on is bounded by attachSendTimeout (the §15
+	// OutboundChannel bounded-error policy): a non-nil return means the
+	// subscriber's read loop is behind such that the write would have
+	// blocked past the bound, so the gateway closes the connection
+	// (returns, running the deferred sub.Close()) instead of blocking the
+	// handler goroutine indefinitely on a stalled client. spec: §7.2 "SSE
+	// back-pressure policy"; §15 OutboundChannel bounded-error policy.
 	if afterSeq > 0 {
 		if oldest, ok := s.attach.Events.OldestRetainedSeq(in.SessionID); ok && oldest > afterSeq+1 {
-			writeMCPGapDetected(w, afterSeq, oldest)
+			if err := writeMCPGapDetected(w, afterSeq, oldest); err != nil {
+				return
+			}
 		}
 	}
 
@@ -198,9 +217,16 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 	// delivery; each frame carries its SeqNum as the SSE id: line so a
 	// later reconnect resumes verbatim.
 	for _, ev := range sub.Backlog {
-		writeMCPSessionEvent(w, ev)
+		if err := writeMCPSessionEvent(w, ev); err != nil {
+			return
+		}
 	}
-	flusher.Flush()
+	// Flush unconditionally so the response headers reach the client
+	// promptly even when the backlog is empty (the loop above wrote
+	// nothing).
+	if err := flushBoundedSSE(w); err != nil {
+		return
+	}
 
 	keepalive := time.NewTicker(attachKeepAliveInterval)
 	defer keepalive.Stop()
@@ -213,8 +239,9 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 			if !open {
 				return
 			}
-			writeMCPSessionEvent(w, ev)
-			flusher.Flush()
+			if err := writeMCPSessionEvent(w, ev); err != nil {
+				return
+			}
 			// Reset the idle timer: keepalive fires only after 20s with
 			// no SessionEvent frame written. spec: §15.2 line 1333.
 			keepalive.Reset(attachKeepAliveInterval)
@@ -222,8 +249,9 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 			// spec: §15.2 line 1333 — `:keepalive\n\n` SSE comment line.
 			// Carries no id:, so it does not affect SeqNum / Last-Event-ID
 			// tracking or the gap_detected contract.
-			fmt.Fprint(w, ":keepalive\n\n")
-			flusher.Flush()
+			if err := writeBoundedSSEFrame(w, []byte(":keepalive\n\n")); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -235,14 +263,16 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 // elicitation/create, notifications/lenny/toolCall, notifications/lenny/
 // error, or the MCP Tasks final-state frame), falling back to the generic
 // notifications/lenny/sessionEvent frame for bus event types outside the
-// closed SessionEventKind enum. spec: §15.2 lines 1331, 1356-1374.
-func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) {
+// closed SessionEventKind enum. The write is bounded by attachSendTimeout
+// (see writeBoundedSSEFrame); a non-nil return means the subscriber's read
+// loop is behind and the caller must close the connection. spec: §15.2
+// lines 1331, 1356-1374; §15 OutboundChannel bounded-error policy.
+func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) error {
 	b := marshalMCPSessionEvent(ev)
 	if b == nil {
-		return
+		return nil
 	}
-	fmt.Fprintf(w, "id: %d\n", ev.Seq)
-	fmt.Fprintf(w, "data: %s\n\n", b)
+	return writeBoundedSSEFrame(w, []byte(fmt.Sprintf("id: %d\ndata: %s\n\n", ev.Seq, b)))
 }
 
 // marshalMCPSessionEvent renders one SessionEvent as the §15.2.1 per-kind
@@ -260,13 +290,55 @@ func marshalMCPSessionEvent(ev sessionevents.Event) []byte {
 // stream-control frame: a `notifications/lenny/gapDetected` JSON-RPC
 // notification carrying {lastSeenSeq, nextSeq}. It carries no `id:` line
 // because it is not a SessionEvent and not part of the SessionEventKind
-// closed enum. spec: §15.2 line 1331.
-func writeMCPGapDetected(w http.ResponseWriter, lastSeen, next uint64) {
+// closed enum. The write is bounded by attachSendTimeout (see
+// writeBoundedSSEFrame). spec: §15.2 line 1331; §15 OutboundChannel
+// bounded-error policy.
+func writeMCPGapDetected(w http.ResponseWriter, lastSeen, next uint64) error {
 	b := marshalMCPGapDetected(lastSeen, next)
 	if b == nil {
-		return
+		return nil
 	}
-	fmt.Fprintf(w, "data: %s\n\n", b)
+	return writeBoundedSSEFrame(w, []byte(fmt.Sprintf("data: %s\n\n", b)))
+}
+
+// writeBoundedSSEFrame writes b to the SSE stream and flushes it within
+// attachSendTimeout. Per §15 ("Normative back-pressure policy for
+// OutboundChannel implementations", bounded-error policy — REQUIRED for
+// connection-coupled adapters such as SSE): "the channel attempts a
+// non-blocking write to the underlying transport. If the write would
+// block (subscriber's read loop is behind), the channel MUST return a
+// non-nil error from Send within 100 ms. The gateway closes the channel
+// on non-nil error." SetWriteDeadline bounds both the frame write and the
+// flush to the underlying connection so a stalled subscriber cannot block
+// the handler goroutine past the timeout.
+//
+// A ResponseWriter that does not support write deadlines (http.
+// ErrNotSupported — the plain flushRecorder the frame-formatting unit
+// tests use, which calls the writers directly rather than through a real
+// connection) falls back to an unbounded write: production traffic always
+// reaches this handler over a real net.Conn, which does support
+// deadlines. spec: §7.2 "SSE back-pressure policy"; §15 OutboundChannel
+// bounded-error policy.
+func writeBoundedSSEFrame(w http.ResponseWriter, b []byte) error {
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Now().Add(attachSendTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	if _, err := w.Write(b); err != nil {
+		return err
+	}
+	return rc.Flush()
+}
+
+// flushBoundedSSE flushes any buffered bytes (e.g. the response headers
+// when the backlog was empty) within attachSendTimeout. See
+// writeBoundedSSEFrame for the bounded-error rationale.
+func flushBoundedSSE(w http.ResponseWriter) error {
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Now().Add(attachSendTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	return rc.Flush()
 }
 
 // marshalMCPGapDetected renders the §15.2 line 1331 gap_detected

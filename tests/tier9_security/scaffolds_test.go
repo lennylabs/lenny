@@ -54,6 +54,7 @@
 package tier9_security_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,11 +87,47 @@ func repoRoot(t *testing.T) string {
 // pentestBundleEnv is the environment variable the §18.33 pen-test
 // replay reads. It points at the JSON findings bundle a third-party
 // pen-test partner delivers at release time (the format is documented
-// on pentest.Bundle). When the variable is unset, TestPentestReplay
-// skips with an external-dependency reason: a partner bundle is a
-// genuine external artifact, not infrastructure this repository can
-// stand up.
+// on pentest.Bundle). When the variable is unset on a non-release run,
+// TestPentestReplay falls back to the internal baseline bundle: a
+// partner bundle is a genuine external artifact, not infrastructure
+// this repository can stand up.
 const pentestBundleEnv = "LENNY_PENTEST_BUNDLE"
+
+// releaseGateEnv is the environment variable the pre-release workflow
+// (.github/workflows/pre-release.yml, the "per release" pen-test
+// cadence TESTING.md documents) sets on its security-pentest job. When
+// it is set, resolvePentestBundlePath refuses to fall back to the
+// internal baseline: a release build must supply the real partner
+// engagement bundle, not silently replay the internal design-review
+// baseline in its place.
+const releaseGateEnv = "LENNY_RELEASE_GATE"
+
+// resolvePentestBundlePath decides which bundle TestPentestReplay
+// loads. bundleEnv and releaseGate are the raw LENNY_PENTEST_BUNDLE and
+// LENNY_RELEASE_GATE environment values; root is the repository root.
+//
+// A supplied partner bundle always wins. Absent one, a release-gate run
+// (releaseGate non-empty) returns an error rather than a path: the
+// Phase 14 exit gate requires the external partner engagement per
+// TESTING.md's "External pen-test: per release" cadence, and silently
+// falling back to the baseline on a release build would let that gate
+// pass without ever replaying the partner's findings. A non-release run
+// (PR, nightly) falls back to the v1 baseline bundle so the driver's
+// structural checks still exercise on every build.
+//
+// spec: 18.33
+func resolvePentestBundlePath(bundleEnv, releaseGate, root string) (path string, baseline bool, err error) {
+	if bundleEnv != "" {
+		return bundleEnv, false, nil
+	}
+	if releaseGate != "" {
+		return "", false, fmt.Errorf(
+			"%s is set but %s is unset: a release build must supply the partner pen-test bundle rather than fall back to the internal baseline",
+			releaseGateEnv, pentestBundleEnv,
+		)
+	}
+	return filepath.Join(root, "tests", "tier9_security", "pentest", "v1-baseline-bundle.json"), true, nil
+}
 
 // §12.9.2 TLS enforcement — covered structurally by:
 //   - tls_test.go (mTLS PKI readiness against the e2e cluster).
@@ -146,32 +183,13 @@ func TestAdmissionSandboxClaimGuard(t *testing.T) {
 		"charts/lenny helm-unittest. Live double-claim exercise on the tier-5 ops backlog.")
 }
 
-// §12.9.4 NetworkPolicy adversarial — agent-namespace egress.
-// The lenny-system half of §12.9.4 is covered by
-// TestNetworkPolicyAdversarial; this scaffold is the agent-pod egress
-// half.
-// §12.9.4 agent-pod egress — covered structurally by:
-//   - network_policy_test.go (lenny-system default-deny against
-//     the e2e cluster).
-//   - pkg/preflight network-policy parity audits
-//     (NET-047/050/057/061/064/065/067/068).
-//   - cmd/lenny-egress-capture (the §12.9.8 sidecar that records
-//     outbound traffic for the credential-leakage probe; unit
-//     tests cover the forward + JSONL capture path).
-//
-// The composite in-pod egress probe needs the cred-shell-echo
-// runtime (shipped at cmd/runtimes/cred-shell-echo) deployed
-// alongside the egress-capture sidecar in the e2e overlay (the
-// agent-workload.yaml wiring landed in commit 3aa580b); the live
-// probe is on the tier-5/9 ops backlog.
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestNetworkPolicyAgentEgress(t *testing.T) {
-	t.Logf("§12.9.4: lenny-system default-deny by network_policy_test.go; NetworkPolicy " +
-		"parity audits by pkg/preflight; egress-capture sidecar by cmd/lenny-egress-capture " +
-		"unit tests. Live in-pod probe on the ops backlog (cred-shell-echo + sidecar wiring " +
-		"shipped in 3aa580b).")
-}
+// §12.9.4 NetworkPolicy adversarial — agent-namespace egress. The
+// lenny-system half of §12.9.4 is covered by TestNetworkPolicyAdversarial;
+// the agent-pod egress half is TestNetworkPolicyAgentEgress in
+// agent_egress_test.go, which schedules a probe pod in lenny-agents and
+// asserts every forbidden destination (internet, Postgres, Redis, a
+// sibling tenant's namespace, the cloud metadata address) times out at
+// the CNI layer.
 
 // §12.9.6 Input fuzzing — covered structurally by:
 //   - pkg/audit, pkg/auth/jwt, pkg/checkpoint, pkg/circuitbreaker,
@@ -290,8 +308,10 @@ func TestSBOMGeneration(t *testing.T) {
 // back as a JSON findings bundle. The driver under
 // tests/tier9_security/pentest/ loads that bundle and asserts every
 // finding is remediated. This test runs the driver against the bundle
-// LENNY_PENTEST_BUNDLE points at, and skips with an external-dependency
-// reason when the variable is unset.
+// LENNY_PENTEST_BUNDLE points at. Outside a release-gate run it falls
+// back to the internal baseline bundle when the variable is unset; see
+// resolvePentestBundlePath and TestPentestReplayReleaseGateRequiresPartnerBundle
+// for the release-gate case, where an unset variable fails instead.
 //
 // spec: 18.33
 // diagnosis: §18.33 pen-test replay failed — the partner findings
@@ -304,17 +324,11 @@ func TestSBOMGeneration(t *testing.T) {
 // committed fixtures; this test is the live replay against a real
 // engagement bundle.
 func TestPentestReplay(t *testing.T) {
-	bundlePath := os.Getenv(pentestBundleEnv)
-	baseline := false
-	if bundlePath == "" {
-		// No external partner bundle supplied — fall back to the v1
-		// baseline bundle that encodes the internal design-review
-		// findings (tests/tier9_security/reviews/*.md) in the partner
-		// schema. Once release engineering ships an engagement bundle,
-		// they point LENNY_PENTEST_BUNDLE at it and the partner bundle
-		// takes precedence.
-		bundlePath = filepath.Join(repoRoot(t), "tests", "tier9_security", "pentest", "v1-baseline-bundle.json")
-		baseline = true
+	bundlePath, baseline, resolveErr := resolvePentestBundlePath(
+		os.Getenv(pentestBundleEnv), os.Getenv(releaseGateEnv), repoRoot(t),
+	)
+	if resolveErr != nil {
+		t.Fatalf("§18.33 pen-test replay: %v", resolveErr)
 	}
 
 	bundle, err := pentest.LoadBundle(bundlePath)
@@ -336,4 +350,52 @@ func TestPentestReplay(t *testing.T) {
 		t.Fatalf("§18.33 pen-test replay failed: %s", res.Summary)
 	}
 	t.Logf("§18.33 pen-test replay: %s", res.Summary)
+}
+
+// The partner-engagement gate itself: a release build (the pre-release
+// workflow's security-pentest job, which carries the "External
+// pen-test: per release" cadence) must not silently replay the
+// internal baseline bundle when no partner bundle is configured. This
+// pins resolvePentestBundlePath's release-gate branch so the gate
+// cannot regress into a silent pass.
+//
+// spec: 18.33
+// diagnosis: §18.33 pen-test replay release-gate check failed —
+// resolvePentestBundlePath must return an error when LENNY_RELEASE_GATE
+// is set and LENNY_PENTEST_BUNDLE is not, so the Phase 14 exit gate
+// fails loudly on a release build that never received a partner bundle,
+// instead of silently passing the internal baseline in its place. A
+// failure here means the release-gate branch stopped rejecting the
+// missing-bundle case, or a non-release run started rejecting it too.
+func TestPentestReplayReleaseGateRequiresPartnerBundle(t *testing.T) {
+	root := repoRoot(t)
+
+	if _, _, err := resolvePentestBundlePath("", "1", root); err == nil {
+		t.Fatalf("§18.33: resolvePentestBundlePath(\"\", %q, ...) = nil error, want an error: "+
+			"a release-gate run with no partner bundle must fail, not fall back to the baseline", "1")
+	}
+
+	path, baseline, err := resolvePentestBundlePath("", "", root)
+	if err != nil {
+		t.Fatalf("§18.33: resolvePentestBundlePath(\"\", \"\", ...) returned an unexpected error for a non-release-gate run: %v", err)
+	}
+	if !baseline {
+		t.Fatalf("§18.33: a non-release-gate run with no partner bundle must fall back to the baseline bundle")
+	}
+	wantBaseline := filepath.Join(root, "tests", "tier9_security", "pentest", "v1-baseline-bundle.json")
+	if path != wantBaseline {
+		t.Fatalf("§18.33: baseline bundle path = %q, want %q", path, wantBaseline)
+	}
+
+	const partnerPath = "/tmp/partner-pentest-bundle.json"
+	path, baseline, err = resolvePentestBundlePath(partnerPath, "1", root)
+	if err != nil {
+		t.Fatalf("§18.33: resolvePentestBundlePath returned an unexpected error when a partner bundle is supplied under the release gate: %v", err)
+	}
+	if baseline {
+		t.Fatalf("§18.33: a supplied partner bundle must not be reported as the baseline")
+	}
+	if path != partnerPath {
+		t.Fatalf("§18.33: bundle path = %q, want the supplied partner bundle path %q", path, partnerPath)
+	}
 }

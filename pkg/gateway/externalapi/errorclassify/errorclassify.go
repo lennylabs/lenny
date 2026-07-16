@@ -118,9 +118,15 @@ var table = map[string]entry{
 	"CIRCUIT_BREAKER_OPEN":        {CategoryPolicy, false},
 	"DELEGATION_CYCLE_DETECTED":   {CategoryPermanent, false},
 	"DELEGATION_BUDGET_EXHAUSTED": {CategoryPolicy, false},
-	"QUOTA_EXCEEDED":              {CategoryPolicy, false},
-	"RATE_LIMITED":                {CategoryPolicy, true},
-	"INTERCEPTOR_REJECTED":        {CategoryPolicy, false},
+	// spec: §8.2 "2a-bis. Effective maxDepth resolution" — a hop
+	// rejected because it would push the delegation chain past the
+	// resolved maxDepth ceiling. PERMANENT and not retryable: the
+	// same chain fails again at the same depth; the caller must
+	// restructure the delegation tree or raise the ceiling.
+	"DELEGATION_DEPTH_EXCEEDED": {CategoryPermanent, false},
+	"QUOTA_EXCEEDED":            {CategoryPolicy, false},
+	"RATE_LIMITED":              {CategoryPolicy, true},
+	"INTERCEPTOR_REJECTED":      {CategoryPolicy, false},
 	// spec: §15.1 line 1008 — an interceptor timeout in a fail-closed
 	// chain is TRANSIENT and retryable, distinct from the POLICY
 	// INTERCEPTOR_REJECTED a deliberate REJECT produces.

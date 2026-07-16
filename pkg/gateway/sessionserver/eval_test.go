@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
@@ -97,6 +98,22 @@ func postEvalAs(t *testing.T, h http.Handler, sessionID string, body sessionserv
 // wired over an in-memory counter. F-10.7.4 / F-11.2.19.
 func evalServerRL(t *testing.T, perSession, perTenant int, seed ...sessionstore.Session) http.Handler {
 	t.Helper()
+	return evalServerRLClock(t, nil, perSession, perTenant, seed...)
+}
+
+// settableClock is a settable clock so a test can advance server time
+// deterministically across a rate-limit window boundary.
+type settableClock struct{ t time.Time }
+
+func (c *settableClock) now() time.Time      { return c.t }
+func (c *settableClock) add(d time.Duration) { c.t = c.t.Add(d) }
+
+// evalServerRLClock is evalServerRL with an injectable clock so a test
+// can drive the eval rate limiter's notion of "now" across a
+// minute-window boundary. A nil clock leaves the server on its default
+// (real) clock.
+func evalServerRLClock(t *testing.T, clock func() time.Time, perSession, perTenant int, seed ...sessionstore.Session) http.Handler {
+	t.Helper()
 	store := memstore.New()
 	for _, s := range seed {
 		if err := store.Create(context.Background(), s); err != nil {
@@ -108,6 +125,7 @@ func evalServerRL(t *testing.T, perSession, perTenant int, seed ...sessionstore.
 		EvalRateLimitCounter:    ratelimit.NewMemory(),
 		EvalPerSessionPerMinute: perSession,
 		EvalPerTenantPerMinute:  perTenant,
+		Clock:                   clock,
 	})
 	return srv.Handler()
 }
@@ -173,6 +191,52 @@ func TestEvalRateLimitPerTenant_spec_10_7_938(t *testing.T) {
 	}
 	if rr.Header().Get("Retry-After") == "" {
 		t.Error("per-tenant 429 must carry a Retry-After header")
+	}
+}
+
+// TestEvalRateLimitSlidingWindowBoundaryEvasion_spec_10_7_938 pins §10.7
+// line 938: the per-session eval-submission rate limit is "enforced by
+// the gateway via Redis sliding-window counters." A sliding-window
+// counter tracks the trailing per-minute interval, so it must still
+// reject a submission that arrives just after a wall-clock minute
+// boundary if the trailing 60s already holds a full quota of prior
+// submissions — a client cannot double its effective rate by
+// front-loading requests at the tail of one window and the head of the
+// next. F-10.7.4 / F-11.2.19.
+func TestEvalRateLimitSlidingWindowBoundaryEvasion_spec_10_7_938(t *testing.T) {
+	// t.Skip: kept as a spec-faithful pin pending a human decision on
+	// whether §10.7 line 938's "Redis sliding-window counters" mandates
+	// literal trailing-window semantics for the eval-submission limit, or
+	// whether — matching the platform's established fixed-window
+	// ratelimit.Counter convention used for every other per-minute rate
+	// limit in the gateway, including the §8.3 messaging limit that
+	// carries the identical "sliding-window" spec phrasing — the spec
+	// wording is descriptive rather than a literal algorithm requirement.
+	// See the still-open TEST-GAPS.md finding on eval rate-limit window-
+	// boundary evasion for the question and blast-radius notes.
+	t.Skip("open question: does the eval rate limiter require a literal sliding window, or is a fixed window (the platform's established convention) the intended reading of §10.7 line 938 — see TEST-GAPS.md")
+
+	clock := &settableClock{t: time.Date(2026, 1, 1, 12, 0, 58, 0, time.UTC)} // 2s before the minute boundary
+	h := evalServerRLClock(t, clock.now, 3, -1, evalSession("sess_1", session.StateRunning))
+	body := sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)}
+
+	// Exhaust the per-session ceiling in the tail of the current window.
+	for i := 0; i < 3; i++ {
+		if rr := postEval(t, h, "sess_1", body); rr.Code != http.StatusCreated {
+			t.Fatalf("submission %d (tail of window): status %d, want 201", i+1, rr.Code)
+		}
+	}
+
+	// Advance 3s, crossing the calendar-minute boundary into the head of
+	// the next fixed window, but still well inside the same trailing 60s
+	// interval as the three submissions above.
+	clock.add(3 * time.Second)
+	rr := postEval(t, h, "sess_1", body)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("submission just after the minute boundary: status %d, want 429 (a sliding window must still count the tail-of-window submissions)", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("429 response must carry a Retry-After header per §10.7 line 938")
 	}
 }
 

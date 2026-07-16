@@ -256,11 +256,22 @@ for (const f of selectResult.selected) {
   let verifyResult = { approved: false, issues: [] }
   let priorIssues = []
   let forcedHuman = false
+  // A finding can take several attempts (a rejected first pass, a
+  // corrected second one); each attempt's own discoveredIssues would
+  // otherwise be lost when a later attempt's implResult overwrites the
+  // earlier one (observed directly: a real discoveredIssue from a
+  // superseded first attempt never made it to the File-discovered-issues
+  // step because only the FINAL implResult was read). Accumulate across
+  // every attempt instead.
+  const discoveredThisFinding = []
   while (attempt < maxAttemptsPerFinding) {
     attempt++
     implResult = await agent(implementPrompt(f, priorIssues), {
       label: f.id + ':impl:' + attempt, phase: 'Close', schema: IMPLEMENT_SCHEMA, effort: 'high',
     })
+    if (implResult && implResult.discoveredIssues && implResult.discoveredIssues.length) {
+      discoveredThisFinding.push.apply(discoveredThisFinding, implResult.discoveredIssues)
+    }
     if (!implResult) {
       // agent() returns null on a terminal API error (auth expiry, rate/usage
       // limit) after retries, not just for this finding but almost certainly
@@ -317,6 +328,12 @@ for (const f of selectResult.selected) {
     implResult = { id: f.id, route: 'needs-human', attempts: attempt, humanQuestion: revertResult.humanQuestion, notes: 'code-fix reverted after verifier veto' }
     verifyResult = { approved: true, issues: [] }
   }
+  if (implResult) {
+    // Replace with the full cross-attempt accumulation so a discovery
+    // from a superseded earlier attempt isn't lost (see the comment
+    // above discoveredThisFinding).
+    implResult.discoveredIssues = discoveredThisFinding
+  }
   closedResults.push({ finding: f, impl: implResult, verify: verifyResult, attempts: attempt })
   log(f.id + ' -> route=' + (implResult ? implResult.route : 'none') + ' approved=' + verifyResult.approved + ' after ' + attempt + ' attempt(s).')
   if (abortedOnTerminalError) {
@@ -338,16 +355,21 @@ for (const f of selectResult.selected) {
 const approvedClosable = closedResults.filter(function (r) {
   return r.verify.approved && r.impl && (r.impl.route === 'test' || r.impl.route === 'code-fix' || r.impl.route === 'moot')
 })
-// A route=test/code-fix/moot approval with no commitSha means the
-// implementer's own commit never actually landed (observed directly: a
-// Bash-tool outage let an implementer finish and pass independent
-// verification without ever running `git commit`). Marking TEST-GAPS.md
-// resolved in that case would record a resolution backed by nothing in
-// git — the exact bookkeeping-vs-reality gap this workflow exists to
-// prevent. Route these to the same stuck/annotate path as a genuine
-// rejection instead of silently resolving them.
-const toResolve = approvedClosable.filter(function (r) { return !!r.impl.commitSha })
-const missingCommit = approvedClosable.filter(function (r) { return !r.impl.commitSha })
+// A route=test/code-fix approval with no commitSha means the implementer's
+// own commit never actually landed (observed directly: a Bash-tool outage
+// let an implementer finish and pass independent verification without ever
+// running `git commit`). Marking TEST-GAPS.md resolved in that case would
+// record a resolution backed by nothing in git — the exact
+// bookkeeping-vs-reality gap this workflow exists to prevent. Route these
+// to the same stuck/annotate path as a genuine rejection instead of
+// silently resolving them. route=moot is exempt from this check: its own
+// contract (see implementPrompt) is "already covered by since-landed work,"
+// which frequently means nothing at all needs to change or be committed —
+// requiring a commitSha there punished a real, verified, legitimately
+// commit-free resolution the same way (observed directly on this run).
+const commitRequiredRoutes = ['test', 'code-fix']
+const toResolve = approvedClosable.filter(function (r) { return r.impl.route === 'moot' || !!r.impl.commitSha })
+const missingCommit = approvedClosable.filter(function (r) { return commitRequiredRoutes.indexOf(r.impl.route) !== -1 && !r.impl.commitSha })
 const needsHuman = closedResults.filter(function (r) { return r.impl && r.impl.route === 'needs-human' })
 // abortedFindings: impl is null because the implementer or verifier agent
 // hit a terminal API error (rate/usage limit, auth expiry) and never
@@ -373,7 +395,7 @@ if (toResolve.length) {
       return { id: r.finding.id, commitSha: r.impl.commitSha, resolutionNote: r.impl.resolutionNote, route: r.impl.route, specCitation: r.impl.specCitation }
     })),
     '',
-    'For each, locate its heading (`grep -n \'^### - \\[ \\] <id> \'` — use the literal id) in TEST-GAPS.md, flip `- [ ]` to `- [x]` and `OPEN` to `RESOLVED <commitSha>`, and replace the five original fields (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test) with a single `- **Resolution:** <resolutionNote>` field, mirroring the existing worked example at T-10.1.11 (grep it in TEST-GAPS.md for the exact tone). For route="moot" findings, phrase the Resolution as "already covered by <what>, found during batch review" rather than implying new work landed. For route="code-fix" findings, the Resolution must state both what the test now pins and what product-code defect was corrected, citing the spec section that made the fix unambiguous.',
+    'For each, locate its heading (`grep -n \'^### - \\[ \\] <id> \'` — use the literal id) in TEST-GAPS.md, flip `- [ ]` to `- [x]` and `OPEN` to `RESOLVED <commitSha>`, and replace the five original fields (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test) with a single `- **Resolution:** <resolutionNote>` field, mirroring the existing worked example at T-10.1.11 (grep it in TEST-GAPS.md for the exact tone). For route="moot" findings, phrase the Resolution as "already covered by <what>, found during batch review" rather than implying new work landed; a moot resolution legitimately has no commitSha of its own when nothing needed to change — if none was given, look up the actual historical commit that landed the covering test/fix via `git log --oneline --all -- <the covering test file the resolutionNote names>` and cite that instead of leaving the RESOLVED marker bare. For route="code-fix" findings, the Resolution must state both what the test now pins and what product-code defect was corrected, citing the spec section that made the fix unambiguous.',
     '',
     'GIT DISCIPLINE: you are already on the batch branch and must stay on it — first confirm `git branch --show-current` is NOT `impl/v1-initial`/`main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: mark <ids> resolved"`.',
     '',
@@ -383,6 +405,16 @@ if (toResolve.length) {
     label: 'mark-resolved', phase: 'Close', effort: 'medium',
     schema: { type: 'object', additionalProperties: false, required: ['markedCount'], properties: { markedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
   })
+  if (!markResult) {
+    // Same terminal-error shape as Annotate/File-discovered-issues below:
+    // the write to TEST-GAPS.md may never have happened (observed
+    // directly — resolvedCount reported >0 in a batch summary while
+    // markResult came back as a bare `null` and the findings stayed
+    // OPEN on disk). Carry the unresolved list forward instead of
+    // losing it in a null.
+    markResult = { markedCount: 0, abortedOnTerminalError: true, pendingResolutions: toResolve.map(function (r) { return { id: r.finding.id, commitSha: r.impl.commitSha, route: r.impl.route } }) }
+    abortedOnTerminalError = true
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -753,7 +753,8 @@
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
         "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
-        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
+        "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -777,7 +778,8 @@
       "title": "Upload Safety",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
-        "pkg/upload/..."
+        "pkg/upload/...",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives"
       ],
       "packages": [
         "pkg/upload"
@@ -839,11 +841,16 @@
         "pkg/delegation/lease/lease_test.go::TestEnforcePolicyCeilingCapsResolved",
         "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling",
         "tests/tier4_integration/multi_agent_testbed_test.go::TestMultiAgentDelegationTestbedPerHopInvariants",
-        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationCycleDetectedRejectsSelfRecursion",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationDepthExceededRejectsChainBeyondCeiling",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationBudgetExhaustedRejectsWidenedFanOutSlice"
       ],
       "packages": [
         "pkg/delegation/cycle",
-        "pkg/delegation/lease"
+        "pkg/delegation/lease",
+        "pkg/gateway/mcpfabric/mcptools",
+        "pkg/gateway/externalapi/errorclassify"
       ],
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the §8.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the §8.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the §8.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the §8.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."
@@ -858,14 +865,15 @@
         "tests/tier2_component/stores/delegationpolicystore_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
         "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility",
-        "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058"
+        "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058",
+        "tests/tier4_integration/delegation_credential_pool_race_test.go::TestDelegateTaskConcurrentCredentialPoolExhaustionRace"
       ],
       "packages": [
         "pkg/delegation/lease",
         "pkg/delegation/policy"
       ],
       "blocked_until_phase": "9",
-      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2."
+      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2. The concurrent credential-pool point-in-time-check race (adversarial case) has a spec-derived test at tests/tier4_integration/delegation_credential_pool_race_test.go, kept t.Skip'd because credentialPropagation has no production implementation to race against yet."
     },
     "8.4": {
       "title": "Approval Modes",
@@ -1013,7 +1021,8 @@
       "tests": [
         "tests/tier2_component/stores/connectorstore_test.go",
         "tests/tier4_integration/connector_oauth_test.go",
-        "tests/tier4_integration/external_mcp_tool_test.go"
+        "tests/tier4_integration/external_mcp_tool_test.go",
+        "tests/tier4_integration/connector_delegation_scope_test.go"
       ],
       "packages": [
         "pkg/connector",
@@ -1174,6 +1183,9 @@
         "tests/tier3_contract/rest_auth/auth_test.go::TestNoCredentialsRejectedWhenAuthRequired",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderTransportAccepted",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgNoneForgeryRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestKeySubstitutionForgedKIDRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgorithmConfusionRS256HeaderRejected",
         "tests/tier2_component/stores/userstore_test.go",
         "tests/tier2_component/stores/customrolestore_test.go",
         "tests/tier5_e2e_kind/auth_modes_test.go::TestStandardBearerGatesSessionCreation",
@@ -1330,7 +1342,8 @@
         "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey",
         "tests/tier2_component/stores/experimentstore_test.go",
         "tests/tier2_component/stores/evalstore_test.go",
-        "tests/tier2_component/evalaggregates/eval_aggregates_test.go"
+        "tests/tier2_component/evalaggregates/eval_aggregates_test.go",
+        "pkg/gateway/sessionserver/eval_test.go::TestEvalRateLimitSlidingWindowBoundaryEvasion_spec_10_7_938"
       ],
       "packages": [
         "pkg/experiment"
@@ -1800,6 +1813,7 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier9_security/audit_integrity_test.go",
+        "tests/tier9_security/blackbox_fuzz_test.go",
         "tests/tier9_security/live_session_test.go",
         "tests/tier9_security/pentest/...",
         "tests/tier9_security/rbac_test.go",
@@ -1927,6 +1941,7 @@
         "tests/tier2_component/migrations/migrations_test.go",
         "tests/tier5_e2e_kind/ingress_test.go",
         "tests/tier9_security/network_policy_test.go",
+        "tests/tier9_security/agent_egress_test.go",
         "tests/tier6_e2e_cloud/managed_elasticache_test.go",
         "tests/tier6_e2e_cloud/managed_rds_test.go",
         "tests/tier6_e2e_cloud/managed_cloudsql_test.go",
@@ -1967,6 +1982,9 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
         "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestSuccessEnvelopeMatchesRFC8693",
         "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestErrorEnvelopeMatchesRFC8693",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgNoneForgeryRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestKeySubstitutionForgedKIDRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgorithmConfusionRS256HeaderRejected",
         "tests/tier3_contract/oauth_token/...",
         "tests/tier2_component/securitycaches/propagation_test.go",
         "tests/tier2_component/stores/connectorcredstore_test.go",
@@ -2016,7 +2034,9 @@
         "pkg/upload/upload_test.go::TestValidateEntrySymlinkRejectsEscape",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsOversizedAggregate",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsTooManyEntries",
-        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio"
+        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives"
       ],
       "packages": [
         "pkg/upload"
@@ -2250,7 +2270,8 @@
         "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
         "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
         "tests/tier3_contract/multiprotocol_journey/journey_test.go",
-        "tests/tier4_integration/multi_protocol_same_deployment_test.go"
+        "tests/tier4_integration/multi_protocol_same_deployment_test.go",
+        "tests/tier4_integration/openai_cross_tenant_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -2863,6 +2884,23 @@
       ],
       "blocked_until_phase": "2",
       "notes": "ImageResolver enforces override > url > default precedence and digest pinning. Spec §18 (build sequence) is currently deferred; this entry captures the §18.1 deliverable named by the prior spec revision."
+    },
+    "18.33": {
+      "title": "Phase 14 — External pen-test replay",
+      "spec_file": "spec/18_build-sequence.md",
+      "tests": [
+        "tests/tier9_security/scaffolds_test.go::TestPentestReplay",
+        "tests/tier9_security/scaffolds_test.go::TestPentestReplayReleaseGateRequiresPartnerBundle",
+        "tests/tier9_security/pentest/driver_test.go::TestLoadExampleBundleParses",
+        "tests/tier9_security/pentest/driver_test.go::TestAssertAllRemediatedPassesCleanBundle",
+        "tests/tier9_security/pentest/driver_test.go::TestParseBundleRejectsMalformed",
+        "tests/tier9_security/pentest/driver_test.go::TestLoadBundleMissingFile"
+      ],
+      "packages": [
+        "tests/tier9_security/pentest"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "TestPentestReplay runs the §18.33 external pen-test driver against the bundle at LENNY_PENTEST_BUNDLE, falling back to the internal v1-baseline-bundle.json on a non-release run. TestPentestReplayReleaseGateRequiresPartnerBundle pins resolvePentestBundlePath's release-gate branch: when LENNY_RELEASE_GATE is set (as .github/workflows/pre-release.yml's security-pentest job sets it), an unset LENNY_PENTEST_BUNDLE fails the test instead of silently falling back to the baseline, so the Phase 14 exit gate cannot pass a release without a real partner engagement bundle."
     },
     "19": {
       "title": "Resolved Decisions",
