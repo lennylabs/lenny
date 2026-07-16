@@ -4347,13 +4347,14 @@ func (x *CheckpointSummary) GetTotalBytes() int64 {
 	return 0
 }
 
-// CheckpointFailed terminates the stream on a failure the gateway cannot
-// otherwise observe because it no longer issues the object-store call: a
-// chunk PUT the object store rejected (carrying the object store's HTTP
+// CheckpointFailed terminates the stream on a chunk PUT the object store
+// rejected, a failure the gateway cannot otherwise observe because it no
+// longer issues the object-store call. It carries the object store's HTTP
 // status and error code so the gateway can map a `kms:`-coded rejection
 // onto a classification-control violation and keep the §12 fail-closed T4
-// posture), or a workspace-size-probe rejection before any grant is
-// minted.
+// posture. A workspace-size-probe rejection is not reported through this
+// frame; it terminates the stream with a gRPC FailedPrecondition status
+// before any grant is minted.
 type CheckpointFailed struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`

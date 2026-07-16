@@ -139,10 +139,12 @@ type AdapterClient interface {
 	// (CheckpointProbe), declares each chunk by index and exact length
 	// (ChunkReady), PUTs the chunk bytes directly to object storage against
 	// the grant, acknowledges the commit (ChunkCommitted), and closes with
-	// CheckpointSummary. A chunk the object store rejects, or a probe that
-	// exceeds the workspace size limit, terminates the stream with
-	// CheckpointFailed carrying the object store's HTTP status and error
-	// code. The adapter never mints a `checkpoint_id`; the id the gateway
+	// CheckpointSummary. A chunk PUT the object store rejects terminates the
+	// stream with CheckpointFailed carrying the object store's HTTP status
+	// and error code. A probe that exceeds the workspace size limit
+	// terminates the stream with a gRPC FailedPrecondition status before any
+	// grant is minted, and carries no CheckpointFailed frame. The adapter
+	// never mints a `checkpoint_id`; the id the gateway
 	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
@@ -563,10 +565,12 @@ type AdapterServer interface {
 	// (CheckpointProbe), declares each chunk by index and exact length
 	// (ChunkReady), PUTs the chunk bytes directly to object storage against
 	// the grant, acknowledges the commit (ChunkCommitted), and closes with
-	// CheckpointSummary. A chunk the object store rejects, or a probe that
-	// exceeds the workspace size limit, terminates the stream with
-	// CheckpointFailed carrying the object store's HTTP status and error
-	// code. The adapter never mints a `checkpoint_id`; the id the gateway
+	// CheckpointSummary. A chunk PUT the object store rejects terminates the
+	// stream with CheckpointFailed carrying the object store's HTTP status
+	// and error code. A probe that exceeds the workspace size limit
+	// terminates the stream with a gRPC FailedPrecondition status before any
+	// grant is minted, and carries no CheckpointFailed frame. The adapter
+	// never mints a `checkpoint_id`; the id the gateway
 	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
