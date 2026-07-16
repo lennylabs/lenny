@@ -225,17 +225,13 @@ type Server struct {
 	// pre-checkpoint workspace-size probe exceed). Nil makes every
 	// metric call a no-op.
 	CheckpointMetrics CheckpointMetrics
-	// CheckpointEvents publishes the §4.4 line 254 `checkpoint.skipped`
-	// session event when the pre-checkpoint workspace-size probe
-	// rejects the run. Nil makes the emission a no-op.
-	CheckpointEvents CheckpointEventEmitter
 	// CheckpointPoolLabel is the pool label stamped onto the §4.4
 	// metric increments (e.g., `claude-code-pool`). Empty omits the
 	// label per metric-emit advisory.
 	CheckpointPoolLabel string
 	// CheckpointLevelLabel is the runtime-integration-level label
-	// stamped onto `lenny_checkpoint_size_exceeded_total` per §4.4
-	// line 254 (one of `basic`, `standard`, `full`, `embedded`).
+	// stamped onto `lenny_checkpoint_storage_failure_total` per §4.4
+	// line 262 (one of `basic`, `standard`, `full`, `embedded`).
 	// Empty omits the label.
 	CheckpointLevelLabel string
 	// CheckpointTriggerLabel is the trigger label stamped onto
@@ -243,17 +239,6 @@ type Server struct {
 	// (one of `periodic`, `pre_scale_down`, `eviction`). Empty omits
 	// the label.
 	CheckpointTriggerLabel string
-	// WorkspaceSize returns the on-disk byte count of the session's
-	// workspace root. Nil disables the §4.4 line 254 pre-checkpoint
-	// workspace-size probe — the kubelet `emptyDir.sizeLimit` is the
-	// backstop. Production wires this against
-	// `pkg/adapter/workspace.Size`.
-	WorkspaceSize WorkspaceSizeFunc
-	// WorkspaceSizeLimitBytes is the §4.4 line 254
-	// `workspaceSizeLimitBytes` per-pool cap. Zero or negative
-	// disables the probe; production sets this to the pool's
-	// configured limit (default 512Mi).
-	WorkspaceSizeLimitBytes int64
 	// Restorer loads the §4.4 workspace checkpoints the Resume RPC
 	// restores from. Nil leaves Resume Unimplemented.
 	Restorer CheckpointSource
