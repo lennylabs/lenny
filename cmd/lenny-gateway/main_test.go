@@ -659,26 +659,29 @@ func TestHardPrunePartialManifests(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(func() time.Time { return base })
 	ctx := context.Background()
 
-	put := func(session string, gen int64) {
+	put := func(checkpointID, session string) {
 		if err := store.Put(ctx, partialmanifeststore.Record{
-			TenantID:               "acme",
-			SessionID:              session,
-			Generation:             gen,
-			PartialObjectKeyPrefix: "/acme/checkpoints/" + session + "/partial/cp/",
-			ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+			TenantID:             "acme",
+			CheckpointID:         checkpointID,
+			SessionID:            session,
+			ChunkObjectKeyPrefix: "/acme/checkpoints/" + session + "/" + checkpointID + "/",
+			ChunkSizeBytes:       16 << 20,
+			ChunkEncoding:        partialmanifeststore.ChunkEncodingTar,
+			CheckpointStartedAt:  base,
+			CheckpointTimeoutAt:  base.Add(90 * time.Second),
 		}); err != nil {
-			t.Fatalf("Put %s/%d: %v", session, gen, err)
+			t.Fatalf("Put %s/%s: %v", checkpointID, session, err)
 		}
 	}
-	put("sess-a", 1)
-	put("sess-b", 1)
-	put("sess-c", 1) // stays active
+	put("cp-a", "sess-a")
+	put("cp-b", "sess-b")
+	put("cp-c", "sess-c") // stays active
 
 	// Soft-delete two rows at base; the third remains active.
-	if err := store.SoftDelete(ctx, "acme", "sess-a", 1); err != nil {
+	if err := store.SoftDelete(ctx, "acme", "cp-a"); err != nil {
 		t.Fatalf("SoftDelete a: %v", err)
 	}
-	if err := store.SoftDelete(ctx, "acme", "sess-b", 1); err != nil {
+	if err := store.SoftDelete(ctx, "acme", "cp-b"); err != nil {
 		t.Fatalf("SoftDelete b: %v", err)
 	}
 
@@ -697,13 +700,13 @@ func TestHardPrunePartialManifests(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("pruned = %d; want 2", n)
 	}
-	if _, err := store.Get(ctx, "acme", "sess-a", 1); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+	if _, err := store.Get(ctx, "acme", "cp-a"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
 		t.Errorf("sess-a still present after hard-prune: %v", err)
 	}
-	if _, err := store.Get(ctx, "acme", "sess-b", 1); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+	if _, err := store.Get(ctx, "acme", "cp-b"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
 		t.Errorf("sess-b still present after hard-prune: %v", err)
 	}
-	if _, err := store.Get(ctx, "acme", "sess-c", 1); err != nil {
+	if _, err := store.Get(ctx, "acme", "cp-c"); err != nil {
 		t.Errorf("active sess-c was pruned: %v", err)
 	}
 }

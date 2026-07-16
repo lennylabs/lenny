@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
@@ -41,15 +42,19 @@ func (s *stubMetrics) IncPartialManifestCleanup(outcome string) {
 	s.outcomes = append(s.outcomes, outcome)
 }
 
-// seedManifest puts a single active manifest row.
-func seedManifest(t *testing.T, store partialmanifeststore.Store, tenant, session, prefix string) partialmanifeststore.Record {
+// seedManifest puts a single active manifest row and returns it.
+func seedManifest(t *testing.T, store partialmanifeststore.Store, tenant, checkpointID, session, prefix string) partialmanifeststore.Record {
 	t.Helper()
+	now := time.Now().UTC()
 	r := partialmanifeststore.Record{
-		TenantID:               tenant,
-		SessionID:              session,
-		Generation:             1,
-		PartialObjectKeyPrefix: prefix,
-		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+		TenantID:             tenant,
+		CheckpointID:         checkpointID,
+		SessionID:            session,
+		ChunkObjectKeyPrefix: prefix,
+		ChunkSizeBytes:       16 << 20,
+		ChunkEncoding:        partialmanifeststore.ChunkEncodingTar,
+		CheckpointStartedAt:  now,
+		CheckpointTimeoutAt:  now.Add(90 * time.Second),
 	}
 	if err := store.Put(context.Background(), r); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -61,18 +66,18 @@ func seedManifest(t *testing.T, store partialmanifeststore.Store, tenant, sessio
 // the prefix and soft-deletes the manifest row.
 func TestCleanupPartialManifestSuccess(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
-	r := seedManifest(t, store, "acme", "s1", "/acme/checkpoints/s1/partial/ck-1/")
+	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
 	deleter := &stubChunkDeleter{}
 	metrics := &stubMetrics{}
 
 	if err := checkpointer.CleanupPartialManifest(context.Background(), store, deleter, r, metrics, false); err != nil {
 		t.Fatalf("CleanupPartialManifest: %v", err)
 	}
-	if len(deleter.prefixes) != 1 || deleter.prefixes[0] != r.PartialObjectKeyPrefix {
-		t.Errorf("chunk deletion prefixes = %v, want [%q]", deleter.prefixes, r.PartialObjectKeyPrefix)
+	if len(deleter.prefixes) != 1 || deleter.prefixes[0] != r.ChunkObjectKeyPrefix {
+		t.Errorf("chunk deletion prefixes = %v, want [%q]", deleter.prefixes, r.ChunkObjectKeyPrefix)
 	}
 
-	row, _ := store.Get(context.Background(), "acme", "s1", 1)
+	row, _ := store.Get(context.Background(), "acme", "cp-1")
 	if row.DeletedAt.IsZero() {
 		t.Error("cleanup did not soft-delete the manifest row")
 	}
@@ -85,14 +90,14 @@ func TestCleanupPartialManifestSuccess(t *testing.T) {
 // §12.5 backstop sweep can retry on the next cycle.
 func TestCleanupPartialManifestMinIOFailure(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
-	r := seedManifest(t, store, "acme", "s1", "/acme/checkpoints/s1/partial/ck-1/")
+	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
 	deleter := &stubChunkDeleter{err: errors.New("minio down")}
 	metrics := &stubMetrics{}
 
 	if err := checkpointer.CleanupPartialManifest(context.Background(), store, deleter, r, metrics, false); err == nil {
 		t.Fatal("expected an error when the chunk deleter fails")
 	}
-	row, _ := store.Get(context.Background(), "acme", "s1", 1)
+	row, _ := store.Get(context.Background(), "acme", "cp-1")
 	if !row.DeletedAt.IsZero() {
 		t.Error("cleanup soft-deleted the row despite the MinIO failure")
 	}
@@ -107,7 +112,7 @@ func TestCleanupPartialManifestMinIOFailure(t *testing.T) {
 // soft-deleted.
 func TestCleanupPartialManifestIsIdempotent(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
-	r := seedManifest(t, store, "acme", "s1", "/acme/checkpoints/s1/partial/ck-1/")
+	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
 	metrics := &stubMetrics{}
 
 	for i := 0; i < 3; i++ {
@@ -130,7 +135,7 @@ func TestCleanupPartialManifestIsIdempotent(t *testing.T) {
 // resume-path cleanups from GC-backstop cleanups.
 func TestCleanupPartialManifestGCCollectedOutcome(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
-	r := seedManifest(t, store, "acme", "s1", "/acme/checkpoints/s1/partial/ck-1/")
+	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
 	metrics := &stubMetrics{}
 
 	if err := checkpointer.CleanupPartialManifest(context.Background(), store, &stubChunkDeleter{}, r, metrics, true); err != nil {
@@ -145,26 +150,27 @@ func TestCleanupPartialManifestGCCollectedOutcome(t *testing.T) {
 // path (tests / dev-mode); the row is still soft-deleted.
 func TestCleanupPartialManifestNilDeleterSkipsMinIO(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
-	r := seedManifest(t, store, "acme", "s1", "/acme/checkpoints/s1/partial/ck-1/")
+	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
 	metrics := &stubMetrics{}
 
 	if err := checkpointer.CleanupPartialManifest(context.Background(), store, nil, r, metrics, false); err != nil {
 		t.Fatalf("CleanupPartialManifest: %v", err)
 	}
-	row, _ := store.Get(context.Background(), "acme", "s1", 1)
+	row, _ := store.Get(context.Background(), "acme", "cp-1")
 	if row.DeletedAt.IsZero() {
 		t.Error("row was not soft-deleted when deleter is nil")
 	}
 }
 
-// spec: §4.4 line 234 — input validation: an empty tenant/session id
-// or prefix is a programming error.
+// spec: §10.1 line 141 — input validation: an empty tenant id,
+// checkpoint id, or chunk_object_key_prefix is a programming error the
+// cleanup path rejects before touching either store.
 func TestCleanupPartialManifestRejectsEmptyFields(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	cases := []partialmanifeststore.Record{
-		{SessionID: "s1", PartialObjectKeyPrefix: "/x/"},
-		{TenantID: "acme", PartialObjectKeyPrefix: "/x/"},
-		{TenantID: "acme", SessionID: "s1"},
+		{CheckpointID: "cp-1", ChunkObjectKeyPrefix: "/x/"},
+		{TenantID: "acme", ChunkObjectKeyPrefix: "/x/"},
+		{TenantID: "acme", CheckpointID: "cp-1"},
 	}
 	for _, r := range cases {
 		if err := checkpointer.CleanupPartialManifest(context.Background(), store, nil, r, nil, false); err == nil {

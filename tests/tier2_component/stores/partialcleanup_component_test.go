@@ -4,7 +4,7 @@
 
 // Component test for the §4.4 partial-checkpoint manifest resume
 // cleanup driven across BOTH real backends at once: a real MinIO
-// container (chunk objects under partial_object_key_prefix) and a
+// container (chunk objects under chunk_object_key_prefix) and a
 // real Postgres container (the manifest row). The tier1
 // partialcleanup_test.go covers CleanupPartialManifest against a
 // stubbed chunk deleter, and partialmanifeststore_test.go covers the
@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 
@@ -35,7 +36,7 @@ import (
 // It walks the prefix with ListObjectsV2 semantics and issues a per-key
 // RemoveObject (DeleteObject) for each object, exactly as §4.4 line 236
 // requires ("delete every chunk object listed under the manifest's
-// partial_object_key_prefix via per-key DeleteObject calls"). MinIO's
+// chunk_object_key_prefix via per-key DeleteObject calls"). MinIO's
 // delete-on-absent semantics make repeated deletion on a vanished key a
 // no-op, which is the independent idempotency the spec relies on.
 type minioPrefixDeleter struct {
@@ -89,7 +90,7 @@ func countObjectsUnderPrefix(t *testing.T, mc *containers.MinIO, prefix string) 
 
 // spec: §4.4 line 236 — "On resume — whether the partial reconstruction
 // succeeds or fails — the gateway MUST delete every chunk object listed
-// under the manifest's partial_object_key_prefix via per-key DeleteObject
+// under the manifest's chunk_object_key_prefix via per-key DeleteObject
 // calls, then soft-delete the Postgres row ... a stale-leader retry, a
 // crash-resumed resume path, or the §12.5 backstop sweep that races the
 // primary cleanup all observe rows_affected == 0 on the second writer and
@@ -110,13 +111,14 @@ func TestPartialManifestResumeCleanupAcrossRealBackends(t *testing.T) {
 
 	tenant := freshTenant(t, ctx, pg)
 	sessID := newUUID(t)
+	checkpointID := newUUID(t)
 	// Object keys carry no leading slash so they match how the store
 	// lays blobs out under `{tenant}/...`.
-	prefix := tenant + "/checkpoints/" + sessID + "/partial/ck-1/"
+	prefix := tenant + "/checkpoints/" + sessID + "/" + checkpointID + "/"
 
-	// Upload two committed chunk objects (partial-{n}.tar) to real MinIO,
+	// Upload two committed chunk objects (chunk-{n}.tar) to real MinIO,
 	// mirroring the §10.1 single-part PutObject chunk-commit model.
-	chunkKeys := []string{prefix + "partial-0.tar", prefix + "partial-1.tar"}
+	chunkKeys := []string{prefix + "chunk-0.tar", prefix + "chunk-1.tar"}
 	for _, key := range chunkKeys {
 		body := []byte("chunk:" + key)
 		if _, err := mc.Client.PutObject(ctx, mc.Bucket, key,
@@ -129,12 +131,16 @@ func TestPartialManifestResumeCleanupAcrossRealBackends(t *testing.T) {
 	}
 
 	// Seed the matching active manifest row in real Postgres.
+	now := time.Now().UTC()
 	record := partialmanifeststore.Record{
-		TenantID:               tenant,
-		SessionID:              sessID,
-		Generation:             1,
-		PartialObjectKeyPrefix: prefix,
-		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+		TenantID:             tenant,
+		CheckpointID:         checkpointID,
+		SessionID:            sessID,
+		ChunkObjectKeyPrefix: prefix,
+		ChunkSizeBytes:       16 << 20,
+		ChunkEncoding:        partialmanifeststore.ChunkEncodingTar,
+		CheckpointStartedAt:  now,
+		CheckpointTimeoutAt:  now.Add(90 * time.Second),
 	}
 	if err := store.Put(ctx, record); err != nil {
 		t.Fatalf("Put manifest: %v", err)
@@ -151,7 +157,7 @@ func TestPartialManifestResumeCleanupAcrossRealBackends(t *testing.T) {
 	if got := countObjectsUnderPrefix(t, mc, prefix); got != 0 {
 		t.Errorf("after cleanup: %d chunk objects remain under prefix, want 0", got)
 	}
-	afterFirst, err := store.Get(ctx, tenant, sessID, 1)
+	afterFirst, err := store.Get(ctx, tenant, checkpointID)
 	if err != nil {
 		t.Fatalf("Get after primary cleanup: %v", err)
 	}
@@ -170,7 +176,7 @@ func TestPartialManifestResumeCleanupAcrossRealBackends(t *testing.T) {
 	if err := checkpointer.CleanupPartialManifest(ctx, store, deleter, record, metrics, true); err != nil {
 		t.Fatalf("GC-backstop CleanupPartialManifest: %v", err)
 	}
-	afterSecond, err := store.Get(ctx, tenant, sessID, 1)
+	afterSecond, err := store.Get(ctx, tenant, checkpointID)
 	if err != nil {
 		t.Fatalf("Get after GC-backstop cleanup: %v", err)
 	}

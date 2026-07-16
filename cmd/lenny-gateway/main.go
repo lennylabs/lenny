@@ -1076,9 +1076,9 @@ func hardPrunePartialManifests(ctx context.Context, store partialmanifeststore.S
 	}
 	pruned := 0
 	for _, r := range expired {
-		if derr := store.HardDelete(ctx, r.TenantID, r.SessionID, r.Generation); derr != nil {
-			log.Printf("lenny-gateway: §12.5 partial-manifest hard-prune row %s/%s gen=%d: %v",
-				r.TenantID, r.SessionID, r.Generation, derr)
+		if derr := store.HardDelete(ctx, r.TenantID, r.CheckpointID); derr != nil {
+			log.Printf("lenny-gateway: §12.5 partial-manifest hard-prune row %s/%s checkpoint=%s: %v",
+				r.TenantID, r.SessionID, r.CheckpointID, derr)
 			continue
 		}
 		pruned++

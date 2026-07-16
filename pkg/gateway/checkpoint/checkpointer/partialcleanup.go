@@ -12,7 +12,7 @@ import (
 
 // PartialChunkDeleter is the §4.4 line 236 MinIO surface the cleanup
 // path uses to remove the chunk objects stored under a partial
-// manifest's `partial_object_key_prefix`. The implementation walks
+// manifest's `chunk_object_key_prefix`. The implementation walks
 // the prefix (`ListObjectsV2` semantics) and `DeleteObject`s each
 // key; MinIO's delete-on-absent semantics make repeated deletions on
 // the same key independently idempotent so a retry never errors on a
@@ -58,7 +58,7 @@ type PartialCleanupMetrics interface {
 
 // CleanupPartialManifest performs the §4.4 line 236 cleanup of a
 // single partial-manifest row: (1) delete every chunk under the
-// row's `partial_object_key_prefix` via per-key `DeleteObject`
+// row's `chunk_object_key_prefix` via per-key `DeleteObject`
 // calls; (2) soft-delete the Postgres row under the
 // `deleted_at IS NULL` predicate; (3) emit the
 // `lenny_partial_manifest_cleanup_total` counter labeled by outcome.
@@ -71,7 +71,7 @@ type PartialCleanupMetrics interface {
 //
 // spec: §4.4 line 236 — "Regardless of reassembly outcome, the
 // gateway MUST delete every chunk object listed under the manifest's
-// partial_object_key_prefix via per-key DeleteObject calls, then
+// chunk_object_key_prefix via per-key DeleteObject calls, then
 // soft-delete the Postgres row".
 func CleanupPartialManifest(
 	ctx context.Context,
@@ -84,20 +84,20 @@ func CleanupPartialManifest(
 	if store == nil {
 		return errors.New("checkpointer: partial-manifest store is required")
 	}
-	if record.TenantID == "" || record.SessionID == "" {
-		return errors.New("checkpointer: tenant and session ids are required")
+	if record.TenantID == "" || record.CheckpointID == "" {
+		return errors.New("checkpointer: tenant id and checkpoint id are required")
 	}
-	if record.PartialObjectKeyPrefix == "" {
-		return errors.New("checkpointer: partial_object_key_prefix is required")
+	if record.ChunkObjectKeyPrefix == "" {
+		return errors.New("checkpointer: chunk_object_key_prefix is required")
 	}
 	if deleter != nil {
-		if _, err := deleter.DeleteByPrefix(ctx, record.PartialObjectKeyPrefix); err != nil {
+		if _, err := deleter.DeleteByPrefix(ctx, record.ChunkObjectKeyPrefix); err != nil {
 			emitOutcome(metrics, PartialCleanupFailedDeleted)
 			return fmt.Errorf("checkpointer: delete chunks under %s: %w",
-				record.PartialObjectKeyPrefix, err)
+				record.ChunkObjectKeyPrefix, err)
 		}
 	}
-	if err := store.SoftDelete(ctx, record.TenantID, record.SessionID, record.Generation); err != nil {
+	if err := store.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
 		emitOutcome(metrics, PartialCleanupFailedDeleted)
 		return fmt.Errorf("checkpointer: soft-delete partial manifest row: %w", err)
 	}
