@@ -3284,6 +3284,7 @@
         "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnRealPostgresConnectionError",
         "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnGatewayAuth401",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier5_e2e_kind/ops_anonymous_rejected_test.go::TestOpsAnonymousRejectedOnDeployedBinary_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsHealthzAnonymousAdmitted_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567",

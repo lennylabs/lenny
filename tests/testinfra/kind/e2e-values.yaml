@@ -329,6 +329,23 @@ global:
   # `required`. The Kind e2e overlay pins a deployment-unique placeholder.
   spiffeTrustDomain: lenny-kind-e2e
 
+# §25.4 line 1567 — "No anonymous access except /healthz." lenny-ops
+# leaves that authentication MUST unenforced when no bearer-trust key is
+# configured: cmd/lenny-ops/main.go buildAuthConfig returns a nil
+# AuthConfig outside production, so the surface admits anonymous callers.
+# Without this the e2e deploy would serve the platform-admin operability
+# APIs (remediation locks, backup, drift, diagnostics) to any anonymous
+# caller and never exercise the §25.4 auth gate end-to-end. Naming the
+# Secret renders --bearer-trust-hmac-key-file onto lenny-ops (and the
+# gateway) and gives lenny-ops a RequireAuth AuthConfig; install.sh
+# creates the Secret (data key `key`, an HMAC key file) before the chart
+# install. global.devMode: true keeps production=false so dev-header auth
+# stays an accepted transport — the existing dev-header e2e callers are
+# unaffected while an anonymous caller is now rejected 401.
+security:
+  oidc:
+    bearerTrustKeySecret: lenny-e2e-bearer-trust-key
+
 # In-cluster data stores. install.sh deploys Postgres, Redis, and MinIO
 # from datastores.yaml into lenny-system and runs the lenny-migrate Job
 # before the chart install. These keys point the gateway and controller
