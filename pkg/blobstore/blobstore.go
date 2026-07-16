@@ -149,8 +149,10 @@ const (
 	// copies) per §4.5 ll. 301-303.
 	ObjectTypeWorkspace ObjectType = "workspace"
 	// ObjectTypeCheckpoint — periodic / eviction / pre-drain
-	// checkpoints per §4.4 line 234, §12.5 ll. 311-313.
-	ObjectTypeCheckpoint ObjectType = "checkpoint"
+	// checkpoints per §4.4 line 234, §12.5 ll. 311-313. The key segment
+	// is `checkpoints` (plural) so the object key matches the §10.1
+	// chunked-checkpoint prefix `/{tenant_id}/checkpoints/{session_id}/`.
+	ObjectTypeCheckpoint ObjectType = "checkpoints"
 	// ObjectTypeTranscript — session conversation transcripts per
 	// §4.4 line 226.
 	ObjectTypeTranscript ObjectType = "transcript"
@@ -232,17 +234,20 @@ func ParseURI(raw string) (URI, error) {
 	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 	var objType ObjectType
 	var session, part string
-	switch len(parts) {
-	case 3:
-		// §12.5 ll. 295 canonical 4-segment form
-		// (`/tenant/object_type/session/part`).
+	switch {
+	case len(parts) >= 3:
+		// §12.5 ll. 295 canonical form
+		// (`/tenant/object_type/session/part...`). Everything after the
+		// session segment is the part id, so a §10.1 nested checkpoint
+		// key (`{checkpoint_id}/chunk-{n}.{enc}`) round-trips instead of
+		// being rejected as a 5-segment path.
 		objType = ObjectType(parts[0])
 		session = parts[1]
-		part = parts[2]
+		part = strings.Join(parts[2:], "/")
 		if !IsValidObjectType(objType) {
 			return URI{}, fmt.Errorf("%w: unknown object_type %q", ErrInvalidURI, parts[0])
 		}
-	case 2:
+	case len(parts) == 2:
 		// Pre-{object_type} legacy form (`/tenant/session/part`).
 		// Default to `upload` because the upload handler is the
 		// dominant emit path under the legacy shape.
@@ -296,10 +301,23 @@ func (u URI) String() string {
 		url.PathEscape(u.TenantID),
 		url.PathEscape(string(objType)),
 		url.PathEscape(u.SessionID),
-		url.PathEscape(u.PartID),
+		escapePartID(u.PartID),
 		int(u.TTL.Seconds()),
 		enc,
 	)
+}
+
+// escapePartID percent-escapes each slash-separated segment of a part
+// id while preserving the separators, so a §10.1 nested checkpoint key
+// (`{checkpoint_id}/chunk-{n}.{enc}`) survives a String → ParseURI
+// round-trip. Escaping the whole part id in one call would collapse its
+// slashes into `%2F` and the parser would then read it as one segment.
+func escapePartID(part string) string {
+	segs := strings.Split(part, "/")
+	for i, seg := range segs {
+		segs[i] = url.PathEscape(seg)
+	}
+	return strings.Join(segs, "/")
 }
 
 // Store is the §4.5 blob-store interface. Implementations are
@@ -339,6 +357,49 @@ type Copier interface {
 	// blob (§4.5 write-once). The two URIs must point at the same
 	// tenant; a cross-tenant Copy returns ErrCrossTenant.
 	Copy(src, dst URI) error
+}
+
+// Presigner extends Store with §13.2 capability minting. The returned
+// Grant is a single-key, single-method, short-expiry capability the
+// gateway hands to an agent pod; the pod issues the object-store call,
+// the ArtifactStore does not. A PresignPut grant additionally binds an
+// exact Content-Length; a PresignGet grant is read-only and is minted
+// only for keys the gateway resolved from a manifest row it owns.
+//
+// The gateway signs the tenant prefix, the HTTP method, and the object
+// key into every grant, so a pod that alters any of them produces a
+// signature mismatch and the object store rejects the request before a
+// byte is written or read. On the SigV4 backends (MinIO, AWS S3) the
+// tenant's SSE-KMS headers and the Content-Length are folded into the
+// signature as well; the gateway returns those signed name→value pairs
+// in Grant.Headers for the grantee to replay verbatim. GCS V4 signed
+// URLs and Azure account-key SAS carry no signed headers, so their T4
+// encryption posture rests on a bucket-default CMEK (GCS) or a
+// container default encryption scope (Azure) rather than on the grant.
+//
+// spec: §13.2 (capability model); §12.5 (per-provider T4 mint
+// invariants).
+type Presigner interface {
+	// PresignPut mints a single-key PUT capability for u bound to the
+	// exact contentLength, expiring after ttl.
+	PresignPut(u URI, contentLength int64, ttl time.Duration) (Grant, error)
+	// PresignGet mints a single-key read-only GET capability for u,
+	// expiring after ttl.
+	PresignGet(u URI, ttl time.Duration) (Grant, error)
+}
+
+// Grant is a §13.2 object-store capability. Headers carries the exact
+// name→value pairs the backend folded into the signature (the SSE-KMS
+// header set and Content-Length on a T4 PresignPut for the SigV4
+// backends), which the grantee MUST replay verbatim on the request or
+// the object store rejects it with SignatureDoesNotMatch. Headers is
+// empty when the backend signs no request headers.
+//
+// spec: §13.2 (capability model).
+type Grant struct {
+	URL       string
+	Headers   map[string]string
+	ExpiresAt time.Time
 }
 
 // Tombstoner extends Store with the §12.5 soft-delete + hard-prune
@@ -903,6 +964,37 @@ func (s *TenantScoped) Copy(src, dst URI) error {
 	return cop.Copy(src, dst)
 }
 
+// PresignPut implements Presigner with the §12.5 ll. 295 tenant-prefix
+// invariant: the caller-tenant gate runs at mint time so a scoped
+// handle cannot sign a capability for a foreign tenant's key.
+//
+// spec: §13.2 (capability model); §12.5 ll. 295.
+func (s *TenantScoped) PresignPut(u URI, contentLength int64, ttl time.Duration) (Grant, error) {
+	if err := s.check(u); err != nil {
+		return Grant{}, err
+	}
+	p, ok := s.inner.(Presigner)
+	if !ok {
+		return Grant{}, fmt.Errorf("blobstore: underlying store %T does not implement Presigner", s.inner)
+	}
+	return p.PresignPut(u, contentLength, ttl)
+}
+
+// PresignGet implements Presigner with the §12.5 ll. 295 tenant-prefix
+// invariant, mirroring PresignPut on the read path.
+//
+// spec: §13.2 (capability model); §12.5 ll. 295.
+func (s *TenantScoped) PresignGet(u URI, ttl time.Duration) (Grant, error) {
+	if err := s.check(u); err != nil {
+		return Grant{}, err
+	}
+	p, ok := s.inner.(Presigner)
+	if !ok {
+		return Grant{}, fmt.Errorf("blobstore: underlying store %T does not implement Presigner", s.inner)
+	}
+	return p.PresignGet(u, ttl)
+}
+
 // DeleteByTenant implements TenantPrefixDeleter with the §12.5 ll. 295
 // tenant-prefix invariant: a store bound to tenant T only permits
 // DeleteByTenant(T); a request to bulk-delete a different tenant
@@ -929,6 +1021,7 @@ func (s *TenantScoped) DeleteByUser(_ context.Context, _, _ string) (int, error)
 }
 
 var (
-	_ Eraser = (*MemoryStore)(nil)
-	_ Eraser = (*TenantScoped)(nil)
+	_ Eraser    = (*MemoryStore)(nil)
+	_ Eraser    = (*TenantScoped)(nil)
+	_ Presigner = (*TenantScoped)(nil)
 )

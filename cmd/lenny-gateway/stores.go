@@ -1072,6 +1072,22 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	log.Printf("lenny-gateway: §4.5/§17.9.3 artifact store backend=%q (§12.5 SSEKeyResolver wired; T4 tenant-scoped SSE-KMS)",
 		objectStoreBackendName(*objectStorageProvider, *minioEndpoint))
 
+	// §13.2 capability model: a pod-based deployment mints presigned
+	// checkpoint capabilities against the resolved backend, so that
+	// backend MUST implement blobstore.Presigner. The check is on the
+	// resolved store rather than on the configured provider name because
+	// provider=minio with an empty --minio-endpoint falls back to the
+	// in-memory store, which deliberately omits Presigner. Fail closed at
+	// startup rather than at the first checkpoint attempt.
+	//
+	// spec: §13.2 (capability model).
+	if *f.agentNamespace != "" {
+		if _, ok := objectStore.(blobstore.Presigner); !ok {
+			log.Fatalf("lenny-gateway: §13.2 pod-based sandboxes (--agent-namespace=%q) require a Presigner-capable artifact store, but the resolved backend %T does not implement it (an empty --minio-endpoint falls back to the in-memory store); configure a signing object-store backend",
+				*f.agentNamespace, objectStore)
+		}
+	}
+
 	// §12.5 ll. 309-321 artifact_store catalog. The Postgres-backed
 	// catalog is the surface the §12.5 GC sweep, the §11.2 size
 	// accounting, the §12.8 erasure orchestrator, and the §12.5 legal-

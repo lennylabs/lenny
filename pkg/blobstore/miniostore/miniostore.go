@@ -20,6 +20,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -146,6 +148,7 @@ var (
 	_ blobstore.Store      = (*Store)(nil)
 	_ blobstore.Copier     = (*Store)(nil)
 	_ blobstore.Tombstoner = (*Store)(nil)
+	_ blobstore.Presigner  = (*Store)(nil)
 )
 
 // New builds a MinIO-backed Store. It validates the configuration and
@@ -288,35 +291,12 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	// SSE-KMS request because the tenant-scoped key is unavailable.
 	//
 	// spec: §12.5 (T4 per-tenant KMS key lifecycle, bullet 2).
-	var t4Write bool
-	if s.sseResolver != nil {
-		keyID, requireKey, err := s.sseResolver(u.TenantID)
-		t4Write = requireKey
-		switch {
-		case err != nil && requireKey:
-			// §12.5 ll. 303: T4 tenant whose key is unreachable at
-			// the resolver level. Fail closed.
-			s.fireKMSUnavailable(u.TenantID)
-			return "", fmt.Errorf("%w: tenant=%s: %v", ErrClassificationControlViolation, u.TenantID, err)
-		case err != nil:
-			return "", fmt.Errorf("miniostore: SSE key resolver for tenant %s: %w", u.TenantID, err)
-		case requireKey && keyID == "":
-			// Resolver says "this tenant requires a per-tenant key"
-			// but returned no key id — fail closed.
-			s.fireKMSUnavailable(u.TenantID)
-			return "", fmt.Errorf("%w: tenant=%s: resolver returned empty keyID", ErrClassificationControlViolation, u.TenantID)
-		case keyID != "":
-			sse, sseErr := encrypt.NewSSEKMS(keyID, nil)
-			if sseErr != nil {
-				if requireKey {
-					s.fireKMSUnavailable(u.TenantID)
-					return "", fmt.Errorf("%w: tenant=%s: build SSE-KMS: %v",
-						ErrClassificationControlViolation, u.TenantID, sseErr)
-				}
-				return "", fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", u.TenantID, sseErr)
-			}
-			opts.ServerSideEncryption = sse
-		}
+	sse, t4Write, err := s.resolveSSE(u.TenantID)
+	if err != nil {
+		return "", err
+	}
+	if sse != nil {
+		opts.ServerSideEncryption = sse
 	}
 	// Buffer the body so retries can replay the bytes. PutObject with
 	// a -1 size accepts any io.Reader; once we know the bytes we use
@@ -480,6 +460,105 @@ func (s *Store) fireKMSUnavailable(tenantID string) {
 	}
 }
 
+// resolveSSE resolves the §12.5 ll. 297-303 per-tenant SSE-KMS object
+// for tenantID and reports whether the tenant requires envelope
+// encryption (T4). A T4 tenant whose key is unreachable fails closed
+// with ErrClassificationControlViolation and fires the KMS-unavailable
+// hook. A nil sse with requireEnvelope false is the T3 / no-key path,
+// where the bucket default applies. Put, Copy, and PresignPut share it
+// so the fail-closed contract has one implementation.
+//
+// spec: §12.5 ll. 297-303.
+func (s *Store) resolveSSE(tenantID string) (sse encrypt.ServerSide, requireEnvelope bool, err error) {
+	if s.sseResolver == nil {
+		return nil, false, nil
+	}
+	keyID, requireKey, rerr := s.sseResolver(tenantID)
+	switch {
+	case rerr != nil && requireKey:
+		s.fireKMSUnavailable(tenantID)
+		return nil, true, fmt.Errorf("%w: tenant=%s: %v", ErrClassificationControlViolation, tenantID, rerr)
+	case rerr != nil:
+		return nil, false, fmt.Errorf("miniostore: SSE key resolver for tenant %s: %w", tenantID, rerr)
+	case requireKey && keyID == "":
+		s.fireKMSUnavailable(tenantID)
+		return nil, true, fmt.Errorf("%w: tenant=%s: resolver returned empty keyID", ErrClassificationControlViolation, tenantID)
+	case keyID != "":
+		built, buildErr := encrypt.NewSSEKMS(keyID, nil)
+		if buildErr != nil {
+			if requireKey {
+				s.fireKMSUnavailable(tenantID)
+				return nil, true, fmt.Errorf("%w: tenant=%s: build SSE-KMS: %v",
+					ErrClassificationControlViolation, tenantID, buildErr)
+			}
+			return nil, false, fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", tenantID, buildErr)
+		}
+		return built, requireKey, nil
+	}
+	return nil, requireKey, nil
+}
+
+// PresignPut implements blobstore.Presigner. It mints a single-key
+// SigV4 PUT capability for u via PresignHeader, folding the tenant's
+// SSE-KMS headers (§12.5) and the exact Content-Length into the
+// signature so a pod that strips a header or sends a different body
+// length is rejected with SignatureDoesNotMatch before a byte lands.
+// The signed name→value pairs are returned in Grant.Headers for the
+// adapter to replay verbatim. A T4 tenant whose key is unreachable
+// fails closed exactly as Put does.
+//
+// spec: §13.2 (capability model); §12.5 (T4 SSE-KMS binding).
+func (s *Store) PresignPut(u blobstore.URI, contentLength int64, ttl time.Duration) (blobstore.Grant, error) {
+	key := objectKey(u)
+	sse, _, err := s.resolveSSE(u.TenantID)
+	if err != nil {
+		return blobstore.Grant{}, err
+	}
+	extra := http.Header{}
+	if sse != nil {
+		sse.Marshal(extra)
+	}
+	extra.Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	signed, err := s.client.PresignHeader(context.Background(), http.MethodPut, s.bucket, key, ttl, url.Values{}, extra)
+	if err != nil {
+		return blobstore.Grant{}, fmt.Errorf("miniostore: presign put %s: %w", key, err)
+	}
+	return blobstore.Grant{
+		URL:       signed.String(),
+		Headers:   flattenHeader(extra),
+		ExpiresAt: s.clock().Add(ttl),
+	}, nil
+}
+
+// PresignGet implements blobstore.Presigner. It mints a single-key
+// read-only GET capability for u via PresignedGetObject. A GET
+// capability signs no request headers, so Grant.Headers is empty.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	key := objectKey(u)
+	signed, err := s.client.PresignedGetObject(context.Background(), s.bucket, key, ttl, url.Values{})
+	if err != nil {
+		return blobstore.Grant{}, fmt.Errorf("miniostore: presign get %s: %w", key, err)
+	}
+	return blobstore.Grant{
+		URL:       signed.String(),
+		Headers:   map[string]string{},
+		ExpiresAt: s.clock().Add(ttl),
+	}, nil
+}
+
+// flattenHeader collapses an http.Header into the single-value map a
+// Grant carries. Every signed header the gateway folds in is
+// single-valued, so the first value per key is the signed value.
+func flattenHeader(h http.Header) map[string]string {
+	m := make(map[string]string, len(h))
+	for k := range h {
+		m[k] = h.Get(k)
+	}
+	return m
+}
+
 // Get implements blobstore.Store. The caller closes the returned reader.
 // A tombstoned blob — §12.5 soft-deleted but not yet hard-pruned —
 // reads as ErrNotFound so soft-delete behaves identically to physical
@@ -581,31 +660,12 @@ func (s *Store) Copy(src, dst blobstore.URI) error {
 	// rejects the SSE-KMS rewrap because the tenant key is unavailable.
 	//
 	// spec: §12.5 (T4 per-tenant KMS key lifecycle, bullet 2).
-	var t4Write bool
-	if s.sseResolver != nil {
-		keyID, requireKey, err := s.sseResolver(dst.TenantID)
-		t4Write = requireKey
-		switch {
-		case err != nil && requireKey:
-			s.fireKMSUnavailable(dst.TenantID)
-			return fmt.Errorf("%w: tenant=%s: %v", ErrClassificationControlViolation, dst.TenantID, err)
-		case err != nil:
-			return fmt.Errorf("miniostore: SSE key resolver for tenant %s: %w", dst.TenantID, err)
-		case requireKey && keyID == "":
-			s.fireKMSUnavailable(dst.TenantID)
-			return fmt.Errorf("%w: tenant=%s: resolver returned empty keyID", ErrClassificationControlViolation, dst.TenantID)
-		case keyID != "":
-			sse, sseErr := encrypt.NewSSEKMS(keyID, nil)
-			if sseErr != nil {
-				if requireKey {
-					s.fireKMSUnavailable(dst.TenantID)
-					return fmt.Errorf("%w: tenant=%s: build SSE-KMS: %v",
-						ErrClassificationControlViolation, dst.TenantID, sseErr)
-				}
-				return fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", dst.TenantID, sseErr)
-			}
-			dstOpts.Encryption = sse
-		}
+	sse, t4Write, err := s.resolveSSE(dst.TenantID)
+	if err != nil {
+		return err
+	}
+	if sse != nil {
+		dstOpts.Encryption = sse
 	}
 	if _, err := s.client.CopyObject(ctx, dstOpts, srcOpts); err != nil {
 		// §12.5 bullet 2: a T4 derive whose tenant-scoped KMS key is

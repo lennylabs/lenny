@@ -174,6 +174,61 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	return ref, nil
 }
 
+// RecordPut inserts the §12.5 artifact_store catalog row for an object
+// the caller already wrote through a presigned capability (the object
+// bytes never pass through this decorator, so Put's insert path does
+// not run). It is an INSERT only: the §11.2 Reserve / Adjust quota
+// reconciliation stays with the driver that issued the Reserve, exactly
+// as it does for the client-upload path, so RecordPut performs no quota
+// work. size is the gateway-confirmed byte count (from Store.Stat).
+//
+// spec: §12.5 ll. 309 — every artifact_store row is inserted alongside
+// the bucket object; §11.2 (quota reconciliation stays with the driver).
+func (s *Store) RecordPut(u blobstore.URI, size int64, mimeType string) error {
+	rec := artifactcatalog.Record{
+		URI:          u.String(),
+		TenantID:     u.TenantID,
+		SessionID:    u.SessionID,
+		PartID:       u.PartID,
+		MimeType:     mimeType,
+		SizeBytes:    size,
+		State:        artifactcatalog.StateLive,
+		ArtifactType: ArtifactTypeFor(u.ObjectType),
+		CreatedAt:    s.now(),
+	}
+	if err := s.catalog.Insert(context.Background(), rec); err != nil {
+		if s.logOnFail != nil {
+			s.logOnFail(u.String(), err)
+		}
+		return fmt.Errorf("cataloging: record put catalog row for %s: %w", u.String(), err)
+	}
+	return nil
+}
+
+// PresignPut forwards §13.2 capability minting to the inner store when
+// it implements blobstore.Presigner.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignPut(u blobstore.URI, contentLength int64, ttl time.Duration) (blobstore.Grant, error) {
+	p, ok := s.inner.(blobstore.Presigner)
+	if !ok {
+		return blobstore.Grant{}, fmt.Errorf("cataloging: inner store %T does not implement Presigner", s.inner)
+	}
+	return p.PresignPut(u, contentLength, ttl)
+}
+
+// PresignGet forwards §13.2 read-capability minting to the inner store
+// when it implements blobstore.Presigner.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	p, ok := s.inner.(blobstore.Presigner)
+	if !ok {
+		return blobstore.Grant{}, fmt.Errorf("cataloging: inner store %T does not implement Presigner", s.inner)
+	}
+	return p.PresignGet(u, ttl)
+}
+
 // Get forwards to the inner store.
 func (s *Store) Get(u blobstore.URI) (blobstore.BlobInfo, io.ReadCloser, error) {
 	return s.inner.Get(u)

@@ -50,7 +50,7 @@ func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 	}
 	cat := fakeCatalog{rows: []artifactcatalog.Record{
 		{URI: "lenny-blob://acme/workspace/sess_c/part_1", State: artifactcatalog.StateLive, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
-		{URI: "lenny-blob://acme/checkpoint/sess_c/ck_1", State: artifactcatalog.StateLive, ArtifactType: artifactcatalog.ArtifactTypeCheckpoint},
+		{URI: "lenny-blob://acme/checkpoints/sess_c/ck_1", State: artifactcatalog.StateLive, ArtifactType: artifactcatalog.ArtifactTypeCheckpoint},
 		{URI: "lenny-blob://acme/workspace/sess_c/part_gone", State: artifactcatalog.StateSoftDeleted, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
 	}}
 	srv := New(memstore.New(), Options{Clock: taskResultClock, Transcripts: tx, Artifacts: cat})

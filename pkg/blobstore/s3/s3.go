@@ -23,11 +23,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
@@ -44,6 +46,13 @@ type objectClient interface {
 	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	ListObjectsV2(ctx context.Context, in *s3.ListObjectsV2Input, opts ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 	CopyObject(ctx context.Context, in *s3.CopyObjectInput, opts ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
+}
+
+// presignAPI narrows the S3 presign-client surface the §13.2 capability
+// minting uses. *s3.PresignClient satisfies it.
+type presignAPI interface {
+	PresignPutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error)
+	PresignGetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error)
 }
 
 // SSEKeyResolver returns the per-tenant SSE-KMS key id for an object.
@@ -77,6 +86,7 @@ type Config struct {
 // Store implements blobstore.Store + blobstore.Tombstoner over S3.
 type Store struct {
 	client                objectClient
+	presign               presignAPI
 	bucket                string
 	resolver              SSEKeyResolver
 	onArtifactUploadError func(tenantID, errorType string)
@@ -177,6 +187,7 @@ var (
 	_ blobstore.Store      = (*Store)(nil)
 	_ blobstore.Tombstoner = (*Store)(nil)
 	_ blobstore.Copier     = (*Store)(nil)
+	_ blobstore.Presigner  = (*Store)(nil)
 )
 
 // New returns a Store. Returns an error when cfg.Bucket is empty or
@@ -188,8 +199,10 @@ func New(cfg Config) (*Store, error) {
 	if _, err := cfg.AWSConfig.Credentials.Retrieve(context.Background()); err != nil {
 		return nil, fmt.Errorf("blobstore/s3: resolve AWS credentials: %w", err)
 	}
+	cli := s3.NewFromConfig(cfg.AWSConfig)
 	return &Store{
-		client:   s3.NewFromConfig(cfg.AWSConfig),
+		client:   cli,
+		presign:  s3.NewPresignClient(cli),
 		bucket:   cfg.Bucket,
 		resolver: cfg.SSEKeyResolver,
 	}, nil
@@ -297,6 +310,80 @@ func (s *Store) Copy(src, dst blobstore.URI) error {
 		return fmt.Errorf("blobstore/s3: CopyObject: %w", err)
 	}
 	return nil
+}
+
+// PresignPut implements blobstore.Presigner. It mints a single-key
+// SigV4 PUT capability over a PutObjectInput whose SSE-KMS fields and
+// ContentLength are set, so the object store rejects a request that
+// strips a signed header or changes the body length. The SDK-reported
+// signed headers (minus Host, which the HTTP client sets itself) are
+// returned in Grant.Headers for the adapter to replay.
+//
+// spec: §13.2 (capability model); §12.5 (T4 SSE-KMS binding).
+func (s *Store) PresignPut(u blobstore.URI, contentLength int64, ttl time.Duration) (blobstore.Grant, error) {
+	if s.presign == nil {
+		return blobstore.Grant{}, errors.New("blobstore/s3: presign client not configured")
+	}
+	key := objectKey(u)
+	in := &s3.PutObjectInput{
+		Bucket:        awssdk.String(s.bucket),
+		Key:           awssdk.String(key),
+		ContentLength: awssdk.Int64(contentLength),
+	}
+	if err := s.applySSE(u, func(kmsID string) {
+		in.ServerSideEncryption = types.ServerSideEncryptionAwsKms
+		in.SSEKMSKeyId = awssdk.String(kmsID)
+	}); err != nil {
+		return blobstore.Grant{}, err
+	}
+	signed, err := s.presign.PresignPutObject(context.Background(), in, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return blobstore.Grant{}, fmt.Errorf("blobstore/s3: presign put %s: %w", key, err)
+	}
+	return blobstore.Grant{
+		URL:       signed.URL,
+		Headers:   signedHeaderMap(signed.SignedHeader),
+		ExpiresAt: time.Now().UTC().Add(ttl),
+	}, nil
+}
+
+// PresignGet implements blobstore.Presigner. It mints a single-key
+// read-only GET capability; a GET signs no SSE-KMS headers, so
+// Grant.Headers is empty.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	if s.presign == nil {
+		return blobstore.Grant{}, errors.New("blobstore/s3: presign client not configured")
+	}
+	key := objectKey(u)
+	signed, err := s.presign.PresignGetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: awssdk.String(s.bucket),
+		Key:    awssdk.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return blobstore.Grant{}, fmt.Errorf("blobstore/s3: presign get %s: %w", key, err)
+	}
+	return blobstore.Grant{
+		URL:       signed.URL,
+		Headers:   map[string]string{},
+		ExpiresAt: time.Now().UTC().Add(ttl),
+	}, nil
+}
+
+// signedHeaderMap collapses the SDK's signed-header set into the
+// single-value map a Grant carries, dropping Host (the HTTP client
+// populates it from the URL, and a signed Host is not one the adapter
+// sets by hand).
+func signedHeaderMap(h http.Header) map[string]string {
+	m := make(map[string]string, len(h))
+	for k := range h {
+		if strings.EqualFold(k, "Host") {
+			continue
+		}
+		m[k] = h.Get(k)
+	}
+	return m
 }
 
 // Get implements blobstore.Store.

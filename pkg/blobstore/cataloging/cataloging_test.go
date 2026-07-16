@@ -278,6 +278,102 @@ func TestPutInsertsCatalogRow(t *testing.T) {
 	}
 }
 
+// TestRecordPutInsertsCheckpointRowWithoutObjectBytes pins the §12.5
+// post-hoc catalog surface the presigned-checkpoint path uses: the chunk
+// bytes are PUT directly to the object store through a capability, never
+// through this decorator, so the driver calls RecordPut with the
+// gateway-confirmed size to insert the artifact_store row. Without the
+// row the §11.2 storage-quota SUM would drift after a Redis restart while
+// the delete-side decrement still fired for those bytes.
+//
+// spec: §12.5 ll. 309 (artifact_store row); §13.2 (capability model).
+func TestRecordPutInsertsCheckpointRowWithoutObjectBytes(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "s_1",
+		PartID:     "ck_9f2a/chunk-00000.tar",
+		TTL:        time.Hour,
+	}
+	if err := store.RecordPut(u, 4096, "application/x-tar"); err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+
+	row, err := cat.Get(context.Background(), u.String())
+	if err != nil {
+		t.Fatalf("catalog Get after RecordPut: %v", err)
+	}
+	if row.URI != u.String() || row.TenantID != "acme" || row.SessionID != "s_1" ||
+		row.PartID != "ck_9f2a/chunk-00000.tar" {
+		t.Errorf("catalog row mismatch: %+v", row)
+	}
+	if row.SizeBytes != 4096 {
+		t.Errorf("catalog SizeBytes = %d, want 4096 (the gateway-confirmed size)", row.SizeBytes)
+	}
+	if row.ArtifactType != artifactcatalog.ArtifactTypeCheckpoint {
+		t.Errorf("catalog ArtifactType = %q, want %q", row.ArtifactType, artifactcatalog.ArtifactTypeCheckpoint)
+	}
+	if row.State != artifactcatalog.StateLive {
+		t.Errorf("catalog State = %q, want %q", row.State, artifactcatalog.StateLive)
+	}
+
+	// RecordPut is an INSERT only: it never wrote object bytes, so the
+	// inner store holds nothing for the key.
+	if _, err := inner.Stat(u); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("inner.Stat after RecordPut = %v, want ErrNotFound (RecordPut writes no object)", err)
+	}
+}
+
+// TestCatalogForwardsPresignerToInner pins that the decorator forwards
+// §13.2 capability minting to a Presigner-capable inner store, and fails
+// closed when the inner store omits Presigner.
+//
+// spec: §13.2 (capability model).
+func TestCatalogForwardsPresignerToInner(t *testing.T) {
+	cat := newFakeCatalog()
+
+	// The in-memory store omits Presigner, so the decorator must reject.
+	memBacked := New(blobstore.NewMemoryStore(nil), cat, Options{})
+	u := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s", PartID: "ck/chunk-00000.tar", TTL: time.Hour}
+	if _, err := memBacked.PresignPut(u, 10, time.Minute); err == nil {
+		t.Error("PresignPut through a non-presigning inner returned nil error")
+	}
+	if _, err := memBacked.PresignGet(u, time.Minute); err == nil {
+		t.Error("PresignGet through a non-presigning inner returned nil error")
+	}
+
+	// A presigning inner store forwards.
+	presigning := New(&catalogFakePresigner{MemoryStore: blobstore.NewMemoryStore(nil)}, cat, Options{})
+	grant, err := presigning.PresignPut(u, 10, time.Minute)
+	if err != nil {
+		t.Fatalf("PresignPut through a presigning inner: %v", err)
+	}
+	if grant.URL == "" {
+		t.Error("forwarded PresignPut returned an empty grant URL")
+	}
+	if _, err := presigning.PresignGet(u, time.Minute); err != nil {
+		t.Errorf("PresignGet through a presigning inner: %v", err)
+	}
+}
+
+// catalogFakePresigner is a blobstore.Store that also implements
+// Presigner, used to assert the decorator forwards the mint.
+type catalogFakePresigner struct {
+	*blobstore.MemoryStore
+}
+
+func (f *catalogFakePresigner) PresignPut(u blobstore.URI, _ int64, _ time.Duration) (blobstore.Grant, error) {
+	return blobstore.Grant{URL: "https://store.example/put/" + u.PartID}, nil
+}
+
+func (f *catalogFakePresigner) PresignGet(u blobstore.URI, _ time.Duration) (blobstore.Grant, error) {
+	return blobstore.Grant{URL: "https://store.example/get/" + u.PartID}, nil
+}
+
 // spec: §12.5 — the catalog must reflect the ObjectType the URI
 // embeds so the GC sweep selects rows by artifact class.
 func TestPutMapsObjectTypeToArtifactType(t *testing.T) {

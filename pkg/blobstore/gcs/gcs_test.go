@@ -131,6 +131,11 @@ func (f *fakeGCS) List(_ context.Context) ([]string, error) {
 	return out, nil
 }
 
+func (f *fakeGCS) SignedURL(object, method string, expires time.Time) (string, error) {
+	return "https://gcs.example/" + object + "?x-goog-method=" + method +
+		"&x-goog-expires=" + expires.UTC().Format(time.RFC3339), nil
+}
+
 func newStore(t *testing.T) (*Store, *fakeGCS) {
 	t.Helper()
 	f := newFakeGCS()
