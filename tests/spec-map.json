@@ -3334,7 +3334,8 @@
         "tests/tier4_integration/event_stream_test.go::TestOpsEventStreamReadSurfaceE2E",
         "tests/tier4_integration/event_stream_test.go::TestOpsEventSubscriptionWebhookSSRFE2E",
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable",
-        "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery"
+        "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery",
+        "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown"
       ],
       "packages": [
         "pkg/ops/events",
