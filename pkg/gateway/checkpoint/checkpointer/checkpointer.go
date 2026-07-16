@@ -15,10 +15,14 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // ErrNoBinding reports that the checkpointer holds no pod binding for
@@ -330,7 +334,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		return ErrNoBinding
 	}
 	startedAt := c.now()
-	result, err := binding.Adapter.Checkpoint(ctx, sessionID, c.Deadline)
+	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding.Adapter, trigger)
 	elapsed := c.now().Sub(startedAt).Seconds()
 	// spec: §4.4 line 254 — observe the duration histogram regardless
 	// of outcome so operators see slow checkpoints that also failed
@@ -347,7 +351,10 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		// the post-snapshot rotation observes the committed state.
 		legalHold = row.LegalHold
 		row.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
-			Ref:       result.CheckpointID,
+			// spec: §10.1 line 130 — the gateway mints the
+			// checkpoint_id and records it as the snapshot ref; the
+			// adapter never mints one.
+			Ref:       checkpointID,
 			Source:    source,
 			Timestamp: now,
 			// spec: §7.3 line 397 / §10.1 coordinator-handoff step 0 —
@@ -357,7 +364,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 			// preStop tiered-cap selection both have a non-NULL input.
 			// A zero size is treated the same as NULL by the storage
 			// layer and the preStop fallback. F-7.3.21.
-			Bytes: result.SizeBytes,
+			Bytes: sizeBytes,
 		}
 		// spec: §4.4 line 258 — "The gateway tracks
 		// last_successful_checkpoint_at on the session record in
@@ -373,8 +380,67 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	// rotation is per (session, slot) — binding.SlotID is the empty
 	// string for the single-workspace path and the bound slot id for
 	// concurrent-workspace pods.
-	c.recordRetention(ctx, tenantID, sessionID, binding.SlotID, result.CheckpointID, legalHold)
+	c.recordRetention(ctx, tenantID, sessionID, binding.SlotID, checkpointID, legalHold)
 	return nil
+}
+
+// driveCheckpoint runs the gateway side of the §4.7 / §10.1
+// bidirectional Checkpoint stream far enough to record a workspace
+// snapshot. It mints the checkpoint_id (§10.1 line 130 — the gateway
+// mints it, never the adapter), opens the stream against the bound pod,
+// and sends CheckpointStart carrying the id and the typed trigger. It
+// then consumes server frames until the adapter closes the attempt with
+// CheckpointSummary (returning the gateway-minted id and the
+// adapter-reported total byte count) or with CheckpointFailed or a
+// stream error (returning the failure). The intermediate CheckpointProbe,
+// ChunkReady, and ChunkCommitted frames advance the chunk grant/confirm
+// loop; the record path here waits for the terminal frame.
+//
+// spec: §10.1 lines 130-132 — the gateway mints the checkpoint_id, opens
+// the stream, and the adapter reports the confirmed byte total in
+// CheckpointSummary.
+func (c *Checkpointer) driveCheckpoint(ctx context.Context, client *adapterclient.Client, trigger checkpoint.Trigger) (string, int64, error) {
+	// Cancel the stream on return so its RPC is torn down once the
+	// terminal frame is read. c.Deadline additionally bounds the whole
+	// attempt: a stalled stream cancels rather than blocking the sweep
+	// indefinitely. Zero lets the adapter apply its own §4.4 default.
+	var cancel context.CancelFunc
+	if c.Deadline > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.Deadline)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	defer cancel()
+	stream, err := client.Checkpoint(ctx)
+	if err != nil {
+		return "", 0, fmt.Errorf("open checkpoint stream: %w", err)
+	}
+	checkpointID := uuid.NewString()
+	start := &adapterv1.CheckpointClientMessage{
+		Msg: &adapterv1.CheckpointClientMessage_Start{
+			Start: &adapterv1.CheckpointStart{
+				CheckpointId: checkpointID,
+				Trigger:      trigger.Proto(),
+				DeadlineMs:   c.Deadline.Milliseconds(),
+			},
+		},
+	}
+	if err := stream.Send(start); err != nil {
+		return "", 0, fmt.Errorf("send checkpoint start: %w", err)
+	}
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			return "", 0, fmt.Errorf("recv checkpoint frame: %w", err)
+		}
+		if summary := msg.GetSummary(); summary != nil {
+			return checkpointID, summary.GetTotalBytes(), nil
+		}
+		if failed := msg.GetFailed(); failed != nil {
+			return "", 0, fmt.Errorf("adapter checkpoint failed: %s (http %d, code %q)",
+				failed.GetReason(), failed.GetHttpStatus(), failed.GetErrorCode())
+		}
+	}
 }
 
 // observeDuration emits the §4.4 line 254 histogram observation.
