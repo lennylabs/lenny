@@ -433,10 +433,15 @@ func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 	index := cr.GetIndex()
 	length := cr.GetLength()
 	// spec: §10.1 line 130 — the gateway mints a chunk capability only after
-	// the intent-row INSERT commits. A ChunkReady seen before the Probe wrote
-	// the row (or on a manifest-disabled dev-mode path) gets no capability, so
+	// the intent-row INSERT commits. The gate is unconditional: a ChunkReady
+	// seen before the Probe wrote the row, or on a manifest-disabled dev-mode
+	// path where onProbe returns before writing any row, gets no capability, so
 	// no PUT can orphan an object under a checkpoint_id with no manifest row.
-	if c.Manifests != nil && !d.intentWritten {
+	// Qualifying the gate on c.Manifests != nil would let a config with a
+	// Presigner but no manifest store sign a real PUT against object storage
+	// with no manifest row and no reclaimer, the exact orphan this gate exists
+	// to prevent.
+	if !d.intentWritten {
 		d.abort(partialmanifeststore.ReasonStreamTruncated,
 			fmt.Sprintf("chunk %d ready before the intent row was written", index))
 		return

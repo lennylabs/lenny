@@ -820,6 +820,114 @@ func TestDriverFencesChunkReadyOnIntentRow_spec_10_1(t *testing.T) {
 	}
 }
 
+// probeThenChunkAdapter sends a Probe followed by a ChunkReady, then records
+// whether the gateway replied with an Abort or minted a Grant. It stands in
+// for a chunked producer running against a gateway whose manifest store is
+// unwired: onProbe returns before writing any intent row, so the capability
+// gate must still refuse to sign.
+type probeThenChunkAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	reply chan string
+}
+
+func (a *probeThenChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+	if _, err := stream.Recv(); err != nil { // consume CheckpointStart
+		return err
+	}
+	if err := stream.Send(&adapterv1.CheckpointServerMessage{
+		Msg: &adapterv1.CheckpointServerMessage_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: 4096}},
+	}); err != nil {
+		return err
+	}
+	if err := stream.Send(&adapterv1.CheckpointServerMessage{
+		Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: 0, Length: 10}},
+	}); err != nil {
+		return err
+	}
+	msg, err := stream.Recv()
+	if err != nil {
+		a.reply <- fmt.Sprintf("recv-err:%v", err)
+		return nil
+	}
+	switch {
+	case msg.GetAbort() != nil:
+		a.reply <- "abort:" + msg.GetAbort().GetReason()
+	case msg.GetGrant() != nil:
+		a.reply <- "grant"
+	default:
+		a.reply <- "other"
+	}
+	return nil
+}
+
+// countingPresigner records how many PUT capabilities it signed so a test can
+// assert the gateway minted none.
+type countingPresigner struct {
+	mu     sync.Mutex
+	signed int
+}
+
+func (p *countingPresigner) PresignPut(u blobstore.URI, contentLength int64, ttl time.Duration) (blobstore.Grant, error) {
+	p.mu.Lock()
+	p.signed++
+	p.mu.Unlock()
+	return presignerFake{}.PresignPut(u, contentLength, ttl)
+}
+
+func (p *countingPresigner) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	return presignerFake{}.PresignGet(u, ttl)
+}
+
+func (p *countingPresigner) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.signed
+}
+
+// spec: §10.1 line 130 — the chunk-capability gate is unconditional: no PUT
+// capability may be minted before an intent row commits. A gateway with a
+// Presigner wired but no manifest store writes no intent row (onProbe returns
+// early), so a ChunkReady must still receive an Abort and sign nothing;
+// otherwise a real PUT capability would orphan an object under a checkpoint_id
+// with no manifest row and no reclaimer.
+//
+// diagnosis: the gate qualified minting on c.Manifests != nil, so the
+// manifest-disabled path (intentWritten stays false) skipped the gate entirely
+// and fell through to sign a real grant. Against the pre-fix code the adapter
+// receives a Grant and the presigner signs once; the fix makes it receive a
+// stream_truncated Abort with zero capabilities signed.
+func TestDriverFencesChunkReadyWhenManifestsUnwired_spec_10_1(t *testing.T) {
+	adapter := &probeThenChunkAdapter{reply: make(chan string, 1)}
+	client := dialAdapter(t, adapter)
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: client})
+	sessions := memstore.New()
+	runningSession(t, sessions, "acme", "s1")
+	presigner := &countingPresigner{}
+	cp := &checkpointer.Checkpointer{
+		Sessions:    sessions,
+		Registry:    registry,
+		Presigner:   presigner, // wired, but Manifests is nil
+		ObjectStore: blobstore.NewMemoryStore(time.Now),
+		Deadline:    5 * time.Second,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("Checkpoint succeeded on a ChunkReady with no intent row, want failure")
+	}
+	select {
+	case got := <-adapter.reply:
+		if got != "abort:"+partialmanifeststore.ReasonStreamTruncated {
+			t.Errorf("adapter reply = %q, want an %s abort (no grant without an intent row)",
+				got, partialmanifeststore.ReasonStreamTruncated)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("adapter received no reply to its ChunkReady")
+	}
+	if n := presigner.count(); n != 0 {
+		t.Errorf("presigner signed %d capabilities, want 0 (no grant before an intent row)", n)
+	}
+}
+
 // captureDriverMetrics records the driver's gateway-side counter fires.
 type captureDriverMetrics struct {
 	sizeExceeded   int
