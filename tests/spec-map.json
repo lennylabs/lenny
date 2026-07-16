@@ -3284,6 +3284,7 @@
         "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnRealPostgresConnectionError",
         "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnGatewayAuth401",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier5_e2e_kind/ops_anonymous_rejected_test.go::TestOpsAnonymousRejectedOnDeployedBinary_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsHealthzAnonymousAdmitted_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567",
@@ -3325,6 +3326,7 @@
         "tests/tier3_contract/ops_endpoints/events_test.go",
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
+        "tests/tier2_component/eventstream/read_surface_tenant_rbac_test.go::TestOpsEventStreamReadSurfaceTenantScopedCallerIsolation",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
@@ -3332,7 +3334,8 @@
         "tests/tier4_integration/event_stream_test.go::TestOpsEventStreamReadSurfaceE2E",
         "tests/tier4_integration/event_stream_test.go::TestOpsEventSubscriptionWebhookSSRFE2E",
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable",
-        "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery"
+        "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery",
+        "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown"
       ],
       "packages": [
         "pkg/ops/events",
@@ -3421,7 +3424,10 @@
         "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry",
-        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender"
+        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesFixedPhaseDurations",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta"
       ],
       "packages": [
         "pkg/upgrade",
@@ -3481,6 +3487,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/backup/backup_test.go",
+        "tests/tier2_component/stores/backup_minio_roundtrip_test.go::TestBackupMinIORoundTrip",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
         "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",

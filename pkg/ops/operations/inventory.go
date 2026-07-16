@@ -320,9 +320,12 @@ func enrichOperations(ctx context.Context, ops []Operation, clock func() time.Ti
 // preserved; only etaSeconds/etaConfidence/etaMethod and
 // stalledForSeconds are (re)derived. A terminal or paused operation is
 // left untouched — a completed operation is not stalled, and a paused
-// one is awaiting an operator by design (§25.2 line 391).
+// one is awaiting an operator by design (§25.2 line 391). For a
+// platform_upgrade the method chain is pinned to historical_p50 then
+// fixed_phase_durations so the Inventory envelope matches the direct
+// GET /v1/admin/platform/upgrade/status endpoint (§25.8 line 3496).
 //
-// spec: §25.2 lines 357-401.
+// spec: §25.2 lines 357-401, §25.8 line 3496.
 func enrichProgress(ctx context.Context, op *Operation, clock func() time.Time, baselines BaselineStore) {
 	if op == nil || op.Progress == nil || op.Status != StatusInProgress {
 		return
@@ -333,15 +336,31 @@ func enrichProgress(ctx context.Context, op *Operation, clock func() time.Time, 
 	}
 	pr := op.Progress
 	in := ETAInputs{
-		Now:               now,
-		StartedAt:         op.StartedAt,
-		CurrentStep:       pr.CurrentStep,
-		CurrentStepDetail: pr.CurrentStepDetail,
-		CompletedSteps:    pr.CompletedSteps,
-		TotalSteps:        pr.TotalSteps,
-		Percent:           pr.Percent,
-		Rate:              pr.RateMetric,
-		ExpectedCadence:   ExpectedCadence(op.Kind),
+		Now:                now,
+		StartedAt:          op.StartedAt,
+		CurrentStep:        pr.CurrentStep,
+		CurrentStepDetail:  pr.CurrentStepDetail,
+		CompletedSteps:     pr.CompletedSteps,
+		TotalSteps:         pr.TotalSteps,
+		Percent:            pr.Percent,
+		Rate:               pr.RateMetric,
+		ExpectedCadence:    ExpectedCadence(op.Kind),
+		FixedPhaseDuration: FixedPhaseDuration(op.Kind, pr.CurrentStep),
+	}
+	if op.Kind == KindPlatformUpgrade {
+		// spec: §25.8 line 3496 fixes the platform_upgrade ETA chain at
+		// historical_p50 then fixed_phase_durations. Its percent is a discrete
+		// phase index, not the size/rate signal Compute's linear_extrapolation
+		// and rate_based methods assume, so the step-derived percent and rate
+		// must not feed the ETA selection — they would otherwise win over
+		// fixed_phase_durations and diverge from the direct
+		// GET /v1/admin/platform/upgrade/status envelope
+		// (upgradeservice.FullProgress). The descriptive percent the source
+		// set on pr is preserved below; only the ETA inputs are suppressed.
+		in.Percent = nil
+		in.CompletedSteps = nil
+		in.TotalSteps = nil
+		in.Rate = nil
 	}
 	if pr.LastProgressAt != "" {
 		if t, err := time.Parse(time.RFC3339, pr.LastProgressAt); err == nil {
