@@ -394,6 +394,128 @@ func TestDriverSupersedesPriorAbortedAttempt_spec_10_1(t *testing.T) {
 	}
 }
 
+// spec: §11.2 line 35 — reservation release is exactly-once and guarded:
+// when a next attempt supersedes a retained 'timeout' resume-aid row whose
+// reservation was already released on its own deadline-fire arm, the guarded
+// UPDATE reports rows_affected == 0 and the tenant storage counter is NOT
+// decremented a second time.
+//
+// diagnosis: supersedePriorAttempts discarded the rows-affected return and
+// applied the counter Adjust whenever ReleaseReservation returned no error,
+// double-decrementing the counter for bytes the deadline-fire arm had
+// already released. Against the pre-fix code the counter reads 10 (the
+// second reservation of 20 minus the wrongful 20-byte decrement plus the
+// retained 10); the fix keeps it at 30.
+func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) {
+	// The next attempt completes cleanly; the scenario under test is what it
+	// does to the counter while superseding the retained timeout row.
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30)
+
+	// Inject a retained 'timeout' resume-aid row for the same (session, slot)
+	// whose reservation was already released on its own deadline-fire arm
+	// (ReservationReleasedAt set, reserved 30, 10 bytes confirmed). Those 10
+	// confirmed bytes are the only storage this row still accounts for, so
+	// the tenant counter starts at 10.
+	released := time.Now().Add(-time.Minute)
+	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
+		TenantID:               "acme",
+		CheckpointID:           "cp-timeout",
+		SessionID:              sid,
+		SlotID:                 partialmanifeststore.SlotDefault,
+		Partial:                true,
+		ManifestReason:         partialmanifeststore.ReasonTimeout,
+		ChunkObjectKeyPrefix:   "/acme/checkpoint/s1/cp-timeout/",
+		ReservedBytes:          30,
+		WorkspaceBytesUploaded: 10,
+		ReservationReleasedAt:  released,
+	}); err != nil {
+		t.Fatalf("seed retained timeout row: %v", err)
+	}
+	if err := h.quota.Set(context.Background(), "acme", 10); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	// The retained row's reservation was already released, so superseding it
+	// must not touch the counter. The counter is the retained 10 plus the
+	// second attempt's confirmed 20, reconciled to 0 net at completion = 30.
+	used, _ := h.quota.Used(context.Background(), "acme")
+	if used != 30 {
+		t.Errorf("storage counter = %d, want 30 (no double release of the retained row)", used)
+	}
+	if m.superseded != 1 {
+		t.Errorf("supersede counter fired %d times, want 1", m.superseded)
+	}
+}
+
+// ctxHonoringManifests fails Finalise and ReleaseReservation when the
+// supplied context is already cancelled or expired, mirroring pgstore and
+// storagequota (which honour ctx) rather than the ctx-ignoring MemoryStore.
+// It exercises the abort-arm cleanup running on a context detached from the
+// attempt's cancelled deadline context.
+type ctxHonoringManifests struct {
+	*partialmanifeststore.MemoryStore
+}
+
+func (s ctxHonoringManifests) Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.MemoryStore.Finalise(ctx, tenantID, checkpointID, partial, reason)
+}
+
+func (s ctxHonoringManifests) ReleaseReservation(ctx context.Context, tenantID, checkpointID string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return s.MemoryStore.ReleaseReservation(ctx, tenantID, checkpointID)
+}
+
+// spec: §10.1 line 132 — every abort arm finalises the intent row
+// partial = true with its manifest_reason and releases the reservation the
+// attempt did not keep, even though a latched abort cancels the attempt's
+// stream context before the terminal handler runs.
+//
+// diagnosis: finaliseAbort and reconcile issued their durable writes on the
+// per-attempt context, which abort() cancels via d.cancel() before the
+// reader reaches the terminal handler. Against a store that honours ctx the
+// Finalise and ReleaseReservation then failed on the dead context, leaving
+// the row 'in_progress' with the reservation leaked. The fix runs the
+// cleanup on a context detached from the cancelled attempt context.
+func TestDriverAbortFinalisesOnDetachedContext_spec_10_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    20,
+		chunkLens:     []int64{10, 10},
+		putBytes:      map[int]int64{0: 25}, // over-size confirm latches an abort and cancels d.ctx
+		truncateAfter: -1,
+	}, 1<<30)
+	// Swap in a store that honours ctx cancellation so the abort arm's
+	// finalisation on the cancelled attempt context would fail if it did not
+	// detach.
+	h.cp.Manifests = ctxHonoringManifests{h.manifests}
+
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded despite an over-size chunk, want abort")
+	}
+	rec := latestManifest(t, h, "acme", sid)
+	if rec.ManifestReason != partialmanifeststore.ReasonQuotaExceeded {
+		t.Errorf("manifest_reason = %q, want quota_exceeded (row was not finalised on the detached context)", rec.ManifestReason)
+	}
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after an abort arm")
+	}
+	if rec.ReservationReleasedAt.IsZero() {
+		t.Errorf("reservation was not released on the abort arm's detached context")
+	}
+}
+
 // captureDriverMetrics records the driver's gateway-side counter fires.
 type captureDriverMetrics struct {
 	sizeExceeded   int

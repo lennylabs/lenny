@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,6 +32,14 @@ const DefaultChunkSizeBytes = 16 << 20
 // chunkMimeType is the content type recorded for every checkpoint chunk
 // object; the chunks are opaque tar (or tar.gz) blocks.
 const chunkMimeType = "application/octet-stream"
+
+// cleanupTimeout bounds the detached context on which a terminal abort or
+// deadline-fire arm commits its durable manifest finalisation, reservation
+// release, and chunk sweep. The attempt's own d.ctx is already cancelled or
+// deadline-expired on those arms (a latched abort cancels the stream; a
+// deadline fire is what drove stream.Recv to return), so the cleanup writes
+// run on a fresh short-lived context detached from that cancellation.
+const cleanupTimeout = 15 * time.Second
 
 // StorageQuota is the §11.2 reservation seam the upload driver reserves
 // the probed workspace size against before it mints any grant and
@@ -319,12 +328,15 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 	}
 	// Release the superseded attempt's outstanding reservation and sweep
 	// its chunk objects before Put soft-deletes the row inside the INSERT
-	// transaction (spec: §10.1 supersede-on-write).
-	if _, rerr := c.Manifests.ReleaseReservation(d.ctx, prior.TenantID, prior.CheckpointID); rerr == nil {
-		if c.Quota != nil {
-			_ = c.Quota.Adjust(d.ctx, prior.TenantID,
-				-(prior.ReservedBytes - prior.WorkspaceBytesUploaded))
-		}
+	// transaction (spec: §10.1 supersede-on-write). The counter decrement is
+	// applied only when the guarded UPDATE reports rows_affected == 1, so a
+	// row whose reservation was already released (a retained 'timeout' resume
+	// aid this attempt supersedes) reports rows_affected == 0 and is not
+	// decremented a second time (spec: §11.2 line 35 — reservation release is
+	// exactly-once and guarded).
+	if rows, rerr := c.Manifests.ReleaseReservation(d.ctx, prior.TenantID, prior.CheckpointID); rerr == nil && rows == 1 && c.Quota != nil {
+		_ = c.Quota.Adjust(d.ctx, prior.TenantID,
+			-(prior.ReservedBytes - prior.WorkspaceBytesUploaded))
 	}
 	if c.ChunkDeleter != nil && prior.ChunkObjectKeyPrefix != "" {
 		_, _ = c.ChunkDeleter.DeleteByPrefix(d.ctx, prior.ChunkObjectKeyPrefix)
@@ -506,7 +518,7 @@ func (d *uploadDriver) onSummary(s *adapterv1.CheckpointSummary) (string, int64,
 			false, partialmanifeststore.ReasonComplete); err != nil {
 			return "", 0, fmt.Errorf("checkpointer: finalise complete: %w", err)
 		}
-		d.reconcile(confirmedBytes)
+		d.reconcile(d.ctx, confirmedBytes)
 	}
 	return d.checkpointID, total, nil
 }
@@ -640,29 +652,43 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	}
 	confirmed := d.confirmedBytes
 	d.mu.Unlock()
-	if err := c.Manifests.Finalise(d.ctx, d.tenantID, d.checkpointID, true, reason); err != nil {
+	// Commit the durable finalisation, reservation release, and chunk sweep
+	// on a context detached from the attempt's already-cancelled or
+	// deadline-expired d.ctx. Against a store that honours ctx these writes
+	// would otherwise fail on the dead context, leaving the row
+	// manifest_reason='in_progress' with a leaked reservation and unswept
+	// chunks (spec: §10.1 line 132 — every abort arm finalises partial=true
+	// and releases the reservation the attempt did not keep).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(d.ctx), cleanupTimeout)
+	defer cancel()
+	if err := c.Manifests.Finalise(ctx, d.tenantID, d.checkpointID, true, reason); err != nil {
 		return fmt.Errorf("checkpointer: finalise partial (%s): %w", reason, err)
 	}
-	d.reconcile(confirmed)
+	d.reconcile(ctx, confirmed)
 	// A deadline-fire (timeout) row is retained for the resume path; every
 	// other abort arm's chunks are swept because no resume will consume
 	// them (spec: §10.1 line 157 / §3 abort-arm sweep).
 	if reason != partialmanifeststore.ReasonTimeout && c.ChunkDeleter != nil && d.prefix != "" {
-		_, _ = c.ChunkDeleter.DeleteByPrefix(d.ctx, d.prefix)
+		_, _ = c.ChunkDeleter.DeleteByPrefix(ctx, d.prefix)
 	}
 	return nil
 }
 
 // reconcile releases the unconfirmed portion of the reservation exactly
 // once, so an aborted checkpoint charges the tenant only for the chunks
-// it confirmed and a complete one for its confirmed total.
-func (d *uploadDriver) reconcile(confirmed int64) {
+// it confirmed and a complete one for its confirmed total. The counter
+// decrement is applied only when the guarded UPDATE reports
+// rows_affected == 1 (spec: §11.2 line 35 — reservation release is
+// exactly-once and guarded). The caller passes the context the durable
+// write runs on: the live attempt context on the complete path, a detached
+// cleanup context on an abort arm whose d.ctx is already cancelled.
+func (d *uploadDriver) reconcile(ctx context.Context, confirmed int64) {
 	c := d.c
-	rows, err := c.Manifests.ReleaseReservation(d.ctx, d.tenantID, d.checkpointID)
+	rows, err := c.Manifests.ReleaseReservation(ctx, d.tenantID, d.checkpointID)
 	if err != nil || rows != 1 || c.Quota == nil {
 		return
 	}
-	_ = c.Quota.Adjust(d.ctx, d.tenantID, -(d.reservedBytes - confirmed))
+	_ = c.Quota.Adjust(ctx, d.tenantID, -(d.reservedBytes - confirmed))
 }
 
 // releaseReservation releases the reservation on an early abort before
