@@ -121,7 +121,7 @@ Across 132 audited units: **1679 findings** — 504 High, 756 Medium, 269 Low, 1
 - [§13.4 Upload Security](#t-13.4) — 4H 4M 2L 1I — Archive extraction moved gateway-side and trust-boundary/metric gaps closed; wire-contract, tier9, and cross-deployment coverage still thin
 - [§13.5 Delegation Chain Content Security](#t-13.5) — 3H 5M 2L 1I — No integration/e2e/contract/chaos coverage of §13.5 content-security phases through the wired gateway binary
 - [§14 Workspace Plan Schema](#t-14) — 3H 6M 2L 1I — §14 workspace plan: all 12 findings still open; no suggested test files landed on disk since 2026-06-03
-- [§15.1 REST API](#t-15.1) — 4H 8M 3L 1I — Admin REST plane still lacks real-OIDC/Postgres component tests; OpenAPI/scope/dryRun gaps closed, pagination/etag now unit-only.
+- [§15.1 REST API](#t-15.1) — 4H 9M 3L 1I — Admin REST plane still lacks real-OIDC/Postgres component tests; OpenAPI/scope/dryRun gaps closed, pagination/etag now unit-only.
 - [§15.2 MCP API](#t-15.2) — 7H 4M 2L 1I — MCP streaming (attach_session, SSE, per-kind projection, resume) now implemented and tested; the §15.2.1 third-party matrix, validate-gate wiring, coordinator-handoff reattach, and MCP schema conformance remain open.
 - [§15.3 Internal Control API (Custom Protocol)](#t-15.3) — 2H 2M 1L 1I — Gateway-dials-pod-adapter mTLS handshake still unverified above unit level; only the reverse callback channel gained a real test
 - [§15.4 Runtime Adapter Specification](#t-15.4) — 5H 9M 2L 1I — High-severity gaps remain: no Kind/cloud e2e adapter transport, MCP/REST/A2A fidelity untested, blob-dereference path unverified.
@@ -189,7 +189,7 @@ Across 132 audited units: **1679 findings** — 504 High, 756 Medium, 269 Low, 1
 - [Theme — Real End-to-End User Journeys](#t-theme-user-journeys) — 6H 4M 1L 1I — All 12 user-journey e2e gaps still open; none of the 13 suggested test files exist on disk.
 - [Theme — Deployment Combination Coverage](#t-theme-deployment-matrix) — 2H 0M 1L 1I — 9 of 14 findings resolved; open: sandboxed-isolation infra (T-DEP.1), CheckpointSink wiring (T-DEP.5), a discovered kube(t) nil-panic gap (T-DEP.14), and the tier-6 cross-provider vacuous-pass observation (T-DEP.13), all needs-human or observational
 - [Theme — Adversarial and Abuse Scenarios](#t-theme-adversarial) — 4H 6M 2L 1I — Adversarial theme: none of the 12 suggested tests landed on disk; all 13 findings remain OPEN verbatim.
-- [Theme — Integrated Testbed Scenarios](#t-theme-testbed) — 6H 5M 4L 1I — T-BED.6 resolved (048e279d conformance battery+fidelity matrix now live); 13 testbed-combination gaps remain open
+- [Theme — Integrated Testbed Scenarios](#t-theme-testbed) — 6H 6M 6L 1I — T-BED.6 resolved (048e279d conformance battery+fidelity matrix now live); 11 testbed-combination gaps remain open
 
 ### Coverage meta-analysis
 - [Coverage meta-analysis](#t-meta)
@@ -6319,6 +6319,13 @@ Counts: 4 High, 6 Medium, 2 Low, 1 Info.
 - **Dependencies:** Requires triaging whether the store's grant-timestamp defaulting or the test's zero-timestamp expectation is correct before the assertion can be made deterministic.
 - **Suggested test:** Reconcile the `grant_defaults_a_zero_timestamp` assertion against the store's actual grant-timestamp defaulting so the tier2 store contract test passes deterministically.
 
+### - [ ] T-15.1.17 — `tests/change-graph.json` maps `cmd/lenny-gateway` only to static/contract/integration, omitting unit, so its 36 in-package unit test files are never selected by `--changed`/`--pkg`/`--since` [Medium] — OPEN
+- **Spec/Doc:** `tests/change-graph.json` is the change-impact map `lenny-test --changed`/`--since`/`--pkg` consults to decide which tiers a diff runs; `tests/spec-map.json` §15.1 lists `cmd/lenny-gateway` among the packages it owns.
+- **Existing tests:** `tests/change-graph.json:235-239` maps `"cmd/lenny-gateway": {"static": ["cmd/lenny-gateway/..."], "contract": [...], "integration": [...]}` with no `"unit"` key. `find cmd/lenny-gateway -maxdepth 1 -name '*_test.go' | wc -l` returns 36.
+- **Gap:** Because `cmd/lenny-gateway` has no `unit` entry in `tests/change-graph.json`, a change-selected CI run (`--changed`, `--pkg cmd/lenny-gateway`, or `--since <sha>`) touching the gateway binary's own package never selects its 36 in-package unit test files, even though the static, contract, and integration tiers are correctly mapped. A regression caught only by one of those 36 unit tests would pass a change-scoped run. This mirrors the same class of gap already fixed for `cmd/lenny-ops` (T-25.4.39) and `cmd/lenny-test`/`cmd/lenny-token-service`, but `cmd/lenny-gateway` itself was missed. Discovered while closing T-25.4.39.
+- **Dependencies:** None — buildable today; the edit is to `tests/change-graph.json`.
+- **Suggested test:** Add a `"unit": ["cmd/lenny-gateway/..."]` entry to the `cmd/lenny-gateway` block in `tests/change-graph.json`, mirroring the `cmd/lenny-ops` fix, and add a tier0 guard in `tests/tier0_static/change_graph_ops_selection_test.go` (or a sibling gateway-scoped test) asserting a change to `cmd/lenny-gateway` resolves through the change graph to at least the unit tier.
+
 ## §15.2 MCP API <a id="t-15.2"></a>
 **Spec file:** `spec/15_external-api-surface.md`
 **Reviewed:** 2026-07-06
@@ -12081,6 +12088,27 @@ Counts: 6 High, 5 Medium, 4 Low, 1 Info.
 - **Gap:** `go test -run '^TestHarnessCreateAndTerminate$|^TestHarnessGetSession$' github.com/lennylabs/lenny/tests/testinfra/sessiondriver` fails at startSha c73db9d4 (changes stashed) with status 403 `{"error":{"code":"TENANT_NOT_ACTIVE",...,"details":{"state":"deleting","tenantId":"sessiondriver-smoke-tenant"}}}`. These tests gate the unit tier for any change but are unrelated to escalation; the sessiondriver-smoke-tenant / sessiondriver-get-tenant test tenants appear to be left in a `deleting` state in the shared test gateway, or the harness fails to reset/recreate them per run. This is a test-harness reliability defect (related to T-BED.16, which lumps the same 403 into whole-module contention without isolating the deleting-tenant root cause). Discovered while closing T-25.4.26.
 - **Dependencies:** A harness fix — ensure the sessiondriver test tenants are created fresh (or fully reset out of the deleting state) per run rather than reused from a prior run's partially-completed teardown.
 - **Suggested test:** After the harness change, confirm the two sessiondriver harness tests pass both from a clean gateway and from a prior-run gateway state, without depending on a pre-provisioned active tenant.
+
+### - [ ] T-BED.20 — The static tier gate is red on this branch from pre-existing gofumpt-unformatted files unrelated to any single in-flight finding, blocking a fully-green `--since` regression pass [Low] — OPEN
+- **Spec/Doc:** The tier-0 static gate requires gofumpt-clean files (TESTING.md tier model; `.claude/rules/test-coverage.md` tier-0).
+- **Existing tests:** `gofumpt -l cmd/lenny-gateway/auditpipeline.go pkg/ops/upgradeservice/upgradeservice.go tests/tier2_component/auditstore/scatter_redis_cache_test.go tests/tier2_component/opsaudit/diagnostics_rate_limit_test.go` lists all four files as unformatted.
+- **Gap:** `lenny-test --since <any-recent-sha>` fails the static tier at the gofumpt step regardless of the diff under test, because these four pre-existing unformatted files are unrelated to the packages any single in-flight finding touches. This blocks a visibly fully-green regression pass for unrelated findings worked on this branch. Discovered while closing T-25.4.39.
+- **Dependencies:** None — a `gofumpt -w` on the four files clears the gate.
+- **Suggested test:** Run `gofumpt -w` on the four named files to clear the tier-0 gate, and add a periodic (or pre-merge) tier-0 sweep over the full tree so formatting drift on unrelated files cannot silently block a batch's static tier again.
+
+### - [ ] T-BED.21 — Kind e2e node image cache missing `curlimages/curl:8.11.0`, failing every `tier5_e2e_kind` test that starts the shared bootstrap probe pod [Medium] — OPEN
+- **Spec/Doc:** The shared `t5StartGatewayProbe`/`gateway_probe_test.go` bootstrap fixture is used across `tests/tier5_e2e_kind` suites to confirm a pod is reachable before a test proceeds.
+- **Existing tests:** `lenny-test run --changed --continue-on-failure` (`e2e_kind` tier) failed 5 tests — `TestAuditPipeline` (`audit_test.go:63`), `TestDiagnosticsRunFixCertManagerExpiring` (`diagnostics_fix_test.go:313`, indirectly via the same shared probe-pod setup path), `TestEagerClaimCreatedExpiryReleasesPod`, `TestEagerClaimFinalizeMaterializesAgainstWarmPod`, and `TestEagerClaimPoolExhaustionAtCreate` (`eager_claim_e2e_test.go:147,196,238`) — all with `probe pod ... did not become Ready: exit status 1 ... Reason: ErrImageNeverPull ... Container image "curlimages/curl:8.11.0" is not present with pull policy of Never`.
+- **Gap:** The shared `t5StartGatewayProbe` bootstrap fixture that a wide range of `tier5_e2e_kind` tests depend on cannot start because the Kind node image cache does not carry `curlimages/curl:8.11.0` under a `Never` pull policy. This fails tests across unrelated suites (audit, diagnostics, eager-claim) whose own logic is otherwise correct, because none of them own or control the shared fixture's image. Discovered while closing T-25.6.18.
+- **Dependencies:** Requires preloading `curlimages/curl:8.11.0` into the Kind node image cache (or the harness's image-loading step) so probe pods can start with pull policy `Never`.
+- **Suggested test:** After the image is preloaded into the Kind node cache, confirm `TestAuditPipeline`, `TestDiagnosticsRunFixCertManagerExpiring`, and the three `TestEagerClaim*` tests (plus any other consumer of `t5StartGatewayProbe`) pass, and add a Kind-cluster-bootstrap check that fails fast if a probe image required by `gateway_probe_test.go` is missing from the node cache.
+
+### - [ ] T-BED.22 — This sandbox's `lenny-test` unit tier cannot run at all: no C toolchain, so `-race` (which the unit tier hard-requires) fails immediately [Low] — OPEN
+- **Spec/Doc:** The tier-1 unit tier is expected to run green and is required to use `-race` (TESTING.md tier model; `.claude/rules/test-coverage.md`).
+- **Existing tests:** `go test -race ./cmd/lenny-ops/...` (and the `lenny-test` unit tier internally) fails with `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`; `which gcc cc clang` all resolve to nothing in this environment.
+- **Gap:** This reproduces identically on a clean checkout of startSha (`b92ffd30`), so it is an environment/toolchain gap rather than anything introduced by product or test code, but it silently makes the unit tier a no-op verification step for every finding worked in this sandbox: a run that reports the unit tier as failing (or unrunnable) for toolchain reasons gives no signal about whether the code under test actually passes its unit suite. Discovered while closing T-25.6.18.
+- **Dependencies:** Requires provisioning a C toolchain (gcc, cc, or clang) in this sandbox image, or a documented `CGO_ENABLED=0` fallback path for the unit tier when no C toolchain is present.
+- **Suggested test:** After the toolchain is provisioned (or a fallback mode is added), confirm `lenny-test run --tier unit` (or `go test -race ./...`) actually executes the unit suite in this environment instead of failing immediately on the cgo requirement.
 
 ## Coverage meta-analysis <a id="t-meta"></a>
 
