@@ -166,7 +166,7 @@ type CheckpointChunkRelease struct {
 
 // ReleaseCheckpointChunks runs the §12.5 three-step release for one
 // finalised checkpoint a reclaimer dropped (the retention latest-2 rotation
-// in this step's caller): for every chunk object under the checkpoint it
+// reclaimer, recordRetention): for every chunk object under the checkpoint it
 // (1) soft-deletes the chunk's artifact_store row through the cataloging
 // decorator under the deleted_at IS NULL guard, which issues the §12.5
 // rule 4 Redis decrement exactly once and is what returns the tenant's
