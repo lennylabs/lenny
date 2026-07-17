@@ -902,7 +902,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		// wired (Postgres mode); the in-memory dev gateway has no
 		// catalog and skips it.
 		if w.artifactCatalog != nil && w.auditAppender != nil {
-			recon := legalholdreconciler.New(w.artifactCatalog, w.auditAppender, w.gwMetrics, legalholdreconciler.Options{
+			recon := legalholdreconciler.New(w.artifactCatalog, w.auditAppender, w.gwMetrics, w.partialManifests, legalholdreconciler.Options{
 				Clock: clockinject.Now,
 			})
 			leaderGate.Add("legal-hold-reconciler", func(ctx context.Context) {

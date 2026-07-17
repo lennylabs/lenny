@@ -12,8 +12,28 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
 )
+
+// fakeManifests is a minimal PartialManifestLookup keyed by
+// (tenant, checkpoint_id). A missing key returns ErrNotFound, matching
+// the Postgres store's Get contract.
+type fakeManifests struct {
+	rows map[string]partialmanifeststore.Record
+	err  error
+}
+
+func (f *fakeManifests) Get(_ context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error) {
+	if f.err != nil {
+		return partialmanifeststore.Record{}, f.err
+	}
+	r, ok := f.rows[tenantID+"|"+checkpointID]
+	if !ok {
+		return partialmanifeststore.Record{}, partialmanifeststore.ErrNotFound
+	}
+	return r, nil
+}
 
 // spec: §12.8 line 739 — the reconciler scans for legal-hold sessions
 // whose artifact_store rows record a rotated checkpoint and emits a
@@ -97,8 +117,8 @@ func (m *fakeMetrics) IncLegalHoldCheckpointGap(tenantID string) {
 }
 
 // TestTickEmitsOnRotatedCheckpoint verifies the reconciler emits the
-// §16.7 audit event when a held session carries a soft_deleted
-// checkpoint row alongside a live one.
+// §16.7 audit event when a held session carries a soft_deleted chunk row
+// of a complete (partial = false) checkpoint alongside a live one.
 //
 // spec: §12.8 line 739.
 func TestTickEmitsOnRotatedCheckpoint(t *testing.T) {
@@ -107,13 +127,16 @@ func TestTickEmitsOnRotatedCheckpoint(t *testing.T) {
 		rows: map[string][]artifactcatalog.Record{
 			"acme|sess-1": {
 				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateLive},
-				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "cp-complete/chunk-00000.tar"},
 			},
 		},
 	}
+	man := &fakeManifests{rows: map[string]partialmanifeststore.Record{
+		"acme|cp-complete": {TenantID: "acme", CheckpointID: "cp-complete", Partial: false, ManifestReason: partialmanifeststore.ReasonComplete},
+	}}
 	app := &fakeAppender{}
 	m := &fakeMetrics{}
-	r := legalholdreconciler.New(cat, app, m, legalholdreconciler.Options{
+	r := legalholdreconciler.New(cat, app, m, man, legalholdreconciler.Options{
 		Clock: func() time.Time { return time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC) },
 	})
 	emitted, err := r.Tick(context.Background())
@@ -160,7 +183,7 @@ func TestTickSkipsSessionWithoutRotatedCheckpoint(t *testing.T) {
 		},
 	}
 	app := &fakeAppender{}
-	r := legalholdreconciler.New(cat, app, nil, legalholdreconciler.Options{})
+	r := legalholdreconciler.New(cat, app, nil, nil, legalholdreconciler.Options{})
 	emitted, err := r.Tick(context.Background())
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
@@ -188,7 +211,7 @@ func TestTickDedupesWithinEmitWindow(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 	app := &fakeAppender{}
-	r := legalholdreconciler.New(cat, app, nil, legalholdreconciler.Options{
+	r := legalholdreconciler.New(cat, app, nil, nil, legalholdreconciler.Options{
 		Clock:      clock,
 		EmitWindow: 24 * time.Hour,
 	})
@@ -225,7 +248,7 @@ func TestTickPropagatesAuditError(t *testing.T) {
 		},
 	}
 	app := &fakeAppender{err: errors.New("chain unreachable")}
-	r := legalholdreconciler.New(cat, app, nil, legalholdreconciler.Options{})
+	r := legalholdreconciler.New(cat, app, nil, nil, legalholdreconciler.Options{})
 	if _, err := r.Tick(context.Background()); err == nil {
 		t.Error("Tick should propagate the audit error")
 	}
@@ -236,12 +259,155 @@ func TestTickPropagatesAuditError(t *testing.T) {
 func TestTickPropagatesCatalogError(t *testing.T) {
 	cat := &fakeCatalog{candidatesErr: errors.New("postgres down")}
 	app := &fakeAppender{}
-	r := legalholdreconciler.New(cat, app, nil, legalholdreconciler.Options{})
+	r := legalholdreconciler.New(cat, app, nil, nil, legalholdreconciler.Options{})
 	if _, err := r.Tick(context.Background()); err == nil {
 		t.Error("Tick should propagate the catalog error")
 	}
 	if len(app.rows) != 0 {
 		t.Errorf("no audit rows must be written when the candidate list fails")
+	}
+}
+
+// TestTickExcludesRotatedPartialManifestChunk pins the §12.8 line 739
+// scoping: a soft_deleted chunk row that belongs to a manifest finalised
+// `partial = true` (here a superseded drain attempt) is not a gap. The
+// partial attempt was cleaned up without destroying anything under hold,
+// so the reconciler must emit no audit event and increment no metric.
+// Before the scoping fix the reconciler counted every rotated
+// checkpoint-typed row and would have emitted a false-positive gap here.
+//
+// spec: §12.8 line 739; §10.1 line 141.
+func TestTickExcludesRotatedPartialManifestChunk(t *testing.T) {
+	cat := &fakeCatalog{
+		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-partial"}},
+		rows: map[string][]artifactcatalog.Record{
+			"acme|sess-partial": {
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateLive, PartID: "cp-live/chunk-00000.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "cp-super/chunk-00000.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateTombstoned, PartID: "cp-super/chunk-00001.tar"},
+			},
+		},
+	}
+	man := &fakeManifests{rows: map[string]partialmanifeststore.Record{
+		"acme|cp-super": {TenantID: "acme", CheckpointID: "cp-super", Partial: true, ManifestReason: partialmanifeststore.ReasonSuperseded},
+	}}
+	app := &fakeAppender{}
+	m := &fakeMetrics{}
+	r := legalholdreconciler.New(cat, app, m, man, legalholdreconciler.Options{})
+	emitted, err := r.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if emitted != 0 {
+		t.Errorf("emitted = %d, want 0 (partial-manifest chunk is not a gap)", emitted)
+	}
+	if len(app.rows) != 0 {
+		t.Errorf("audit rows = %d, want 0", len(app.rows))
+	}
+	if m.counts["acme"] != 0 {
+		t.Errorf("metric counts = %v, want acme=0", m.counts)
+	}
+}
+
+// TestTickMixedPartialAndCompleteRotation verifies that when a held
+// session carries both a rotated complete checkpoint and rotated partial
+// chunks, only the complete checkpoint counts. The rotated count in the
+// audit payload reflects the genuine gap alone, so compliance sizing is
+// not inflated by cleaned-up partial attempts.
+//
+// spec: §12.8 line 739; §10.1 line 141.
+func TestTickMixedPartialAndCompleteRotation(t *testing.T) {
+	cat := &fakeCatalog{
+		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-mix"}},
+		rows: map[string][]artifactcatalog.Record{
+			"acme|sess-mix": {
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateLive, PartID: "cp-live/chunk-00000.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "cp-done/chunk-00000.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateTombstoned, PartID: "cp-abort/chunk-00000.tar"},
+			},
+		},
+	}
+	man := &fakeManifests{rows: map[string]partialmanifeststore.Record{
+		"acme|cp-done":  {TenantID: "acme", CheckpointID: "cp-done", Partial: false, ManifestReason: partialmanifeststore.ReasonComplete},
+		"acme|cp-abort": {TenantID: "acme", CheckpointID: "cp-abort", Partial: true, ManifestReason: partialmanifeststore.ReasonTimeout},
+	}}
+	app := &fakeAppender{}
+	m := &fakeMetrics{}
+	r := legalholdreconciler.New(cat, app, m, man, legalholdreconciler.Options{})
+	emitted, err := r.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if emitted != 1 {
+		t.Errorf("emitted = %d, want 1 (one complete checkpoint rotated)", emitted)
+	}
+	if len(app.rows) != 1 {
+		t.Fatalf("audit rows = %d, want 1", len(app.rows))
+	}
+	if !strings.Contains(app.rows[0].payload, `"rotated_checkpoints":1`) {
+		t.Errorf("payload rotated_checkpoints should count only the complete checkpoint: %q", app.rows[0].payload)
+	}
+	if m.counts["acme"] != 1 {
+		t.Errorf("metric counts = %v, want acme=1", m.counts)
+	}
+}
+
+// TestTickCountsRowWithoutCheckpointSegment pins the fail-toward-detection
+// default: a rotated checkpoint row whose part_id carries no
+// "{checkpoint_id}/..." segment cannot be confirmed as a partial-manifest
+// chunk, so the reconciler counts it as a gap rather than silently
+// excluding a possibly-genuine rotation even when a manifest store is
+// wired.
+//
+// spec: §12.8 line 739.
+func TestTickCountsRowWithoutCheckpointSegment(t *testing.T) {
+	cat := &fakeCatalog{
+		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-nolink"}},
+		rows: map[string][]artifactcatalog.Record{
+			"acme|sess-nolink": {
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "checkpoint-no-slash"},
+			},
+		},
+	}
+	man := &fakeManifests{rows: map[string]partialmanifeststore.Record{}}
+	app := &fakeAppender{}
+	m := &fakeMetrics{}
+	r := legalholdreconciler.New(cat, app, m, man, legalholdreconciler.Options{})
+	emitted, err := r.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if emitted != 1 {
+		t.Errorf("emitted = %d, want 1 (unlinkable rotated checkpoint counts as a gap)", emitted)
+	}
+	if m.counts["acme"] != 1 {
+		t.Errorf("metric counts = %v, want acme=1", m.counts)
+	}
+}
+
+// TestTickPropagatesManifestLookupError surfaces a checkpoint_manifest
+// read failure so a transient Postgres fault does not silently drop a
+// rotated chunk out of the gap assessment. The sweep returns the error
+// rather than counting or excluding the row on a guess.
+//
+// spec: §12.8 line 739.
+func TestTickPropagatesManifestLookupError(t *testing.T) {
+	cat := &fakeCatalog{
+		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-err"}},
+		rows: map[string][]artifactcatalog.Record{
+			"acme|sess-err": {
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "cp-x/chunk-00000.tar"},
+			},
+		},
+	}
+	man := &fakeManifests{err: errors.New("checkpoint_manifest unreachable")}
+	app := &fakeAppender{}
+	r := legalholdreconciler.New(cat, app, nil, man, legalholdreconciler.Options{})
+	if _, err := r.Tick(context.Background()); err == nil {
+		t.Error("Tick should propagate the manifest lookup error")
+	}
+	if len(app.rows) != 0 {
+		t.Errorf("no audit rows must be written when the manifest lookup fails")
 	}
 }
 

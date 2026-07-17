@@ -3,9 +3,16 @@
 // Package legalholdreconciler implements the §12.8 line 739 background
 // reconciler. The reconciler runs co-located with the §12.5 GC
 // goroutine and scans for sessions where `legal_hold = true` and one or
-// more checkpoints have already been rotated (the artifact_store
-// table records a soft_deleted or tombstoned row alongside the
-// session's live checkpoints).
+// more retained checkpoints have already been rotated.
+//
+// A gap is a rotated retained checkpoint: a §12.5 checkpoint-retention
+// catalog row whose checkpoint-typed artifact_store row is soft_deleted
+// or tombstoned. Chunk rows that belong to a §10.1 checkpoint_manifest
+// finalised `partial = true` are excluded, so an aborted, truncated,
+// superseded, or quota-refused partial checkpoint does not trip the
+// detector — nothing under hold was destroyed when a partial attempt
+// was cleaned up. Only rotated chunks of a complete checkpoint
+// (`partial = false`) count.
 //
 // When a gap is detected the reconciler emits a §16.7
 // `legal_hold.checkpoint_gap_detected` critical audit event and
@@ -20,11 +27,14 @@ package legalholdreconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
@@ -48,14 +58,30 @@ type MetricsSink interface {
 	IncLegalHoldCheckpointGap(tenantID string)
 }
 
+// PartialManifestLookup reports the §10.1 finalisation disposition of a
+// checkpoint's checkpoint_manifest row. detectGap consults it to exclude
+// a rotated chunk row that belongs to a manifest finalised
+// `partial = true` (an aborted, truncated, superseded, or quota-refused
+// attempt) from the gap count: cleaning up such an attempt destroyed
+// nothing under hold. A manifest that finalised `partial = false` is a
+// complete, retained checkpoint, so its rotated chunk rows still count.
+// partialmanifeststore.Store satisfies this via Get, which returns the
+// row for (tenant, checkpoint_id) even after it has been soft-deleted.
+//
+// spec: §12.8 line 739.
+type PartialManifestLookup interface {
+	Get(ctx context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error)
+}
+
 // Reconciler drives the §12.8 line 739 legal-hold checkpoint-gap
 // detection on a periodic cadence. Construct with New.
 type Reconciler struct {
-	catalog  artifactcatalog.Store
-	audit    AuditAppender
-	metrics  MetricsSink
-	interval time.Duration
-	clock    func() time.Time
+	catalog   artifactcatalog.Store
+	audit     AuditAppender
+	metrics   MetricsSink
+	manifests PartialManifestLookup
+	interval  time.Duration
+	clock     func() time.Time
 	// dedupe records the most recently emitted (tenant, session) gap
 	// so a chronic condition does not flood the audit chain on every
 	// 15-minute sweep. A session that was previously reported with a
@@ -83,14 +109,21 @@ type Options struct {
 }
 
 // New returns a Reconciler that scans through the given catalog. Both
-// catalog and audit must be non-nil; metrics is optional.
+// catalog and audit must be non-nil; metrics is optional. manifests
+// resolves the §10.1 checkpoint_manifest disposition of each rotated
+// chunk row so that partial-attempt chunks are excluded from the gap
+// count; production wires the Postgres store. When manifests is nil the
+// reconciler cannot confirm any rotated chunk as a partial attempt and
+// counts every rotated checkpoint row, matching the pre-exclusion
+// behavior.
 //
 // spec: §12.8 line 739.
-func New(catalog artifactcatalog.Store, audit AuditAppender, metrics MetricsSink, opts Options) *Reconciler {
+func New(catalog artifactcatalog.Store, audit AuditAppender, metrics MetricsSink, manifests PartialManifestLookup, opts Options) *Reconciler {
 	r := &Reconciler{
 		catalog:    catalog,
 		audit:      audit,
 		metrics:    metrics,
+		manifests:  manifests,
 		interval:   opts.Interval,
 		clock:      opts.Clock,
 		emitWindow: opts.EmitWindow,
@@ -142,10 +175,17 @@ func (r *Reconciler) Tick(ctx context.Context) (int, error) {
 }
 
 // detectGap inspects the per-session catalog rows and reports whether
-// any checkpoint has been rotated (soft_deleted or tombstoned). The
-// returned (live, rotated) counts feed the audit payload so the
-// compliance team can size the impact at a glance. A session with
-// every checkpoint live and at least one entry is gap-free.
+// any retained checkpoint has been rotated (soft_deleted or
+// tombstoned). A rotated chunk row only counts when it belongs to a
+// complete checkpoint: chunk rows of a §10.1 checkpoint_manifest
+// finalised `partial = true` are excluded because cleaning up an
+// aborted, truncated, superseded, or quota-refused partial attempt
+// destroyed nothing under hold. The returned (live, rotated) counts feed
+// the audit payload so the compliance team can size the impact at a
+// glance. A session with every checkpoint live and at least one entry is
+// gap-free.
+//
+// spec: §12.8 line 739.
 func (r *Reconciler) detectGap(ctx context.Context, ref artifactcatalog.SessionRef) (bool, checkpointSummary, error) {
 	rows, err := r.catalog.ListBySession(ctx, ref.TenantID, ref.SessionID)
 	if err != nil {
@@ -160,6 +200,13 @@ func (r *Reconciler) detectGap(ctx context.Context, ref artifactcatalog.SessionR
 		case artifactcatalog.StateLive:
 			s.live++
 		case artifactcatalog.StateSoftDeleted, artifactcatalog.StateTombstoned:
+			partial, err := r.rowBelongsToPartialManifest(ctx, ref.TenantID, row)
+			if err != nil {
+				return false, checkpointSummary{}, err
+			}
+			if partial {
+				continue
+			}
 			s.rotated++
 		}
 	}
@@ -169,6 +216,47 @@ func (r *Reconciler) detectGap(ctx context.Context, ref artifactcatalog.SessionR
 type checkpointSummary struct {
 	live    int
 	rotated int
+}
+
+// rowBelongsToPartialManifest reports whether the rotated checkpoint row
+// is a chunk of a §10.1 checkpoint_manifest finalised `partial = true`.
+// The chunk object key is "{checkpoint_id}/chunk-{n}.{enc}", so the
+// checkpoint_id is the row's leading part_id segment; the manifest's
+// Partial flag settles the disposition. A complete checkpoint finalises
+// `partial = false`, so a false result marks a genuine retained-checkpoint
+// gap. When the manifest row is absent (already hard-pruned, or a row
+// carrying no checkpoint segment) the reconciler cannot confirm the chunk
+// as a partial attempt and counts it, failing toward detection so a
+// possible gap is never silently suppressed.
+//
+// spec: §12.8 line 739; §10.1 line 141.
+func (r *Reconciler) rowBelongsToPartialManifest(ctx context.Context, tenantID string, row artifactcatalog.Record) (bool, error) {
+	if r.manifests == nil {
+		return false, nil
+	}
+	checkpointID := checkpointIDFromPartID(row.PartID)
+	if checkpointID == "" {
+		return false, nil
+	}
+	m, err := r.manifests.Get(ctx, tenantID, checkpointID)
+	if errors.Is(err, partialmanifeststore.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("legalholdreconciler: lookup manifest %s/%s: %w", tenantID, checkpointID, err)
+	}
+	return m.Partial, nil
+}
+
+// checkpointIDFromPartID returns the §10.1 checkpoint_id segment of a
+// checkpoint artifact_store row's part_id. Chunk objects are keyed
+// "{checkpoint_id}/chunk-{n}.{enc}", so the id is the segment before the
+// first slash. Returns "" when the part_id carries no checkpoint segment.
+func checkpointIDFromPartID(partID string) string {
+	if i := strings.IndexByte(partID, '/'); i >= 0 {
+		return partID[:i]
+	}
+	return ""
 }
 
 // shouldEmit reports whether the (tenant, session) pair has not been
