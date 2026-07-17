@@ -74,6 +74,70 @@ tests:
           path: data["openslo.yaml"]
           pattern: "kind: AlertPolicy"
 
+  # spec: §16.10 — every emitted AlertPolicy references one shared
+  # AlertNotificationTarget through notificationTargets[].targetRef, so the
+  # ConfigMap is self-contained. The default render carries the target
+  # document and the default targetRef name.
+  - it: carries a shared AlertNotificationTarget referenced by targetRef
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+    asserts:
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "kind: AlertNotificationTarget"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: "targetRef: lenny-slo-notifications"
+
+  # spec: §16.10 — the AlertNotificationTarget's spec.target type
+  # (monitoring.openslo.notificationTarget.type) and its name
+  # (monitoring.openslo.notificationTarget.name, rendered into
+  # metadata.name and every targetRef) are deployer-configurable and
+  # substituted at install time, leaving no placeholder and no residual
+  # default-name literal behind (a stale literal would dangle a targetRef).
+  - it: substitutes a non-default notification-target name and type
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+          notificationTarget:
+            name: acme-alerts
+            type: slack
+    asserts:
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'target: slack'
+      - notMatchRegex:
+          path: data["openslo.yaml"]
+          pattern: "__OPENSLO_NOTIFICATION_TARGET__"
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'name: acme-alerts'
+      - matchRegex:
+          path: data["openslo.yaml"]
+          pattern: 'targetRef: acme-alerts'
+      - notMatchRegex:
+          path: data["openslo.yaml"]
+          pattern: "lenny-slo-notifications"
+
+  # spec: §16.10 — the notification-target name renders into
+  # pattern-constrained OpenSLO metadata.name and targetRef fields, so
+  # values.schema.json guards it and an out-of-pattern override is rejected
+  # at install (fail closed). The deny path fails if the deep-nested schema
+  # path is mis-nested and the constraint silently never applies.
+  - it: rejects an out-of-pattern notification-target name
+    set:
+      monitoring:
+        openslo:
+          enabled: true
+          notificationTarget:
+            name: Bad_Name!
+    asserts:
+      - failedTemplate:
+          errorPattern: "does not match pattern"
+
   # spec: §16.10 line 733 — the documents reference the canonical §16.5
   # metric names so external tooling resolves the same series the bundled
   # alerts evaluate.

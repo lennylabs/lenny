@@ -174,7 +174,24 @@
       "type": "object"
     },
     "monitoring": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "openslo": {
+          "type": "object",
+          "properties": {
+            "notificationTarget": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                  "maxLength": 63
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "mtls": {
       "type": "object"
