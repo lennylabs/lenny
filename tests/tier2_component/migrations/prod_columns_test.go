@@ -542,6 +542,10 @@ var prodMigrationSchema = []struct {
 	// on, and the NULL sentinel are asserted directly in
 	// migrations/credential_leases_expires_at_test.go. spec: §4.9.
 	{migration: "0175", table: "credential_leases", columns: []string{"expires_at"}},
+	// 0176 persists the §8.3 credential_origin_session_id on sessions so a
+	// `credentialPropagation: inherit` hop forwards the same origin
+	// credential pool through contiguous inherit hops.
+	{migration: "0176", table: "sessions", columns: []string{"credential_origin_session_id"}},
 }
 
 // spec: 12.2, 18.5

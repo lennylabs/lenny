@@ -1337,6 +1337,25 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 //
 // spec: §8.2 lines 59-61, 90; §8.7; §8.9 line 1010; §10.7 lines 868, 905.
 // F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
+// credentialOriginID resolves the credential-origin session id stamped on
+// a delegated child per §8.3 lines 472, 488. A `credentialPropagation:
+// inherit` hop forwards the parent's origin so contiguous `inherit` hops
+// share one origin pool, traced back to the last `independent` break or the
+// root; when the parent carries no explicit origin (a root or top-level
+// parent, whose read-path origin collapses to empty) the parent itself is
+// the origin. Every other mode — `independent`, `deny`, or an omitted value
+// that defaults to `independent` — establishes a new origin equal to the
+// child itself. spec: §8.3 lines 472, 488, 474.
+func credentialOriginID(mode lease.CredentialPropagation, parent sessionstore.Session, childID string) string {
+	if mode == lease.CredentialPropagationInherit {
+		if parent.CredentialOriginSessionID != "" {
+			return parent.CredentialOriginSessionID
+		}
+		return parent.ID
+	}
+	return childID
+}
+
 func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (sessionstore.Session, *ChildToken, error) {
 	parent := adm.parent
 	userID := req.UserID
@@ -1407,6 +1426,15 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		IsolationProfile: adm.childProfile,
 		ParentSessionID:  parent.ID,
 		RootSessionID:    rootSessionID,
+		// §8.3 lines 472, 488 — the credential-origin pool a
+		// `credentialPropagation: inherit` hop draws from. An `inherit`
+		// child forwards the parent's origin (tracing one origin pool
+		// through contiguous `inherit` hops back to the last `independent`
+		// break or the root); an `independent`, `deny`, or omitted-mode
+		// child, like a root or top-level session, is its own origin. The
+		// §8.3 cross-environment compatibility check and the finalize-time
+		// assignment read this in O(1) rather than re-walking lineage.
+		CredentialOriginSessionID: credentialOriginID(req.CredentialPropagation, parent, childID),
 		// §10.7 lines 868, 905 — the child's delegation depth is the
 		// parent's depth + 1, fixed at admission. Recording it here lets
 		// the built-in eval endpoint populate EvalResult.delegation_depth

@@ -737,3 +737,58 @@ func TestDeleteByTenantIdempotent_spec_12_1(t *testing.T) {
 		t.Errorf("DeleteByTenant on empty store: n=%d err=%v", n, err)
 	}
 }
+
+// spec: 8.3 lines 472, 488 — the credential-origin session id records the
+// origin credential pool a `credentialPropagation: inherit` hop draws from.
+// The memstore is the §17.4 embedded backend, so the field must survive both
+// a Create/Get round-trip and an ExportState/ImportState snapshot cycle for a
+// later hop and the finalize-time assignment to resolve the same origin.
+func TestCredentialOriginSessionIDRoundTrips(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	if err := s.Create(ctx, sessionstore.Session{
+		ID: "child_1", TenantID: "acme", State: session.StateCreated,
+		CredentialOriginSessionID: "origin_1",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(ctx, "acme", "child_1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CredentialOriginSessionID != "origin_1" {
+		t.Errorf("CredentialOriginSessionID = %q, want origin_1", got.CredentialOriginSessionID)
+	}
+
+	// A self-origin session (independent/deny/root/top-level) carries no
+	// explicit origin and must read back empty.
+	if err := s.Create(ctx, sessionstore.Session{
+		ID: "root_1", TenantID: "acme", State: session.StateCreated,
+	}); err != nil {
+		t.Fatalf("Create root: %v", err)
+	}
+	root, err := s.Get(ctx, "acme", "root_1")
+	if err != nil {
+		t.Fatalf("Get root: %v", err)
+	}
+	if root.CredentialOriginSessionID != "" {
+		t.Errorf("self-origin CredentialOriginSessionID = %q, want empty", root.CredentialOriginSessionID)
+	}
+
+	// The §17.4 snapshot cycle preserves the origin across a restart.
+	snap, err := s.ExportState()
+	if err != nil {
+		t.Fatalf("ExportState: %v", err)
+	}
+	restored := memstore.New()
+	if err := restored.ImportState(snap); err != nil {
+		t.Fatalf("ImportState: %v", err)
+	}
+	got, err = restored.Get(ctx, "acme", "child_1")
+	if err != nil {
+		t.Fatalf("Get after restore: %v", err)
+	}
+	if got.CredentialOriginSessionID != "origin_1" {
+		t.Errorf("restored CredentialOriginSessionID = %q, want origin_1", got.CredentialOriginSessionID)
+	}
+}

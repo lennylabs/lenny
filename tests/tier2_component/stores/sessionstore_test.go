@@ -747,6 +747,54 @@ func TestSessionStoreContract(t *testing.T) {
 			t.Errorf("CascadeOnFailure.Resolve() = %q, want %q", got.CascadeOnFailure.Resolve(), session.CascadeCancelAll)
 		}
 	})
+
+	// spec: 8.3 line 472, 488 — credential_origin_session_id records the
+	// origin credential pool a `credentialPropagation: inherit` hop draws
+	// from. The delegation Service stamps the origin (an ancestor id) on an
+	// inherited child; the value must survive a Postgres reload so a later
+	// hop and the finalize-time assignment resolve the same origin without
+	// re-walking lineage.
+	t.Run("credential_origin_session_id round-trip through pgstore", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		originID := newUUID(t)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			CredentialOriginSessionID: originID,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CredentialOriginSessionID != originID {
+			t.Errorf("CredentialOriginSessionID = %q, want %q", got.CredentialOriginSessionID, originID)
+		}
+	})
+
+	// spec: 8.3 line 472, 474 — a self-origin session (independent, deny,
+	// root, or top-level) carries no explicit origin. The delegation Service
+	// leaves CredentialOriginSessionID empty, which persists as SQL NULL and
+	// the read path COALESCEs back to the empty string. The finalize path
+	// treats an empty (or self) value as "not inherited", so an absent
+	// origin must not read back as a non-empty ancestor id.
+	t.Run("credential_origin_session_id absent reads as empty", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CredentialOriginSessionID != "" {
+			t.Errorf("CredentialOriginSessionID = %q, want empty", got.CredentialOriginSessionID)
+		}
+	})
 }
 
 // insertMessage writes one session_messages row under the tenant
