@@ -278,3 +278,31 @@ func TestChangeGraphEventStreamPackagesSelectHigherTiers(t *testing.T) {
 		}
 	}
 }
+
+// spec: 25.12 (MCP Management Server; the CI suite's two authorization
+// sweeps over every MCP tool, and the tier-3 initialize/tools/call wire
+// contract)
+// diagnosis: A change under pkg/ops/mcp no longer selects the tier-3
+//
+//	ops_endpoints contract suite or the tier-9 MCP management
+//	authorization sweep. tests/tier3_contract/ops_endpoints/mcp_test.go
+//	drives the §25.12 initialize/tools/call wire contract directly, and
+//	tests/tier9_security/mcp_management_authz_sweep_test.go iterates
+//	mcp.NewRegistry().All() to assert every generated tool enforces its
+//	scope and role gate. When the change graph omits the contract or
+//	security tier for pkg/ops/mcp, `lenny-test --changed`/`--since`
+//	under-selects and a broken MCP wire contract, or a newly generated
+//	tool that skips its scope or role gate, ships untested. Add the
+//	missing tier mapping(s) in tests/change-graph.json.
+func TestChangeGraphMCPPackageSelectsContractAndSecurityTiers(t *testing.T) {
+	t.Parallel()
+
+	tiers := resolveChangeGraphTiers(t, "pkg/ops/mcp/tools.go")
+
+	for _, want := range []string{"unit", "contract", "security"} {
+		if !tiers[want] {
+			t.Errorf("a change to pkg/ops/mcp resolved to tiers %v; expected it to include %q so the tier-3 ops_endpoints contract suite and the tier-9 MCP management authorization sweep are selected",
+				sortedKeys(tiers), want)
+		}
+	}
+}

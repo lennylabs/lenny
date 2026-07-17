@@ -3569,6 +3569,7 @@
         "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
         "pkg/ops/mcp/naming_test.go::TestToolNamesFollowLennyDomainActionPattern_spec_25_12",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphMCPPackageSelectsContractAndSecurityTiers",
         "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",
         "tests/tier8_chaos/mcp_management_gateway_outage_test.go::TestMCPManagementGatewayOwnedToolDuringGatewayOutage",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer"
