@@ -219,7 +219,7 @@ GET /v1/admin/audit-events?event_type=credential.user_revoked&since=1h
 GET /v1/admin/audit-events?event_type=credential.registered&since=1h
 ```
 
-These events record `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, and `active_leases_terminated` — the compliance record for the user-scoped rotation. The `lenny_user_credential_revoked_with_active_leases` gauge (labeled by `tenant_id`, `provider`) feeds the `CredentialCompromised` alert (Spec §16.5) alongside its pool-scoped counterpart.
+These events record `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, and `active_leases_terminated` — the compliance record for the user-scoped rotation. The `lenny_user_credential_revoked_with_active_leases` gauge (labeled by `tenant_id`, `provider`) counts revoked user-scoped credentials whose active leases are not shadowed by a deny-list entry, and feeds the `CredentialCompromised` alert (Spec §16.5) alongside its pool-scoped counterpart. A lease correctly on the deny list is not counted, so the gauge stays at zero after a successful proxy-mode revocation.
 
 ## Escalation
 
