@@ -66,6 +66,33 @@ func (d *DenyList) Reset(keys []credential.CredentialKey) {
 	d.revoked = next
 }
 
+// Remove deletes a credential identity from the deny list. It is the
+// inverse of Revoke. The §4.9 expired-lease sweep calls it once the
+// store reports no remaining active lease for the credential, so a deny
+// entry expires when the credential's last lease lapses.
+//
+// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// natural lease TTL lapses.
+func (d *DenyList) Remove(key credential.CredentialKey) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.revoked, key)
+}
+
+// Keys returns a snapshot of the credential identities currently on the
+// deny list. The §4.9 sweep iterates the snapshot and re-checks each key
+// against the shared lease store, so every replica bounds its own list
+// regardless of which replica deleted an expired lease row.
+func (d *DenyList) Keys() []credential.CredentialKey {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	keys := make([]credential.CredentialKey, 0, len(d.revoked))
+	for k := range d.revoked {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Revoked reports whether the credential identified by key is on the
 // deny list. It satisfies the §4.9 LLM proxy's DenyList interface.
 func (d *DenyList) Revoked(key credential.CredentialKey) bool {

@@ -471,7 +471,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `MinIOUnavailable` | `rate(lenny_artifact_upload_error_total{error_type="minio_unreachable"}[2m]) > 0` sustained for > 1 min; cluster-wide MinIO ArtifactStore unreachable | Critical |
 | `EtcdUnavailable` | API server etcd connectivity errors sustained > 15s | Critical |
 | `CredentialPoolExhausted` | Any credential pool has 0 assignable credentials for > 30s | Critical |
-| `CredentialCompromised` | Revoked credential has active leases for > 30s (pool-scoped: `lenny_credential_revoked_with_active_leases`; user-scoped: `lenny_user_credential_revoked_with_active_leases`) | Critical |
+| `CredentialCompromised` | Revoked credential has an active lease not shadowed by a deny-list entry for > 30s (pool-scoped: `lenny_credential_revoked_with_active_leases`; user-scoped: `lenny_user_credential_revoked_with_active_leases`); clears once every active lease against the credential is on the deny list or terminated in direct mode | Critical |
 | `TokenServiceUnavailable` | Token Service circuit breaker open for > 30s | Critical |
 | `ControllerLeaderElectionFailed` | Lease not renewed within `leaseDuration` (15s) | Critical |
 | `DedicatedDNSUnavailable` | All dedicated CoreDNS replicas have zero ready pods for > 30s | Critical |

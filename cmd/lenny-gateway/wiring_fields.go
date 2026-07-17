@@ -268,6 +268,14 @@ type gatewayWiringFields struct {
 	clusterClient   client.Client
 	coordinator     *coordination.Sweeper
 	credDeny        *denylist.DenyList
+	// credDenyRebuilt is set once the §4.9 credential deny-list startup
+	// rebuild commits its authoritative Reset. The /readyz handler gates
+	// readiness fail-closed (503) while it is unset so a fresh replica
+	// serves no proxy traffic against a retained revoked lease with an
+	// incomplete deny list; the rebuild goroutine (startBillingAndSecurityWorkers)
+	// flips it after the union across both credential stores lands.
+	// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+	credDenyRebuilt atomic.Bool
 	credRenewalProp *credrenewalprop.Propagator
 	deadlockTracker *deadlock.AwaitTracker
 	// §8.2 / §9.1 MCP fabric outputs. buildMCPSurface constructs the

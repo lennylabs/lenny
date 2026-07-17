@@ -531,6 +531,17 @@ var prodMigrationSchema = []struct {
 	// sequences are asserted directly in
 	// migrations/0174_default_tenant_billing_audit_sequences_test.go.
 	// spec: §11.2.1, §11.7, §15.1, §10.2.
+	//
+	// 0175 adds the §4.9 expires_at projection column to credential_leases:
+	// migration 0129 moved the lease body to an AES-256-GCM envelope, so the
+	// deny-list sweep and the fail-closed lease-existence count cannot read
+	// the lease's expiry without a KMS unwrap. The column is projected out of
+	// the encrypted body and stays nullable (a pre-backfill row reads NULL, an
+	// unknown-expiry sentinel the existence guard counts as active). The
+	// nullability, the credential_leases_expires_at_idx index the sweep filters
+	// on, and the NULL sentinel are asserted directly in
+	// migrations/credential_leases_expires_at_test.go. spec: §4.9.
+	{migration: "0175", table: "credential_leases", columns: []string{"expires_at"}},
 }
 
 // spec: 12.2, 18.5

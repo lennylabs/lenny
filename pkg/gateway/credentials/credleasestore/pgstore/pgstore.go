@@ -140,11 +140,14 @@ func (s *Store) Put(lease credential.Lease) error {
 		return err
 	}
 	now := time.Now().UTC()
+	// expires_at (migration 0175) is the plain projection of the §12.9
+	// envelope-encrypted lease body's ExpiresAt, so the sweep and the
+	// existence count can reason about expiry without decrypting the row.
 	_, err = s.pool.Exec(ctx, `INSERT INTO credential_leases (
 		lease_id, lease_token_hash, delivery_mode, lease, lease_key_version,
 		session_id, cred_source, pool_id, credential_id, cred_tenant_id, credential_ref,
-		created_at, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+		expires_at, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)
 	ON CONFLICT (lease_id) DO UPDATE SET
 		lease_token_hash = EXCLUDED.lease_token_hash,
 		delivery_mode = EXCLUDED.delivery_mode,
@@ -156,10 +159,11 @@ func (s *Store) Put(lease credential.Lease) error {
 		credential_id = EXCLUDED.credential_id,
 		cred_tenant_id = EXCLUDED.cred_tenant_id,
 		credential_ref = EXCLUDED.credential_ref,
+		expires_at = EXCLUDED.expires_at,
 		updated_at = EXCLUDED.updated_at`,
 		lease.LeaseID, leaseTokenHash(lease), string(lease.DeliveryMode), blob, keyVersion,
 		lease.SessionID, string(lease.Source), lease.PoolID, lease.CredentialID,
-		lease.TenantID, lease.CredentialRef, now)
+		lease.TenantID, lease.CredentialRef, lease.ExpiresAt.UTC(), now)
 	return err
 }
 
@@ -255,6 +259,139 @@ func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Le
 		return nil
 	}
 	return s.collect(rows)
+}
+
+// DeleteExpired removes every lease row whose expires_at is set and past
+// cutoff, returning the number of rows removed. It backs the §4.9
+// bounded expired-lease sweep. A NULL expires_at (a pre-backfill row of
+// unknown expiry) is never deleted here; BackfillExpiresAt fills or
+// removes those rows instead.
+//
+// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// natural lease TTL lapses.
+func (s *Store) DeleteExpired(ctx context.Context, cutoff time.Time) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM credential_leases WHERE expires_at IS NOT NULL AND expires_at < $1`,
+		cutoff.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("credleasestore/pgstore: delete expired leases: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// LeasesByCredentialCount reports how many leases the store holds whose
+// backing credential equals key and that are still active as of
+// activeAsOf (expires_at after activeAsOf, or NULL). It runs an indexed
+// plain-column count without decrypting any lease body, so unlike
+// LeasesByCredential it never conflates a query error or a decrypt
+// failure with an empty result: it returns the query error on failure.
+// A NULL expires_at (a pre-backfill row of unknown expiry) counts as
+// active so the caller fails closed on a row the backfill has not yet
+// reached. It backs the §4.9 fail-closed deny-list-entry removal (the
+// sweep) and the startup rebuild filter.
+//
+// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// entry only for a revoked credential that still has an active lease.
+func (s *Store) LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error) {
+	var (
+		q    string
+		args []any
+	)
+	switch key.Source {
+	case credential.SourcePool:
+		q = `SELECT count(*) FROM credential_leases
+		     WHERE cred_source = $1 AND pool_id = $2 AND credential_id = $3
+		       AND (expires_at IS NULL OR expires_at > $4)`
+		args = []any{string(key.Source), key.PoolID, key.CredentialID, activeAsOf.UTC()}
+	case credential.SourceUser:
+		q = `SELECT count(*) FROM credential_leases
+		     WHERE cred_source = $1 AND cred_tenant_id = $2 AND credential_ref = $3
+		       AND (expires_at IS NULL OR expires_at > $4)`
+		args = []any{string(key.Source), key.TenantID, key.CredentialRef, activeAsOf.UTC()}
+	default:
+		return 0, nil
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("credleasestore/pgstore: count active leases by credential: %w", err)
+	}
+	return n, nil
+}
+
+// BackfillExpiresAt fills the plain expires_at projection column
+// (migration 0175) for rows written before the migration, which carry a
+// NULL expires_at that neither DeleteExpired nor LeasesByCredentialCount
+// can treat as expired. It decrypts each NULL-expires_at lease body and
+// either sets expires_at from the lease's ExpiresAt, or deletes the row
+// when the lease is already past expiry as of now so a pre-migration
+// expired lease does not linger. It returns the number of rows filled
+// and the number deleted. A row whose body does not decrypt is left
+// untouched: its NULL expires_at counts as active, so the existence
+// guard stays fail-closed. Active leases also re-populate expires_at on
+// their next renewal Put, so this pass is a one-time convergence step
+// run once at startup.
+//
+// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// natural lease TTL lapses.
+func (s *Store) BackfillExpiresAt(ctx context.Context) (filled, deleted int, err error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT lease_id, lease, lease_key_version FROM credential_leases WHERE expires_at IS NULL`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("credleasestore/pgstore: query NULL-expires_at rows: %w", err)
+	}
+	type pending struct {
+		leaseID   string
+		expiresAt time.Time
+	}
+	var todo []pending
+	for rows.Next() {
+		var (
+			leaseID    string
+			blob       []byte
+			keyVersion int
+		)
+		if scanErr := rows.Scan(&leaseID, &blob, &keyVersion); scanErr != nil {
+			rows.Close()
+			return filled, deleted, fmt.Errorf("credleasestore/pgstore: scan backfill row: %w", scanErr)
+		}
+		doc, openErr := s.openLease(ctx, blob, keyVersion)
+		if openErr != nil {
+			// An undecryptable body leaves the NULL in place; a NULL
+			// expires_at counts as active, so the guard stays fail-closed.
+			continue
+		}
+		var lease credential.Lease
+		if json.Unmarshal(doc, &lease) != nil {
+			continue
+		}
+		todo = append(todo, pending{leaseID: leaseID, expiresAt: lease.ExpiresAt.UTC()})
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		rows.Close()
+		return filled, deleted, fmt.Errorf("credleasestore/pgstore: iterate backfill rows: %w", rowsErr)
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	for _, p := range todo {
+		if p.expiresAt.IsZero() || !p.expiresAt.After(now) {
+			tag, delErr := s.pool.Exec(ctx,
+				`DELETE FROM credential_leases WHERE lease_id = $1 AND expires_at IS NULL`, p.leaseID)
+			if delErr != nil {
+				return filled, deleted, fmt.Errorf("credleasestore/pgstore: delete expired backfill row: %w", delErr)
+			}
+			deleted += int(tag.RowsAffected())
+			continue
+		}
+		tag, updErr := s.pool.Exec(ctx,
+			`UPDATE credential_leases SET expires_at = $2 WHERE lease_id = $1 AND expires_at IS NULL`,
+			p.leaseID, p.expiresAt)
+		if updErr != nil {
+			return filled, deleted, fmt.Errorf("credleasestore/pgstore: fill backfill row: %w", updErr)
+		}
+		filled += int(tag.RowsAffected())
+	}
+	return filled, deleted, nil
 }
 
 // collect decrypts and decodes every (lease, lease_key_version) row in

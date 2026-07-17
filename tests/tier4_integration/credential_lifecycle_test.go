@@ -81,10 +81,10 @@ const (
 // lifecycleRevoker mirrors cmd/lenny-gateway's poolCredentialRevoker (the
 // admin.PoolCredentialRevoker the emergency-revocation endpoint calls): for
 // each revoked credential it adds the source-aware pool identity to the
-// deny list and drops the leases this replica holds against it, returning
-// the count terminated. It is reconstructed here rather than imported
-// because the production glue lives in package main. spec: §4.9 lines
-// 1640-1652.
+// deny list and retains the leases this replica holds against it, denied in
+// place by the deny-list entry, returning the count of leases affected. It
+// is reconstructed here rather than imported because the production glue
+// lives in package main. spec: §4.9 lines 1640-1652, 1671.
 type lifecycleRevoker struct {
 	denyList *denylist.DenyList
 	leases   *credleasestore.Store
@@ -99,8 +99,9 @@ func (r *lifecycleRevoker) RevokePoolCredentials(_ context.Context, poolID strin
 			CredentialID: credID,
 		}
 		r.denyList.Revoke(key)
-		for _, lease := range r.leases.LeasesByCredential(key) {
-			r.leases.Remove(lease.LeaseID)
+		// spec: §4.9 — the lease is retained and denied in place; the count
+		// is leases-affected, not leases-removed.
+		for range r.leases.LeasesByCredential(key) {
 			total++
 		}
 	}
@@ -134,12 +135,12 @@ func (r *lifecycleRevoker) RevokePoolCredentials(_ context.Context, poolID strin
 //	across its stages. Either the adapter did not run the Full-level rotation
 //	handshake against the real runtime (credentials_rotated sent, runtime
 //	rebinds, credentials_acknowledged received, credential file rewritten to
-//	the rotated lease), or the §4.9 emergency revocation did not terminate the
-//	session's active lease and deny the credential so a step-5 replacement
-//	mint from the exhausted pool fails and the session terminates. A break in
-//	any stage leaves a session running on a stale, unacknowledged, or revoked
-//	credential — the exact windows the lifecycle protocol and emergency
-//	revocation exist to close.
+//	the rotated lease), or the §4.9 emergency revocation did not deny the
+//	session's active credential (retaining the lease but shadowing it with a
+//	deny-list entry) so a step-5 replacement mint from the exhausted pool
+//	fails and the session terminates. A break in any stage leaves a session
+//	running on a stale, unacknowledged, or revoked credential — the exact
+//	windows the lifecycle protocol and emergency revocation exist to close.
 func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -282,7 +283,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 		t.Errorf("revokedCredential = %q, want %q", summary.RevokedCredential, clCredID)
 	}
 	// The session held exactly one active lease (v2) against key-1; the §4.9
-	// terminator dropped it.
+	// terminator counts it as affected (denied in place, retained in store).
 	if summary.LeasesTerminated != 1 {
 		t.Errorf("leasesTerminated = %d, want 1 (the active session lease)", summary.LeasesTerminated)
 	}
@@ -290,9 +291,12 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 		t.Error("revoke summary missing propagatedAt")
 	}
 
-	// The session's active lease is terminated and the credential denied.
-	if _, ok := leaseStore.GetByID(v2.GetLeaseId()); ok {
-		t.Fatalf("post-revoke: session lease v2 %s still present; the active session was not terminated", v2.GetLeaseId())
+	// The session's active lease is retained and denied in place: the §4.9
+	// revocation shadows it with the deny-list entry rather than removing the
+	// row (which would make the deny-list check unreachable on the shared
+	// store). spec: §4.9 line 1671.
+	if _, ok := leaseStore.GetByID(v2.GetLeaseId()); !ok {
+		t.Fatalf("post-revoke: session lease v2 %s must be retained so the deny-list check can reject it", v2.GetLeaseId())
 	}
 	credKey := credential.CredentialKey{Source: credential.SourcePool, PoolID: clPool, CredentialID: clCredID}
 	if !deny.Revoked(credKey) {

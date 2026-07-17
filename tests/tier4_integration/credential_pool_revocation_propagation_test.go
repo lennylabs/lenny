@@ -57,9 +57,10 @@ import (
 // admin.PoolCredentialRevoker the emergency-revocation endpoint calls.
 // For each revoked credential it adds the source-aware pool identity to
 // the deny list (a Propagator, so the entry fans out to peer replicas over
-// Redis) and drops the leases this replica holds against it, returning the
-// count terminated. It is reconstructed here rather than imported because
-// the production glue lives in package main. spec: §4.9 lines 1640-1652.
+// Redis) and retains the leases this replica holds against it, denied in
+// place by the deny-list entry, returning the count of leases affected. It
+// is reconstructed here rather than imported because the production glue
+// lives in package main. spec: §4.9 lines 1640-1652, 1671.
 type poolRevoker struct {
 	denyList *propagator.Propagator
 	leases   *credleasestore.Store
@@ -74,8 +75,9 @@ func (p *poolRevoker) RevokePoolCredentials(_ context.Context, poolID string, cr
 			CredentialID: credID,
 		}
 		p.denyList.Revoke(key)
-		for _, lease := range p.leases.LeasesByCredential(key) {
-			p.leases.Remove(lease.LeaseID)
+		// spec: §4.9 — the lease is retained and denied in place; the count
+		// is leases-affected, not leases-removed.
+		for range p.leases.LeasesByCredential(key) {
 			total++
 		}
 	}
@@ -290,6 +292,142 @@ func TestPoolCredentialEmergencyRevocationPropagatesAcrossReplicas(t *testing.T)
 	// ---- after revocation: the peer rejects the still-held lease with
 	// CREDENTIAL_REVOKED before any upstream call ----
 	req, _ := http.NewRequest(http.MethodPost, peerMessagesURL, strings.NewReader(revProxyBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", leaseToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("issue post-revocation proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("post-revocation proxy request: status %d, want 403; body %s", resp.StatusCode, body)
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode proxy error envelope: %v; body %s", err, body)
+	}
+	if env.Error.Code != "CREDENTIAL_REVOKED" {
+		t.Fatalf("post-revocation error code = %q, want CREDENTIAL_REVOKED; body %s", env.Error.Code, body)
+	}
+	// The rejection preceded the upstream call: the stub's request count did
+	// not advance past the single pre-revocation request.
+	if got := len(upstream.Requests()); got != 1 {
+		t.Fatalf("post-revocation: upstream received %d requests, want 1 — the revoked lease reached the provider", got)
+	}
+}
+
+// TestPoolCredentialEmergencyRevocationDeniesRetainedLeaseSharedStore drives
+// a pool-backed proxy lease through the real admin emergency-revocation
+// endpoint under the multi-replica shared-Postgres topology, where the revoke
+// endpoint and the LLM proxy read one shared credential-lease store. The §4.9
+// revoke retains the lease and adds the credential to the deny list, so a
+// post-revocation proxy request resolves the retained lease and is rejected
+// CREDENTIAL_REVOKED before any upstream call. Deleting the lease on revoke
+// (the pre-fix behavior) would remove the row the proxy reads, so the request
+// would resolve no lease and degrade to 401 LEASE_TOKEN_INVALID, never
+// reaching the deny-list check.
+//
+// spec: §4.9 (CREDENTIAL_REVOKED reachable for a pool-backed lease under the
+// shared store).
+//
+// diagnosis: the §4.9 emergency revoke deleted the credential-lease row
+// instead of retaining it under the shared-Postgres topology. A post-revocation
+// proxy request then resolves no lease and degrades to 401
+// LEASE_TOKEN_INVALID, never reaching the deny-list check, so the
+// CREDENTIAL_REVOKED rejection is unreachable for a pool-backed lease. Revoke
+// must retain the lease and add the credential to the deny list.
+func TestPoolCredentialEmergencyRevocationDeniesRetainedLeaseSharedStore(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// One shared credential-lease store, upstream-credential cache, and deny
+	// list, as every replica reads under the shared-Postgres topology.
+	leases := credleasestore.New()
+	creds := credcache.New()
+	dl := denylist.New()
+
+	assign := credassign.New(leases, creds)
+	assign.RegisterPool(credassign.Pool{
+		Name:         revPool,
+		Provider:     credential.ProviderAnthropicDirect,
+		DeliveryMode: credential.DeliveryProxy,
+		Strategy:     credential.StrategyLeastLoaded,
+		ProxyURL:     "https://lenny-llm-proxy.internal/llm-proxy",
+		ProxyDialect: string(credential.ProxyDialectAnthropic),
+		Credentials: []credassign.PoolCredential{
+			{ID: revCredID, APIKey: revUpstream, Healthy: true},
+		},
+	})
+	lease, err := assign.Assign(revPool, revSession, "", revTenant)
+	if err != nil {
+		t.Fatalf("assign pool lease: %v", err)
+	}
+	if lease.Proxy == nil || lease.Proxy.LeaseToken == "" {
+		t.Fatalf("assigned pool lease carries no proxy token: %+v", lease)
+	}
+	leaseToken := lease.Proxy.LeaseToken
+
+	// The §4.9 LLM proxy reads the same shared lease store, credential cache,
+	// and deny list.
+	upstream := llmprovider.New(t)
+	registry := llmproxy.NewTranslatorRegistry(&llmproxy.AnthropicDirectTranslator{
+		BaseURL:                 upstream.URL(),
+		DefaultAnthropicVersion: "2023-06-01",
+	})
+	proxy := httptest.NewServer(&llmproxy.Handler{
+		Leases:      leases,
+		Translators: registry,
+		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Credentials: creds,
+		DenyList:    dl,
+	})
+	t.Cleanup(proxy.Close)
+	messagesURL := proxy.URL + "/v1/messages"
+
+	// The real §4.9 admin emergency-revocation endpoint, wired to the shared
+	// deny list and lease store exactly as cmd/lenny-gateway wires
+	// poolCredentialRevoker (reusing the reconstructed lifecycleRevoker).
+	poolStore := credentialpoolstore.NewMemory()
+	if err := poolStore.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID: revTenant,
+		Name:     revPool,
+		Provider: string(credential.ProviderAnthropicDirect),
+		Credentials: []credentialpoolstore.Credential{
+			{ID: revCredID, SecretRef: "lenny-system/k2"},
+		},
+	}); err != nil {
+		t.Fatalf("seed credential pool: %v", err)
+	}
+	adminRouter := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithCredentialPools(poolStore).
+		WithPoolCredentialRevocation(&lifecycleRevoker{denyList: dl, leases: leases})
+
+	// ---- before revocation: the shared lease reaches upstream ----
+	if code := doProxy(t, messagesURL, leaseToken); code != http.StatusOK {
+		t.Fatalf("pre-revocation proxy request: status %d, want 200", code)
+	}
+	if got := len(upstream.Requests()); got != 1 {
+		t.Fatalf("pre-revocation: upstream received %d requests, want 1", got)
+	}
+
+	// ---- emergency-revoke through the real admin endpoint ----
+	revResp := adminRevokeRequest(t, adminRouter.Handler(),
+		"/v1/admin/credential-pools/"+revPool+"/credentials/"+revCredID+"/revoke")
+	if revResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(revResp.Body)
+		revResp.Body.Close()
+		t.Fatalf("admin revoke: status %d, body %s", revResp.StatusCode, body)
+	}
+	revResp.Body.Close()
+
+	// ---- after revocation: the retained shared lease is denied in place ----
+	req, _ := http.NewRequest(http.MethodPost, messagesURL, strings.NewReader(revProxyBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", leaseToken)
 	resp, err := http.DefaultClient.Do(req)

@@ -276,6 +276,7 @@ type gatewayFlags struct {
 	credentialsExpiryWarningLeadSeconds     *int
 	workspaceSealMaxDurationSeconds         *int
 	idempotencyGCIntervalSeconds            *int
+	credentialLeaseGCIntervalSeconds        *int
 	idempotencyMaxBodyBytes                 *int64
 	checkpointJitterFraction                *float64
 	noEnvPolicy                             *string
@@ -1101,6 +1102,9 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.idempotencyGCIntervalSeconds = flag.Int("idempotency-gc-interval-seconds",
 		envInt("LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS", 3600),
 		"§11.5 line 277 idempotency_keys TTL garbage-collection cadence. The sweeper iterates tenants and drops rows past the 24-hour retention window every interval. Default 3600s (one hour). Lower values reduce row backlog at the cost of more frequent Postgres scans; higher values keep expired rows up to the configured interval past TTL (read-time gate masks them from clients). Override via LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS.")
+	f.credentialLeaseGCIntervalSeconds = flag.Int("credential-lease-gc-interval-seconds",
+		envInt("LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS", 3600),
+		"§4.9 line 1671 credential_leases expired-lease sweep cadence. Every interval the gateway deletes lease rows past ExpiresAt (bounding the credential_leases table) and then reconciles this replica's deny list, dropping a credential's deny entry only when the store definitively reports no remaining active lease for it (failing closed on a store error). Runs on every replica so each replica's in-memory deny list stays bounded within its lifetime. Default 3600s (one hour). Override via LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS.")
 	f.idempotencyMaxBodyBytes = flag.Int64("idempotency-max-body-bytes",
 		envInt64("LENNY_IDEMPOTENCY_MAX_BODY_BYTES", 8<<20),
 		"§11.5 line 277 cap on the request body the idempotency middleware buffers and hashes. A request larger than this is rejected with 413 BODY_TOO_LARGE before reaching the inner handler. Default 8 MiB covers the §11.5 critical operations (CreateSession ~10KB, FinalizeWorkspace and StartSession ~KB, Resume body that may carry a TaskResult). Operators raise it when their delegation payloads (taskInput) or replay/derive bodies exceed the default. Override via LENNY_IDEMPOTENCY_MAX_BODY_BYTES.")

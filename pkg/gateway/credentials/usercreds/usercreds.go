@@ -243,25 +243,32 @@ func (m *Materializer) RotateUser(ctx context.Context, tenantID, credentialRef s
 	return len(leases), nil
 }
 
-// RevokeUser invalidates every active lease backed by (tenant,
-// credentialRef) and returns the count terminated. It adds the user-shaped
+// RevokeUser denies every active lease backed by (tenant, credentialRef)
+// and returns the count of leases affected. It adds the user-shaped
 // deny-list entry {source: user, tenantId, credentialRef} (propagated
-// across replicas when a Revoker is wired), drops the cached upstream
-// secret so the proxy can no longer inject it, and removes the leases this
-// replica holds. A peer replica that still holds a lease rejects it via
-// the propagated deny-list entry on its next upstream request.
+// across replicas when a Revoker is wired) and drops the cached upstream
+// secret so the proxy can no longer inject it. The leases themselves are
+// retained in the lease store so the proxy resolves them and rejects each
+// with CREDENTIAL_REVOKED at the deny-list check; a retained lease is
+// shadowed by its deny-list entry until its natural TTL lapses. Under the
+// shared-Postgres lease store, deleting the lease would remove the row every
+// replica reads and make the deny-list check unreachable, degrading the
+// rejection to LEASE_TOKEN_INVALID. Dropping the cached secret while
+// retaining the lease is defense in depth: the proxy denies the request at
+// the deny-list check before it would inject a secret.
 //
 // spec: §4.9 lines 1350-1351 (revoke invalidates active leases), 1640-1652
-// (user-shaped deny-list entry), 1424 (user_credential_revoked trigger).
+// (user-shaped deny-list entry), 1671 (the deny-list entry shadows the
+// retained lease until its TTL lapses), 1424 (user_credential_revoked
+// trigger).
 func (m *Materializer) RevokeUser(_ context.Context, tenantID, credentialRef string) (int, error) {
 	key := credential.CredentialKey{Source: credential.SourceUser, TenantID: tenantID, CredentialRef: credentialRef}
 	if m.revoker != nil {
 		m.revoker.Revoke(key)
 	}
+	// spec: §4.9 — the lease is retained and denied in place; only the
+	// cached upstream secret is dropped.
 	leases := m.leases.LeasesByCredential(key)
-	for _, lease := range leases {
-		m.leases.Remove(lease.LeaseID)
-	}
 	m.creds.Remove(key)
 	return len(leases), nil
 }

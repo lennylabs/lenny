@@ -14,7 +14,9 @@
 package credleasestore
 
 import (
+	"context"
 	"sync"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 )
@@ -34,6 +36,26 @@ type LeaseStore interface {
 	// is one of sessionIDs. It backs the §7.1 step 23 session-teardown
 	// lease release and the §11.4 full_revoke revocation step.
 	LeasesBySession(sessionIDs []string) []credential.Lease
+	// DeleteExpired removes every lease whose expiry is past cutoff and
+	// returns the number of leases removed. It backs the §4.9 bounded
+	// expired-lease sweep that keeps the lease working set and the deny
+	// list bounded within a replica's lifetime.
+	//
+	// spec: §4.9 line 1671 — deny-list entries expire when the
+	// credential's natural lease TTL lapses.
+	DeleteExpired(ctx context.Context, cutoff time.Time) (int, error)
+	// LeasesByCredentialCount reports how many leases the store holds
+	// whose backing credential equals key and that are still active as of
+	// activeAsOf (expiry after activeAsOf, or an unknown expiry). Unlike
+	// LeasesByCredential it returns the store error on failure, so a
+	// caller can distinguish a definitive "no active lease for this
+	// credential" from an unanswerable query and fail closed. It backs the
+	// §4.9 fail-closed deny-list-entry removal and the startup rebuild
+	// filter.
+	//
+	// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+	// entry only for a revoked credential that still has an active lease.
+	LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error)
 }
 
 // Store indexes issued credential leases by lease ID and, for
@@ -168,4 +190,52 @@ func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Le
 		}
 	}
 	return out
+}
+
+// DeleteExpired removes every lease this replica holds whose ExpiresAt
+// is before cutoff, dropping its token index the way Remove does, and
+// returns the number of leases removed. The in-memory store always
+// answers, so the error is nil. It backs the §4.9 bounded expired-lease
+// sweep.
+//
+// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// natural lease TTL lapses.
+func (s *Store) DeleteExpired(_ context.Context, cutoff time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for id, lease := range s.byID {
+		if lease.ExpiresAt.Before(cutoff) {
+			if lease.Proxy != nil {
+				delete(s.byToken, lease.Proxy.LeaseToken)
+			}
+			delete(s.byID, id)
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// LeasesByCredentialCount reports how many leases this replica holds
+// whose backing credential equals key and that are still active as of
+// activeAsOf: ExpiresAt after activeAsOf, or a zero (unknown) ExpiresAt,
+// which counts as active so the caller fails closed. The in-memory store
+// always answers, so the error is nil. It backs the §4.9 fail-closed
+// deny-list-entry removal (the sweep) and the startup rebuild filter.
+//
+// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// entry only for a revoked credential that still has an active lease.
+func (s *Store) LeasesByCredentialCount(_ context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, lease := range s.byID {
+		if lease.CredentialKey() != key {
+			continue
+		}
+		if lease.ExpiresAt.IsZero() || lease.ExpiresAt.After(activeAsOf) {
+			count++
+		}
+	}
+	return count, nil
 }

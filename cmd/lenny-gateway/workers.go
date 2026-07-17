@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -25,6 +26,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
@@ -1239,6 +1242,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	billingRetentionDays := f.billingRetentionDays
 	checkpointInterval := f.checkpointInterval
 	idempotencyGCIntervalSeconds := f.idempotencyGCIntervalSeconds
+	credentialLeaseGCIntervalSeconds := f.credentialLeaseGCIntervalSeconds
 	postgresWriteIopsSampleSeconds := f.postgresWriteIopsSampleSeconds
 	// ----- §10.1 session-coordination lease sweeper -----
 	// Active only with Redis: it renews this replica's lease on every
@@ -1419,38 +1423,22 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	}
 
 	// ----- §4.9 credential deny-list startup rebuild -----
-	// Seeds the per-replica credential deny list from the credential
-	// stores' revoked entries, so a replica started immediately after a
-	// pool-credential revocation denies that credential on the upstream
+	// Seeds the per-replica credential deny list from the union of the
+	// pool store's and the token store's revoked entries, so a replica
+	// started immediately after either a pool-credential or a
+	// user-credential revocation denies that credential on the upstream
 	// path even if it missed the original Redis pub/sub notification. The
-	// rebuild is authoritative (Reset) and runs once at startup, where
-	// the list is empty; it is not periodic because a periodic Reset
-	// would drop the entries the live §11.4 revocation path adds for
-	// pool credentials not yet reflected in the store query. The §4.9
-	// union's user-credential term is vacuous today — no user-backed
-	// lease is minted at session creation yet — so only the
-	// pool-credential side is seeded.
+	// rebuild is authoritative (Reset) and runs once at startup, seeding a
+	// deny entry only for a revoked credential that still has an active
+	// lease (the §4.9 lease-existence bound). It runs in a background
+	// goroutine so runServers can bring up the /healthz and /readyz
+	// listeners rather than blocking on a boot-time store retry; readiness
+	// stays gated (credDenyRebuilt unset) until the Reset commits, so the
+	// replica serves no proxy traffic against a retained revoked lease with
+	// an incomplete deny list while /healthz stays live throughout.
 	//
-	// spec: §4.9 lines 1668-1673.
-	{
-		revoked, err := w.credentialPools.RevokedCredentials(context.Background())
-		if err != nil {
-			log.Printf("lenny-gateway: §4.9 credential deny-list startup rebuild failed: %v", err)
-		} else {
-			keys := make([]credential.CredentialKey, 0, len(revoked))
-			for _, rc := range revoked {
-				keys = append(keys, credential.CredentialKey{
-					Source:       credential.SourcePool,
-					PoolID:       rc.PoolName,
-					CredentialID: rc.CredentialID,
-				})
-			}
-			w.credDeny.Reset(keys)
-			if len(keys) > 0 {
-				log.Printf("lenny-gateway: §4.9 credential deny list rebuilt with %d revoked credential(s)", len(keys))
-			}
-		}
-	}
+	// spec: §4.9 lines 1692-1697.
+	go w.runCredentialDenyListRebuild()
 
 	// ----- §11.5 idempotency-key TTL garbage collection -----
 	// Reclaims idempotency_keys rows past the 24-hour retention window
@@ -1476,6 +1464,297 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 				}
 			}
 		}()
+	}
+
+	// ----- §4.9 credential-lease expires_at backfill -----
+	// One-time convergence pass for rows written before migration 0175, which
+	// carry a NULL expires_at that the sweep below cannot treat as expired and
+	// the rebuild filter counts as active. It fills the plain projection from
+	// the decrypted lease body, or deletes the row when the lease is already
+	// past expiry, so a pre-migration expired lease does not linger past its
+	// TTL and keep its deny-list entry forever. Only the Postgres-backed store
+	// carries the projection column; the in-memory store keeps ExpiresAt on the
+	// struct and needs no backfill. It runs in a background goroutine so a large
+	// backfill on an upgraded deployment does not block the /healthz and /readyz
+	// listeners, mirroring the deny-list rebuild above.
+	//
+	// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+	// natural lease TTL lapses.
+	w.startCredentialLeaseExpiresAtBackfill()
+
+	// ----- §4.9 expired-lease sweep and deny-entry expiry -----
+	// Each tick deletes credential_leases rows past ExpiresAt (bounding the
+	// table) and then reconciles this replica's deny list, dropping a
+	// credential's deny entry only once the store definitively reports no
+	// remaining active lease against it. The reconcile fails closed: a
+	// store error or a positive count keeps the entry, so a transient
+	// Postgres or KMS fault never opens a CREDENTIAL_REVOKED bypass. Like
+	// the §11.5 idempotency GC above it runs on every replica with no
+	// leader gate, and the deny-entry removal is driven by this replica's
+	// own Keys() rather than by the deleted rows: under the shared store
+	// each expired row is deleted by exactly one replica, so a
+	// deletion-derived removal set would bound only the winning replica's
+	// list. Iterating each replica's own list bounds every replica's list
+	// within its lifetime.
+	//
+	// spec: §4.9 line 1671 — a deny-list entry expires when the
+	// credential's natural lease TTL lapses.
+	if w.llmLeases != nil && w.credDeny != nil {
+		gcInterval := time.Duration(*credentialLeaseGCIntervalSeconds) * time.Second
+		if gcInterval <= 0 {
+			gcInterval = time.Hour
+		}
+		go runCredentialLeaseSweepLoop(w.watchdogCtx, w.llmLeases, w.credDeny, w.gwMetrics, gcInterval, clockinject.Now)
+	}
+}
+
+// credentialLeaseSweepMetrics records how many expired lease rows the §4.9
+// sweep removed each tick. *gatewaymetrics.Metrics satisfies it; a test
+// substitutes a counter.
+type credentialLeaseSweepMetrics interface {
+	AddCredentialLeasesSwept(n int)
+}
+
+// runCredentialLeaseSweepLoop runs the §4.9 expired-lease sweep on a ticker
+// until ctx is cancelled. Each tick deletes credential_leases rows past
+// ExpiresAt and reconciles this replica's deny list, failing closed on a
+// store error (a failing tick leaves the deny entry in place and retries
+// next interval). It records the swept-row count on metrics.
+//
+// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// natural lease TTL lapses.
+func runCredentialLeaseSweepLoop(ctx context.Context, leases leaseSweeper, deny denyReconciler, metrics credentialLeaseSweepMetrics, interval time.Duration, now func() time.Time) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			swept, denyRemoved, err := sweepExpiredCredentialLeases(ctx, leases, deny, now())
+			if err != nil {
+				log.Printf("lenny-gateway: §4.9 expired-lease sweep error: %v", err)
+				continue
+			}
+			metrics.AddCredentialLeasesSwept(swept)
+			if swept > 0 || denyRemoved > 0 {
+				log.Printf("lenny-gateway: §4.9 expired-lease sweep removed %d lease row(s) past ExpiresAt and expired %d deny-list entr(ies)",
+					swept, denyRemoved)
+			}
+		}
+	}
+}
+
+// leaseSweeper bounds the credential_leases table and answers the
+// per-credential lease-existence query the §4.9 deny-entry expiry gates on.
+// LeasesByCredentialCount distinguishes a definitive zero from an
+// unanswerable query so the reconcile can fail closed.
+type leaseSweeper interface {
+	DeleteExpired(ctx context.Context, cutoff time.Time) (int, error)
+	LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error)
+}
+
+// denyReconciler is the per-replica deny list the §4.9 sweep reconciles:
+// it snapshots the current entries and removes one once its credential has
+// no remaining active lease.
+type denyReconciler interface {
+	Keys() []credential.CredentialKey
+	Remove(key credential.CredentialKey)
+}
+
+// sweepExpiredCredentialLeases runs one §4.9 expired-lease sweep tick. It
+// first deletes lease rows past ExpiresAt to bound the credential_leases
+// table, then reconciles the deny list by dropping a credential's deny
+// entry only when the store reports a count of zero with no error (the
+// store definitively holds no active lease, so no request can resolve to
+// an unexpired lease and the entry is inert). On a store error or a
+// positive count the entry stays for this tick and is retried next
+// interval, because removing a live deny entry is a fail-closed
+// CREDENTIAL_REVOKED bypass. It returns the number of expired lease rows
+// removed and the number of deny entries expired.
+//
+// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// natural lease TTL lapses.
+func sweepExpiredCredentialLeases(ctx context.Context, leases leaseSweeper, deny denyReconciler, now time.Time) (swept int, denyRemoved int, err error) {
+	swept, err = leases.DeleteExpired(ctx, now)
+	if err != nil {
+		return 0, 0, fmt.Errorf("§4.9 expired-lease sweep (delete): %w", err)
+	}
+	for _, key := range deny.Keys() {
+		n, cerr := leases.LeasesByCredentialCount(ctx, key, now)
+		if cerr != nil || n > 0 {
+			continue
+		}
+		deny.Remove(key)
+		denyRemoved++
+	}
+	return swept, denyRemoved, nil
+}
+
+// expiresAtBackfiller converges the plain expires_at projection for
+// credential_leases rows written before migration 0175, which carry a NULL
+// expires_at that the sweep cannot treat as expired. Only the Postgres-backed
+// lease store implements it; the in-memory store keeps ExpiresAt on the struct
+// and needs no backfill.
+type expiresAtBackfiller interface {
+	BackfillExpiresAt(ctx context.Context) (filled, deleted int, err error)
+}
+
+// startCredentialLeaseExpiresAtBackfill launches the one-time §4.9 expires_at
+// convergence pass in the background when the lease store is the Postgres
+// backend, so pre-migration NULL-expires_at rows are filled or, when already
+// expired, removed rather than lingering past their TTL and keeping their
+// deny-list entry. It is a no-op on the in-memory store, which keeps ExpiresAt
+// on the struct. It returns whether the pass was launched.
+//
+// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// natural lease TTL lapses.
+func (w *gatewayWiring) startCredentialLeaseExpiresAtBackfill() bool {
+	backfiller, ok := w.llmLeases.(expiresAtBackfiller)
+	if !ok {
+		return false
+	}
+	go runCredentialLeaseExpiresAtBackfill(w.watchdogCtx, backfiller)
+	return true
+}
+
+// runCredentialLeaseExpiresAtBackfill runs the one-time §4.9 expires_at
+// convergence pass and logs the filled and deleted counts. It is not retried on
+// error: active leases re-populate expires_at on their next renewal Put, so a
+// transient boot-time fault leaves only pre-migration rows for the next
+// restart's pass to converge rather than opening a security gap.
+//
+// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// natural lease TTL lapses.
+func runCredentialLeaseExpiresAtBackfill(ctx context.Context, backfiller expiresAtBackfiller) {
+	filled, deleted, err := backfiller.BackfillExpiresAt(ctx)
+	if err != nil {
+		log.Printf("lenny-gateway: §4.9 credential-lease expires_at backfill failed: %v", err)
+		return
+	}
+	if filled > 0 || deleted > 0 {
+		log.Printf("lenny-gateway: §4.9 credential-lease expires_at backfill filled %d pre-migration row(s) and deleted %d already-expired row(s)",
+			filled, deleted)
+	}
+}
+
+// revokedPoolLister enumerates the pool store's revoked credentials for the
+// §4.9 startup deny-list rebuild.
+type revokedPoolLister interface {
+	RevokedCredentials(ctx context.Context) ([]credentialpoolstore.RevokedCredential, error)
+}
+
+// revokedUserLister enumerates the token store's revoked user credentials for
+// the §4.9 startup deny-list rebuild.
+type revokedUserLister interface {
+	RevokedCredentials(ctx context.Context) ([]credentialstore.RevokedUserCredential, error)
+}
+
+// leaseCounter reports how many active leases the store holds against a
+// credential, distinguishing a definitive zero from an unanswerable query so
+// the rebuild can fail closed.
+type leaseCounter interface {
+	LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error)
+}
+
+// denyResetter commits the authoritative §4.9 deny-list Reset.
+type denyResetter interface {
+	Reset(keys []credential.CredentialKey)
+}
+
+// rebuildCredentialDenyListKeys builds the §4.9 startup deny-list union across
+// the pool and token stores and bounds it to credentials that still have an
+// active lease. Both listing queries fail closed: a non-nil error from either
+// aborts the whole rebuild so no Reset is ever committed on a partial union.
+// The per-key lease-existence filter also fails closed: a candidate key is
+// retained when the store reports an active lease or when the count query
+// errors, so a transient Postgres or KMS fault over-approximates the deny list
+// rather than dropping a still-revoked credential.
+//
+// spec: §4.9 lines 1692-1697 (rebuild union); :1694-1695 (active-lease bound).
+func rebuildCredentialDenyListKeys(ctx context.Context, pools revokedPoolLister, users revokedUserLister, leases leaseCounter, now time.Time) ([]credential.CredentialKey, error) {
+	revokedPools, err := pools.RevokedCredentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("§4.9 deny-list rebuild (pool term): %w", err)
+	}
+	keys := make([]credential.CredentialKey, 0, len(revokedPools))
+	for _, rc := range revokedPools {
+		keys = append(keys, credential.CredentialKey{
+			Source:       credential.SourcePool,
+			PoolID:       rc.PoolName,
+			CredentialID: rc.CredentialID,
+		})
+	}
+	revokedUsers, err := users.RevokedCredentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("§4.9 deny-list rebuild (user term): %w", err)
+	}
+	for _, ru := range revokedUsers {
+		keys = append(keys, credential.CredentialKey{
+			Source:        credential.SourceUser,
+			TenantID:      ru.TenantID,
+			CredentialRef: ru.CredentialRef,
+		})
+	}
+	// spec: §4.9 lines 1694-1695 — retain only keys with an active lease;
+	// fail closed by keeping the key when the existence query errors.
+	active := keys[:0]
+	for _, k := range keys {
+		n, cerr := leases.LeasesByCredentialCount(ctx, k, now)
+		if cerr != nil || n > 0 {
+			active = append(active, k)
+		}
+	}
+	return active, nil
+}
+
+// runCredentialDenyListRebuild runs the §4.9 credential deny-list startup
+// rebuild off the synchronous startup path, committing the authoritative Reset
+// and flipping credDenyRebuilt so /readyz admits the replica once its deny list
+// is complete.
+//
+// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+func (w *gatewayWiring) runCredentialDenyListRebuild() {
+	rebuildCredentialDenyList(w.watchdogCtx, w.credentialPools, w.credentials, w.llmLeases,
+		w.credDeny, func() { w.credDenyRebuilt.Store(true) }, clockinject.Now)
+}
+
+// rebuildCredentialDenyList re-runs both listing queries with bounded backoff
+// until both succeed, commits one authoritative Reset on the complete filtered
+// union, and invokes committed so /readyz admits the replica. Until the Reset
+// commits the replica stays out of the §10.4 ready set (fail closed): a non-nil
+// error from either listing query aborts the commit rather than resetting on a
+// partial union, so a transient boot-time Postgres or KMS fault never leaves a
+// retained revoked lease resolvable with a dropped store's deny entries. The
+// loop exits on ctx cancellation.
+//
+// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+func rebuildCredentialDenyList(ctx context.Context, pools revokedPoolLister, users revokedUserLister, leases leaseCounter, deny denyResetter, committed func(), now func() time.Time) {
+	const (
+		initialBackoff = time.Second
+		maxBackoff     = 30 * time.Second
+	)
+	backoff := initialBackoff
+	for {
+		keys, err := rebuildCredentialDenyListKeys(ctx, pools, users, leases, now())
+		if err == nil {
+			deny.Reset(keys)
+			committed()
+			if len(keys) > 0 {
+				log.Printf("lenny-gateway: §4.9 credential deny list rebuilt with %d revoked credential(s)", len(keys))
+			}
+			return
+		}
+		log.Printf("lenny-gateway: §4.9 credential deny-list startup rebuild failed, retrying in %s: %v", backoff, err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 

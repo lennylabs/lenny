@@ -40,6 +40,7 @@ var spec161Metrics = []string{
 	"lenny_credential_pool_cooldown_count", "lenny_credential_lease_duration_seconds",
 	"lenny_credential_preclaim_mismatch_total", "lenny_credential_rotation_inflight_ceiling_hit_total",
 	"lenny_credential_revoked_with_active_leases", "lenny_user_credential_revoked_with_active_leases",
+	"lenny_gateway_credential_leases_swept_total",
 	"lenny_elicitation_roundtrip_seconds", "lenny_elicitation_pending", "lenny_elicitation_suppressed_total",
 	"lenny_elicitation_timeout_total", "lenny_elicitation_content_tamper_detected_total",
 	"lenny_delegation_budget_utilization_ratio", "lenny_delegation_lease_extension_total",

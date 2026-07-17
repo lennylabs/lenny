@@ -328,6 +328,41 @@ func (s *Store) List(ctx context.Context, tenantID, userID string) ([]credential
 	return out, nil
 }
 
+// RevokedCredentials implements credentialstore.Store. It scans every
+// tenant's credentials for revoked rows, for the §4.9 startup deny-list
+// rebuild. It reads across tenants via pgtenant.InAllTenants because the
+// rebuild is a platform-internal startup operation with no per-tenant
+// request scope; it is a read, so the §12.3 cross_tenant_read audit (for
+// user-triggered cross-tenant reads) does not apply. It returns no
+// secret material.
+//
+// spec: §4.9 — a newly started gateway replica rebuilds its deny list
+// from the stores' revoked entries.
+func (s *Store) RevokedCredentials(ctx context.Context) ([]credentialstore.RevokedUserCredential, error) {
+	var out []credentialstore.RevokedUserCredential
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT tenant_id, ref FROM credentials
+			 WHERE status = 'revoked' ORDER BY tenant_id, ref`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var rc credentialstore.RevokedUserCredential
+			if err := rows.Scan(&rc.TenantID, &rc.CredentialRef); err != nil {
+				return err
+			}
+			out = append(out, rc)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Rotate replaces the secret material for an existing credential. It
 // refreshes RotatedAt, restores the active status, and clears the
 // revoked state. Returns ErrNotFound when the credential does not

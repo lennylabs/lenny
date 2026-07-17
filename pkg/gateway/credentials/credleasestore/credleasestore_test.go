@@ -3,6 +3,7 @@
 package credleasestore_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -195,5 +196,95 @@ func TestLeasesBySessionNoMatch(t *testing.T) {
 	_ = s.Put(sessionLease("cl_1", "lt-1", "run_a"))
 	if got := s.LeasesBySession([]string{"run_absent"}); len(got) != 0 {
 		t.Errorf("LeasesBySession for an unknown session returned %d leases, want 0", len(got))
+	}
+}
+
+// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// natural lease TTL lapses, so the sweep deletes leases past ExpiresAt.
+
+// expiringLease returns a valid pool-backed proxy lease with the given
+// ID, token, and expiry.
+func expiringLease(leaseID, token string, expiresAt time.Time) credential.Lease {
+	l := proxyLease(leaseID, token)
+	l.IssuedAt = expiresAt.Add(-time.Hour)
+	l.ExpiresAt = expiresAt
+	return l
+}
+
+func TestDeleteExpiredRemovesPastLeasesAndCounts(t *testing.T) {
+	s := credleasestore.New()
+	now := time.Now()
+	// Two leases already past expiry, one still active.
+	_ = s.Put(expiringLease("cl_old1", "lt-old1", now.Add(-time.Hour)))
+	_ = s.Put(expiringLease("cl_old2", "lt-old2", now.Add(-time.Minute)))
+	_ = s.Put(expiringLease("cl_live", "lt-live", now.Add(time.Hour)))
+
+	removed, err := s.DeleteExpired(context.Background(), now)
+	if err != nil {
+		t.Fatalf("DeleteExpired: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("DeleteExpired removed %d leases, want 2", removed)
+	}
+	// The expired leases are gone from both the id and the token index.
+	for _, id := range []string{"cl_old1", "cl_old2"} {
+		if _, ok := s.GetByID(id); ok {
+			t.Errorf("expired lease %s survived DeleteExpired", id)
+		}
+	}
+	if _, ok := s.GetByToken("lt-old1"); ok {
+		t.Error("expired lease's token index survived DeleteExpired")
+	}
+	// The active lease and its token index are retained.
+	if _, ok := s.GetByID("cl_live"); !ok {
+		t.Error("DeleteExpired dropped an unexpired lease")
+	}
+	if _, ok := s.GetByToken("lt-live"); !ok {
+		t.Error("DeleteExpired dropped an unexpired lease's token index")
+	}
+	if s.Len() != 1 {
+		t.Errorf("store holds %d leases after DeleteExpired, want 1", s.Len())
+	}
+}
+
+// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// entry only for a revoked credential that still has an active lease, so
+// the existence count must exclude a lease already past its expiry and
+// report a nil error the caller can distinguish from an unanswerable
+// query.
+func TestLeasesByCredentialCountExcludesExpired(t *testing.T) {
+	s := credleasestore.New()
+	now := time.Now()
+	key := credential.CredentialKey{
+		Source:       credential.SourcePool,
+		PoolID:       "claude-prod",
+		CredentialID: "key-1",
+	}
+	// Two active leases against the credential, one expired against it.
+	_ = s.Put(expiringLease("cl_a", "lt-a", now.Add(time.Hour)))
+	_ = s.Put(expiringLease("cl_b", "lt-b", now.Add(30*time.Minute)))
+	_ = s.Put(expiringLease("cl_expired", "lt-e", now.Add(-time.Minute)))
+	// A lease against a different credential must not be counted.
+	other := expiringLease("cl_other", "lt-o", now.Add(time.Hour))
+	other.CredentialID = "key-2"
+	_ = s.Put(other)
+
+	n, err := s.LeasesByCredentialCount(context.Background(), key, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("LeasesByCredentialCount = %d, want 2 active leases", n)
+	}
+
+	// A credential with no live lease reports zero with a nil error, the
+	// definitive answer the fail-closed callers act on.
+	absent := credential.CredentialKey{Source: credential.SourcePool, PoolID: "absent", CredentialID: "absent"}
+	n, err = s.LeasesByCredentialCount(context.Background(), absent, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount(absent): %v", err)
+	}
+	if n != 0 {
+		t.Errorf("LeasesByCredentialCount(absent) = %d, want 0", n)
 	}
 }

@@ -36,11 +36,13 @@ func TestPoolCredentialRevokerRevokesAndDenies(t *testing.T) {
 	rev := &poolCredentialRevoker{leases: leases, denyList: prop}
 	n := rev.RevokePoolCredentials(context.Background(), "claude-prod", []string{"key-1"})
 	if n != 2 {
-		t.Fatalf("RevokePoolCredentials terminated %d leases, want 2", n)
+		t.Fatalf("RevokePoolCredentials affected %d leases, want 2", n)
 	}
+	// spec: §4.9 — the revoked leases are retained and resolvable so the
+	// proxy denies each in place via the deny-list entry.
 	for _, id := range []string{"l1", "l2"} {
-		if _, ok := leases.GetByID(id); ok {
-			t.Errorf("revoked lease %s still in the store", id)
+		if _, ok := leases.GetByID(id); !ok {
+			t.Errorf("revoked lease %s must be retained for the deny-list check", id)
 		}
 	}
 	if _, ok := leases.GetByID("l3"); !ok {
@@ -57,7 +59,10 @@ func TestPoolCredentialRevokerRevokesAndDenies(t *testing.T) {
 }
 
 // TestPoolCredentialRevokerPoolWide revokes every credential id in one
-// call (the §4.9 pool-wide force-rotate), summing the terminated leases.
+// call (the §4.9 pool-wide force-rotate), summing the leases affected. The
+// leases are retained and denied in place, so the store keeps them.
+//
+// spec: §4.9 (retained-and-denied; the count is leases-affected).
 func TestPoolCredentialRevokerPoolWide(t *testing.T) {
 	leases := credleasestore.New()
 	prop, deny := newLocalRevocationDenyList()
@@ -68,13 +73,13 @@ func TestPoolCredentialRevokerPoolWide(t *testing.T) {
 	rev := &poolCredentialRevoker{leases: leases, denyList: prop}
 	n := rev.RevokePoolCredentials(context.Background(), "claude-prod", []string{"key-1", "key-2"})
 	if n != 2 {
-		t.Fatalf("RevokePoolCredentials terminated %d leases, want 2", n)
+		t.Fatalf("RevokePoolCredentials affected %d leases, want 2", n)
 	}
 	if deny.Len() != 2 {
 		t.Errorf("deny list has %d entries, want 2", deny.Len())
 	}
-	if leases.Len() != 0 {
-		t.Errorf("lease store has %d leases after pool-wide revoke, want 0", leases.Len())
+	if leases.Len() != 2 {
+		t.Errorf("lease store has %d leases after pool-wide revoke, want 2 (retained and denied in place)", leases.Len())
 	}
 }
 

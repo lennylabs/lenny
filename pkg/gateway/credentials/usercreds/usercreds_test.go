@@ -258,8 +258,11 @@ func TestRotateUser_noLeases_spec_4_9_1350(t *testing.T) {
 }
 
 // TestRevokeUser_spec_4_9_1351 confirms a revoke deny-lists the user-shaped
-// key, drops the active leases, evicts the cached secret, and counts the
-// terminated leases.
+// key, retains the active leases so the proxy denies them in place, evicts
+// the cached secret, and counts the leases affected.
+//
+// spec: §4.9 (the deny-list entry shadows the retained lease; deleting the
+// lease would make CREDENTIAL_REVOKED unreachable under the shared store).
 func TestRevokeUser_spec_4_9_1351(t *testing.T) {
 	m, store, leases, creds := newMaterializer(t, testProxyURL)
 	rev := &recordingRevoker{}
@@ -287,17 +290,21 @@ func TestRevokeUser_spec_4_9_1351(t *testing.T) {
 	if rev.keys[0] != want {
 		t.Fatalf("deny-list key = %+v, want %+v", rev.keys[0], want)
 	}
-	// Lease dropped and cached secret evicted on this replica.
-	if _, ok := leases.GetByID(proto.LeaseId); ok {
-		t.Fatal("RevokeUser must drop the lease")
+	// Lease retained and resolvable so the proxy denies it in place via the
+	// deny-list entry; the cached upstream secret is still evicted.
+	if _, ok := leases.GetByID(proto.LeaseId); !ok {
+		t.Fatal("RevokeUser must retain the lease so the deny-list check can reject it")
 	}
 	if _, ok := creds.UpstreamCredential(lease); ok {
 		t.Fatal("RevokeUser must evict the cached upstream secret")
 	}
 }
 
-// TestRevokeUser_nilRevoker_spec_4_9_1351 confirms revoke still drops the
-// local leases without a cross-replica propagator (single-replica posture).
+// TestRevokeUser_nilRevoker_spec_4_9_1351 confirms revoke still counts and
+// retains the local leases without a cross-replica propagator (single-replica
+// posture).
+//
+// spec: §4.9 (the lease is retained and denied in place, not removed).
 func TestRevokeUser_nilRevoker_spec_4_9_1351(t *testing.T) {
 	m, store, leases, _ := newMaterializer(t, testProxyURL)
 	c := register(t, store, credential.ProviderAnthropicDirect, "sk")
@@ -310,7 +317,7 @@ func TestRevokeUser_nilRevoker_spec_4_9_1351(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("RevokeUser nil-revoker = %d,%v; want 1,nil", n, err)
 	}
-	if _, ok := leases.GetByID(proto.LeaseId); ok {
-		t.Fatal("RevokeUser must drop the lease even with no revoker")
+	if _, ok := leases.GetByID(proto.LeaseId); !ok {
+		t.Fatal("RevokeUser must retain the lease even with no revoker")
 	}
 }

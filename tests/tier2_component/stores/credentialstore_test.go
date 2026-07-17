@@ -286,6 +286,101 @@ func TestCredentialStoreContract(t *testing.T) {
 	})
 }
 
+// spec: 4.9
+// diagnosis: the Postgres-backed §4.9 startup deny-list rebuild has no
+// user-credential term because credentialstore/pgstore exposes no
+// cross-tenant revoked-credential listing query. RevokedCredentials must
+// scan every tenant, return only revoked rows in (tenant_id, ref) order,
+// and return an empty slice with no error when nothing is revoked, so a
+// restarted replica can re-deny a revoked user credential it missed on
+// the original pub/sub notification.
+func TestCredentialStoreRevokedCredentials(t *testing.T) {
+	t.Parallel()
+	store, _, pg := newCredentialStore(t)
+	ctx := context.Background()
+
+	t.Run("empty when nothing is revoked", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		if _, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "x"); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		got, err := store.RevokedCredentials(ctx)
+		if err != nil {
+			t.Fatalf("RevokedCredentials: %v", err)
+		}
+		for _, rc := range got {
+			if rc.TenantID == tenant {
+				t.Errorf("active credential leaked into RevokedCredentials: %+v", rc)
+			}
+		}
+	})
+
+	t.Run("cross-tenant scan returns only revoked rows", func(t *testing.T) {
+		acme := freshTenant(t, ctx, pg)
+		globex := freshTenant(t, ctx, pg)
+
+		acmeRevoked, err := store.Register(ctx, acme, "alice", credential.ProviderAnthropicDirect, "", "sk-a")
+		if err != nil {
+			t.Fatalf("Register acme/alice: %v", err)
+		}
+		// An active acme credential must be excluded.
+		if _, err := store.Register(ctx, acme, "bob", credential.ProviderGitHub, "", "sk-b"); err != nil {
+			t.Fatalf("Register acme/bob: %v", err)
+		}
+		globexRevoked, err := store.Register(ctx, globex, "carol", credential.ProviderVertexAI, "", "sk-c")
+		if err != nil {
+			t.Fatalf("Register globex/carol: %v", err)
+		}
+		if _, err := store.Revoke(ctx, acme, acmeRevoked.Ref); err != nil {
+			t.Fatalf("Revoke acme: %v", err)
+		}
+		if _, err := store.Revoke(ctx, globex, globexRevoked.Ref); err != nil {
+			t.Fatalf("Revoke globex: %v", err)
+		}
+
+		got, err := store.RevokedCredentials(ctx)
+		if err != nil {
+			t.Fatalf("RevokedCredentials: %v", err)
+		}
+
+		// Filter to the two tenants this subtest owns; the shared store
+		// may carry revoked rows from parallel subtests.
+		var mine []credentialstore.RevokedUserCredential
+		for _, rc := range got {
+			if rc.TenantID == acme || rc.TenantID == globex {
+				mine = append(mine, rc)
+			}
+		}
+		want := []credentialstore.RevokedUserCredential{
+			{TenantID: acme, CredentialRef: acmeRevoked.Ref},
+			{TenantID: globex, CredentialRef: globexRevoked.Ref},
+		}
+		if acme > globex {
+			want[0], want[1] = want[1], want[0]
+		}
+		if len(mine) != len(want) {
+			t.Fatalf("RevokedCredentials returned %d rows for this test's tenants, want %d: %+v", len(mine), len(want), mine)
+		}
+		for i := range want {
+			if mine[i] != want[i] {
+				t.Errorf("entry %d = %+v, want %+v", i, mine[i], want[i])
+			}
+		}
+	})
+
+	t.Run("a store error surfaces rather than an empty rebuild", func(t *testing.T) {
+		// The §4.9 startup rebuild is fail-closed: it aborts the whole
+		// rebuild on a listing-query error rather than committing an empty
+		// deny list. A cancelled context makes the cross-tenant scan fail
+		// before it runs, so the query must return an error.
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		if _, err := store.RevokedCredentials(canceled); err == nil {
+			t.Error("RevokedCredentials must return an error when the cross-tenant scan cannot run (fail closed)")
+		}
+	})
+}
+
 // readSecretColumn reads the raw secret and secret_key_version columns
 // for a credential straight out of Postgres, bypassing the store's
 // decrypt path. The credentials table is tenant-scoped, so the read
