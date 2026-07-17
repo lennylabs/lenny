@@ -340,6 +340,49 @@ func seedRetainedTimeoutRow(t *testing.T, h *driverHarness, tenantID, sessionID,
 	}
 }
 
+// seedAbandonedIntentRow seeds a partial = true / manifest_reason =
+// 'in_progress' row for the session's default slot with its reservation still
+// outstanding. An abandoned intent row is one a prior attempt wrote at
+// intent-row INSERT and never carried to a terminal arm, so no finaliseAbort
+// arm ever counted it on the partial counter. It is active for the (session,
+// slot), so the next attempt's supersede path finds and fences it.
+func seedAbandonedIntentRow(t *testing.T, h *driverHarness, tenantID, sessionID, checkpointID string) {
+	t.Helper()
+	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
+		TenantID:             tenantID,
+		CheckpointID:         checkpointID,
+		SessionID:            sessionID,
+		SlotID:               partialmanifeststore.SlotDefault,
+		Partial:              true,
+		ManifestReason:       partialmanifeststore.ReasonInProgress,
+		ChunkObjectKeyPrefix: "/" + tenantID + "/checkpoint/" + sessionID + "/" + checkpointID + "/",
+		ReservedBytes:        30,
+	}); err != nil {
+		t.Fatalf("seed abandoned intent row: %v", err)
+	}
+}
+
+// countSupersededPartialEmissions returns how many lenny_checkpoint_partial_total
+// emissions carried manifest_reason = 'superseded', asserting each such
+// emission is recovered = false and stamps a trigger in the closed enum.
+func countSupersededPartialEmissions(t *testing.T, m *captureDriverMetrics) int {
+	t.Helper()
+	n := 0
+	for _, e := range m.partial {
+		if e.manifestReason != partialmanifeststore.ReasonSuperseded {
+			continue
+		}
+		n++
+		if e.recovered {
+			t.Errorf("supersede arm recovered = true, want false")
+		}
+		if !e.trigger.IsValid() {
+			t.Errorf("supersede arm trigger = %q is not in the closed enum", e.trigger)
+		}
+	}
+	return n
+}
+
 // spec: §10.1 — a complete checkpoint whose every declared byte is
 // Stat-confirmed finalises partial = false / complete, and the
 // reservation reconciles against the confirmed total.
@@ -639,13 +682,42 @@ func TestDriverEmitsNoPartialCounterOnCompleteArm_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — the supersede arm finalises the prior row
-// manifest_reason = 'superseded', so it emits lenny_checkpoint_partial_total
-// once with that reason (recovered = false), alongside the supersede-specific
-// counter.
+// spec: §16.1 line 195 — the supersede arm finalises an abandoned in_progress
+// intent row manifest_reason = 'superseded', so it emits
+// lenny_checkpoint_partial_total once with that reason (recovered = false),
+// alongside the supersede-specific counter. An abandoned intent is a row no
+// finaliseAbort arm ever counted, so counting it once here is the only count it
+// receives.
 func TestDriverEmitsPartialCounterOnSupersedeArm_spec_16_1(t *testing.T) {
-	// A retained 'timeout' row from a prior deadline-fire is the active row a
-	// later completing attempt supersedes.
+	// A prior attempt's abandoned in_progress intent is the active row a later
+	// completing attempt supersedes.
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30)
+	seedAbandonedIntentRow(t, h, "acme", sid, "cp-intent")
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if superseded := countSupersededPartialEmissions(t, m); superseded != 1 {
+		t.Fatalf("superseded partial-counter emissions = %d, want 1", superseded)
+	}
+}
+
+// spec: §16.1 line 195 — the partial counter increments once per finalised
+// partial-manifest row. A deadline-fire (timeout) row is counted on its own
+// finaliseAbort arm and then retained active for the resume path. When the next
+// attempt fences that still-active row, the supersede arm must NOT count it a
+// second time as 'superseded': the same physical row would otherwise inflate
+// both the sum across manifest_reason and the recovered = false denominator of
+// the recovery-rate signal. The supersede-specific counter, a per-event signal,
+// still fires.
+// diagnosis: supersedePriorAttempts emitted IncCheckpointPartial with
+// manifest_reason = 'superseded' for every fenced prior row, guarding only the
+// reservation release on rows_affected == 1 while leaving the partial-counter
+// emission ungated, so a retained timeout row was counted twice.
+func TestDriverSupersedeDoesNotDoubleCountRetainedTimeoutRow_spec_16_1(t *testing.T) {
 	h, sid := newDriverHarness(t, &chunkedAdapter{
 		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
@@ -655,20 +727,11 @@ func TestDriverEmitsPartialCounterOnSupersedeArm_spec_16_1(t *testing.T) {
 	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
 		t.Fatalf("Checkpoint: %v", err)
 	}
-	var superseded int
-	for _, e := range m.partial {
-		if e.manifestReason == partialmanifeststore.ReasonSuperseded {
-			superseded++
-			if e.recovered {
-				t.Errorf("supersede arm recovered = true, want false")
-			}
-			if !e.trigger.IsValid() {
-				t.Errorf("supersede arm trigger = %q is not in the closed enum", e.trigger)
-			}
-		}
+	if superseded := countSupersededPartialEmissions(t, m); superseded != 0 {
+		t.Fatalf("superseded partial-counter emissions = %d, want 0 (the retained timeout row was already counted on its timeout arm)", superseded)
 	}
-	if superseded != 1 {
-		t.Fatalf("superseded partial-counter emissions = %d, want 1", superseded)
+	if m.superseded != 1 {
+		t.Errorf("supersede-specific counter fired %d times, want 1", m.superseded)
 	}
 }
 

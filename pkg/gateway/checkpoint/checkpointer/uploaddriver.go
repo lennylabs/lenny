@@ -454,8 +454,19 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 		// spec: §16.1 line 195 — the prior row Put soft-deletes is finalised
 		// manifest_reason = 'superseded', so count it on the partial counter's
 		// superseded arm (recovered = false, this attempt's trigger), distinct
-		// from the supersede-specific counter above.
-		c.DriverMetrics.IncCheckpointPartial(d.pool, false, partialmanifeststore.ReasonSuperseded, d.trigger)
+		// from the supersede-specific counter above. The partial counter
+		// increments once per finalised partial-manifest row, so it fires here
+		// only for a prior row still carrying ReasonInProgress: an abandoned
+		// intent that no terminal arm counted. A retained 'timeout' row was
+		// already counted on its own finaliseAbort arm and is retained active
+		// for the resume path; counting it again as 'superseded' when the next
+		// attempt fences it would count one physical row twice, inflating both
+		// the sum across manifest_reason and the recovered = false denominator
+		// of the recovery-rate signal. The reservation release above is guarded
+		// the same way on rows_affected == 1 for the same exactly-once reason.
+		if prior.ManifestReason == partialmanifeststore.ReasonInProgress {
+			c.DriverMetrics.IncCheckpointPartial(d.pool, false, partialmanifeststore.ReasonSuperseded, d.trigger)
+		}
 	}
 	return nil
 }
