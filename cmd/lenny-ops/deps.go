@@ -991,10 +991,12 @@ var diagnosticsAuditRateLimited = func() *prometheus.CounterVec {
 }()
 
 // buildDiagnosticsAudit constructs the §25.9 diagnostics-audit config: a
-// coalesced diagnostic audit event is logged (the audit-append stub,
-// mirroring logAuditSink until the audit-store client lands) and a
-// dropped event bumps lenny_audit_rate_limited_total so operators can
-// detect rate-limited diagnostics. F-25.9.15.
+// coalesced diagnostic audit event is durably committed to the §11.7
+// hash chain via recorder.Record, and a dropped event bumps
+// lenny_audit_rate_limited_total so operators can detect rate-limited
+// diagnostics. F-25.9.15.
+//
+// spec: §11.7 (hash-chained audit append).
 func buildDiagnosticsAudit(ratePerMinute int, recorder *opsaudit.Recorder) *opsserver.DiagnosticsAuditConfig {
 	return &opsserver.DiagnosticsAuditConfig{
 		RatePerMinute: ratePerMinute,

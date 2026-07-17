@@ -3256,6 +3256,7 @@
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsEndpointsSuiteSelectsContractTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsPackagesWithSuiteSelectUnitTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsDedicatedSuitesSelectHigherTiers",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphLennyOpsBinarySelectsUnitTier",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
@@ -3378,12 +3379,15 @@
         "tests/tier4_integration/diagnostics_test.go",
         "tests/tier5_e2e_kind/diagnostics_fix_test.go",
         "tests/tier5_e2e_kind/diagnostics_cause_chain_test.go",
-        "tests/tier9_security/diagnostics_fix_guardrails_test.go"
+        "tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go",
+        "tests/tier9_security/diagnostics_fix_guardrails_test.go",
+        "cmd/lenny-ops/deps_setup_test.go"
       ],
       "packages": [
         "pkg/ops/diagnostics",
         "pkg/ops/opsserver",
-        "pkg/ops/doctor"
+        "pkg/ops/doctor",
+        "cmd/lenny-ops"
       ],
       "chart_templates": [
         "charts/lenny/templates/ops-rbac.yaml"
@@ -3465,7 +3469,8 @@
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/audit_deferred_reconcile_test.go",
         "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable",
-        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
+        "tests/tier11_docs/diagnostics_audit_wiring_comment_test.go::TestDiagnosticsAuditWiringCommentsNotStale"
       ],
       "packages": [
         "pkg/ops/opsaudit"

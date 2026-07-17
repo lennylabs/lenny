@@ -206,6 +206,36 @@ func TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E(t *testing.T) {
 			t.Errorf("podCounts.%s = %v, want %v (live agent_pod_state breakdown): %v", bucket, got, want, counts)
 		}
 	}
+
+	// ---- diagnostics latency histogram: scraped and labelled per endpoint ----
+	//
+	// spec: §25.6 line 2932 — the metrics catalog lists
+	// `lenny_diagnostics_request_duration_seconds` as a Histogram labelled
+	// `endpoint`, "Per-diagnostic-endpoint latency". The session and pool
+	// diagnostic calls above each ran against this same lenny-ops process,
+	// so the real /metrics text exposition it serves must carry one
+	// completed observation per endpoint short name.
+	resp, err := client.Get(base + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	metricsBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /metrics status = %d, want 200; body:\n%s", resp.StatusCode, metricsBody)
+	}
+	samples := parseGaugeSamples(t, string(metricsBody))
+	for _, endpoint := range []string{"session", "pool"} {
+		key := `lenny_diagnostics_request_duration_seconds_count{endpoint="` + endpoint + `"}`
+		got, ok := samples[key]
+		if !ok {
+			t.Errorf("/metrics did not expose %s (§25.6 line 2932); the diagnostics histogram is not on the scraped registry for endpoint %q", key, endpoint)
+			continue
+		}
+		if got < 1 {
+			t.Errorf("%s = %v, want >= 1 (one diagnostic call was made against endpoint %q)", key, got, endpoint)
+		}
+	}
 }
 
 // containsString reports whether the decoded JSON array v holds the string s.
