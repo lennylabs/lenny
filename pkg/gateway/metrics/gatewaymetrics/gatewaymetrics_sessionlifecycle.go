@@ -99,8 +99,10 @@ type sessionLifecycleMetrics struct {
 	// workspaceSealDuration is the §7.1 line 112 seal-and-export
 	// completion-time histogram. Observed once per terminal session at
 	// teardown. Labels: `pool` (the session runtime) and `outcome`
-	// (success | timeout). The §16.5 WorkspaceSealStuck alert fires on a
-	// nonzero count for outcome="timeout".
+	// (success | timeout | permanent). The `permanent` outcome records a
+	// seal that failed on a permanent adapter error and returned
+	// immediately without retrying. The §16.5 WorkspaceSealStuck alert
+	// fires on a nonzero count for outcome="timeout" alone.
 	workspaceSealDuration *prometheus.HistogramVec
 	// checkpointStorageFailure counts the §4.4 line 262 non-eviction
 	// MinIO-upload failures (all retries exhausted, the failed
@@ -256,7 +258,9 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 	// §7.1 line 112 — `lenny_workspace_seal_duration_seconds` tracks
 	// seal-and-export completion time across all terminal sessions,
 	// labeled by `pool` (session runtime) and `outcome` (success |
-	// timeout). The §16.5 WorkspaceSealStuck alert fires when the
+	// timeout | permanent). The `permanent` arm records a seal that
+	// failed on a permanent adapter error and returned immediately
+	// without retrying. The §16.5 WorkspaceSealStuck alert fires when the
 	// outcome="timeout" count increases over a 5-minute window. Buckets
 	// span the per-attempt 5s–60s backoff and the 300s default window.
 	workspaceSealDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{

@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -133,6 +136,93 @@ func TestSealWorkspaceBackoffBoundedByWindow_spec_7_1_3(t *testing.T) {
 	}
 	if len(metric.obs) != 1 || metric.obs[0].outcome != sealOutcomeTimeout {
 		t.Errorf("seal metric = %+v, want one timeout observation", metric.obs)
+	}
+}
+
+// TestSealWorkspacePermanentErrorReturnsImmediately_spec_7_1_permanent
+// pins the §7.1 line 112 permanent-error arm: a seal that fails with a
+// gRPC status the adapter reports as permanent (the §4.4 line 255
+// workspace-size probe returns FailedPrecondition) ends the retry window
+// on its first observation. Exactly one Seal call, zero backoff sleeps,
+// an outcome="permanent" observation, and no outcome="timeout"
+// observation (so WorkspaceSealStuck stays silent on a tenant
+// configuration condition). The pre-fix loop retried every error for the
+// full 300s window, so it would sleep and observe outcome="timeout".
+func TestSealWorkspacePermanentErrorReturnsImmediately_spec_7_1_permanent(t *testing.T) {
+	permanentCodes := []codes.Code{
+		codes.FailedPrecondition,
+		codes.InvalidArgument,
+		codes.Unimplemented,
+	}
+	for _, code := range permanentCodes {
+		t.Run(code.String(), func(t *testing.T) {
+			clock, sleep, slept := advancingClock(time.Unix(0, 0).UTC())
+			metric := &sealMetricRec{}
+			sealer := &flakySealer{failUntil: -1, err: status.Error(code, "workspace exceeds workspaceSizeLimitBytes")}
+			srv := New(memstore.New(), Options{
+				Sealer:                       sealer,
+				SealSleep:                    sleep,
+				ObserveWorkspaceSealDuration: metric.observe,
+				Clock:                        clock,
+			})
+
+			sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
+			err := srv.sealWorkspace(context.Background(), sess)
+			if err == nil {
+				t.Fatal("sealWorkspace must return the permanent seal error")
+			}
+			if sealer.calls != 1 {
+				t.Errorf("seal attempts = %d, want 1 (permanent error is not retried)", sealer.calls)
+			}
+			if len(*slept) != 0 {
+				t.Errorf("backoff sleeps = %d, want 0 (permanent error returns without sleeping)", len(*slept))
+			}
+			if len(metric.obs) != 1 || metric.obs[0].outcome != sealOutcomePermanent {
+				t.Fatalf("seal metric = %+v, want one permanent observation", metric.obs)
+			}
+			for _, o := range metric.obs {
+				if o.outcome == sealOutcomeTimeout {
+					t.Errorf("observed outcome=timeout on a permanent error; WorkspaceSealStuck must not fire")
+				}
+			}
+			if metric.obs[0].pool != "claude-code" {
+				t.Errorf("seal metric pool = %q, want claude-code", metric.obs[0].pool)
+			}
+		})
+	}
+}
+
+// TestRecordSessionCompletedPermanentSealStaysTimeoutClass_spec_7_1_permanent
+// confirms the §7.1 line 112 terminal state is unchanged by the permanent
+// arm: the session is still relabelled failed/workspace_seal_timeout even
+// though the seal returned immediately on a permanent error, so the §7.1
+// failureClass enum is untouched.
+func TestRecordSessionCompletedPermanentSealStaysTimeoutClass_spec_7_1_permanent(t *testing.T) {
+	metric := &sealMetricRec{}
+	store := memstore.New()
+	srv := New(store, Options{
+		Sealer:                       &flakySealer{failUntil: -1, err: status.Error(codes.FailedPrecondition, "workspace exceeds workspaceSizeLimitBytes")},
+		ObserveWorkspaceSealDuration: metric.observe,
+		Clock:                        func() time.Time { return time.Unix(0, 0).UTC() },
+	})
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "s_perm", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	completed, _ := store.Get(context.Background(), "acme", "s_perm")
+
+	srv.recordSessionCompleted(context.Background(), session.StateRunning, completed)
+
+	row, _ := store.Get(context.Background(), "acme", "s_perm")
+	if row.State != session.StateFailed {
+		t.Errorf("state after permanent seal error = %q, want failed", row.State)
+	}
+	if row.FailureClass != session.FailureClassWorkspaceSealTimeout {
+		t.Errorf("failureClass = %q, want workspace_seal_timeout (enum unchanged)", row.FailureClass)
+	}
+	if len(metric.obs) != 1 || metric.obs[0].outcome != sealOutcomePermanent {
+		t.Errorf("seal metric = %+v, want one permanent observation", metric.obs)
 	}
 }
 

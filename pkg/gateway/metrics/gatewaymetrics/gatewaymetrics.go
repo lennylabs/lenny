@@ -588,8 +588,11 @@ func (m *Metrics) IncInjectionGateFailClosed(cause string) {
 // ObserveWorkspaceSealDuration records the §7.1 line 112
 // `lenny_workspace_seal_duration_seconds{pool,outcome}` histogram for one
 // terminal session's seal-and-export. outcome is "success" when the seal
-// completed or "timeout" when the retry window was exhausted. The §16.5
-// WorkspaceSealStuck alert fires on a nonzero outcome="timeout" count.
+// completed, "timeout" when the retry window was exhausted, or
+// "permanent" when the seal failed on an export error the adapter
+// reported as permanent and returned immediately without retrying. The
+// §16.5 WorkspaceSealStuck alert fires on a nonzero outcome="timeout"
+// count alone.
 // spec: §7.1 line 112.
 func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds float64) {
 	if m == nil {
