@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -193,6 +194,23 @@ type Checkpointer struct {
 	// the object-store sweep (dev-mode / test path).
 	// spec: §4.4 line 236 / §10.1 line 157.
 	ChunkDeleter PartialChunkDeleter
+	// ChunkCatalog soft-deletes each rotated-out checkpoint chunk's
+	// artifact_store row through the cataloging decorator, issuing the §12.5
+	// rule 4 Redis decrement exactly once. Nil (with ChunkObjects) skips the
+	// rotation-side chunk release, leaving the chunks for the §12.5 backstop
+	// sweep. cataloging.Store satisfies it.
+	// spec: §12.5 GC rule 4, GC rule 5.
+	ChunkCatalog ChunkCatalogReleaser
+	// ChunkObjects hard-deletes each rotated-out checkpoint chunk object per
+	// key. Nil (with ChunkCatalog) skips the rotation-side chunk release.
+	// miniostore.Store satisfies it.
+	// spec: §12.5 GC rule 5.
+	ChunkObjects ChunkObjectDeleter
+	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// window stamped onto each soft-deleted chunk row's hard-prune deadline
+	// during the rotation-side release. Zero selects DefaultTombstoneRetention.
+	// spec: §12.5 line 341.
+	TombstoneRetention time.Duration
 	// DriverMetrics receives the gateway-side §4.4 / §10.1 counter
 	// increments the object-store call moving off the adapter transferred
 	// to the gateway. Nil disables the emissions.
@@ -636,10 +654,68 @@ func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID,
 		// §12.5 line 313 — held sessions retain all checkpoints.
 		return
 	}
-	if _, err := c.Retention.Rotate(ctx, tenantID, sessionID, slotID); err != nil {
+	rotated, err := c.Retention.Rotate(ctx, tenantID, sessionID, slotID)
+	if err != nil {
 		log.Printf("checkpointer: retention rotate tenant=%s session=%s slot=%s: %v",
 			tenantID, sessionID, slotID, err)
+		return
 	}
+	// §12.5 GC rule 5 — release every checkpoint the latest-2 rotation
+	// dropped. Each confirmed chunk carries a quota-charged artifact_store
+	// row (§12.5 line 309), so without this release a long-running session's
+	// chunk rows accrete and storage_bytes_used climbs monotonically to
+	// STORAGE_QUOTA_EXCEEDED (§12.5 line 348). Best-effort per row: a failure
+	// logs and leaves the row for the §12.5 backstop sweep.
+	for _, dropped := range rotated {
+		c.releaseRotatedCheckpoint(ctx, tenantID, dropped.Ref)
+	}
+}
+
+// releaseRotatedCheckpoint runs the §12.5 three-step release for one
+// checkpoint the latest-2 rotation dropped: it resolves the checkpoint's
+// finalised manifest row (keyed by the gateway-minted checkpoint_id the
+// retention row carries as its ref), then soft-deletes each chunk's
+// artifact_store row through the cataloging decorator, deletes the chunk
+// objects per key, and soft-deletes the manifest row. Best-effort: an
+// unwired release seam or a resolve/release failure logs and leaves the
+// checkpoint for the §12.5 backstop sweep.
+//
+// spec: §12.5 GC rule 5 — keep only the latest 2 checkpoints per active
+// session.
+func (c *Checkpointer) releaseRotatedCheckpoint(ctx context.Context, tenantID, ref string) {
+	if c.Manifests == nil || c.ChunkCatalog == nil || c.ChunkObjects == nil {
+		// Chunk release is not wired (dev-mode / degenerate test path); the
+		// retention row is already soft-deleted by Rotate, but the chunks are
+		// left for the §12.5 backstop.
+		return
+	}
+	record, err := c.Manifests.Get(ctx, tenantID, ref)
+	if err != nil {
+		if !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			log.Printf("checkpointer: resolve rotated manifest tenant=%s checkpoint=%s: %v",
+				tenantID, ref, err)
+		}
+		return
+	}
+	if err := ReleaseCheckpointChunks(ctx, CheckpointChunkRelease{
+		Manifests:          c.Manifests,
+		Catalog:            c.ChunkCatalog,
+		Objects:            c.ChunkObjects,
+		TombstoneRetention: c.tombstoneRetention(),
+	}, record); err != nil {
+		log.Printf("checkpointer: release rotated checkpoint tenant=%s checkpoint=%s: %v",
+			tenantID, ref, err)
+	}
+}
+
+// tombstoneRetention returns the §12.5 line 341 tombstone-retention window
+// stamped onto each soft-deleted chunk row during the rotation-side release,
+// applying DefaultTombstoneRetention when TombstoneRetention is unset.
+func (c *Checkpointer) tombstoneRetention() time.Duration {
+	if c.TombstoneRetention > 0 {
+		return c.TombstoneRetention
+	}
+	return retentiongc.DefaultTombstoneRetention
 }
 
 // now returns the checkpoint timestamp.

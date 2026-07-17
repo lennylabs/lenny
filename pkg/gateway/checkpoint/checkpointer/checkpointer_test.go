@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -595,10 +596,13 @@ func TestSnapshotStampsTheCallerSuppliedTrigger(t *testing.T) {
 }
 
 // fakeRetention captures Insert + Rotate so the test asserts §4.4
-// line 234 / §12.5 latest-2 wiring.
+// line 234 / §12.5 latest-2 wiring. rotateReturn is the set of rows Rotate
+// reports as dropped past the latest-2 cap, so a test can drive the
+// rotation-side chunk release.
 type fakeRetention struct {
-	inserts []retInsert
-	rotates []retRotate
+	inserts      []retInsert
+	rotates      []retRotate
+	rotateReturn []checkpointretention.Record
 }
 
 type retInsert struct {
@@ -621,7 +625,7 @@ func (f *fakeRetention) Insert(_ context.Context, r checkpointretention.Record) 
 
 func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error) {
 	f.rotates = append(f.rotates, retRotate{tenantID, sessionID, slotID})
-	return nil, nil
+	return f.rotateReturn, nil
 }
 
 // spec: §4.4 line 234 / §12.5 — every successful checkpoint records
@@ -729,5 +733,75 @@ func TestCheckpointPropagatesSlotToRetention(t *testing.T) {
 	}
 	if len(ret.rotates) != 1 || ret.rotates[0].slotID != "slot-3" {
 		t.Fatalf("Rotate slot: got %+v, want slotID slot-3", ret.rotates)
+	}
+}
+
+// spec: §12.5 GC rule 5 / line 348 — a checkpoint the latest-2 rotation
+// drops must have its chunk rows released (issuing the §12.5 rule 4 Redis
+// decrement) and its objects deleted, so a long-running session's
+// storage_bytes_used does not climb monotonically to STORAGE_QUOTA_EXCEEDED.
+// The pre-fix recordRetention discarded the rows Rotate returns, so none of
+// this ran and the chunks leaked; this pins the corrected behavior.
+func TestRotatedOutCheckpointReleasesItsChunkRowsAndObjects(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(
+		chunkRow("acme", "s1", "cp-old", 0, 100),
+		chunkRow("acme", "s1", "cp-old", 1, 250),
+	)
+	deleter := &fakeObjectDeleter{}
+
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{
+		{TenantID: "acme", SessionID: "s1", Ref: "cp-old"},
+	}}
+	cp := &checkpointer.Checkpointer{
+		Sessions:     store,
+		Registry:     registry,
+		Retention:    ret,
+		Manifests:    manifests,
+		ChunkCatalog: catalog,
+		ChunkObjects: deleter,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	if catalog.freed != 350 {
+		t.Errorf("released bytes = %d, want 350 (cp-old's two chunk rows)", catalog.freed)
+	}
+	if len(deleter.deleted) != 2 {
+		t.Errorf("hard-deleted objects = %v, want the two cp-old chunks", deleter.deleted)
+	}
+	row, err := manifests.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if row.DeletedAt.IsZero() {
+		t.Error("rotated-out checkpoint's manifest row was not soft-deleted")
+	}
+}
+
+// spec: §12.5 GC rule 5 — with the release seams unwired (dev-mode) the
+// rotation still runs and the retention row is dropped; the chunk release is
+// simply skipped, leaving the chunks for the §12.5 backstop, and Checkpoint
+// does not fail.
+func TestRotationWithoutReleaseSeamsDoesNotFail(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{
+		{TenantID: "acme", SessionID: "s1", Ref: "cp-old"},
+	}}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.rotates) != 1 {
+		t.Fatalf("Rotate: want 1 call, got %d", len(ret.rotates))
 	}
 }

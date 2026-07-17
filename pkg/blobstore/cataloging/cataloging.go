@@ -324,6 +324,59 @@ func (s *Store) SoftDelete(u blobstore.URI, retention time.Duration) error {
 	return nil
 }
 
+// SoftDeleteRow soft-deletes the artifact_store catalog row named by uri
+// under the catalog's deleted_at IS NULL guard and issues the §11 line 37 /
+// §12.5 rule 4 Redis decrement exactly once for the live→soft_deleted
+// transition, without touching the bucket object. The §12.5 checkpoint
+// chunk-release paths (the retention rotation reclaimer, and by extension
+// the abort, resume, supersede, and backstop sweeps) hard-delete the object
+// by key through a separate DeleteObject call immediately after, so a bucket
+// tombstone would be redundant work the hard delete undoes. A row already
+// past live — a re-run of the release over the same checkpoint prefix —
+// reads freed bytes of zero and issues no second decrement, which is the
+// §12.5 rule 4 exactly-once guarantee.
+//
+// This differs from SoftDelete, which is the §7.1 retention path: SoftDelete
+// tombstones the bucket object so the hard-prune sweep removes it later,
+// whereas the chunk-release path deletes the object per key straight away
+// and only needs the catalog row transition and the guarded decrement here.
+//
+// spec: §12.5 rule 4 — the Redis decrement follows the Postgres deleted_at
+// commit and fires exactly once; §11 line 37 ordering requirement.
+func (s *Store) SoftDeleteRow(ctx context.Context, uri string, retention time.Duration) error {
+	rec, gerr := s.catalog.Get(ctx, uri)
+	if gerr != nil {
+		if errors.Is(gerr, artifactcatalog.ErrNotFound) {
+			// No catalog row — a chunk written before the cataloging wiring
+			// or an uncounted straggler an outstanding grant landed. Nothing
+			// to soft-delete and no bytes to release; the object delete the
+			// caller issues next removes it regardless.
+			return nil
+		}
+		return fmt.Errorf("cataloging: read catalog row for %s: %w", uri, gerr)
+	}
+	var freed int64
+	if rec.State == artifactcatalog.StateLive {
+		freed = rec.SizeBytes
+	}
+	deadline := s.now().Add(retention)
+	if err := s.catalog.SoftDelete(ctx, uri, deadline); err != nil {
+		if errors.Is(err, artifactcatalog.ErrNotFound) {
+			// The row raced past live between the Get above and here; the
+			// bytes were released by the writer that won, so treat as
+			// idempotent and issue no decrement.
+			return nil
+		}
+		return fmt.Errorf("cataloging: soft-delete catalog row for %s: %w", uri, err)
+	}
+	// The row is committed with deleted_at set; only now is the §11 line 37
+	// Redis decrement safe (the spec's ordering requirement). A row that was
+	// already past live released its bytes on the first transition, so freed
+	// is zero and no second decrement fires.
+	s.releaseBytes(ctx, rec.TenantID, freed)
+	return nil
+}
+
 // DeleteBySession forwards the §12.8 erasure sweep to the inner store
 // when it implements the per-session deleter contract, then drops the
 // matching catalog rows so the §12.8 ledger no longer references the

@@ -6,7 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
@@ -105,6 +109,117 @@ func CleanupPartialManifest(
 		emitOutcome(metrics, PartialCleanupGCCollected)
 	} else {
 		emitOutcome(metrics, PartialCleanupSuccess)
+	}
+	return nil
+}
+
+// ChunkCatalogReleaser is the §12.5 cataloging-decorator seam the chunk
+// release runs a reclaimed checkpoint's chunks through: it enumerates the
+// session's artifact_store rows and soft-deletes each chunk row under the
+// deleted_at IS NULL guard, which issues the §12.5 rule 4 Redis decrement
+// exactly once. cataloging.Store satisfies it via ListBySession and
+// SoftDeleteRow.
+type ChunkCatalogReleaser interface {
+	ListBySession(ctx context.Context, tenantID, sessionID string) ([]artifactcatalog.Record, error)
+	SoftDeleteRow(ctx context.Context, uri string, retention time.Duration) error
+}
+
+// ChunkObjectDeleter hard-deletes one chunk object by key after its
+// artifact_store row is soft-deleted. A missing key is a no-op
+// (delete-on-absent, S3-compatible semantics), so a re-run over an
+// already-reclaimed checkpoint never errors. miniostore.Store satisfies it
+// via HardDeleteObject (blobstore.Tombstoner).
+type ChunkObjectDeleter interface {
+	HardDeleteObject(u blobstore.URI) error
+}
+
+// CheckpointChunkRelease bundles the seams the §12.5 three-step chunk
+// release runs against.
+type CheckpointChunkRelease struct {
+	// Manifests soft-deletes the finalised manifest row in the release's
+	// final step. Required.
+	Manifests partialmanifeststore.Store
+	// Catalog soft-deletes each chunk's artifact_store row and issues the
+	// §12.5 rule 4 Redis decrement. Required.
+	Catalog ChunkCatalogReleaser
+	// Objects hard-deletes each chunk object per key. Required.
+	Objects ChunkObjectDeleter
+	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// window stamped as each soft-deleted chunk row's hard-prune deadline.
+	TombstoneRetention time.Duration
+}
+
+// ReleaseCheckpointChunks runs the §12.5 three-step release for one
+// finalised checkpoint a reclaimer dropped (the retention latest-2 rotation
+// in this step's caller): for every chunk under the checkpoint it
+// (1) soft-deletes the chunk's artifact_store row through the cataloging
+// decorator under the deleted_at IS NULL guard, which issues the §12.5
+// rule 4 Redis decrement exactly once and is what returns the tenant's
+// storage_bytes_used toward zero; (2) hard-deletes the chunk object per key;
+// and finally (3) soft-deletes the finalised manifest row so the checkpoint
+// drops out of every deleted_at IS NULL reclaimer's selector.
+//
+// The chunk set is enumerated from the artifact_store catalog rows scoped to
+// the checkpoint's PartID prefix rather than by reconstructing keys: a
+// completed checkpoint confirmed every chunk and holds no outstanding grant,
+// so its catalogued rows are exactly the objects it charged the tenant for,
+// and enumerating the rows lets the soft-delete key on the exact stored URI
+// (which the §12.5 catalog primary key encodes with the mint-time capability
+// TTL) without reconstructing it.
+//
+// The release is idempotent: a re-run observes each catalog row already
+// soft-deleted (no second decrement), each object already absent
+// (delete-on-absent no-op), and the manifest row already soft-deleted.
+//
+// spec: §12.5 GC rule 4 (Redis decrement gated on the Postgres soft-delete,
+// exactly once), GC rule 5 (keep only the latest 2 checkpoints per active
+// session); §4.4 line 236 (soft-delete the row, then per-key DeleteObject).
+func ReleaseCheckpointChunks(ctx context.Context, cfg CheckpointChunkRelease, record partialmanifeststore.Record) error {
+	if cfg.Manifests == nil || cfg.Catalog == nil || cfg.Objects == nil {
+		return errors.New("checkpointer: chunk release requires the manifest store, catalog, and object deleter")
+	}
+	if record.TenantID == "" || record.SessionID == "" || record.CheckpointID == "" {
+		return errors.New("checkpointer: tenant, session, and checkpoint ids are required")
+	}
+	rows, err := cfg.Catalog.ListBySession(ctx, record.TenantID, record.SessionID)
+	if err != nil {
+		return fmt.Errorf("checkpointer: list catalog rows for session %s: %w", record.SessionID, err)
+	}
+	// A checkpoint's chunk objects carry the PartID
+	// `{checkpoint_id}/chunk-{n}.{enc}`, so the checkpoint id plus a slash is
+	// the exact prefix that scopes this checkpoint's rows out of the
+	// session's other checkpoints.
+	keyPrefix := record.CheckpointID + "/"
+	for _, row := range rows {
+		if row.ArtifactType != artifactcatalog.ArtifactTypeCheckpoint {
+			continue
+		}
+		if !strings.HasPrefix(row.PartID, keyPrefix) {
+			continue
+		}
+		// (1) Soft-delete the chunk's artifact_store row through the
+		// cataloging decorator: the §12.5 rule 4 Redis decrement fires here,
+		// exactly once for the live→soft_deleted transition.
+		if err := cfg.Catalog.SoftDeleteRow(ctx, row.URI, cfg.TombstoneRetention); err != nil {
+			return fmt.Errorf("checkpointer: release chunk row %s: %w", row.URI, err)
+		}
+		// (2) Hard-delete the chunk object per key.
+		uri, perr := blobstore.ParseURI(row.URI)
+		if perr != nil {
+			// A malformed URI cannot map to a bucket object; the row is
+			// already soft-deleted, so leave the object for an operator to
+			// inspect rather than failing the whole release.
+			continue
+		}
+		if err := cfg.Objects.HardDeleteObject(uri); err != nil {
+			return fmt.Errorf("checkpointer: delete chunk object %s: %w", row.URI, err)
+		}
+	}
+	// (3) Soft-delete the finalised manifest row under its own
+	// deleted_at IS NULL guard.
+	if err := cfg.Manifests.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
+		return fmt.Errorf("checkpointer: soft-delete manifest row %s/%s: %w",
+			record.TenantID, record.CheckpointID, err)
 	}
 	return nil
 }
