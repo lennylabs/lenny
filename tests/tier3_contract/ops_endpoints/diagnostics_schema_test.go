@@ -5,7 +5,7 @@
 // Tier-3 contract tests that pin each whole §25.6 diagnostic response
 // body to a committed JSON Schema derived from the §25.6 Response Types
 // (SessionDiagnosis, PoolDiagnosis) and the credential-pool and
-// connectivity diagnoses, plus the canonical §25.4 degradation envelope
+// connectivity diagnoses, plus the canonical §25.2 degradation envelope
 // each carries. The other diagnostics contract tests assert individual
 // field presence; these validate the entire body against a schema with
 // additionalProperties disabled, so a renamed field, a dropped field,

@@ -22,6 +22,8 @@ var degradationEnvelopeCitationFiles = []string{
 	"pkg/ops/conventions/conventions.go",
 	"pkg/gateway/operability/health/service.go",
 	"pkg/gateway/operability/recommendations/service.go",
+	"tests/tier3_contract/ops_endpoints/diagnostics_schema_test.go",
+	"tests/tier8_chaos/store_failure_test.go",
 }
 
 // staleDegradationLineCitation matches the specific stale line-number
