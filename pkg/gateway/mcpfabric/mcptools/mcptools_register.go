@@ -1858,7 +1858,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// `task.workspaceFiles.export` carries the §8.7 export specs. No
 		// per-call `maxDepth`: the effective ceiling is resolved at lease
 		// issuance via the §8.2.bis precedence chain (F-8.2.6).
-		InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","target"],"properties":{"parentSessionId":{"type":"string"},"target":{"type":"string","description":"§8.2 opaque delegation target id. The runtime does not know whether it resolves to a standalone runtime, a derived runtime, or an external registered agent; the gateway resolves it server-side. A type:mcp target is rejected with target_not_an_agent."},"poolRef":{"type":"string"},"task":{"type":"object","description":"§8.2 TaskSpec (delegation subset).","properties":{"input":{"type":"array","description":"§15.4.1 MessagePart[] task input delivered to the child as its first message.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"}}}},"workspaceFiles":{"type":"object","properties":{"export":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 export entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace."}}}}},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the task.workspaceFiles.export set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","target"],"properties":{"parentSessionId":{"type":"string"},"target":{"type":"string","description":"§8.2 opaque delegation target id. The runtime does not know whether it resolves to a standalone runtime, a derived runtime, or an external registered agent; the gateway resolves it server-side. A type:mcp target is rejected with target_not_an_agent."},"poolRef":{"type":"string"},"task":{"type":"object","description":"§8.2 TaskSpec (delegation subset).","properties":{"input":{"type":"array","description":"§15.4.1 MessagePart[] task input delivered to the child as its first message.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"}}}},"workspaceFiles":{"type":"object","properties":{"export":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 export entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace."}}}}},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"credentialPropagation":{"type":"string","enum":["inherit","independent","deny"],"description":"§8.3 credential propagation mode on the delegation lease. Omit for the default (independent)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the task.workspaceFiles.export set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 		// principal so the §4 chain payload, §8.2 service Delegate, and
@@ -1891,6 +1891,13 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			// validates the closed enum and short-circuits on
 			// "deny" before any side effects. F-8.4.1, F-8.4.2.
 			ApprovalMode string `json:"approvalMode,omitempty"`
+			// CredentialPropagation is the §8.3 credential propagation
+			// mode forwarded verbatim onto the delegation Request. The
+			// empty string defaults to independent; the service and the
+			// MCP boundary validate the closed enum and reject any other
+			// value with INVALID_LEASE_FIELD before any side effects.
+			// spec: §8.3.
+			CredentialPropagation string `json:"credentialPropagation,omitempty"`
 			// TreeVisibility is the §8.5 lease visibility boundary
 			// forwarded onto the delegation Request. Empty inherits the
 			// parent's effective value; a value broader than the
@@ -1951,6 +1958,16 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
 				err.Error(),
 				map[string]any{"field": "approvalMode", "value": in.ApprovalMode})
+		}
+		// §8.3: validate the credentialPropagation closed enum at the MCP
+		// boundary so a malformed value (typo, casing, post-v1 mode) is
+		// rejected with INVALID_LEASE_FIELD before the parent lookup
+		// runs. An empty value (the independent default) is valid. The
+		// service repeats the check as defence-in-depth.
+		if err := lease.ValidateCredentialPropagation(lease.CredentialPropagation(in.CredentialPropagation)); err != nil {
+			return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
+				err.Error(),
+				map[string]any{"field": "credentialPropagation", "value": in.CredentialPropagation})
 		}
 		// §8.5: validate the treeVisibility closed enum at the MCP
 		// boundary so a typo is rejected with INVALID_LEASE_FIELD
@@ -2194,10 +2211,15 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			PoolRef:          in.PoolRef,
 			IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 			ApprovalMode:     lease.ApprovalMode(in.ApprovalMode),
-			LeaseSlice:       leaseSlice,
-			ParentToken:      parentToken,
-			FileExport:       fileExport,
-			FileExportLimits: fileExportLimits,
+			// §8.3: the credential propagation mode forwarded onto the
+			// child lease. Empty defaults to independent. On a
+			// cross-environment inherit hop the service runs the
+			// provider-compatibility check before claiming a pod.
+			CredentialPropagation: lease.CredentialPropagation(in.CredentialPropagation),
+			LeaseSlice:            leaseSlice,
+			ParentToken:           parentToken,
+			FileExport:            fileExport,
+			FileExportLimits:      fileExportLimits,
 			// §8.3 lines 311-319: the lease visibility boundary. Empty
 			// inherits the parent's effective value in the Service.
 			// EffectiveMessagingScope is left unset (resolves to the
@@ -2231,15 +2253,25 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					if declaredApproval == "" {
 						declaredApproval = string(lease.ApprovalModePolicy)
 					}
+					// §8.3 / F-8.4.3: the declared credentialPropagation
+					// mode rides the rejection audit alongside approval_mode
+					// so the post-incident replay records how the rejected
+					// hop would have credentialed the child. An omitted
+					// value is recorded as the independent default.
+					declaredPropagation := in.CredentialPropagation
+					if declaredPropagation == "" {
+						declaredPropagation = string(lease.CredentialPropagationIndependent)
+					}
 					deps.Audit.EmitDelegationEvent(ctx, "delegation.isolation_violation", map[string]any{
-						"parentSessionId":     in.ParentSessionID,
-						"runtimeRef":          targetRef,
-						"poolRef":             in.PoolRef,
-						"parent_isolation":    string(isoErr.ParentProfile),
-						"target_isolation":    string(isoErr.ChildProfile),
-						"matched_policy_rule": "",
-						"cross_environment":   viaCrossEnv,
-						"approval_mode":       declaredApproval,
+						"parentSessionId":        in.ParentSessionID,
+						"runtimeRef":             targetRef,
+						"poolRef":                in.PoolRef,
+						"parent_isolation":       string(isoErr.ParentProfile),
+						"target_isolation":       string(isoErr.ChildProfile),
+						"matched_policy_rule":    "",
+						"cross_environment":      viaCrossEnv,
+						"approval_mode":          declaredApproval,
+						"credential_propagation": declaredPropagation,
 					})
 				}
 				// spec: §15.2.1 — return *mcp.ToolError so the REST and
@@ -2333,6 +2365,16 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
 					err.Error(),
 					map[string]any{"field": "approvalMode", "value": iameErr.Value})
+			}
+			// §8.3: a structurally invalid credentialPropagation survives
+			// the MCP-layer validator only if the service is invoked from
+			// another code path. Map the typed error so the MCP envelope
+			// is the canonical INVALID_LEASE_FIELD.
+			var icpErr *lease.InvalidCredentialPropagationError
+			if errors.As(err, &icpErr) {
+				return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
+					err.Error(),
+					map[string]any{"field": "credentialPropagation", "value": icpErr.Value})
 			}
 			// spec: §8.2 lines 38-48, 127 — the caller's lease_slice
 			// exceeds the parent's granted budget on at least one

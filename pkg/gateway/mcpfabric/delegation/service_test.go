@@ -1658,6 +1658,76 @@ func TestDelegateRejectsUnknownApprovalMode_spec_8_4(t *testing.T) {
 	}
 }
 
+// TestDelegateRejectsUnknownCredentialPropagation_spec_8_3 verifies
+// §8.3: a credentialPropagation value outside the closed enum is
+// rejected at the service boundary as defence-in-depth with
+// *lease.InvalidCredentialPropagationError, before any side effects (no
+// store write, no audit emission), so a non-MCP caller cannot bypass
+// the MCP-ingress validator.
+func TestDelegateRejectsUnknownCredentialPropagation_spec_8_3(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:  func() string { return "sess_child" },
+		Auditor: aud,
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:       "sess_parent",
+		RuntimeRef:            "gemini",
+		PoolRef:               "pool-b",
+		IsolationProfile:      isolation.ProfileSandboxed,
+		CredentialPropagation: "share",
+	})
+	var icp *lease.InvalidCredentialPropagationError
+	if !errors.As(err, &icp) {
+		t.Fatalf("Delegate(credentialPropagation=share) = %v, want *lease.InvalidCredentialPropagationError", err)
+	}
+	if icp.Value != "share" {
+		t.Errorf("InvalidCredentialPropagationError.Value = %q, want share", icp.Value)
+	}
+	if len(aud.events) != 0 {
+		t.Errorf("invalid credentialPropagation must not emit audit: %+v", aud.events)
+	}
+	if _, err := store.Get(context.Background(), "acme", "sess_child"); err == nil {
+		t.Error("invalid credentialPropagation must not commit a child session")
+	}
+}
+
+// TestDelegateAcceptsCredentialPropagationEnum_spec_8_3 verifies §8.3:
+// the documented credentialPropagation enum values are admitted at the
+// service boundary and commit a child session. This step threads the
+// field; the origin-pool assignment and cross-environment gate are
+// exercised elsewhere.
+func TestDelegateAcceptsCredentialPropagationEnum_spec_8_3(t *testing.T) {
+	for _, mode := range []lease.CredentialPropagation{
+		"", lease.CredentialPropagationInherit, lease.CredentialPropagationIndependent, lease.CredentialPropagationDeny,
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			store := memstore.New()
+			seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+			svc := delegation.NewService(store, delegation.Options{
+				IDFunc: func() string { return "sess_child" },
+				Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+			})
+			_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+				ParentSessionID:       "sess_parent",
+				RuntimeRef:            "gemini",
+				PoolRef:               "pool-b",
+				IsolationProfile:      isolation.ProfileSandboxed,
+				CredentialPropagation: mode,
+			})
+			if err != nil {
+				t.Fatalf("Delegate(credentialPropagation=%q) = %v, want admitted", mode, err)
+			}
+			if _, err := store.Get(context.Background(), "acme", "sess_child"); err != nil {
+				t.Fatalf("credentialPropagation=%q must commit a child session: %v", mode, err)
+			}
+		})
+	}
+}
+
 // TestDelegateSpawnedAuditRecordsDefaultApprovalMode_spec_8_4 verifies
 // §8.4: a delegation that omits approvalMode is recorded with the
 // spec-default ("policy") on the audit row so the audit shape is

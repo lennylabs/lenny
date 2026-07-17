@@ -123,6 +123,18 @@ type Request struct {
 	// spec: §8.4 lines 515-521. F-8.4.1, F-8.4.2, F-8.4.3.
 	ApprovalMode lease.ApprovalMode
 
+	// CredentialPropagation is the §8.3 credential propagation mode on
+	// the delegation lease. The empty string defaults to independent
+	// (the child gets its own credential lease). "inherit" draws the
+	// child's credential from the parent's origin pool, subject to the
+	// cross-environment provider-compatibility check; "deny" gives the
+	// child no LLM credentials. Any other value is rejected with
+	// *lease.InvalidCredentialPropagationError so the §8.5
+	// lenny/delegate_task handler surfaces INVALID_LEASE_FIELD.
+	//
+	// spec: §8.3.
+	CredentialPropagation lease.CredentialPropagation
+
 	// TreeVisibility is the §8.5 visibility boundary the parent declares
 	// on the child lease. Empty inherits the parent's effective value
 	// per the §8.3 inheritance rule (the child lease's declared value if
@@ -900,6 +912,15 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 	// writes). The §8.5 lenny/delegate_task handler maps the typed
 	// error to INVALID_LEASE_FIELD. F-8.4.2.
 	if err := lease.ValidateApprovalMode(req.ApprovalMode); err != nil {
+		return admission{}, err
+	}
+	// §8.3: validate the credentialPropagation closed enum at the
+	// service boundary as defence-in-depth so a malformed value
+	// reaching the service from a non-MCP caller is rejected with
+	// *lease.InvalidCredentialPropagationError before any side effects.
+	// The §8.5 lenny/delegate_task handler maps the typed error to
+	// INVALID_LEASE_FIELD.
+	if err := lease.ValidateCredentialPropagation(req.CredentialPropagation); err != nil {
 		return admission{}, err
 	}
 	// §8.4 line 521: an `approvalMode: "deny"` lease short-circuits
