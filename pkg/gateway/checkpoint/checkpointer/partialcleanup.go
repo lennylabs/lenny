@@ -148,6 +148,17 @@ type CheckpointChunkRelease struct {
 	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
 	// window stamped as each soft-deleted chunk row's hard-prune deadline.
 	TombstoneRetention time.Duration
+	// OnOrphanedObject, when set, is called once for the chunk object whose
+	// HardDeleteObject failed, before the release returns the error. A
+	// completed (partial = false) checkpoint has no §12.5 backstop sweep to
+	// retry the delete — that sweep's selector carries partial = true (§12.5
+	// GC rule 6) and never re-selects a finalised checkpoint — so a failed
+	// object delete on the rotation path orphans the object with no reclaimer.
+	// The callback lets the caller surface that leak on the
+	// lenny_checkpoint_orphaned_objects_total counter rather than leaving it
+	// silent. Nil skips the emission.
+	// spec: §4.4 line 248 (orphaned-object counter); §12.5 GC rule 6.
+	OnOrphanedObject func()
 }
 
 // ReleaseCheckpointChunks runs the §12.5 three-step release for one
@@ -175,9 +186,21 @@ type CheckpointChunkRelease struct {
 // soft-deleted (no second decrement), each object already absent
 // (delete-on-absent no-op), and the manifest row already soft-deleted.
 //
+// On a HardDeleteObject failure the release returns early with the wrapped
+// error and leaves the finalised manifest row active (the manifest soft-delete
+// is step 3, past the failure), and it invokes cfg.OnOrphanedObject for the
+// object it could not delete. A completed (partial = false) checkpoint has no
+// §12.5 backstop sweep to retry that delete — the backstop's selector carries
+// partial = true (§12.5 GC rule 6) and never re-selects a finalised checkpoint,
+// and the rotation catalog row is already dropped — so the object is orphaned
+// with no reclaimer. The callback is what makes that leak observable on
+// lenny_checkpoint_orphaned_objects_total rather than silent.
+//
 // spec: §12.5 GC rule 4 (Redis decrement gated on the Postgres soft-delete,
 // exactly once), GC rule 5 (keep only the latest 2 checkpoints per active
-// session); §4.4 line 236 (soft-delete the row, then per-key DeleteObject).
+// session), GC rule 6 (the backstop sweep selects partial = true rows only);
+// §4.4 line 236 (soft-delete the row, then per-key DeleteObject); §4.4 line 248
+// (orphaned-object counter).
 func ReleaseCheckpointChunks(ctx context.Context, cfg CheckpointChunkRelease, record partialmanifeststore.Record) error {
 	if cfg.Manifests == nil || cfg.Catalog == nil || cfg.Objects == nil {
 		return errors.New("checkpointer: chunk release requires the manifest store, catalog, and object store")
@@ -212,8 +235,16 @@ func ReleaseCheckpointChunks(ctx context.Context, cfg CheckpointChunkRelease, re
 		if err := cfg.Catalog.SoftDeleteRow(ctx, uri, cfg.TombstoneRetention); err != nil {
 			return fmt.Errorf("checkpointer: release chunk row %s: %w", uri, err)
 		}
-		// (2) Hard-delete the chunk object per key.
+		// (2) Hard-delete the chunk object per key. On failure the object is
+		// orphaned: its artifact_store row is already soft-deleted (step 1),
+		// so the TTL sweep skips it, and no §12.5 backstop re-selects a
+		// completed checkpoint. Surface it on the orphaned-object counter so
+		// the leak is observable rather than silently attributed to a backstop
+		// that never runs for a partial = false checkpoint.
 		if err := cfg.Objects.HardDeleteObject(obj.URI); err != nil {
+			if cfg.OnOrphanedObject != nil {
+				cfg.OnOrphanedObject()
+			}
 			return fmt.Errorf("checkpointer: delete chunk object %s: %w", uri, err)
 		}
 	}

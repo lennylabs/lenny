@@ -107,6 +107,14 @@ type DriverMetrics interface {
 	// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"} on a
 	// kms:-coded object-store rejection.
 	IncCheckpointKMSUnavailable()
+	// IncCheckpointOrphanedObjects stamps
+	// lenny_checkpoint_orphaned_objects_total when a chunk object's delete
+	// fails and no reclaimer will retry it. The rotation-side release uses it
+	// for a completed (partial = false) checkpoint, which the §12.5 backstop
+	// sweep never re-selects (that sweep's predicate carries partial = true),
+	// so a failed DeleteObject there orphans the object with no backstop.
+	// spec: §4.4 line 248.
+	IncCheckpointOrphanedObjects(pool, trigger string)
 }
 
 // lockFlight acquires the per-(session, slot) single-flight lock so a

@@ -340,6 +340,46 @@ func TestReleaseCheckpointChunksIsIdempotent(t *testing.T) {
 	}
 }
 
+// spec: §4.4 line 248 / §12.5 GC rule 6 — when a chunk object's delete fails
+// on a completed (partial = false) checkpoint, the release invokes
+// OnOrphanedObject for that object and leaves the finalised manifest row active
+// (step 3 never runs). No §12.5 backstop re-selects a partial = false
+// checkpoint, so the callback is what makes the orphan observable rather than
+// silent. The pre-fix release had no such callback and returned the error
+// silently; this pins the corrected behavior.
+func TestReleaseCheckpointChunksReportsOrphanOnDeleteFailure(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedCompleteManifest(t, store, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+	objects.deleteErr = errors.New("minio unreachable")
+
+	orphans := 0
+	err := checkpointer.ReleaseCheckpointChunks(context.Background(), checkpointer.CheckpointChunkRelease{
+		Manifests:          store,
+		Catalog:            catalog,
+		Objects:            objects,
+		TombstoneRetention: time.Hour,
+		OnOrphanedObject:   func() { orphans++ },
+	}, rec)
+	if err == nil {
+		t.Fatal("release did not surface the DeleteObject failure")
+	}
+	if orphans != 1 {
+		t.Errorf("OnOrphanedObject calls = %d, want 1 (the undeletable chunk)", orphans)
+	}
+	// The manifest row stays active: step 3 (soft-delete manifest) is past the
+	// failed delete, so a completed checkpoint whose object survives keeps a
+	// live row rather than dropping the prefix from every reclaimer.
+	row, err := store.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("release soft-deleted the manifest row despite the undeletable object")
+	}
+}
+
 // spec: §12.5 GC rule 5 — a partially-wired release (missing seam) is
 // rejected so the caller can degrade to leaving the row for the backstop.
 func TestReleaseCheckpointChunksRequiresEverySeam(t *testing.T) {

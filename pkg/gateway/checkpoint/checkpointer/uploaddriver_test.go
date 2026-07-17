@@ -1117,9 +1117,12 @@ type captureDriverMetrics struct {
 	storageFailure     int
 	superseded         int
 	kmsUnavailable     int
+	orphanedObjects    int
 	sizeExceededPool   string
 	storageFailurePool string
 	supersededPool     string
+	orphanedPool       string
+	orphanedTrigger    string
 	// partial records every lenny_checkpoint_partial_total emission so a test
 	// can assert the {recovered, manifest_reason, trigger} tuple each abort arm
 	// stamps.
@@ -1149,6 +1152,12 @@ func (m *captureDriverMetrics) IncCheckpointPartialManifestsSuperseded(pool stri
 }
 
 func (m *captureDriverMetrics) IncCheckpointKMSUnavailable() { m.kmsUnavailable++ }
+
+func (m *captureDriverMetrics) IncCheckpointOrphanedObjects(pool, trigger string) {
+	m.orphanedObjects++
+	m.orphanedPool = pool
+	m.orphanedTrigger = trigger
+}
 
 func (m *captureDriverMetrics) IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger) {
 	m.partial = append(m.partial, partialEmit{pool, recovered, manifestReason, trigger})

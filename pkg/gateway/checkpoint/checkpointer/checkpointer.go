@@ -197,8 +197,9 @@ type Checkpointer struct {
 	// ChunkCatalog soft-deletes each rotated-out checkpoint chunk's
 	// artifact_store row through the cataloging decorator, issuing the §12.5
 	// rule 4 Redis decrement exactly once. Nil (with ChunkObjects) skips the
-	// rotation-side chunk release, leaving the chunks for the §12.5 backstop
-	// sweep. cataloging.Store satisfies it.
+	// rotation-side chunk release, leaving the chunk rows and objects in place;
+	// the §12.5 backstop sweeps partial = true rows only and does not reclaim
+	// a completed checkpoint. cataloging.Store satisfies it.
 	// spec: §12.5 GC rule 4, GC rule 5.
 	ChunkCatalog ChunkCatalogReleaser
 	// ChunkObjects discovers each rotated-out checkpoint's chunk objects under
@@ -458,7 +459,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	// rotation is per (session, slot) — binding.SlotID is the empty
 	// string for the single-workspace path and the bound slot id for
 	// concurrent-workspace pods.
-	c.recordRetention(ctx, tenantID, sessionID, binding.SlotID, checkpointID, legalHold)
+	c.recordRetention(ctx, tenantID, sessionID, binding.SlotID, checkpointID, legalHold, trigger)
 	return nil
 }
 
@@ -635,7 +636,7 @@ func (c *Checkpointer) observeDuration(trigger checkpoint.Trigger, seconds float
 // checkpoint is retained until the hold is lifted. Best-effort: a
 // failure logs and discards rather than fail the snapshot.
 // spec: §4.4 line 234 / §12.5 lines 313, 326.
-func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, slotID, ref string, legalHold bool) {
+func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, slotID, ref string, legalHold bool, trigger checkpoint.Trigger) {
 	if c.Retention == nil || ref == "" {
 		return
 	}
@@ -665,10 +666,14 @@ func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID,
 	// dropped. Each confirmed chunk carries a quota-charged artifact_store
 	// row (§12.5 line 309), so without this release a long-running session's
 	// chunk rows accrete and storage_bytes_used climbs monotonically to
-	// STORAGE_QUOTA_EXCEEDED (§12.5 line 348). Best-effort per row: a failure
-	// logs and leaves the row for the §12.5 backstop sweep.
+	// STORAGE_QUOTA_EXCEEDED (§12.5 line 348). Best-effort per row: a resolve
+	// or release failure logs. A dropped checkpoint is finalised
+	// (partial = false), which the §12.5 backstop sweep never re-selects (its
+	// predicate carries partial = true), so a failed object delete has no
+	// backstop; it surfaces on lenny_checkpoint_orphaned_objects_total instead
+	// (§4.4 line 248).
 	for _, dropped := range rotated {
-		c.releaseRotatedCheckpoint(ctx, tenantID, dropped.Ref)
+		c.releaseRotatedCheckpoint(ctx, tenantID, dropped.Ref, trigger)
 	}
 }
 
@@ -678,16 +683,22 @@ func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID,
 // retention row carries as its ref), then soft-deletes each chunk's
 // artifact_store row through the cataloging decorator, deletes the chunk
 // objects per key, and soft-deletes the manifest row. Best-effort: an
-// unwired release seam or a resolve/release failure logs and leaves the
-// checkpoint for the §12.5 backstop sweep.
+// unwired release seam or a resolve/release failure logs. A dropped
+// checkpoint is finalised (partial = false), so the §12.5 backstop sweep
+// (partial = true predicate, GC rule 6) never re-selects it; the rotation
+// path is its sole reclaimer. A failed object delete therefore has no
+// backstop and is surfaced on lenny_checkpoint_orphaned_objects_total via the
+// release's OnOrphanedObject callback so the leak is observable.
 //
-// spec: §12.5 GC rule 5 — keep only the latest 2 checkpoints per active
-// session.
-func (c *Checkpointer) releaseRotatedCheckpoint(ctx context.Context, tenantID, ref string) {
+// spec: §12.5 GC rule 5 (keep only the latest 2 checkpoints per active
+// session), GC rule 6 (backstop selects partial = true rows only); §4.4 line
+// 248 (orphaned-object counter).
+func (c *Checkpointer) releaseRotatedCheckpoint(ctx context.Context, tenantID, ref string, trigger checkpoint.Trigger) {
 	if c.Manifests == nil || c.ChunkCatalog == nil || c.ChunkObjects == nil {
-		// Chunk release is not wired (dev-mode / degenerate test path); the
-		// retention row is already soft-deleted by Rotate, but the chunks are
-		// left for the §12.5 backstop.
+		// Chunk release is not wired (dev-mode / degenerate test path). The
+		// retention row is already soft-deleted by Rotate; the chunk rows and
+		// objects are left in place. The §12.5 backstop sweeps partial = true
+		// rows only, so it does not reclaim a completed checkpoint.
 		return
 	}
 	record, err := c.Manifests.Get(ctx, tenantID, ref)
@@ -703,10 +714,24 @@ func (c *Checkpointer) releaseRotatedCheckpoint(ctx context.Context, tenantID, r
 		Catalog:            c.ChunkCatalog,
 		Objects:            c.ChunkObjects,
 		TombstoneRetention: c.tombstoneRetention(),
+		OnOrphanedObject:   func() { c.emitOrphanedObject(trigger) },
 	}, record); err != nil {
 		log.Printf("checkpointer: release rotated checkpoint tenant=%s checkpoint=%s: %v",
 			tenantID, ref, err)
 	}
+}
+
+// emitOrphanedObject stamps the §4.4 line 248
+// lenny_checkpoint_orphaned_objects_total counter for one chunk object the
+// rotation-side release could not delete, labeling it with the checkpointer's
+// pool and the trigger of the checkpoint whose rotation dropped the object.
+// A nil DriverMetrics skips the emission.
+// spec: §4.4 line 248.
+func (c *Checkpointer) emitOrphanedObject(trigger checkpoint.Trigger) {
+	if c.DriverMetrics == nil {
+		return
+	}
+	c.DriverMetrics.IncCheckpointOrphanedObjects(c.Pool, string(trigger))
 }
 
 // tombstoneRetention returns the §12.5 line 341 tombstone-retention window

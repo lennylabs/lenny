@@ -788,10 +788,71 @@ func TestRotatedOutCheckpointReleasesItsChunkRowsAndObjects(t *testing.T) {
 	}
 }
 
+// spec: §12.5 GC rule 6 / §4.4 line 248 — a completed (partial = false)
+// checkpoint the latest-2 rotation drops has no §12.5 backstop sweep to retry
+// a failed chunk delete (that sweep's predicate carries partial = true and
+// never re-selects a finalised checkpoint), so a failed DeleteObject on the
+// rotation path orphans the object with no reclaimer. The gateway surfaces it
+// on lenny_checkpoint_orphaned_objects_total. The pre-fix code discarded the
+// release error and emitted nothing, attributing the leak to a backstop that
+// never runs; this pins the corrected, observable behavior.
+func TestRotatedOutCheckpointObjectDeleteFailureEmitsOrphanCounter(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+	// MinIO is unreachable, so the per-key DeleteObject fails and the object
+	// survives under a checkpoint no backstop reclaims.
+	objects.deleteErr = errors.New("minio unreachable")
+
+	metrics := &captureDriverMetrics{}
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{
+		{TenantID: "acme", SessionID: "s1", Ref: "cp-old"},
+	}}
+	cp := &checkpointer.Checkpointer{
+		Sessions:      store,
+		Registry:      registry,
+		Retention:     ret,
+		Manifests:     manifests,
+		ChunkCatalog:  catalog,
+		ChunkObjects:  objects,
+		DriverMetrics: metrics,
+		Pool:          "pool-a",
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	if metrics.orphanedObjects != 1 {
+		t.Fatalf("orphaned-object counter fires = %d, want 1 (the undeletable chunk)", metrics.orphanedObjects)
+	}
+	if metrics.orphanedPool != "pool-a" {
+		t.Errorf("orphaned-object pool label = %q, want pool-a", metrics.orphanedPool)
+	}
+	if metrics.orphanedTrigger != string(checkpoint.TriggerPeriodic) {
+		t.Errorf("orphaned-object trigger label = %q, want %q", metrics.orphanedTrigger, checkpoint.TriggerPeriodic)
+	}
+	// Step 3 never runs after the failed delete, so the manifest row stays
+	// active. A soft-deleted row would drop out of every deleted_at IS NULL
+	// selector and abandon the surviving object entirely.
+	row, err := manifests.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("release soft-deleted the manifest row despite the undeletable object")
+	}
+}
+
 // spec: §12.5 GC rule 5 — with the release seams unwired (dev-mode) the
 // rotation still runs and the retention row is dropped; the chunk release is
-// simply skipped, leaving the chunks for the §12.5 backstop, and Checkpoint
-// does not fail.
+// simply skipped, leaving the chunk rows and objects in place (the §12.5
+// backstop sweeps partial = true rows only and does not reclaim a completed
+// checkpoint), and Checkpoint does not fail.
 func TestRotationWithoutReleaseSeamsDoesNotFail(t *testing.T) {
 	registry := podsession.NewRegistry()
 	store := memstore.New()
