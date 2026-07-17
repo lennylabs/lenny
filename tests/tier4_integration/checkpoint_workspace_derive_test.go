@@ -106,13 +106,16 @@ func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
 		t.Fatalf("derive status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
 
-	// The derived session's ref names a fresh checkpoint id.
+	// The derived session's ref is the four-segment object-path form whose
+	// last segment is the fresh derived checkpoint id.
+	// spec: §10.1 line 155 / §4.5 line 312.
 	derived, err := sessions.Get(ctx, tenant, "sess_derived")
 	if err != nil {
 		t.Fatalf("get derived session: %v", err)
 	}
-	if derived.WorkspaceSnapshot == nil || derived.WorkspaceSnapshot.Ref != "ck_derived" {
-		t.Fatalf("derived ref = %+v, want ck_derived", derived.WorkspaceSnapshot)
+	const wantDerivedRef = "/acme/checkpoints/sess_derived/ck_derived"
+	if derived.WorkspaceSnapshot == nil || derived.WorkspaceSnapshot.Ref != wantDerivedRef {
+		t.Fatalf("derived ref = %+v, want %s", derived.WorkspaceSnapshot, wantDerivedRef)
 	}
 
 	// Every parent chunk is copied into the derived session's prefix.
@@ -152,6 +155,114 @@ func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
 		t.Fatalf("derived manifest: partial=%v chunk_count=%d, want partial=false chunk_count=3", rec.Partial, rec.ChunkCount)
 	}
 	rrWs := getWorkspace(t, handler, tenant, "sess_derived")
+	if rrWs.Code != http.StatusOK {
+		t.Fatalf("derived workspace status = %d, want 200; body=%s", rrWs.Code, rrWs.Body.String())
+	}
+	if rrWs.Body.String() != string(archive) {
+		t.Fatalf("derived workspace bytes do not match the parent archive")
+	}
+}
+
+// spec: §10.1 line 155 / §4.5 line 312 — the stored WorkspaceSnapshot.Ref
+// is the four-segment object-path form /{tenant}/checkpoints/{session}/
+// {checkpoint_id} the snapshot parsers accept; the workspace download
+// resolves the manifest row from its trailing checkpoint_id segment and
+// streams the chunk set.
+//
+// diagnosis: a failure here means the download handler treats the whole
+// four-segment ref as a bare checkpoint_id, so the manifest lookup misses,
+// the handler falls through to the legacy single-object path, and an
+// N-chunk checkpoint cannot be served.
+func TestWorkspaceDownloadResolvesFourSegmentRef(t *testing.T) {
+	const (
+		tenant = "acme"
+		sessID = "sess_fs"
+		ck     = "ck_fs"
+	)
+	store := newLiveChunkStore(t)
+	mstore := partialmanifeststore.NewMemoryStore(nil)
+	archive := seedCheckpoint(t, store, mstore, tenant, sessID, ck,
+		[]int{2500, 2500, 640}, partialmanifeststore.ChunkEncodingTarGz)
+
+	fourSegmentRef := "/" + tenant + "/checkpoints/" + sessID + "/" + ck
+	handler, _ := newChunkGateway(t, store, mstore, func() string { return "unused" },
+		sessionstore.Session{
+			ID: sessID, TenantID: tenant, State: session.StateCompleted,
+			WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fourSegmentRef},
+		})
+
+	rr := getWorkspace(t, handler, tenant, sessID)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("workspace status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Body.String() != string(archive) {
+		t.Fatalf("workspace body (%d bytes) does not match concatenated archive (%d bytes)", rr.Body.Len(), len(archive))
+	}
+}
+
+// spec: §7.1 derive / §10.1 line 155 — deriving from a parent whose
+// WorkspaceSnapshot.Ref is the four-segment object-path form resolves the
+// parent manifest from the trailing checkpoint_id segment and copies every
+// chunk into the derived session's own prefix.
+//
+// diagnosis: a failure here means derive treats the whole four-segment
+// parent ref as a bare checkpoint_id, misses the parent manifest, and falls
+// through to the legacy single-object copy that cannot copy an N-chunk
+// checkpoint.
+func TestDeriveFromFourSegmentParentRefCopiesChunks(t *testing.T) {
+	const (
+		tenant   = "acme"
+		parentID = "sess_fs_parent"
+		parentCk = "ck_fs_parent"
+	)
+	store := newLiveChunkStore(t)
+	mstore := partialmanifeststore.NewMemoryStore(nil)
+	archive := seedCheckpoint(t, store, mstore, tenant, parentID, parentCk,
+		[]int{2048, 2048, 512}, partialmanifeststore.ChunkEncodingTar)
+	ctx := context.Background()
+
+	fourSegmentRef := "/" + tenant + "/checkpoints/" + parentID + "/" + parentCk
+	ids := []string{"sess_fs_derived", "ck_fs_derived"}
+	handler, sessions := newChunkGateway(t, store, mstore, func() string {
+		id := ids[0]
+		ids = ids[1:]
+		return id
+	}, sessionstore.Session{
+		ID: parentID, TenantID: tenant, State: session.StateCompleted,
+		RuntimeRef: "claude-code", PoolRef: "default-pool", IsolationProfile: isolation.ProfileSandboxed,
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fourSegmentRef, Source: sessionstore.WorkspaceSnapshotSealed},
+	})
+
+	buf, _ := json.Marshal(map[string]any{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+parentID+"/derive", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("derive status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	derived, err := sessions.Get(ctx, tenant, "sess_fs_derived")
+	if err != nil {
+		t.Fatalf("get derived session: %v", err)
+	}
+	const wantDerivedRef = "/acme/checkpoints/sess_fs_derived/ck_fs_derived"
+	if derived.WorkspaceSnapshot == nil || derived.WorkspaceSnapshot.Ref != wantDerivedRef {
+		t.Fatalf("derived ref = %+v, want %s", derived.WorkspaceSnapshot, wantDerivedRef)
+	}
+
+	derivedObjs, err := store.ListByPrefix(ctx, resumechunkPrefixURI(tenant, "sess_fs_derived", "ck_fs_derived"))
+	if err != nil {
+		t.Fatalf("list derived prefix: %v", err)
+	}
+	if len(derivedObjs) != 3 {
+		t.Fatalf("derived chunk objects = %d, want 3", len(derivedObjs))
+	}
+
+	// The derived session's four-segment ref round-trips through the
+	// workspace download and reassembles to the parent's archive.
+	rrWs := getWorkspace(t, handler, tenant, "sess_fs_derived")
 	if rrWs.Code != http.StatusOK {
 		t.Fatalf("derived workspace status = %d, want 200; body=%s", rrWs.Code, rrWs.Body.String())
 	}

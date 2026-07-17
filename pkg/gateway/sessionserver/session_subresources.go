@@ -341,10 +341,26 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, body)
 }
 
+// checkpointIDFromSnapshotRef extracts the checkpoint_id (the checkpoint
+// manifest primary key) from a stored WorkspaceSnapshot.Ref. spec: §10.1
+// line 155 — the ref is the four-segment object-path form the parsers accept
+// (/{tenant}/checkpoints/{session}/{checkpoint_id}) whose last segment is
+// the checkpoint_id the manifest row is keyed by. A ref carrying only the
+// bare checkpoint_id (no path segments) is returned unchanged, so both
+// forms resolve to the same manifest key.
+func checkpointIDFromSnapshotRef(ref string) string {
+	trimmed := strings.TrimSuffix(ref, "/")
+	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
+		return trimmed[i+1:]
+	}
+	return trimmed
+}
+
 // streamChunkedWorkspace serves GET /v1/sessions/{id}/workspace from a
-// §10.1 chunked checkpoint: it resolves the manifest row named by
-// WorkspaceSnapshot.Ref (a checkpoint_id), then streams each chunk object
-// in ascending index order [0, chunk_count) as one continuous archive. The
+// §10.1 chunked checkpoint: it resolves the manifest row from the
+// checkpoint_id carried in WorkspaceSnapshot.Ref (the last segment of the
+// four-segment object-path form), then streams each chunk object in
+// ascending index order [0, chunk_count) as one continuous archive. The
 // gateway reads the bodies itself — the caller is the API client, so no
 // presigned capability is minted. It reports handled=true when it wrote a
 // response (success or a terminal error), and handled=false when no chunked
@@ -363,7 +379,8 @@ func (s *Server) streamChunkedWorkspace(w http.ResponseWriter, r *http.Request, 
 	if s.checkpointManifests == nil {
 		return false
 	}
-	rec, err := s.checkpointManifests.Get(r.Context(), tenantID, row.WorkspaceSnapshot.Ref)
+	checkpointID := checkpointIDFromSnapshotRef(row.WorkspaceSnapshot.Ref)
+	rec, err := s.checkpointManifests.Get(r.Context(), tenantID, checkpointID)
 	if err != nil {
 		// No manifest row for this ref (a checkpoint predating the chunked
 		// model, or a legacy single-snapshot ref): fall through.
@@ -391,7 +408,7 @@ func (s *Server) streamChunkedWorkspace(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	for n := 0; n < rec.ChunkCount; n++ {
-		uri := resumechunks.ChunkObjectURI(row.TenantID, row.ID, row.WorkspaceSnapshot.Ref, uint32(n), encoding)
+		uri := resumechunks.ChunkObjectURI(row.TenantID, row.ID, checkpointID, uint32(n), encoding)
 		// The gateway-direct read serves any physically-present chunk, the
 		// same liveness signal the presigned-GET resume path uses; §12.5 GC
 		// is the sole authority on a chunk's lifetime, so the read-time TTL

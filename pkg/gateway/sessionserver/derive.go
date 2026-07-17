@@ -417,31 +417,36 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 
 // deriveChunkedCheckpoint copies every chunk of the parent's §10.1
 // chunked checkpoint into the derived session's own prefix and writes a
-// derived manifest row, returning the derived checkpoint_id (which becomes
-// the derived session's WorkspaceSnapshot.Ref). It reports handled=true
-// when the parent has a chunked manifest that it acted on, so the caller
-// skips the legacy single-snapshot copy; handled=false leaves the caller
-// on the legacy path (dev mode, a store without Copier, or a checkpoint
-// predating the chunked model). A copy or manifest-write failure returns
-// handled=true with a non-nil error so the caller maps it to the derive
-// error response.
+// derived manifest row, returning the derived session's
+// WorkspaceSnapshot.Ref (the four-segment object-path form
+// /{tenant}/checkpoints/{derived_session}/{derived_checkpoint_id} the
+// snapshot parsers accept, whose last segment is the derived checkpoint_id).
+// It reports handled=true when the parent has a chunked manifest that it
+// acted on, so the caller skips the legacy single-snapshot copy;
+// handled=false leaves the caller on the legacy path (dev mode, a store
+// without Copier, or a checkpoint predating the chunked model). A copy or
+// manifest-write failure returns handled=true with a non-nil error so the
+// caller maps it to the derive error response.
 //
-// The derived checkpoint owns a fresh checkpoint_id and a distinct object
-// prefix, so no chunk object is shared with the parent: the derived
-// session survives the parent's GC. The manifest is recorded complete via
-// the intent-row model (Put → ConfirmChunk → Finalise(partial=false)).
+// The parent's ref is resolved by its trailing checkpoint_id segment, so
+// both the bare-checkpoint_id and four-segment ref forms name the same
+// manifest row. The derived checkpoint owns a fresh checkpoint_id and a
+// distinct object prefix, so no chunk object is shared with the parent: the
+// derived session survives the parent's GC. The manifest is recorded
+// complete via the intent-row model (Put → ConfirmChunk →
+// Finalise(partial=false)).
 //
 // spec: §10.1 line 155 (chunk layout); §7.1 derive copy semantics; §4.5
 // line 311 (content-addressed independence from the parent).
-func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (derivedCheckpointID string, handled bool, err error) {
+func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (derivedRef string, handled bool, err error) {
 	if s.checkpointManifests == nil || s.checkpointManifestWriter == nil {
 		return "", false, nil
 	}
 	if _, ok := s.blobs.(blobstore.Copier); !ok || source.WorkspaceSnapshot == nil || source.WorkspaceSnapshot.Ref == "" {
 		return "", false, nil
 	}
-	parentRef := source.WorkspaceSnapshot.Ref
-	parentRec, gerr := s.checkpointManifests.Get(ctx, source.TenantID, parentRef)
+	parentCheckpointID := checkpointIDFromSnapshotRef(source.WorkspaceSnapshot.Ref)
+	parentRec, gerr := s.checkpointManifests.Get(ctx, source.TenantID, parentCheckpointID)
 	if gerr != nil || parentRec.ChunkCount <= 0 {
 		// No chunked manifest for this ref: fall through to the legacy path.
 		return "", false, nil
@@ -450,7 +455,8 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 	if encoding == "" {
 		encoding = partialmanifeststore.ChunkEncodingTar
 	}
-	derivedCheckpointID = s.idFn()
+	derivedCheckpointID := s.idFn()
+	derivedRef = checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)
 
 	// spec: §12.5 ll. 295 — copy each chunk through the tenant-scoped
 	// boundary so both source and destination URIs are validated against
@@ -458,10 +464,10 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 	// chunk (an idempotent retry) is tolerated via ErrConflict.
 	scoped := blobstore.NewTenantScoped(source.TenantID, s.blobs)
 	for n := 0; n < parentRec.ChunkCount; n++ {
-		srcURI := resumechunks.ChunkObjectURI(source.TenantID, source.ID, parentRef, uint32(n), encoding)
+		srcURI := resumechunks.ChunkObjectURI(source.TenantID, source.ID, parentCheckpointID, uint32(n), encoding)
 		dstURI := resumechunks.ChunkObjectURI(source.TenantID, derivedID, derivedCheckpointID, uint32(n), encoding)
 		if cerr := scoped.Copy(srcURI, dstURI); cerr != nil && !errors.Is(cerr, blobstore.ErrConflict) {
-			return derivedCheckpointID, true, cerr
+			return derivedRef, true, cerr
 		}
 	}
 
@@ -484,17 +490,27 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		CreatedAt:                   now,
 	}
 	if perr := s.checkpointManifestWriter.Put(ctx, rec); perr != nil {
-		return derivedCheckpointID, true, perr
+		return derivedRef, true, perr
 	}
 	if cerr := s.checkpointManifestWriter.ConfirmChunk(ctx, source.TenantID, derivedCheckpointID,
 		parentRec.ChunkCount-1, parentRec.WorkspaceBytesUploaded); cerr != nil {
-		return derivedCheckpointID, true, cerr
+		return derivedRef, true, cerr
 	}
 	if ferr := s.checkpointManifestWriter.Finalise(ctx, source.TenantID, derivedCheckpointID,
 		false, partialmanifeststore.ReasonComplete); ferr != nil {
-		return derivedCheckpointID, true, ferr
+		return derivedRef, true, ferr
 	}
-	return derivedCheckpointID, true, nil
+	return derivedRef, true, nil
+}
+
+// checkpointSnapshotRef builds the four-segment object-path form the
+// snapshot-ref parsers accept for a §10.1 chunked checkpoint:
+// /{tenant}/checkpoints/{session}/{checkpoint_id}. Its last segment is the
+// checkpoint_id the manifest row is keyed by, so a derived session's ref
+// round-trips through checkpointIDFromSnapshotRef on the next download or
+// re-derive. spec: §10.1 line 155; §4.5 line 312.
+func checkpointSnapshotRef(tenantID, sessionID, checkpointID string) string {
+	return fmt.Sprintf("/%s/%s/%s/%s", tenantID, blobstore.ObjectTypeCheckpoint, sessionID, checkpointID)
 }
 
 // derivedChunkPrefix is the object-key prefix under which the derived
