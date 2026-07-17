@@ -245,6 +245,20 @@ func TestCrossEnvironmentDelegationCredentialCompatibility(t *testing.T) {
 	// provider with the origin pool is rejected with
 	// CREDENTIAL_PROVIDER_MISMATCH before any warm pod is claimed and
 	// before a child row is committed.
+	//
+	// The §8.3 line 470 "before any pod allocation" invariant is observed
+	// here through the session store: delegation.Service.Delegate runs the
+	// admission gates (this credential-compatibility gate included) and
+	// commits the child row via insertChildSession, but it never claims a
+	// pod. A pod is claimed later at the sessionserver finalize barrier
+	// (exercised by admit_credential_assignment_constrained_to_origin_pool),
+	// strictly downstream of a committed running child. The gate firing
+	// before the child row commits (childrenOf == 0) therefore proves it
+	// fires before pod allocation: no committed child means no session that
+	// could ever reach finalize and claim a pod. The warm-pool counters the
+	// proposal names as the second signal live on the finalize path, so at
+	// the delegate-time tier the pre-commit session-store check is the
+	// observable signal for the pre-claim ordering.
 	t.Run("reject_disjoint_provider_intersection", func(t *testing.T) {
 		fx := newCrossEnvFixture(t)
 		resp := crossEnvCall(t, fx.srv, crossEnvCallerTeamA, "sess_parent", "isolated-tool", "inherit")
@@ -362,8 +376,8 @@ func TestCrossEnvironmentDelegationCredentialCompatibility(t *testing.T) {
 		}
 	})
 
-	// Admit assignment (CODE-5): an admitted inherit child draws its
-	// finalize-time credential from the origin pool. Driven through the
+	// Admit assignment: an admitted inherit child draws its finalize-time
+	// credential from the origin pool (spec/08 §8.3 line 470). Driven through the
 	// real sessionserver finalize barrier, its pod binder, and the real
 	// credential-pool minting path over an envtest-backed warm pool, the
 	// child's assigned credential provider is constrained to the
@@ -520,7 +534,7 @@ func (a *poolRecordingAssigner) assignedPools() []string {
 // real sessionserver create → finalize barrier over an envtest-backed warm
 // pool and asserts the pod binder minted a credential only from the origin
 // pool's provider (anthropic_direct → claude-prod), not the child's own
-// wider eligible set. Against the pre-CODE-5 assignment path the child
+// wider eligible set. Before the origin-pool constraint applies, the child
 // would additionally draw openai-prod (its own openai_direct provider).
 //
 // spec: §8.3 line 470 (assign a credential from the parent's pool whose
@@ -625,7 +639,7 @@ func assertInheritChildDrawsFromOriginPool(t *testing.T) {
 		t.Fatalf("create inherit child: status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	// Thread the origin credential pool onto the child, as the §8.3 inherit
-	// hop (CODE-3) does when the delegation commits the row.
+	// hop (spec/08 §8.3 lines 472, 488) does when the delegation commits the row.
 	if _, err := store.Update(ctx, "acme", "sess-inherit-child", func(s *sessionstore.Session) error {
 		s.CredentialOriginSessionID = "sess-origin"
 		return nil
