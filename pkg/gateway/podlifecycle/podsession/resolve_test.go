@@ -28,6 +28,17 @@ func sandboxTemplate(name, runtimeRef, isolation string) *lennyv1.SandboxTemplat
 	}
 }
 
+func spiffeBindingTemplate(name, runtimeRef, isolation, spiffeBinding string) *lennyv1.SandboxTemplate {
+	return &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       runtimeRef,
+			IsolationProfile: isolation,
+			SpiffeBinding:    spiffeBinding,
+		},
+	}
+}
+
 func serviceTemplate(name, runtimeRef, isolation string, maxConcurrent int32) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
@@ -395,6 +406,43 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 	}
 	if got.Pool != "claude-pool" {
 		t.Errorf("resolved pool = %q, want claude-pool", got.Pool)
+	}
+}
+
+// spec: §4.9 — ResolvePool copies the pool's SandboxTemplate spiffeBinding
+// onto the PoolMatch so the session-start credential-delivery gate can pair
+// the bound pod's binding with each resolved CredentialPool's effective
+// deliveryMode. TestResolvePoolCopiesSpiffeBinding pins the populated case.
+func TestResolvePoolCopiesSpiffeBinding(t *testing.T) {
+	c := k8sClient(
+		t,
+		warmPool("claude-pool", "claude-tmpl"),
+		spiffeBindingTemplate("claude-tmpl", "claude-code", "standard", "disabled"),
+	)
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "", "")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.SpiffeBinding != "disabled" {
+		t.Errorf("SpiffeBinding = %q, want disabled", got.SpiffeBinding)
+	}
+}
+
+// spec: §4.9 — a SandboxTemplate that declares no spiffeBinding leaves the
+// PoolMatch field at its empty default rather than fabricating a value the
+// credential-delivery gate would misread.
+func TestResolvePoolLeavesSpiffeBindingEmptyByDefault(t *testing.T) {
+	c := k8sClient(
+		t,
+		warmPool("claude-pool", "claude-tmpl"),
+		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
+	)
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "", "")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.SpiffeBinding != "" {
+		t.Errorf("SpiffeBinding = %q, want empty default", got.SpiffeBinding)
 	}
 }
 
