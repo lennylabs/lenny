@@ -218,8 +218,35 @@ func TestResolveHonoursPartialRecoveryThreshold(t *testing.T) {
 	}
 }
 
-// A zero-chunk manifest resolves to no chunks (restores nothing) without
-// consulting the lister or presigner.
+// spec: §10.1 line 155 — a partial checkpoint that never confirmed a chunk
+// (chunk_count == 0, workspace_bytes_uploaded == 0) is below any recovery
+// threshold, so it returns ErrBelowRecoveryThreshold rather than resolving
+// to an empty restore. Without this the zero-chunk short-circuit would run
+// first and the caller would silently skip the last-full-checkpoint fallback,
+// resuming the session with an empty workspace.
+func TestResolveZeroChunkPartialFallsBackNotEmptyRestore(t *testing.T) {
+	baseline := int64(100)
+	r := &Resolver{
+		Manifests: fakeManifests{rec: partialmanifeststore.Record{
+			CheckpointID:                rcCheckpoint,
+			ChunkCount:                  0,
+			ChunkEncoding:               partialmanifeststore.ChunkEncodingTar,
+			Partial:                     true,
+			WorkspaceBytesUploaded:      0,
+			BaselineFullCheckpointBytes: &baseline,
+		}},
+		Presigner:                        &countingPresigner{},
+		Lister:                           fakeLister{},
+		TTL:                              30 * time.Second,
+		PartialRecoveryThresholdFraction: 0.5,
+	}
+	if _, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint); !errors.Is(err, ErrBelowRecoveryThreshold) {
+		t.Fatalf("zero-chunk partial Resolve err = %v, want ErrBelowRecoveryThreshold", err)
+	}
+}
+
+// A zero-chunk complete (partial = false) manifest resolves to no chunks
+// (restores nothing) without consulting the lister or presigner.
 func TestResolveZeroChunkManifestRestoresNothing(t *testing.T) {
 	r, p := newResolver(0, partialmanifeststore.ChunkEncodingTar, nil)
 	grants, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)

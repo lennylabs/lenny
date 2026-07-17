@@ -194,6 +194,19 @@ type Store interface {
 	// spec: §10.1 line 157 — the resume-time cleaner selects partial rows.
 	LatestActive(ctx context.Context, tenantID, sessionID string) (Record, error)
 
+	// LatestActiveAny returns the highest-coordination_generation active row
+	// (`deleted_at IS NULL`) for (tenantID, sessionID) regardless of
+	// `partial`, taking the most recently created row among rows at that
+	// generation — the §10.1 line 154 resume-reassembly selector. It resolves
+	// the checkpoint the resume restores from: a newer partial = true drain
+	// row at or above a completed checkpoint's generation wins, so the
+	// partialRecoveryThresholdFraction gate can arbitrate. Returns ErrNotFound
+	// when no active row exists.
+	//
+	// spec: §10.1 line 154 — select the active row at
+	// MAX(coordination_generation) regardless of partial.
+	LatestActiveAny(ctx context.Context, tenantID, sessionID string) (Record, error)
+
 	// HasActivePartialManifest reports whether an active partial row
 	// exists for (tenantID, sessionID) — the §7.2 resume-classification
 	// input. It is LatestActive collapsed to a boolean: true when a
@@ -443,6 +456,35 @@ func (m *MemoryStore) LatestActive(_ context.Context, tenantID, sessionID string
 			continue
 		}
 		if !found || row.CoordinationGeneration > best.CoordinationGeneration {
+			best = row
+			found = true
+		}
+	}
+	if !found {
+		return Record{}, ErrNotFound
+	}
+	return best, nil
+}
+
+// LatestActiveAny returns the highest-generation active row for
+// (tenantID, sessionID) regardless of partial — the §10.1 line 154 resume
+// selector. Ties on coordination_generation break to the most recently
+// created row.
+func (m *MemoryStore) LatestActiveAny(_ context.Context, tenantID, sessionID string) (Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best Record
+	found := false
+	for _, row := range m.rows {
+		if row.TenantID != tenantID || row.SessionID != sessionID {
+			continue
+		}
+		if !row.DeletedAt.IsZero() {
+			continue
+		}
+		if !found ||
+			row.CoordinationGeneration > best.CoordinationGeneration ||
+			(row.CoordinationGeneration == best.CoordinationGeneration && row.CreatedAt.After(best.CreatedAt)) {
 			best = row
 			found = true
 		}

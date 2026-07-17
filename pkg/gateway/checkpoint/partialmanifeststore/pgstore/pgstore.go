@@ -230,6 +230,35 @@ func (s *Store) LatestActive(ctx context.Context, tenantID, sessionID string) (p
 	return out, nil
 }
 
+// LatestActiveAny returns the highest-coordination_generation active row
+// (`deleted_at IS NULL`) for (tenantID, sessionID) regardless of `partial` —
+// the §10.1 line 154 resume-reassembly selector. Ties on
+// coordination_generation break to the most recently created row.
+func (s *Store) LatestActiveAny(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
+	var out partialmanifeststore.Record
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM checkpoint_manifest
+				WHERE tenant_id = $1 AND session_id = $2
+					AND deleted_at IS NULL
+				ORDER BY coordination_generation DESC, created_at DESC LIMIT 1`,
+			tenantID, sessionID)
+		r, err := scanRow(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return partialmanifeststore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		out = r
+		return nil
+	})
+	if err != nil {
+		return partialmanifeststore.Record{}, err
+	}
+	return out, nil
+}
+
 // HasActivePartialManifest reports whether an active partial row exists
 // for (tenantID, sessionID) — the §7.2 resume-classification input.
 func (s *Store) HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error) {

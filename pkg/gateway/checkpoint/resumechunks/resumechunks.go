@@ -105,14 +105,16 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 	if err != nil {
 		return nil, fmt.Errorf("resumechunks: resolve manifest %s/%s: %w", tenantID, checkpointID, err)
 	}
-	if rec.ChunkCount <= 0 {
-		return nil, nil
-	}
 	// spec: §10.1 line 155 — a partial checkpoint is reconstructed only
 	// when it clears the recovery threshold. A full checkpoint (partial =
 	// false) restores whole and skips the gate. The threshold is
 	// baseline_full_checkpoint_bytes * partialRecoveryThresholdFraction when
-	// the baseline is non-NULL, else 0.
+	// the baseline is non-NULL, else 0. This gate runs before the zero-chunk
+	// short-circuit below so a partial that never confirmed a chunk
+	// (chunk_count == 0, workspace_bytes_uploaded == 0) returns
+	// ErrBelowRecoveryThreshold and the caller falls back to the last full
+	// checkpoint, rather than resolving to an empty restore that silently
+	// bypasses the fallback.
 	if rec.Partial {
 		var threshold int64
 		if rec.BaselineFullCheckpointBytes != nil {
@@ -122,6 +124,12 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 			return nil, fmt.Errorf("%w: %d confirmed bytes below threshold %d for %s",
 				ErrBelowRecoveryThreshold, rec.WorkspaceBytesUploaded, threshold, checkpointID)
 		}
+	}
+	// A complete (partial = false) manifest that genuinely holds zero chunks
+	// resolves to no chunks, which restores nothing. A partial row reaches
+	// here only after clearing the recovery threshold above.
+	if rec.ChunkCount <= 0 {
+		return nil, nil
 	}
 	encoding := rec.ChunkEncoding
 	if encoding == "" {

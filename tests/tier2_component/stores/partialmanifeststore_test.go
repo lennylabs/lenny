@@ -182,6 +182,52 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §10.1 line 154 — LatestActiveAny is the resume-reassembly
+	// selector: the highest-coordination_generation active row regardless of
+	// partial. A completed checkpoint is returned when it is the only active
+	// row (unlike LatestActive, which is partial-scoped), and a newer partial
+	// drain attempt at a higher generation wins over it.
+	t.Run("latest active any ignores the partial predicate", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		session := newUUID(t)
+		full := newUUID(t)
+		drain := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, full, session, 2)); err != nil {
+			t.Fatalf("Put full intent: %v", err)
+		}
+		// A confirmed chunk keeps the completed row active (a zero-chunk row
+		// is soft-deleted by Finalise, §10.1 line 132).
+		if err := store.ConfirmChunk(ctx, tenant, full, 0, 4096); err != nil {
+			t.Fatalf("ConfirmChunk full: %v", err)
+		}
+		if err := store.Finalise(ctx, tenant, full, false, partialmanifeststore.ReasonComplete); err != nil {
+			t.Fatalf("Finalise full: %v", err)
+		}
+		// The partial-only selector skips the completed row; LatestActiveAny
+		// returns it because it is the sole active row.
+		if _, err := store.LatestActive(ctx, tenant, session); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive with only a completed row: got %v, want ErrNotFound", err)
+		}
+		got, err := store.LatestActiveAny(ctx, tenant, session)
+		if err != nil {
+			t.Fatalf("LatestActiveAny with only a completed row: %v", err)
+		}
+		if got.CheckpointID != full {
+			t.Errorf("LatestActiveAny = %q, want the completed checkpoint", got.CheckpointID)
+		}
+		// A newer partial drain attempt at gen 3 wins the generation fence.
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, drain, session, 3)); err != nil {
+			t.Fatalf("Put drain intent: %v", err)
+		}
+		got, err = store.LatestActiveAny(ctx, tenant, session)
+		if err != nil {
+			t.Fatalf("LatestActiveAny: %v", err)
+		}
+		if got.CheckpointID != drain {
+			t.Errorf("LatestActiveAny = %q, want the higher-generation drain partial", got.CheckpointID)
+		}
+	})
+
 	// spec: §10.1 line 131 — ConfirmChunk advances the counters
 	// monotonically under the `chunk_count < n + 1` guard.
 	t.Run("confirm chunk is monotonic", func(t *testing.T) {

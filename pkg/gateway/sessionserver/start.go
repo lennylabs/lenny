@@ -3191,37 +3191,84 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 	if s.resumeChunkResolver == nil || row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
 		return nil
 	}
-	ref := row.WorkspaceSnapshot.Ref
-	chunks, err := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, ref)
+	// spec: §10.1 line 154 — select the checkpoint to reassemble by the
+	// generation fence, not by the WorkspaceSnapshot.Ref alone. The ref is a
+	// validation input that names the session's last completed checkpoint;
+	// the selector takes the active manifest row at MAX(coordination_generation)
+	// regardless of partial, so a newer partial = true drain row at or above
+	// the completed checkpoint's generation wins and the
+	// partialRecoveryThresholdFraction gate can arbitrate. Resolving ref-first
+	// would always pick the completed checkpoint and make partial recovery
+	// unreachable.
+	checkpointID := s.selectResumeCheckpoint(ctx, row.TenantID, row.ID, row.WorkspaceSnapshot.Ref)
+	chunks, err := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, checkpointID)
 	if err == nil {
 		return chunks
 	}
 	if errors.Is(err, resumechunks.ErrReassemblyContiguity) || errors.Is(err, resumechunks.ErrBelowRecoveryThreshold) {
 		// spec: §10.1 line 155 — reassembly failed atomically before any
-		// chunk body was fetched (a contiguity failure) or the partial
-		// checkpoint did not clear the recovery threshold; fall back to the
-		// last successful full checkpoint so the resume restores intact
-		// bytes rather than a corrupted or not-worth-it splice.
-		if s.checkpointManifests == nil {
-			return nil
-		}
-		full, ferr := s.checkpointManifests.LatestFull(ctx, row.TenantID, row.ID)
-		if ferr != nil || full.CheckpointID == "" || full.CheckpointID == ref {
-			return nil
-		}
-		fallback, ferr := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, full.CheckpointID)
-		if ferr != nil {
-			log.Printf("sessionserver: resume %s fell back to full checkpoint %s but it did not resolve: %v",
-				row.ID, full.CheckpointID, ferr)
-			return nil
-		}
-		return fallback
+		// chunk body was fetched (a contiguity failure) or the generation-
+		// selected partial checkpoint did not clear the recovery threshold;
+		// fall back to the last successful full checkpoint so the resume
+		// restores intact bytes rather than a corrupted or not-worth-it
+		// splice.
+		return s.resolveFullCheckpointFallback(ctx, row, checkpointID)
 	}
 	// A missing manifest row or a transient store outage: the resume itself
 	// succeeded, so a lookup failure must not block the session from coming
 	// back online. Restore nothing rather than fail the resume.
-	log.Printf("sessionserver: resume %s could not resolve checkpoint %s chunks: %v", row.ID, ref, err)
+	log.Printf("sessionserver: resume %s could not resolve checkpoint %s chunks: %v", row.ID, checkpointID, err)
 	return nil
+}
+
+// selectResumeCheckpoint resolves the checkpoint_id the resume reassembles
+// from. It selects the active manifest row for the session at
+// MAX(coordination_generation) regardless of partial (§10.1 line 154), so a
+// newer partial = true drain row at or above the completed checkpoint's
+// generation is preferred over the older completed checkpoint. The
+// WorkspaceSnapshot.Ref, written only on a successful checkpoint, is the
+// fallback identifier when no active row is selectable: the manifest reader
+// is not wired (dev mode), a store lookup fails, or the completed checkpoint
+// was rotated out of the active set. Resolving by ref alone must never be the
+// selection mechanism, or the partialRecoveryThresholdFraction gate never
+// engages.
+//
+// spec: §10.1 line 154 — MAX(coordination_generation) select regardless of
+// partial; the ref is a validation input.
+func (s *Server) selectResumeCheckpoint(ctx context.Context, tenantID, sessionID, ref string) string {
+	if s.checkpointManifests == nil {
+		return ref
+	}
+	active, err := s.checkpointManifests.LatestActiveAny(ctx, tenantID, sessionID)
+	if err != nil || active.CheckpointID == "" {
+		return ref
+	}
+	return active.CheckpointID
+}
+
+// resolveFullCheckpointFallback resolves the last successful full checkpoint's
+// chunk set for a resume whose generation-selected manifest failed its
+// contiguity or recovery-threshold check. It returns nil when the manifest
+// reader is not wired, no surviving full checkpoint exists, the full
+// checkpoint is the row that already failed (selected), or the fallback does
+// not resolve.
+//
+// spec: §10.1 line 155 — fallback to the last successful full checkpoint.
+func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessionstore.Session, selected string) []adapterclient.ChunkGrant {
+	if s.checkpointManifests == nil {
+		return nil
+	}
+	full, ferr := s.checkpointManifests.LatestFull(ctx, row.TenantID, row.ID)
+	if ferr != nil || full.CheckpointID == "" || full.CheckpointID == selected {
+		return nil
+	}
+	fallback, ferr := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, full.CheckpointID)
+	if ferr != nil {
+		log.Printf("sessionserver: resume %s fell back to full checkpoint %s but it did not resolve: %v",
+			row.ID, full.CheckpointID, ferr)
+		return nil
+	}
+	return fallback
 }
 
 // fenceResumedPod issues the §10.1 / §4.2 CoordinatorFence to the pod a

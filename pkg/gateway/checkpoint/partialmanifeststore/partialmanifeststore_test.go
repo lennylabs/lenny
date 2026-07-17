@@ -166,6 +166,55 @@ func TestLatestActiveSelectsPartialOnly(t *testing.T) {
 	}
 }
 
+// spec: §10.1 line 154 — LatestActiveAny is the resume-reassembly selector.
+// Unlike LatestActive (partial = TRUE), it returns the highest-generation
+// active row regardless of partial, so a completed checkpoint is returned
+// when it is the only active row, and a newer partial drain attempt at a
+// higher generation wins over it.
+func TestLatestActiveAnyIgnoresPartialPredicate(t *testing.T) {
+	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+
+	// A completed checkpoint at gen 2: LatestActive (partial-only) skips it,
+	// but LatestActiveAny returns it because it is the sole active row.
+	if err := store.Put(context.Background(), intentRow(clock, "acme", "cp-complete", "s1", 2)); err != nil {
+		t.Fatalf("Put complete intent: %v", err)
+	}
+	// A confirmed chunk keeps the completed row active (a zero-chunk row is
+	// soft-deleted by Finalise, §10.1 line 132).
+	if err := store.ConfirmChunk(context.Background(), "acme", "cp-complete", 0, 4096); err != nil {
+		t.Fatalf("ConfirmChunk complete: %v", err)
+	}
+	if err := store.Finalise(context.Background(), "acme", "cp-complete", false, partialmanifeststore.ReasonComplete); err != nil {
+		t.Fatalf("Finalise complete: %v", err)
+	}
+	got, err := store.LatestActiveAny(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("LatestActiveAny with only a completed row: %v", err)
+	}
+	if got.CheckpointID != "cp-complete" {
+		t.Errorf("LatestActiveAny.CheckpointID = %q, want cp-complete (returned regardless of partial)", got.CheckpointID)
+	}
+
+	// A newer partial drain attempt at gen 3 wins on the generation fence.
+	clock = clock.Add(time.Minute)
+	if err := store.Put(context.Background(), intentRow(clock, "acme", "cp-drain", "s1", 3)); err != nil {
+		t.Fatalf("Put drain intent: %v", err)
+	}
+	got, err = store.LatestActiveAny(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("LatestActiveAny: %v", err)
+	}
+	if got.CheckpointID != "cp-drain" {
+		t.Errorf("LatestActiveAny.CheckpointID = %q, want cp-drain (higher generation wins)", got.CheckpointID)
+	}
+
+	// No active row for an unknown session returns ErrNotFound.
+	if _, err := store.LatestActiveAny(context.Background(), "acme", "s2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("LatestActiveAny for empty session = %v, want ErrNotFound", err)
+	}
+}
+
 // spec: §10.1 line 137 — supersede-on-write collapses the active partial
 // set to the highest-generation row for the (session, slot). A same-slot
 // write at or above the incoming generation soft-deletes the prior

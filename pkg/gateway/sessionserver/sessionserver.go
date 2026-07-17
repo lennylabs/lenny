@@ -707,12 +707,16 @@ type ResumeChunkResolver interface {
 
 // CheckpointManifestReader reads §10.1 checkpoint_manifest rows for the
 // resume and workspace-download paths: Get resolves one checkpoint by id
-// (for its chunk_count / chunk_encoding), and LatestFull resolves the last
-// successful full checkpoint the resume path falls back to when reassembly
-// of the selected partial manifest fails its contiguity check. The
-// Postgres and in-memory checkpoint_manifest stores implement it.
+// (for its chunk_count / chunk_encoding), LatestActiveAny resolves the
+// active row at MAX(coordination_generation) regardless of partial (the
+// §10.1 line 154 resume-reassembly selector), and LatestFull resolves the
+// last successful full checkpoint the resume path falls back to when
+// reassembly of the selected manifest fails its contiguity or recovery-
+// threshold check. The Postgres and in-memory checkpoint_manifest stores
+// implement it.
 type CheckpointManifestReader interface {
 	Get(ctx context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error)
+	LatestActiveAny(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error)
 	LatestFull(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error)
 }
 
