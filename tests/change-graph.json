@@ -641,6 +641,9 @@
     "pkg/ops/registryservice": {
       "unit": ["pkg/ops/registryservice/..."]
     },
+    "pkg/blobstore/replication": {
+      "unit": ["pkg/blobstore/replication/..."]
+    },
     "pkg/ops/upgradeservice": {
       "unit": ["pkg/ops/upgradeservice/..."],
       "component": [
