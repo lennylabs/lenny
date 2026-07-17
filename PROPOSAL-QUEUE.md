@@ -27,10 +27,12 @@ clusters (C-01–C-03), proposal-B holds the §4.9 credential-leasing clusters
 (C-04–C-06) and the eviction-trigger cluster C-22 (which depends on proposal-A's
 C-01, so B works C-04–C-06 first), and proposal-C holds the two spec areas no
 other worker or the §25 closure machine touches: the interceptor error-envelope
-cluster C-18 (§4.8/§15.1) and the OpenSLO-export cluster C-19 (§16.10). The
+cluster C-18 (§4.8/§15.1) and the OpenSLO-export cluster C-19 (§16.10), both now
+landed (0039, 0041); its next isolated cluster is C-38 (§10.7/§8.3 rate-limit). The
 integrator extends each worker's assignments from the remaining clusters as its
 branches land, keeping each worker's lane clear of the others' active spec
-sections.
+sections; the §15 (C-13) and §7 (C-14) Highs are held back until proposal-A's
+C-01 pod/resume work lands, to avoid pod-claim/resume conflicts.
 
 **Status lifecycle** (per cluster):
 
@@ -404,7 +406,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-38 — "Sliding-window" rate-limit naming vs fixed-window implementation — §10.7/§8.3
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-C
 - **findings:** T-8.3.16, T-ADV.12
 - **root spec gap:** The spec calls both the eval-submission limit (§10.7) and messagingRateLimit (§8.3) "sliding-window," but both share the fixed-window `ratelimit.Counter` that resets on wall-clock minute boundaries, permitting classic window-boundary evasion.
 - **proposal scope:** Decide whether the spec wording is imprecise and should be corrected to "fixed-window," or a true sliding-window Redis primitive must be designed and built (decoupled from the shared §11.1 admission counter).
