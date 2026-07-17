@@ -378,6 +378,11 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: "--playground-acknowledge-api-key-mode=true"
+      # spec: §4.9 — the credential-delivery scan reads tenancy.mode to
+      # decide whether to enforce the forbidden deliveryMode combinations.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tenancy-mode=multi"
 
   - it: renders the playground-config preflight inputs at chart defaults
     documentSelector:
@@ -393,6 +398,11 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: "--playground-acknowledge-api-key-mode=false"
+      # spec: §4.9 — defaults to single-tenant, so the credential-delivery
+      # scan passes without enforcing.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tenancy-mode=single"
 
   # spec: §17.2 line 56 — the fail-closed lenny-registry-digest webhook
   # must be tracked by the preflight inventory when digest pinning is on,
