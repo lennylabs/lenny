@@ -674,3 +674,75 @@ func TestManifestReasonValidValues(t *testing.T) {
 		t.Error("terminated_during_resume was removed from the enum and must not validate")
 	}
 }
+
+// spec: §10.1 partial-manifest path — HasActivePartialManifest is true
+// while an active partial row exists and false once it is finalised
+// complete (partial = false) or superseded.
+func TestHasActivePartialManifest(t *testing.T) {
+	clock := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+	ctx := context.Background()
+
+	has, err := store.HasActivePartialManifest(ctx, "acme", "sess_h")
+	if err != nil || has {
+		t.Fatalf("HasActivePartialManifest on empty store = (%v, %v), want (false, nil)", has, err)
+	}
+
+	if err := store.Put(ctx, intentRow(clock, "acme", "cp-h", "sess_h", 1)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	has, err = store.HasActivePartialManifest(ctx, "acme", "sess_h")
+	if err != nil || !has {
+		t.Fatalf("HasActivePartialManifest after intent = (%v, %v), want (true, nil)", has, err)
+	}
+
+	// Confirm a chunk and finalise complete: the row is no longer partial.
+	if err := store.ConfirmChunk(ctx, "acme", "cp-h", 0, 16); err != nil {
+		t.Fatalf("ConfirmChunk: %v", err)
+	}
+	if err := store.Finalise(ctx, "acme", "cp-h", false, partialmanifeststore.ReasonComplete); err != nil {
+		t.Fatalf("Finalise: %v", err)
+	}
+	has, err = store.HasActivePartialManifest(ctx, "acme", "sess_h")
+	if err != nil || has {
+		t.Fatalf("HasActivePartialManifest after complete = (%v, %v), want (false, nil)", has, err)
+	}
+}
+
+// spec: §10.1 line 155 — LatestFull returns the most-recently-created
+// active full checkpoint row (partial = false) and never a partial one.
+func TestLatestFullSelectsNewestCompleteRow(t *testing.T) {
+	clock := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+	ctx := context.Background()
+
+	if _, err := store.LatestFull(ctx, "acme", "sess_f"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Fatalf("LatestFull on empty store = %v, want ErrNotFound", err)
+	}
+
+	// A complete full checkpoint at generation 1.
+	if err := store.Put(ctx, intentRow(clock, "acme", "cp-old", "sess_f", 1)); err != nil {
+		t.Fatalf("Put old: %v", err)
+	}
+	if err := store.ConfirmChunk(ctx, "acme", "cp-old", 0, 16); err != nil {
+		t.Fatalf("ConfirmChunk old: %v", err)
+	}
+	if err := store.Finalise(ctx, "acme", "cp-old", false, partialmanifeststore.ReasonComplete); err != nil {
+		t.Fatalf("Finalise old: %v", err)
+	}
+	// A newer active partial drain row must be ignored by LatestFull.
+	if err := store.Put(ctx, intentRow(clock, "acme", "cp-partial", "sess_f", 5)); err != nil {
+		t.Fatalf("Put partial: %v", err)
+	}
+
+	got, err := store.LatestFull(ctx, "acme", "sess_f")
+	if err != nil {
+		t.Fatalf("LatestFull: %v", err)
+	}
+	if got.CheckpointID != "cp-old" {
+		t.Fatalf("LatestFull.CheckpointID = %q, want cp-old (the complete row, not the active partial)", got.CheckpointID)
+	}
+	if got.Partial {
+		t.Fatalf("LatestFull returned a partial row")
+	}
+}

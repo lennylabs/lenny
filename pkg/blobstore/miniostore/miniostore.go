@@ -609,6 +609,54 @@ func (s *Store) statBlob(ctx context.Context, u blobstore.URI) (blobstore.BlobIn
 	return info, nil
 }
 
+// ListByPrefix lists every live object whose key falls under the object
+// key of u (its PartID names the prefix segment, e.g. a checkpoint id with
+// a trailing slash). The returned BlobInfos carry the full reconstructed
+// URI (same tenant / object_type / session as u, with PartID set to the
+// key's suffix after the (tenant, object_type, session) prefix) and Size,
+// in the store's native lexicographic list order. §12.5 tombstoned objects
+// are excluded so a soft-deleted chunk is not offered for reassembly. The
+// §10.1 line 155 resume path calls it to enumerate a checkpoint's chunk
+// objects and verify contiguity before minting GET capabilities.
+//
+// spec: §10.1 line 155 — list objects under chunk_object_key_prefix.
+func (s *Store) ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
+	objType := u.ObjectType
+	if objType == "" {
+		objType = blobstore.ObjectTypeUpload
+	}
+	keyPrefix := objectKey(u)
+	sessPrefix := sessionPrefix(u.TenantID, objType, u.SessionID)
+	var out []blobstore.BlobInfo
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    keyPrefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("miniostore: list %s: %w", keyPrefix, obj.Err)
+		}
+		tombstoned, terr := s.isTombstoned(ctx, obj.Key)
+		if terr != nil {
+			return nil, terr
+		}
+		if tombstoned {
+			continue
+		}
+		partID := strings.TrimPrefix(obj.Key, sessPrefix)
+		out = append(out, blobstore.BlobInfo{
+			URI: blobstore.URI{
+				TenantID:   u.TenantID,
+				ObjectType: objType,
+				SessionID:  u.SessionID,
+				PartID:     partID,
+			},
+			Size:     obj.Size,
+			StoredAt: obj.LastModified,
+		})
+	}
+	return out, nil
+}
+
 // Probe runs the §12.5 artifact-store liveness check — a bucket-exists
 // call against the configured bucket — and satisfies the §12.5
 // drain-readiness Prober contract.

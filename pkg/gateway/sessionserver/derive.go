@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
@@ -316,14 +319,33 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	derivedID := s.idFn()
 	derivedRef := derivedSnapshotRef(tenantID, derivedID)
-	// spec: §4.5 ll. 311 — derive copies the parent's workspace
-	// snapshot bytes into a new object scoped to the derived
-	// session's prefix so the derived session owns its workspace
-	// independent of the parent's GC. When the blob store
-	// implements Copier (production MinIO/S3/GCS), the copy runs
-	// natively; otherwise we keep the previous ref-rewrite
-	// behavior (tests + the minimal gateway).
-	if _, ok := s.blobs.(blobstore.Copier); ok && source.WorkspaceSnapshot != nil && source.WorkspaceSnapshot.Ref != "" {
+	// spec: §10.1 line 155 / §7.1 derive — when the parent's checkpoint is a
+	// chunked manifest, derive copies every chunk under the parent's
+	// chunk_object_key_prefix into the derived session's own prefix and
+	// writes a derived manifest row, so the derived session owns a resumable
+	// and downloadable checkpoint with no object shared with the parent. The
+	// handler falls through to the legacy single-snapshot copy when the
+	// parent has no chunked manifest.
+	if newRef, handled, cerr := s.deriveChunkedCheckpoint(r.Context(), source, derivedID, now); handled {
+		if cerr != nil {
+			if errors.Is(cerr, blobstore.ErrNotFound) {
+				s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
+				s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
+					"parent workspace checkpoint chunk is absent in storage",
+					map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
+				return
+			}
+			s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"workspace checkpoint copy failed: "+cerr.Error(), nil)
+			return
+		}
+		derivedRef = newRef
+	} else if _, ok := s.blobs.(blobstore.Copier); ok && source.WorkspaceSnapshot != nil && source.WorkspaceSnapshot.Ref != "" {
+		// spec: §4.5 ll. 311 — legacy single-object copy for a checkpoint
+		// that predates the chunked model. The copy runs through the
+		// tenant-scoped boundary; otherwise the ref-rewrite behavior (tests
+		// + the minimal gateway) applies.
 		srcURI, dstURI, ok := parseDeriveURIs(source.WorkspaceSnapshot.Ref, derivedRef, tenantID, source.ID, derivedID)
 		if ok {
 			// spec: §12.5 ll. 295 — run the snapshot copy through the
@@ -391,6 +413,95 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// deriveChunkedCheckpoint copies every chunk of the parent's §10.1
+// chunked checkpoint into the derived session's own prefix and writes a
+// derived manifest row, returning the derived checkpoint_id (which becomes
+// the derived session's WorkspaceSnapshot.Ref). It reports handled=true
+// when the parent has a chunked manifest that it acted on, so the caller
+// skips the legacy single-snapshot copy; handled=false leaves the caller
+// on the legacy path (dev mode, a store without Copier, or a checkpoint
+// predating the chunked model). A copy or manifest-write failure returns
+// handled=true with a non-nil error so the caller maps it to the derive
+// error response.
+//
+// The derived checkpoint owns a fresh checkpoint_id and a distinct object
+// prefix, so no chunk object is shared with the parent: the derived
+// session survives the parent's GC. The manifest is recorded complete via
+// the intent-row model (Put → ConfirmChunk → Finalise(partial=false)).
+//
+// spec: §10.1 line 155 (chunk layout); §7.1 derive copy semantics; §4.5
+// line 311 (content-addressed independence from the parent).
+func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (derivedCheckpointID string, handled bool, err error) {
+	if s.checkpointManifests == nil || s.checkpointManifestWriter == nil {
+		return "", false, nil
+	}
+	if _, ok := s.blobs.(blobstore.Copier); !ok || source.WorkspaceSnapshot == nil || source.WorkspaceSnapshot.Ref == "" {
+		return "", false, nil
+	}
+	parentRef := source.WorkspaceSnapshot.Ref
+	parentRec, gerr := s.checkpointManifests.Get(ctx, source.TenantID, parentRef)
+	if gerr != nil || parentRec.ChunkCount <= 0 {
+		// No chunked manifest for this ref: fall through to the legacy path.
+		return "", false, nil
+	}
+	encoding := parentRec.ChunkEncoding
+	if encoding == "" {
+		encoding = partialmanifeststore.ChunkEncodingTar
+	}
+	derivedCheckpointID = s.idFn()
+
+	// spec: §12.5 ll. 295 — copy each chunk through the tenant-scoped
+	// boundary so both source and destination URIs are validated against
+	// the caller tenant at the store interface. A copy of an already-copied
+	// chunk (an idempotent retry) is tolerated via ErrConflict.
+	scoped := blobstore.NewTenantScoped(source.TenantID, s.blobs)
+	for n := 0; n < parentRec.ChunkCount; n++ {
+		srcURI := resumechunks.ChunkObjectURI(source.TenantID, source.ID, parentRef, uint32(n), encoding)
+		dstURI := resumechunks.ChunkObjectURI(source.TenantID, derivedID, derivedCheckpointID, uint32(n), encoding)
+		if cerr := scoped.Copy(srcURI, dstURI); cerr != nil && !errors.Is(cerr, blobstore.ErrConflict) {
+			return derivedCheckpointID, true, cerr
+		}
+	}
+
+	// Record the derived manifest complete: Put writes the (always partial)
+	// intent row, ConfirmChunk advances chunk_count to the copied count
+	// (which also keeps the row out of the zero-chunk soft-delete arm), and
+	// Finalise stamps partial=false / complete.
+	rec := partialmanifeststore.Record{
+		TenantID:                    source.TenantID,
+		CheckpointID:                derivedCheckpointID,
+		SessionID:                   derivedID,
+		SlotID:                      partialmanifeststore.SlotDefault,
+		ManifestReason:              partialmanifeststore.ReasonInProgress,
+		ChunkObjectKeyPrefix:        derivedChunkPrefix(source.TenantID, derivedID, derivedCheckpointID),
+		ChunkSizeBytes:              parentRec.ChunkSizeBytes,
+		ChunkEncoding:               encoding,
+		BaselineFullCheckpointBytes: parentRec.BaselineFullCheckpointBytes,
+		CheckpointStartedAt:         now,
+		CheckpointTimeoutAt:         now,
+		CreatedAt:                   now,
+	}
+	if perr := s.checkpointManifestWriter.Put(ctx, rec); perr != nil {
+		return derivedCheckpointID, true, perr
+	}
+	if cerr := s.checkpointManifestWriter.ConfirmChunk(ctx, source.TenantID, derivedCheckpointID,
+		parentRec.ChunkCount-1, parentRec.WorkspaceBytesUploaded); cerr != nil {
+		return derivedCheckpointID, true, cerr
+	}
+	if ferr := s.checkpointManifestWriter.Finalise(ctx, source.TenantID, derivedCheckpointID,
+		false, partialmanifeststore.ReasonComplete); ferr != nil {
+		return derivedCheckpointID, true, ferr
+	}
+	return derivedCheckpointID, true, nil
+}
+
+// derivedChunkPrefix is the object-key prefix under which the derived
+// session's copied chunks live:
+// /{tenant_id}/checkpoints/{derived_session_id}/{derived_checkpoint_id}/.
+func derivedChunkPrefix(tenantID, derivedSessionID, derivedCheckpointID string) string {
+	return fmt.Sprintf("/%s/%s/%s/%s/", tenantID, blobstore.ObjectTypeCheckpoint, derivedSessionID, derivedCheckpointID)
 }
 
 // copySnapshotRef returns a §7.1 derived-snapshot reference at the

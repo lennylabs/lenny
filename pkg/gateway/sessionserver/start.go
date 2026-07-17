@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
@@ -3123,6 +3124,14 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	if row.WorkspaceSnapshot != nil {
 		expectedBytes = row.WorkspaceSnapshot.Bytes
 	}
+	// spec: §10.1 line 155 — resolve the checkpoint's chunk set from the
+	// manifest row the gateway owns, verify contiguity of [0, chunk_count),
+	// and mint one presigned GET capability per index. The adapter fetches
+	// them in ascending index order and concatenates the bodies into one
+	// decompress→untar pipeline. A contiguity failure falls back to the
+	// last successful full checkpoint; an unresolvable manifest (dev mode,
+	// a checkpoint predating the chunked model) leaves the chunk set empty.
+	chunks := s.resolveResumeChunks(ctx, row)
 	result, err := s.podBinder.Resume(ctx, podsession.ResumeRequest{
 		Pool:                    match.Pool,
 		SessionID:               row.ID,
@@ -3143,6 +3152,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		// (legacy row, adapter on an older protocol) disables the
 		// assertion on the adapter side. F-7.3.15.
 		ExpectedWorkspaceRoot: row.WorkspaceRoot,
+		Chunks:                chunks,
 	})
 	if err != nil {
 		return "", err
@@ -3161,6 +3171,57 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		return "", ferr
 	}
 	return result.Mode, nil
+}
+
+// resolveResumeChunks resolves the §10.1 line 155 reassembly chunk set for
+// the checkpoint the session is being restored from. It returns one
+// presigned GET capability per chunk in ascending index order, which the
+// gateway hands the adapter on ResumeRequest.Chunks. When reassembly of the
+// selected manifest fails its contiguity check (a gap or an out-of-order
+// index below chunk_count), it falls back to the last successful full
+// checkpoint. A nil resolver (dev mode, or the gateway wired without a
+// chunk store), an unresolvable manifest (a checkpoint that predates the
+// chunked-object model), or a transient store outage leaves the chunk set
+// empty so the resume still proceeds; the adapter then restores nothing
+// beyond what the size pre-check permits.
+//
+// spec: §10.1 line 155 — reassembly on resume; fallback to the last full
+// checkpoint on a contiguity failure.
+func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Session) []adapterclient.ChunkGrant {
+	if s.resumeChunkResolver == nil || row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
+		return nil
+	}
+	ref := row.WorkspaceSnapshot.Ref
+	chunks, err := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, ref)
+	if err == nil {
+		return chunks
+	}
+	if errors.Is(err, resumechunks.ErrReassemblyContiguity) || errors.Is(err, resumechunks.ErrBelowRecoveryThreshold) {
+		// spec: §10.1 line 155 — reassembly failed atomically before any
+		// chunk body was fetched (a contiguity failure) or the partial
+		// checkpoint did not clear the recovery threshold; fall back to the
+		// last successful full checkpoint so the resume restores intact
+		// bytes rather than a corrupted or not-worth-it splice.
+		if s.checkpointManifests == nil {
+			return nil
+		}
+		full, ferr := s.checkpointManifests.LatestFull(ctx, row.TenantID, row.ID)
+		if ferr != nil || full.CheckpointID == "" || full.CheckpointID == ref {
+			return nil
+		}
+		fallback, ferr := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, full.CheckpointID)
+		if ferr != nil {
+			log.Printf("sessionserver: resume %s fell back to full checkpoint %s but it did not resolve: %v",
+				row.ID, full.CheckpointID, ferr)
+			return nil
+		}
+		return fallback
+	}
+	// A missing manifest row or a transient store outage: the resume itself
+	// succeeded, so a lookup failure must not block the session from coming
+	// back online. Restore nothing rather than fail the resume.
+	log.Printf("sessionserver: resume %s could not resolve checkpoint %s chunks: %v", row.ID, ref, err)
+	return nil
 }
 
 // fenceResumedPod issues the §10.1 / §4.2 CoordinatorFence to the pod a

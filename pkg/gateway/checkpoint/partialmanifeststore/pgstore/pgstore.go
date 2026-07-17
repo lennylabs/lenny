@@ -230,6 +230,53 @@ func (s *Store) LatestActive(ctx context.Context, tenantID, sessionID string) (p
 	return out, nil
 }
 
+// HasActivePartialManifest reports whether an active partial row exists
+// for (tenantID, sessionID) — the §7.2 resume-classification input.
+func (s *Store) HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error) {
+	var exists bool
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM checkpoint_manifest
+				WHERE tenant_id = $1 AND session_id = $2
+					AND partial = TRUE AND deleted_at IS NULL)`,
+			tenantID, sessionID).Scan(&exists)
+	})
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// LatestFull returns the most-recently-created active full checkpoint row
+// (`partial = FALSE AND deleted_at IS NULL`) for (tenantID, sessionID), or
+// ErrNotFound when the session has no surviving full checkpoint. It is the
+// §10.1 line 155 fallback selector the resume path consults when the
+// selected partial manifest fails its reassembly contiguity check.
+func (s *Store) LatestFull(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
+	var out partialmanifeststore.Record
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM checkpoint_manifest
+				WHERE tenant_id = $1 AND session_id = $2
+					AND partial = FALSE AND deleted_at IS NULL
+				ORDER BY created_at DESC LIMIT 1`,
+			tenantID, sessionID)
+		r, err := scanRow(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return partialmanifeststore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		out = r
+		return nil
+	})
+	if err != nil {
+		return partialmanifeststore.Record{}, err
+	}
+	return out, nil
+}
+
 // LatestActiveForSlot returns the active partial row for
 // (tenantID, sessionID, slotID), the single slot the supersede path scopes
 // on (§10.1 line 137). partial_manifest_active_uniq admits at most one such

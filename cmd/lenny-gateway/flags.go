@@ -280,6 +280,7 @@ type gatewayFlags struct {
 	checkpointJitterFraction                *float64
 	checkpointGrantWindow                   *int
 	checkpointCapabilityTTLSeconds          *int
+	partialRecoveryThresholdFraction        *float64
 	noEnvPolicy                             *string
 	connectorOAuthCallbackURL               *string
 	connectorOAuthCA                        *string
@@ -1114,6 +1115,9 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.checkpointCapabilityTTLSeconds = flag.Int("checkpoint-capability-ttl-seconds",
 		envInt("LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS", checkpointer.DefaultCapabilityTTLSeconds),
 		"§13.2 / §17.8.1 checkpointCapabilityTTLSeconds: the expiry, in seconds, of each gateway-minted presigned checkpoint upload or restore capability. Default 30. Override via LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS.")
+	f.partialRecoveryThresholdFraction = flag.Float64("partial-recovery-threshold-fraction",
+		envFloat("LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION", 0.5),
+		"§10.1 line 155 / §17.8.1 partialRecoveryThresholdFraction: the minimum fraction of the baseline full-checkpoint bytes a partial checkpoint must have confirmed before the resume path reassembles it rather than falling back to the last full checkpoint. A fraction in [0.0, 1.0]. Default 0.5. Override via LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION.")
 	f.noEnvPolicy = flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	f.connectorOAuthCallbackURL = flag.String("connector-oauth-callback-url", os.Getenv("LENNY_CONNECTOR_OAUTH_CALLBACK_URL"),

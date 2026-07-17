@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -107,6 +109,25 @@ func (w *gatewayWiring) buildSessionServer(
 	retryMaxRetries := f.retryMaxRetries
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	envVarBlocklistCSV := f.envVarBlocklistCSV
+
+	// spec: §10.1 line 155 — the resume path resolves the checkpoint's
+	// chunk set and mints one presigned GET capability per chunk. It needs
+	// a Presigner-capable and prefix-listing object store; the in-memory
+	// dev backend implements neither, so the resolver stays nil there and
+	// the resume carries no chunks (the §13.2 startup fail-closed already
+	// requires a Presigner-capable backend for pod-based deployments).
+	var resumeChunkResolver sessionserver.ResumeChunkResolver
+	presigner, presignerOK := w.objectStore.(blobstore.Presigner)
+	lister, listerOK := w.objectStore.(resumechunks.ChunkLister)
+	if presignerOK && listerOK {
+		resumeChunkResolver = &resumechunks.Resolver{
+			Manifests:                        w.partialManifests,
+			Presigner:                        presigner,
+			Lister:                           lister,
+			TTL:                              time.Duration(*f.checkpointCapabilityTTLSeconds) * time.Second,
+			PartialRecoveryThresholdFraction: *f.partialRecoveryThresholdFraction,
+		}
+	}
 
 	return sessionserver.New(w.sessions, sessionserver.Options{
 		// spec: §6.2 lines 273-300 — stamp agent_output / tool_use events
@@ -218,6 +239,16 @@ func (w *gatewayWiring) buildSessionServer(
 			Store:   w.partialManifests,
 			Metrics: gwMetrics,
 		},
+		// spec: §10.1 partial-manifest path — classify a resume as
+		// partial_workspace when an active partial manifest exists.
+		PartialManifestLookup: w.partialManifests,
+		// spec: §10.1 line 155 — resolve the checkpoint's chunk set from the
+		// manifest row, verify contiguity, and mint one presigned GET
+		// capability per chunk for the resume path; read the row for the
+		// workspace-download stream; write the derived manifest on derive.
+		ResumeChunkResolver:      resumeChunkResolver,
+		CheckpointManifestReader: w.partialManifests,
+		CheckpointManifestWriter: w.partialManifests,
 		// §4.4 line 226 session-log close-hook. Wired with the
 		// per-deployment Store (Noop for in-memory, MinIOStore when
 		// the §4.5 follow-on wiring lands a MinIO uploader). The

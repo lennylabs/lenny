@@ -38,6 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -271,9 +272,23 @@ type Server struct {
 	// session.resumed event surfaces the correct ResumeMode per
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
-	treeArchive           treearchive.Store
-	taskUsage             *resultrollup.Builder
-	treeBudgetReturner    TreeBudgetReturner
+	// resumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// chunk set the resume path hands the adapter on ResumeRequest.Chunks.
+	// Nil leaves the resume carrying no chunks (dev mode, or a checkpoint
+	// that predates the chunked-object model), so the adapter restores
+	// nothing beyond what a snapshotless rebuild recovers.
+	resumeChunkResolver ResumeChunkResolver
+	// checkpointManifests, when set, reads §10.1 checkpoint_manifest rows
+	// for the resume fallback (LatestFull) and the workspace-download path
+	// (Get, to resolve chunk_count / chunk_encoding).
+	checkpointManifests CheckpointManifestReader
+	// checkpointManifestWriter, when set, writes the §7.1 derived-session
+	// manifest row after the derive path copies the parent's chunks into
+	// the derived prefix.
+	checkpointManifestWriter CheckpointManifestWriter
+	treeArchive              treearchive.Store
+	taskUsage                *resultrollup.Builder
+	treeBudgetReturner       TreeBudgetReturner
 	// leaseRegistrar, when set, registers a newly created root session
 	// with the §8.6 lease-extension budget source so a later in-process
 	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
@@ -670,6 +685,49 @@ type PartialManifestLookup interface {
 	// exists; a store error returns the error so the resume path can
 	// degrade gracefully (falls back to ResumeFull).
 	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
+}
+
+// ResumeChunkResolver resolves the §10.1 line 155 reassembly chunk set for
+// a checkpoint the resume path restores. It lists the committed chunk
+// objects under the manifest row's chunk_object_key_prefix, verifies
+// contiguity of the prefix [0, chunk_count), and mints one presigned
+// single-key GET capability per index. The gateway is the sole authority
+// that resolves, lists, validates, and signs the keys; the pod fetches the
+// capabilities and concatenates the bodies. resumechunks.Resolver
+// implements it.
+//
+// spec: §10.1 line 155.
+type ResumeChunkResolver interface {
+	// Resolve returns one presigned GET capability per chunk of the named
+	// checkpoint in ascending index order, or resumechunks.ErrReassemblyContiguity
+	// when the committed objects do not form a contiguous [0, chunk_count)
+	// prefix.
+	Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) ([]adapterclient.ChunkGrant, error)
+}
+
+// CheckpointManifestReader reads §10.1 checkpoint_manifest rows for the
+// resume and workspace-download paths: Get resolves one checkpoint by id
+// (for its chunk_count / chunk_encoding), and LatestFull resolves the last
+// successful full checkpoint the resume path falls back to when reassembly
+// of the selected partial manifest fails its contiguity check. The
+// Postgres and in-memory checkpoint_manifest stores implement it.
+type CheckpointManifestReader interface {
+	Get(ctx context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error)
+	LatestFull(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error)
+}
+
+// CheckpointManifestWriter writes a §10.1 checkpoint_manifest row for the
+// derived session after the §7.1 derive path copies the parent's chunks
+// into the derived prefix, so the derived session owns a resumable /
+// downloadable checkpoint independent of the parent's GC. The store models
+// a manifest as an intent row (Put, always partial) advanced by
+// ConfirmChunk and stamped terminal by Finalise, so recording a complete
+// derived checkpoint is Put → ConfirmChunk → Finalise(partial=false). The
+// Postgres and in-memory checkpoint_manifest stores implement it.
+type CheckpointManifestWriter interface {
+	Put(ctx context.Context, r partialmanifeststore.Record) error
+	ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error
+	Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error
 }
 
 // TreeBudgetReturner releases the §12.4 delegation tree budget a
@@ -1261,6 +1319,23 @@ type Options struct {
 	// defaulting to ResumeFull when a workspace snapshot is present.
 	PartialManifestLookup PartialManifestLookup
 
+	// ResumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// chunk set the resume path hands the adapter. Nil leaves the resume
+	// carrying no chunks.
+	ResumeChunkResolver ResumeChunkResolver
+
+	// CheckpointManifestReader, when set, reads §10.1 checkpoint_manifest
+	// rows for the resume fallback (LatestFull) and the workspace-download
+	// path (Get). Nil disables the contiguity fallback and serves the
+	// workspace download from the legacy single-snapshot ref.
+	CheckpointManifestReader CheckpointManifestReader
+
+	// CheckpointManifestWriter, when set, writes the §7.1 derived-session
+	// manifest row after the derive path copies the parent's chunks into
+	// the derived prefix. Nil leaves the derive on the legacy
+	// single-snapshot copy.
+	CheckpointManifestWriter CheckpointManifestWriter
+
 	// TreeArchive, when set, receives a §8.10 archive record for every
 	// child session (a session with a parent) that reaches a terminal
 	// state, so a resumed parent can replay the outcome. Nil disables
@@ -1669,6 +1744,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		partialManifestCleaner:     opts.PartialManifestCleaner,
 		evictionStateLookup:        opts.EvictionStateLookup,
 		partialManifestLookup:      opts.PartialManifestLookup,
+		resumeChunkResolver:        opts.ResumeChunkResolver,
+		checkpointManifests:        opts.CheckpointManifestReader,
+		checkpointManifestWriter:   opts.CheckpointManifestWriter,
 		treeArchive:                opts.TreeArchive,
 		taskUsage:                  opts.TaskUsage,
 		treeBudgetReturner:         opts.TreeBudgetReturner,

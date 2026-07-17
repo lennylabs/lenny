@@ -194,6 +194,28 @@ type Store interface {
 	// spec: §10.1 line 157 — the resume-time cleaner selects partial rows.
 	LatestActive(ctx context.Context, tenantID, sessionID string) (Record, error)
 
+	// HasActivePartialManifest reports whether an active partial row
+	// exists for (tenantID, sessionID) — the §7.2 resume-classification
+	// input. It is LatestActive collapsed to a boolean: true when a
+	// `partial = TRUE AND deleted_at IS NULL` row is present, false when
+	// none is. A store error is surfaced so the resume path can degrade to
+	// ResumeFull rather than block on a transient outage.
+	//
+	// spec: §10.1 partial-manifest path — `session.resumed` carries
+	// `resumeMode: "partial_workspace"` when an active partial manifest is
+	// present.
+	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
+
+	// LatestFull returns the most-recently-created active full checkpoint
+	// row (`partial = FALSE AND deleted_at IS NULL`) for
+	// (tenantID, sessionID) — the §10.1 line 155 "last successful full
+	// checkpoint" the resume path falls back to when reassembly of the
+	// selected partial manifest fails its contiguity check. Returns
+	// ErrNotFound when the session has no surviving full checkpoint.
+	//
+	// spec: §10.1 line 155 — fallback to the last successful full checkpoint.
+	LatestFull(ctx context.Context, tenantID, sessionID string) (Record, error)
+
 	// LatestActiveForSlot returns the active partial row for the single
 	// (tenantID, sessionID, slotID) the supersede path scopes on. The
 	// partial_manifest_active_uniq index admits at most one active partial
@@ -421,6 +443,44 @@ func (m *MemoryStore) LatestActive(_ context.Context, tenantID, sessionID string
 			continue
 		}
 		if !found || row.CoordinationGeneration > best.CoordinationGeneration {
+			best = row
+			found = true
+		}
+	}
+	if !found {
+		return Record{}, ErrNotFound
+	}
+	return best, nil
+}
+
+// HasActivePartialManifest reports whether an active partial row exists
+// for (tenantID, sessionID).
+func (m *MemoryStore) HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error) {
+	_, err := m.LatestActive(ctx, tenantID, sessionID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// LatestFull returns the most-recently-created active full checkpoint row
+// for (tenantID, sessionID), or ErrNotFound when none survives.
+func (m *MemoryStore) LatestFull(_ context.Context, tenantID, sessionID string) (Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best Record
+	found := false
+	for _, row := range m.rows {
+		if row.TenantID != tenantID || row.SessionID != sessionID {
+			continue
+		}
+		if row.Partial || !row.DeletedAt.IsZero() {
+			continue
+		}
+		if !found || row.CreatedAt.After(best.CreatedAt) {
 			best = row
 			found = true
 		}
