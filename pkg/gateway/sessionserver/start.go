@@ -3298,21 +3298,27 @@ func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessions
 // (which never reaches a successful ResolveResult), and a resume that
 // resolved no chunks all leave res.Recovered false and emit nothing.
 //
-// The trigger label is stamped eviction so the recovered=true series joins
-// its recovered=false write-path counterpart on the trigger label. The only
-// partial a resume reassembles is a retained deadline-fire
-// (manifest_reason = "timeout") row the preStop drain left behind, and the
-// drain driver stamps the eviction trigger on that finalisation (§10.1 line
-// 172), so the write-path abort emits it with trigger = eviction. Matching
-// that here keeps the per-trigger partial-recovery rate
-// (recovered=true / (recovered=true + recovered=false)) computable. The
-// checkpoint_manifest row does not persist the originating trigger, so this
-// is stamped from the drain producer §10.1 line 172 pins rather than read
-// back. The value stays inside the closed checkpoint.Trigger enum §16.1
-// line 195 admits.
+// The recovered=true / (recovered=true + recovered=false) ratio is the
+// counter-level partial-recovery signal §16.1 line 195 keeps; it is correct
+// in aggregate regardless of which trigger label the recovered=true arm
+// carries. The trigger label is a required member of the closed
+// checkpoint.Trigger enum, and the §10.1 checkpoint_manifest column set does
+// not persist the trigger the aborting attempt was started with, so a resume
+// running on a replacement pod long after the originating attempt is gone
+// cannot read that origin back. finaliseAbort retains every
+// manifest_reason = "timeout" row for the resume path regardless of trigger
+// (a periodic or pre_scale_down deadline fire is retained the same as an
+// eviction drain), so a reassembled partial can originate from any trigger.
+// eviction is stamped as the enum-valid representative because the preStop
+// drain is the recovery mechanism this counter primarily serves (§10.1 line
+// 172); the per-trigger breakdown of the recovered=true arm therefore
+// attributes every recovery to eviction and is join-exact against the
+// recovered=false write-path arm only for eviction-originated partials. The
+// aggregate recovery signal is unaffected.
 //
-// spec: §16.1 line 195; §10.1 line 172 (the drain stamps the eviction
-// trigger); §10.1 line 155 (reassembly on resume).
+// spec: §16.1 line 195 (the recovered signal is counter-level); §10.1 line
+// 172 (the preStop drain stamps eviction); §10.1 line 155 (reassembly on
+// resume).
 func (s *Server) emitCheckpointRecovered(row sessionstore.Session, res resumechunks.ResolveResult) {
 	if s.checkpointRecoveryMetrics == nil || !res.Recovered {
 		return

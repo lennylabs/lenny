@@ -227,17 +227,17 @@ func (c *capturingRecoveryMetrics) IncCheckpointPartial(pool string, recovered b
 // spec: §16.1 line 195 — a resume that reassembles an above-threshold partial
 // checkpoint stamps lenny_checkpoint_partial_total{recovered=true} exactly
 // once, carrying the session's pool, the recovered row's manifest_reason, and
-// the eviction trigger. The retained timeout partial the resume reassembles
-// is produced by the preStop drain, which stamps the eviction trigger on that
-// finalisation (§10.1 line 172), so the recovered=true series must carry
-// trigger = eviction to join its recovered=false write-path counterpart on the
-// trigger label. A complete (partial = false) restore emits nothing.
+// a trigger inside the closed checkpoint.Trigger enum. The §10.1 manifest
+// column set does not persist the originating trigger, so the resume stamps
+// eviction as the enum-valid representative (the preStop drain is the recovery
+// mechanism this counter primarily serves, §10.1 line 172). A complete
+// (partial = false) restore emits nothing.
 //
 // diagnosis: a missing emission means the resume-side recovery signal is
 // unwired and operators cannot compute a partial-checkpoint recovery rate; an
 // emission on a complete restore mislabels an ordinary full restore as a
-// partial recovery; a trigger other than eviction cannot join the
-// recovered=false abort series, so the per-trigger recovery rate is wrong.
+// partial recovery; a trigger outside the closed enum would be a value no
+// IsValid gate admits.
 func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) {
 	const (
 		tenant  = "acme"
@@ -280,12 +280,69 @@ func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) 
 	if !got.trigger.IsValid() {
 		t.Errorf("trigger = %q, want a member of the closed checkpoint.Trigger enum", got.trigger)
 	}
-	// spec: §10.1 line 172 — the preStop drain stamps the eviction trigger on
-	// the retained timeout partial the resume reassembles, so the write-path
-	// abort emits {timeout, eviction, recovered=false}. The recovered=true
-	// resume emission must carry the same trigger to be joinable.
+	// spec: §16.1 line 195 — the resume stamps eviction as the enum-valid
+	// representative because the §10.1 manifest column set does not persist the
+	// originating trigger, and the preStop drain (§10.1 line 172) is the
+	// recovery mechanism this counter primarily serves.
 	if got.trigger != checkpoint.TriggerEviction {
-		t.Errorf("trigger = %q, want %q so the recovered=true series joins its recovered=false write-path counterpart",
+		t.Errorf("trigger = %q, want %q (the enum-valid representative the resume stamps)",
+			got.trigger, checkpoint.TriggerEviction)
+	}
+}
+
+// spec: §16.1 line 195 — the resume-side recovered=true emission fires on ANY
+// above-threshold partial the generation selector picks, regardless of the
+// trigger the aborting attempt was started with. finaliseAbort retains every
+// manifest_reason = "timeout" row for the resume path, so a partial whose
+// origin was a periodic or pre_scale_down deadline fire (not an eviction
+// drain) is reassembled and recovered the same as an eviction partial. The
+// origin trigger is not persisted in the manifest, so the emission carries the
+// eviction representative in every case; the counter-level recovery signal is
+// aggregated across triggers and stays correct.
+//
+// diagnosis: were the resume-side emission gated on the partial having an
+// eviction origin (a value the manifest cannot carry), a periodic- or
+// pre_scale_down-originated recovery would fire no recovered=true counter at
+// all and the aggregate partial-recovery rate would under-count every
+// non-eviction-drain recovery.
+func TestResolveResumeChunksRecoversNonEvictionOriginPartial(t *testing.T) {
+	const (
+		tenant  = "acme"
+		session = "sess_periodic_origin"
+		drainCk = "ck_periodic_origin"
+	)
+	mstore := partialmanifeststore.NewMemoryStore(nil)
+	seedManifest(t, mstore, tenant, session, drainCk, 3, true)
+
+	metrics := &capturingRecoveryMetrics{}
+	// The resolver reports a recovered above-threshold partial that carries the
+	// timeout reason a periodic or pre_scale_down deadline fire finalises with;
+	// the manifest never records which trigger produced it.
+	resolver := &recordingResolver{
+		grants:         []adapterclient.ChunkGrant{{Index: 0}},
+		recovered:      true,
+		manifestReason: partialmanifeststore.ReasonTimeout,
+	}
+	s := &Server{
+		resumeChunkResolver:       resolver,
+		checkpointManifests:       mstore,
+		checkpointRecoveryMetrics: metrics,
+	}
+	row := sessionstore.Session{
+		ID: session, TenantID: tenant, PoolRef: "warm-b",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: ""},
+	}
+
+	_ = s.resolveResumeChunks(context.Background(), row)
+	if len(metrics.calls) != 1 {
+		t.Fatalf("recovery emissions = %d, want 1 (a non-eviction-origin partial is still recovered)", len(metrics.calls))
+	}
+	got := metrics.calls[0]
+	if !got.recovered {
+		t.Errorf("recovered = false, want true (the reassembled partial is a recovery regardless of origin)")
+	}
+	if got.trigger != checkpoint.TriggerEviction {
+		t.Errorf("trigger = %q, want %q (the enum-valid representative stamped when the origin is not persisted)",
 			got.trigger, checkpoint.TriggerEviction)
 	}
 }
