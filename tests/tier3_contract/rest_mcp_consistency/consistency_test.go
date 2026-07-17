@@ -527,25 +527,36 @@ func TestRESTMCPDelegation(t *testing.T) {
 
 // spec: §15.2.1
 // diagnosis: §15.2.1 names webhook subscription CRUD as a candidate
-// overlapping operation; neither the REST sessionserver nor the
-// platform MCP server registers webhook-subscription routes today.
-// The consistency test cannot drive the same payload through either
-// surface.
-// spec: §15.1 / §15.2.1 / §25.5 (webhook subscription is REST-only by design)
-// diagnosis: §15.1 line 763 states "Webhook delivery (callbackUrl)
-// is a per-session field, not a platform-admin-managed
-// subscription resource", and §25.5 ships the event-subscription
-// CRUD on lenny-ops, not the gateway:
+// overlapping operation. §15.1 line 763 states "Webhook delivery
+// (callbackUrl) is a per-session field, not a platform-admin-managed
+// subscription resource" (the per-session callbackUrl has no MCP
+// counterpart), but the platform-admin-managed event-subscription CRUD
+// §25.5 ships on lenny-ops (POST/GET/PUT/DELETE
+// /v1/admin/event-subscriptions on pkg/ops/opsserver) does carry an MCP
+// counterpart: §15.1's Admin API MCP extension contract requires every
+// admin-API endpoint with documented RBAC to be exposed as an MCP tool
+// on /mcp/management, and pkg/ops/mcp/generated_tools.go registers
+// lenny_event_subscription_create/get/update/delete and
+// lenny_event_subscriptions_list for this family.
 //
-//	POST/GET/DELETE /v1/admin/event-subscriptions on
-//	pkg/ops/opsserver. There is no MCP counterpart — by design.
+// This file's harness (newConsistencyServers) wires only the
+// gateway-hosted §8.5 session REST/MCP surface, not the lenny-ops
+// REST/MCP admin-API surface the event-subscription endpoints live on,
+// so it cannot drive this pair itself. The parity is driven end to end
+// in tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_-
+// test.go::TestEventSubscriptionRESTMCPParityContract, which creates a
+// subscription through REST and reads/lists/deletes it through the
+// generated MCP tools (and the reverse), against the real lenny-ops
+// server pkg/ops/opsserver.New wires. The generated-inventory coverage
+// is separately pinned by
+// pkg/ops/mcp/generated_tools_drift_test.go::TestGeneratedInventoryCoversEveryDocumentedEndpoint_spec_25_12.
 //
-// The §25.5 lenny-ops surface has its own per-handler unit tests
-// in pkg/ops/opsserver/event_subscriptions_test.go.
-// spec: 15.2.1
-// diagnosis: webhook subscription CRUD is REST-only on the lenny-ops control plane; no MCP parity surface exists.
+// spec: §15.1 (Admin API MCP extension contract — "Every admin-API
+// endpoint with documented RBAC MUST be exposed as an MCP tool on
+// /mcp/management"), §25.5 (event-subscription CRUD), §25.12 (MCP
+// Management Server tool inventory).
 func TestRESTMCPWebhookSubscription(t *testing.T) {
-	t.Logf("§15.1 / §25.5: webhook subscription CRUD is the lenny-ops REST surface (no MCP parity)")
+	t.Logf("§15.1 / §25.5 / §25.12: event-subscription CRUD has an MCP counterpart via the generated lenny_event_subscription_* tools; parity is driven in tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_test.go against the lenny-ops REST/MCP surface this file's gateway-only harness does not wire")
 }
 
 // spec: §15.2.1
