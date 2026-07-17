@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -720,6 +721,93 @@ func resolveDDLPools(
 	return billingAuditDDLPool, primaryDDLPool, nil
 }
 
+// t4DefaultEncryptionConfig carries the per-tenant default-encryption
+// declarations that the GCS V4 signed-URL and Azure SAS checkpoint PUT
+// paths cannot bind per request. On these two backends the presigned
+// capability signs no encryption header, so a workspaceTier T4 tenant's
+// per-tenant encryption rests on a backend default: a per-tenant GCS
+// bucket-default CMEK, or an Azure container-level default encryption
+// scope pinned with DenyEncryptionScopeOverride. These are read from the
+// same objectStorage.{gcs,azure} configuration keys the §17.6 preflight
+// check reads.
+//
+// spec: §12.5 line 315; §17.9.7.
+type t4DefaultEncryptionConfig struct {
+	gcsBucketDefaultCMEK             string
+	azureDefaultEncryptionScope      string
+	azureDenyEncryptionScopeOverride bool
+}
+
+// validateT4DefaultEncryption is the fail-closed replacement for the SigV4
+// signature binding that the GCS V4 and Azure SAS paths cannot carry per
+// request (spec §12.5 line 321-325): because the mint signs no encryption
+// header on these two backends, a misconfigured deployment would silently
+// write T4 checkpoints under the deployment-wide key rather than the
+// tenant-scoped key, defeating the §12.9 cryptographic-erasure property.
+// It returns a non-nil error when a gcs or azure backend serves any
+// workspaceTier T4 tenant without the required backend default:
+//
+//   - gcs requires a per-tenant bucket-default CMEK, which the T4
+//     checkpoint PUT inherits.
+//   - azure requires both a container-level default encryption scope and
+//     DenyEncryptionScopeOverride, so a chunk PUT cannot land under any
+//     other scope.
+//
+// A backend other than gcs/azure, or a deployment serving no T4 tenant,
+// returns nil: the SigV4 backends fold the SSE-KMS key into the signature
+// and fail closed at request time, and a deployment with no T4 tenant has
+// no per-tenant key requirement to assert. The caller escalates a non-nil
+// error to log.Fatalf so the gateway refuses to boot before it serves a
+// T4 tenant.
+//
+// spec: §12.5 line 315, 321-325; §17.9.7.
+func validateT4DefaultEncryption(provider string, servesT4Tenant bool, cfg t4DefaultEncryptionConfig) error {
+	if !servesT4Tenant {
+		return nil
+	}
+	switch provider {
+	case blobproviderflags.ProviderGCS:
+		if strings.TrimSpace(cfg.gcsBucketDefaultCMEK) == "" {
+			return fmt.Errorf("§12.5 line 315: object-storage-provider=gcs serves a workspaceTier T4 tenant but declares no per-tenant bucket-default CMEK; set objectStorage.gcs.bucketDefaultCmek (--object-storage-gcs-bucket-default-cmek / LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK) — the GCS V4 signed URL cannot carry a per-request CMEK, so the T4 checkpoint PUT inherits the bucket default and the gateway fails closed without it")
+		}
+	case blobproviderflags.ProviderAzure:
+		if strings.TrimSpace(cfg.azureDefaultEncryptionScope) == "" {
+			return fmt.Errorf("§12.5 line 315: object-storage-provider=azure serves a workspaceTier T4 tenant but declares no container default encryption scope; set objectStorage.azure.defaultEncryptionScope (--object-storage-azure-default-encryption-scope / LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE) — the Azure SAS carries no encryption scope, so the T4 chunk PUT lands under the container default and the gateway fails closed without it")
+		}
+		if !cfg.azureDenyEncryptionScopeOverride {
+			return fmt.Errorf("§12.5 line 315: object-storage-provider=azure serves a workspaceTier T4 tenant with a container default encryption scope but no override prevention; set objectStorage.azure.denyEncryptionScopeOverride=true (--object-storage-azure-deny-encryption-scope-override / LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE) so a chunk PUT cannot land under any other scope")
+		}
+	}
+	return nil
+}
+
+// assertT4DefaultEncryption fails the gateway boot closed when the resolved
+// gcs or azure object-store backend is configured to serve any workspaceTier
+// T4 tenant without the per-tenant bucket-default CMEK (GCS) or container-
+// level default encryption scope with override prevention (Azure) that the
+// presigned PUT cannot bind per request. The gate runs only for gcs/azure —
+// the SigV4 backends (minio, s3) fold the SSE-KMS key into the signature and
+// fail closed at request time. A failure to enumerate T4 tenants on a
+// gcs/azure backend is itself fatal: the gateway cannot verify the T4
+// default-encryption posture and must not start.
+//
+// spec: §12.5 line 315, 321-325; §17.9.7.
+func (w *gatewayWiring) assertT4DefaultEncryption(ctx context.Context, tenants tenantstore.Store) error {
+	provider := *w.f.objectStorageProvider
+	if provider != blobproviderflags.ProviderGCS && provider != blobproviderflags.ProviderAzure {
+		return nil
+	}
+	t4Tenants, err := (t4TenantSource{store: tenants}).T4Tenants(ctx)
+	if err != nil {
+		return fmt.Errorf("§12.5 T4 default-encryption startup assertion: cannot enumerate workspaceTier T4 tenants to verify the %s bucket/container default encryption posture: %w", provider, err)
+	}
+	return validateT4DefaultEncryption(provider, len(t4Tenants) > 0, t4DefaultEncryptionConfig{
+		gcsBucketDefaultCMEK:             *w.f.objectStorageGCSBucketDefaultCMEK,
+		azureDefaultEncryptionScope:      *w.f.objectStorageAzureDefaultEncryptionScope,
+		azureDenyEncryptionScopeOverride: *w.f.objectStorageAzureDenyEncryptionScopeOverride,
+	})
+}
+
 // buildPersistenceStores constructs the §4.2 session and metadata stores
 // (Postgres, §17.4 embedded SQLite, or in-memory), the §12.3 read-replica /
 // billing-audit / audit-sync pools, the §4.4 partial-manifest, session-log,
@@ -1086,6 +1174,22 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			log.Fatalf("lenny-gateway: §13.2 pod-based sandboxes (--agent-namespace=%q) require a Presigner-capable artifact store, but the resolved backend %T does not implement it (an empty --minio-endpoint falls back to the in-memory store); configure a signing object-store backend",
 				*f.agentNamespace, objectStore)
 		}
+	}
+
+	// §12.5 line 315 / §17.9.7 — the fail-closed replacement for the SigV4
+	// signature binding that the GCS V4 and Azure SAS checkpoint PUT paths
+	// cannot carry per request. On a gcs or azure backend the presigned
+	// capability signs no encryption header, so a workspaceTier T4 tenant's
+	// per-tenant encryption rests on a backend default (a per-tenant GCS
+	// bucket-default CMEK, or an Azure container default encryption scope with
+	// DenyEncryptionScopeOverride). Refuse to boot when such a backend serves
+	// any T4 tenant without that default declared, before the deployment
+	// silently writes T4 checkpoints under the deployment-wide key. The
+	// §17.6 preflight check reads the same objectStorage.{gcs,azure} keys.
+	//
+	// spec: §12.5 line 315, 321-325; §17.9.7.
+	if err := w.assertT4DefaultEncryption(context.Background(), tenants); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
 	}
 
 	// §12.5 ll. 309-321 artifact_store catalog. The Postgres-backed
