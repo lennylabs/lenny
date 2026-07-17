@@ -3206,7 +3206,8 @@
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
-        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy"
+        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
+        "tests/tier8_chaos/store_failure_test.go"
       ],
       "packages": [
         "pkg/ops/conventions"
@@ -3235,7 +3236,8 @@
         "tests/tier4_integration/ops_event_emission_test.go::TestOpsEventEmissionHealthStatusChangedReachesBuffer",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
-        "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey"
+        "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey",
+        "tests/tier8_chaos/store_failure_test.go"
       ],
       "packages": [
         "pkg/gateway/operability/health",
@@ -3550,7 +3552,8 @@
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRulesConfigMapIsLoadablePrometheusRuleFile",
         "tests/tier11_docs/alerting_docs_reference_test.go::TestDocsAlertingRulesYAMLIsLoadablePrometheusRuleFile",
         "tests/tier11_docs/alerting_docs_reference_test.go::TestRoutingRecommendationsNameAllSeverities",
-        "charts/lenny/tests/tier-presets_test.yaml"
+        "charts/lenny/tests/tier-presets_test.yaml",
+        "tests/tier8_chaos/store_failure_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "14",
