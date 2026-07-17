@@ -204,6 +204,31 @@
         "metadata": { "$ref": "#/$defs/Metadata" },
         "spec": { "$ref": "#/$defs/AlertPolicySpec" }
       }
+    },
+    "AlertNotificationTargetSpec": {
+      "type": "object",
+      "required": ["target"],
+      "properties": {
+        "target": {
+          "description": "OpenSLO README, 'Notes (AlertNotificationTarget)': 'target string, required field.' The go-sdk validator (github.com/OpenSLO/go-sdk, pkg/openslo/v1/alert_notification_target.go) enforces this with rules.NotEmpty on AlertNotificationTargetSpec.Target. Left as an unconstrained string so the chart fragment's __OPENSLO_NOTIFICATION_TARGET__ placeholder validates before Helm substitution.",
+          "type": "string"
+        },
+        "description": {
+          "description": "OpenSLO README, 'Notes (AlertNotificationTarget)': 'description string, optional field.'",
+          "type": "string",
+          "maxLength": 1050
+        }
+      }
+    },
+    "AlertNotificationTargetDocument": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": { "const": "openslo/v1" },
+        "kind": { "const": "AlertNotificationTarget" },
+        "metadata": { "$ref": "#/$defs/Metadata" },
+        "spec": { "$ref": "#/$defs/AlertNotificationTargetSpec" }
+      }
     }
   }
 }
