@@ -14,15 +14,17 @@
 // endpoint, and observes that the next in-flight request is rejected with
 // CREDENTIAL_REVOKED before any upstream call is made.
 //
-// The §4.9 revoke terminates the lease on the replica that served the
-// revoke (it drops that replica's lease and adds the credential to the
-// deny list) and propagates the deny-list entry to peers. The
-// CREDENTIAL_REVOKED rejection therefore fires on a peer replica that
-// still holds the lease but has received the propagated deny-list entry.
-// The test models that peer with a second lease store while the origin
-// replica's materializer serves the revoke; cross-replica pub/sub
-// propagation of the deny-list entry itself is covered by the deny-list
-// propagator tests, so here the two replicas share the deny list that
+// The §4.9 revoke retains the lease and adds the credential to the deny
+// list, propagating the deny-list entry to peers. Under the multi-replica
+// shared-Postgres topology every replica resolves the same retained lease
+// from the one shared lease store and rejects it via the shared deny-list
+// entry. The test models that topology with one shared lease store across
+// the revoke endpoint and the proxy: deleting the lease on revoke (the
+// pre-fix behavior) would remove the row the proxy reads and degrade the
+// rejection to LEASE_TOKEN_INVALID, so sharing the store is what makes the
+// CREDENTIAL_REVOKED path reachable. Cross-replica pub/sub propagation of
+// the deny-list entry itself is covered by the deny-list propagator tests,
+// so here the revoke endpoint and the proxy share the deny list that
 // propagation would have converged.
 
 package tier4_integration_test
@@ -89,14 +91,16 @@ func TestUserCredentialRevocationDenyListProxy(t *testing.T) {
 	store := credentialstore.NewMemory(nil)
 	dl := denylist.New()
 
-	// Origin replica: the lease store the materializer mints into and the
-	// revoke endpoint drops from.
-	leasesOrigin := credleasestore.New()
-	credsOrigin := credcache.New()
+	// One shared §4.9 credential-lease store and upstream-credential cache, as
+	// the multi-replica shared-Postgres topology presents to every replica:
+	// the materializer mints into it and the revoke endpoint denies against it
+	// while retaining the lease, and the proxy resolves the same retained lease.
+	leases := credleasestore.New()
+	creds := credcache.New()
 	mat := usercreds.New(usercreds.Config{
 		Store:    store,
-		Leases:   leasesOrigin,
-		Creds:    credsOrigin,
+		Leases:   leases,
+		Creds:    creds,
 		ProxyURL: "https://lenny-llm-proxy.internal/llm-proxy",
 	})
 	mat.SetRevoker(dl)
@@ -112,33 +116,25 @@ func TestUserCredentialRevocationDenyListProxy(t *testing.T) {
 		t.Fatalf("mint user proxy lease: %v", err)
 	}
 	credKey := credential.CredentialKey{Source: credential.SourceUser, TenantID: tenant, CredentialRef: cred.Ref}
-	minted := leasesOrigin.LeasesByCredential(credKey)
+	minted := leases.LeasesByCredential(credKey)
 	if len(minted) != 1 || minted[0].Proxy == nil || minted[0].Proxy.LeaseToken == "" {
 		t.Fatalf("expected exactly one minted proxy lease with a token, got %+v", minted)
 	}
 	lease := minted[0]
 	leaseToken := lease.Proxy.LeaseToken
 
-	// Peer replica: a second lease store and credential cache holding the
-	// same lease (as a replica the pod's proxy request load-balances to
-	// still would), serving the §4.9 LLM proxy over the upstream stub. It
-	// reads the shared deny list.
-	leasesPeer := credleasestore.New()
-	credsPeer := credcache.New()
-	if err := leasesPeer.Put(lease); err != nil {
-		t.Fatalf("seed peer lease store: %v", err)
-	}
-	credsPeer.Put(credKey, realKey)
-
+	// The §4.9 LLM proxy reads the same shared lease store and credential
+	// cache the materializer minted into, as every replica does under the
+	// shared-Postgres topology.
 	registry := llmproxy.NewTranslatorRegistry(&llmproxy.AnthropicDirectTranslator{
 		BaseURL:                 upstream.URL(),
 		DefaultAnthropicVersion: "2023-06-01",
 	})
 	handler := &llmproxy.Handler{
-		Leases:      leasesPeer,
+		Leases:      leases,
 		Translators: registry,
 		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
-		Credentials: credsPeer,
+		Credentials: creds,
 		DenyList:    dl,
 	}
 	proxySrv := httptest.NewServer(handler)
@@ -175,8 +171,12 @@ func TestUserCredentialRevocationDenyListProxy(t *testing.T) {
 		t.Fatalf("revoke: status %d, body %s", rresp.StatusCode, rbody)
 	}
 
-	// ---- after revocation: the in-flight request the peer serves is
-	// rejected with CREDENTIAL_REVOKED before any upstream call ----
+	// ---- after revocation: the in-flight request against the shared
+	// retained lease is rejected with CREDENTIAL_REVOKED before any upstream
+	// call, rather than resolving no lease under a delete and degrading to
+	// 401 LEASE_TOKEN_INVALID ----
+	// spec: §4.9 (CREDENTIAL_REVOKED reachable under the shared lease store;
+	// deny-list shadows a retained lease).
 	req, _ := http.NewRequest(http.MethodPost, proxyMessagesURL,
 		strings.NewReader(`{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"post-revoke"}]}`))
 	req.Header.Set("Content-Type", "application/json")
