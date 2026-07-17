@@ -194,3 +194,76 @@ func TestEffectiveApprovalModeAliasesApprovalToPolicy_spec_8_4(t *testing.T) {
 		t.Errorf("EffectiveApprovalMode(deny) = %q, want deny (no alias)", got)
 	}
 }
+
+// spec: §8.3 — the credentialPropagation closed enum admits "inherit",
+// "independent", "deny", and the empty string (which resolves to the
+// independent default when the field is omitted from a delegate_task
+// call).
+func TestValidateCredentialPropagationAcceptsClosedEnum_spec_8_3(t *testing.T) {
+	cases := []CredentialPropagation{
+		"",
+		CredentialPropagationInherit,
+		CredentialPropagationIndependent,
+		CredentialPropagationDeny,
+	}
+	for _, m := range cases {
+		if err := ValidateCredentialPropagation(m); err != nil {
+			t.Errorf("ValidateCredentialPropagation(%q) = %v, want nil", m, err)
+		}
+	}
+}
+
+// spec: §8.3 — the closed-enum validator MUST reject any value outside
+// the three documented modes so a lease authored with a typo
+// (credentialPropagation: "Inherit", "share", "none") is rejected at
+// ingress rather than silently falling through to the default.
+func TestValidateCredentialPropagationRejectsUnknownValue_spec_8_3(t *testing.T) {
+	cases := []CredentialPropagation{"Inherit", "share", "none", "Independent", "DENY"}
+	for _, m := range cases {
+		err := ValidateCredentialPropagation(m)
+		if err == nil {
+			t.Errorf("ValidateCredentialPropagation(%q) = nil, want InvalidCredentialPropagationError", m)
+			continue
+		}
+		var ipe *InvalidCredentialPropagationError
+		if !errors.As(err, &ipe) {
+			t.Errorf("ValidateCredentialPropagation(%q) returned %T, want *InvalidCredentialPropagationError", m, err)
+			continue
+		}
+		if ipe.Value != string(m) {
+			t.Errorf("InvalidCredentialPropagationError.Value = %q, want %q", ipe.Value, m)
+		}
+	}
+}
+
+// spec: §8.3 line 470 — the provider-intersection primitive returns
+// the a-ordered intersection, deduplicated, and preserves the order of
+// the first list so a credential can be assigned deterministically
+// from the parent pool.
+func TestIntersectProvidersOrderStable_spec_8_3(t *testing.T) {
+	cases := []struct {
+		name string
+		a    []string
+		b    []string
+		want []string
+	}{
+		{"non-empty intersection preserves a order", []string{"anthropic", "openai", "google"}, []string{"google", "anthropic"}, []string{"anthropic", "google"}},
+		{"empty intersection", []string{"anthropic"}, []string{"openai"}, []string{}},
+		{"a empty", nil, []string{"openai"}, []string{}},
+		{"b empty", []string{"anthropic"}, nil, []string{}},
+		{"deduplicates repeats in a", []string{"anthropic", "anthropic", "openai"}, []string{"anthropic", "openai"}, []string{"anthropic", "openai"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IntersectProviders(tc.a, tc.b)
+			if len(got) != len(tc.want) {
+				t.Fatalf("IntersectProviders(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("IntersectProviders(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+				}
+			}
+		})
+	}
+}
