@@ -235,7 +235,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-20 — Cross-environment delegation credential compatibility check — §8.3
-- **status:** open
+- **status:** claimed:proposal-C@2026-07-17T19:12:31Z
 - **assigned:** proposal-C
 - **findings:** T-BED.8
 - **root spec gap:** The §8.3 `credentialPropagation: inherit` provider-compatibility check (intersect parent pool providers with child runtime supportedProviders, reject empty with `CREDENTIAL_PROVIDER_MISMATCH` before pod allocation) is fully specified but entirely absent — there is no `credentialPropagation` field on the schema or Request and no code produces the error.
