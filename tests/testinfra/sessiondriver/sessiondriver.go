@@ -369,6 +369,7 @@ func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRe
 			return nil, fmt.Errorf("create-and-start session: %w", err)
 		}
 		rb, _ := io.ReadAll(res.Body)
+		retryAfter := res.Header.Get("Retry-After")
 		_ = res.Body.Close()
 		if res.StatusCode == http.StatusCreated {
 			var s Session
@@ -379,13 +380,21 @@ func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRe
 		}
 		lastStatus = res.StatusCode
 		lastBody = rb
-		if res.StatusCode != http.StatusServiceUnavailable || !isPoolNotReady(rb) {
+		if res.StatusCode != http.StatusServiceUnavailable || !isRetryableCreateFailure(rb) {
 			break
+		}
+		// A retryable 503 (a §5.2 pool-not-ready envelope or a §7.1 line 28
+		// SESSION_CREATION_FAILED atomic-unit failure) carries a §15.1 line 1138
+		// Retry-After header; honor it as the backoff floor so the wait matches
+		// the platform's own budget, otherwise fall back to the linear schedule.
+		backoff := time.Duration(attempt+1) * 500 * time.Millisecond
+		if hinted := retryAfterBackoff(retryAfter); hinted > backoff {
+			backoff = hinted
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		case <-time.After(backoff):
 		}
 	}
 	// A 503 pool-not-ready envelope that survived the whole retry window
@@ -414,6 +423,42 @@ func isPoolNotReady(body []byte) bool {
 		}
 	}
 	return false
+}
+
+// isRetryableCreateFailure reports whether a 503 body carries a transient
+// session-create envelope the platform marks retryable, so the driver should
+// keep trying within its window rather than fail on the first hit. It covers
+// the pool-not-ready codes and the §7.1 line 28 SESSION_CREATION_FAILED
+// atomic-unit fallback: the gateway returns SESSION_CREATION_FAILED (with a
+// §15.1 line 1138 Retry-After header) for a generic step 2-8 failure such as
+// the gateway failing to dial a freshly-claimed pod's adapter on :50051 while
+// the pod's network is still settling on a loaded cluster. That is the same
+// transient class as a pool-not-ready churn, so a client is expected to back
+// off and retry; a genuinely broken create fails identically across the whole
+// window and still surfaces. A non-retryable code (INTERNAL, a permanent 422)
+// is not matched and breaks the loop immediately.
+func isRetryableCreateFailure(body []byte) bool {
+	return isPoolNotReady(body) || bytes.Contains(body, []byte("SESSION_CREATION_FAILED"))
+}
+
+// retryAfterBackoff parses a Retry-After header value expressed in
+// delta-seconds into a backoff duration, capped at 10s so a large server hint
+// cannot stall the retry window past the caller's context. An absent or
+// unparseable value (an HTTP-date form, which the gateway does not emit for
+// these envelopes) yields zero so the caller keeps its linear schedule.
+func retryAfterBackoff(header string) time.Duration {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return 0
+	}
+	secs, err := strconv.Atoi(header)
+	if err != nil || secs <= 0 {
+		return 0
+	}
+	if secs > 10 {
+		secs = 10
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // Start issues POST /v1/sessions/{id}/start, transitioning a ready
