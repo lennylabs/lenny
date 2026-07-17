@@ -3337,6 +3337,7 @@
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier2_component/eventstream/read_surface_tenant_rbac_test.go::TestOpsEventStreamReadSurfaceTenantScopedCallerIsolation",
+        "cmd/lenny-ops/eventmetrics_stream_test.go::TestEventsStreamLengthGaugeAtMaxLen_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
@@ -3353,7 +3354,8 @@
         "pkg/ops/eventsubscription/pgstore",
         "pkg/ops/opsservice",
         "pkg/ops/opsserver",
-        "pkg/webhookdelivery"
+        "pkg/webhookdelivery",
+        "cmd/lenny-ops"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. pkg/ops/events is the read surface over the Redis stream and in-memory buffer; pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
