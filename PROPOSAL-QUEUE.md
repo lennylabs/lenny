@@ -287,7 +287,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-23 — Internal/admin TLS transport contradictions — §25.4/§13.2/charts
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.4.18, T-25.4.20, T-25.4.24
+- **findings:** T-25.4.18, T-25.4.20, T-25.4.24, T-25.6.14
 - **root spec gap:** The spec is internally contradictory on internal-transport TLS: `gateway.internalTLSPort` and `gateway.llmProxyPort` both default to 8443, no gateway admin-API-over-TLS listener exists, and §25.4 says lenny-ops serves TLS on :8090 while the same section terminates TLS at the Ingress.
 - **proposal scope:** Assign a distinct non-colliding `internalTLSPort`, decide how/whether the gateway binds an admin-API-over-TLS listener and its cert source, and resolve whether lenny-ops :8090 is plaintext-behind-Ingress or serves TLS; then the skipped handshake tests un-skip.
 - **severity:** High
@@ -295,7 +295,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-24 — §25.6 Postgres-unreachable K8s fallback pod-labeling and signals — §25.6/§6.2/§4.6.1
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.6.13, T-25.6.15, T-25.6.16, T-25.6.19, T-25.6.26
+- **findings:** T-25.6.13, T-25.6.15, T-25.6.16, T-25.6.19, T-25.6.26, T-25.6.17
 - **root spec gap:** The §25.6 diagnostics K8s fallback reads pod labels/signals (`lenny.dev/session-id`, `lenny.dev/pod-state`, an `InSetupPhase` signal) that §6.2/§4.6.1 never stamp; the coarse `lenny.dev/state` (idle/active/draining) cannot reconstruct the four-bucket breakdown, and no error code is catalogued for the both-down 503.
 - **proposal scope:** Reconcile §25.6 against §6.2/§4.6.1: decide which labels/values the platform stamps (or revise §25.6 to an achievable fallback), name the canonical setup-phase signal for SETUP_COMMAND_FAILED, and add the missing 503 error code/category.
 - **severity:** High
@@ -458,3 +458,4 @@ with the action taken, keeping a short trail here.
 - [ ] pending fold-in to ASSIGNED clusters (apply when C-02/C-03 reopen or before proposal-A starts them; not applied now per "don't alter assigned clusters"): T-25.3.5, T-25.5.20 → C-02 (§25.5 read source); T-25.12.11 → C-03 (§25.12 dispatch; its chaos test is blocked on T-25.12.3).
 - [x] test-infra handback from re-cluster: de-escalated T-ADV.11, T-ADV.13, T-25.2.2, T-25.12.22 (runner-closable). Kept needs-human as operator-resource-blocked: T-25.4.37 (EKS/cloud), T-25.11.7 (tagged buckets + cloud creds), T-25.6.1 (operator helm upgrade for RBAC).
 - [x] re-cluster 2026-07-17: folded T-25.4.38 into C-29 (recommendation aggregator, same root gap); added C-39 for T-25.4.33 (backup operationId disambiguation); de-escalated test-infra T-25.4.12 (orphaned-commit re-verify).
+- [x] re-cluster 2026-07-17: folded T-25.6.14→C-23 (gateway :8443 TLS/HTTP probe collision) and T-25.6.17→C-24 (§25.6 both-down 503 error code) — both match existing unassigned clusters.
