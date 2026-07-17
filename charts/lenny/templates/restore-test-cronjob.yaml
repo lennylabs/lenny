@@ -19,6 +19,17 @@ capabilities dropped, read-only root filesystem, RuntimeDefault
 seccomp.
 */ -}}
 {{- if .Values.backups.restoreTest.enabled }}
+{{- /* §12.5 — when the self-managed MinIO serving cert is issued by a CA
+   outside the system trust store, the operator names a ConfigMap (key
+   ca.crt) via minio.tls.caBundleConfigMap; the gateway and the
+   bucket-lifecycle Job already mount it and point SSL_CERT_DIR at it so
+   their MinIO clients verify the endpoint against it in addition to the
+   system roots (§12.5 "TLS: MinIO connections MUST use TLS"). The
+   test-restore Job mirrors that mount so its own MinIO client can
+   complete the same handshake. */ -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- $minioTLS := $minio.tls | default dict -}}
+{{- $minioCABundle := default "" $minioTLS.caBundleConfigMap -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -200,6 +211,14 @@ spec:
                     secretKeyRef:
                       name: lenny-backup-minio
                       key: minio-secret-key
+                {{- if $minioCABundle }}
+                # §12.5 — add the operator-supplied MinIO CA directory to
+                # the test-restore Job's Go trust pool so it verifies the
+                # HTTPS endpoint against this CA in addition to the system
+                # roots.
+                - name: SSL_CERT_DIR
+                  value: /etc/lenny/minio-ca
+                {{- end }}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -209,6 +228,14 @@ spec:
               volumeMounts:
                 - name: tmp
                   mountPath: /tmp
+                {{- if $minioCABundle }}
+                # §12.5 — the operator-supplied MinIO CA bundle (key
+                # ca.crt), added to the Go trust pool via SSL_CERT_DIR
+                # above.
+                - name: lenny-minio-ca
+                  mountPath: /etc/lenny/minio-ca
+                  readOnly: true
+                {{- end }}
               resources:
                 {{- toYaml .Values.backups.restoreTest.resources | nindent 16 }}
           volumes:
@@ -217,4 +244,12 @@ spec:
             # filesystem stays read-only.
             - name: tmp
               emptyDir: {}
+            {{- if $minioCABundle }}
+            - name: lenny-minio-ca
+              configMap:
+                name: {{ $minioCABundle | quote }}
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            {{- end }}
 {{- end }}
