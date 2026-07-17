@@ -2628,7 +2628,7 @@
       "title": "OpenSLO Export",
       "spec_file": "spec/16_observability.md",
       "tests": [
-        "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOEmitsThreeDocsPerSLO",
+        "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOEmitsFourDocsPerSLOPlusSharedTarget",
         "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOObjectivesMatchCatalog",
         "pkg/alerting/rules/slo_test.go::TestSLODefinitionsBackEveryBurnRateAlert",
         "charts/lenny/tests/openslo-configmap_test.yaml"

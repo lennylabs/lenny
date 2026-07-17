@@ -20,6 +20,26 @@ import (
 // spec: §16.10 line 734 (tier labels), §16.1.1 (deployment_tier label).
 const SLOTierPlaceholder = "__DEPLOYMENT_TIER__"
 
+// SLONotificationTargetPlaceholder is the token the chart-fragment render
+// carries in place of a concrete OpenSLO notification-target type. It
+// mirrors SLOTierPlaceholder: the gen-alerting-rules build step renders the
+// chart fragment with the placeholder intact so the Helm template can
+// substitute monitoring.openslo.notificationTarget.type at install time.
+// The docs and CLI callers, which have no Helm layer, pass
+// OpenSLODefaultNotificationTarget so their output is placeholder-free and
+// schema-valid.
+//
+// spec: §16.10 (deployer-configurable notification-target type).
+const SLONotificationTargetPlaceholder = "__OPENSLO_NOTIFICATION_TARGET__"
+
+// OpenSLODefaultNotificationTarget is the schema-valid default OpenSLO
+// AlertNotificationTarget type the docs and CLI callers render into
+// spec.target. It is the operator-tunable default the Helm chart exposes as
+// monitoring.openslo.notificationTarget.type.
+//
+// spec: §16.10 (default notification-target type: webhook).
+const OpenSLODefaultNotificationTarget = "webhook"
+
 // Burn-rate window parameters shared by the §16.5 burn-rate alerts
 // (burnRateAlerts) and the §16.10 OpenSLO AlertPolicy export
 // (RenderOpenSLO). A single source keeps the rendered OpenSLO alert

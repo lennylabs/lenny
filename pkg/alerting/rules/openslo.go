@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,6 +20,18 @@ const openSLOAPIVersion = "openslo/v1"
 // slo command pass it to RenderOpenSLO so the rendered service name is
 // canonical across the chart fragment and the CLI output.
 const OpenSLOService = "lenny"
+
+// openSLONotificationTargetName is the metadata.name of the single shared
+// AlertNotificationTarget document every emitted AlertPolicy references
+// through notificationTargets[].targetRef. The Helm template replaces this
+// default literal with the deployer-configured
+// monitoring.openslo.notificationTarget.name at install time (the literal
+// appears only as the target's metadata.name and the targetRef entries
+// pointing at it, which change together, so a global replace is correct).
+//
+// spec: §16.10 (shared AlertNotificationTarget referenced by every
+// AlertPolicy; deployer-configurable name, default lenny-slo-notifications).
+const openSLONotificationTargetName = "lenny-slo-notifications"
 
 // openSLODoc is one OpenSLO v1 document. Spec is one of sliSpec,
 // sloSpec, or alertPolicySpec depending on Kind.
@@ -63,13 +76,43 @@ type openSLOMetricSource struct {
 // Occurrences budgeting method, carries the SLO objective target, and
 // references the burn-rate AlertPolicy.
 type sloSpec struct {
-	Description     string              `yaml:"description"`
-	Service         string              `yaml:"service"`
-	IndicatorRef    string              `yaml:"indicatorRef"`
-	TimeWindow      []openSLOTimeWindow `yaml:"timeWindow"`
-	BudgetingMethod string              `yaml:"budgetingMethod"`
-	Objectives      []openSLOObjective  `yaml:"objectives"`
-	AlertPolicies   []string            `yaml:"alertPolicies"`
+	Description     string                  `yaml:"description"`
+	Service         string                  `yaml:"service"`
+	IndicatorRef    string                  `yaml:"indicatorRef"`
+	TimeWindow      []openSLOTimeWindow     `yaml:"timeWindow"`
+	BudgetingMethod string                  `yaml:"budgetingMethod"`
+	Objectives      []openSLOObjective      `yaml:"objectives"`
+	AlertPolicies   []openSLOAlertPolicyRef `yaml:"alertPolicies"`
+}
+
+// openSLOAlertPolicyRef is one SLO alertPolicies entry. OpenSLO v1 requires
+// each entry to be an object that references an AlertPolicy by name (rather
+// than a bare string), so the export emits {alertPolicyRef: <name>}.
+//
+// spec: §16.10 (SLO alertPolicies as reference objects).
+type openSLOAlertPolicyRef struct {
+	AlertPolicyRef string `yaml:"alertPolicyRef"`
+}
+
+// openSLONotificationTargetRef is one AlertPolicy notificationTargets entry.
+// OpenSLO v1 requires spec.notificationTargets present and non-empty; each
+// entry references a shared AlertNotificationTarget by name.
+//
+// spec: §16.10 (required non-empty notificationTargets referencing an
+// emitted AlertNotificationTarget).
+type openSLONotificationTargetRef struct {
+	TargetRef string `yaml:"targetRef"`
+}
+
+// alertNotificationTargetSpec is the OpenSLO AlertNotificationTarget spec.
+// target is the free-form target type (default webhook); the deployer
+// defines the concrete channel and credentials in their own OpenSLO tool
+// keyed by the target's metadata.name.
+//
+// spec: §16.10 (shared AlertNotificationTarget document).
+type alertNotificationTargetSpec struct {
+	Description string `yaml:"description"`
+	Target      string `yaml:"target"`
 }
 
 type openSLOTimeWindow struct {
@@ -85,9 +128,10 @@ type openSLOObjective struct {
 // alertPolicySpec is the OpenSLO AlertPolicy spec carrying the §16.5
 // multi-window burn-rate conditions (fast critical + slow warning).
 type alertPolicySpec struct {
-	Description        string                  `yaml:"description"`
-	AlertWhenBreaching bool                    `yaml:"alertWhenBreaching"`
-	Conditions         []openSLOConditionEntry `yaml:"conditions"`
+	Description         string                         `yaml:"description"`
+	AlertWhenBreaching  bool                           `yaml:"alertWhenBreaching"`
+	Conditions          []openSLOConditionEntry        `yaml:"conditions"`
+	NotificationTargets []openSLONotificationTargetRef `yaml:"notificationTargets"`
 }
 
 type openSLOConditionEntry struct {
@@ -111,26 +155,42 @@ type openSLOBurnRateCond struct {
 }
 
 // RenderOpenSLO renders the canonical §16.5 SLO catalog (SLODefinitions)
-// into the §16.10 OpenSLO v1 export: for each SLO, an SLI document, an
-// SLO document, and a multi-window burn-rate AlertPolicy document. The
-// documents reference the canonical §16.5 metric names and scope every
-// query to deployment_tier="<tier>" so external OpenSLO tooling (Sloth,
-// Nobl9) produces burn-rate alerts consistent with the bundled §16.5
-// multi-window alerts. The export is a view of the same SLODefinitions
-// catalog burnRateAlerts derives from, so the two cannot drift.
+// into the §16.10 OpenSLO v1 export. For each SLO it emits an SLI
+// document, an SLO document, and two single-condition burn-rate
+// AlertPolicy documents (<name>-burnrate-fast at 1h/14x critical and
+// <name>-burnrate-slow at 6h/3x warning). OpenSLO v1 caps an AlertPolicy
+// at exactly one condition, so the §16.5 multi-window burn rate is
+// preserved by splitting across two policies rather than packing two
+// conditions into one. After the per-SLO loop it emits one shared
+// top-level AlertNotificationTarget document that every AlertPolicy
+// references through notificationTargets[].targetRef, so the fragment is
+// self-contained. The documents reference the canonical §16.5 metric names
+// and scope every query to deployment_tier="<tier>" so external OpenSLO
+// tooling (Sloth, Nobl9) produces burn-rate alerts consistent with the
+// bundled §16.5 multi-window alerts. The export is a view of the same
+// SLODefinitions catalog burnRateAlerts derives from, so the two cannot
+// drift.
 //
 // service is the OpenSLO service name; tier is the deployment tier
 // substituted for SLOTierPlaceholder in the query templates (the
 // gen-alerting-rules build step passes SLOTierPlaceholder so the chart
-// can substitute global.deploymentTier at install time).
+// can substitute global.deploymentTier at install time). notificationTarget
+// mirrors tier: it is the free-form AlertNotificationTarget type rendered
+// into the shared target's spec.target (the chart-fragment caller passes
+// SLONotificationTargetPlaceholder for the Helm template to substitute
+// monitoring.openslo.notificationTarget.type; the docs and CLI callers pass
+// the concrete OpenSLODefaultNotificationTarget).
 //
-// spec: §16.10 lines 732-736; §16.5 lines 611-640.
-func RenderOpenSLO(service, tier string) ([]byte, error) {
+// spec: §16.10 lines 742-746; §16.5 lines 611-640.
+func RenderOpenSLO(service, tier, notificationTarget string) ([]byte, error) {
 	if service == "" {
 		return nil, fmt.Errorf("rules: OpenSLO service name is required")
 	}
 	if tier == "" {
 		return nil, fmt.Errorf("rules: OpenSLO deployment tier is required")
+	}
+	if notificationTarget == "" {
+		return nil, fmt.Errorf("rules: OpenSLO notification target is required")
 	}
 	var docs []openSLODoc
 	for _, d := range SLODefinitions() {
@@ -139,7 +199,8 @@ func RenderOpenSLO(service, tier string) ([]byte, error) {
 		}
 		labels := map[string]string{"deployment_tier": tier}
 		sliName := d.Name + "-sli"
-		policyName := d.Name + "-burnrate"
+		fastPolicyName := d.Name + "-burnrate-fast"
+		slowPolicyName := d.Name + "-burnrate-slow"
 
 		ratio := openSLORatioMetric{
 			Counter: d.SLI.Counter,
@@ -175,52 +236,36 @@ func RenderOpenSLO(service, tier string) ([]byte, error) {
 					TimeWindow:      []openSLOTimeWindow{{Duration: "30d", IsRolling: true}},
 					BudgetingMethod: "Occurrences",
 					Objectives:      []openSLOObjective{{DisplayName: d.Objective, Target: d.Target}},
-					AlertPolicies:   []string{policyName},
-				},
-			},
-			openSLODoc{
-				APIVersion: openSLOAPIVersion,
-				Kind:       "AlertPolicy",
-				Metadata:   openSLOMeta{Name: policyName, Labels: labels},
-				Spec: alertPolicySpec{
-					Description:        "Multi-window error-budget burn-rate policy for " + d.Objective,
-					AlertWhenBreaching: true,
-					Conditions: []openSLOConditionEntry{
-						{
-							Kind:     "AlertCondition",
-							Metadata: openSLOMeta{Name: d.Name + "-fast-burn"},
-							Spec: openSLOConditionSpec{
-								Description: "Fast-window (1h) error-budget burn rate exceeds the page threshold.",
-								Severity:    string(SeverityCritical),
-								Condition: openSLOBurnRateCond{
-									Kind:           "burnrate",
-									Op:             "gt",
-									Threshold:      burnRateFastMultiplier,
-									LookbackWindow: prometheusDuration(burnRateFastWindow),
-									AlertAfter:     prometheusDuration(burnRateFastWindow),
-								},
-							},
-						},
-						{
-							Kind:     "AlertCondition",
-							Metadata: openSLOMeta{Name: d.Name + "-slow-burn"},
-							Spec: openSLOConditionSpec{
-								Description: "Slow-window (6h) error-budget burn rate exceeds the warning threshold.",
-								Severity:    string(SeverityWarning),
-								Condition: openSLOBurnRateCond{
-									Kind:           "burnrate",
-									Op:             "gt",
-									Threshold:      burnRateSlowMultiplier,
-									LookbackWindow: prometheusDuration(burnRateSlowWindow),
-									AlertAfter:     prometheusDuration(burnRateSlowWindow),
-								},
-							},
-						},
+					AlertPolicies: []openSLOAlertPolicyRef{
+						{AlertPolicyRef: fastPolicyName},
+						{AlertPolicyRef: slowPolicyName},
 					},
 				},
 			},
+			burnRatePolicyDoc(
+				fastPolicyName, labels, d.Name+"-fast-burn",
+				"Fast-window (1h) error-budget burn rate exceeds the page threshold.",
+				string(SeverityCritical), burnRateFastMultiplier, burnRateFastWindow,
+			),
+			burnRatePolicyDoc(
+				slowPolicyName, labels, d.Name+"-slow-burn",
+				"Slow-window (6h) error-budget burn rate exceeds the warning threshold.",
+				string(SeverityWarning), burnRateSlowMultiplier, burnRateSlowWindow,
+			),
 		)
 	}
+
+	// One shared AlertNotificationTarget every AlertPolicy references by
+	// name, so the fragment is self-contained. spec: §16.10.
+	docs = append(docs, openSLODoc{
+		APIVersion: openSLOAPIVersion,
+		Kind:       "AlertNotificationTarget",
+		Metadata:   openSLOMeta{Name: openSLONotificationTargetName},
+		Spec: alertNotificationTargetSpec{
+			Description: "Shared notification target for the Lenny SLO burn-rate alert policies.",
+			Target:      notificationTarget,
+		},
+	})
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -235,6 +280,46 @@ func RenderOpenSLO(service, tier string) ([]byte, error) {
 		return nil, fmt.Errorf("rules: closing OpenSLO encoder: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// burnRatePolicyDoc builds one single-condition burn-rate AlertPolicy
+// document. OpenSLO v1 caps spec.conditions at one entry, so each of the
+// §16.5 multi-window thresholds (1h/14x critical, 6h/3x warning) renders as
+// its own policy. Every policy references the shared AlertNotificationTarget
+// so the fragment is self-contained.
+//
+// spec: §16.10 (one condition per AlertPolicy, required non-empty
+// notificationTargets), §16.5 line 627 (multi-window burn rate).
+func burnRatePolicyDoc(policyName string, labels map[string]string, condName, condDesc, severity string, multiplier int, window time.Duration) openSLODoc {
+	return openSLODoc{
+		APIVersion: openSLOAPIVersion,
+		Kind:       "AlertPolicy",
+		Metadata:   openSLOMeta{Name: policyName, Labels: labels},
+		Spec: alertPolicySpec{
+			Description:        "Error-budget burn-rate policy: " + condDesc,
+			AlertWhenBreaching: true,
+			Conditions: []openSLOConditionEntry{
+				{
+					Kind:     "AlertCondition",
+					Metadata: openSLOMeta{Name: condName},
+					Spec: openSLOConditionSpec{
+						Description: condDesc,
+						Severity:    severity,
+						Condition: openSLOBurnRateCond{
+							Kind:           "burnrate",
+							Op:             "gt",
+							Threshold:      multiplier,
+							LookbackWindow: prometheusDuration(window),
+							AlertAfter:     prometheusDuration(window),
+						},
+					},
+				},
+			},
+			NotificationTargets: []openSLONotificationTargetRef{
+				{TargetRef: openSLONotificationTargetName},
+			},
+		},
+	}
 }
 
 // promSource builds a Prometheus metricSource with the deployment tier
