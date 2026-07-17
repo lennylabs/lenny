@@ -139,6 +139,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// Re-bind the flags the admin-router wiring reads to their original
 	// local names so the moved construct-and-wire block reads unchanged.
 	devMode := f.devMode
+	tenancyMode := f.tenancyMode
 	interceptorWeakeningCooldownSeconds := f.interceptorWeakeningCooldownSeconds
 	addr := f.addr
 	auditSIEMEndpoint := f.auditSIEMEndpoint
@@ -286,6 +287,10 @@ func (w *gatewayWiring) buildAdminRouter(
 		Audit:   auditSink,
 		Metrics: gwMetrics,
 		DevMode: *devMode,
+		// spec: §4.9 — the platform tenancy.mode the warm-pool
+		// pool-registration layer-1 check gates the cross-tenant
+		// credential-delivery rejections on.
+		TenancyMode: *tenancyMode,
 	})).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(w.runtimes).

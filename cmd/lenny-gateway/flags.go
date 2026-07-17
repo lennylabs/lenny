@@ -52,6 +52,7 @@ import (
 type gatewayFlags struct {
 	addr                                    *string
 	multiTenant                             *bool
+	tenancyMode                             *string
 	tenantIDClaim                           *string
 	oidcIssuerURL                           *string
 	oidcClientID                            *string
@@ -375,6 +376,15 @@ func parseFlags() *gatewayFlags {
 func (f *gatewayFlags) registerCoreFlags() {
 	f.addr = flag.String("addr", ":8080", "address to bind (host:port)")
 	f.multiTenant = flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
+	// spec: §4.9 — the platform tenancy.mode signal the gateway enforces
+	// the two cross-tenant credential-delivery rejections against. It
+	// mirrors the lenny-webhook binary's --tenancy-mode flag (wired from
+	// the same .Values.tenancy.mode) rather than overloading the
+	// semantically inverted §10.2 --multi-tenant auth flag. This one flag
+	// is the source both the admin Router and the sessionserver read the
+	// tenancy mode from. Defaults to "single".
+	f.tenancyMode = flag.String("tenancy-mode", envOr("LENNY_TENANCY_MODE", "single"),
+		"§4.9 platform tenancy.mode (\"multi\" or \"single\"). The gateway enforces the §4.9 direct/standard and proxy/spiffe cross-tenant credential-delivery rejections only in multi-tenant mode. Mirrors the tenancy.mode Helm value. Override via LENNY_TENANCY_MODE.")
 	f.tenantIDClaim = flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
 		"§10.2 line 212 OIDC claim name the gateway reads the tenant identifier from. Defaults to `tenant_id` (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9.")
 	f.oidcIssuerURL = flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
