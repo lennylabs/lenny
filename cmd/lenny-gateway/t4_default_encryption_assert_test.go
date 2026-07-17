@@ -88,6 +88,37 @@ func TestAssertT4DefaultEncryptionResolvesProviderAndTenants(t *testing.T) {
 		}
 	})
 
+	// A case- or whitespace-variant provider name resolves to a genuine
+	// gcs/azure backend (blobproviderflags.Resolve lower-cases and trims the
+	// raw value), so the gate must normalize identically before comparing.
+	// Comparing the raw string would let "GCS", "Azure", or " gcs" bypass the
+	// gate and boot without the required default encryption, the fail-open the
+	// gate exists to prevent. These cases fail against a gate that keys off the
+	// raw provider string.
+	for _, variant := range []string{"GCS", " gcs", "Gcs\t"} {
+		t.Run("gcs variant "+variant+" serving a T4 tenant without CMEK fails closed", func(t *testing.T) {
+			w := &gatewayWiring{f: t4AssertFlags(variant, "", "", false)}
+			err := w.assertT4DefaultEncryption(ctx, seedT4(t))
+			if err == nil {
+				t.Fatalf("gcs variant %q serving a T4 tenant without a bucket-default CMEK booted, want fail-closed", variant)
+			}
+			if !strings.Contains(err.Error(), "bucketDefaultCmek") {
+				t.Errorf("error %q does not name the missing config key", err.Error())
+			}
+		})
+	}
+
+	t.Run("azure variant Azure serving a T4 tenant without a scope fails closed", func(t *testing.T) {
+		w := &gatewayWiring{f: t4AssertFlags("Azure", "", "", false)}
+		err := w.assertT4DefaultEncryption(ctx, seedT4(t))
+		if err == nil {
+			t.Fatal("azure variant \"Azure\" serving a T4 tenant without an encryption scope booted, want fail-closed")
+		}
+		if !strings.Contains(err.Error(), "defaultEncryptionScope") {
+			t.Errorf("error %q does not name the missing config key", err.Error())
+		}
+	})
+
 	t.Run("gcs serving no T4 tenant boots without CMEK", func(t *testing.T) {
 		store := tenantstore.NewMemory()
 		if err := store.Create(ctx, tenantstore.Tenant{ID: "globex", WorkspaceTier: "T3"}); err != nil {

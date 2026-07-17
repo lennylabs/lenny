@@ -793,7 +793,14 @@ func validateT4DefaultEncryption(provider string, servesT4Tenant bool, cfg t4Def
 //
 // spec: §12.5 line 315, 321-325; §17.9.7.
 func (w *gatewayWiring) assertT4DefaultEncryption(ctx context.Context, tenants tenantstore.Store) error {
-	provider := *w.f.objectStorageProvider
+	// Normalize the provider exactly as blobproviderflags.Resolve does
+	// (lower-cased, whitespace-trimmed) so this fail-closed gate keys off
+	// the backend Resolve actually selects. A raw "GCS", "Azure", or
+	// " gcs" resolves to a genuine cloud backend; comparing the raw string
+	// would let that variant bypass the gate and boot without the required
+	// bucket/container default encryption, the fail-open this gate exists
+	// to prevent.
+	provider := strings.ToLower(strings.TrimSpace(*w.f.objectStorageProvider))
 	if provider != blobproviderflags.ProviderGCS && provider != blobproviderflags.ProviderAzure {
 		return nil
 	}
