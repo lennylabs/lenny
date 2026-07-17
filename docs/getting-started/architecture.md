@@ -520,8 +520,8 @@ Every agent pod runs with:
 | Root filesystem | Read-only |
 | Writable paths | tmpfs (`/tmp`), workspace volumes, sessions directory, artifacts directory |
 | Egress | Default-deny NetworkPolicy; allow only gateway + DNS |
-| Credentials | No standing credentials; projected ServiceAccount token + short-lived credential lease only |
-| File delivery | Gateway-mediated only; no shared storage mounts |
+| Credentials | No standing credentials; projected ServiceAccount token + short-lived credential lease only. Object-store access is granted as a gateway-minted presigned capability (single key, single method, exact `Content-Length` on a `PUT`, short expiry) and never as an object-store credential. |
+| File delivery | Gateway-mediated for all session inputs and outputs. Checkpoint chunk objects are the one exception: their bytes travel between the agent pod and object storage against gateway-minted presigned capabilities. The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs. No shared storage mounts. |
 | Adapter-agent auth | `SO_PEERCRED` UID check + manifest nonce (primary); nonce + HMAC challenge-response (fallback under gVisor) |
 
 ### What pods can and cannot do
@@ -531,6 +531,7 @@ Every agent pod runs with:
 | Read/write files in `/workspace/current` | Access the Kubernetes API server |
 | Call LLM providers through the gateway's LLM Proxy (proxy-mode pools) or directly with a short-lived materialized credential (direct-mode pools) | Hold long-lived API keys or secrets |
 | Use MCP tools via the adapter's local MCP servers | Communicate with other pods |
-| Respond to gateway lifecycle RPCs | Access MinIO, Postgres, or Redis directly |
+| `PUT` and `GET` checkpoint chunk objects to object storage against a gateway-minted presigned capability (single key, single method, short expiry) | Access Postgres or Redis directly, or reach object storage without a gateway-signed presigned capability |
+| Respond to gateway lifecycle RPCs | Hold an object-store credential, or issue `LIST`, `DELETE`, or multipart object-store operations |
 | Report usage metrics to the gateway | Mount shared storage from other pods |
 | Request human input via elicitation chain | Open arbitrary network connections (unless egress profile allows) |
