@@ -642,6 +642,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// serving until the process crashes. The dual-store-both-down case
 	// is exempted so the replica stays ready to answer the §10.1 503
 	// PLATFORM_DEGRADED. F-10.4.6.
+	// spec: §4.9 — the §4.9 credential deny-list startup-rebuild flag the
+	// /readyz handler gates on. Captured here because the handler param
+	// shadows the gatewayWiring receiver `w`.
+	credDenyRebuilt := &w.credDenyRebuilt
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		dualStoreDown := dsMonitor != nil && dsMonitor.Unavailable()
@@ -650,7 +654,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		res := readinessVerdict(ctx, prestopHook.Draining(), driftMonitor.Degraded(), dualStoreDown, probe)
+		// spec: §4.9 — hold this replica out of the ready set until the
+		// startup deny-list rebuild commits its authoritative Reset, so it
+		// resolves no retained revoked lease with an incomplete deny list.
+		rebuildPending := !credDenyRebuilt.Load()
+		res := readinessVerdict(ctx, prestopHook.Draining(), driftMonitor.Degraded(), rebuildPending, dualStoreDown, probe)
 		w.WriteHeader(res.Code)
 		if res.Body != "" {
 			_, _ = w.Write([]byte(res.Body))

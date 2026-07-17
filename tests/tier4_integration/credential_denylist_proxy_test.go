@@ -37,6 +37,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
@@ -212,15 +213,81 @@ func TestUserCredentialRevocationDenyListProxy(t *testing.T) {
 	// pool-credential or user-credential revocation rebuilds a complete
 	// deny list ... exercising ... the startup rebuild path (on a replica
 	// restarted immediately after the revoke)."
-	t.Run("startup rebuild on a restarted replica", func(t *testing.T) {
-		t.Skip("the §4.9 user-credential startup deny-list rebuild (the 'From TokenStore' union term) is unimplemented: cmd/lenny-gateway/workers.go seeds only pool-credential deny-list entries and the user credential store exposes no revoked-listing query, so a replica restarted immediately after a user-credential revoke does not rebuild the user-shaped {source: user, tenantId, credentialRef} entry from Postgres and would accept the revoked lease; unskip once the rebuild covers the user source")
-		// Once implemented, this arm builds a fresh deny list and llmproxy
-		// handler sharing the same credential and lease stores (a restarted
-		// replica that missed the pub/sub revocation), runs the startup
-		// rebuild over both stores, and asserts the same user-backed lease is
-		// rejected with CREDENTIAL_REVOKED before any upstream call.
+	//
+	// A fresh replica that missed the pub/sub revocation rebuilds its deny
+	// list from the credential stores' revoked entries, filtered to the
+	// credentials that still have an active lease in the shared lease store.
+	// It builds only the user-source term here (the pool store is empty),
+	// exactly as cmd/lenny-gateway/workers.go seeds the §4.9 rebuild union,
+	// and asserts the same retained user lease is denied CREDENTIAL_REVOKED.
+	//
+	// spec: §4.9 (startup rebuild union across both stores; a restarted
+	// replica denies a revoked user credential).
+	t.Run("startup rebuild on a restarted replica denies the retained revoked lease", func(t *testing.T) {
+		revoked, err := store.RevokedCredentials(ctx)
+		if err != nil {
+			t.Fatalf("RevokedCredentials: %v", err)
+		}
+		rebuiltDeny := denylist.New()
+		var keys []credential.CredentialKey
+		for _, ru := range revoked {
+			k := credential.CredentialKey{Source: credential.SourceUser, TenantID: ru.TenantID, CredentialRef: ru.CredentialRef}
+			// The §4.9 active-lease bound: seed only credentials the shared
+			// lease store still holds a live lease for.
+			n, cerr := leases.LeasesByCredentialCount(ctx, k, timeNow())
+			if cerr != nil || n > 0 {
+				keys = append(keys, k)
+			}
+		}
+		rebuiltDeny.Reset(keys)
+		if !rebuiltDeny.Revoked(credKey) {
+			t.Fatalf("fresh replica rebuild did not deny the revoked user credential %+v", credKey)
+		}
+
+		freshHandler := &llmproxy.Handler{
+			Leases:      leases,
+			Translators: registry,
+			Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+			Credentials: creds,
+			DenyList:    rebuiltDeny,
+		}
+		freshSrv := httptest.NewServer(freshHandler)
+		t.Cleanup(freshSrv.Close)
+
+		before := len(upstream.Requests())
+		req, _ := http.NewRequest(http.MethodPost, freshSrv.URL+"/v1/messages",
+			strings.NewReader(`{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"post-restart"}]}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", leaseToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("issue post-restart proxy request: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("post-restart proxy request: status %d, want 403; body %s", resp.StatusCode, body)
+		}
+		var env struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(body, &env); err != nil {
+			t.Fatalf("decode proxy error envelope: %v; body %s", err, body)
+		}
+		if env.Error.Code != "CREDENTIAL_REVOKED" {
+			t.Fatalf("post-restart error code = %q, want CREDENTIAL_REVOKED; body %s", env.Error.Code, body)
+		}
+		if got := len(upstream.Requests()); got != before {
+			t.Fatalf("post-restart: upstream received %d new requests, want 0 — the revoked lease reached the provider", got-before)
+		}
 	})
 }
+
+// timeNow is the wall clock the restart-rebuild arm passes to the §4.9
+// lease-existence filter.
+func timeNow() time.Time { return time.Now() }
 
 // authInject wraps a handler so the credential endpoints see an
 // authenticated (tenant, user) caller, standing in for the gateway auth
