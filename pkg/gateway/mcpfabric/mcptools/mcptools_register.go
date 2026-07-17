@@ -2103,12 +2103,26 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			if res.Action == interceptor.ActionReject {
 				recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreRoute, res)
 				// spec: §15.2.1 line 1386 — see PreDelegation site
-				// above. INTERCEPTOR_REJECTED preserves REST/MCP
-				// (category, retryable) parity for a deliberate
-				// PreRoute reject. F-15.2.11.
-				return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED",
-					res.Reason,
-					map[string]any{"phase": string(interceptor.PhasePreRoute)})
+				// above. A deliberate PreRoute reject falls back to
+				// INTERCEPTOR_REJECTED, preserving REST/MCP (category,
+				// retryable) parity. An immutable-field violation
+				// carries its own §15.1 code
+				// (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION) plus the
+				// violated_fields detail the §4.8/§15.1 envelope
+				// mandates. F-15.2.11.
+				// spec: §4.8, §15.1
+				code := res.Code
+				if code == "" {
+					code = "INTERCEPTOR_REJECTED"
+				}
+				details := map[string]any{
+					"phase":           string(interceptor.PhasePreRoute),
+					"interceptor_ref": res.RejectedBy,
+				}
+				if res.Code == interceptor.CodeInterceptorImmutableFieldViolation {
+					details["violated_fields"] = res.ViolatedFields
+				}
+				return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, details)
 			}
 			if res.Action == interceptor.ActionModify {
 				var modified childRouteSpec

@@ -188,6 +188,14 @@ type Result struct {
 	RejectedBy      string
 	TimeoutMs       int64
 
+	// ViolatedFields lists the immutable field paths a MODIFY altered,
+	// populated only on the immutable-violation reject path
+	// (Code == CodeInterceptorImmutableFieldViolation). Each surface
+	// emits it as details.violated_fields in the §15.1 error envelope.
+	// spec: §4.8 (immutable field enforcement), §15.1
+	// (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION details.violated_fields).
+	ViolatedFields []string
+
 	// FailOpenSkips lists the interceptors the chain skipped on this run
 	// because they errored or timed out under a fail-open FailPolicy
 	// without crossing the §4.8 line 1030 escalation ceiling. It is
@@ -516,6 +524,7 @@ func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) b
 					Reason:          fmt.Sprintf("interceptor %q MODIFY altered immutable %s field(s): %s", ic.Name(), req.Phase, strings.Join(violations, ", ")),
 					ModifiedContent: content,
 					RejectedBy:      ic.Name(),
+					ViolatedFields:  violations,
 				}
 			}
 			content = res.ModifiedContent

@@ -200,7 +200,6 @@ func bootstrapEchoTenant(t *testing.T, do func(method, path, roles string, body 
 // catch a regression in the subprocess dial or the wire round-trip.
 func TestExternalInterceptorModifyImmutableTenantThroughGateway_spec_4_8(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
-	t.Skip("spec-faithful assertion for an OPEN test-gap: the PreRoute session-create surface rejects the immutable-field MODIFY (the enforcement works across the gRPC boundary) but returns 403 INTERCEPTOR_REJECTED with the code in details.interceptorCode rather than the §15.1 400 INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION with details.violated_fields; awaiting a human decision on the error-envelope contract before this can assert green")
 
 	// The default external-interceptor priority is 500, so the interceptor
 	// runs in the at-or-above-ExperimentRouter PreRoute segment whose

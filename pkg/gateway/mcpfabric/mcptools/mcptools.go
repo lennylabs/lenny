@@ -1003,7 +1003,21 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 			if code == "" {
 				code = "INTERCEPTOR_REJECTED"
 			}
-			return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, nil)
+			// A deliberate PreToolResult reject falls back to
+			// INTERCEPTOR_REJECTED; an immutable-field violation (a MODIFY
+			// altering the immutable tool_call `id`) carries its own §15.1
+			// code (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION) plus the
+			// violated field names, so the tool-error envelope matches the
+			// §15.1 catalog row uniformly with the other chain surfaces.
+			// spec: §4.8 (PreToolResult id immutability), §15.1.
+			details := map[string]any{
+				"phase":           string(interceptor.PhasePreToolResult),
+				"interceptor_ref": res.RejectedBy,
+			}
+			if res.Code == interceptor.CodeInterceptorImmutableFieldViolation {
+				details["violated_fields"] = res.ViolatedFields
+			}
+			return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, details)
 		case interceptor.ActionModify:
 			var modified preToolResultPayload
 			if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
