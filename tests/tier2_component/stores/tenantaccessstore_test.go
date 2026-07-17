@@ -107,7 +107,14 @@ func TestTenantAccessStoreContract(t *testing.T) {
 	t.Run("grant defaults a zero timestamp", func(t *testing.T) {
 		pool := tenantaccessPool(t, ctx, pg)
 		tenant := freshTenant(t, ctx, pg)
-		before := time.Now().UTC()
+		// diagnosis: the granted_at column is a Postgres timestamptz, which
+		// stores microsecond precision. The store defaults a zero timestamp
+		// from a nanosecond-precision time.Now(), so the read-back value has
+		// its sub-microsecond nanoseconds dropped. Truncate the lower bound
+		// to the same microsecond resolution as storage, otherwise a default
+		// that lands in the same microsecond as before but rounds down reads
+		// as being before it.
+		before := time.Now().UTC().Truncate(time.Microsecond)
 		if _, err := store.Grant(ctx, tenantaccessstore.KindPool, pool, tenant, "admin", time.Time{}); err != nil {
 			t.Fatalf("Grant: %v", err)
 		}
