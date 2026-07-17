@@ -3345,6 +3345,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/eventsubscription/pgstore/pgstore_test.go::TestPgStoreRoundTrip_spec_25_5",
+        "pkg/ops/eventsubscription/eventsubscription_test.go::TestServiceInvalidFilterType_spec_25_5",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
