@@ -1,6 +1,6 @@
 # Proposal: Correct the §10.7 eval, §8.3 messaging, and §8.6 auto-mode rate-limit wording from "sliding-window" to the fixed-window per-minute counter they share, and add the boundary tests
 
-- **Status:** Verified (2026-07-17). Converged after 2 adversarial review rounds (0 findings fixed); awaiting sign-off.
+- **Status:** Approved (2026-07-17). Both Open decisions (§9) are resolved at sign-off: the bounded cross-boundary transient is documented explicitly at both rate-limit sites (SPEC-1 and SPEC-2), and no §8.6 auto-mode boundary test is added here (left to T-8.6.7). Verified (2026-07-17), converged after 2 adversarial review rounds.
 - **Date:** 2026-07-17.
 - **Scope:** A spec-first correction of three per-minute rate-limit descriptions in `spec/10_gateway-internals.md` (§10.7) and `spec/08_recursive-delegation.md` (§8.3, §8.6) from "sliding-window" to the fixed-window per-minute counter all three are enforced by, plus the two internal doc comments in `pkg/gateway/mcpfabric/mcptools/messaging.go` that carry the same imprecision. It re-points the existing skipped eval boundary test to assert the documented fixed-window contract and tracks the rename in `tests/spec-map.json`. It changes no rate-limit value, key, default, `429`/`Retry-After` behavior, or `RATE_LIMITED` receipt: the enforcement is already fixed-window, and this reconciles the descriptive wording and its one skipped test to what the code implements. It closes the Low-severity findings T-ADV.12 and T-8.3.16. The §11.2 token-BUDGET quota store (`pkg/gateway/quota/quotastore`) is a separate, genuinely sliding-window subsystem and is out of scope.
 
@@ -66,7 +66,7 @@ Because the primitive is fixed-window, each limit bounds its per-key count to th
 
 **Rationale:** The paragraph calls `maxPerMinute` a "per-session outbound sliding-window burst limit" and says the inbound cap counts "per sliding window," but both per-minute caps go through the shared fixed-window counter (`messaging.go:97,105,109` calling `ratelimit.go:48`). The N-independent anti-flood property survives the correction and is preserved verbatim.
 
-**Change (staged text):** Replace "`maxPerMinute` is a per-session outbound sliding-window burst limit" with "`maxPerMinute` is a per-session outbound fixed-window per-minute burst limit". Replace "the target accepts at most `maxInboundPerMinute` messages per sliding window" with "the target accepts at most `maxInboundPerMinute` messages per fixed one-minute window". Leave the anti-flood sentence ("This prevents N compromised siblings from flooding a single target at N × `maxPerMinute`; regardless of the number of senders …") and the `RATE_LIMITED` receipt sentences unchanged, since the N-independence property holds under fixed-window.
+**Change (staged text):** Replace "`maxPerMinute` is a per-session outbound sliding-window burst limit" with "`maxPerMinute` is a per-session outbound fixed-window per-minute burst limit". Replace "the target accepts at most `maxInboundPerMinute` messages per sliding window" with "the target accepts at most `maxInboundPerMinute` messages per fixed one-minute window". Leave the anti-flood sentence ("This prevents N compromised siblings from flooding a single target at N × `maxPerMinute`; regardless of the number of senders …") and the `RATE_LIMITED` receipt sentences unchanged, since the N-independence property holds under fixed-window. Immediately after the anti-flood sentence, append one sentence documenting the bounded cross-boundary transient (the Open decision resolved in favor of explicit documentation at both rate-limit sites): "Because each window is fixed rather than sliding, a burst straddling a wall-clock-minute boundary can transiently reach up to twice a per-minute ceiling — twice `maxPerMinute` outbound, and twice `maxInboundPerMinute` in aggregate at a target regardless of sender count — before the window resets."
 
 ### SPEC-3. Correct §8.6 autoModeRateLimit wording to fixed one-minute window
 
@@ -127,13 +127,13 @@ Subsequent adversarial review rounds populate this section. The challenge-round 
 
 ## 9. Open decisions for review
 
-### Documenting the cross-boundary transient explicitly
+### Documenting the cross-boundary transient explicitly — RESOLVED (sign-off): explicit at both sites
 
-Whether §10.7 and §8.3 should explicitly document the bounded up-to-2x cross-boundary transient (one added sentence per site), or state only "fixed-window per-minute" and leave the boundary behavior implicit. SPEC-1 stages the explicit sentence; SPEC-2 leaves the anti-flood sentence unchanged and could carry the same explicit note. The reviewer may prefer the terse form at both sites.
+The bounded up-to-2x cross-boundary transient is documented explicitly at both rate-limit sites: SPEC-1 (§10.7) carries the transient sentence, and SPEC-2 (§8.3) now appends the matching sentence after the anti-flood sentence (covering both `maxPerMinute` and the N-independent `maxInboundPerMinute` aggregate). The terse form was not chosen; explicit documentation of the security-relevant §8.3 control's actual bound was preferred.
 
-### A minimal auto-mode boundary test
+### A minimal auto-mode boundary test — RESOLVED (sign-off): leave to T-8.6.7
 
-Whether to add a minimal fixed-window boundary test for the §8.6 auto-mode limiter (`leasecontrol`) in this proposal for symmetry, or leave all auto-mode window testing to the broader T-8.6.7 finding. The draft leaves it to T-8.6.7 and corrects only the §8.6:714 wording.
+No §8.6 auto-mode boundary test is added here. The auto-mode limiter routes through the same shared fixed-window primitive already pinned at tier 1, so a per-caller boundary test would re-exercise the shared primitive; the broader T-8.6.7 (Medium) finding owns auto-mode window testing, including the cross-replica and elicitation-fallback cases that carry the actual value. This proposal corrects only the §8.6 wording.
 
 ## 10. Files touched on application
 
