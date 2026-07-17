@@ -58,8 +58,16 @@ func specMapTestFilesFixture(t *testing.T, sections map[string][]string, present
 // gate: a concrete `.go` reference under a non-exempt section must
 // resolve on disk, a `::TestName` selector is stripped before the file
 // is probed, a directory or package reference is not required to be a
-// file, and both the exceptions-section and pending-path channels
-// suppress a missing-file report.
+// file, and the pending-path channel suppresses a missing-file report.
+//
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// the tests ... that encode it"; tests/spec-map-exceptions.yaml records
+// sections "explicitly exempt from the 'every section has at least one
+// test' rule"). The exceptions file waives only the has-a-test
+// (coverage-completeness) requirement; it does not waive the
+// existence check for a `tests[]` reference the map does carry. A
+// listed-but-excepted section's dangling reference must still be
+// flagged.
 func TestValidateSpecMapTestFiles(t *testing.T) {
 	// All references resolve: pass.
 	r := specMapTestFilesFixture(t,
@@ -81,10 +89,23 @@ func TestValidateSpecMapTestFiles(t *testing.T) {
 		nil, "", "")
 	expectFail(t, r, "pkg/foo/missing_test.go")
 
-	// A missing file whose section is exempt passes.
+	// A missing file whose section is listed in spec-map-exceptions.yaml
+	// still fails: the exceptions file waives the has-a-test
+	// (coverage-completeness) requirement, not the existence check on a
+	// tests[] reference the section does carry.
 	r = specMapTestFilesFixture(t,
 		map[string][]string{"1.4": {"pkg/foo/missing_test.go"}},
 		nil, "1.4", "")
+	expectFail(t, r, "1.4", "pkg/foo/missing_test.go")
+
+	// An excepted section that carries no tests[] entries at all still
+	// passes the existence check trivially (there is nothing to probe);
+	// the coverage-completeness waiver that lets such a section exist
+	// with zero tests is validateSpecMapCoverage's concern, not this
+	// gate's.
+	r = specMapTestFilesFixture(t,
+		map[string][]string{"1.7": {}},
+		nil, "1.7", "")
 	expectPass(t, r)
 
 	// A missing file listed in the pending file passes.

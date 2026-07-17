@@ -377,7 +377,7 @@ func assertStoreOutageDegrades(t *testing.T, c *kind.Cluster, s storeOutageScena
 			t.Errorf("health component %q carries runbook %q, expected %q",
 				s.healthComp, comp.runbook(), s.wantRunbookRef)
 		}
-		// Assert: the top-level §25.4 degradation envelope tracks the
+		// Assert: the top-level §25.2 degradation envelope tracks the
 		// outage. During the store outage the aggregate status is
 		// non-healthy, so the envelope level is degraded or failed (never
 		// healthy) and its thresholdSource is compiled-in-defaults.
@@ -407,7 +407,7 @@ func assertStoreOutageDegrades(t *testing.T, c *kind.Cluster, s storeOutageScena
 		t.Fatalf("/v1/admin/health did not return component %q to healthy within %s after %s was restored "+
 			"(last status %q)", s.healthComp, storeRecoveryBound, s.store, lastStatus)
 	}
-	// Assert: once the store recovers the top-level §25.4 degradation
+	// Assert: once the store recovers the top-level §25.2 degradation
 	// envelope returns to level healthy (with thresholdSource still
 	// compiled-in-defaults), so the response-level signal an agent reads
 	// tracks recovery, not only the per-component status.

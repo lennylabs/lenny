@@ -285,7 +285,10 @@
         "tests/tier2_component/opsidem/outage_test.go"
       ],
       "contract": ["tests/tier3_contract/ops_endpoints/..."],
-      "security": ["tests/tier9_security/diagnostics_fix_guardrails_test.go"]
+      "security": [
+        "tests/tier9_security/diagnostics_fix_guardrails_test.go",
+        "tests/tier9_security/mcp_management_authz_sweep_test.go"
+      ]
     },
     "tests/tier3_contract/ops_endpoints": {
       "unit": ["pkg/ops/opsserver/..."],
@@ -577,7 +580,11 @@
     },
     "pkg/ops/mcp": {
       "unit": ["pkg/ops/mcp/..."],
-      "contract": ["tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go"]
+      "contract": [
+        "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go"
+      ],
+      "security": ["tests/tier9_security/mcp_management_authz_sweep_test.go"]
     },
     "pkg/ops/me": {
       "unit": ["pkg/ops/me/..."]
