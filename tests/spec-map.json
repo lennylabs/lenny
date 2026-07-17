@@ -3279,7 +3279,9 @@
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
         "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey",
-        "tests/tier8_chaos/store_failure_test.go"
+        "tests/tier8_chaos/store_failure_test.go",
+        "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesTriggeringCheck_spec_25_3",
+        "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesRecoveredCheck_spec_25_3"
       ],
       "packages": [
         "pkg/gateway/operability/health",
@@ -3351,6 +3353,7 @@
         "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsFailedRestore",
         "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsRunningBackup",
         "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsVerifyingBackup",
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryOperationIDLookupIsUnambiguousForVerifyingBackup",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress"
@@ -3475,6 +3478,7 @@
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry",
         "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
+        "charts/lenny/tests/registry-digest-webhook_test.yaml",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesFixedPhaseDurations",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta"
