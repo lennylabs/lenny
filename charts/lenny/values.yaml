@@ -1028,6 +1028,24 @@ monitoring:
     namespace: ""
     # name is the OpenSLO ConfigMap name.
     name: "lenny-openslo"
+    # notificationTarget configures the shared OpenSLO
+    # AlertNotificationTarget every emitted AlertPolicy references through
+    # notificationTargets[].targetRef, so the ConfigMap is self-contained.
+    # Both values are operator-tunable per §16.10. Distinct per-deployment
+    # names let deployments sharing one OpenSLO tool define separate
+    # targets; the deployer defines the concrete channel and credentials in
+    # their own OpenSLO tool keyed by the configured name. This is distinct
+    # from openslo.name above, which is the ConfigMap resource name.
+    notificationTarget:
+      # name is the AlertNotificationTarget metadata.name and the targetRef
+      # every AlertPolicy points at. It must match the OpenSLO name pattern
+      # (lowercase alphanumeric and hyphens, up to 63 chars), enforced by
+      # values.schema.json so an invalid override is rejected at install.
+      name: "lenny-slo-notifications"
+      # type is the free-form AlertNotificationTarget spec.target the
+      # deployer's OpenSLO tool interprets (for example webhook, slack, or
+      # email).
+      type: "webhook"
 
 # slo carries the §16.5 service-level-objective posture. The §16.5 SLO
 # targets are provisional first-principles estimates that must not back
