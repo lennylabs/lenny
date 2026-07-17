@@ -218,3 +218,59 @@ func TestOperabilityPackageReferencesResolveOnDisk(t *testing.T) {
 			strings.Join(dangling, "; "))
 	}
 }
+
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+//
+//	the tests, packages, migrations, and chart templates that encode
+//	it"); 25.9 ("GET /v1/admin/audit-events" paginated query, plus the
+//	single-event, summary, retranslate, republish, and partition-drop
+//	endpoints of the Audit Log Query API)
+//
+// diagnosis: pkg/gateway/externalapi/admin implements every §25.9
+//
+//	endpoint (handleListAuditEvents, handleGetAuditEvent,
+//	handleAuditSummary, the retranslate/republish handlers, and the
+//	cross-tenant scatter-gather path). The §25.9 spec-map entry's
+//	tests[] already references pkg/gateway/externalapi/admin/
+//	audit_query_test.go and its siblings, but packages[] named only
+//	pkg/ops/opsaudit (the §11.7 audit-append funnel that feeds the log,
+//	not the §25.9 query surface), so coverage/impact tooling keyed on
+//	packages[] could not tie an edit of the query implementation back
+//	to §25.9.
+func TestSpecMapAuditQueryPackagesIncludeAdminImplementation(t *testing.T) {
+	t.Parallel()
+
+	pkgs := readSpecMapPackages(t)["25.9"]
+	if !contains(pkgs, "pkg/gateway/externalapi/admin") {
+		t.Errorf("spec-map.json §25.9 packages %v does not include pkg/gateway/externalapi/admin, "+
+			"which implements the GET /v1/admin/audit-events query API", pkgs)
+	}
+}
+
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+//
+//	the tests, packages, migrations, and chart templates that encode
+//	it"); 25.10 ("GET /v1/admin/drift compares... Running state...
+//	Desired state — read from bootstrap_seed_snapshot table in
+//	Postgres")
+//
+// diagnosis: pkg/drift implements the §25.10 field-by-field desired-
+//
+//	vs-running diff and severity classification, and
+//	pkg/ops/driftservice/pgstore implements the Postgres-backed
+//	bootstrap_seed_snapshot store the "Snapshot Validation" and "When
+//	the snapshot is updated" subsections describe. The §25.10 spec-map
+//	entry's tests[] already references pkg/drift/drift_test.go, but
+//	packages[] omitted both pkg/drift and pkg/ops/driftservice/pgstore,
+//	so coverage/impact tooling keyed on packages[] could not tie an
+//	edit of the diff engine or the snapshot store back to §25.10.
+func TestSpecMapDriftPackagesIncludeDiffAndSnapshotStore(t *testing.T) {
+	t.Parallel()
+
+	pkgs := readSpecMapPackages(t)["25.10"]
+	for _, want := range []string{"pkg/drift", "pkg/ops/driftservice/pgstore"} {
+		if !contains(pkgs, want) {
+			t.Errorf("spec-map.json §25.10 packages %v does not include %s", pkgs, want)
+		}
+	}
+}

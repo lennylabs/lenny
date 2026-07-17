@@ -3474,10 +3474,10 @@
         "tests/tier11_docs/diagnostics_audit_wiring_comment_test.go::TestDiagnosticsAuditWiringCommentsNotStale"
       ],
       "packages": [
+        "pkg/gateway/externalapi/admin",
         "pkg/ops/opsaudit"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.9 Audit Log Query API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.9 Audit Log Query API. pkg/gateway/externalapi/admin implements the query endpoints; pkg/ops/opsaudit is the §11.7 audit-append funnel that feeds the queried log. See TESTING.md §25 for the test plan."
     },
     "25.10": {
       "title": "Configuration Drift Detection",
@@ -3494,11 +3494,12 @@
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
+        "pkg/drift",
         "pkg/ops/driftservice",
-        "pkg/ops/driftservice/gatewayreader"
+        "pkg/ops/driftservice/gatewayreader",
+        "pkg/ops/driftservice/pgstore"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.10 Configuration Drift Detection. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.10 Configuration Drift Detection. pkg/drift implements the field-by-field diff and severity classification; pkg/ops/driftservice/pgstore implements the Postgres-backed bootstrap_seed_snapshot store. See TESTING.md §25 for the test plan."
     },
     "25.11": {
       "title": "Backup and Restore API",
