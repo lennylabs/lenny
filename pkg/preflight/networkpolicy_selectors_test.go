@@ -188,3 +188,174 @@ func TestCheckDNSPodSelectorParityIgnoresNonDNSRules(t *testing.T) {
 		t.Errorf("check flagged a non-DNS rule: %s", d.Reason)
 	}
 }
+
+// objectStoreInClusterPolicy builds an allow-pod-egress-objectstore
+// NetworkPolicy carrying the NET-071 in-cluster arm: an egress peer
+// selecting the self-managed MinIO pod on the TLS port.
+func objectStoreInClusterPolicy() *networkingv1.NetworkPolicy {
+	p := netPolicy("allow-pod-egress-objectstore")
+	p.Namespace = "lenny-agents"
+	p.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+		To: []networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: labelSel("kubernetes.io/metadata.name", "lenny-system"),
+			PodSelector:       labelSel("lenny.dev/component", "minio"),
+		}},
+		Ports: []networkingv1.NetworkPolicyPort{tcpPort(9443)},
+	}}
+	return p
+}
+
+// objectStoreCloudPolicy builds an allow-pod-egress-objectstore
+// NetworkPolicy carrying the NET-071 cloud-managed arm: an ipBlock peer
+// from a non-empty objectStorage.egressCIDRs list on TCP 443.
+func objectStoreCloudPolicy() *networkingv1.NetworkPolicy {
+	p := netPolicy("allow-pod-egress-objectstore")
+	p.Namespace = "lenny-agents"
+	p.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+		To: []networkingv1.NetworkPolicyPeer{{
+			IPBlock: &networkingv1.IPBlock{CIDR: "203.0.113.0/24"},
+		}},
+		Ports: []networkingv1.NetworkPolicyPort{tcpPort(443)},
+	}}
+	return p
+}
+
+// minioIngressWithAgentClause builds an allow-minio NetworkPolicy that
+// carries the NET-071 agent-namespace ingress clause paired with the
+// in-cluster arm, alongside the always-present gateway ingress.
+func minioIngressWithAgentClause() *networkingv1.NetworkPolicy {
+	p := netPolicy("allow-minio")
+	p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{
+		{
+			From:  []networkingv1.NetworkPolicyPeer{{PodSelector: labelSel("lenny.dev/component", "gateway")}},
+			Ports: []networkingv1.NetworkPolicyPort{tcpPort(9443)},
+		},
+		{
+			From: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: labelSel("lenny.dev/agent-namespace", "true"),
+				PodSelector:       labelSel("lenny.dev/managed", "true"),
+			}},
+			Ports: []networkingv1.NetworkPolicyPort{tcpPort(9443)},
+		},
+	}
+	return p
+}
+
+// minioIngressGatewayOnly builds an allow-minio NetworkPolicy with only
+// the gateway ingress clause and no NET-071 agent-namespace clause (the
+// cloud-managed / no-MinIO render).
+func minioIngressGatewayOnly() *networkingv1.NetworkPolicy {
+	p := netPolicy("allow-minio")
+	p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{
+		From:  []networkingv1.NetworkPolicyPeer{{PodSelector: labelSel("lenny.dev/component", "gateway")}},
+		Ports: []networkingv1.NetworkPolicyPort{tcpPort(9443)},
+	}}
+	return p
+}
+
+// TestCheckObjectStoreEgressParityPassesOnMatchedPair pins the §13.2
+// NET-071 both-or-neither invariant: an in-cluster object-store egress
+// arm paired with the matching MinIO agent-namespace ingress clause passes.
+//
+// spec: §13.2 line 209; §17.6 (NET-071).
+func TestCheckObjectStoreEgressParityPassesOnMatchedPair(t *testing.T) {
+	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
+		*objectStoreInClusterPolicy(),
+		*minioIngressWithAgentClause(),
+	})
+	if !d.Passed {
+		t.Errorf("matched in-cluster egress / MinIO ingress pair failed parity: %s", d.Reason)
+	}
+}
+
+// TestCheckObjectStoreEgressParityPassesOnCloudManagedArm pins that a
+// cloud-managed arm (an ipBlock peer from a non-empty egressCIDRs list)
+// with no in-cluster arm and no MinIO agent-namespace ingress clause
+// passes: the cloud-managed profile has no MinIO pod and no ingress side.
+//
+// spec: §13.2 line 209; §17.6 (NET-071).
+func TestCheckObjectStoreEgressParityPassesOnCloudManagedArm(t *testing.T) {
+	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
+		*objectStoreCloudPolicy(),
+		*minioIngressGatewayOnly(),
+	})
+	if !d.Passed {
+		t.Errorf("cloud-managed arm with non-empty CIDRs failed parity: %s", d.Reason)
+	}
+}
+
+// TestCheckObjectStoreEgressParityPassesWhenNeitherRenders pins that a
+// deployment resolving the in-memory or filesystem store (no object-store
+// egress policy, no agent-namespace MinIO ingress clause) passes.
+//
+// spec: §13.2 line 209; §17.6 (NET-071).
+func TestCheckObjectStoreEgressParityPassesWhenNeitherRenders(t *testing.T) {
+	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
+		*minioIngressGatewayOnly(),
+	})
+	if !d.Passed {
+		t.Errorf("neither-rendered case failed parity: %s", d.Reason)
+	}
+}
+
+// TestCheckObjectStoreEgressParityFailsInClusterArmWithoutMinIOIngress
+// pins the NET-071 fail-closed gate: an in-cluster object-store egress
+// arm rendered without the paired MinIO agent-namespace ingress clause
+// leaves the checkpoint chunk return path dropped by the lenny-system
+// default-deny, so the install fails closed. This asserts the corrected
+// gate rejects; before this check existed the one-sided render passed
+// preflight and silently broke checkpoint transfer at runtime.
+//
+// spec: §13.2 line 209; §17.6 (NET-071).
+func TestCheckObjectStoreEgressParityFailsInClusterArmWithoutMinIOIngress(t *testing.T) {
+	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
+		*objectStoreInClusterPolicy(),
+		*minioIngressGatewayOnly(),
+	})
+	if d.Passed {
+		t.Fatal("in-cluster arm without the paired MinIO ingress clause passed parity")
+	}
+	if !strings.Contains(d.Reason, "NETWORK_POLICY_OBJECTSTORE_PARITY") {
+		t.Errorf("reason %q does not carry the NET-071 parity error code", d.Reason)
+	}
+}
+
+// TestCheckObjectStoreEgressParityFailsMinIOIngressWithoutInClusterArm
+// pins the reverse NET-071 fail-closed gate: a MinIO agent-namespace
+// ingress clause rendered with no object-store egress policy fails closed.
+//
+// spec: §13.2 line 209; §17.6 (NET-071).
+func TestCheckObjectStoreEgressParityFailsMinIOIngressWithoutInClusterArm(t *testing.T) {
+	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
+		*minioIngressWithAgentClause(),
+	})
+	if d.Passed {
+		t.Fatal("MinIO agent-namespace ingress clause without an object-store egress policy passed parity")
+	}
+	if !strings.Contains(d.Reason, "NETWORK_POLICY_OBJECTSTORE_PARITY") {
+		t.Errorf("reason %q does not carry the NET-071 parity error code", d.Reason)
+	}
+}
+
+// TestCheckObjectStoreEgressParityFailsEmptyCloudCIDRs pins the NET-071
+// non-empty-CIDR gate: an object-store egress rule that renders no peers
+// admits every destination, the fail-open outcome of an empty
+// objectStorage.egressCIDRs list under a cloud-managed provider. The
+// check fails it closed.
+//
+// spec: §13.2 line 209; §17.6 (NET-071).
+func TestCheckObjectStoreEgressParityFailsEmptyCloudCIDRs(t *testing.T) {
+	p := netPolicy("allow-pod-egress-objectstore")
+	p.Namespace = "lenny-agents"
+	p.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+		To:    nil,
+		Ports: []networkingv1.NetworkPolicyPort{tcpPort(443)},
+	}}
+	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{*p})
+	if d.Passed {
+		t.Fatal("object-store egress rule with no peers (empty egressCIDRs) passed parity")
+	}
+	if !strings.Contains(d.Reason, "NETWORK_POLICY_OBJECTSTORE_PARITY") {
+		t.Errorf("reason %q does not carry the NET-071 parity error code", d.Reason)
+	}
+}

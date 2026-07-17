@@ -68,6 +68,33 @@ var dnsServerSelectors = map[string]string{
 	canonicalComponentLabel: "coredns",
 }
 
+// objectStoreEgressPolicyName is the §13.2 NET-071 supplemental
+// agent-egress NetworkPolicy that re-admits agent-pod egress to object
+// storage for checkpoint chunk PUT/GET against gateway-minted presigned
+// capabilities. The chart renders one per agent namespace.
+const objectStoreEgressPolicyName = "allow-pod-egress-objectstore"
+
+// minioIngressPolicyName is the §13.2 lenny-system NetworkPolicy whose
+// agent-namespace ingress clause admits the checkpoint chunk return path
+// on the MinIO TLS port, paired one-for-one with the object-store egress
+// policy's in-cluster arm (NET-071).
+const minioIngressPolicyName = "allow-minio"
+
+// agentNamespaceLabel is the namespace label the chart stamps on every
+// agent namespace. The MinIO agent-namespace ingress clause selects the
+// checkpoint chunk sources by pairing this namespaceSelector with the
+// managed-pod podSelector.
+const agentNamespaceLabel = "lenny.dev/agent-namespace"
+
+// managedPodLabel is the label the WarmPoolController stamps on every
+// agent pod. The object-store egress policy targets these pods, and the
+// MinIO agent-namespace ingress clause admits them as chunk sources.
+const managedPodLabel = "lenny.dev/managed"
+
+// minioComponentValue is the canonical-component value of the self-managed
+// MinIO pod the object-store egress policy's in-cluster arm selects.
+const minioComponentValue = "minio"
+
 // gatherNetworkPolicies lists the Lenny-rendered NetworkPolicies across
 // every namespace. The chart labels each managed resource with
 // app.kubernetes.io/name: lenny, so the selector-consistency and
