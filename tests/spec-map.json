@@ -1347,7 +1347,7 @@
         "tests/tier2_component/stores/experimentstore_test.go",
         "tests/tier2_component/stores/evalstore_test.go",
         "tests/tier2_component/evalaggregates/eval_aggregates_test.go",
-        "pkg/gateway/sessionserver/eval_test.go::TestEvalRateLimitSlidingWindowBoundaryEvasion_spec_10_7_938"
+        "pkg/gateway/sessionserver/eval_test.go::TestEvalRateLimitFixedWindowBoundary_spec_10_7"
       ],
       "packages": [
         "pkg/experiment"
