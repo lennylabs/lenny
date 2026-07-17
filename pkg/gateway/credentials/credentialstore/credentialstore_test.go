@@ -324,3 +324,66 @@ func TestLookupResolvesFourTuple_spec_4_9_1347(t *testing.T) {
 		t.Fatalf("Lookup status = %q, want revoked", rev.Status)
 	}
 }
+
+// TestRevokedCredentialsAcrossTenants is the §4.9 startup-rebuild query:
+// RevokedCredentials returns every revoked user credential across all
+// tenants, excludes active credentials, and orders deterministically by
+// (tenantId, credentialRef).
+func TestRevokedCredentialsAcrossTenants(t *testing.T) {
+	store := newStore()
+	ctx := context.Background()
+
+	// acme: one revoked, one active. globex: one revoked.
+	acmeRevoked, err := store.Register(ctx, "acme", "alice", credential.ProviderAnthropicDirect, "", "sk-a")
+	if err != nil {
+		t.Fatalf("register acme/alice: %v", err)
+	}
+	if _, err := store.Register(ctx, "acme", "bob", credential.ProviderGitHub, "", "sk-b"); err != nil {
+		t.Fatalf("register acme/bob: %v", err)
+	}
+	globexRevoked, err := store.Register(ctx, "globex", "carol", credential.ProviderVertexAI, "", "sk-c")
+	if err != nil {
+		t.Fatalf("register globex/carol: %v", err)
+	}
+	if _, err := store.Revoke(ctx, "acme", acmeRevoked.Ref); err != nil {
+		t.Fatalf("revoke acme: %v", err)
+	}
+	if _, err := store.Revoke(ctx, "globex", globexRevoked.Ref); err != nil {
+		t.Fatalf("revoke globex: %v", err)
+	}
+
+	got, err := store.RevokedCredentials(ctx)
+	if err != nil {
+		t.Fatalf("RevokedCredentials: %v", err)
+	}
+	want := []credentialstore.RevokedUserCredential{
+		{TenantID: "acme", CredentialRef: acmeRevoked.Ref},
+		{TenantID: "globex", CredentialRef: globexRevoked.Ref},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("RevokedCredentials returned %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	// Deterministic order: acme sorts before globex.
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestRevokedCredentialsEmpty confirms the §4.9 rebuild query returns an
+// empty slice and no error when no credential has been revoked.
+func TestRevokedCredentialsEmpty(t *testing.T) {
+	store := newStore()
+	ctx := context.Background()
+	if _, err := store.Register(ctx, "acme", "alice", credential.ProviderGitHub, "", "sk"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	got, err := store.RevokedCredentials(ctx)
+	if err != nil {
+		t.Fatalf("RevokedCredentials: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("RevokedCredentials with no revoked credential = %+v, want none", got)
+	}
+}

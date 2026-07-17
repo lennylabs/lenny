@@ -82,6 +82,19 @@ var (
 	ErrNotFound = errors.New("credentialstore: credential not found")
 )
 
+// RevokedUserCredential identifies one revoked user credential for the
+// §4.9 startup deny-list rebuild. The §4.9 deny list keys a user-backed
+// entry on (tenantId, credentialRef).
+//
+// spec: §4.9 — the startup rebuild's user-credential term.
+type RevokedUserCredential struct {
+	// TenantID owns the credential.
+	TenantID string
+	// CredentialRef is the opaque credential_ref; it is the deny-list
+	// credentialRef.
+	CredentialRef string
+}
+
 // Store is the §4.9 user-credential registry contract.
 //
 // spec: §4.3 line 202 — credentials are scoped by (tenant, user,
@@ -113,6 +126,16 @@ type Store interface {
 
 	// List returns the user's registered credentials.
 	List(ctx context.Context, tenantID, userID string) ([]Credential, error)
+
+	// RevokedCredentials returns every revoked user credential across
+	// all tenants, for the §4.9 startup deny-list rebuild. It is the
+	// only method that is not tenant-scoped.
+	//
+	// spec: §4.9 — a newly started gateway replica rebuilds its deny
+	// list from the stores' revoked entries so no revoked credential
+	// silently becomes accepted on a replica that missed the original
+	// pub/sub notification.
+	RevokedCredentials(ctx context.Context) ([]RevokedUserCredential, error)
 
 	// Rotate replaces the secret material for an existing credential.
 	Rotate(ctx context.Context, tenantID, ref, newSecret string) (Credential, error)
@@ -251,6 +274,28 @@ func (m *Memory) List(_ context.Context, tenantID, userID string) ([]Credential,
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
+	return out, nil
+}
+
+// RevokedCredentials implements Store. It scans every tenant's stored
+// credentials and returns each revoked one in a deterministic order.
+//
+// spec: §4.9 — the startup rebuild's user-credential term.
+func (m *Memory) RevokedCredentials(_ context.Context) ([]RevokedUserCredential, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []RevokedUserCredential
+	for _, c := range m.byRef {
+		if c.Status == StatusRevoked {
+			out = append(out, RevokedUserCredential{TenantID: c.TenantID, CredentialRef: c.Ref})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TenantID != out[j].TenantID {
+			return out[i].TenantID < out[j].TenantID
+		}
+		return out[i].CredentialRef < out[j].CredentialRef
+	})
 	return out, nil
 }
 
