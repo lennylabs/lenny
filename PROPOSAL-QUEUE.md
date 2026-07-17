@@ -405,7 +405,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-38 — "Sliding-window" rate-limit naming vs fixed-window implementation — §10.7/§8.3
-- **status:** claimed:proposal-C@2026-07-17T06:40:21Z
+- **status:** in-review:0042 (correct §10.7/§8.3/§8.6 "sliding-window" wording to the shared fixed-window per-minute counter + un-skip the pre-existing tier-1 eval boundary test; tier-4 clockstep tests declined as redundant to tier-1 primitive coverage)
 - **assigned:** proposal-C
 - **findings:** T-8.3.16, T-ADV.12
 - **root spec gap:** The spec calls both the eval-submission limit (§10.7) and messagingRateLimit (§8.3) "sliding-window," but both share the fixed-window `ratelimit.Counter` that resets on wall-clock minute boundaries, permitting classic window-boundary evasion.
