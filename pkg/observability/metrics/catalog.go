@@ -146,6 +146,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_credential_rotation_inflight_ceiling_hit_total", TypeCounter, "Credential rotation 300s in-flight ceiling hits"},
 	{"lenny_credential_revoked_with_active_leases", TypeGauge, "Pool-scoped revoked credentials with active leases"},
 	{"lenny_user_credential_revoked_with_active_leases", TypeGauge, "User-scoped revoked credentials with active leases"},
+	{"lenny_gateway_credential_leases_swept_total", TypeCounter, "Expired credential-lease rows removed by the §4.9 sweep worker"},
 	{"lenny_elicitation_roundtrip_seconds", TypeHistogram, "Elicitation round-trip latency"},
 	{"lenny_elicitation_pending", TypeGauge, "Elicitation requests pending"},
 	{"lenny_elicitation_suppressed_total", TypeCounter, "Elicitation requests suppressed"},
