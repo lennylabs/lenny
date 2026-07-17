@@ -565,6 +565,10 @@
       "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_fix_test.go"],
       "security": ["tests/tier9_security/diagnostics_fix_guardrails_test.go"]
     },
+    "pkg/drift": {
+      "unit": ["pkg/drift/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]
+    },
     "pkg/ops/driftservice": {
       "unit": ["pkg/ops/driftservice/..."],
       "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]

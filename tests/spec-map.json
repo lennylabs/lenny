@@ -3511,6 +3511,7 @@
       "tests": [
         "pkg/drift/drift_test.go",
         "pkg/ops/driftservice/gatewayreader/gatewayreader_test.go",
+        "tests/tier0_static/change_graph_drift_selection_test.go::TestChangeGraphDriftPackageSelectsUnitTier",
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/drift_reconcile_test.go",
