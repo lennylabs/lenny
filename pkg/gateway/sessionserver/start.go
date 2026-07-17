@@ -3188,19 +3188,30 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 // spec: §10.1 line 155 — reassembly on resume; fallback to the last full
 // checkpoint on a contiguity failure.
 func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Session) []adapterclient.ChunkGrant {
-	if s.resumeChunkResolver == nil || row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
+	if s.resumeChunkResolver == nil {
 		return nil
 	}
-	// spec: §10.1 line 154 — select the checkpoint to reassemble by the
-	// generation fence, not by the WorkspaceSnapshot.Ref alone. The ref is a
-	// validation input that names the session's last completed checkpoint;
-	// the selector takes the active manifest row at MAX(coordination_generation)
-	// regardless of partial, so a newer partial = true drain row at or above
-	// the completed checkpoint's generation wins and the
-	// partialRecoveryThresholdFraction gate can arbitrate. Resolving ref-first
-	// would always pick the completed checkpoint and make partial recovery
-	// unreachable.
-	checkpointID := s.selectResumeCheckpoint(ctx, row.TenantID, row.ID, row.WorkspaceSnapshot.Ref)
+	// spec: §10.1 line 154 — reassembly is manifest-driven, so it is not gated
+	// on the WorkspaceSnapshot.Ref being present. The ref is a validation input
+	// that names the session's last completed checkpoint (written only on a
+	// partial = false success), and the selector takes the active manifest row
+	// at MAX(coordination_generation) regardless of partial. A partial = true
+	// drain whose session never completed a full checkpoint has an empty ref,
+	// yet LatestActiveAny still selects it and its NULL-baseline threshold is 0
+	// (§10.1 line 155), so it must reassemble. Gating on a non-empty ref would
+	// short-circuit that partial-only session to zero chunks even though
+	// classifyResume reports partial_workspace for it.
+	var ref string
+	if row.WorkspaceSnapshot != nil {
+		ref = row.WorkspaceSnapshot.Ref
+	}
+	checkpointID := s.selectResumeCheckpoint(ctx, row.TenantID, row.ID, ref)
+	if checkpointID == "" {
+		// No active manifest row and no ref: the manifest reader is not wired
+		// (dev mode) or the checkpoint predates the chunked model. Restore
+		// nothing rather than resolve an empty key.
+		return nil
+	}
 	chunks, err := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, checkpointID)
 	if err == nil {
 		return chunks
@@ -3231,17 +3242,20 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 // is not wired (dev mode), a store lookup fails, or the completed checkpoint
 // was rotated out of the active set. Resolving by ref alone must never be the
 // selection mechanism, or the partialRecoveryThresholdFraction gate never
-// engages.
+// engages. The ref is normalized through checkpointIDFromSnapshotRef so the
+// four-segment object-path form (/{tenant}/checkpoints/{session}/{checkpoint_id})
+// resolves to the checkpoint_id the manifest row is keyed by, matching the
+// workspace-download and derive paths.
 //
 // spec: §10.1 line 154 — MAX(coordination_generation) select regardless of
-// partial; the ref is a validation input.
+// partial; the ref is a validation input in the four-segment form.
 func (s *Server) selectResumeCheckpoint(ctx context.Context, tenantID, sessionID, ref string) string {
 	if s.checkpointManifests == nil {
-		return ref
+		return checkpointIDFromSnapshotRef(ref)
 	}
 	active, err := s.checkpointManifests.LatestActiveAny(ctx, tenantID, sessionID)
 	if err != nil || active.CheckpointID == "" {
-		return ref
+		return checkpointIDFromSnapshotRef(ref)
 	}
 	return active.CheckpointID
 }
