@@ -163,6 +163,19 @@ func poolConflicts(existing poolstore.Pool, p PoolPayload) (conflicts, securityC
 	if p.ExecutionMode != "" && string(existing.ExecutionMode) != p.ExecutionMode {
 		conflicts = append(conflicts, "executionMode")
 	}
+	// spec: §4.9 — deliveryMode and spiffeBinding reconcile onto the
+	// SandboxTemplate, so a seed changing only one of them must register a
+	// conflict to be applied under force-update. They are ordinary (non
+	// security-critical) conflicts: the fail-closed multi-tenant Decide gate
+	// runs earlier in upsertPools, and marking them security-critical would
+	// block a legitimate single-tenant reconfiguration regardless of
+	// force-update.
+	if p.DeliveryMode != "" && existing.DeliveryMode != p.DeliveryMode {
+		conflicts = append(conflicts, "deliveryMode")
+	}
+	if p.SpiffeBinding != "" && existing.SpiffeBinding != p.SpiffeBinding {
+		conflicts = append(conflicts, "spiffeBinding")
+	}
 	if p.ResourceClass != "" && existing.ResourceClass != p.ResourceClass {
 		conflicts = append(conflicts, "resourceClass")
 	}
