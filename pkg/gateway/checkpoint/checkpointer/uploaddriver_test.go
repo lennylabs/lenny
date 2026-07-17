@@ -182,6 +182,13 @@ type chunkReleaseSpy struct {
 	freed         int64
 	objects       []blobstore.URI
 	rows          map[string]int64 // uri.String() -> live catalog row size
+	// failDelete makes HardDeleteObject return an error for every object,
+	// standing in for an unreachable MinIO during the abort sweep.
+	failDelete bool
+	// injectOnList lazily seeds one chunk object under the first prefix a sweep
+	// lists, so a test can exercise the abort sweep against a live attempt whose
+	// gateway-minted checkpoint id it cannot know in advance. It fires once.
+	injectOnList bool
 }
 
 func newChunkReleaseSpy() *chunkReleaseSpy {
@@ -201,6 +208,12 @@ func (s *chunkReleaseSpy) ListByPrefix(_ context.Context, u blobstore.URI) ([]bl
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.listedPartIDs = append(s.listedPartIDs, u.PartID)
+	if s.injectOnList {
+		s.injectOnList = false
+		obj := blobstore.URI{TenantID: u.TenantID, ObjectType: u.ObjectType, SessionID: u.SessionID, PartID: u.PartID + "chunk-00000.tar"}
+		s.objects = append(s.objects, obj)
+		s.rows[obj.String()] = 10
+	}
 	var out []blobstore.BlobInfo
 	for _, o := range s.objects {
 		if o.TenantID == u.TenantID && o.SessionID == u.SessionID && strings.HasPrefix(o.PartID, u.PartID) {
@@ -213,6 +226,9 @@ func (s *chunkReleaseSpy) ListByPrefix(_ context.Context, u blobstore.URI) ([]bl
 func (s *chunkReleaseSpy) HardDeleteObject(u blobstore.URI) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failDelete {
+		return fmt.Errorf("object store unreachable")
+	}
 	s.deleted = append(s.deleted, u.PartID)
 	kept := s.objects[:0]
 	for _, o := range s.objects {
@@ -298,6 +314,30 @@ func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driv
 		Deadline:      5 * time.Second,
 	}
 	return &driverHarness{cp: cp, manifests: manifests, quota: quota, store: store, release: release, sessions: sessions}, "s1"
+}
+
+// seedRetainedTimeoutRow seeds a partial = true / manifest_reason = 'timeout'
+// row for the session's default slot, with its reservation already released on
+// its own deadline-fire arm. A deadline-fire (timeout) abort is the one arm
+// that retains its row active for the resume path, so it is the prior active
+// row a later attempt supersedes; the stream-truncation, adapter-crash,
+// supersession, and quota-refusal arms soft-delete their row in-process and
+// leave nothing to supersede.
+func seedRetainedTimeoutRow(t *testing.T, h *driverHarness, tenantID, sessionID, checkpointID string) {
+	t.Helper()
+	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
+		TenantID:              tenantID,
+		CheckpointID:          checkpointID,
+		SessionID:             sessionID,
+		SlotID:                partialmanifeststore.SlotDefault,
+		Partial:               true,
+		ManifestReason:        partialmanifeststore.ReasonTimeout,
+		ChunkObjectKeyPrefix:  "/" + tenantID + "/checkpoint/" + sessionID + "/" + checkpointID + "/",
+		ReservedBytes:         30,
+		ReservationReleasedAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed retained timeout row: %v", err)
+	}
 }
 
 // spec: §10.1 — a complete checkpoint whose every declared byte is
@@ -434,6 +474,84 @@ func TestDriverLeavesPartialTrueOnTruncatedStream_spec_10_1(t *testing.T) {
 	}
 }
 
+// spec: §4.4 "Checkpoint abort cleanup" — a stream-truncation abort whose
+// prefix sweep deletes every chunk object soft-deletes the manifest row after a
+// final prefix list returns empty, the same disposition the resume and §12.5
+// backstop paths reach. Leaving the emptied partial row active (deleted_at IS
+// NULL) would let a later resume's highest-generation selector pick a row whose
+// chunks are already gone and fall back to a stale full checkpoint.
+//
+// diagnosis: finaliseAbort ran the prefix sweep but never soft-deleted the
+// manifest row, deferring the whole soft-delete to the §12.5 backstop, so the
+// aborted row stayed partial = true / deleted_at IS NULL until the next GC
+// cycle. This test drives a truncated stream past one confirmed chunk and
+// asserts the row is soft-deleted in-process, which fails against the pre-fix
+// code where DeletedAt stayed zero.
+func TestDriverAbortSweepSoftDeletesRowAfterPrefixEmpty_spec_4_4(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		truncateAfter: 0, // close after chunk 0 commits, no Summary
+	}, 1<<30)
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	rec := latestManifest(t, h, "acme", sid)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after a truncated stream")
+	}
+	if rec.DeletedAt.IsZero() {
+		t.Error("manifest row still active after the abort sweep emptied the prefix, want soft-deleted in-process")
+	}
+}
+
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248 — when a chunk
+// DeleteObject fails during the abort sweep the gateway increments
+// lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for
+// that object and leaves the manifest row active (deleted_at IS NULL) so the
+// §12.5 backstop re-selects the prefix and retries the delete on a later cycle.
+//
+// diagnosis: finaliseAbort passed a nil onDeleteErr callback to the prefix
+// sweep and discarded its error, so a failed DeleteObject on the abort path
+// emitted no orphaned-object counter — the named metric never fired on its
+// dominant drain/abort failure mode. This test injects a chunk object under the
+// live attempt's prefix and fails its delete, asserting one counter emission
+// and an active row, which fails against the pre-fix code that emitted none.
+func TestDriverAbortSweepCountsOrphanOnDeleteFailure_spec_4_4(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		truncateAfter: 0, // close after chunk 0 commits, no Summary
+	}, 1<<30)
+	if _, err := h.sessions.Update(context.Background(), "acme", sid,
+		func(s *sessionstore.Session) error { s.PoolRef = "tier-1"; return nil }); err != nil {
+		t.Fatalf("set session pool: %v", err)
+	}
+	h.release.failDelete = true
+	h.release.injectOnList = true
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	if m.orphanedObjects != 1 {
+		t.Fatalf("orphaned-object emissions = %d, want 1 on a failed abort-sweep delete", m.orphanedObjects)
+	}
+	if m.orphanedPool != "tier-1" {
+		t.Errorf("orphaned-object pool = %q, want %q (the session's bound pool)", m.orphanedPool, "tier-1")
+	}
+	if m.orphanedTrigger != string(checkpoint.TriggerPeriodic) {
+		t.Errorf("orphaned-object trigger = %q, want %q", m.orphanedTrigger, checkpoint.TriggerPeriodic)
+	}
+	// The failed delete leaves the manifest row active so the §12.5 backstop
+	// re-selects the prefix and retries; soft-deleting it here would drop the
+	// prefix from the backstop's deleted_at IS NULL selector.
+	rec := latestManifest(t, h, "acme", sid)
+	if !rec.DeletedAt.IsZero() {
+		t.Error("manifest row soft-deleted despite a failed chunk delete, want left active for the backstop")
+	}
+}
+
 // spec: §16.1 line 195 — every terminal abort arm emits
 // lenny_checkpoint_partial_total once, with recovered = false, the
 // manifest_reason that named the arm, and the trigger the attempt was
@@ -526,21 +644,16 @@ func TestDriverEmitsNoPartialCounterOnCompleteArm_spec_16_1(t *testing.T) {
 // once with that reason (recovered = false), alongside the supersede-specific
 // counter.
 func TestDriverEmitsPartialCounterOnSupersedeArm_spec_16_1(t *testing.T) {
-	// First attempt truncates, leaving a partial = true active row.
+	// A retained 'timeout' row from a prior deadline-fire is the active row a
+	// later completing attempt supersedes.
 	h, sid := newDriverHarness(t, &chunkedAdapter{
-		probeBytes: 30, chunkLens: []int64{10, 10, 10}, truncateAfter: 0,
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
+	seedRetainedTimeoutRow(t, h, "acme", sid, "cp-timeout")
 	m := &captureDriverMetrics{}
 	h.cp.DriverMetrics = m
-	_ = h.cp.Checkpoint(context.Background(), "acme", sid)
-
-	// A fresh completing attempt on the same (session, slot) supersedes the
-	// retained row.
-	second := &chunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1, store: h.store}
-	client := dialAdapter(t, second)
-	h.cp.Registry.Put(&podsession.BindResult{SessionID: sid, TenantID: "acme", Adapter: client})
 	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
-		t.Fatalf("second Checkpoint: %v", err)
+		t.Fatalf("Checkpoint: %v", err)
 	}
 	var superseded int
 	for _, e := range m.partial {
@@ -657,28 +770,23 @@ func TestDriverEmitsSkippedOnSizeLimit_spec_4_4(t *testing.T) {
 	}
 }
 
-// spec: §10.1 supersede-on-write — an aborted attempt's retained active row
-// is superseded by the next attempt regardless of trigger, and the
-// supersede counter fires once per superseded row.
+// spec: §10.1 supersede-on-write — a retained active row is superseded by the
+// next attempt regardless of trigger, and the supersede counter fires once per
+// superseded row. Only the deadline-fire (timeout) arm retains its row active;
+// the other abort arms soft-delete their row in-process, so a retained timeout
+// row is the prior active row a later attempt supersedes.
 func TestDriverSupersedesPriorAbortedAttempt_spec_10_1(t *testing.T) {
-	// First attempt truncates, leaving a partial = true active row.
 	h, sid := newDriverHarness(t, &chunkedAdapter{
-		probeBytes: 30, chunkLens: []int64{10, 10, 10}, truncateAfter: 0,
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
+	seedRetainedTimeoutRow(t, h, "acme", sid, "cp-timeout")
 	m := &captureDriverMetrics{}
 	h.cp.DriverMetrics = m
-	_ = h.cp.Checkpoint(context.Background(), "acme", sid)
-
-	// Rebind a fresh completing adapter for the second attempt on the same
-	// registry so the same (session, slot) supersedes the retained row.
-	second := &chunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1, store: h.store}
-	client := dialAdapter(t, second)
-	h.cp.Registry.Put(&podsession.BindResult{SessionID: sid, TenantID: "acme", Adapter: client})
 	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
-		t.Fatalf("second Checkpoint: %v", err)
+		t.Fatalf("Checkpoint: %v", err)
 	}
 	if m.superseded == 0 {
-		t.Errorf("IncCheckpointPartialManifestsSuperseded was not fired for the retained aborted row")
+		t.Errorf("IncCheckpointPartialManifestsSuperseded was not fired for the retained timeout row")
 	}
 }
 
@@ -694,7 +802,7 @@ func TestDriverSupersedesPriorAbortedAttempt_spec_10_1(t *testing.T) {
 // supersededPool reads "" and this assertion fails.
 func TestDriverCountersCarrySessionBoundPool_spec_16_1(t *testing.T) {
 	h, sid := newDriverHarness(t, &chunkedAdapter{
-		probeBytes: 30, chunkLens: []int64{10, 10, 10}, truncateAfter: 0,
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
 	// The session is scheduled against a named pool; the Checkpointer's own
 	// static Pool label stays empty, as it is in production.
@@ -702,15 +810,13 @@ func TestDriverCountersCarrySessionBoundPool_spec_16_1(t *testing.T) {
 		func(s *sessionstore.Session) error { s.PoolRef = "tier-1"; return nil }); err != nil {
 		t.Fatalf("set session pool: %v", err)
 	}
+	// A retained 'timeout' row is the prior active row the completing attempt
+	// supersedes, firing the supersede counter under test.
+	seedRetainedTimeoutRow(t, h, "acme", sid, "cp-timeout")
 	m := &captureDriverMetrics{}
 	h.cp.DriverMetrics = m
-	_ = h.cp.Checkpoint(context.Background(), "acme", sid)
-
-	second := &chunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1, store: h.store}
-	client := dialAdapter(t, second)
-	h.cp.Registry.Put(&podsession.BindResult{SessionID: sid, TenantID: "acme", Adapter: client})
 	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
-		t.Fatalf("second Checkpoint: %v", err)
+		t.Fatalf("Checkpoint: %v", err)
 	}
 	if m.superseded == 0 {
 		t.Fatal("supersede counter did not fire")

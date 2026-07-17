@@ -28,6 +28,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -199,6 +200,9 @@ type cpStore struct {
 	urls   map[string]blobstore.URI
 	uris   map[string]blobstore.URI // object path -> URI
 	listed []string                 // object-path prefixes ListByPrefix walked
+	// failDelete makes HardDeleteObject return an error without removing the
+	// object, standing in for an unreachable MinIO during the abort sweep.
+	failDelete bool
 }
 
 func newCPStore() *cpStore {
@@ -275,10 +279,43 @@ func (s *cpStore) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.
 func (s *cpStore) HardDeleteObject(u blobstore.URI) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failDelete {
+		return fmt.Errorf("object store unreachable")
+	}
 	key := objectPath(u)
 	delete(s.sizes, key)
 	delete(s.uris, key)
 	return nil
+}
+
+// cpDriverMetrics is a checkpointer.DriverMetrics capture recording the
+// gateway-side checkpoint counter emissions a test asserts on. The abort-sweep
+// tests read orphanedObjects, orphanedPool, and orphanedTrigger.
+type cpDriverMetrics struct {
+	mu              sync.Mutex
+	orphanedObjects int
+	orphanedPool    string
+	orphanedTrigger string
+}
+
+func (m *cpDriverMetrics) IncCheckpointSizeExceeded(string, string)          {}
+func (m *cpDriverMetrics) IncCheckpointStorageFailure(string, string, string) {}
+func (m *cpDriverMetrics) IncCheckpointPartialManifestsSuperseded(string)     {}
+func (m *cpDriverMetrics) IncCheckpointPartial(string, bool, string, checkpoint.Trigger) {
+}
+func (m *cpDriverMetrics) IncCheckpointKMSUnavailable() {}
+func (m *cpDriverMetrics) IncCheckpointOrphanedObjects(pool, trigger string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.orphanedObjects++
+	m.orphanedPool = pool
+	m.orphanedTrigger = trigger
+}
+
+func (m *cpDriverMetrics) orphanCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.orphanedObjects
 }
 
 func (s *cpStore) sweptPrefix(prefix string) bool {
@@ -334,6 +371,7 @@ type cpDriverHarness struct {
 	quota     *storagequota.Memory
 	store     *cpStore
 	catalog   *cpCatalog
+	metrics   *cpDriverMetrics
 	sessions  sessionstore.Store
 }
 
@@ -361,6 +399,7 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 	manifests := partialmanifeststore.NewMemoryStore(nil)
 	quota := storagequota.NewMemory()
 	catalog := newCPCatalog()
+	metrics := &cpDriverMetrics{}
 	cp := &checkpointer.Checkpointer{
 		Sessions:      sessions,
 		Registry:      registry,
@@ -371,9 +410,10 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 		ObjectStore:   store,
 		ChunkCatalog:  catalog,
 		ChunkObjects:  store,
+		DriverMetrics: metrics,
 		Deadline:      5 * time.Second,
 	}
-	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, catalog: catalog, sessions: sessions}
+	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, catalog: catalog, metrics: metrics, sessions: sessions}
 }
 
 // latestManifest resolves the manifest row for the session's latest

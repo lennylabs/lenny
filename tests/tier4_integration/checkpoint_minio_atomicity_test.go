@@ -37,7 +37,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // spec: §10.1 — the intent row is partial = true from INSERT and flips to
@@ -159,5 +161,83 @@ func TestCheckpointLeavesPartialOnTruncatedStream(t *testing.T) {
 	}
 	if got := h.store.count(rec.ChunkObjectKeyPrefix); got != 0 {
 		t.Errorf("objects under prefix = %d after the sweep, want 0", got)
+	}
+}
+
+// spec: §4.4 "Checkpoint abort cleanup" — a stream-truncation abort whose sweep
+// deletes every chunk object soft-deletes the manifest row after a final prefix
+// list returns empty, the same disposition the resume and §12.5 backstop paths
+// reach. Leaving the emptied partial row active (deleted_at IS NULL) would let a
+// later resume's highest-generation selector pick a row whose chunks are gone
+// and fall back to a stale full checkpoint.
+//
+// diagnosis: the abort sweep deleted the chunk objects but never soft-deleted
+// the manifest row, deferring the whole soft-delete to the §12.5 backstop, so
+// the emptied row stayed active until the next GC cycle. This test drives a
+// truncated stream, lets the sweep empty the prefix, and asserts the row is
+// soft-deleted in-process; it fails against the pre-fix code where the row
+// stayed active.
+func TestCheckpointAbortSweepSoftDeletesRowAfterPrefixEmpty(t *testing.T) {
+	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: 0}
+	h := newCPDriverHarness(t, adapter)
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	rec := h.latestManifest(t)
+	if !rec.Partial {
+		t.Errorf("manifest partial = false, want true after a truncated stream")
+	}
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got != 0 {
+		t.Fatalf("objects under prefix = %d after the sweep, want 0", got)
+	}
+	if rec.DeletedAt.IsZero() {
+		t.Error("manifest row still active after the abort sweep emptied the prefix, want soft-deleted in-process")
+	}
+	if _, err := h.manifests.LatestActive(context.Background(), cpTenant, cpSession); err == nil {
+		t.Error("LatestActive still returns the swept row, want no active row after in-process soft-delete")
+	}
+}
+
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248 — when a chunk
+// DeleteObject fails during the abort sweep the gateway increments
+// lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for that
+// object and leaves the manifest row active (deleted_at IS NULL) so the §12.5
+// backstop re-selects the prefix and retries the delete.
+//
+// diagnosis: the abort sweep passed a nil delete-error callback and discarded
+// the sweep error, so a failed DeleteObject on the abort path emitted no
+// orphaned-object counter — the named metric never fired on its dominant
+// drain/abort failure mode. This test fails the object store's delete during a
+// truncated-stream sweep and asserts one counter emission and an active row; it
+// fails against the pre-fix code that emitted none.
+func TestCheckpointAbortSweepCountsOrphanOnDeleteFailure(t *testing.T) {
+	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: 0}
+	h := newCPDriverHarness(t, adapter)
+	if _, err := h.sessions.Update(context.Background(), cpTenant, cpSession,
+		func(s *sessionstore.Session) error { s.PoolRef = "tier-1"; return nil }); err != nil {
+		t.Fatalf("set session pool: %v", err)
+	}
+	h.store.failDelete = true
+
+	if err := h.cp.Checkpoint(context.Background(), cpTenant, cpSession); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	rec := h.latestManifest(t)
+	if got := h.metrics.orphanCount(); got != 1 {
+		t.Fatalf("orphaned-object emissions = %d, want 1 on a failed abort-sweep delete", got)
+	}
+	if h.metrics.orphanedPool != "tier-1" {
+		t.Errorf("orphaned-object pool = %q, want %q (the session's bound pool)", h.metrics.orphanedPool, "tier-1")
+	}
+	if h.metrics.orphanedTrigger != string(checkpoint.TriggerPeriodic) {
+		t.Errorf("orphaned-object trigger = %q, want %q", h.metrics.orphanedTrigger, checkpoint.TriggerPeriodic)
+	}
+	// The failed delete leaves the row active so the §12.5 backstop retries.
+	if !rec.DeletedAt.IsZero() {
+		t.Error("manifest row soft-deleted despite a failed chunk delete, want left active for the backstop")
+	}
+	if got := h.store.count(rec.ChunkObjectKeyPrefix); got == 0 {
+		t.Error("chunk object removed despite a failed delete, want retained under the active row")
 	}
 }

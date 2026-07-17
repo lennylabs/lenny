@@ -108,12 +108,16 @@ type DriverMetrics interface {
 	// kms:-coded object-store rejection.
 	IncCheckpointKMSUnavailable()
 	// IncCheckpointOrphanedObjects stamps
-	// lenny_checkpoint_orphaned_objects_total when a chunk object's delete
-	// fails and no reclaimer will retry it. The rotation-side release uses it
-	// for a completed (partial = false) checkpoint, which the §12.5 backstop
-	// sweep never re-selects (that sweep's predicate carries partial = true),
-	// so a failed DeleteObject there orphans the object with no backstop.
-	// spec: §4.4 line 248.
+	// lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for
+	// a chunk object whose delete failed during a checkpoint chunk sweep. The
+	// rotation-side release stamps it for a completed (partial = false)
+	// checkpoint, which the §12.5 backstop sweep never re-selects (that sweep's
+	// predicate carries partial = true), so a failed DeleteObject there orphans
+	// the object with no reclaimer. The in-process abort sweep stamps it too, on
+	// its fail-safe direction: it leaves the manifest row active so the §12.5
+	// backstop retries the delete, and the counter marks that the object is
+	// transiently unreclaimed until that retry lands.
+	// spec: §4.4 line 248; §4.4 "Checkpoint abort cleanup".
 	IncCheckpointOrphanedObjects(pool, trigger string)
 }
 
@@ -864,15 +868,47 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// through the cataloging decorator — soft-delete its artifact_store row
 	// (the §12.5 rule 4 decrement, exactly once) before the per-key object
 	// delete — so an aborted checkpoint's confirmed bytes return to the tenant
-	// rather than staying charged forever (spec: §12.5 GC rule 4). Finalise
-	// left the manifest row active (partial = true), so a failed object delete
-	// is retried by the §12.5 backstop, which re-selects the row; no
-	// orphaned-object callback is needed here.
+	// rather than staying charged forever (spec: §12.5 GC rule 4).
+	//
+	// On a chunk DeleteObject failure the sweep increments
+	// lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for
+	// the object it could not delete and leaves the manifest row active
+	// (partial = true), so the §12.5 backstop re-selects the prefix and retries
+	// the delete on a later cycle. When every object is deleted the sweep
+	// soft-deletes the manifest row after a final prefix list returns empty, the
+	// same finaliseReclaimedManifest step the resume and backstop paths run, so
+	// a stream_truncated / superseded / quota_exceeded abort does not leave an
+	// emptied active partial row for the resume selector to pick.
+	// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248 (orphaned-object
+	// counter).
 	if reason != partialmanifeststore.ReasonTimeout && c.ChunkCatalog != nil && c.ChunkObjects != nil && d.prefix != "" {
-		_ = releaseChunkObjectsUnderPrefix(ctx, c.ChunkCatalog, c.ChunkObjects,
-			d.chunkPrefixURI(), d.prefix, c.tombstoneRetention(), nil)
+		if err := releaseChunkObjectsUnderPrefix(ctx, c.ChunkCatalog, c.ChunkObjects,
+			d.chunkPrefixURI(), d.prefix, c.tombstoneRetention(), d.onOrphanedObject); err == nil {
+			_ = finaliseReclaimedManifest(ctx, c.Manifests, c.ChunkObjects,
+				d.chunkPrefixURI(), partialmanifeststore.Record{
+					TenantID:             d.tenantID,
+					CheckpointID:         d.checkpointID,
+					SessionID:            d.sessionID,
+					ChunkObjectKeyPrefix: d.prefix,
+				})
+		}
 	}
 	return nil
+}
+
+// onOrphanedObject stamps the §4.4 line 248
+// lenny_checkpoint_orphaned_objects_total counter for one chunk object the
+// abort sweep could not delete, labeling it with the attempt's pool and
+// trigger. The abort sweep leaves the manifest row active on such a failure so
+// the §12.5 backstop re-selects the prefix and retries the delete, but the
+// object is counted so the leak window is observable rather than silent. A nil
+// DriverMetrics skips the emission.
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248.
+func (d *uploadDriver) onOrphanedObject() {
+	if d.c.DriverMetrics == nil {
+		return
+	}
+	d.c.DriverMetrics.IncCheckpointOrphanedObjects(d.pool, string(d.trigger))
 }
 
 // reconcile releases the unconfirmed portion of the reservation exactly
