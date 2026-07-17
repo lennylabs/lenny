@@ -227,13 +227,17 @@ func (c *capturingRecoveryMetrics) IncCheckpointPartial(pool string, recovered b
 // spec: §16.1 line 195 — a resume that reassembles an above-threshold partial
 // checkpoint stamps lenny_checkpoint_partial_total{recovered=true} exactly
 // once, carrying the session's pool, the recovered row's manifest_reason, and
-// a trigger inside the closed §4.4 checkpoint.Trigger enum. A complete
-// (partial = false) restore emits nothing.
+// the eviction trigger. The retained timeout partial the resume reassembles
+// is produced by the preStop drain, which stamps the eviction trigger on that
+// finalisation (§10.1 line 172), so the recovered=true series must carry
+// trigger = eviction to join its recovered=false write-path counterpart on the
+// trigger label. A complete (partial = false) restore emits nothing.
 //
 // diagnosis: a missing emission means the resume-side recovery signal is
 // unwired and operators cannot compute a partial-checkpoint recovery rate; an
 // emission on a complete restore mislabels an ordinary full restore as a
-// partial recovery; a trigger outside the enum breaks the §16.1 label domain.
+// partial recovery; a trigger other than eviction cannot join the
+// recovered=false abort series, so the per-trigger recovery rate is wrong.
 func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) {
 	const (
 		tenant  = "acme"
@@ -275,6 +279,14 @@ func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) 
 	}
 	if !got.trigger.IsValid() {
 		t.Errorf("trigger = %q, want a member of the closed checkpoint.Trigger enum", got.trigger)
+	}
+	// spec: §10.1 line 172 — the preStop drain stamps the eviction trigger on
+	// the retained timeout partial the resume reassembles, so the write-path
+	// abort emits {timeout, eviction, recovered=false}. The recovered=true
+	// resume emission must carry the same trigger to be joinable.
+	if got.trigger != checkpoint.TriggerEviction {
+		t.Errorf("trigger = %q, want %q so the recovered=true series joins its recovered=false write-path counterpart",
+			got.trigger, checkpoint.TriggerEviction)
 	}
 }
 

@@ -3298,19 +3298,26 @@ func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessions
 // (which never reaches a successful ResolveResult), and a resume that
 // resolved no chunks all leave res.Recovered false and emit nothing.
 //
-// The trigger label is stamped pre_scale_down: the recovery-on-resume path
-// reassembles the partial checkpoint a pod drain left behind (§10.1 line
-// 155), and the checkpoint_manifest row does not persist the originating
-// trigger, so pre_scale_down names the §4.4 producer of the drain partial
-// the resume recovers. The value stays inside the closed checkpoint.Trigger
-// enum §16.1 line 195 admits.
+// The trigger label is stamped eviction so the recovered=true series joins
+// its recovered=false write-path counterpart on the trigger label. The only
+// partial a resume reassembles is a retained deadline-fire
+// (manifest_reason = "timeout") row the preStop drain left behind, and the
+// drain driver stamps the eviction trigger on that finalisation (§10.1 line
+// 172), so the write-path abort emits it with trigger = eviction. Matching
+// that here keeps the per-trigger partial-recovery rate
+// (recovered=true / (recovered=true + recovered=false)) computable. The
+// checkpoint_manifest row does not persist the originating trigger, so this
+// is stamped from the drain producer §10.1 line 172 pins rather than read
+// back. The value stays inside the closed checkpoint.Trigger enum §16.1
+// line 195 admits.
 //
-// spec: §16.1 line 195; §10.1 line 155 (reassembly on resume).
+// spec: §16.1 line 195; §10.1 line 172 (the drain stamps the eviction
+// trigger); §10.1 line 155 (reassembly on resume).
 func (s *Server) emitCheckpointRecovered(row sessionstore.Session, res resumechunks.ResolveResult) {
 	if s.checkpointRecoveryMetrics == nil || !res.Recovered {
 		return
 	}
-	s.checkpointRecoveryMetrics.IncCheckpointPartial(row.PoolRef, true, res.ManifestReason, checkpoint.TriggerPreScaleDown)
+	s.checkpointRecoveryMetrics.IncCheckpointPartial(row.PoolRef, true, res.ManifestReason, checkpoint.TriggerEviction)
 }
 
 // fenceResumedPod issues the §10.1 / §4.2 CoordinatorFence to the pod a
