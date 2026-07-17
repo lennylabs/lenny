@@ -423,7 +423,9 @@ func (s *Service) pollPage(cursorKind, eventKey string, filter gwevents.EventFil
 	}
 	if gap {
 		page.Pagination.GapDetected = true
+		page.Pagination.GapReason = "cursor could not be resolved against the current buffer: evicted, or minted at a different actualSource"
 		page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindBuffer, oldestKey)
+		page.Pagination.SuggestedAction = "resync"
 		s.observeGap()
 	}
 	return page

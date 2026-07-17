@@ -3210,13 +3210,15 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapPackagesIncludeEveryTestReferencedPackage",
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "tests/tier8_chaos/store_failure_test.go",
-        "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview"
+        "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview",
+        "pkg/ops/events/read_surface_test.go::TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261"
       ],
       "packages": [
-        "pkg/ops/conventions"
+        "pkg/ops/conventions",
+        "pkg/ops/events"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.2 Architecture Overview. The API conventions shared by every operability endpoint (the canonical degradation and error envelopes and pagination) are implemented in pkg/ops/conventions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.2 Architecture Overview. The API conventions shared by every operability endpoint (the canonical degradation and error envelopes and pagination) are implemented in pkg/ops/conventions. The §25.2 cursor-opaqueness and gap-detection rule (a cursor minted at one actualSource presented at another reports gapDetected/oldestAvailableCursor/suggestedAction) is exercised against the §25.5 read surface in pkg/ops/events. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
     },
     "25.3": {
       "title": "Gateway-Side Ops Endpoints",
