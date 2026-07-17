@@ -371,6 +371,49 @@ func TestRevokedCredentialsAcrossTenants(t *testing.T) {
 	}
 }
 
+// TestRevokedCredentialsOrdersByRefWithinTenant pins the §4.9 rebuild
+// query's secondary sort key: two revoked credentials under the same tenant
+// are returned ordered by credentialRef, so the deny-list rebuild is
+// deterministic regardless of map iteration order.
+func TestRevokedCredentialsOrdersByRefWithinTenant(t *testing.T) {
+	store := newStore()
+	ctx := context.Background()
+
+	first, err := store.Register(ctx, "acme", "alice", credential.ProviderAnthropicDirect, "", "sk-1")
+	if err != nil {
+		t.Fatalf("register acme/alice: %v", err)
+	}
+	second, err := store.Register(ctx, "acme", "bob", credential.ProviderGitHub, "", "sk-2")
+	if err != nil {
+		t.Fatalf("register acme/bob: %v", err)
+	}
+	for _, ref := range []string{first.Ref, second.Ref} {
+		if _, err := store.Revoke(ctx, "acme", ref); err != nil {
+			t.Fatalf("revoke %s: %v", ref, err)
+		}
+	}
+
+	got, err := store.RevokedCredentials(ctx)
+	if err != nil {
+		t.Fatalf("RevokedCredentials: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("RevokedCredentials returned %d entries, want 2: %+v", len(got), got)
+	}
+	if got[0].TenantID != "acme" || got[1].TenantID != "acme" {
+		t.Fatalf("both entries must be tenant acme: %+v", got)
+	}
+	// Within one tenant the entries sort by credentialRef ascending.
+	lo, hi := first.Ref, second.Ref
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if got[0].CredentialRef != lo || got[1].CredentialRef != hi {
+		t.Errorf("within-tenant order = [%s, %s], want [%s, %s]",
+			got[0].CredentialRef, got[1].CredentialRef, lo, hi)
+	}
+}
+
 // TestRevokedCredentialsEmpty confirms the §4.9 rebuild query returns an
 // empty slice and no error when no credential has been revoked.
 func TestRevokedCredentialsEmpty(t *testing.T) {

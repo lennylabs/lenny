@@ -1488,27 +1488,44 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 		if gcInterval <= 0 {
 			gcInterval = time.Hour
 		}
-		go func() {
-			ticker := time.NewTicker(gcInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-w.watchdogCtx.Done():
-					return
-				case <-ticker.C:
-					swept, denyRemoved, err := sweepExpiredCredentialLeases(w.watchdogCtx, w.llmLeases, w.credDeny, clockinject.Now())
-					if err != nil {
-						log.Printf("lenny-gateway: §4.9 expired-lease sweep error: %v", err)
-						continue
-					}
-					w.gwMetrics.AddCredentialLeasesSwept(swept)
-					if swept > 0 || denyRemoved > 0 {
-						log.Printf("lenny-gateway: §4.9 expired-lease sweep removed %d lease row(s) past ExpiresAt and expired %d deny-list entr(ies)",
-							swept, denyRemoved)
-					}
-				}
+		go runCredentialLeaseSweepLoop(w.watchdogCtx, w.llmLeases, w.credDeny, w.gwMetrics, gcInterval, clockinject.Now)
+	}
+}
+
+// credentialLeaseSweepMetrics records how many expired lease rows the §4.9
+// sweep removed each tick. *gatewaymetrics.Metrics satisfies it; a test
+// substitutes a counter.
+type credentialLeaseSweepMetrics interface {
+	AddCredentialLeasesSwept(n int)
+}
+
+// runCredentialLeaseSweepLoop runs the §4.9 expired-lease sweep on a ticker
+// until ctx is cancelled. Each tick deletes credential_leases rows past
+// ExpiresAt and reconciles this replica's deny list, failing closed on a
+// store error (a failing tick leaves the deny entry in place and retries
+// next interval). It records the swept-row count on metrics.
+//
+// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// natural lease TTL lapses.
+func runCredentialLeaseSweepLoop(ctx context.Context, leases leaseSweeper, deny denyReconciler, metrics credentialLeaseSweepMetrics, interval time.Duration, now func() time.Time) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			swept, denyRemoved, err := sweepExpiredCredentialLeases(ctx, leases, deny, now())
+			if err != nil {
+				log.Printf("lenny-gateway: §4.9 expired-lease sweep error: %v", err)
+				continue
 			}
-		}()
+			metrics.AddCredentialLeasesSwept(swept)
+			if swept > 0 || denyRemoved > 0 {
+				log.Printf("lenny-gateway: §4.9 expired-lease sweep removed %d lease row(s) past ExpiresAt and expired %d deny-list entr(ies)",
+					swept, denyRemoved)
+			}
+		}
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 )
 
@@ -281,5 +282,69 @@ func TestRebuildDenyListGatesReadinessThenCommitsOnRecovery(t *testing.T) {
 	}
 	if !dl.Revoked(userKeyA) {
 		t.Errorf("retained revoked user credential not on the deny list after recovery: %+v", userKeyA)
+	}
+}
+
+// TestRebuildDenyListStopsOnContextCancel pins that the retry loop returns
+// when its context is cancelled while a listing query is still failing, so a
+// replica shutting down mid-boot does not leak the rebuild goroutine.
+//
+// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+func TestRebuildDenyListStopsOnContextCancel(t *testing.T) {
+	pools := &stubPoolLister{err: errors.New("pg down at boot")}
+	users := &stubUserLister{}
+	leases := &stubLeaseCounter{counts: map[credential.CredentialKey]int{}}
+	dl := denylist.New()
+	var committed atomic.Bool
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		rebuildCredentialDenyList(ctx, pools, users, leases, dl,
+			func() { committed.Store(true) }, time.Now)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for pools.callCount() < 1 {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("the rebuild loop never issued its first listing query")
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the rebuild loop did not return on context cancellation")
+	}
+	if committed.Load() {
+		t.Error("the rebuild committed a Reset despite never getting a clean listing")
+	}
+}
+
+// TestRunCredentialDenyListRebuildFlipsReadinessFlag pins the gatewayWiring
+// wrapper: it runs the rebuild against the wired stores and flips the
+// credDenyRebuilt flag so /readyz admits the replica once the deny list is
+// complete. With no revoked credential the union is empty and the Reset still
+// commits (an empty but complete deny list).
+//
+// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+func TestRunCredentialDenyListRebuildFlipsReadinessFlag(t *testing.T) {
+	w := &gatewayWiring{}
+	w.watchdogCtx = context.Background()
+	w.credentialPools = credentialpoolstore.NewMemory()
+	w.credentials = credentialstore.NewMemory(time.Now)
+	w.llmLeases = credleasestore.New()
+	w.credDeny = denylist.New()
+
+	if w.credDenyRebuilt.Load() {
+		t.Fatal("credDenyRebuilt must start unset")
+	}
+	w.runCredentialDenyListRebuild()
+	if !w.credDenyRebuilt.Load() {
+		t.Fatal("runCredentialDenyListRebuild did not flip credDenyRebuilt after committing the Reset")
 	}
 }

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -188,5 +189,100 @@ func TestExpiredLeaseSweepAbortsOnDeleteError(t *testing.T) {
 	}
 	if !deny.Revoked(poolCredKey("key-1")) {
 		t.Error("the deny list must be untouched when the delete step fails")
+	}
+}
+
+// countingSweepMetrics records the swept counts the §4.9 sweep loop reports,
+// standing in for *gatewaymetrics.Metrics so a test can observe the loop
+// bumped the counter.
+type countingSweepMetrics struct {
+	mu    sync.Mutex
+	swept int
+}
+
+func (c *countingSweepMetrics) AddCredentialLeasesSwept(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.swept += n
+}
+
+func (c *countingSweepMetrics) total() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.swept
+}
+
+// TestCredentialLeaseSweepLoopReclaimsThenStops asserts the §4.9 sweep loop
+// runs a tick that deletes an expired lease and expires its deny entry,
+// records the swept count on metrics, and returns when its context is
+// cancelled.
+//
+// spec: §4.9 line 1671.
+func TestCredentialLeaseSweepLoopReclaimsThenStops(t *testing.T) {
+	now := time.Now()
+	leases := credleasestore.New()
+	deny := denylist.New()
+	_ = leases.Put(expiredCredLease("l1", "key-1", now.Add(-time.Hour)))
+	deny.Revoke(poolCredKey("key-1"))
+	metrics := &countingSweepMetrics{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		runCredentialLeaseSweepLoop(ctx, leases, deny, metrics, time.Millisecond, time.Now)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for deny.Revoked(poolCredKey("key-1")) {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("the sweep loop never expired the deny entry")
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweep loop did not return on context cancellation")
+	}
+	if metrics.total() < 1 {
+		t.Errorf("metrics swept total = %d, want at least 1", metrics.total())
+	}
+	if _, ok := leases.GetByID("l1"); ok {
+		t.Error("the expired lease must be deleted by the sweep loop")
+	}
+}
+
+// TestCredentialLeaseSweepLoopContinuesOnStoreError asserts a per-tick store
+// error does not stop the loop: it logs and retries the next tick, and the
+// loop still returns cleanly on context cancellation.
+//
+// spec: §4.9 line 1671 (fail closed without aborting the sweep worker).
+func TestCredentialLeaseSweepLoopContinuesOnStoreError(t *testing.T) {
+	deny := denylist.New()
+	deny.Revoke(poolCredKey("key-1"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		runCredentialLeaseSweepLoop(ctx,
+			errLeaseSweeper{deleteErr: errors.New("postgres unavailable")},
+			deny, &countingSweepMetrics{}, time.Millisecond, time.Now)
+		close(done)
+	}()
+
+	// Let several failing ticks run, then cancel; the loop must still exit.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweep loop did not return after failing ticks and cancellation")
+	}
+	if !deny.Revoked(poolCredKey("key-1")) {
+		t.Error("a failing sweep tick must leave the deny entry in place (fail closed)")
 	}
 }

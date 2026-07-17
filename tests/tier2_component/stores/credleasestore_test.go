@@ -540,6 +540,93 @@ func TestCredLeaseStoreByCredentialCount(t *testing.T) {
 	if n != 0 {
 		t.Errorf("LeasesByCredentialCount(absent) = %d, want 0", n)
 	}
+
+	// A user-backed (direct-mode) credential is counted on the
+	// (tenantId, credentialRef) key, the §4.9 user term of the rebuild.
+	user := credleaseDirect("cl-" + newUUID(t))
+	if err := store.Put(user); err != nil {
+		t.Fatalf("Put user lease: %v", err)
+	}
+	userKey := credential.CredentialKey{Source: credential.SourceUser, TenantID: user.TenantID, CredentialRef: user.CredentialRef}
+	nUser, err := store.LeasesByCredentialCount(ctx, userKey, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount(user): %v", err)
+	}
+	if nUser != 1 {
+		t.Errorf("LeasesByCredentialCount(user) = %d, want 1", nUser)
+	}
+
+	// A key with no recognized source is not a lease-bearing credential;
+	// the count is a definitive zero with no query.
+	unknown := credential.CredentialKey{}
+	nUnknown, err := store.LeasesByCredentialCount(ctx, unknown, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount(unknown source): %v", err)
+	}
+	if nUnknown != 0 {
+		t.Errorf("LeasesByCredentialCount(unknown source) = %d, want 0", nUnknown)
+	}
+}
+
+// spec: §4.9 lines 1671, 1694-1695 — the sweep, the rebuild filter, and the
+// backfill are fail-closed security paths, so a store or KMS fault must
+// surface as an error (or leave an undecryptable row untouched) rather than
+// masquerade as an empty result that would drop a live deny entry.
+// diagnosis: a failure means a query error is swallowed as a zero count or a
+// clean backfill, so a transient Postgres or KMS fault at boot or sweep time
+// would silently open a CREDENTIAL_REVOKED bypass.
+func TestCredLeaseStoreExistenceQueriesFailClosed(t *testing.T) {
+	t.Parallel()
+	store, pg := newCredLeaseStore(t)
+
+	t.Run("count, delete, and backfill surface a store error", func(t *testing.T) {
+		// A cancelled context makes every pgx query return an error before
+		// it runs, modeling a dead pool or a boot-time Postgres outage.
+		canceled, cancel := context.WithCancel(context.Background())
+		cancel()
+		now := time.Now().UTC()
+		poolKey := credential.CredentialKey{Source: credential.SourcePool, PoolID: "p", CredentialID: "c"}
+
+		if _, err := store.LeasesByCredentialCount(canceled, poolKey, now); err == nil {
+			t.Error("LeasesByCredentialCount must return an error when the query cannot run (fail closed)")
+		}
+		if _, err := store.DeleteExpired(canceled, now); err == nil {
+			t.Error("DeleteExpired must return an error when the delete cannot run")
+		}
+		if _, _, err := store.BackfillExpiresAt(canceled); err == nil {
+			t.Error("BackfillExpiresAt must return an error when the query cannot run")
+		}
+	})
+
+	t.Run("backfill leaves an undecryptable row in place", func(t *testing.T) {
+		ctx := context.Background()
+		l := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond))
+		if err := store.Put(l); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		// Corrupt the encrypted body and clear the projection so the row
+		// looks pre-migration; its body no longer decrypts.
+		if _, err := pg.Pool.Exec(ctx,
+			`UPDATE credential_leases SET lease = $2, expires_at = NULL WHERE lease_id = $1`,
+			l.LeaseID, []byte("not-a-valid-envelope")); err != nil {
+			t.Fatalf("corrupt lease body: %v", err)
+		}
+		filled, _, err := store.BackfillExpiresAt(ctx)
+		if err != nil {
+			t.Fatalf("BackfillExpiresAt must skip an undecryptable row, not error: %v", err)
+		}
+		// The undecryptable row is neither filled nor deleted: its NULL
+		// expires_at persists so the existence guard keeps counting it active.
+		var expiresAt *time.Time
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT expires_at FROM credential_leases WHERE lease_id = $1`, l.LeaseID).Scan(&expiresAt); err != nil {
+			t.Fatalf("read expires_at: %v", err)
+		}
+		if expiresAt != nil {
+			t.Errorf("an undecryptable row was backfilled to %v; it must be left NULL (fail closed)", expiresAt)
+		}
+		_ = filled
+	})
 }
 
 // spec: §4.9 line 1671 — a row written before migration 0175 carries a

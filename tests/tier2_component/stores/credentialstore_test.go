@@ -367,6 +367,18 @@ func TestCredentialStoreRevokedCredentials(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("a store error surfaces rather than an empty rebuild", func(t *testing.T) {
+		// The §4.9 startup rebuild is fail-closed: it aborts the whole
+		// rebuild on a listing-query error rather than committing an empty
+		// deny list. A cancelled context makes the cross-tenant scan fail
+		// before it runs, so the query must return an error.
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		if _, err := store.RevokedCredentials(canceled); err == nil {
+			t.Error("RevokedCredentials must return an error when the cross-tenant scan cannot run (fail closed)")
+		}
+	})
 }
 
 // readSecretColumn reads the raw secret and secret_key_version columns
