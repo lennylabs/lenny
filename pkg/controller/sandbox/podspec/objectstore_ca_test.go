@@ -25,7 +25,7 @@ func containerArgs(t *testing.T, pod *corev1.Pod, name string) []string {
 	return container(t, pod, name).Args
 }
 
-// TestBuildRendersWorkspaceSizeLimit_spec_4_4 verifies the §4.4 line 254
+// TestBuildRendersWorkspaceSizeLimit_spec_4_4 verifies the §4.4 line 255
 // workspace-size hard limit is rendered as --workspace-size-limit-bytes on
 // both the sidecar adapter and the embedded runtime container. Without the
 // flag the adapter's pre-checkpoint size probe stays disabled, so the §10.1

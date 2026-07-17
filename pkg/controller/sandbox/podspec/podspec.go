@@ -374,7 +374,7 @@ type Inputs struct {
 	// holds with or without configured assets. spec: §6.4 line 409 — F-6.4.3.
 	SharedAssetsArg string
 
-	// WorkspaceSizeLimitBytes is the §4.4 line 254 per-pod workspace-size
+	// WorkspaceSizeLimitBytes is the §4.4 line 255 per-pod workspace-size
 	// hard limit resolved from the pool's SandboxTemplate. When set, the
 	// builder renders --workspace-size-limit-bytes onto the adapter so the
 	// adapter runs its pre-checkpoint workspace-size probe (stat the workspace
@@ -383,7 +383,7 @@ type Inputs struct {
 	// keeps the probe disabled exactly where the pool declares no limit; the
 	// size probe, the §10.1 storage reservation it feeds, and the
 	// permanent-error checkpoint arm are all inert without it. spec: §4.4 line
-	// 254.
+	// 255.
 	WorkspaceSizeLimitBytes *int64
 
 	// ObjectStoreCAConfigMap is the name of the §13.2 per-agent-namespace
@@ -856,13 +856,13 @@ func nonceOnlyArgs(in Inputs) []string {
 
 // checkpointProbeArgs returns the §4.4 / §13.2 adapter flags for the
 // checkpoint upload path. --workspace-size-limit-bytes carries the §4.4
-// line 254 per-pod workspace-size limit so the adapter runs its
+// line 255 per-pod workspace-size limit so the adapter runs its
 // pre-checkpoint size probe; it is omitted when the pool declares no limit,
 // leaving the probe disabled. --objectstore-ca-bundle points the adapter at
 // the mounted §13.2 object-store CA trust bundle so it can complete the TLS
 // handshake to a self-managed object store; it is omitted when no CA
 // ConfigMap is configured (a cloud-managed endpoint chaining to a public CA).
-// spec: §4.4 line 254, §13.2.
+// spec: §4.4 line 255, §13.2.
 func checkpointProbeArgs(in Inputs) []string {
 	var args []string
 	if in.WorkspaceSizeLimitBytes != nil {

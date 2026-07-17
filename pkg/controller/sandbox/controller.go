@@ -390,7 +390,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// spec: §5.3 line 677 — dev mode falls back to `standard` (runc).
 		profile = string(isolation.DefaultForMode(r.DevMode))
 	}
-	// spec: §5.2 line 516 / §4.4 line 254 — resolve the pool's SandboxTemplate
+	// spec: §5.2 line 516 / §4.4 line 255 — resolve the pool's SandboxTemplate
 	// once and read the grace-period settings and the workspace-size hard limit
 	// off it. A missing template leaves each nil, so the pod builder falls back
 	// to its §4.6.1 grace default and renders no --workspace-size-limit-bytes.
@@ -474,7 +474,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// pool opted out via the lenny.dev/dns-policy: cluster-default label.
 		DedicatedDNSClusterIP: r.DedicatedDNSClusterIP,
 		ReleaseNamespace:      r.ReleaseNamespace,
-		// spec: §4.4 line 254 — the pool's workspace-size hard limit. When set,
+		// spec: §4.4 line 255 — the pool's workspace-size hard limit. When set,
 		// the builder renders --workspace-size-limit-bytes so the adapter runs
 		// its pre-checkpoint size probe; nil leaves the probe disabled.
 		WorkspaceSizeLimitBytes: workspaceSizeLimit,
