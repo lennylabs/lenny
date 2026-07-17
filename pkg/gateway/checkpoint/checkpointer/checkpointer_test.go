@@ -753,7 +753,10 @@ func TestRotatedOutCheckpointReleasesItsChunkRowsAndObjects(t *testing.T) {
 		chunkRow("acme", "s1", "cp-old", 0, 100),
 		chunkRow("acme", "s1", "cp-old", 1, 250),
 	)
-	deleter := &fakeObjectDeleter{}
+	objects := newFakeObjectStore(
+		chunkURI("acme", "s1", "cp-old", 0),
+		chunkURI("acme", "s1", "cp-old", 1),
+	)
 
 	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{
 		{TenantID: "acme", SessionID: "s1", Ref: "cp-old"},
@@ -764,7 +767,7 @@ func TestRotatedOutCheckpointReleasesItsChunkRowsAndObjects(t *testing.T) {
 		Retention:    ret,
 		Manifests:    manifests,
 		ChunkCatalog: catalog,
-		ChunkObjects: deleter,
+		ChunkObjects: objects,
 	}
 	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
 		t.Fatalf("Checkpoint: %v", err)
@@ -773,8 +776,8 @@ func TestRotatedOutCheckpointReleasesItsChunkRowsAndObjects(t *testing.T) {
 	if catalog.freed != 350 {
 		t.Errorf("released bytes = %d, want 350 (cp-old's two chunk rows)", catalog.freed)
 	}
-	if len(deleter.deleted) != 2 {
-		t.Errorf("hard-deleted objects = %v, want the two cp-old chunks", deleter.deleted)
+	if len(objects.deleted) != 2 {
+		t.Errorf("hard-deleted objects = %v, want the two cp-old chunks", objects.deleted)
 	}
 	row, err := manifests.Get(context.Background(), "acme", "cp-old")
 	if err != nil {

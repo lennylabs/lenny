@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,36 +17,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
-// fakeChunkCatalog is an in-memory ChunkCatalogReleaser. ListBySession
-// returns the seeded rows for a session; SoftDeleteRow models the §12.5
-// rule 4 exactly-once decrement by releasing a live row's bytes once and
-// no-oping on a replay.
+// fakeChunkCatalog is an in-memory ChunkCatalogReleaser. SoftDeleteRow models
+// the §12.5 rule 4 exactly-once decrement by releasing a live row's bytes once
+// and no-oping on a replay; a URI with no seeded row (an uncounted straggler)
+// releases nothing.
 type fakeChunkCatalog struct {
 	mu      sync.Mutex
 	rows    []artifactcatalog.Record
 	deleted map[string]bool
 	freed   int64
-	listErr error
 	softErr error
 }
 
 func newFakeChunkCatalog(rows ...artifactcatalog.Record) *fakeChunkCatalog {
 	return &fakeChunkCatalog{rows: rows, deleted: map[string]bool{}}
-}
-
-func (f *fakeChunkCatalog) ListBySession(_ context.Context, tenantID, sessionID string) ([]artifactcatalog.Record, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.listErr != nil {
-		return nil, f.listErr
-	}
-	var out []artifactcatalog.Record
-	for _, r := range f.rows {
-		if r.TenantID == tenantID && r.SessionID == sessionID {
-			out = append(out, r)
-		}
-	}
-	return out, nil
 }
 
 func (f *fakeChunkCatalog) SoftDeleteRow(_ context.Context, uri string, _ time.Duration) error {
@@ -78,32 +63,66 @@ func (f *fakeChunkCatalog) softDeleted() []string {
 	return out
 }
 
-// fakeObjectDeleter records every HardDeleteObject key.
-type fakeObjectDeleter struct {
-	mu      sync.Mutex
-	deleted []string
-	err     error
+// fakeObjectStore is an in-memory ChunkObjectStore. ListByPrefix returns the
+// seeded objects whose key falls under the walked prefix (the checkpoint's
+// chunk_object_key_prefix); HardDeleteObject records the key. It models the
+// prefix walk the release uses to discover a checkpoint's chunk objects,
+// including a straggler an outstanding grant landed under the prefix with no
+// catalog row.
+type fakeObjectStore struct {
+	mu        sync.Mutex
+	objects   []blobstore.URI
+	deleted   []string
+	listErr   error
+	deleteErr error
 }
 
-func (d *fakeObjectDeleter) HardDeleteObject(u blobstore.URI) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.err != nil {
-		return d.err
+func newFakeObjectStore(objects ...blobstore.URI) *fakeObjectStore {
+	return &fakeObjectStore{objects: objects}
+}
+
+func (f *fakeObjectStore) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
 	}
-	d.deleted = append(d.deleted, u.PartID)
+	var out []blobstore.BlobInfo
+	for _, o := range f.objects {
+		if o.TenantID == u.TenantID && o.SessionID == u.SessionID &&
+			strings.HasPrefix(o.PartID, u.PartID) {
+			out = append(out, blobstore.BlobInfo{URI: o})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeObjectStore) HardDeleteObject(u blobstore.URI) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deleted = append(f.deleted, u.PartID)
 	return nil
 }
 
-// chunkRow builds a live checkpoint artifact_store row for one chunk.
-func chunkRow(tenantID, sessionID, checkpointID string, idx int, size int64) artifactcatalog.Record {
-	u := blobstore.URI{
+// chunkURI builds the object URI for one checkpoint chunk, matching the key
+// the upload path writes and the catalog row records.
+func chunkURI(tenantID, sessionID, checkpointID string, idx int) blobstore.URI {
+	return blobstore.URI{
 		TenantID:   tenantID,
 		ObjectType: blobstore.ObjectTypeCheckpoint,
 		SessionID:  sessionID,
 		PartID:     fmt.Sprintf("%s/chunk-%05d.tar", checkpointID, idx),
 		TTL:        30 * time.Second,
 	}
+}
+
+// chunkRow builds a live checkpoint artifact_store row for one chunk, keyed on
+// the same URI chunkURI produces.
+func chunkRow(tenantID, sessionID, checkpointID string, idx int, size int64) artifactcatalog.Record {
+	u := chunkURI(tenantID, sessionID, checkpointID, idx)
 	return artifactcatalog.Record{
 		URI:          u.String(),
 		TenantID:     tenantID,
@@ -199,8 +218,9 @@ func seedManifest(t *testing.T, store partialmanifeststore.Store, tenant, checkp
 // spec: §12.5 GC rule 4 / rule 5 — the three-step release soft-deletes
 // every chunk's artifact_store row (issuing the exactly-once decrement),
 // hard-deletes each chunk object per key, and soft-deletes the finalised
-// manifest row. Only the target checkpoint's chunks are released; a sibling
-// checkpoint's rows and a non-checkpoint artifact are left untouched.
+// manifest row. The chunk set is discovered by walking the target
+// checkpoint's chunk_object_key_prefix, so a sibling checkpoint's objects
+// (under a different prefix) are left untouched.
 func TestReleaseCheckpointChunksReleasesRowsObjectsAndManifest(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	rec := seedCompleteManifest(t, store, "acme", "cp-old", "s1")
@@ -211,36 +231,37 @@ func TestReleaseCheckpointChunksReleasesRowsObjectsAndManifest(t *testing.T) {
 		chunkRow("acme", "s1", "cp-old", 0, 100),
 		chunkRow("acme", "s1", "cp-old", 1, 250),
 		chunkRow("acme", "s1", "cp-keep", 0, 999),
-		// A non-checkpoint artifact under the same session (e.g. a
-		// workspace snapshot) must not be released by the checkpoint sweep.
-		artifactcatalog.Record{URI: "lenny-blob://acme/workspace/s1/snap?ttl=3600&enc=aes256gcm",
-			TenantID: "acme", SessionID: "s1", PartID: "snap", SizeBytes: 7,
-			State: artifactcatalog.StateLive, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
 	)
-	deleter := &fakeObjectDeleter{}
+	// Both checkpoints' objects live in the bucket; only cp-old's prefix is
+	// walked, so cp-keep's object must survive.
+	objects := newFakeObjectStore(
+		chunkURI("acme", "s1", "cp-old", 0),
+		chunkURI("acme", "s1", "cp-old", 1),
+		chunkURI("acme", "s1", "cp-keep", 0),
+	)
 
 	if err := checkpointer.ReleaseCheckpointChunks(context.Background(), checkpointer.CheckpointChunkRelease{
 		Manifests:          store,
 		Catalog:            catalog,
-		Objects:            deleter,
+		Objects:            objects,
 		TombstoneRetention: time.Hour,
 	}, rec); err != nil {
 		t.Fatalf("ReleaseCheckpointChunks: %v", err)
 	}
 
 	// (1) Exactly cp-old's two chunk rows are soft-deleted, releasing 350
-	// bytes; cp-keep and the workspace row are untouched.
+	// bytes; cp-keep's row is untouched.
 	if got := catalog.freed; got != 350 {
 		t.Errorf("released bytes = %d, want 350 (only cp-old's chunks)", got)
 	}
 	if got := len(catalog.softDeleted()); got != 2 {
 		t.Errorf("soft-deleted rows = %d (%v), want 2", got, catalog.softDeleted())
 	}
-	// (2) Both cp-old objects are hard-deleted per key; nothing else is.
-	if len(deleter.deleted) != 2 {
-		t.Fatalf("deleted objects = %v, want the two cp-old chunks", deleter.deleted)
+	// (2) Both cp-old objects are hard-deleted per key; cp-keep's is not.
+	if len(objects.deleted) != 2 {
+		t.Fatalf("deleted objects = %v, want the two cp-old chunks", objects.deleted)
 	}
-	for _, part := range deleter.deleted {
+	for _, part := range objects.deleted {
 		if part != "cp-old/chunk-00000.tar" && part != "cp-old/chunk-00001.tar" {
 			t.Errorf("unexpected object deleted: %q", part)
 		}
@@ -256,6 +277,44 @@ func TestReleaseCheckpointChunksReleasesRowsObjectsAndManifest(t *testing.T) {
 	}
 }
 
+// spec: §12.5 GC rule 5 — the release discovers a checkpoint's objects by
+// walking its chunk_object_key_prefix, so an object landed under the prefix
+// with no artifact_store row (a grant that outlived the finalising deadline)
+// is still deleted. A confirmed-catalog-set enumeration would miss the
+// straggler and orphan it once the manifest row is soft-deleted and the prefix
+// drops out of every reclaimer's selector.
+func TestReleaseCheckpointChunksDeletesUncataloguedStraggler(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedCompleteManifest(t, store, "acme", "cp-old", "s1")
+	// Only chunk 0 carries a catalog row; chunk 1 is an uncounted straggler an
+	// outstanding grant landed under the prefix.
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(
+		chunkURI("acme", "s1", "cp-old", 0),
+		chunkURI("acme", "s1", "cp-old", 1),
+	)
+
+	if err := checkpointer.ReleaseCheckpointChunks(context.Background(), checkpointer.CheckpointChunkRelease{
+		Manifests:          store,
+		Catalog:            catalog,
+		Objects:            objects,
+		TombstoneRetention: time.Hour,
+	}, rec); err != nil {
+		t.Fatalf("ReleaseCheckpointChunks: %v", err)
+	}
+
+	// Both objects are deleted, including the straggler the confirmed-catalog
+	// set would have missed.
+	if len(objects.deleted) != 2 {
+		t.Fatalf("deleted objects = %v, want chunk-0 and the straggler chunk-1", objects.deleted)
+	}
+	// Only chunk 0's bytes are released; the straggler has no row, so its
+	// guarded soft-delete issues no decrement.
+	if catalog.freed != 100 {
+		t.Errorf("released bytes = %d, want 100 (only the catalogued chunk)", catalog.freed)
+	}
+}
+
 // spec: §12.5 GC rule 4 — the release is idempotent: a re-run over the same
 // checkpoint issues no second decrement (the exactly-once guarantee).
 func TestReleaseCheckpointChunksIsIdempotent(t *testing.T) {
@@ -265,8 +324,11 @@ func TestReleaseCheckpointChunksIsIdempotent(t *testing.T) {
 		chunkRow("acme", "s1", "cp-old", 0, 100),
 		chunkRow("acme", "s1", "cp-old", 1, 250),
 	)
-	deleter := &fakeObjectDeleter{}
-	cfg := checkpointer.CheckpointChunkRelease{Manifests: store, Catalog: catalog, Objects: deleter, TombstoneRetention: time.Hour}
+	objects := newFakeObjectStore(
+		chunkURI("acme", "s1", "cp-old", 0),
+		chunkURI("acme", "s1", "cp-old", 1),
+	)
+	cfg := checkpointer.CheckpointChunkRelease{Manifests: store, Catalog: catalog, Objects: objects, TombstoneRetention: time.Hour}
 
 	for i := 0; i < 3; i++ {
 		if err := checkpointer.ReleaseCheckpointChunks(context.Background(), cfg, rec); err != nil {
@@ -284,7 +346,7 @@ func TestReleaseCheckpointChunksRequiresEverySeam(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	rec := seedCompleteManifest(t, store, "acme", "cp-old", "s1")
 	if err := checkpointer.ReleaseCheckpointChunks(context.Background(),
-		checkpointer.CheckpointChunkRelease{Catalog: newFakeChunkCatalog(), Objects: &fakeObjectDeleter{}}, rec); err == nil {
+		checkpointer.CheckpointChunkRelease{Catalog: newFakeChunkCatalog(), Objects: newFakeObjectStore()}, rec); err == nil {
 		t.Error("release accepted a nil manifest store")
 	}
 }

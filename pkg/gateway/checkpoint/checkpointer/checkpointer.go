@@ -201,11 +201,12 @@ type Checkpointer struct {
 	// sweep. cataloging.Store satisfies it.
 	// spec: §12.5 GC rule 4, GC rule 5.
 	ChunkCatalog ChunkCatalogReleaser
-	// ChunkObjects hard-deletes each rotated-out checkpoint chunk object per
-	// key. Nil (with ChunkCatalog) skips the rotation-side chunk release.
-	// miniostore.Store satisfies it.
+	// ChunkObjects discovers each rotated-out checkpoint's chunk objects under
+	// its chunk_object_key_prefix and hard-deletes each one per key. Nil (with
+	// ChunkCatalog) skips the rotation-side chunk release. miniostore.Store
+	// satisfies it.
 	// spec: §12.5 GC rule 5.
-	ChunkObjects ChunkObjectDeleter
+	ChunkObjects ChunkObjectStore
 	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
 	// window stamped onto each soft-deleted chunk row's hard-prune deadline
 	// during the rotation-side release. Zero selects DefaultTombstoneRetention.
