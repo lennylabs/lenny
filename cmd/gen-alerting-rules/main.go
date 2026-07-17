@@ -296,7 +296,7 @@ func renderDocsRules() ([]byte, error) {
 // bundles. It carries the tier placeholder so the chart can substitute
 // global.deploymentTier at install time.
 func renderOpenSLOFragment() ([]byte, error) {
-	docs, err := rules.RenderOpenSLO(rules.OpenSLOService, rules.SLOTierPlaceholder)
+	docs, err := rules.RenderOpenSLO(rules.OpenSLOService, rules.SLOTierPlaceholder, rules.SLONotificationTargetPlaceholder)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func renderOpenSLOFragment() ([]byte, error) {
 // concrete tier1 example so deployers translating to an OpenSLO tool see
 // resolved queries rather than the chart's substitution placeholder.
 func renderDocsOpenSLO() ([]byte, error) {
-	docs, err := rules.RenderOpenSLO(rules.OpenSLOService, "tier1")
+	docs, err := rules.RenderOpenSLO(rules.OpenSLOService, "tier1", rules.OpenSLODefaultNotificationTarget)
 	if err != nil {
 		return nil, err
 	}
