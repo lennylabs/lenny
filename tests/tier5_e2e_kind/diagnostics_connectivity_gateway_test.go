@@ -95,7 +95,8 @@ func dccGatewayDependency(report dccConnectivityReport) (dep struct {
 	Name      string `json:"name"`
 	Reachable bool   `json:"reachable"`
 	Detail    string `json:"detail,omitempty"`
-}, found bool) {
+}, found bool,
+) {
 	for _, d := range report.Dependencies {
 		if d.Name == "gateway" {
 			return d, true
