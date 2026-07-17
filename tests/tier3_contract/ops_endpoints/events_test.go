@@ -34,6 +34,7 @@ import (
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
@@ -382,6 +383,54 @@ func TestEventSubscriptionRegistrationContract(t *testing.T) {
 	}
 	if _, leaked := subs[0].(map[string]any)["secret"]; leaked {
 		t.Error("GET /v1/admin/event-subscriptions leaked the plaintext secret")
+	}
+}
+
+// TestEventStreamAndDeliveryRoutesReportTenantAdminInOpenAPIMetadata pins
+// the §25.5 tenant-admin admissibility of the poll/stream endpoints and the
+// per-subscription deliveries/rotate-secret endpoints in the OpenAPI role
+// metadata the F-COV-3 merge serves. §25.4 requires platform-admin or
+// tenant-admin on every lenny-ops endpoint, and §25.5's Tenant Isolation
+// section documents SSE/polling as tenant-scoped and the deliveries/
+// rotate-secret endpoints as reachable for a subscription's owning tenant
+// (TestEventSubscriptionTenantOwnershipIsolation in event_subscriptions_-
+// test.go pins the same-tenant success path), so the x-lenny-required-role
+// these routes carry must admit tenant-admin rather than report
+// platform-admin as the sole role.
+//
+// spec: 25.4 ("Requires platform-admin or tenant-admin role on all
+// endpoints"), 25.5 ("SSE and polling endpoints apply the same filter:
+// tenant-scoped callers only see events matching their tenant or carrying
+// no tenant label")
+// diagnosis: opsserver.RouteSchemas() reports one of these routes as
+// x-lenny-required-role: platform-admin, under-reporting the tenant-admin
+// admissibility §25.4/§25.5 grant. A caller deriving its callable surface
+// from the served openapi.json (the §25.4 /me.links.openApi discovery hop)
+// would wrongly conclude a tenant-admin cannot poll or stream operational
+// events, or list/rotate the secret of its own subscription's deliveries.
+func TestEventStreamAndDeliveryRoutesReportTenantAdminInOpenAPIMetadata(t *testing.T) {
+	want := map[string]bool{
+		"GET /v1/admin/events":                                  true,
+		"GET /v1/admin/events/stream":                           true,
+		"GET /v1/admin/event-subscriptions/{id}/deliveries":     true,
+		"POST /v1/admin/event-subscriptions/{id}/rotate-secret": true,
+	}
+	found := map[string]bool{}
+	for _, r := range opsserver.RouteSchemas() {
+		key := r.Method + " " + r.Path
+		if !want[key] {
+			continue
+		}
+		found[key] = true
+		if r.RequiredRole != mcp.RoleTenantAdmin {
+			t.Errorf("%s x-lenny-required-role = %q, want %q (admits platform-admin and tenant-admin)",
+				key, r.RequiredRole, mcp.RoleTenantAdmin)
+		}
+	}
+	for key := range want {
+		if !found[key] {
+			t.Errorf("RouteSchemas has no entry for %q", key)
+		}
 	}
 }
 
