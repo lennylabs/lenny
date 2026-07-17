@@ -89,6 +89,38 @@ func readSpecMapPackages(t *testing.T) map[string][]string {
 	return out
 }
 
+// readSpecMapTests returns, per section id, the `tests` list recorded
+// in tests/spec-map.json, with any trailing `::TestName` selector
+// stripped so the result is a set of repo-relative file paths.
+func readSpecMapTests(t *testing.T) map[string][]string {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map.json"))
+	if err != nil {
+		t.Fatalf("read spec-map.json: %v", err)
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse spec-map.json: %v", err)
+	}
+	out := map[string][]string{}
+	for id, sec := range doc.Sections {
+		paths := make([]string, len(sec.Tests))
+		for i, entry := range sec.Tests {
+			if idx := strings.Index(entry, "::"); idx >= 0 {
+				entry = entry[:idx]
+			}
+			paths[i] = entry
+		}
+		out[id] = paths
+	}
+	return out
+}
+
 // spec: 25.2 (agent operability architecture overview; the operability
 //
 //	surface is implemented under pkg/ops, split between the gateway and
@@ -216,5 +248,194 @@ func TestOperabilityPackageReferencesResolveOnDisk(t *testing.T) {
 		t.Errorf("spec-map.json §25 `packages` entries point at directories that do not exist on disk "+
 			"(gateway-side ops lives under pkg/gateway/operability/*, the lenny-ops service under pkg/ops/*): %s",
 			strings.Join(dangling, "; "))
+	}
+}
+
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+//
+//	the tests, packages, migrations, and chart templates that encode
+//	it"); 25.9 ("GET /v1/admin/audit-events" paginated query, plus the
+//	single-event, summary, retranslate, republish, and partition-drop
+//	endpoints of the Audit Log Query API)
+//
+// diagnosis: pkg/gateway/externalapi/admin implements every §25.9
+//
+//	endpoint (handleListAuditEvents, handleGetAuditEvent,
+//	handleAuditSummary, the retranslate/republish handlers, and the
+//	cross-tenant scatter-gather path). The §25.9 spec-map entry's
+//	tests[] already references pkg/gateway/externalapi/admin/
+//	audit_query_test.go and its siblings, but packages[] named only
+//	pkg/ops/opsaudit (the §11.7 audit-append funnel that feeds the log,
+//	not the §25.9 query surface), so coverage/impact tooling keyed on
+//	packages[] could not tie an edit of the query implementation back
+//	to §25.9.
+func TestSpecMapAuditQueryPackagesIncludeAdminImplementation(t *testing.T) {
+	t.Parallel()
+
+	pkgs := readSpecMapPackages(t)["25.9"]
+	if !contains(pkgs, "pkg/gateway/externalapi/admin") {
+		t.Errorf("spec-map.json §25.9 packages %v does not include pkg/gateway/externalapi/admin, "+
+			"which implements the GET /v1/admin/audit-events query API", pkgs)
+	}
+}
+
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+//
+//	the tests, packages, migrations, and chart templates that encode
+//	it"); 25.10 ("GET /v1/admin/drift compares... Running state...
+//	Desired state — read from bootstrap_seed_snapshot table in
+//	Postgres")
+//
+// diagnosis: pkg/drift implements the §25.10 field-by-field desired-
+//
+//	vs-running diff and severity classification, and
+//	pkg/ops/driftservice/pgstore implements the Postgres-backed
+//	bootstrap_seed_snapshot store the "Snapshot Validation" and "When
+//	the snapshot is updated" subsections describe. The §25.10 spec-map
+//	entry's tests[] already references pkg/drift/drift_test.go, but
+//	packages[] omitted both pkg/drift and pkg/ops/driftservice/pgstore,
+//	so coverage/impact tooling keyed on packages[] could not tie an
+//	edit of the diff engine or the snapshot store back to §25.10.
+func TestSpecMapDriftPackagesIncludeDiffAndSnapshotStore(t *testing.T) {
+	t.Parallel()
+
+	pkgs := readSpecMapPackages(t)["25.10"]
+	for _, want := range []string{"pkg/drift", "pkg/ops/driftservice/pgstore"} {
+		if !contains(pkgs, want) {
+			t.Errorf("spec-map.json §25.10 packages %v does not include %s", pkgs, want)
+		}
+	}
+}
+
+// spec: 25.11 ("The backup pipeline has two surfaces: a Postgres/config
+//
+//	archive pipeline ... and a continuous ArtifactStore replication
+//	pipeline (MinIO workspace bucket replicated to an off-cluster
+//	destination — see ArtifactStore Backup below)." and "#### ArtifactStore
+//	Backup (MinIO workspace bucket replication)", spec/25_agent-
+//	operability.md); TESTING.md §5 ("tests/spec-map.json maps every spec
+//	section to the tests, packages, migrations, and chart templates that
+//	encode it")
+//
+// diagnosis: §25.11 names two surfaces: the Postgres/config archive
+//
+//	pipeline (implemented across pkg/ops/backup and its runner, pgstore,
+//	and k8slauncher subpackages — each subpackage is a distinct Go
+//	package, so coverage/impact tooling keyed on packages[] does not
+//	walk into a subdirectory unless it is listed explicitly) and the
+//	continuous ArtifactStore replication pipeline (implemented in
+//	pkg/blobstore/replication and the pkg/gateway/externalapi/admin
+//	artifact-replication resume endpoint). The §25.11 packages[] entry
+//	previously named only pkg/ops/backup, so an edit to the runner,
+//	pgstore, k8slauncher, replication, or admin packages could not be
+//	tied back to §25.11 by the coverage/impact tooling.
+func TestSpecMapBackupPackagesIncludeSubpackagesAndReplication(t *testing.T) {
+	t.Parallel()
+
+	pkgs := readSpecMapPackages(t)["25.11"]
+	for _, want := range []string{
+		"pkg/ops/backup",
+		"pkg/ops/backup/runner",
+		"pkg/ops/backup/pgstore",
+		"pkg/ops/backup/k8slauncher",
+		"pkg/blobstore/replication",
+		"pkg/gateway/externalapi/admin",
+	} {
+		if !contains(pkgs, want) {
+			t.Errorf("spec-map.json §25.11 packages %v does not include %s", pkgs, want)
+		}
+	}
+}
+
+// spec: 25.11 (Backup Execution, Restore Execution, Storage, and
+//
+//	ArtifactStore Backup subsections; spec/25_agent-operability.md);
+//	TESTING.md §5 (spec-map maps sections to the tests that encode them)
+//
+// diagnosis: The substantive §25.11 coverage lives outside the single
+//
+//	tests[] entry (pkg/ops/backup/backup_test.go) the spec-map
+//	previously recorded: the restore, post-restore, region-selection,
+//	and size-estimate paths (restore_test.go, postrestore_test.go,
+//	region_test.go, estimate_test.go), the Postgres-backed job store and
+//	the Kubernetes Job launcher (pgstore/pgstore_test.go,
+//	k8slauncher/k8slauncher_test.go), the lenny-backup runner's dump,
+//	upload, redaction, and restore-test logic (the runner/*_test.go
+//	files), the lenny-ops HTTP handlers (opsserver/backup_test.go), and
+//	the continuous ArtifactStore replication surface
+//	(artifact_replication_test.go, replication_test.go,
+//	replication_wiring_test.go). A reader or tool relying on tests[]
+//	alone was misled about what §25.11 coverage exists on disk.
+func TestSpecMapBackupTestsIncludeRestoreAndReplicationFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := readSpecMapTests(t)["25.11"]
+	for _, want := range []string{
+		"pkg/ops/backup/restore_test.go",
+		"pkg/ops/backup/postrestore_test.go",
+		"pkg/ops/backup/region_test.go",
+		"pkg/ops/backup/estimate_test.go",
+		"pkg/ops/backup/pgstore/pgstore_test.go",
+		"pkg/ops/backup/k8slauncher/k8slauncher_test.go",
+		"pkg/ops/backup/runner/exec_test.go",
+		"pkg/ops/backup/runner/export_test.go",
+		"pkg/ops/backup/runner/redact_exec_test.go",
+		"pkg/ops/backup/runner/restoretest_test.go",
+		"pkg/ops/opsserver/backup_test.go",
+		"pkg/gateway/externalapi/admin/artifact_replication_test.go",
+		"pkg/blobstore/replication/replication_test.go",
+		"cmd/lenny-gateway/replication_wiring_test.go",
+	} {
+		if !contains(tests, want) {
+			t.Errorf("spec-map.json §25.11 tests %v does not include %s", tests, want)
+		}
+	}
+}
+
+// spec: 25.12 ("The `ManagementMCPAdapter` lives in `lenny-ops` at
+//
+//	`/mcp/management` on port 8090." spec/25_agent-operability.md); tests/README.md
+//	("`spec-map-exceptions.yaml` | Spec sections explicitly exempt from the
+//	'every section has at least one test' rule, with justifications.")
+//
+// diagnosis: tests/spec-map-exceptions.yaml lists "25.12" with reason
+//
+//	"deferred" and justification "The MCP management server is built in
+//	Wave 4 (Phase 13)." pkg/ops/mcp implements the ManagementMCPAdapter
+//	the spec cites, pkg/ops/opsserver/mcp.go wires it into lenny-ops, and
+//	the §25.12 spec-map entry already carries eighteen tests[] references
+//	spanning tier9 authz/isolation, tier5 e2e, tier4 integration, tier8
+//	chaos, and unit coverage of the tool inventory, correlation, and role
+//	gate. The exceptions file exists only to waive the "every section has
+//	at least one test" rule for a section that has none; §25.12 already
+//	satisfies that rule on its own tests[] entry, so the exception is both
+//	unnecessary and factually wrong about the section being deferred. A
+//	reader or tool trusting the exceptions file's "deferred" claim is
+//	misled into thinking §25.12 has zero coverage and skipping it, when
+//	the map's own tests[] array (and the packages[] directory) says
+//	otherwise. The remaining unbuilt slices of §25.12 (gateway-owned tool
+//	routing via GatewayClient, and the notifications/subscribe streaming
+//	transport) are already tracked precisely by t.Skip scaffolds carrying
+//	their own §25.12 citations (tests/tier4_integration/
+//	mcp_management_event_subscription_test.go), so a section-wide
+//	deferral exception is not needed to account for them.
+func TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	excepted := readSpecMapExceptedSections(t, root)
+	if excepted["25.12"] {
+		t.Errorf("tests/spec-map-exceptions.yaml lists §25.12 as exempt from the " +
+			"\"every section has at least one test\" rule, but the section already " +
+			"carries real tests[] entries in spec-map.json and pkg/ops/mcp implements " +
+			"the ManagementMCPAdapter the spec describes; remove the §25.12 entry")
+	}
+
+	tests := readSpecMapTests(t)["25.12"]
+	if len(tests) == 0 {
+		t.Errorf("spec-map.json §25.12 has no tests[] entries; the ManagementMCPAdapter " +
+			"spec/25_agent-operability.md describes is implemented in pkg/ops/mcp and " +
+			"pkg/ops/opsserver, so the section should carry real test references rather " +
+			"than relying on a spec-map-exceptions.yaml deferral")
 	}
 }

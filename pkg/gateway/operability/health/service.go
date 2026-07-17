@@ -135,13 +135,13 @@ type Report struct {
 	// Components is the per-subsystem breakdown, name-sorted.
 	Components []Component `json:"components"`
 
-	// Degradation carries the §25.4 canonical envelope. The gateway's
+	// Degradation carries the §25.2 canonical envelope. The gateway's
 	// in-process alert tracker always evaluates the compiled-in
 	// thresholds, so a single-replica Report stamps
 	// `thresholdSource: "compiled-in-defaults"` per §25.13 line 4848.
 	// `lenny-ops` overrides the envelope when its aggregated view
 	// derives from the operator's Prometheus rules.
-	// spec: §25.4 line 215.
+	// spec: §25.2.
 	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
@@ -410,7 +410,7 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 	}
 }
 
-// degradationLevelFor maps the §25.3 worst-status to the §25.4
+// degradationLevelFor maps the §25.3 worst-status to the §25.2
 // envelope level. healthy → healthy, degraded → degraded, unhealthy →
 // failed.
 func degradationLevelFor(s Status) conventions.DegradationLevel {

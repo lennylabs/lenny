@@ -3249,7 +3249,8 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
-        "tests/tier8_chaos/store_failure_test.go"
+        "tests/tier8_chaos/store_failure_test.go",
+        "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview"
       ],
       "packages": [
         "pkg/ops/conventions"
@@ -3515,10 +3516,10 @@
         "tests/tier11_docs/diagnostics_audit_wiring_comment_test.go::TestDiagnosticsAuditWiringCommentsNotStale"
       ],
       "packages": [
+        "pkg/gateway/externalapi/admin",
         "pkg/ops/opsaudit"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.9 Audit Log Query API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.9 Audit Log Query API. pkg/gateway/externalapi/admin implements the query endpoints; pkg/ops/opsaudit is the §11.7 audit-append funnel that feeds the queried log. See TESTING.md §25 for the test plan."
     },
     "25.10": {
       "title": "Configuration Drift Detection",
@@ -3535,17 +3536,38 @@
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
+        "pkg/drift",
         "pkg/ops/driftservice",
-        "pkg/ops/driftservice/gatewayreader"
+        "pkg/ops/driftservice/gatewayreader",
+        "pkg/ops/driftservice/pgstore"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.10 Configuration Drift Detection. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.10 Configuration Drift Detection. pkg/drift implements the field-by-field diff and severity classification; pkg/ops/driftservice/pgstore implements the Postgres-backed bootstrap_seed_snapshot store. See TESTING.md §25 for the test plan."
     },
     "25.11": {
       "title": "Backup and Restore API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/backup/backup_test.go",
+        "pkg/ops/backup/restore_test.go",
+        "pkg/ops/backup/postrestore_test.go",
+        "pkg/ops/backup/region_test.go",
+        "pkg/ops/backup/estimate_test.go",
+        "pkg/ops/backup/pgstore/pgstore_test.go",
+        "pkg/ops/backup/k8slauncher/k8slauncher_test.go",
+        "pkg/ops/backup/runner/audit_test.go",
+        "pkg/ops/backup/runner/audit_verify_internal_test.go",
+        "pkg/ops/backup/runner/exec_test.go",
+        "pkg/ops/backup/runner/export_test.go",
+        "pkg/ops/backup/runner/opsevents_test.go",
+        "pkg/ops/backup/runner/redact_exec_test.go",
+        "pkg/ops/backup/runner/redact_internal_test.go",
+        "pkg/ops/backup/runner/restoreexec_test.go",
+        "pkg/ops/backup/runner/restoretest_test.go",
+        "pkg/ops/backup/runner/runner_test.go",
+        "pkg/ops/opsserver/backup_test.go",
+        "pkg/gateway/externalapi/admin/artifact_replication_test.go",
+        "pkg/blobstore/replication/replication_test.go",
+        "cmd/lenny-gateway/replication_wiring_test.go",
         "tests/tier2_component/stores/backup_minio_roundtrip_test.go::TestBackupMinIORoundTrip",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
         "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
@@ -3559,10 +3581,15 @@
         "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11"
       ],
       "packages": [
-        "pkg/ops/backup"
+        "pkg/ops/backup",
+        "pkg/ops/backup/runner",
+        "pkg/ops/backup/pgstore",
+        "pkg/ops/backup/k8slauncher",
+        "pkg/blobstore/replication",
+        "pkg/gateway/externalapi/admin"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status."
+      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status. §25.11 also covers the continuous ArtifactStore replication pipeline (pkg/blobstore/replication, its Postgres-backed lag/state store, and the pkg/gateway/externalapi/admin artifact-replication resume endpoint), wired into cmd/lenny-gateway."
     },
     "25.12": {
       "title": "MCP Management Server",
@@ -3584,8 +3611,10 @@
         "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
         "pkg/ops/mcp/naming_test.go::TestToolNamesFollowLennyDomainActionPattern_spec_25_12",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphMCPPackageSelectsContractAndSecurityTiers",
         "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",
-        "tests/tier8_chaos/mcp_management_gateway_outage_test.go::TestMCPManagementGatewayOwnedToolDuringGatewayOutage"
+        "tests/tier8_chaos/mcp_management_gateway_outage_test.go::TestMCPManagementGatewayOwnedToolDuringGatewayOutage",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer"
       ],
       "packages": [
         "pkg/ops/mcp"

@@ -467,17 +467,24 @@ func validateSpecMapCoverage(specMapPath, exceptionsPath string) checkResult {
 // Only entries that name a concrete `.go` file are checked; a
 // directory or package glob is not required to resolve to a file. A
 // trailing `::TestName` selector is stripped before the file is
-// probed. Two exemption channels keep the check reliable while later
+// probed. One exemption channel keeps the check reliable while later
 // phases are still landing:
 //
-//   - A section listed in tests/spec-map-exceptions.yaml is skipped:
-//     its feature is deferred or non-normative, so its tests may not
-//     exist yet (the same sections validateSpecMapCoverage exempts
-//     from the has-a-test rule).
 //   - An individual path listed in tests/spec-map-pending.txt is
 //     skipped, mirroring the change-graph-pending.txt channel, for a
 //     reference committed ahead of the file or awaiting repair under
 //     a separately tracked finding.
+//
+// A section listed in tests/spec-map-exceptions.yaml is NOT skipped
+// here. That file waives only the has-a-test (coverage-completeness)
+// requirement that validateSpecMapCoverage enforces: an excepted
+// section is allowed to carry zero tests. It does not waive the
+// existence check on a tests[] reference the section does carry — a
+// deferred or non-normative section can still accumulate a dangling
+// reference to a renamed or deleted file, and that reference is exactly
+// as misleading to a maintainer reading the map as one under a
+// non-exempt section. Skipping excepted sections wholesale here would
+// leave such a reference invisible until the section unblocks.
 //
 // Package (`packages`) references are not probed here: many name a
 // package that a later phase ships, and distinguishing a deferred
@@ -495,13 +502,9 @@ func validateSpecMapTestFiles(specMapPath, exceptionsPath, pendingPath, root str
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return newResult("spec-map test files", false, err.Error())
 	}
-	excepted := readExceptionSections(exceptionsPath)
 	pending := readPendingPaths(pendingPath)
 	missing := []string{}
 	for section, entry := range doc.Sections {
-		if excepted[section] {
-			continue
-		}
 		for _, t := range entry.Tests {
 			path := t
 			if i := strings.Index(path, "::"); i >= 0 {
