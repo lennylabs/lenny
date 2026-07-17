@@ -27,15 +27,15 @@ const (
 // lenny/send_message rate limits. A zero field selects the spec default.
 // spec: §7.2 line 270; §8.3 lines 269-272, 309. F-7.2.6.
 type MessagingRateLimit struct {
-	// MaxPerMinute is the per-sender outbound sliding-window burst limit
-	// (default 30).
+	// MaxPerMinute is the per-sender outbound fixed-window per-minute burst
+	// limit (default 30).
 	MaxPerMinute int
 	// MaxPerSession is the per-sender lifetime outbound cap (default
 	// 200).
 	MaxPerSession int
 	// MaxInboundPerMinute is the per-target inbound aggregate
-	// sliding-window limit, counting messages arriving from every sender
-	// in the delegation tree (default 60). It is the §8.3 line 309 brake
+	// fixed-window per-minute limit, counting messages arriving from every
+	// sender in the delegation tree (default 60). It is the §8.3 line 309 brake
 	// on the O(N²) sibling-messaging storm: regardless of how many
 	// senders contribute, the target accepts at most this many per
 	// window.
