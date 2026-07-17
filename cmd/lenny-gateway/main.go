@@ -2516,15 +2516,19 @@ func envInt64(name string, def int64) int64 {
 }
 
 // barrierCoordinatorDispatch adapts a *barrier.Coordinator to the
-// prestop.BarrierDispatcher interface: the staged drain only needs the
-// pass to fire under its ACK budget, so the DispatchSummary is discarded
-// and any enumeration error is surfaced for the hook to log.
+// prestop.BarrierDispatcher interface. It surfaces the pass's per-session
+// Outcome set (not just the error) so the preStop hook can skip every
+// barrier-acked session in its post-barrier per-session loop: under the
+// §10.1 line 169 quiesce-and-hold contract the barrier already drives a
+// full gateway-side checkpoint for every session it acks, so a loop that
+// re-checkpointed those sessions would open a second manifest row and
+// duplicate catalog rows for one (session, coordination_generation).
 // spec: §10.1 lines 163-181.
 type barrierCoordinatorDispatch struct{ c *barrier.Coordinator }
 
-func (d barrierCoordinatorDispatch) Dispatch(ctx context.Context) error {
-	_, err := d.c.Dispatch(ctx)
-	return err
+func (d barrierCoordinatorDispatch) Dispatch(ctx context.Context) ([]barrier.Outcome, error) {
+	sum, err := d.c.Dispatch(ctx)
+	return sum.Outcomes, err
 }
 
 // parseTerminationGrace returns the §4.4 line 263 termination grace

@@ -605,7 +605,17 @@ func (w *gatewayWiring) buildHTTPSurface(
 				return b.Adapter, true
 			},
 		}
-		coord := barrier.New(barrierLister, barrierDisp, checkpointMeta, gwMetrics)
+		// §10.1 line 169 — hand the barrier the in-process checkpointer so
+		// it drives the gateway-side Checkpoint stream (with
+		// checkpoint.TriggerEviction) against each quiesced pod concurrently
+		// with the CheckpointBarrier RPC. A nil checkpointSvc (no store
+		// wired) leaves the barrier firing without a gateway-driven
+		// checkpoint.
+		var barrierCheckpointer barrier.Checkpointer
+		if w.checkpointSvc != nil {
+			barrierCheckpointer = w.checkpointSvc
+		}
+		coord := barrier.New(barrierLister, barrierDisp, checkpointMeta, gwMetrics, barrierCheckpointer)
 		barrierDispatch = barrierCoordinatorDispatch{coord}
 	}
 	prestopHook := &prestop.Hook{

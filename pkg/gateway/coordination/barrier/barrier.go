@@ -37,6 +37,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 )
 
@@ -101,6 +102,21 @@ type Metrics interface {
 	IncPreStopBarrierTargetSource(source string)
 }
 
+// Checkpointer drives one gateway-side Checkpoint stream against a
+// bound pod for a session under the given trigger. Under the §10.1
+// line 169 quiesce-and-hold contract the adapter holds its quiescence
+// open and returns CheckpointBarrierAck only after the gateway-driven
+// stream terminates, so the barrier opens this stream **concurrently
+// with** the in-flight CheckpointBarrier RPC: a gateway that waited for
+// the ack before starting the stream, and an adapter that waits for the
+// stream before acking, would deadlock. *checkpointer.Checkpointer
+// satisfies it via CheckpointWithTrigger.
+//
+// spec: §10.1 line 169.
+type Checkpointer interface {
+	CheckpointWithTrigger(ctx context.Context, tenantID, sessionID string, trigger checkpoint.Trigger) error
+}
+
 // ErrGenerationStale is the sentinel a Dispatcher returns when the pod
 // rejects the barrier as generation-stale (a §10.1 line 165
 // false-positive that survived the cache fallback). It is recorded but
@@ -110,16 +126,21 @@ var ErrGenerationStale = errors.New("barrier: pod rejected barrier as generation
 // Coordinator drives the gateway side of the CheckpointBarrier
 // protocol. Construct with New.
 type Coordinator struct {
-	targets  TargetLister
-	dispatch Dispatcher
-	meta     sessioncheckpointmeta.Store
-	metrics  Metrics
+	targets    TargetLister
+	dispatch   Dispatcher
+	meta       sessioncheckpointmeta.Store
+	metrics    Metrics
+	checkpoint Checkpointer
 }
 
 // New returns a Coordinator. targets, dispatch, and meta are required;
-// metrics may be nil (the counters are disabled).
-func New(targets TargetLister, dispatch Dispatcher, meta sessioncheckpointmeta.Store, metrics Metrics) *Coordinator {
-	return &Coordinator{targets: targets, dispatch: dispatch, meta: meta, metrics: metrics}
+// metrics may be nil (the counters are disabled) and checkpoint may be
+// nil (the barrier fires without driving a gateway-side checkpoint, the
+// dev-mode / single-replica posture). When checkpoint is set the barrier
+// drives the §10.1 line 169 quiesce-and-hold Checkpoint stream against
+// each target concurrently with the CheckpointBarrier RPC.
+func New(targets TargetLister, dispatch Dispatcher, meta sessioncheckpointmeta.Store, metrics Metrics, checkpoint Checkpointer) *Coordinator {
+	return &Coordinator{targets: targets, dispatch: dispatch, meta: meta, metrics: metrics, checkpoint: checkpoint}
 }
 
 // Outcome is the per-session result of a barrier dispatch.
@@ -135,6 +156,13 @@ type Outcome struct {
 	// Err is any non-stale dispatch error (deadline, transport). The
 	// drain continues past it.
 	Err error
+	// CheckpointErr is any error the gateway-driven quiesce-and-hold
+	// Checkpoint stream returned for this target (§10.1 line 169). The
+	// stream finalises the manifest row itself (a partial row on abort),
+	// so a non-nil value does not clear Acked: a barrier-acked session is
+	// captured and must not be re-checkpointed by the post-barrier loop.
+	// Nil when no Checkpointer is wired.
+	CheckpointErr error
 }
 
 // DispatchSummary aggregates a Dispatch pass.
@@ -184,7 +212,25 @@ func (c *Coordinator) Dispatch(ctx context.Context) (DispatchSummary, error) {
 func (c *Coordinator) dispatchOne(ctx context.Context, t Target) Outcome {
 	barrierID := c.nextBarrierID(ctx, t)
 	out := Outcome{Target: t, BarrierID: barrierID}
+	// §10.1 line 169 quiesce-and-hold: open the gateway-driven Checkpoint
+	// stream concurrently with the CheckpointBarrier RPC. The adapter
+	// holds its quiescence open and returns the ack only after this stream
+	// terminates, so starting it before the ack (rather than after) is
+	// what keeps the barrier from deadlocking against the held ack. The
+	// stream finalises the manifest row itself; its error is recorded but
+	// never un-acks the target.
+	var cpWG sync.WaitGroup
+	var cpErr error
+	if c.checkpoint != nil {
+		cpWG.Add(1)
+		go func() {
+			defer cpWG.Done()
+			cpErr = c.checkpoint.CheckpointWithTrigger(ctx, t.TenantID, t.SessionID, checkpoint.TriggerEviction)
+		}()
+	}
 	ack, err := c.dispatch.Send(ctx, t, barrierID)
+	cpWG.Wait()
+	out.CheckpointErr = cpErr
 	if err != nil {
 		if errors.Is(err, ErrGenerationStale) {
 			out.Stale = true

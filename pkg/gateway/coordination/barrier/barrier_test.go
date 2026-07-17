@@ -73,7 +73,7 @@ func TestDispatchHappyPath_spec_10_1(t *testing.T) {
 			{TenantID: "acme", SessionID: "s2", CoordinationGeneration: 2, PodAddr: "10.0.0.2"},
 		},
 		source: SourcePostgres,
-	}, disp, meta, mx)
+	}, disp, meta, mx, nil)
 
 	sum, err := c.Dispatch(ctx)
 	if err != nil {
@@ -108,7 +108,7 @@ func TestDispatchBarrierIDMonotonic_spec_10_1(t *testing.T) {
 	disp := newFakeDispatcher()
 	disp.acks["s1"] = Ack{CheckpointRef: "ck1"}
 	lister := &fakeLister{targets: []Target{{TenantID: "acme", SessionID: "s1", CoordinationGeneration: 1}}, source: SourcePostgres}
-	c := New(lister, disp, meta, nil)
+	c := New(lister, disp, meta, nil, nil)
 
 	if _, err := c.Dispatch(ctx); err != nil {
 		t.Fatalf("first Dispatch: %v", err)
@@ -140,7 +140,7 @@ func TestDispatchGenerationStaleNonFatal_spec_10_1(t *testing.T) {
 			{TenantID: "acme", SessionID: "s2"},
 		},
 		source: SourcePostgres,
-	}, disp, meta, nil)
+	}, disp, meta, nil, nil)
 
 	sum, err := c.Dispatch(ctx)
 	if err != nil {
@@ -168,7 +168,7 @@ func TestDispatchTransportErrorNonFatal_spec_10_1(t *testing.T) {
 	meta := sessioncheckpointmeta.NewMemoryStore(nil)
 	disp := newFakeDispatcher()
 	disp.errs["s1"] = errors.New("deadline exceeded")
-	c := New(&fakeLister{targets: []Target{{TenantID: "acme", SessionID: "s1"}}, source: SourceCacheFallback}, disp, meta, nil)
+	c := New(&fakeLister{targets: []Target{{TenantID: "acme", SessionID: "s1"}}, source: SourceCacheFallback}, disp, meta, nil, nil)
 	sum, err := c.Dispatch(ctx)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -183,7 +183,7 @@ func TestDispatchTransportErrorNonFatal_spec_10_1(t *testing.T) {
 func TestDispatchCacheFallbackSource_spec_10_1(t *testing.T) {
 	mx := newFakeMetrics()
 	c := New(&fakeLister{targets: nil, source: SourceCacheFallback}, newFakeDispatcher(),
-		sessioncheckpointmeta.NewMemoryStore(nil), mx)
+		sessioncheckpointmeta.NewMemoryStore(nil), mx, nil)
 	if _, err := c.Dispatch(context.Background()); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestDispatchCacheFallbackSource_spec_10_1(t *testing.T) {
 
 func TestDispatchListerError(t *testing.T) {
 	c := New(&fakeLister{err: errors.New("pg down")}, newFakeDispatcher(),
-		sessioncheckpointmeta.NewMemoryStore(nil), nil)
+		sessioncheckpointmeta.NewMemoryStore(nil), nil, nil)
 	if _, err := c.Dispatch(context.Background()); err == nil {
 		t.Error("lister error should propagate")
 	}
@@ -228,7 +228,7 @@ func TestDispatchMetaUpsertErrorKeepsAcked_spec_10_1(t *testing.T) {
 	c := New(&fakeLister{
 		targets: []Target{{TenantID: "acme", SessionID: "s1", CoordinationGeneration: 1}},
 		source:  SourcePostgres,
-	}, disp, meta, nil)
+	}, disp, meta, nil, nil)
 
 	sum, err := c.Dispatch(ctx)
 	if err != nil {

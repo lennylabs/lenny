@@ -360,7 +360,23 @@ func (c *Checkpointer) interval() time.Duration {
 // source `checkpoint`. It returns ErrNoBinding when this replica does
 // not coordinate the session.
 func (c *Checkpointer) Checkpoint(ctx context.Context, tenantID, sessionID string) error {
-	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotCheckpoint, checkpoint.TriggerPeriodic)
+	return c.CheckpointWithTrigger(ctx, tenantID, sessionID, checkpoint.TriggerPeriodic)
+}
+
+// CheckpointWithTrigger takes one §4.4 checkpoint of the session and
+// stamps the given trigger on the duration histogram and the partial
+// counter. The §10.1 preStop drain paths call it with
+// checkpoint.TriggerEviction so both the barrier-window checkpoint and
+// the per-session tier-cap finalisation are labelled eviction, which is
+// what the §16.1 `lenny_checkpoint_partial_total{trigger="eviction"}`
+// domain and the §10.1 line 172 finalisation counter are written
+// against. Like Checkpoint it returns ErrNoBinding when this replica
+// does not coordinate the session.
+//
+// spec: §10.1 line 172 (the preStop drain driver stamps the eviction
+// trigger on both barrier-drain and Stage 2 tier-cap finalisations).
+func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sessionID string, trigger checkpoint.Trigger) error {
+	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotCheckpoint, trigger)
 }
 
 // Seal takes the §7.1 final workspace snapshot of a completing session
