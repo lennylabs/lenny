@@ -1,0 +1,69 @@
+suite: registry digest-pinning webhook (air-gap requireDigest posture)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/registry-digest-webhook.yaml
+tests:
+  # spec: §25.8 — the chart defaults platform.registry.requireDigest to
+  # false so a stock install renders tag-pinned references without the
+  # digest-enforcement webhook blocking admission. The air-gap enforcement
+  # is opt-in.
+  - it: renders nothing when requireDigest is false (the default posture)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §25.8 air-gap guidance — "Set platform.registry.requireDigest:
+  # true to enforce digest-pinned image references (defends against tag
+  # mutation in the mirror)." Turning the flag on renders the
+  # digest-enforcement admission workload plus its ValidatingWebhookConfiguration.
+  - it: renders the digest-enforcement webhook when requireDigest is true
+    set:
+      platform.registry.requireDigest: true
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  # spec: §25.8 — the enforcement runs as a fail-closed admission gate so a
+  # pod whose image references cannot be validated is not admitted with an
+  # unverified digest-pinning posture.
+  - it: configures the digest webhook fail-closed on pod CREATE in agent namespaces
+    set:
+      platform.registry.requireDigest: true
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: metadata.name
+          value: lenny-registry-digest
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /registry-digest
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: pods
+      - equal:
+          path: webhooks[0].rules[0].operations[0]
+          value: CREATE
+      - equal:
+          path: webhooks[0].namespaceSelector.matchExpressions[0].key
+          value: lenny.dev/agent-namespace
+      - equal:
+          path: webhooks[0].namespaceSelector.matchExpressions[0].values[0]
+          value: "true"
+
+  # spec: §25.8 — requireDigest enforcement rides on the in-tree admission
+  # stack. When the stack is disabled the digest webhook cannot be served,
+  # so it must not render even with requireDigest set.
+  - it: renders nothing when the admission stack is disabled even if requireDigest is true
+    set:
+      admissionWebhooks.enabled: false
+      platform.registry.requireDigest: true
+    asserts:
+      - hasDocuments:
+          count: 0
