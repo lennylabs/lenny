@@ -142,6 +142,20 @@ func TestOpsEventEmissionHealthStatusChangedReachesBuffer(t *testing.T) {
 	if got := gjsonString(t, ev.Event.Data, "newStatus"); got != observed {
 		t.Errorf("health_status_changed data.newStatus = %q, want %q (the observed post-outage verdict)", got, observed)
 	}
+	// The transition is attributable to the Redis component going from
+	// healthy to unhealthy, so the payload's triggeringComponents must
+	// name it. spec: §25.3 line 706 ("triggering component").
+	trig := gjsonStringSlice(t, ev.Event.Data, "triggeringComponents")
+	found := false
+	for _, name := range trig {
+		if name == "redis" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("health_status_changed data.triggeringComponents = %v, want to contain %q", trig, "redis")
+	}
 }
 
 // getHealthStatus reads the aggregate verdict off the §25.3
@@ -266,4 +280,29 @@ func gjsonString(t *testing.T, data json.RawMessage, key string) string {
 	}
 	s, _ := m[key].(string)
 	return s
+}
+
+// gjsonStringSlice pulls a top-level string-array field out of a
+// CloudEvents data payload without a dependency on the product event
+// type.
+func gjsonStringSlice(t *testing.T, data json.RawMessage, key string) []string {
+	t.Helper()
+	if len(data) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("decode event data: %v", err)
+	}
+	raw, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }

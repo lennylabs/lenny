@@ -27,7 +27,7 @@ func TestOnTransitionFiresOnAggregateChange(t *testing.T) {
 		Fn:            func(context.Context) health.Component { return health.Component{Status: status} },
 	})
 	var transitions []string
-	agg.OnTransition(func(prev, curr health.Status) {
+	agg.OnTransition(func(prev, curr health.Status, prevComponents, currComponents []health.Component) {
 		transitions = append(transitions, string(prev)+"->"+string(curr))
 	})
 
@@ -43,6 +43,80 @@ func TestOnTransitionFiresOnAggregateChange(t *testing.T) {
 	agg.Report(context.Background())
 	if len(transitions) != 1 || transitions[0] != "healthy->unhealthy" {
 		t.Errorf("transitions = %v, want one healthy->unhealthy", transitions)
+	}
+}
+
+// TestOnTransitionCarriesComponentSnapshots is the §25.3 contract that
+// the health_status_changed hook receives the per-component snapshot from
+// the previous and the new Report, not only the two aggregate statuses,
+// so a caller can identify the component whose status change drove the
+// aggregate transition.
+// spec: §25.3 (event types — health_status_changed payload: "Old status,
+// new status, triggering component").
+func TestOnTransitionCarriesComponentSnapshots(t *testing.T) {
+	agg := health.NewAggregatorWithCache(0, nil)
+	dbStatus := health.StatusHealthy
+	agg.Register(health.CheckerFunc{
+		ComponentName: "db",
+		Fn:            func(context.Context) health.Component { return health.Component{Name: "db", Status: dbStatus} },
+	})
+	agg.Register(healthy("cache"))
+
+	var gotPrev, gotCurr []health.Component
+	fired := 0
+	agg.OnTransition(func(prev, curr health.Status, prevComponents, currComponents []health.Component) {
+		fired++
+		gotPrev = prevComponents
+		gotCurr = currComponents
+	})
+
+	agg.Report(context.Background()) // baseline; no transition
+	dbStatus = health.StatusUnhealthy
+	agg.Report(context.Background()) // db flips; the aggregate transitions
+
+	if fired != 1 {
+		t.Fatalf("hook fired %d times, want 1", fired)
+	}
+	if len(gotPrev) != 2 || len(gotCurr) != 2 {
+		t.Fatalf("prevComponents/currComponents lengths = %d/%d, want 2/2", len(gotPrev), len(gotCurr))
+	}
+	if got := health.TriggeringComponents(gotPrev, gotCurr); len(got) != 1 || got[0] != "db" {
+		t.Errorf("TriggeringComponents(prevComponents, currComponents) = %v, want [db]", got)
+	}
+}
+
+// TestTriggeringComponentsNamesChangedComponent asserts TriggeringComponents
+// names the component(s) whose individual status changed between the
+// previous and the new snapshot, including on a recovery transition back
+// to healthy, so a subscriber can attribute a return-to-healthy signal to
+// the component that cleared.
+// spec: §25.3 (event types — health_status_changed payload: "Old status,
+// new status, triggering component").
+func TestTriggeringComponentsNamesChangedComponent(t *testing.T) {
+	prev := []health.Component{
+		{Name: "cache", Status: health.StatusHealthy},
+		{Name: "db", Status: health.StatusUnhealthy},
+	}
+	curr := []health.Component{
+		{Name: "cache", Status: health.StatusHealthy},
+		{Name: "db", Status: health.StatusHealthy},
+	}
+	if got, want := health.TriggeringComponents(prev, curr), []string{"db"}; len(got) != 1 || got[0] != want[0] {
+		t.Errorf("TriggeringComponents (recovery) = %v, want %v", got, want)
+	}
+
+	// Multiple components changing in the same Report cycle are all named,
+	// sorted by name.
+	prev = []health.Component{
+		{Name: "cache", Status: health.StatusHealthy},
+		{Name: "db", Status: health.StatusHealthy},
+	}
+	curr = []health.Component{
+		{Name: "cache", Status: health.StatusDegraded},
+		{Name: "db", Status: health.StatusUnhealthy},
+	}
+	if got, want := health.TriggeringComponents(prev, curr), []string{"cache", "db"}; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("TriggeringComponents (multiple) = %v, want %v", got, want)
 	}
 }
 

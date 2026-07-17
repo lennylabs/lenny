@@ -3240,7 +3240,11 @@
         "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey",
         "tests/tier8_chaos/store_failure_test.go",
         "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesTriggeringCheck_spec_25_3",
-        "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesRecoveredCheck_spec_25_3"
+        "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesRecoveredCheck_spec_25_3",
+        "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesTriggeringComponent_spec_25_3",
+        "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesRecoveredComponent_spec_25_3",
+        "pkg/gateway/operability/health/service_test.go::TestOnTransitionCarriesComponentSnapshots",
+        "pkg/gateway/operability/health/service_test.go::TestTriggeringComponentsNamesChangedComponent"
       ],
       "packages": [
         "pkg/gateway/operability/health",
