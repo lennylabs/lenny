@@ -175,6 +175,25 @@ func TestManifestReasonAndPartialCounterDomainsAgree(t *testing.T) {
 		t.Error("§10.1 manifest_reason enum enumeration still lists terminated_during_resume as a live value")
 	}
 
+	// §10.1 cleanup-paragraph cross-reference site: the second §10.1 mention of
+	// lenny_checkpoint_partial_total (the Cleanup paragraph) carries only the
+	// §16.1 cross-reference and re-enumerates none of the recovered /
+	// manifest_reason / trigger domains, mirroring the enum-line check above so
+	// both §10.1 cross-reference sites are pinned. A future edit that re-adds a
+	// domain enumeration or the removed terminated_during_resume value here would
+	// otherwise pass undetected and defeat the single-source invariant §16.1 owns.
+	cleanupLine := requireLine(t, s101, "counter tracks partial checkpoint events")
+	requireAllContain(t, "§10.1 cleanup-paragraph lenny_checkpoint_partial_total cross-reference", cleanupLine, []string{
+		"the single source in [§16.1]",
+	})
+	requireNoneContain(t, "§10.1 cleanup-paragraph lenny_checkpoint_partial_total cross-reference", cleanupLine, []string{
+		"terminated_during_resume",
+		"`stream_truncated`",
+		"`quota_exceeded`",
+		"`pre_scale_down`",
+		"`periodic`",
+	})
+
 	// §16.1 partial-total row: the recovered, manifest_reason, and trigger
 	// domain declarations read exactly, and none names terminated_during_resume.
 	s161 := specSection(t, filepath.Join(root, "spec", "16_observability.md"), "### 16.1 ")
