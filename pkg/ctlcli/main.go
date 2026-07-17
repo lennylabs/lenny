@@ -429,7 +429,7 @@ Operability commands (§25.14 / §24.15, target lenny-ops):
   logs pods <namespace> <name> [--container <c>] [--since <d>] [--tail <n>] [--previous]
                                         Proxy a pod's container logs from lenny-ops (§24.15, §25.4)
   mcp-management tools                  List the management MCP tools (§24.15)
-  mcp-management call <tool> [--params <json>]   Invoke a management MCP tool (§24.15)
+  mcp-management call <tool> [--args <json>]   Invoke a management MCP tool (§24.15)
 
 Embedded Mode local commands (§24.19; identical to the lenny short name):
   up [--http-port <n>] [--https-port <n>]   Start the local stack (idempotent)

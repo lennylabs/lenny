@@ -167,9 +167,99 @@ func TestMCPManagementTools(t *testing.T) {
 	}
 }
 
-func TestMCPManagementCall(t *testing.T) {
+func TestMCPManagementCallRequiresTool(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--ops-server", "http://ops:8090", "mcp-management", "call"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("mcp-management call without <tool>: exit %d, want 2", code)
+	}
+}
+
+// TestMCPManagementAutoDiscoversOpsURL drives `mcp-management tools`
+// through the full §24.16 auto-discovery path (no --ops-server): the
+// gateway advertises the ops URL in its GET /v1/admin/platform/version
+// response, and lenny-ctl routes the JSON-RPC call to /mcp/management on
+// that ops server. §24.15 line 4866 lists mcp-management among the
+// command groups that resolve to lenny-ops via this auto-discovery rule.
+// spec: §24.15 line 4866 ("mcp-management | lenny-ops | --ops-server
+// flag, or auto-discovered via GET /v1/admin/platform/version (gateway
+// response includes opsServiceURL)"); §24.16 line 201 rule 2.
+func TestMCPManagementAutoDiscoversOpsURL(t *testing.T) {
+	opsGot := &capturedRequest{}
+	ops := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		opsGot.method = r.Method
+		opsGot.path = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
+	}))
+	defer ops.Close()
+
+	// The gateway advertises the ops URL in the version response.
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/admin/platform/version" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"gatewayVersion":"dev","opsServiceURL":"` + ops.URL + `"}`))
+	}))
+	defer gateway.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", gateway.URL, "mcp-management", "tools"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (stderr %s)", code, stderr.String())
+	}
+	if opsGot.method != http.MethodPost || opsGot.path != "/mcp/management" {
+		t.Errorf("auto-discovery did not route mcp-management to the ops server: ops saw %s %s", opsGot.method, opsGot.path)
+	}
+}
+
+// TestMCPManagementFallsBackToGatewayWhenOpsURLAbsent covers the §24.16
+// rule-3 fallback for the mcp-management group specifically: when the
+// gateway's version response carries no opsServiceURL and --ops-server is
+// not passed, lenny-ctl falls back to the gateway host rather than
+// aborting, and surfaces a warning. spec: §24.16 line 201 rule 3 ("If
+// auto-discovery fails (gateway unreachable, opsServiceURL absent because
+// the cluster is mid-upgrade), lenny-ctl falls back to the gateway host
+// under the assumption that gateway-hosted operability endpoints ...
+// still work, and surfaces a warning for any ops-exclusive command.").
+func TestMCPManagementFallsBackToGatewayWhenOpsURLAbsent(t *testing.T) {
+	got := &capturedRequest{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/admin/platform/version" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"gatewayVersion":"dev"}`)) // no opsServiceURL.
+			return
+		}
+		got.method = r.Method
+		got.path = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
+	}))
+	defer gateway.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", gateway.URL, "mcp-management", "tools"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("fallback: exit code %d, want 0 (stderr %s)", code, stderr.String())
+	}
+	if got.method != http.MethodPost || got.path != "/mcp/management" {
+		t.Errorf("fallback did not route mcp-management to the gateway host: gateway saw %s %s", got.method, got.path)
+	}
+	if !strings.Contains(stderr.String(), "WARN") || !strings.Contains(stderr.String(), "falling back to the gateway host") {
+		t.Errorf("fallback should warn on stderr, got %q", stderr.String())
+	}
+}
+
+// TestMCPManagementCallAcceptsArgsFlag covers the §25.14 command table's
+// documented flag name for `mcp-management tools call`: the tool
+// arguments are passed via --args, not --params.
+// spec: §25.14 line 4984 ("lenny-ctl mcp-management tools call <name>
+// --args <json>").
+func TestMCPManagementCallAcceptsArgsFlag(t *testing.T) {
 	code, got := runAgainstOps(t, http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":{}}`,
-		"mcp-management", "call", "lenny_get_pool", "--params", `{"name":"pool-a"}`)
+		"mcp-management", "call", "lenny_get_pool", "--args", `{"name":"pool-a"}`)
 	if code != 0 {
 		t.Fatalf("exit code: got %d, want 0", code)
 	}
@@ -186,18 +276,10 @@ func TestMCPManagementCall(t *testing.T) {
 	}
 }
 
-func TestMCPManagementCallRequiresTool(t *testing.T) {
+func TestMCPManagementCallRejectsBadArgs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--ops-server", "http://ops:8090", "mcp-management", "call"}, &stdout, &stderr)
+	code := run([]string{"--ops-server", "http://ops:8090", "mcp-management", "call", "t", "--args", "not-json"}, &stdout, &stderr)
 	if code != 2 {
-		t.Errorf("mcp-management call without <tool>: exit %d, want 2", code)
-	}
-}
-
-func TestMCPManagementCallRejectsBadParams(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"--ops-server", "http://ops:8090", "mcp-management", "call", "t", "--params", "not-json"}, &stdout, &stderr)
-	if code != 2 {
-		t.Errorf("mcp-management call with bad --params: exit %d, want 2", code)
+		t.Errorf("mcp-management call with bad --args: exit %d, want 2", code)
 	}
 }
