@@ -459,20 +459,35 @@ const discoveredIssues = closedResults
 let fileIssuesResult = { filedCount: 0 }
 if (discoveredIssues.length) {
   const fileIssuesPrompt = [
-    'ROLE. File the following implementer-discovered issues as new OPEN findings in TEST-GAPS.md. Each was found incidentally while closing an unrelated finding and is out of scope for it; they need their own durable record.',
+    'ROLE. File the following implementer-discovered issues as new OPEN findings in TEST-GAPS.md. Each was found incidentally while closing an unrelated finding and is out of scope for it; they need their own durable record — UNLESS an existing finding already records the same fact, in which case filing a new one is pure duplication (this has repeatedly happened: the same pre-existing gofumpt drift, the same delegation-echo build flakiness, and the same tier4_integration go:build tag bug have each been independently re-filed as 3-7 separate findings across batches because nothing checked for an existing record first). Your job is to file what is genuinely new and consolidate what is not.',
     '',
     'DISCOVERED ISSUES:',
     JSON.stringify(discoveredIssues),
     '',
-    'For each: pick the TEST-GAPS.md section that actually covers its subject matter (the spec section it concerns, or the closest theme section — do not default to wherever foundWhileClosing happens to live unless that is genuinely the right home), find that section\'s highest existing finding number and use the next one, and insert a new finding block in the same format every other finding in that section uses: `### - [ ] <new-id> — <title> [<severity>] — OPEN` followed by `- **Spec/Doc:**`, `- **Existing tests:**`, `- **Gap:**`, `- **Dependencies:**`, `- **Suggested test:**` fields, writing them from the evidence given (it is fine for Existing tests / Suggested test to be brief if the evidence does not spell them out — do not invent specifics the evidence does not support). Update that section\'s theme/spec-area summary line near the top of the file (the "NH NM NL NI" counts) to include the new finding. Do not touch any other finding\'s text.',
+    'STEP 1 — dedup WITHIN this list first. Two or more entries can describe the same underlying fact even when found while closing different findings (e.g. two implementers in the same batch both hit the same pre-existing static-tier failure). Merge entries whose evidence points at the same root cause (same file(s), same error signature, same defect) into one: keep the most complete evidence, the highest severity among them, and list every contributing foundWhileClosing id.',
+    '',
+    'STEP 2 — for each remaining (deduplicated) issue, search TEST-GAPS.md for an existing finding that already records the same fact before writing a new one: `grep -in` for the issue\'s distinctive filenames, function/test names, or error text across TEST-GAPS.md. A match is the same fact if it names the same file(s)/symptom/root cause, even if worded differently or observed at a different commit — "confirmed again at a later commit" is corroboration, not a new gap.',
+    '  - If an existing OPEN finding already covers it: do NOT file a new finding. Instead append one line to that finding, right after its `Suggested test` field (before the next heading): `- **Also observed** (' + '<today\'s date via `date +%F`>' + ', while closing <foundWhileClosing id(s)>): <one-sentence note — a new detail only if the new evidence adds one, e.g. a newly affected file, otherwise just "reproduced again">.` Record its id under corroboratedIds.',
+    '  - If an existing finding covers the same fact but is already RESOLVED (checked `[x]`) or already carries a `**Needs human input` field: treat it the same as a match — do not refile; skip it silently (a resolved-but-recurring fact is itself worth noting, but as a one-line addendum to that finding\'s Resolution, not a new open finding). Record its id under corroboratedIds.',
+    '  - Only when genuinely nothing existing covers it, file it as new: pick the TEST-GAPS.md section that actually covers its subject matter (the spec section it concerns, or the closest theme section — do not default to wherever foundWhileClosing happens to live unless that is genuinely the right home), find that section\'s highest existing finding number and use the next one, and insert a new finding block in the same format every other finding in that section uses: `### - [ ] <new-id> — <title> [<severity>] — OPEN` followed by `- **Spec/Doc:**`, `- **Existing tests:**`, `- **Gap:**`, `- **Dependencies:**`, `- **Suggested test:**` fields, writing them from the evidence given (it is fine for Existing tests / Suggested test to be brief if the evidence does not spell them out — do not invent specifics the evidence does not support). Update that section\'s theme/spec-area summary line near the top of the file (the "NH NM NL NI" counts) to include the new finding.',
+    '',
+    'Do not touch any finding\'s text beyond the one-line addenda and new insertions described above.',
     '',
     'GIT DISCIPLINE: stay on the current batch branch — first confirm `git branch --show-current` is NOT `impl/v1-initial`/`main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: record <N> issue(s) discovered during batch review"`.',
     '',
-    'RETURN filedCount (integer) and commitSha.',
+    'RETURN filedCount (integer, genuinely new findings only), skippedAsDuplicateCount (integer, issues that matched an existing finding or were merged as within-batch dupes), corroboratedIds (array of existing finding ids you appended a one-line addendum to, empty if none), commitSha.',
   ].join('\n')
   fileIssuesResult = await agent(fileIssuesPrompt, {
     label: 'file-discovered-issues', phase: 'Close', effort: 'medium',
-    schema: { type: 'object', additionalProperties: false, required: ['filedCount'], properties: { filedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
+    schema: {
+      type: 'object', additionalProperties: false, required: ['filedCount'],
+      properties: {
+        filedCount: { type: 'integer' },
+        skippedAsDuplicateCount: { type: 'integer' },
+        corroboratedIds: { type: 'array', items: { type: 'string' } },
+        commitSha: { type: 'string' },
+      },
+    },
   })
   if (!fileIssuesResult) {
     // Same terminal-error shape as Annotate: the write may never have
