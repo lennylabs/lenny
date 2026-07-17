@@ -197,10 +197,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	}
 	// §25.3: emit a health_status_changed operational event when the
 	// aggregate health verdict transitions.
-	healthAgg.OnTransition(func(prev, curr health.Status) {
-		data, _ := json.Marshal(map[string]any{
-			"oldStatus": string(prev), "newStatus": string(curr),
-		})
+	healthAgg.OnTransition(func(prev, curr health.Status, prevComponents, currComponents []health.Component) {
+		data, _ := json.Marshal(healthStatusChangedPayload(prev, curr, prevComponents, currComponents))
 		_ = opsEmitter.Emit(context.Background(), events.OperationalEvent{
 			Source:          "/v1/admin/health",
 			Type:            events.EventHealthStatusChanged.CloudEventsType(),
@@ -955,6 +953,23 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// in place later; the run loop serves w.httpSrv.
 	w.mux = mux
 	w.httpSrv = httpSrv
+}
+
+// healthStatusChangedPayload builds the §25.3 health_status_changed event
+// payload for an aggregate-health transition. The event catalog documents
+// the payload as "Old status, new status, triggering component", so
+// alongside the previous and current aggregate status the payload names
+// the triggering component(s): the health components whose individual
+// status changed between the previous and the new Report, which is what
+// drove the aggregate transition. This mirrors how lenny-ops names the
+// triggering check(s) on ops_health_status_changed.
+// spec: §25.3 (event types — health_status_changed payload).
+func healthStatusChangedPayload(prev, curr health.Status, prevComponents, currComponents []health.Component) map[string]any {
+	return map[string]any{
+		"oldStatus":            string(prev),
+		"newStatus":            string(curr),
+		"triggeringComponents": health.TriggeringComponents(prevComponents, currComponents),
+	}
 }
 
 // startLeaderElectedSweeps launches the §12.5 gateway-singleton sweeps

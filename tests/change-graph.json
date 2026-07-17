@@ -416,6 +416,7 @@
     },
     "cmd/lenny-ops": {
       "unit": ["cmd/lenny-ops/..."],
+      "component": ["cmd/lenny-ops/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"]
     },
     "buf.yaml": {

@@ -5,6 +5,7 @@ package eventsubscription_test
 import (
 	"context"
 	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 
@@ -160,6 +161,67 @@ func TestServiceUpdate_spec_25_5(t *testing.T) {
 	}
 	if _, err := svc.Update(context.Background(), "missing", es.UpdateRequest{Description: &desc}, platformAdmin); es.CodeOf(err) != es.ErrCodeNotFound {
 		t.Errorf("update missing err = %v, want SUBSCRIPTION_NOT_FOUND", err)
+	}
+}
+
+// spec: §25.5 — the `PUT /v1/admin/event-subscriptions/{id}` endpoint
+// "Update subscription filters", and `ops_event_subscriptions` persists
+// those filters in the `types TEXT[] NOT NULL` and `severity TEXT[]`
+// columns. Update must patch the Types and Severity filter fields the
+// same way it patches Description and Active, and must reject an
+// unrecognized severity with INVALID_EVENT_FILTER ("Unrecognized event
+// type or severity in filter") exactly as Create does.
+//
+// diagnosis: TestServiceUpdate_spec_25_5 only ever sends
+// Description/Active through UpdateRequest, so the branches in
+// Service.Update that normalize and store req.Types/req.Severity (and
+// the validation error path for a bad severity) were never executed by
+// any test.
+func TestServiceUpdateFilters_spec_25_5(t *testing.T) {
+	svc, _ := newService()
+	rev, _ := svc.Create(context.Background(), es.CreateRequest{CallbackURL: "https://acme.example/hook"}, platformAdmin)
+
+	types := []string{"dev.lenny.session_failed", "dev.lenny.alert_fired"}
+	severity := []string{"WARNING", "critical"}
+	got, err := svc.Update(context.Background(), rev.ID, es.UpdateRequest{Types: &types, Severity: &severity}, platformAdmin)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	wantTypes := []string{"dev.lenny.alert_fired", "dev.lenny.session_failed"}
+	wantSeverity := []string{"critical", "warning"}
+	if !reflect.DeepEqual(got.Types, wantTypes) {
+		t.Errorf("update Types = %v, want %v", got.Types, wantTypes)
+	}
+	if !reflect.DeepEqual(got.Severity, wantSeverity) {
+		t.Errorf("update Severity = %v, want %v", got.Severity, wantSeverity)
+	}
+	if got.Generation != 1 {
+		t.Errorf("update Generation = %d, want 1", got.Generation)
+	}
+
+	// The persisted record carries the same normalized filters the
+	// read-view reported, confirming the patch reached the Store and
+	// not just the returned view.
+	rec, err := svc.Store.Get(context.Background(), rev.ID)
+	if err != nil {
+		t.Fatalf("store Get: %v", err)
+	}
+	if !reflect.DeepEqual(rec.Types, wantTypes) || !reflect.DeepEqual(rec.Severity, wantSeverity) {
+		t.Errorf("stored record Types=%v Severity=%v, want %v / %v", rec.Types, rec.Severity, wantTypes, wantSeverity)
+	}
+
+	// An unrecognized severity on Update is rejected the same way Create
+	// rejects it, and leaves the previously patched filters untouched.
+	badSeverity := []string{"emergency"}
+	if _, err := svc.Update(context.Background(), rev.ID, es.UpdateRequest{Severity: &badSeverity}, platformAdmin); es.CodeOf(err) != es.ErrCodeInvalidFilter {
+		t.Errorf("update bad-severity err = %v, want INVALID_EVENT_FILTER", err)
+	}
+	unchanged, err := svc.Get(context.Background(), rev.ID, platformAdmin)
+	if err != nil {
+		t.Fatalf("Get after rejected update: %v", err)
+	}
+	if !reflect.DeepEqual(unchanged.Severity, wantSeverity) || unchanged.Generation != 1 {
+		t.Errorf("rejected update mutated state: Severity=%v Generation=%d, want %v / 1", unchanged.Severity, unchanged.Generation, wantSeverity)
 	}
 }
 
