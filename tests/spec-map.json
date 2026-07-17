@@ -1914,7 +1914,8 @@
         "tests/tier9_security/admission_security_test.go",
         "tests/tier9_security/image_signing_test.go",
         "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
-        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointDocsMirrorsAgreeWithSpec131"
       ],
       "packages": [
         "pkg/podsecurity"

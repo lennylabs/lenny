@@ -14,7 +14,11 @@
 //   - the §12.5 backstop sweep predicate reads identically at its two spec/12
 //     occurrences (the backstop bullet and GC concurrency rule 6);
 //   - the storage-counter rehydrate reservation-folding term reads identically
-//     at its §11.2 occurrences and at §12.4.
+//     at its §11.2 occurrences and at §12.4;
+//   - the reader-facing docs mirrors of the §13.1 Pod Security table
+//     (architecture.md, security.md) and the concepts.md file-delivery prose
+//     agree with the amended spec rows, so no docs page still asserts that
+//     agent pods have no object-store path.
 //
 // The checks read repository state directly (no build tag, no infrastructure),
 // the same posture as the other tier-11 doc checks, plus two lightweight enum
@@ -22,7 +26,8 @@
 // re-typed literal.
 //
 // spec: 10.1 (partial-manifest column set and manifest_reason enum), 11.2
-// (storage-counter rehydrate), 12.5 (backstop sweep predicate), 16.1
+// (storage-counter rehydrate), 12.5 (backstop sweep predicate), 13.1 (docs
+// mirrors of the pod-to-object-store checkpoint path), 16.1
 // (lenny_checkpoint_partial_total label domains).
 
 package tier11_docs_test
@@ -259,6 +264,68 @@ func TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec(t *testing.T)
 	if n := strings.Count(string(s12), term); n < 1 {
 		t.Errorf("the reservation-folding rehydrate term is absent from spec/12 §12.4; the failure-mode table must fold reservations with the same term §11.2 uses:\n  %s", term)
 	}
+}
+
+// spec: 13.1
+// diagnosis: the reader-facing docs mirrors of the §13.1 Pod Security control
+//
+//	table (architecture.md, security.md) or the concepts.md "Gateway-mediated
+//	file delivery" prose have drifted from the amended §13.1 spec rows. §13.1
+//	records that the agent pod PUTs checkpoint chunks to, and on resume GETs
+//	them from, object storage against gateway-minted presigned capabilities —
+//	the one exception to gateway-mediated file delivery. This check anchors on
+//	the spec first (so a docs mirror is measured against the live §13.1 rows,
+//	not a stale re-typed phrase) and then asserts each mirror agrees. A failure
+//	means the §13.1 row that grants the presigned path was removed, or a docs
+//	page still presents the pre-pipeline posture in which the agent pod has no
+//	object-store path at all, leaving an operator with a control-table mirror
+//	that contradicts the shipped presigned-capability grant.
+func TestCheckpointDocsMirrorsAgreeWithSpec131(t *testing.T) {
+	root := repoRoot(t)
+
+	// Spec anchor: §13.1 grants the agent pod the presigned checkpoint-chunk
+	// path. Assert the spec side first so the docs comparison below is bound to
+	// a live row rather than passing vacuously when the row is gone.
+	s131 := specSection(t, filepath.Join(root, "spec", "13_security-model.md"), "### 13.1 ")
+	specTransfer := requireLine(t, s131, "| Checkpoint transfer |")
+	requireAllContain(t, "§13.1 Checkpoint transfer row", specTransfer, []string{
+		"`PUT`s checkpoint chunks",
+		"gateway-minted presigned URLs",
+	})
+
+	// architecture.md and security.md §13.1 table mirrors: the File delivery row
+	// names the checkpoint-chunk exception, matching the amended spec row.
+	tableMirrors := []struct{ page, heading string }{
+		{filepath.Join("docs", "getting-started", "architecture.md"), "Pod security settings"},
+		{filepath.Join("docs", "operator-guide", "security.md"), "Security Context"},
+	}
+	for _, m := range tableMirrors {
+		body := readDoc(t, filepath.Join(root, m.page))
+		sec := section(body, m.heading)
+		if sec == "" {
+			t.Fatalf("%s: %q section not found (renamed or removed?)", m.page, m.heading)
+		}
+		delivery := requireLine(t, sec, "| File delivery |")
+		requireAllContain(t, m.page+" §13.1 File delivery row", delivery, []string{
+			"Checkpoint chunk objects are the one exception",
+			"gateway-minted presigned capabilities",
+		})
+	}
+
+	// concepts.md prose: the file-delivery section states the exception and does
+	// not assert pods have no object-store path.
+	concepts := readDoc(t, filepath.Join(root, "docs", "getting-started", "concepts.md"))
+	delivery := section(concepts, "Gateway-mediated file delivery")
+	if delivery == "" {
+		t.Fatal("concepts.md: 'Gateway-mediated file delivery' section not found (renamed or removed?)")
+	}
+	requireAllContain(t, "concepts.md gateway-mediated file delivery prose", delivery, []string{
+		"Checkpoint chunk objects are the one exception",
+		"gateway-minted presigned capability",
+	})
+	requireNoneContain(t, "concepts.md gateway-mediated file delivery prose", delivery, []string{
+		"no direct object store access from pods",
+	})
 }
 
 // assertSetEqual fails when got and want are not the same set of strings,

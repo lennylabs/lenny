@@ -28,12 +28,12 @@
 // the paired §13.2 egress boundary from the same agent namespace. The
 // checkpoint pipeline grants the agent pod one new egress destination — the
 // object store on its TLS port — against a gateway-minted presigned capability.
-// The allow-pod-egress-objectstore policy and the paired MinIO ingress clause
-// must open exactly that one port: the agent pod reaches MinIO on the TLS port
-// (the positive control) and is still dropped at the CNI on every other
-// lenny-system port (lenny-ops admin, the token service). Chart render tests
-// prove the rendered YAML; only a live CNI probe proves the policy admits the
-// object store and nothing else.
+// The allow-pod-egress-objectstore egress policy and the paired MinIO
+// agent-namespace ingress clause (NET-071) must open exactly that one port:
+// the agent pod reaches MinIO on the TLS port (the positive control) and is
+// still dropped at the CNI on every other lenny-system port (lenny-ops admin,
+// the token service). Chart render tests prove the rendered YAML; only a live
+// CNI probe proves the policy admits the object store and nothing else.
 
 package tier9_security_test
 
@@ -58,10 +58,12 @@ const objectStoreTLSPort = 9000
 // rule is scoped to the object store rather than to the whole namespace.
 const tokenServicePort = 50052
 
-// spec: §13.2 (NET-047/050 — the agent-to-object-store egress policy and the
-// paired MinIO ingress clause open exactly the object-store TLS port to the
-// agent namespace)
-// diagnosis: a failure means the new egress policy opened more than the
+// spec: §13.2 (NET-071 — the allow-pod-egress-objectstore agent-to-object-store
+// egress policy and its paired MinIO agent-namespace ingress clause open exactly
+// the object-store TLS port to the agent namespace; NET-047/050 is the separate
+// selector-consistency audit that covers this policy's selector parity, not the
+// egress rule itself)
+// diagnosis: a failure means the NET-071 egress policy opened more than the
 // object-store port, or the paired MinIO ingress clause is missing and the
 // rule is dead. The test schedules a §13.1-compliant probe pod in the
 // lenny-agents namespace (where tenant-supplied agent code runs) and asserts
