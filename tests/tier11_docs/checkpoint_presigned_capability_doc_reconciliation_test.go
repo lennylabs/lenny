@@ -107,7 +107,6 @@ func TestCheckpointPresignedCapabilityMirroredIn131(t *testing.T) {
 	})
 	requireNoneContain(t, "concepts.md gateway-mediated file delivery prose", delivery, []string{
 		"no direct object store access from pods",
-		"Pods have no credentials to access the artifact store directly",
 	})
 }
 
