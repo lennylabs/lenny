@@ -497,7 +497,7 @@ for (let i = 0; i < plan.steps.length; i++) {
     if (!stepReviewClean) {
       issues =
         stepFindings.length > 0
-          ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/), keeping the tests green:\n" +
+          ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/). Each divergence is a defect the step's tests passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO add or strengthen an automated test that asserts the corrected behavior and would FAIL against the pre-fix code, at the tier that owns it, so this class of issue cannot recur. Keep all tests green:\n" +
             JSON.stringify(stepFindings, null, 2)
           : "This step builds and its tests pass, but a design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its sections; fix any divergence and keep the tests green.";
     }
@@ -823,6 +823,14 @@ const REVIEW_LENSES = [
   },
 ];
 
+// A design-conformance review finding is, by construction, a defect the
+// automated tests passed over — the build was green when the review ran. So a
+// review that fixes only the code leaves the same class of issue able to fall
+// through next time. The review-fix agents below therefore MUST add a
+// regression test that would fail against the pre-fix code for every finding
+// with a runtime effect, the reviewer names the tier that test belongs at, and
+// verify-postreview gates on those tests existing. The same rule applies to the
+// per-step review (issues message in the Build loop) and is enforced there too.
 const REVIEW_RULES =
   "Read the proposal at " +
   proposal +
@@ -830,7 +838,7 @@ const REVIEW_RULES =
   baseRef +
   "..HEAD`) in " +
   repo +
-  ". You are read-only; report findings only. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a test gap (coverage is handled separately). Cite file:line and the proposal section. Report an empty array when the code conforms.";
+  ". You are read-only; report findings only. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a bare coverage percentage (the coverage floor is handled separately). Cite file:line and the proposal section. For each finding, also name the tier at which an automated regression test should assert the corrected behavior (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1): you are catching what the automated tests passed over, so the fix must close that test gap, not only the code. Report an empty array when the code conforms.";
 
 let reviewClean = false;
 let reviewRound = 0;
@@ -878,7 +886,7 @@ if (green) {
         proposal +
         ".\n\nWork in " +
         repo +
-        ". The proposal's spec edits are applied; do not edit spec/. Apply each finding so the code matches the proposal's design, add or correct tests for the corrected behavior, run tier 0 and tier 1 (plus the higher tiers the change reaches) to green, and commit. " +
+        ". The proposal's spec edits are applied; do not edit spec/. Apply each finding so the code matches the proposal's design. EACH FINDING IS A COVERAGE GAP BY DEFINITION: the automated tests passed, yet this review caught the defect — so fixing the code alone lets the same class of issue fall through next time. Therefore, for EVERY finding with a runtime effect (a wrong value, a broken invariant, a mis-wired or missing path, a wrong status/error code/label/metric, a fail-open), you MUST also add or strengthen an automated test that asserts the corrected behavior and is CONSTRUCTED SO IT FAILS against the pre-fix code and PASSES after your fix, at the tier that owns it (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1). Line-covering the changed lines does not satisfy this — the assertion must target the corrected outcome, and you should confirm the would-have-caught property (e.g. by checking the test fails at the pre-fix revision). A finding whose code is fixed with no such regression test is NOT done. Run tier 0 and tier 1 (plus the higher tiers the change reaches) to green, and commit each fix together with its regression test. " +
         RULES +
         "\n\nFindings to fix:\n" +
         JSON.stringify(findings, null, 2),
@@ -911,7 +919,7 @@ if (green && reviewFixApplied) {
       coverageFloor +
       "% via `lenny-test coverage --diff " +
       baseRef +
-      "`, refactors exempt). Report green, the tiers run, the coverage, and any remaining failures.",
+      "`, refactors exempt). REGRESSION-TEST GATE FOR REVIEW FIXES: the design-conformance review just caught defects the automated tests had passed over. Inspect the commits made during the review rounds (`git log` since the review began) and confirm each code fix with a runtime effect is pinned by a test that asserts the corrected outcome and would fail against the pre-fix code — not merely line-covered by a pre-existing happy-path test. If any review-driven fix landed with no such regression test, set green=false and name the fix (file:line), the corrected behavior, and the missing test so the gap is closed before this returns. Report green, the tiers run, the coverage, and any remaining failures.",
     { schema: VERIFY, label: "verify-postreview", phase: "Review" },
   );
   finalGreen = !!(recheck && recheck.green);
