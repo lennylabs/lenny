@@ -131,6 +131,14 @@ func applyPoolSeed(stored *poolstore.Pool, desired poolstore.Pool) {
 	stored.WarmCount = desired.WarmCount
 	stored.MaxSessionAgeSeconds = desired.MaxSessionAgeSeconds
 	stored.AllowStandardIsolation = desired.AllowStandardIsolation
+	// spec: §4.9 — carry the pool-definition credential-delivery combination
+	// and its deployer opt-ins through the bootstrap force-update so a seed
+	// that changes the combination on an already-registered pool takes effect
+	// (one admin resource holds the whole combination across every write path).
+	stored.DeliveryMode = desired.DeliveryMode
+	stored.SpiffeBinding = desired.SpiffeBinding
+	stored.AllowDirectModeStandardIsolation = desired.AllowDirectModeStandardIsolation
+	stored.AllowProxyModeSpiffeBindingDisabled = desired.AllowProxyModeSpiffeBindingDisabled
 	stored.AcknowledgeNonceOnlyAuth = desired.AcknowledgeNonceOnlyAuth
 	stored.EgressProfile = desired.EgressProfile
 	stored.DNSPolicy = desired.DNSPolicy
