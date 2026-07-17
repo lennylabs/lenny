@@ -125,15 +125,6 @@ func (f *fakeObjectStore) HardDeleteObject(u blobstore.URI) error {
 	return nil
 }
 
-// add inserts an object into the store after construction, modeling a
-// still-outstanding presigned grant that lands a straggler chunk under the
-// prefix between the backstop's first prefix list and its final one.
-func (f *fakeObjectStore) add(u blobstore.URI) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.objects = append(f.objects, u)
-}
-
 // fakeReservationCounter records the signed relative Adjust calls the backstop
 // issues to release a reclaimed row's outstanding reservation headroom.
 type fakeReservationCounter struct {
