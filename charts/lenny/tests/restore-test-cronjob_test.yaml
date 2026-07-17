@@ -107,6 +107,24 @@ tests:
           path: spec.jobTemplate.spec.template.spec.serviceAccountName
           value: lenny-restore-test
 
+  # spec: §25.11 "Backup Job NetworkPolicy" — "A dedicated NetworkPolicy
+  # `lenny-backup-job` is rendered for backup Job pods (selected by label
+  # `app: lenny-backup`)". The monthly test-restore Job runs the
+  # lenny-backup image (--mode=restore-test), so its pod template must
+  # carry app: lenny-backup for the lenny-backup-job NetworkPolicy
+  # podSelector to match it; without the label the Job pod gets no
+  # egress under the chart's namespace-wide default-deny-all.
+  - it: carries the app=lenny-backup label the lenny-backup-job NetworkPolicy selects on
+    set:
+      backups:
+        restoreTest:
+          enabled: true
+    documentIndex: 5
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.metadata.labels.app
+          value: lenny-backup
+
   - it: applies the restricted pod security posture
     set:
       backups:

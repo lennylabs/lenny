@@ -3574,7 +3574,9 @@
         "tests/tier9_security/backup_isolation_test.go::TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11",
         "tests/tier9_security/backup_isolation_test.go::TestBackupJobEgressBoundToAllowlist_spec_25_11",
         "tests/tier6_e2e_cloud/artifact_replication_residency_test.go::TestCloudArtifactReplicationResidency",
-        "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11"
+        "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11",
+        "charts/lenny/tests/restore-test-cronjob_test.yaml",
+        "charts/lenny/tests/backup-job_test.yaml"
       ],
       "packages": [
         "pkg/ops/backup",

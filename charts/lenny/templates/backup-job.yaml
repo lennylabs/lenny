@@ -127,6 +127,13 @@ spec:
       labels:
         {{- include "lenny.labels" $ | nindent 8 }}
         lenny.dev/component: backup
+        # §25.11 "Backup Job NetworkPolicy": the lenny-backup-job
+        # NetworkPolicy podSelector matches app: lenny-backup. The
+        # on-demand backup Job runs the lenny-backup image, so its pod
+        # template carries this label to get the Postgres/MinIO/K8s API/
+        # DNS egress the policy grants under the namespace-wide
+        # default-deny-all.
+        app: lenny-backup
     spec:
       serviceAccountName: lenny-backup-sa
       {{- include "lenny.imagePullSecrets" $ | nindent 6 }}
