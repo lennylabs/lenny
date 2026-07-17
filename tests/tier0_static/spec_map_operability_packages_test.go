@@ -439,3 +439,51 @@ func TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer(t *testing.T) {
 			"than relying on a spec-map-exceptions.yaml deferral")
 	}
 }
+
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+//
+//	the tests, packages, migrations, and chart templates that encode
+//	it")
+//
+// diagnosis: For each of §25.3, §25.4, §25.6, §25.7, §25.8, §25.11,
+//
+//	§25.12, and §25.13, the section's own tests[] array already
+//	references pkg/*_test.go files that implement the section, but the
+//	packages[] array omits the directory one or more of those files
+//	live in — the same drift pattern TestSpecMapAuditQueryPackagesIncludeAdminImplementation
+//	and TestSpecMapDriftPackagesIncludeDiffAndSnapshotStore fixed for
+//	§25.9 and §25.10. A packages[] entry missing an implementation
+//	directory means coverage/impact tooling keyed on packages[] cannot
+//	tie an edit of that directory back to its spec section. This
+//	computes, for each of these sections, the set of pkg/ directories
+//	its own tests[] references and asserts every one of them also
+//	appears in that section's packages[].
+func TestSpecMapPackagesIncludeEveryTestReferencedPackage(t *testing.T) {
+	t.Parallel()
+
+	sections := []string{"25.3", "25.4", "25.6", "25.7", "25.8", "25.11", "25.12", "25.13"}
+	packages := readSpecMapPackages(t)
+	tests := readSpecMapTests(t)
+
+	for _, id := range sections {
+		referenced := map[string]bool{}
+		for _, test := range tests[id] {
+			if !strings.HasPrefix(test, "pkg/") {
+				continue
+			}
+			referenced[filepath.Dir(test)] = true
+		}
+		pkgs := packages[id]
+		missing := []string{}
+		for p := range referenced {
+			if !contains(pkgs, p) {
+				missing = append(missing, p)
+			}
+		}
+		sort.Strings(missing)
+		if len(missing) > 0 {
+			t.Errorf("spec-map.json §%s packages %v is missing implementation package(s) its own tests[] already references: %s",
+				id, pkgs, strings.Join(missing, ", "))
+		}
+	}
+}
