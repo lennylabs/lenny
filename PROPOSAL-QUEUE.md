@@ -105,7 +105,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-04 — Token Service unavailability guard in the credential renewal path — §4.9
-- **status:** open
+- **status:** landed:0036
 - **assigned:** proposal-B
 - **findings:** T-4.9.7, T-4.9.24
 - **root spec gap:** §4.9 requires that while `now < ExpiresAt` and the Token Service breaker is open, the renewal worker extend the adapter-side lease timer and reschedule instead of triggering the Fallback Flow, but no adapter mechanism exists to extend a direct-mode lease without a re-mint.

@@ -15,6 +15,7 @@ package credrenewal
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -27,6 +28,41 @@ const DefaultInterval = 30 * time.Second
 // MaxRenewalRetries bounds proactive renewal attempts per §4.9 before
 // the worker gives up and the lease falls through to fault rotation.
 const MaxRenewalRetries = 3
+
+// DefaultMaxExtensions bounds consecutive breaker-open lease extensions
+// per §4.9 when a lease carries no LeaseTTL from which to derive the
+// cumulative-extension cap. It is the fallback for maxExtensions.
+// spec: §4.9 line 1470.
+const DefaultMaxExtensions = 3
+
+// ErrRenewInfraUnavailable signals that a renewal could not proceed
+// because the renewal infrastructure (the §4.3 Token Service circuit
+// breaker) is transiently open, not because the lease's credential is
+// bad. Per the §4.9 Token Service unavailability guard, a lease failing
+// with this error while it has not yet expired is held and rescheduled,
+// not exhausted into the Fallback Flow. The gateway wiring maps
+// credassign.ErrTokenServiceUnavailable to this sentinel at the package
+// boundary so credrenewal need not import credassign.
+// spec: §4.9 line 1470.
+var ErrRenewInfraUnavailable = errors.New("credrenewal: renewal infrastructure transiently unavailable")
+
+// maxExtensions returns the number of renewBeforeBuffer intervals that
+// fit in one leaseTTLSeconds, the §4.9 cumulative-extension cap. Because
+// each extension sets RenewBefore = old ExpiresAt and ExpiresAt = old +
+// buffer, buffer is invariant across extensions, so the cap is stable
+// for the life of the lease. When either input is non-positive (a lease
+// carrying no TTL), it falls back to DefaultMaxExtensions.
+// spec: §4.9 line 1470.
+func maxExtensions(ttl, buffer time.Duration) int {
+	if ttl <= 0 || buffer <= 0 {
+		return DefaultMaxExtensions
+	}
+	n := int(ttl / buffer)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
 
 // DefaultExpiryWarningLead is the §11.3 line 215
 // `credentials.expiryWarningLeadSeconds` default (1h). When a lease is
@@ -52,6 +88,13 @@ type Lease struct {
 	RenewBefore time.Time
 	// ExpiresAt is the instant the lease's credential stops working.
 	ExpiresAt time.Time
+	// LeaseTTL is the lease's original leaseTTLSeconds, populated by the
+	// wiring from the pool configuration. It bounds cumulative
+	// breaker-open extension under the §4.9 Token Service unavailability
+	// guard: total extension may not exceed one LeaseTTL. A zero value
+	// selects DefaultMaxExtensions.
+	// spec: §4.9 line 1470.
+	LeaseTTL time.Duration
 }
 
 // Renewer issues a replacement lease for a lease approaching its
@@ -77,6 +120,27 @@ type Options struct {
 	// It is the §25.3 credential_rotated signal.
 	OnRenewed func(renewed Lease)
 
+	// OnExtend, when set, is called under the §4.9 Token Service
+	// unavailability guard to extend a still-valid lease's enforced
+	// deadline to newExpiresAt through the delivery mode's enforcement
+	// point (the adapter expiry timer for direct mode, the gateway lease
+	// store for proxy mode). It returns an error when the enforcement
+	// point could not be reached, in which case the worker does not
+	// advance its own view of the deadline and the lease falls through to
+	// the retry and Fallback path. spec: §4.9 line 1470.
+	OnExtend func(lease Lease, newExpiresAt time.Time) error
+
+	// OnExtensionCapReached, when set, is called under the §4.9 Token
+	// Service unavailability guard when a lease's cumulative breaker-open
+	// extension has reached its original leaseTTLSeconds and the breaker
+	// is still open. The gateway wires it to a terminal session teardown
+	// that drives the session to the §8.8 expired state (surfaced to
+	// clients as expired:lease) and does NOT enter the Fallback Flow,
+	// because a re-mint against the still-open breaker would re-enter the
+	// restart loop the guard prevents. The worker drops the lease from
+	// tracking before invoking it. spec: §4.9 line 1470.
+	OnExtensionCapReached func(lease Lease)
+
 	// ExpiryWarningLead overrides DefaultExpiryWarningLead. The §11.3
 	// line 215 contract: when a tracked lease is within this window of
 	// its ExpiresAt, the worker fires OnExpiryWarning exactly once. Set
@@ -93,13 +157,15 @@ type Options struct {
 
 // Worker is the §4.9 CredentialRenewalWorker. It is goroutine-safe.
 type Worker struct {
-	renewer           Renewer
-	interval          time.Duration
-	clock             func() time.Time
-	onExhausted       func(Lease)
-	onRenewed         func(Lease)
-	expiryWarningLead time.Duration
-	onExpiryWarning   func(Lease)
+	renewer               Renewer
+	interval              time.Duration
+	clock                 func() time.Time
+	onExhausted           func(Lease)
+	onRenewed             func(Lease)
+	onExtend              func(Lease, time.Time) error
+	onExtensionCapReached func(Lease)
+	expiryWarningLead     time.Duration
+	onExpiryWarning       func(Lease)
 
 	mu      sync.Mutex
 	tracked map[string]*trackedLease
@@ -111,20 +177,27 @@ type trackedLease struct {
 	lease              Lease
 	retries            int
 	expiryWarningFired bool
+	// extensions counts consecutive breaker-open extensions of this
+	// lease under the §4.9 Token Service unavailability guard. It bounds
+	// cumulative extension at the lease's original TTL and resets when a
+	// normal renewal replaces the tracked lease.
+	extensions int
 }
 
 // New returns a Worker that renews via renewer.
 func New(renewer Renewer, opts Options) *Worker {
 	w := &Worker{
-		renewer:           renewer,
-		interval:          opts.Interval,
-		clock:             opts.Clock,
-		onExhausted:       opts.OnExhausted,
-		onRenewed:         opts.OnRenewed,
-		expiryWarningLead: opts.ExpiryWarningLead,
-		onExpiryWarning:   opts.OnExpiryWarning,
-		tracked:           map[string]*trackedLease{},
-		revoked:           map[string]bool{},
+		renewer:               renewer,
+		interval:              opts.Interval,
+		clock:                 opts.Clock,
+		onExhausted:           opts.OnExhausted,
+		onRenewed:             opts.OnRenewed,
+		onExtend:              opts.OnExtend,
+		onExtensionCapReached: opts.OnExtensionCapReached,
+		expiryWarningLead:     opts.ExpiryWarningLead,
+		onExpiryWarning:       opts.OnExpiryWarning,
+		tracked:               map[string]*trackedLease{},
+		revoked:               map[string]bool{},
 	}
 	if w.interval <= 0 {
 		w.interval = DefaultInterval
@@ -230,6 +303,45 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 		}
 		next, err := w.renewer.Renew(ctx, tl.lease)
 		if err != nil {
+			// spec: §4.9 line 1470 — Token Service unavailability guard.
+			// The breaker is open and the lease is still valid (the
+			// now >= ExpiresAt guard above already handled the expired
+			// case). Extend the enforced deadline by one renewBeforeBuffer
+			// and reschedule instead of exhausting into the Fallback Flow.
+			if errors.Is(err, ErrRenewInfraUnavailable) && w.onExtend != nil {
+				buffer := tl.lease.ExpiresAt.Sub(tl.lease.RenewBefore)
+				// spec: §4.9 line 1470 — cumulative-extension cap. Once
+				// total extension reaches the lease's original TTL, stop
+				// extending; a permanently-open breaker must not keep the
+				// key alive forever. At the cap, terminate the session
+				// without re-minting against the still-open breaker (which
+				// would loop) rather than dropping into the Fallback Flow.
+				if tl.extensions >= maxExtensions(tl.lease.LeaseTTL, buffer) {
+					if w.onExtensionCapReached != nil {
+						w.mu.Lock()
+						delete(w.tracked, tl.lease.LeaseID)
+						w.mu.Unlock()
+						w.onExtensionCapReached(tl.lease)
+						continue
+					}
+					// No terminal callback wired (a narrow unit-test
+					// worker): fall through to recordFailure/exhaust rather
+					// than extend past the cap.
+				} else {
+					newExpiresAt := tl.lease.ExpiresAt.Add(buffer)
+					if extErr := w.onExtend(tl.lease, newExpiresAt); extErr == nil {
+						w.mu.Lock()
+						tl.lease.RenewBefore = tl.lease.ExpiresAt
+						tl.lease.ExpiresAt = newExpiresAt
+						tl.extensions++
+						tl.retries = 0
+						w.mu.Unlock()
+						continue
+					}
+					// The enforcement point was unreachable; fall through
+					// to recordFailure/exhaust.
+				}
+			}
 			if w.recordFailure(tl) {
 				w.exhaust(tl.lease)
 			}
