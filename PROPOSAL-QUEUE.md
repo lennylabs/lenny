@@ -203,7 +203,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-19 — OpenSLO v1 export conformance and notification-target config — §16.10
-- **status:** converging:0042 (supersedes 0041: reviewer clarified intent as per-deployment distinct-name routing, so the AlertNotificationTarget name — not only its spec.target type — must be deployer-configurable, resolving the metadata-name-pattern vs tier-0-validation constraint; 0040 and 0041 retained for history)
+- **status:** converging:0041 (revising in place per reviewer clarification — per-deployment distinct-name routing: the AlertNotificationTarget name, not only its spec.target type, is deployer-configurable, resolving the metadata-name-pattern vs tier-0-validation constraint; 0040 retained for history)
 - **assigned:** proposal-C
 - **findings:** T-STD.6
 - **root spec gap:** The rendered OpenSLO documents violate the external OpenSLO v1 object model (two conditions per AlertPolicy, missing required `notificationTargets`, bare-string `alertPolicies`), and fixing the notification-targets requirement needs a deployer-facing config surface §16.10 does not define.
