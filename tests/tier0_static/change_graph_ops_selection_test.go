@@ -216,6 +216,27 @@ func TestChangeGraphOpsDedicatedSuitesSelectHigherTiers(t *testing.T) {
 	}
 }
 
+// spec: 25.4 (the lenny-ops service; mandatory standalone deployment)
+// diagnosis: cmd/lenny-ops has no change-graph glob entry, so a change to
+//
+//	the mandatory lenny-ops binary resolves to an empty tier set (static
+//	only) and its in-package unit suite (main_test.go,
+//	doctorremediator_test.go, webhookdelivery_test.go, and the rest of the
+//	cmd/lenny-ops/*_test.go files) is never selected by `lenny-test
+//	--changed`, `--pkg cmd/lenny-ops`, or `--since`. The sibling binaries
+//	cmd/lenny-gateway, cmd/lenny-test, and cmd/lenny-token-service each
+//	carry a change-graph entry; cmd/lenny-ops needs the same "unit"
+//	mapping in tests/change-graph.json.
+func TestChangeGraphLennyOpsBinarySelectsUnitTier(t *testing.T) {
+	t.Parallel()
+
+	tiers := resolveChangeGraphTiers(t, "cmd/lenny-ops/main.go")
+	if !tiers["unit"] {
+		t.Errorf("a change to cmd/lenny-ops resolved to tiers %v; the mandatory lenny-ops binary owns an in-package unit suite, so the resolution must include %q",
+			sortedKeys(tiers), "unit")
+	}
+}
+
 // spec: 25.5 (operational event stream; webhook delivery and SSRF protections)
 // diagnosis: One of the §25.5 event-stream packages resolves to a tier
 //

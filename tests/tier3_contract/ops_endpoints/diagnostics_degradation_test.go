@@ -8,6 +8,7 @@ package ops_endpoints_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -114,4 +115,51 @@ func containsString(arr []any, want string) bool {
 		}
 	}
 	return false
+}
+
+// bothUnreachableSessionSource is a §25.6 DataSource standing in for a
+// data source that could not serve a session record from either
+// Postgres or the Kubernetes fallback. §25.6 line 2922 requires this
+// path to return HTTP 503, carrying a catalogued error code and
+// category rather than falling through to the generic INTERNAL
+// mapping.
+type bothUnreachableSessionSource struct {
+	stubDiagSource
+}
+
+func (d bothUnreachableSessionSource) Session(context.Context, string) (diagnostics.SessionRecord, error) {
+	return diagnostics.SessionRecord{}, errors.New("postgres and kubernetes both unreachable")
+}
+
+// TestDiagnoseSessionBothSourcesUnreachableContract pins the §25.6
+// both-down path: when neither Postgres nor the Kubernetes fallback can
+// serve a session diagnosis, the endpoint must return HTTP 503 carrying
+// the canonical error code and category §25.6 assigns to that case.
+//
+// spec: §25.6 line 2922 ("Both Postgres and K8s API unreachable: Session
+// and pool diagnostics return 503.")
+// diagnosis: The §25.6 Error Codes table (lines 2936-2941) catalogues no
+// code or category for this 503, so a both-down diagnostics error falls
+// through opsserver's diagnosticsErrorMap default branch and reaches the
+// agent as 500 INTERNAL instead of the documented 503. An agent that
+// treats 500 as a generic internal fault (rather than the well-known
+// both-sources-down signal) cannot distinguish "lenny-ops itself is
+// broken" from "both upstream data sources are unreachable, retry
+// later."
+//
+// This test is skipped: §25.6's Error Codes table assigns no code or
+// category to the both-down 503, so there is nothing yet for
+// opsserver's diagnosticsErrorMap to map to and no source-layer contract
+// for producing it. Un-skip once the spec catalogues the code (the same
+// §25.6 reconciliation as the sibling K8s-fallback findings) and the
+// source layer returns it.
+func TestDiagnoseSessionBothSourcesUnreachableContract(t *testing.T) {
+	t.Skip("§25.6 Error Codes table assigns no code or category to the both-Postgres-and-Kubernetes-unreachable 503; blocked on the same §25.6 reconciliation as the K8s-fallback findings")
+
+	srv := opsServerWithDiagSource(bothUnreachableSessionSource{})
+	rec, body := request(t, srv, http.MethodGet, "/v1/admin/diagnostics/sessions/sess-both-down", nil, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when both Postgres and Kubernetes are unreachable; body=%v", rec.Code, body)
+	}
+	assertJSONContentType(t, rec)
 }

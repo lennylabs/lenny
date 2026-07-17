@@ -185,7 +185,12 @@ func (w *opsWiring) buildDependencies() {
 		w.probes[opsservice.ProbeK8sAPI] = opsservice.K8sAPIProbe(w.clientset.Discovery())
 	}
 	if *w.f.gatewayURL != "" {
-		w.probes[opsservice.ProbeGateway] = opsservice.GatewayProbe(w.gatewayHTTP, *w.f.gatewayURL+"/healthz")
+		// spec: §25.6 lines 2905-2906 — the §25.6 connectivity check
+		// "probes the gateway admin API itself (GET
+		// /v1/admin/health/summary)", the gateway's aggregated §25.3
+		// dependency-health endpoint, rather than the liveness-only
+		// /healthz.
+		w.probes[opsservice.ProbeGateway] = opsservice.GatewayProbe(w.gatewayHTTP, *w.f.gatewayURL+"/v1/admin/health/summary")
 	}
 
 	// The §25.7 runbook index, read from docs/runbooks/.
