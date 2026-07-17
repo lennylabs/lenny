@@ -3207,7 +3207,8 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
-        "tests/tier8_chaos/store_failure_test.go"
+        "tests/tier8_chaos/store_failure_test.go",
+        "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview"
       ],
       "packages": [
         "pkg/ops/conventions"
