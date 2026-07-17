@@ -18,9 +18,13 @@
 -- lease.ExpiresAt.
 --
 -- The column is nullable: a row written before this migration carries a NULL
--- expires_at (backfilled by a one-time pass in a later migration). A NULL is
--- an unknown-expiry sentinel, counted as active so the existence guard fails
--- closed rather than treating a pre-backfill lease as already expired.
+-- expires_at. A raw-SQL migration cannot read the AES-256-GCM envelope body,
+-- so these rows are filled by a one-time startup pass that decrypts each
+-- NULL-expires_at row and sets the column (or deletes the row if already
+-- expired); active leases also re-populate expires_at on their next renewal
+-- Write.Put. Until that pass reaches a row, a NULL is an unknown-expiry
+-- sentinel, counted as active so the existence guard fails closed rather than
+-- treating a pre-backfill lease as already expired.
 ALTER TABLE credential_leases
     ADD COLUMN expires_at TIMESTAMPTZ;
 
