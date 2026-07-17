@@ -75,7 +75,15 @@ func (w *gatewayWiring) buildRevocationWiring() {
 	// pushes the rotated credential to via the §4.7 RotateCredentials
 	// RPC. credRenewal is nil when no credential pools are wired; a nil
 	// receiver leaves every renewal hook a no-op.
-	credRenewal := newCredRenewalWiring(w.credAssign, w.podRegistry, opsEmitter)
+	// leases is the same §4.9 credential-lease store instance the LLM
+	// Proxy reads and credassign mirrors leases into (the interface-typed
+	// w.llmLeases, swapped to the Postgres-backed pgstore.Store when
+	// Postgres is configured). The §4.9 Token Service unavailability
+	// guard's proxy-mode extension advances a still-valid lease here so
+	// the proxy's server-side expiry check honors the extension.
+	// terminator drives the §4.9 cumulative-extension-cap teardown to the
+	// §8.8 expired terminal state.
+	credRenewal := newCredRenewalWiring(w.credAssign, w.podRegistry, opsEmitter, w.llmLeases, w.budgetTerminator)
 	// credRenewalProp carries a §4.9 credential-lease revocation across
 	// replicas: a Revoke updates the local deny list, drops the renewal
 	// worker's tracked leases bound to the credential, and fans out over
@@ -136,7 +144,19 @@ func (w *gatewayWiring) buildRevocationWiring() {
 			// fault rotation. The worker drops it; onExhausted clears its
 			// pool binding.
 			OnExhausted: credRenewal.onExhausted,
-			Clock:       clockinject.Now,
+			// spec: §4.9 line 1470 — Token Service unavailability guard. A
+			// breaker-open renewal of a still-valid lease extends the
+			// enforced deadline through the delivery mode's enforcement
+			// point (the adapter timer for direct mode, the lease store for
+			// proxy mode) rather than exhausting into the Fallback Flow.
+			OnExtend: credRenewal.onExtend,
+			// spec: §4.9 line 1470 — cumulative-extension cap. Once total
+			// extension reaches the lease's original TTL with the breaker
+			// still open, terminate the session to §8.8 expired
+			// (expired:lease) rather than re-minting against the still-open
+			// breaker.
+			OnExtensionCapReached: credRenewal.onExtensionCapReached,
+			Clock:                 clockinject.Now,
 			// spec: §11.3 line 215 — operator-tunable expiry-warning lead.
 			// F-11.3.20.
 			ExpiryWarningLead: expiryWarningLead,
