@@ -48,7 +48,9 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	egress_profile, created_at, updated_at, deleted_at,
 	pool_config_generation, session_policy, elicitation_policy, draining_since,
 	bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config,
-	acknowledge_nonce_only_auth, dns_policy`
+	acknowledge_nonce_only_auth, dns_policy,
+	delivery_mode, spiffe_binding,
+	allow_direct_mode_standard_isolation, allow_proxy_mode_spiffe_binding_disabled`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -239,14 +241,18 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 		egress_profile, created_at, updated_at, deleted_at,
 		pool_config_generation, session_policy, elicitation_policy, draining_since,
 		bootstrap_min_warm, reconciliation_resume_epoch, sdk_warm_config,
-		acknowledge_nonce_only_auth, dns_policy
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+		acknowledge_nonce_only_auth, dns_policy,
+		delivery_mode, spiffe_binding,
+		allow_direct_mode_standard_isolation, allow_proxy_mode_spiffe_binding_disabled
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, p.MaxConcurrent,
 		string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
 		p.Generation, spJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
-		p.AcknowledgeNonceOnlyAuth, p.DNSPolicy)
+		p.AcknowledgeNonceOnlyAuth, p.DNSPolicy,
+		p.DeliveryMode, p.SpiffeBinding,
+		p.AllowDirectModeStandardIsolation, p.AllowProxyModeSpiffeBindingDisabled)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -319,14 +325,18 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		egress_profile = $10, updated_at = $11, deleted_at = $12,
 		pool_config_generation = $13, session_policy = $14, elicitation_policy = $15, draining_since = $16,
 		bootstrap_min_warm = $17, reconciliation_resume_epoch = $18, sdk_warm_config = $19,
-		acknowledge_nonce_only_auth = $20, dns_policy = $21
+		acknowledge_nonce_only_auth = $20, dns_policy = $21,
+		delivery_mode = $22, spiffe_binding = $23,
+		allow_direct_mode_standard_isolation = $24, allow_proxy_mode_spiffe_binding_disabled = $25
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, p.MaxConcurrent,
 		string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
 		p.Generation, spJSON, epJSON, pgtenant.NullTime(p.DrainingSince), p.BootstrapMinWarm, p.ReconciliationResumeEpoch, swJSON,
-		p.AcknowledgeNonceOnlyAuth, p.DNSPolicy); err != nil {
+		p.AcknowledgeNonceOnlyAuth, p.DNSPolicy,
+		p.DeliveryMode, p.SpiffeBinding,
+		p.AllowDirectModeStandardIsolation, p.AllowProxyModeSpiffeBindingDisabled); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -441,6 +451,8 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		&p.Generation, &sessionPolicy, &elicitationPolicy, &drainingSince,
 		&bootstrapMinWarm, &p.ReconciliationResumeEpoch, &sdkWarmConfig,
 		&p.AcknowledgeNonceOnlyAuth, &p.DNSPolicy,
+		&p.DeliveryMode, &p.SpiffeBinding,
+		&p.AllowDirectModeStandardIsolation, &p.AllowProxyModeSpiffeBindingDisabled,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}
