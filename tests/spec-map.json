@@ -480,7 +480,10 @@
         "tests/tier8_chaos/testbed_partition_test.go",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
         "tests/tier5_e2e_kind/admission_credential_multitenant_test.go",
-        "tests/tier9_security/lease_spiffe_replay_test.go"
+        "tests/tier9_security/lease_spiffe_replay_test.go",
+        "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
+        "tests/tier8_chaos/token_service_unavailability_guard_test.go",
+        "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go"
       ],
       "packages": [
         "pkg/credential",
