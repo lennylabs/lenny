@@ -274,7 +274,13 @@ func (s *Store) ConfirmChunk(ctx context.Context, tenantID, checkpointID string,
 }
 
 // Finalise stamps the terminal disposition under the `deleted_at IS NULL`
-// guard.
+// guard. When the row carries chunk_count == 0 at finalisation time the
+// same UPDATE also stamps deleted_at, so an empty manifest is soft-deleted
+// in the same transaction rather than left active for a later supersede or
+// the §12.5 backstop to reclaim.
+//
+// spec: §10.1 line 132 — the zero-chunk finalisation soft-deletes the row
+// in the same transaction.
 func (s *Store) Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error {
 	if !partialmanifeststore.IsValidReason(manifestReason) {
 		return errors.New("partialmanifeststore: invalid manifest_reason")
@@ -282,9 +288,10 @@ func (s *Store) Finalise(ctx context.Context, tenantID, checkpointID string, par
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`UPDATE checkpoint_manifest
-				SET partial = $3, manifest_reason = $4
+				SET partial = $3, manifest_reason = $4,
+					deleted_at = CASE WHEN chunk_count = 0 THEN $5 ELSE deleted_at END
 				WHERE tenant_id = $1 AND checkpoint_id = $2 AND deleted_at IS NULL`,
-			tenantID, checkpointID, partial, manifestReason)
+			tenantID, checkpointID, partial, manifestReason, s.now())
 		return err
 	})
 }

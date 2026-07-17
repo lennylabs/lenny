@@ -364,6 +364,21 @@ func (h *cpDriverHarness) latestManifest(t *testing.T) partialmanifeststore.Reco
 			return r
 		}
 	}
+	// A zero-chunk abort soft-deletes its row in the finalising transaction
+	// (§10.1 line 132), so it is neither active nor referenced by a session
+	// ref. Recover the tombstoned row so the test can assert its disposition.
+	deleted, derr := h.manifests.ListSoftDeletedBefore(context.Background(), time.Now().Add(time.Hour))
+	if derr == nil {
+		var best partialmanifeststore.Record
+		for _, r := range deleted {
+			if r.TenantID == cpTenant && r.SessionID == cpSession && r.CreatedAt.After(best.CreatedAt) {
+				best = r
+			}
+		}
+		if best.CheckpointID != "" {
+			return best
+		}
+	}
 	t.Fatalf("no manifest row found for %s/%s", cpTenant, cpSession)
 	return partialmanifeststore.Record{}
 }

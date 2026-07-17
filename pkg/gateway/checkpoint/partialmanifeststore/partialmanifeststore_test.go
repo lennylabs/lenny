@@ -340,6 +340,52 @@ func TestFinalise(t *testing.T) {
 	}
 }
 
+// spec: §10.1 line 132 — a terminal arm that finalises with chunk_count == 0
+// soft-deletes the row in the same transaction, so an empty partial manifest
+// (an adapter crash or a quota refusal before the first chunk confirmed) is
+// never left active occupying the partial_manifest_active_uniq slot for a
+// later supersede or the §12.5 backstop to reclaim. A row that confirmed at
+// least one chunk stays active for the resume path.
+func TestFinaliseSoftDeletesZeroChunkRow(t *testing.T) {
+	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+
+	// A zero-chunk abort: no ConfirmChunk ran, so chunk_count is 0 at
+	// finalisation. The finalising UPDATE soft-deletes the row.
+	_ = store.Put(context.Background(), intentRow(clock, "acme", "cp-empty", "s1", 1))
+	if err := store.Finalise(context.Background(), "acme", "cp-empty", true,
+		partialmanifeststore.ReasonStreamTruncated); err != nil {
+		t.Fatalf("Finalise zero-chunk: %v", err)
+	}
+	empty, _ := store.Get(context.Background(), "acme", "cp-empty")
+	if empty.DeletedAt.IsZero() {
+		t.Error("zero-chunk finalisation left the row active, want soft-deleted in the same transaction")
+	}
+	if empty.ManifestReason != partialmanifeststore.ReasonStreamTruncated {
+		t.Errorf("ManifestReason = %q, want stream_truncated", empty.ManifestReason)
+	}
+	// The soft-deleted empty row is invisible to the resume-time cleanup
+	// selector, so no reclaimer ever picks it up.
+	if _, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", partialmanifeststore.SlotDefault); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("LatestActiveForSlot after zero-chunk finalise = %v, want ErrNotFound", err)
+	}
+
+	// A row that confirmed a chunk finalises partial without soft-deleting:
+	// the resume path consumes its contiguous chunk prefix.
+	_ = store.Put(context.Background(), intentRow(clock, "acme", "cp-one", "s2", 1))
+	if err := store.ConfirmChunk(context.Background(), "acme", "cp-one", 0, 128); err != nil {
+		t.Fatalf("ConfirmChunk: %v", err)
+	}
+	if err := store.Finalise(context.Background(), "acme", "cp-one", true,
+		partialmanifeststore.ReasonTimeout); err != nil {
+		t.Fatalf("Finalise one-chunk: %v", err)
+	}
+	one, _ := store.Get(context.Background(), "acme", "cp-one")
+	if !one.DeletedAt.IsZero() {
+		t.Error("one-chunk finalisation soft-deleted the row, want left active for resume")
+	}
+}
+
 // spec: §11.2 / §12.5 GC rule 4 — ReleaseReservation is exactly-once:
 // the first release reports rows_affected == 1, and every retry (a
 // stale-leader re-run, the §12.5 backstop racing the in-process arm)
@@ -408,8 +454,13 @@ func TestListReclaimableResumeWindow(t *testing.T) {
 	clock := base
 	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
 
-	// An old finalised-timeout row created at base.
+	// An old finalised-timeout row created at base. It confirmed a chunk
+	// before the deadline fired, so it is retained (not soft-deleted at
+	// finalise) for the resume path and remains reclaimable by the backstop
+	// once its resume window expires (§10.1 line 132 soft-deletes only the
+	// zero-chunk finalisation).
 	_ = store.Put(context.Background(), intentRow(clock, "acme", "cp-old", "s1", 1))
+	_ = store.ConfirmChunk(context.Background(), "acme", "cp-old", 0, 128)
 	_ = store.Finalise(context.Background(), "acme", "cp-old", true, partialmanifeststore.ReasonTimeout)
 
 	// Advance two hours and write a young in_progress row whose timeout

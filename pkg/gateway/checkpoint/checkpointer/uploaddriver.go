@@ -795,6 +795,11 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// manifest_reason='in_progress' with a leaked reservation and unswept
 	// chunks (spec: §10.1 line 132 — every abort arm finalises partial=true
 	// and releases the reservation the attempt did not keep).
+	//
+	// spec: §10.1 line 132 — an abort that latched before the first chunk
+	// confirmed finalises with chunk_count == 0; Finalise soft-deletes such
+	// a row in the same transaction so an empty partial manifest is never
+	// left active for the resume path or a downstream reclaimer.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(d.ctx), cleanupTimeout)
 	defer cancel()
 	if err := c.Manifests.Finalise(ctx, d.tenantID, d.checkpointID, true, reason); err != nil {

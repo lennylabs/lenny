@@ -221,10 +221,15 @@ type Store interface {
 	// Finalise stamps the terminal disposition on the row under the
 	// `deleted_at IS NULL` guard: a complete checkpoint finalises
 	// partial = false, manifest_reason = 'complete'; every other arm
-	// finalises partial = true with the reason that names it. A no-op
-	// when the row is missing or soft-deleted.
+	// finalises partial = true with the reason that names it. When the row
+	// carries chunk_count == 0 at finalisation time the same statement also
+	// soft-deletes it, so an empty manifest (an adapter crash, a stream
+	// truncation, or a quota refusal before the first chunk confirmed) is
+	// never left active for the resume path or a downstream reclaimer to
+	// pick up. A no-op when the row is missing or soft-deleted.
 	//
-	// spec: §10.1 line 141.
+	// spec: §10.1 lines 132, 141 — the zero-chunk finalisation soft-deletes
+	// the row in the same transaction.
 	Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error
 
 	// SoftDelete sets `deleted_at = now()` on the row under the
@@ -472,7 +477,7 @@ func (m *MemoryStore) ConfirmChunk(_ context.Context, tenantID, checkpointID str
 }
 
 // Finalise stamps the terminal disposition under the `deleted_at IS NULL`
-// guard.
+// guard, soft-deleting a zero-chunk row in the same mutation.
 func (m *MemoryStore) Finalise(_ context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error {
 	if !IsValidReason(manifestReason) {
 		return fmt.Errorf("partialmanifeststore: invalid manifest_reason %q", manifestReason)
@@ -486,6 +491,13 @@ func (m *MemoryStore) Finalise(_ context.Context, tenantID, checkpointID string,
 	}
 	row.Partial = partial
 	row.ManifestReason = manifestReason
+	// spec: §10.1 line 132 — a terminal arm that finalises with no chunks
+	// committed soft-deletes the row in the same transaction, so an empty
+	// manifest never occupies the partial_manifest_active_uniq slot waiting
+	// on a later supersede or the §12.5 backstop to reclaim it.
+	if row.ChunkCount == 0 {
+		row.DeletedAt = m.now()
+	}
 	m.rows[key] = row
 	return nil
 }

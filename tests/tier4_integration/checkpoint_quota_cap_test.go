@@ -132,4 +132,10 @@ func TestCheckpointRejectsOverChunkSizeDeclaration(t *testing.T) {
 	if rec.ChunkCount != 0 {
 		t.Errorf("chunk_count = %d, want 0 (no grant, no confirm)", rec.ChunkCount)
 	}
+	// spec: §10.1 line 132 — the zero-chunk abort soft-deletes the row in the
+	// finalising transaction, so no empty partial manifest is left active for
+	// the resume path or the §12.5 backstop to reclaim.
+	if rec.DeletedAt.IsZero() {
+		t.Errorf("zero-chunk abort left the manifest row active, want soft-deleted at finalisation")
+	}
 }

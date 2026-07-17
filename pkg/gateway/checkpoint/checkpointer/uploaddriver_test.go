@@ -336,6 +336,13 @@ func TestDriverRejectsOverChunkSizeDeclaration_spec_10_1(t *testing.T) {
 	if rec.ChunkCount != 0 {
 		t.Errorf("chunk_count = %d, want 0 (no grant minted)", rec.ChunkCount)
 	}
+	// spec: §10.1 line 132 — a zero-chunk finalisation soft-deletes the row
+	// in the same transaction, so an empty partial manifest is never left
+	// active occupying the (session, slot) slot for a later supersede or the
+	// §12.5 backstop to reclaim.
+	if rec.DeletedAt.IsZero() {
+		t.Errorf("zero-chunk abort left the manifest row active, want soft-deleted at finalisation")
+	}
 }
 
 // spec: §12.5 line 303 — a kms:-coded object-store rejection maps onto a
@@ -1018,6 +1025,22 @@ func latestManifest(t *testing.T, h *driverHarness, tenantID, sessionID string) 
 		r, e := h.manifests.Get(context.Background(), tenantID, row.WorkspaceSnapshot.Ref)
 		if e == nil {
 			return r
+		}
+	}
+	// A zero-chunk abort soft-deletes its row in the finalising transaction
+	// (§10.1 line 132), so LatestActive no longer returns it and the failed
+	// attempt left no session ref. Recover the tombstoned row so the test can
+	// assert its finalised disposition.
+	deleted, derr := h.manifests.ListSoftDeletedBefore(context.Background(), time.Now().Add(time.Hour))
+	if derr == nil {
+		var best partialmanifeststore.Record
+		for _, r := range deleted {
+			if r.TenantID == tenantID && r.SessionID == sessionID && r.CreatedAt.After(best.CreatedAt) {
+				best = r
+			}
+		}
+		if best.CheckpointID != "" {
+			return best
 		}
 	}
 	t.Fatalf("no manifest row found for %s/%s", tenantID, sessionID)
