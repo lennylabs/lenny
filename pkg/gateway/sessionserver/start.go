@@ -1278,6 +1278,32 @@ func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string
 // without credential pools.
 //
 // spec: §4.9 lines 1216-1218 (Pre-Claim check), 1326 (intersection).
+// intersectProviders returns the order-stable (a-ordered) set
+// intersection of two provider lists: an element of a is emitted at most
+// once, in a's order, when it also appears in b. It is the §8.3 inherit
+// constraint's set-∩, kept local to sessionserver so the delegation-path
+// lease.IntersectProviders primitive stays out of the llmproxy import
+// this package already carries. spec: §8.3 line 470.
+func intersectProviders(a, b []string) []string {
+	inB := make(map[string]struct{}, len(b))
+	for _, p := range b {
+		inB[p] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(a))
+	out := make([]string, 0, len(a))
+	for _, p := range a {
+		if _, ok := inB[p]; !ok {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
 func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, []string, error) {
 	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
 		return nil, nil, nil
@@ -1299,6 +1325,34 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		return nil, nil, nil
 	}
 	intersection := credrouter.Intersection(rt.SupportedProviders, policy)
+
+	// spec: §8.3 line 470 (assign a credential from the parent's pool
+	// whose provider appears in that intersection), line 440 (inherit:
+	// the child uses the same credential pool/source as the parent),
+	// line 472 (each hop re-checks the still-inherited origin pool at
+	// delegation time). A delegated child that inherited its credential
+	// origin draws its provider from the origin pool rather than its own
+	// independent set. A session inherited iff its
+	// CredentialOriginSessionID is a non-empty ancestor id; a self-origin
+	// (or empty) id leaves the top-level/independent path unchanged.
+	// Constrain the child's eligible providers to the origin runtime's
+	// eligible set, live-resolved at this hop so a mid-tree change to the
+	// origin runtime's providers takes effect here. An unresolvable
+	// origin session or origin runtime fails closed (empty intersection →
+	// CREDENTIAL_POOL_EXHAUSTED at assignment) rather than falling back to
+	// the child's own unconstrained set, which would defeat the inherit
+	// guarantee.
+	if row.CredentialOriginSessionID != "" && row.CredentialOriginSessionID != row.ID {
+		originRow, originErr := s.store.Get(ctx, row.TenantID, row.CredentialOriginSessionID)
+		if originErr != nil {
+			intersection = nil
+		} else if originRt, rtErr := runtimestore.Resolve(ctx, s.runtimes, originRow.RuntimeRef); rtErr != nil {
+			intersection = nil
+		} else {
+			originEligible := credrouter.Intersection(originRt.SupportedProviders, policy)
+			intersection = intersectProviders(intersection, originEligible)
+		}
+	}
 
 	allPools, err := s.credPools.List(ctx, row.TenantID, credentialpoolstore.ListFilter{})
 	if err != nil {

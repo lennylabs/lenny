@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -129,6 +130,238 @@ func TestResolveCredentialPoolsIntersectionNarrows(t *testing.T) {
 	}
 	if len(got) != 1 || got["anthropic_direct"] != "claude-prod" {
 		t.Errorf("CredentialPools = %v, want only anthropic_direct→claude-prod", got)
+	}
+}
+
+// preclaimInheritFixture extends preclaimFixture with a wired session
+// store holding an origin session row and an origin runtime, so the §8.3
+// inherit-mode constraint on resolveCredentialPools can be exercised. The
+// child runtime "claude-code" supports childProviders; the origin session
+// "origin-1" runs runtime "origin-rt" supporting originProviders.
+func preclaimInheritFixture(t *testing.T, policy credential.CredentialPolicy, childProviders, originProviders []string, pools ...credentialpoolstore.CredentialPool) *Server {
+	t.Helper()
+	s := preclaimFixture(t, policy, childProviders, pools...)
+	ctx := context.Background()
+	if err := s.runtimes.Create(ctx, runtimestore.Runtime{Name: "origin-rt", SupportedProviders: originProviders}); err != nil {
+		t.Fatalf("create origin runtime: %v", err)
+	}
+	store := memstore.New()
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: "origin-1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "origin-rt",
+	}); err != nil {
+		t.Fatalf("create origin session: %v", err)
+	}
+	s.store = store
+	return s
+}
+
+// inheritedChildRow is a delegated-child session row whose credential
+// origin is the "origin-1" ancestor seeded by preclaimInheritFixture (an
+// inherit hop: CredentialOriginSessionID is a non-empty ancestor id).
+func inheritedChildRow() sessionstore.Session {
+	row := sessionRow()
+	row.CredentialOriginSessionID = "origin-1"
+	return row
+}
+
+// spec: §8.3 line 470 (assign a credential from the parent's pool whose
+// provider appears in the intersection), line 440 (inherit: child uses
+// the same credential pool/source as the parent). An inherit child's
+// eligible provider set is narrowed to the origin runtime's eligible set:
+// the child runtime supports both providers, but the origin runtime
+// supports only anthropic_direct, so the child is assigned only
+// anthropic_direct — the origin∩child intersection, not the child's own
+// wider set.
+func TestResolveCredentialPoolsInheritNarrowsToOrigin(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+			"aws_bedrock":      {DefaultPool: "bedrock-prod"},
+		},
+	}
+	s := preclaimInheritFixture(
+		t, policy,
+		[]string{"anthropic_direct", "aws_bedrock"}, // child runtime supports both
+		[]string{"anthropic_direct"},                // origin runtime supports only one
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
+	)
+	got, _, err := s.resolveCredentialPools(context.Background(), inheritedChildRow())
+	if err != nil {
+		t.Fatalf("resolveCredentialPools: %v", err)
+	}
+	if len(got) != 1 || got["anthropic_direct"] != "claude-prod" {
+		t.Errorf("CredentialPools = %v, want only anthropic_direct→claude-prod (narrowed to origin pool)", got)
+	}
+}
+
+// spec: §8.3 line 470 — a self-origin session (CredentialOriginSessionID
+// equal to its own id) is not an inherit child: the constraint is skipped
+// and the independent/top-level path assigns the child's own full
+// intersection. This pins that the inherit constraint fires only for an
+// ancestor origin id, so an independent hop keeps today's §4.9 behavior.
+func TestResolveCredentialPoolsSelfOriginUnconstrained(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+			"aws_bedrock":      {DefaultPool: "bedrock-prod"},
+		},
+	}
+	s := preclaimInheritFixture(
+		t, policy,
+		[]string{"anthropic_direct", "aws_bedrock"},
+		[]string{"anthropic_direct"},
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
+	)
+	row := sessionRow()
+	row.CredentialOriginSessionID = row.ID // self-origin: not an inherit child
+	got, _, err := s.resolveCredentialPools(context.Background(), row)
+	if err != nil {
+		t.Fatalf("resolveCredentialPools: %v", err)
+	}
+	if len(got) != 2 || got["anthropic_direct"] != "claude-prod" || got["aws_bedrock"] != "bedrock-prod" {
+		t.Errorf("CredentialPools = %v, want both providers (self-origin is unconstrained)", got)
+	}
+}
+
+// spec: §8.3 line 470 — an empty CredentialOriginSessionID (a top-level
+// session that never delegated) leaves the constraint off: the child's
+// own full intersection is assigned.
+func TestResolveCredentialPoolsEmptyOriginUnconstrained(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+			"aws_bedrock":      {DefaultPool: "bedrock-prod"},
+		},
+	}
+	s := preclaimInheritFixture(
+		t, policy,
+		[]string{"anthropic_direct", "aws_bedrock"},
+		[]string{"anthropic_direct"},
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
+	)
+	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow()) // empty origin id
+	if err != nil {
+		t.Fatalf("resolveCredentialPools: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("CredentialPools = %v, want both providers (empty origin id is unconstrained)", got)
+	}
+}
+
+// spec: §8.3 line 472 (each hop re-checks the still-inherited origin pool
+// at delegation time), the CODE-5 fail-closed decision — an inherit child
+// whose origin session cannot be resolved fails closed: the constrained
+// intersection is emptied, so resolveCredentialPools returns
+// ErrNoCredentialAvailable (CREDENTIAL_POOL_EXHAUSTED at assignment)
+// rather than silently falling back to the child's own unconstrained set.
+// The child runtime alone supports anthropic_direct with an active pool,
+// so the unconstrained path would succeed; the missing origin must still
+// deny.
+func TestResolveCredentialPoolsInheritFailsClosedOnMissingOrigin(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	s := preclaimInheritFixture(
+		t, policy,
+		[]string{"anthropic_direct"},
+		[]string{"anthropic_direct"},
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+	)
+	row := sessionRow()
+	row.CredentialOriginSessionID = "ghost-origin" // no such origin session row
+	_, _, err := s.resolveCredentialPools(context.Background(), row)
+	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
+		t.Errorf("resolveCredentialPools = %v, want ErrNoCredentialAvailable (fail closed on unresolvable origin)", err)
+	}
+}
+
+// spec: §8.3 line 472, the CODE-5 fail-closed decision — an inherit child
+// whose origin session resolves but whose origin runtime cannot be
+// resolved (the origin row references a runtime that no longer exists)
+// also fails closed rather than falling back to the child's own set.
+func TestResolveCredentialPoolsInheritFailsClosedOnMissingOriginRuntime(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	s := preclaimInheritFixture(
+		t, policy,
+		[]string{"anthropic_direct"},
+		[]string{"anthropic_direct"},
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+	)
+	// Seed an origin session whose runtime is absent from the runtime store.
+	if err := s.store.Create(context.Background(), sessionstore.Session{
+		ID: "origin-danglingrt", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "vanished-rt",
+	}); err != nil {
+		t.Fatalf("create dangling-runtime origin: %v", err)
+	}
+	row := sessionRow()
+	row.CredentialOriginSessionID = "origin-danglingrt"
+	_, _, err := s.resolveCredentialPools(context.Background(), row)
+	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
+		t.Errorf("resolveCredentialPools = %v, want ErrNoCredentialAvailable (fail closed on unresolvable origin runtime)", err)
+	}
+}
+
+// spec: §8.3 line 470 — the origin∩child intersection can be empty even
+// when the child and origin each individually have an assignable pool: a
+// disjoint origin runtime (supporting a provider the child does not, and
+// vice versa) yields no shared provider, so the inherit child is denied
+// with ErrNoCredentialAvailable before any pod is claimed.
+func TestResolveCredentialPoolsInheritDisjointDenies(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+			"aws_bedrock":      {DefaultPool: "bedrock-prod"},
+		},
+	}
+	s := preclaimInheritFixture(
+		t, policy,
+		[]string{"aws_bedrock"},      // child runtime
+		[]string{"anthropic_direct"}, // origin runtime — disjoint from child
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
+	)
+	_, _, err := s.resolveCredentialPools(context.Background(), inheritedChildRow())
+	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
+		t.Errorf("resolveCredentialPools = %v, want ErrNoCredentialAvailable (disjoint origin∩child)", err)
+	}
+}
+
+// spec: §8.3 line 470 — the local intersectProviders set-∩ is
+// order-stable in a's order, deduplicates, and drops elements absent from
+// b. It backs the inherit constraint's origin∩child computation.
+func TestIntersectProvidersSetSemantics(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b []string
+		want []string
+	}{
+		{"disjoint", []string{"anthropic_direct"}, []string{"aws_bedrock"}, []string{}},
+		{"overlap keeps a-order", []string{"aws_bedrock", "anthropic_direct"}, []string{"anthropic_direct", "aws_bedrock"}, []string{"aws_bedrock", "anthropic_direct"}},
+		{"dedupes a", []string{"anthropic_direct", "anthropic_direct"}, []string{"anthropic_direct"}, []string{"anthropic_direct"}},
+		{"empty a", nil, []string{"anthropic_direct"}, []string{}},
+		{"empty b", []string{"anthropic_direct"}, nil, []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := intersectProviders(tc.a, tc.b)
+			if len(got) != len(tc.want) {
+				t.Fatalf("intersectProviders(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("intersectProviders(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+				}
+			}
+		})
 	}
 }
 
