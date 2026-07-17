@@ -442,6 +442,8 @@ Delegation budgets use an **atomic reservation** model, not a ceiling model. Whe
 | `independent` | Child gets its own credential lease based on the tenant's credential policy and the child Runtime's `supportedProviders` |
 | `deny`        | Child receives no LLM credentials (for runtimes that don't need LLM access, e.g., pure file-processing tools) |
 
+When `credentialPropagation` is omitted from a `delegate_task` call, the hop defaults to `independent`: the child receives its own credential lease based on the tenant `credentialPolicy` and the child runtime's `supportedProviders`, and the cross-environment `inherit` compatibility check below does not apply.
+
 **`credentialPropagation: inherit` multi-hop semantics:** The `inherit` mode applies **per-hop**. Each node in the delegation tree specifies its own `credentialPropagation` on its outgoing delegation lease; that value governs only the single hop from that node to its direct child. It does not recursively override the `credentialPropagation` settings on deeper hops. Concretely: if a root session (depth 0) delegates with `credentialPropagation: inherit`, the depth-1 child is assigned from the root's credential pool. Whether the depth-1 child's own children (depth 2) use `inherit`, `independent`, or `deny` is governed by the delegation lease that the depth-1 child specifies when it calls `lenny/delegate_task` — not by the root's setting.
 
 **Worked example — 3-level tree with mixed modes:**
