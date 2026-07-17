@@ -163,7 +163,7 @@ func TestCredentialCompromisedDocMirrorsAgree(t *testing.T) {
 	}
 }
 
-// TestActiveLeasesTerminatedCountsAffectedLeases pins the SPEC-E audit-count
+// TestActiveLeasesTerminatedCountsAffectedLeases pins the audit-count
 // reconciliation: with proxy-mode leases denied in place rather than
 // removed, the active_leases_terminated audit field and its lenny-ctl and
 // §11.2.1 mirrors describe leases affected (terminated in direct mode,
