@@ -297,13 +297,15 @@ func TestOnExtendProxyModePgStore_spec_4_9(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// The lenny roles (0001, 0002), the credential_leases table (0038), and
-	// its §12.9 envelope-encryption reshape (0129).
+	// The lenny roles (0001, 0002), the credential_leases table (0038), its
+	// §12.9 envelope-encryption reshape (0129), and the §4.9 expires_at column
+	// (0175) the pgstore lease Put/Get read since proposal 0037.
 	for _, name := range []string{
 		"0001_initial_schema.up.sql",
 		"0002_rls_immutability_roles.up.sql",
 		"0038_credential_leases.up.sql",
 		"0129_credential_leases_envelope.up.sql",
+		"0175_credential_leases_expires_at.up.sql",
 	} {
 		sql, readErr := migrations.FS.ReadFile(name)
 		if readErr != nil {
