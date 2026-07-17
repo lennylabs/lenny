@@ -333,7 +333,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-29 — lenny-ops cross-replica health/recommendations aggregation and Prometheus fan-out fallback — §25.4/§25.13/§25.15
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.3.8, T-25.4.9, T-25.4.25, T-25.13.3, T-25.13.5, T-25.15.5
+- **findings:** T-25.3.8, T-25.4.9, T-25.4.25, T-25.13.3, T-25.13.5, T-25.15.5, T-25.4.38
 - **root spec gap:** The §25.4/§25.13 lenny-ops aggregator (Prometheus alerts primary + per-replica `/v1/admin/health` fan-out fallback, worst-of status merge, highest-confidence recommendation merge, `thresholdSource` stamping, RECOMMENDATIONS_UNAVAILABLE 503) is deferred in code with no serving surface, so several documented behaviors have nothing to exercise.
 - **proposal scope:** Build the deferred aggregator and its serving endpoints (including `metrics.Reader` AvailabilityReporter, worst-of/union/highest-confidence merges, `thresholdSource` values, and the disableOnPrometheusOutage 503), or reclassify these as BUILD gaps; then the fan-out integration/chaos tests land.
 - **severity:** Medium
@@ -410,6 +410,14 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **proposal scope:** Decide whether the spec wording is imprecise and should be corrected to "fixed-window," or a true sliding-window Redis primitive must be designed and built (decoupled from the shared §11.1 admission counter).
 - **severity:** Low
 
+### C-39 — §25.4 canonical operationId cannot disambiguate backup vs backup-verification — §25.4
+- **status:** open
+- **assigned:** (unassigned)
+- **findings:** T-25.4.33
+- **root spec gap:** §25.4's canonical operationId format gives KindBackup and KindBackupVerification the same "backup" prefix and the same natural key (the ops_backups id), so a verifying backup projects as two operations sharing operationId "backup-<id>", contradicting the §25.4 Filters contract that an operationId lookup returns a single-element list.
+- **proposal scope:** Disambiguate the two backup kinds in the canonical operationId format (distinct prefix or key component) so the lookup is single-valued, and reconcile the §25.4 Filters "single-element list" contract.
+- **severity:** Low
+
 ---
 
 ## Test-infra findings to de-escalate (hand back to closure runners)
@@ -447,3 +455,4 @@ with the action taken, keeping a short trail here.
 - [x] re-cluster 2026-07-16: 50-finding backlog clustered. Added C-23–C-38 (16 new clusters, unassigned) and folded T-25.8.20/T-25.15.8→C-08, T-25.9.14→C-09, T-25.9.12→C-11.
 - [ ] pending fold-in to ASSIGNED clusters (apply when C-02/C-03 reopen or before proposal-A starts them; not applied now per "don't alter assigned clusters"): T-25.3.5, T-25.5.20 → C-02 (§25.5 read source); T-25.12.11 → C-03 (§25.12 dispatch; its chaos test is blocked on T-25.12.3).
 - [x] test-infra handback from re-cluster: de-escalated T-ADV.11, T-ADV.13, T-25.2.2, T-25.12.22 (runner-closable). Kept needs-human as operator-resource-blocked: T-25.4.37 (EKS/cloud), T-25.11.7 (tagged buckets + cloud creds), T-25.6.1 (operator helm upgrade for RBAC).
+- [x] re-cluster 2026-07-17: folded T-25.4.38 into C-29 (recommendation aggregator, same root gap); added C-39 for T-25.4.33 (backup operationId disambiguation); de-escalated test-infra T-25.4.12 (orphaned-commit re-verify).
