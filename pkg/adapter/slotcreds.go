@@ -81,6 +81,33 @@ func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[s
 	return &adapterv1.RotateCredentialsResponse{}, nil
 }
 
+// extendCredentialLeaseSlot re-arms the slot's own §4.9 direct-mode
+// expiry timer for one provider to a later deadline, without rewriting the
+// slot credential file. It is the per-slot analogue of extendExpiryTimer:
+// the §4.9 Token Service unavailability guard extends only this slot's
+// enforced deadline, leaving sibling slots' timers untouched. If the slot
+// has no timer for the provider, or its lease id differs from leaseID, it
+// is a no-op. The re-armed timer still targets onSlotLeaseExpired, so a
+// later expiry deletes the provider's entry at the extended deadline.
+// spec: §6.1 line 28; §4.9 line 1470.
+func (s *Server) extendCredentialLeaseSlot(slotID, provider, leaseID string, newExpiresAt time.Time) (*adapterv1.ExtendCredentialLeaseResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.slotStateLocked(slotID)
+	if !ok {
+		return &adapterv1.ExtendCredentialLeaseResponse{}, nil
+	}
+	existing, ok := st.timers[provider]
+	if !ok || existing.leaseID != leaseID {
+		return &adapterv1.ExtendCredentialLeaseResponse{}, nil
+	}
+	existing.handle.Stop()
+	delay := newExpiresAt.Sub(s.expiryClockNow())
+	handle := s.expiryAfter(delay, func() { s.onSlotLeaseExpired(slotID, provider, leaseID) })
+	st.timers[provider] = &expiryTimer{leaseID: leaseID, handle: handle}
+	return &adapterv1.ExtendCredentialLeaseResponse{}, nil
+}
+
 // revokeCredentialsSlot removes the named providers from the slot's
 // per-slot file. spec: §6.1 line 28.
 func (s *Server) revokeCredentialsSlot(sessionID, slotID string, providers []string) (*adapterv1.RevokeCredentialsResponse, error) {
