@@ -92,18 +92,36 @@ type Resolver struct {
 	PartialRecoveryThresholdFraction float64
 }
 
+// ResolveResult is the outcome of resolving a resume chunk set: the
+// ascending-index GET capabilities the adapter fetches, plus whether the
+// generation-selected manifest was an above-threshold partial checkpoint
+// the resume reassembled. Recovered is the §16.1 line 195
+// lenny_checkpoint_partial_total{recovered=true} signal the session server
+// stamps once per successful partial reassembly; ManifestReason carries the
+// recovered row's manifest_reason so the counter shares the reason the write
+// path stamped. Recovered is false for a complete (partial = false) restore
+// and for an empty chunk set; a below-threshold or non-contiguous partial
+// returns an error rather than a result.
+type ResolveResult struct {
+	Grants         []adapterclient.ChunkGrant
+	Recovered      bool
+	ManifestReason string
+}
+
 // Resolve resolves the chunk set for the checkpoint named by checkpointID
 // on session (tenantID, sessionID). It returns one ChunkGrant per index in
 // [0, chunk_count) in ascending order, or ErrReassemblyContiguity when the
 // committed objects do not form a contiguous prefix. A checkpoint with
 // chunk_count == 0 (an empty manifest) resolves to no chunks, which
-// restores nothing.
+// restores nothing. ResolveResult.Recovered is true only when the selected
+// manifest was a partial = true checkpoint that cleared the recovery
+// threshold and reassembled into at least one chunk.
 //
-// spec: §10.1 line 155.
-func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) ([]adapterclient.ChunkGrant, error) {
+// spec: §10.1 line 155; §16.1 line 195 (the recovered signal).
+func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) (ResolveResult, error) {
 	rec, err := r.Manifests.Get(ctx, tenantID, checkpointID)
 	if err != nil {
-		return nil, fmt.Errorf("resumechunks: resolve manifest %s/%s: %w", tenantID, checkpointID, err)
+		return ResolveResult{}, fmt.Errorf("resumechunks: resolve manifest %s/%s: %w", tenantID, checkpointID, err)
 	}
 	// spec: §10.1 line 155 — a partial checkpoint is reconstructed only
 	// when it clears the recovery threshold. A full checkpoint (partial =
@@ -121,7 +139,7 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 			threshold = int64(float64(*rec.BaselineFullCheckpointBytes) * r.PartialRecoveryThresholdFraction)
 		}
 		if rec.WorkspaceBytesUploaded <= 0 || rec.WorkspaceBytesUploaded < threshold {
-			return nil, fmt.Errorf("%w: %d confirmed bytes below threshold %d for %s",
+			return ResolveResult{}, fmt.Errorf("%w: %d confirmed bytes below threshold %d for %s",
 				ErrBelowRecoveryThreshold, rec.WorkspaceBytesUploaded, threshold, checkpointID)
 		}
 	}
@@ -129,7 +147,7 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 	// resolves to no chunks, which restores nothing. A partial row reaches
 	// here only after clearing the recovery threshold above.
 	if rec.ChunkCount <= 0 {
-		return nil, nil
+		return ResolveResult{}, nil
 	}
 	encoding := rec.ChunkEncoding
 	if encoding == "" {
@@ -144,11 +162,11 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 	// atomically before any body is fetched.
 	objects, err := r.Lister.ListByPrefix(ctx, prefixURI(tenantID, sessionID, checkpointID))
 	if err != nil {
-		return nil, fmt.Errorf("resumechunks: list chunk objects for %s: %w", checkpointID, err)
+		return ResolveResult{}, fmt.Errorf("resumechunks: list chunk objects for %s: %w", checkpointID, err)
 	}
 	sizes, err := contiguousChunkSizes(objects, checkpointID, rec.ChunkCount)
 	if err != nil {
-		return nil, err
+		return ResolveResult{}, err
 	}
 
 	// (2) Mint one presigned single-key GET capability per index in
@@ -161,7 +179,7 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 		uri.TTL = r.TTL
 		grant, gerr := r.Presigner.PresignGet(uri, r.TTL)
 		if gerr != nil {
-			return nil, fmt.Errorf("resumechunks: mint GET capability for chunk %d of %s: %w", n, checkpointID, gerr)
+			return ResolveResult{}, fmt.Errorf("resumechunks: mint GET capability for chunk %d of %s: %w", n, checkpointID, gerr)
 		}
 		grants = append(grants, adapterclient.ChunkGrant{
 			Index:     uint32(n),
@@ -171,7 +189,12 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 			ExpiresAt: grant.ExpiresAt,
 		})
 	}
-	return grants, nil
+	// spec: §16.1 line 195 — a partial = true manifest that cleared the
+	// recovery threshold above and reassembled into a contiguous chunk set is
+	// a recovered partial checkpoint. A complete (partial = false) restore is
+	// not a recovery. ManifestReason carries the recovered row's reason so the
+	// counter shares the reason the write path stamped.
+	return ResolveResult{Grants: grants, Recovered: rec.Partial, ManifestReason: rec.ManifestReason}, nil
 }
 
 // contiguousChunkSizes parses the listed objects into per-index sizes and

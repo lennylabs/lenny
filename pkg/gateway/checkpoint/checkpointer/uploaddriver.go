@@ -98,6 +98,11 @@ type DriverMetrics interface {
 	// lenny_checkpoint_partial_manifests_superseded_total once per prior
 	// aborted attempt this attempt supersedes.
 	IncCheckpointPartialManifestsSuperseded(pool string)
+	// IncCheckpointPartial stamps lenny_checkpoint_partial_total once per
+	// partial-manifest row finalised on a terminal abort arm, with
+	// recovered = false, the manifest_reason that named the arm, and the
+	// trigger the attempt was started with (§16.1 line 195).
+	IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger)
 	// IncCheckpointKMSUnavailable stamps
 	// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"} on a
 	// kms:-coded object-store rejection.
@@ -415,6 +420,11 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 	}
 	if c.DriverMetrics != nil {
 		c.DriverMetrics.IncCheckpointPartialManifestsSuperseded(d.pool)
+		// spec: §16.1 line 195 — the prior row Put soft-deletes is finalised
+		// manifest_reason = 'superseded', so count it on the partial counter's
+		// superseded arm (recovered = false, this attempt's trigger), distinct
+		// from the supersede-specific counter above.
+		c.DriverMetrics.IncCheckpointPartial(d.pool, false, partialmanifeststore.ReasonSuperseded, d.trigger)
 	}
 	return nil
 }
@@ -804,6 +814,14 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	defer cancel()
 	if err := c.Manifests.Finalise(ctx, d.tenantID, d.checkpointID, true, reason); err != nil {
 		return fmt.Errorf("checkpointer: finalise partial (%s): %w", reason, err)
+	}
+	// spec: §16.1 line 195 — count the partial-manifest row this abort arm
+	// finalised: recovered = false (the write path never recovers), the
+	// manifest_reason that named the arm, and the trigger the attempt was
+	// started with. The success arm (onSummary, partial = false) emits
+	// nothing.
+	if c.DriverMetrics != nil {
+		c.DriverMetrics.IncCheckpointPartial(d.pool, false, reason, d.trigger)
 	}
 	d.reconcile(ctx, confirmed)
 	// A deadline-fire (timeout) row is retained for the resume path; every

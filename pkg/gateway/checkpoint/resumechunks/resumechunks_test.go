@@ -92,10 +92,11 @@ func TestResolveMintsOneCapabilityPerChunkInOrder(t *testing.T) {
 	}
 	r, _ := newResolver(3, partialmanifeststore.ChunkEncodingTarGz, objs)
 
-	grants, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	res, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	grants := res.Grants
 	if len(grants) != 3 {
 		t.Fatalf("grants = %d, want 3", len(grants))
 	}
@@ -123,10 +124,11 @@ func TestResolveToleratesResidueBeyondChunkCount(t *testing.T) {
 	}
 	r, _ := newResolver(2, partialmanifeststore.ChunkEncodingTar, objs)
 
-	grants, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	res, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	grants := res.Grants
 	if len(grants) != 2 {
 		t.Fatalf("grants = %d, want 2 (residue index 2 ignored)", len(grants))
 	}
@@ -194,6 +196,7 @@ func TestResolveHonoursPartialRecoveryThreshold(t *testing.T) {
 				ChunkCount:                  2,
 				ChunkEncoding:               partialmanifeststore.ChunkEncodingTar,
 				Partial:                     true,
+				ManifestReason:              partialmanifeststore.ReasonTimeout,
 				WorkspaceBytesUploaded:      uploaded,
 				BaselineFullCheckpointBytes: &baseline,
 			}},
@@ -209,12 +212,21 @@ func TestResolveHonoursPartialRecoveryThreshold(t *testing.T) {
 		t.Fatalf("below-threshold Resolve err = %v, want ErrBelowRecoveryThreshold", err)
 	}
 	// 60 >= 50: reassemble.
-	grants, err := build(60).Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	res, err := build(60).Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
 	if err != nil {
 		t.Fatalf("at-threshold Resolve: %v", err)
 	}
-	if len(grants) != 2 {
-		t.Fatalf("grants = %d, want 2 (partial above threshold reassembles)", len(grants))
+	if len(res.Grants) != 2 {
+		t.Fatalf("grants = %d, want 2 (partial above threshold reassembles)", len(res.Grants))
+	}
+	// spec: §16.1 line 195 — an above-threshold partial reassembly is a
+	// recovered partial checkpoint, so Resolve surfaces Recovered = true and
+	// the recovered row's manifest_reason for the recovered=true counter.
+	if !res.Recovered {
+		t.Errorf("Recovered = false, want true for an above-threshold partial reassembly")
+	}
+	if res.ManifestReason != partialmanifeststore.ReasonTimeout {
+		t.Errorf("ManifestReason = %q, want %q (the recovered row's reason)", res.ManifestReason, partialmanifeststore.ReasonTimeout)
 	}
 }
 
@@ -249,12 +261,17 @@ func TestResolveZeroChunkPartialFallsBackNotEmptyRestore(t *testing.T) {
 // (restores nothing) without consulting the lister or presigner.
 func TestResolveZeroChunkManifestRestoresNothing(t *testing.T) {
 	r, p := newResolver(0, partialmanifeststore.ChunkEncodingTar, nil)
-	grants, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	res, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if len(grants) != 0 {
-		t.Errorf("grants = %d, want 0", len(grants))
+	if len(res.Grants) != 0 {
+		t.Errorf("grants = %d, want 0", len(res.Grants))
+	}
+	// spec: §16.1 line 195 — a complete (partial = false) restore is not a
+	// recovery, so Recovered stays false and the resume emits nothing.
+	if res.Recovered {
+		t.Errorf("Recovered = true, want false for a complete restore")
 	}
 	if len(p.mints) != 0 {
 		t.Errorf("presign mints = %d, want 0", len(p.mints))

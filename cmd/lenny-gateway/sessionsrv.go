@@ -246,9 +246,13 @@ func (w *gatewayWiring) buildSessionServer(
 		// manifest row, verify contiguity, and mint one presigned GET
 		// capability per chunk for the resume path; read the row for the
 		// workspace-download stream; write the derived manifest on derive.
-		ResumeChunkResolver:      resumeChunkResolver,
-		CheckpointManifestReader: w.partialManifests,
-		CheckpointManifestWriter: w.partialManifests,
+		ResumeChunkResolver: resumeChunkResolver,
+		// spec: §16.1 line 195 — the resume path stamps
+		// lenny_checkpoint_partial_total{recovered=true} on the same concrete
+		// registry the upload driver's recovered=false abort arms write.
+		CheckpointRecoveryMetrics: gwMetrics,
+		CheckpointManifestReader:  w.partialManifests,
+		CheckpointManifestWriter:  w.partialManifests,
 		// §4.4 line 226 session-log close-hook. Wired with the
 		// per-deployment Store (Noop for in-memory, MinIOStore when
 		// the §4.5 follow-on wiring lands a MinIO uploader). The

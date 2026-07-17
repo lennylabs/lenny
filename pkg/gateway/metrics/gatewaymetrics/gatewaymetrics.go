@@ -19,6 +19,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 )
 
 // Metrics holds the registered §16.1 gateway metric vectors. The vectors are
@@ -1244,16 +1246,21 @@ func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {
 	m.podRetirement.WithLabelValues(reason, pool, runtimeClass).Inc()
 }
 
-// IncCheckpointPartial increments the §4.4 line 234
-// `lenny_checkpoint_partial_total` counter labeled by pool. Called
-// once per partial-manifest row written by the §10.1
-// chunk-upload pipeline.
-// spec: §4.4 line 234.
-func (m *Metrics) IncCheckpointPartial(pool string) {
+// IncCheckpointPartial increments the §16.1 line 195
+// `lenny_checkpoint_partial_total` counter labeled by pool, recovered,
+// manifest_reason, and trigger. The write path calls it once per
+// partial-manifest row finalised on a terminal abort arm (recovered =
+// false, the manifest_reason that named the arm, and the trigger the
+// attempt was started with); the resume path calls it once per
+// above-threshold reassembly (recovered = true). trigger is a
+// checkpoint.Trigger so no value outside the closed §4.4 enum can be
+// stamped onto the series.
+// spec: §16.1 line 195.
+func (m *Metrics) IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger) {
 	if m == nil {
 		return
 	}
-	m.checkpointPartialTotal.WithLabelValues(pool).Inc()
+	m.checkpointPartialTotal.WithLabelValues(pool, strconv.FormatBool(recovered), manifestReason, string(trigger)).Inc()
 }
 
 // IncPreStopCapSelection increments the §10.1

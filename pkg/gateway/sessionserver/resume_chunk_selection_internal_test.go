@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -15,14 +17,20 @@ import (
 // recordingResolver records the checkpoint_id the resume path asks it to
 // reassemble, so a test can pin which manifest row the selector resolved.
 type recordingResolver struct {
-	got    string
-	grants []adapterclient.ChunkGrant
-	err    error
+	got            string
+	grants         []adapterclient.ChunkGrant
+	recovered      bool
+	manifestReason string
+	err            error
 }
 
-func (r *recordingResolver) Resolve(_ context.Context, _, _, checkpointID string) ([]adapterclient.ChunkGrant, error) {
+func (r *recordingResolver) Resolve(_ context.Context, _, _, checkpointID string) (resumechunks.ResolveResult, error) {
 	r.got = checkpointID
-	return r.grants, r.err
+	return resumechunks.ResolveResult{
+		Grants:         r.grants,
+		Recovered:      r.recovered,
+		ManifestReason: r.manifestReason,
+	}, r.err
 }
 
 // seedManifest records one manifest row via the intent-row model. When
@@ -195,5 +203,110 @@ func TestResolveResumeChunksReassemblesPartialWithNoRef(t *testing.T) {
 	}
 	if len(grants) != 1 {
 		t.Fatalf("grants = %d, want 1 (the partial drain's chunk set)", len(grants))
+	}
+}
+
+// capturingRecoveryMetrics records every lenny_checkpoint_partial_total
+// emission so a test can assert the resume path fires it exactly once, with
+// recovered = true and a trigger inside the closed checkpoint.Trigger enum.
+type capturingRecoveryMetrics struct {
+	calls []recoveryEmit
+}
+
+type recoveryEmit struct {
+	pool           string
+	recovered      bool
+	manifestReason string
+	trigger        checkpoint.Trigger
+}
+
+func (c *capturingRecoveryMetrics) IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger) {
+	c.calls = append(c.calls, recoveryEmit{pool, recovered, manifestReason, trigger})
+}
+
+// spec: §16.1 line 195 — a resume that reassembles an above-threshold partial
+// checkpoint stamps lenny_checkpoint_partial_total{recovered=true} exactly
+// once, carrying the session's pool, the recovered row's manifest_reason, and
+// a trigger inside the closed §4.4 checkpoint.Trigger enum. A complete
+// (partial = false) restore emits nothing.
+//
+// diagnosis: a missing emission means the resume-side recovery signal is
+// unwired and operators cannot compute a partial-checkpoint recovery rate; an
+// emission on a complete restore mislabels an ordinary full restore as a
+// partial recovery; a trigger outside the enum breaks the §16.1 label domain.
+func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) {
+	const (
+		tenant  = "acme"
+		session = "sess_recovered"
+		drainCk = "ck_recovered"
+	)
+	mstore := partialmanifeststore.NewMemoryStore(nil)
+	seedManifest(t, mstore, tenant, session, drainCk, 4, true)
+
+	metrics := &capturingRecoveryMetrics{}
+	resolver := &recordingResolver{
+		grants:         []adapterclient.ChunkGrant{{Index: 0}},
+		recovered:      true,
+		manifestReason: partialmanifeststore.ReasonTimeout,
+	}
+	s := &Server{
+		resumeChunkResolver:       resolver,
+		checkpointManifests:       mstore,
+		checkpointRecoveryMetrics: metrics,
+	}
+	row := sessionstore.Session{
+		ID: session, TenantID: tenant, PoolRef: "warm-a",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: ""},
+	}
+
+	_ = s.resolveResumeChunks(context.Background(), row)
+	if len(metrics.calls) != 1 {
+		t.Fatalf("recovery emissions = %d, want 1", len(metrics.calls))
+	}
+	got := metrics.calls[0]
+	if !got.recovered {
+		t.Errorf("recovered = false, want true")
+	}
+	if got.pool != "warm-a" {
+		t.Errorf("pool = %q, want %q", got.pool, "warm-a")
+	}
+	if got.manifestReason != partialmanifeststore.ReasonTimeout {
+		t.Errorf("manifest_reason = %q, want %q", got.manifestReason, partialmanifeststore.ReasonTimeout)
+	}
+	if !got.trigger.IsValid() {
+		t.Errorf("trigger = %q, want a member of the closed checkpoint.Trigger enum", got.trigger)
+	}
+}
+
+// spec: §16.1 line 195 — a resume that restores a complete (partial = false)
+// checkpoint is not a partial recovery, so the resume emits no recovered=true
+// counter.
+func TestResolveResumeChunksEmitsNothingOnCompleteRestore(t *testing.T) {
+	const (
+		tenant  = "acme"
+		session = "sess_complete"
+		fullCk  = "ck_complete"
+	)
+	mstore := partialmanifeststore.NewMemoryStore(nil)
+	seedManifest(t, mstore, tenant, session, fullCk, 2, false)
+
+	metrics := &capturingRecoveryMetrics{}
+	resolver := &recordingResolver{
+		grants:    []adapterclient.ChunkGrant{{Index: 0}},
+		recovered: false,
+	}
+	s := &Server{
+		resumeChunkResolver:       resolver,
+		checkpointManifests:       mstore,
+		checkpointRecoveryMetrics: metrics,
+	}
+	row := sessionstore.Session{
+		ID: session, TenantID: tenant, PoolRef: "warm-a",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fullCk},
+	}
+
+	_ = s.resolveResumeChunks(context.Background(), row)
+	if len(metrics.calls) != 0 {
+		t.Fatalf("recovery emissions = %d, want 0 (a complete restore is not a recovery)", len(metrics.calls))
 	}
 }

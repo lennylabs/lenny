@@ -3212,9 +3212,10 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 		// nothing rather than resolve an empty key.
 		return nil
 	}
-	chunks, err := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, checkpointID)
+	res, err := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, checkpointID)
 	if err == nil {
-		return chunks
+		s.emitCheckpointRecovered(row, res)
+		return res.Grants
 	}
 	if errors.Is(err, resumechunks.ErrReassemblyContiguity) || errors.Is(err, resumechunks.ErrBelowRecoveryThreshold) {
 		// spec: §10.1 line 155 — reassembly failed atomically before any
@@ -3276,13 +3277,40 @@ func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessions
 	if ferr != nil || full.CheckpointID == "" || full.CheckpointID == selected {
 		return nil
 	}
+	// spec: §16.1 line 195 — the full-checkpoint fallback restores a complete
+	// (partial = false) checkpoint, which is not a partial recovery, so it
+	// emits nothing on the recovered arm. The resolver reports Recovered =
+	// false for a full checkpoint regardless, but the fallback deliberately
+	// does not consult it.
 	fallback, ferr := s.resumeChunkResolver.Resolve(ctx, row.TenantID, row.ID, full.CheckpointID)
 	if ferr != nil {
 		log.Printf("sessionserver: resume %s fell back to full checkpoint %s but it did not resolve: %v",
 			row.ID, full.CheckpointID, ferr)
 		return nil
 	}
-	return fallback
+	return fallback.Grants
+}
+
+// emitCheckpointRecovered stamps the §16.1 line 195
+// lenny_checkpoint_partial_total{recovered=true} counter once when a resume
+// reassembled an above-threshold partial checkpoint. A complete
+// (partial = false) restore, a below-threshold or non-contiguous partial
+// (which never reaches a successful ResolveResult), and a resume that
+// resolved no chunks all leave res.Recovered false and emit nothing.
+//
+// The trigger label is stamped pre_scale_down: the recovery-on-resume path
+// reassembles the partial checkpoint a pod drain left behind (§10.1 line
+// 155), and the checkpoint_manifest row does not persist the originating
+// trigger, so pre_scale_down names the §4.4 producer of the drain partial
+// the resume recovers. The value stays inside the closed checkpoint.Trigger
+// enum §16.1 line 195 admits.
+//
+// spec: §16.1 line 195; §10.1 line 155 (reassembly on resume).
+func (s *Server) emitCheckpointRecovered(row sessionstore.Session, res resumechunks.ResolveResult) {
+	if s.checkpointRecoveryMetrics == nil || !res.Recovered {
+		return
+	}
+	s.checkpointRecoveryMetrics.IncCheckpointPartial(row.PoolRef, true, res.ManifestReason, checkpoint.TriggerPreScaleDown)
 }
 
 // fenceResumedPod issues the §10.1 / §4.2 CoordinatorFence to the pod a

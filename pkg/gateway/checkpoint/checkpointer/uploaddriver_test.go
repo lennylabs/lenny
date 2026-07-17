@@ -291,6 +291,105 @@ func TestDriverLeavesPartialTrueOnTruncatedStream_spec_10_1(t *testing.T) {
 	}
 }
 
+// spec: §16.1 line 195 — every terminal abort arm emits
+// lenny_checkpoint_partial_total once, with recovered = false, the
+// manifest_reason that named the arm, and the trigger the attempt was
+// started with. The Checkpoint entry point drives a periodic attempt, so the
+// trigger is periodic.
+//
+// diagnosis: a missing emission means an aborted partial checkpoint is
+// invisible to the recovery-rate metric; a recovered = true label on a write
+// arm, or a manifest_reason / trigger outside the §16.1 domain, corrupts the
+// counter's label domain.
+func TestDriverEmitsPartialCounterOnAbortArm_spec_16_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		truncateAfter: 0, // close after chunk 0 commits, no Summary
+	}, 1<<30)
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded on a truncated stream, want failure")
+	}
+	if len(m.partial) != 1 {
+		t.Fatalf("partial counter emissions = %d, want 1 on a truncated-stream abort", len(m.partial))
+	}
+	got := m.partial[0]
+	if got.recovered {
+		t.Errorf("recovered = true, want false on a write-path abort arm")
+	}
+	if got.manifestReason != partialmanifeststore.ReasonStreamTruncated {
+		t.Errorf("manifest_reason = %q, want %q", got.manifestReason, partialmanifeststore.ReasonStreamTruncated)
+	}
+	if got.trigger != checkpoint.TriggerPeriodic {
+		t.Errorf("trigger = %q, want %q (the trigger the attempt was started with)", got.trigger, checkpoint.TriggerPeriodic)
+	}
+	if !got.trigger.IsValid() {
+		t.Errorf("trigger = %q is not a member of the closed checkpoint.Trigger enum", got.trigger)
+	}
+}
+
+// spec: §16.1 line 195 — the success arm (onSummary, partial = false) is not
+// a partial-manifest write, so it emits no lenny_checkpoint_partial_total.
+//
+// diagnosis: an emission on the complete arm would count a successful full
+// checkpoint as a partial write, inflating the counter and breaking the
+// recovery-rate denominator.
+func TestDriverEmitsNoPartialCounterOnCompleteArm_spec_16_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		truncateAfter: -1,
+	}, 1<<30)
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(m.partial) != 0 {
+		t.Fatalf("partial counter emissions = %d, want 0 on a complete checkpoint", len(m.partial))
+	}
+}
+
+// spec: §16.1 line 195 — the supersede arm finalises the prior row
+// manifest_reason = 'superseded', so it emits lenny_checkpoint_partial_total
+// once with that reason (recovered = false), alongside the supersede-specific
+// counter.
+func TestDriverEmitsPartialCounterOnSupersedeArm_spec_16_1(t *testing.T) {
+	// First attempt truncates, leaving a partial = true active row.
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 30, chunkLens: []int64{10, 10, 10}, truncateAfter: 0,
+	}, 1<<30)
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	_ = h.cp.Checkpoint(context.Background(), "acme", sid)
+
+	// A fresh completing attempt on the same (session, slot) supersedes the
+	// retained row.
+	second := &chunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1, store: h.store}
+	client := dialAdapter(t, second)
+	h.cp.Registry.Put(&podsession.BindResult{SessionID: sid, TenantID: "acme", Adapter: client})
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("second Checkpoint: %v", err)
+	}
+	var superseded int
+	for _, e := range m.partial {
+		if e.manifestReason == partialmanifeststore.ReasonSuperseded {
+			superseded++
+			if e.recovered {
+				t.Errorf("supersede arm recovered = true, want false")
+			}
+			if !e.trigger.IsValid() {
+				t.Errorf("supersede arm trigger = %q is not in the closed enum", e.trigger)
+			}
+		}
+	}
+	if superseded != 1 {
+		t.Fatalf("superseded partial-counter emissions = %d, want 1", superseded)
+	}
+}
+
 // spec: §11.2 — a chunk that writes more bytes than the signed
 // Content-Length against a non-enforcing store is caught by the Stat
 // confirm, aborts the attempt, and reconciles the excess into the counter;
@@ -987,6 +1086,17 @@ type captureDriverMetrics struct {
 	sizeExceededPool   string
 	storageFailurePool string
 	supersededPool     string
+	// partial records every lenny_checkpoint_partial_total emission so a test
+	// can assert the {recovered, manifest_reason, trigger} tuple each abort arm
+	// stamps.
+	partial []partialEmit
+}
+
+type partialEmit struct {
+	pool           string
+	recovered      bool
+	manifestReason string
+	trigger        checkpoint.Trigger
 }
 
 func (m *captureDriverMetrics) IncCheckpointSizeExceeded(pool, _ string) {
@@ -1005,6 +1115,10 @@ func (m *captureDriverMetrics) IncCheckpointPartialManifestsSuperseded(pool stri
 }
 
 func (m *captureDriverMetrics) IncCheckpointKMSUnavailable() { m.kmsUnavailable++ }
+
+func (m *captureDriverMetrics) IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger) {
+	m.partial = append(m.partial, partialEmit{pool, recovered, manifestReason, trigger})
+}
 
 // latestManifest returns the manifest row for the session's most recent
 // attempt. It scans the store for the row whose session matches; the

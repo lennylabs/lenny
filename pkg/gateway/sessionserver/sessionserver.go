@@ -35,10 +35,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -278,6 +280,11 @@ type Server struct {
 	// that predates the chunked-object model), so the adapter restores
 	// nothing beyond what a snapshotless rebuild recovers.
 	resumeChunkResolver ResumeChunkResolver
+	// checkpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// lenny_checkpoint_partial_total{recovered=true} emission once per
+	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
+	// satisfies it. Nil leaves the resume recovering without observability.
+	checkpointRecoveryMetrics CheckpointRecoveryMetrics
 	// checkpointManifests, when set, reads §10.1 checkpoint_manifest rows
 	// for the resume fallback (LatestFull) and the workspace-download path
 	// (Get, to resolve chunk_count / chunk_encoding).
@@ -699,10 +706,23 @@ type PartialManifestLookup interface {
 // spec: §10.1 line 155.
 type ResumeChunkResolver interface {
 	// Resolve returns one presigned GET capability per chunk of the named
-	// checkpoint in ascending index order, or resumechunks.ErrReassemblyContiguity
-	// when the committed objects do not form a contiguous [0, chunk_count)
-	// prefix.
-	Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) ([]adapterclient.ChunkGrant, error)
+	// checkpoint in ascending index order together with the §16.1 line 195
+	// recovered signal, or resumechunks.ErrReassemblyContiguity when the
+	// committed objects do not form a contiguous [0, chunk_count) prefix.
+	Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) (resumechunks.ResolveResult, error)
+}
+
+// CheckpointRecoveryMetrics is the narrow slice of §16.1 checkpoint
+// telemetry the resume path emits when it reassembles an above-threshold
+// partial checkpoint. *gatewaymetrics.Metrics satisfies it, so the resume's
+// recovered = true emission lands on the same lenny_checkpoint_partial_total
+// series the upload driver's recovered = false abort arms write, without a
+// sessionserver → concrete-metrics import. trigger is a checkpoint.Trigger,
+// so the resume path can only stamp a value inside the closed §4.4 enum.
+//
+// spec: §16.1 line 195.
+type CheckpointRecoveryMetrics interface {
+	IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger)
 }
 
 // CheckpointManifestReader reads §10.1 checkpoint_manifest rows for the
@@ -1328,6 +1348,13 @@ type Options struct {
 	// carrying no chunks.
 	ResumeChunkResolver ResumeChunkResolver
 
+	// CheckpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// lenny_checkpoint_partial_total{recovered=true} emission once per
+	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
+	// satisfies it. Nil leaves the resume recovering without observability.
+	// spec: §16.1 line 195.
+	CheckpointRecoveryMetrics CheckpointRecoveryMetrics
+
 	// CheckpointManifestReader, when set, reads §10.1 checkpoint_manifest
 	// rows for the resume fallback (LatestFull) and the workspace-download
 	// path (Get). Nil disables the contiguity fallback and serves the
@@ -1749,6 +1776,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		evictionStateLookup:        opts.EvictionStateLookup,
 		partialManifestLookup:      opts.PartialManifestLookup,
 		resumeChunkResolver:        opts.ResumeChunkResolver,
+		checkpointRecoveryMetrics:  opts.CheckpointRecoveryMetrics,
 		checkpointManifests:        opts.CheckpointManifestReader,
 		checkpointManifestWriter:   opts.CheckpointManifestWriter,
 		treeArchive:                opts.TreeArchive,
