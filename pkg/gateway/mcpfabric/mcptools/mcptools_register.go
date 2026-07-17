@@ -2034,6 +2034,20 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				fmt.Sprintf("target_not_in_scope: delegation target %q is not within the caller's environment scope (§10.6)", in.Target),
 				map[string]any{"target": in.Target})
 		}
+		// §8.3: a cross-environment `inherit` delegation whose origin
+		// credential pool shares no provider with the child runtime is
+		// rejected with CREDENTIAL_PROVIDER_MISMATCH before any warm pod
+		// is claimed. The gate fires only on the cross-environment inherit
+		// hop; same-environment inherit and every independent/deny hop
+		// fall through to the Delegate path unchanged. spec: §15.2.1 —
+		// surface the canonical lenny code via *mcp.ToolError so the REST
+		// and MCP envelopes share the same POLICY / 422 (category,
+		// retryable) pair registered at errorclassify.go.
+		if viaCrossEnv && lease.CredentialPropagation(in.CredentialPropagation) == lease.CredentialPropagationInherit {
+			if toolErr := crossEnvInheritMismatch(ctx, deps, tenant, in.ParentSessionID, targetRef); toolErr != nil {
+				return mcp.ToolResult{}, toolErr
+			}
+		}
 		// §4 PreDelegation: run the interceptor chain over the
 		// TaskSpec.input before the gateway processes the delegation.
 		// A REJECT blocks the delegation; a MODIFY rewrites the input
