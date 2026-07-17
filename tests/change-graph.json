@@ -566,7 +566,7 @@
       "security": ["tests/tier9_security/diagnostics_fix_guardrails_test.go"]
     },
     "pkg/drift": {
-      "unit": ["pkg/drift/..."],
+      "unit": ["pkg/drift/...", "pkg/ops/configservice/..."],
       "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]
     },
     "pkg/ops/driftservice": {
