@@ -117,6 +117,91 @@ func TestOCSFTranslationCoversEveryEventType(t *testing.T) {
 }
 
 // spec: 11.7
+// diagnosis: §11.7's event-type -> class/activity table "assigns each
+// event type to an OCSF class (primarily classes 3002 Authentication,
+// 6003 API Activity, ...)". The §25.11 Audit Events list names the
+// backup.* and restore.* events individually; pkg/audit/ocsf/mapping.go
+// resolves all of them through the "backup." / "restore." prefix rows
+// (API Activity 6003, category 6, activity Unknown) rather than exact
+// per-event rows. TestOCSFTranslationCoversEveryEventType only walks
+// ocsf.CatalogEventTypes(), which is the exact-catalog key set, so it
+// never exercises these prefix-matched names. This test translates
+// each backup.* / restore.* event named in the §25.11 Audit Events
+// list by its literal name and pins class_uid, category_uid, and
+// activity_id, so a future edit that gives one of them a wrong exact
+// mapping (or narrows/reorders the prefix table) is caught even though
+// the event never appears in CatalogEventTypes().
+func TestOCSFTranslationPinsBackupAndRestoreEvents(t *testing.T) {
+	// spec: §25.11 Audit Events — the literal backup.* / restore.*
+	// event names.
+	events := []string{
+		"backup.created",
+		"backup.completed",
+		"backup.failed",
+		"backup.verified",
+		"backup.deleted_by_retention",
+		"backup.schedule_updated",
+		"backup.policy_updated",
+		"restore.preview_generated",
+		"restore.started",
+		"restore.shard_completed",
+		"restore.resumed",
+		"restore.completed",
+		"restore.failed",
+	}
+	// ocsf.CatalogEventTypes() returns exactly the exact-catalog key
+	// set (mapping.go). None of the backup.* / restore.* names above
+	// should appear in it: confirm each event still reaches the
+	// "backup." / "restore." prefix fallback rather than silently
+	// picking up a future exact-catalog entry with different values.
+	exactNames := map[string]bool{}
+	for _, c := range ocsf.CatalogEventTypes() {
+		exactNames[c] = true
+	}
+
+	for i, et := range events {
+		et := et
+		t.Run(et, func(t *testing.T) {
+			if exactNames[et] {
+				t.Fatalf("%s: has grown an exact-catalog entry; update this test's expectations instead of relying on the prefix fallback assumption", et)
+			}
+
+			in := ocsf.Input{
+				ID:                 "id-" + et,
+				Sequence:           uint64(i + 1),
+				TenantID:           "acme",
+				EventType:          et,
+				EventSchemaVersion: "v1",
+				CreatedAtUnixMs:    1_700_000_000_000,
+				Payload:            json.RawMessage(`{"user_id":"alice@acme.com","caller_kind":"service"}`),
+				PrevHash:           "abcd",
+				ChainIntegrity:     audit.ChainVerified,
+			}
+			rec, err := ocsf.Translate(in)
+			if err != nil {
+				t.Fatalf("%s: Translate: %v", et, err)
+			}
+			requireOCSFShape(t, rec, in)
+
+			if rec.ClassUID != ocsf.ClassAPIActivity {
+				t.Errorf("%s: class_uid = %d, want %d (API Activity)", et, rec.ClassUID, ocsf.ClassAPIActivity)
+			}
+			const wantCategoryUID = 6 // OCSF "Application Activity" category (classes 60xx)
+			if rec.CategoryUID != wantCategoryUID {
+				t.Errorf("%s: category_uid = %d, want %d (Application Activity)", et, rec.CategoryUID, wantCategoryUID)
+			}
+			if rec.ActivityID != ocsf.ActivityUnknown {
+				t.Errorf("%s: activity_id = %d, want %d (Unknown)", et, rec.ActivityID, ocsf.ActivityUnknown)
+			}
+			wantTypeUID := ocsf.ClassAPIActivity*100 + ocsf.ActivityUnknown
+			if rec.TypeUID != wantTypeUID {
+				t.Errorf("%s: type_uid = %d, want %d", et, rec.TypeUID, wantTypeUID)
+			}
+		})
+	}
+}
+
+// spec: 11.7
 // diagnosis: §11.7 says payload fields with no explicit OCSF mapping
 // are routed verbatim into unmapped.lenny.*, and the chain fields into
 // unmapped.lenny_chain.*, so external tools can verify the hash chain
