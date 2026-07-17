@@ -339,9 +339,10 @@ func mergeBuckets(in []bucketSample) []bucketSample {
 
 // IncCheckpointOrphanedObjects increments the §4.4 line 248
 // `lenny_checkpoint_orphaned_objects_total` counter labeled by pool
-// and trigger. Called from the adapter Checkpoint RPC when a
-// CheckpointAborter.AbortPartial call failed to delete a partially
-// uploaded chunk object.
+// and trigger. Called from the gateway checkpointer's chunk-release
+// path when a chunk object's per-key delete fails and no reclaimer
+// will retry it (the rotation-side release of a completed checkpoint,
+// which the §12.5 backstop sweep never re-selects).
 // spec: §4.4 line 248.
 func (m *Metrics) IncCheckpointOrphanedObjects(pool, trigger string) {
 	if m == nil {
@@ -350,11 +351,12 @@ func (m *Metrics) IncCheckpointOrphanedObjects(pool, trigger string) {
 	m.checkpointOrphanedObjects.WithLabelValues(pool, trigger).Inc()
 }
 
-// IncCheckpointSizeExceeded increments the §4.4 line 254
+// IncCheckpointSizeExceeded increments the §4.4 line 255
 // `lenny_checkpoint_size_exceeded_total` counter labeled by pool and
-// level. Called from the adapter Checkpoint RPC when the
-// pre-checkpoint workspace-size probe rejects the run.
-// spec: §4.4 line 254.
+// level. Called from the gateway upload driver when the adapter
+// rejects the run at its pre-checkpoint workspace-size probe, reported
+// over the Checkpoint stream as a FailedPrecondition status.
+// spec: §4.4 line 255.
 func (m *Metrics) IncCheckpointSizeExceeded(pool, level string) {
 	if m == nil {
 		return

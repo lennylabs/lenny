@@ -189,24 +189,21 @@ type Checkpointer struct {
 	// confirmed chunk from its Stat-confirmed size. Nil skips cataloging.
 	// spec: §12.5 line 309.
 	Cataloging ChunkRecorder
-	// ChunkDeleter sweeps the chunk objects under a manifest's
-	// chunk_object_key_prefix on the abort and supersede arms. Nil skips
-	// the object-store sweep (dev-mode / test path).
-	// spec: §4.4 line 236 / §10.1 line 157.
-	ChunkDeleter PartialChunkDeleter
-	// ChunkCatalog soft-deletes each rotated-out checkpoint chunk's
+	// ChunkCatalog soft-deletes each released checkpoint chunk's
 	// artifact_store row through the cataloging decorator, issuing the §12.5
-	// rule 4 Redis decrement exactly once. Nil (with ChunkObjects) skips the
-	// rotation-side chunk release, leaving the chunk rows and objects in place;
-	// the §12.5 backstop sweeps partial = true rows only and does not reclaim
-	// a completed checkpoint. cataloging.Store satisfies it.
-	// spec: §12.5 GC rule 4, GC rule 5.
+	// rule 4 Redis decrement exactly once. The abort, supersede, and rotation
+	// arms all run their chunk objects through it before the per-key object
+	// delete, so an aborted, superseded, or rotated-out checkpoint's confirmed
+	// bytes return to the tenant rather than staying charged forever. Nil (with
+	// ChunkObjects) skips the chunk release, leaving the chunk rows and objects
+	// in place. cataloging.Store satisfies it.
+	// spec: §12.5 GC rule 4, GC rule 5; §10.1 line 157.
 	ChunkCatalog ChunkCatalogReleaser
-	// ChunkObjects discovers each rotated-out checkpoint's chunk objects under
-	// its chunk_object_key_prefix and hard-deletes each one per key. Nil (with
-	// ChunkCatalog) skips the rotation-side chunk release. miniostore.Store
-	// satisfies it.
-	// spec: §12.5 GC rule 5.
+	// ChunkObjects discovers a released checkpoint's chunk objects under its
+	// chunk_object_key_prefix and hard-deletes each one per key. The abort,
+	// supersede, and rotation arms share it. Nil (with ChunkCatalog) skips the
+	// chunk release. miniostore.Store satisfies it.
+	// spec: §12.5 GC rule 5; §4.4 line 236.
 	ChunkObjects ChunkObjectStore
 	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
 	// window stamped onto each soft-deleted chunk row's hard-prune deadline

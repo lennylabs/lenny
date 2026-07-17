@@ -95,7 +95,7 @@ func TestCheckpointLeavesPartialAndSweepsChunksOnPutFailure(t *testing.T) {
 	if got := h.store.count(rec.ChunkObjectKeyPrefix); got != 0 {
 		t.Errorf("objects under prefix = %d after the sweep, want 0", got)
 	}
-	if !h.deleter.sweptPrefix(rec.ChunkObjectKeyPrefix) {
+	if !h.store.sweptPrefix(rec.ChunkObjectKeyPrefix) {
 		t.Errorf("abort sweep did not run over prefix %q", rec.ChunkObjectKeyPrefix)
 	}
 }
@@ -135,7 +135,7 @@ func TestCheckpointDeadlineFireRetainsChunksForResume(t *testing.T) {
 	if got := h.store.count(rec.ChunkObjectKeyPrefix); got == 0 {
 		t.Errorf("objects under prefix = 0 after a timeout finalise, want the confirmed chunk retained")
 	}
-	if h.deleter.sweptPrefix(rec.ChunkObjectKeyPrefix) {
+	if h.store.sweptPrefix(rec.ChunkObjectKeyPrefix) {
 		t.Errorf("timeout finalise swept prefix %q; a deadline-fire row is retained for resume", rec.ChunkObjectKeyPrefix)
 	}
 }

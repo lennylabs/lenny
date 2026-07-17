@@ -300,23 +300,6 @@ func seedCompleteManifest(t *testing.T, store partialmanifeststore.Store, tenant
 	return rec
 }
 
-// stubChunkDeleter captures every DeleteByPrefix call.
-type stubChunkDeleter struct {
-	mu       sync.Mutex
-	prefixes []string
-	err      error
-}
-
-func (d *stubChunkDeleter) DeleteByPrefix(_ context.Context, prefix string) (int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.prefixes = append(d.prefixes, prefix)
-	if d.err != nil {
-		return 0, d.err
-	}
-	return 1, nil
-}
-
 // stubMetrics captures every IncPartialManifestCleanup call.
 type stubMetrics struct {
 	mu       sync.Mutex
@@ -729,21 +712,31 @@ func TestReclaimAbandonedManifestRequiresEverySeam(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — successful cleanup deletes every chunk under
-// the prefix and soft-deletes the manifest row.
-func TestCleanupPartialManifestSuccess(t *testing.T) {
+// spec: §4.4 line 236 / §12.5 GC rule 4 — successful cleanup releases every
+// confirmed chunk through the cataloging decorator (soft-delete its
+// artifact_store row, the exactly-once decrement) before deleting the object,
+// then soft-deletes the manifest row. Constructed to fail against a resume
+// cleanup that deletes objects around the catalog: it asserts the chunk row is
+// soft-deleted and its bytes freed, not only that the object is gone.
+func TestCleanupPartialManifestReleasesChunkRowsAndSoftDeletesManifest(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
-	deleter := &stubChunkDeleter{}
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-1", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-1", 0))
 	metrics := &stubMetrics{}
 
-	if err := checkpointer.CleanupPartialManifest(context.Background(), store, deleter, r, metrics, false); err != nil {
+	if err := checkpointer.CleanupPartialManifest(context.Background(), store, catalog, objects, time.Hour, r, metrics, false); err != nil {
 		t.Fatalf("CleanupPartialManifest: %v", err)
 	}
-	if len(deleter.prefixes) != 1 || deleter.prefixes[0] != r.ChunkObjectKeyPrefix {
-		t.Errorf("chunk deletion prefixes = %v, want [%q]", deleter.prefixes, r.ChunkObjectKeyPrefix)
+	if len(objects.deleted) != 1 {
+		t.Errorf("deleted objects = %v, want the single chunk", objects.deleted)
 	}
-
+	if got := catalog.softDeleted(); len(got) != 1 {
+		t.Errorf("soft-deleted catalog rows = %v, want the single chunk row", got)
+	}
+	if catalog.freed != 100 {
+		t.Errorf("freed bytes = %d, want 100 (the confirmed chunk's bytes released to the tenant)", catalog.freed)
+	}
 	row, _ := store.Get(context.Background(), "acme", "cp-1")
 	if row.DeletedAt.IsZero() {
 		t.Error("cleanup did not soft-delete the manifest row")
@@ -758,11 +751,13 @@ func TestCleanupPartialManifestSuccess(t *testing.T) {
 func TestCleanupPartialManifestMinIOFailure(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
-	deleter := &stubChunkDeleter{err: errors.New("minio down")}
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-1", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-1", 0))
+	objects.deleteErr = errors.New("minio down")
 	metrics := &stubMetrics{}
 
-	if err := checkpointer.CleanupPartialManifest(context.Background(), store, deleter, r, metrics, false); err == nil {
-		t.Fatal("expected an error when the chunk deleter fails")
+	if err := checkpointer.CleanupPartialManifest(context.Background(), store, catalog, objects, time.Hour, r, metrics, false); err == nil {
+		t.Fatal("expected an error when the object delete fails")
 	}
 	row, _ := store.Get(context.Background(), "acme", "cp-1")
 	if !row.DeletedAt.IsZero() {
@@ -773,23 +768,25 @@ func TestCleanupPartialManifestMinIOFailure(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — `deleted_at IS NULL` is the idempotency
-// guard. Repeated cleanup invocations converge to a single
-// state mutation; the second writer observes the row already
-// soft-deleted.
+// spec: §4.4 line 236 / §12.5 GC rule 4 — a re-run over an already-cleaned row
+// observes each catalog row already soft-deleted (no second decrement), each
+// object already absent, and the manifest already soft-deleted, so repeated
+// invocations converge and release the confirmed bytes exactly once.
 func TestCleanupPartialManifestIsIdempotent(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-1", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-1", 0))
 	metrics := &stubMetrics{}
 
 	for i := 0; i < 3; i++ {
-		if err := checkpointer.CleanupPartialManifest(context.Background(), store, &stubChunkDeleter{}, r, metrics, false); err != nil {
+		if err := checkpointer.CleanupPartialManifest(context.Background(), store, catalog, objects, time.Hour, r, metrics, false); err != nil {
 			t.Fatalf("cleanup %d: %v", i, err)
 		}
 	}
-	// All three calls succeed; the metric records three success
-	// outcomes because the cleanup path is at-least-once-safe by
-	// design (idempotent on the second writer).
+	if catalog.freed != 100 {
+		t.Errorf("freed bytes = %d after 3 runs, want 100 (the decrement fires exactly once)", catalog.freed)
+	}
 	for i, outcome := range metrics.outcomes {
 		if outcome != string(checkpointer.PartialCleanupSuccess) {
 			t.Errorf("invocation %d: outcome %q, want success", i, outcome)
@@ -803,9 +800,11 @@ func TestCleanupPartialManifestIsIdempotent(t *testing.T) {
 func TestCleanupPartialManifestGCCollectedOutcome(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-1", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-1", 0))
 	metrics := &stubMetrics{}
 
-	if err := checkpointer.CleanupPartialManifest(context.Background(), store, &stubChunkDeleter{}, r, metrics, true); err != nil {
+	if err := checkpointer.CleanupPartialManifest(context.Background(), store, catalog, objects, time.Hour, r, metrics, true); err != nil {
 		t.Fatalf("CleanupPartialManifest: %v", err)
 	}
 	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != string(checkpointer.PartialCleanupGCCollected) {
@@ -813,19 +812,20 @@ func TestCleanupPartialManifestGCCollectedOutcome(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — a nil deleter is honored as a "skip MinIO"
-// path (tests / dev-mode); the row is still soft-deleted.
-func TestCleanupPartialManifestNilDeleterSkipsMinIO(t *testing.T) {
+// spec: §4.4 line 236 — a nil catalog / object store is honored as a "skip
+// MinIO" path (tests / dev-mode with no durable backend); the row is still
+// soft-deleted.
+func TestCleanupPartialManifestNilReleaseSeamsSkipsMinIO(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	r := seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
 	metrics := &stubMetrics{}
 
-	if err := checkpointer.CleanupPartialManifest(context.Background(), store, nil, r, metrics, false); err != nil {
+	if err := checkpointer.CleanupPartialManifest(context.Background(), store, nil, nil, 0, r, metrics, false); err != nil {
 		t.Fatalf("CleanupPartialManifest: %v", err)
 	}
 	row, _ := store.Get(context.Background(), "acme", "cp-1")
 	if row.DeletedAt.IsZero() {
-		t.Error("row was not soft-deleted when deleter is nil")
+		t.Error("row was not soft-deleted when the release seams are nil")
 	}
 }
 
@@ -840,7 +840,7 @@ func TestCleanupPartialManifestRejectsEmptyFields(t *testing.T) {
 		{TenantID: "acme", CheckpointID: "cp-1"},
 	}
 	for _, r := range cases {
-		if err := checkpointer.CleanupPartialManifest(context.Background(), store, nil, r, nil, false); err == nil {
+		if err := checkpointer.CleanupPartialManifest(context.Background(), store, nil, nil, 0, r, nil, false); err == nil {
 			t.Errorf("cleanup accepted record with empty fields: %+v", r)
 		}
 	}
@@ -1082,20 +1082,27 @@ func TestReclaimAbandonedManifestSurfacesChunkRowReleaseError(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — the resume-path PartialCleaner reads the latest
-// active partial manifest for the session and runs the cleanup pipeline,
-// soft-deleting the row.
-func TestPartialCleanerCleanupAfterResumeCleansTheActiveRow(t *testing.T) {
+// spec: §4.4 line 236 / §12.5 GC rule 4 — the resume-path PartialCleaner reads
+// the latest active partial manifest for the session and runs the
+// catalog-decorated release: it soft-deletes the confirmed chunk's
+// artifact_store row (releasing its bytes), deletes the object, and
+// soft-deletes the manifest row. Constructed to fail against a cleaner wired
+// to a plain prefix delete: it asserts the chunk row's bytes are freed.
+func TestPartialCleanerCleanupAfterResumeReleasesChunksAndRow(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
-	deleter := &stubChunkDeleter{}
-	cleaner := &checkpointer.PartialCleaner{Store: store, Deleter: deleter}
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-1", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-1", 0))
+	cleaner := &checkpointer.PartialCleaner{Store: store, Catalog: catalog, Objects: objects, TombstoneRetention: time.Hour}
 
 	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
 		t.Fatalf("CleanupAfterResume: %v", err)
 	}
-	if len(deleter.prefixes) != 1 {
-		t.Errorf("chunk deletion calls = %d, want 1", len(deleter.prefixes))
+	if len(objects.deleted) != 1 {
+		t.Errorf("deleted objects = %v, want the single chunk", objects.deleted)
+	}
+	if catalog.freed != 100 {
+		t.Errorf("freed bytes = %d, want 100 (the confirmed chunk released, not orphaned)", catalog.freed)
 	}
 	row, _ := store.Get(context.Background(), "acme", "cp-1")
 	if row.DeletedAt.IsZero() {

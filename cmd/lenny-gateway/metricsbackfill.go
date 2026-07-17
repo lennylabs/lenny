@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -231,6 +233,16 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 		// KMS-unavailable, orphaned objects, and size-exceeded) share the same
 		// live registry as the duration histogram above.
 		w.checkpointSvc.DriverMetrics = gwMetrics
+		// §4.4 line 255 — on the adapter's workspace-size-probe rejection the
+		// upload driver stamps lenny_checkpoint_size_exceeded_total and emits
+		// the checkpoint.skipped{reason} session event so the client is aware.
+		// The event goes on the gateway's session-event bus (w.eventBus), built
+		// in buildSessionMessaging before this backfill runs, because the pod
+		// adapter has no session-event channel. Without this the size-limit
+		// reject increments the counter but emits no client-visible event.
+		if w.eventBus != nil {
+			w.checkpointSvc.SkippedEventFunc = newCheckpointSkippedEmitter(w.eventBus)
+		}
 	}
 
 	// §12.5 ll. 282/303 — wire the artifact store's fail-closed T4
@@ -445,4 +457,30 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 
 	w.gwMetrics = gwMetrics
 	w.subsystemMetrics = subsystemMetrics
+}
+
+// checkpointSkippedBus is the session-event publish surface the §4.4 line 255
+// checkpoint.skipped emitter writes to. *sessionevents.Bus satisfies it; a
+// test passes a capture.
+type checkpointSkippedBus interface {
+	PublishForTenant(tenantID, sessionID, eventType, data string, now time.Time) sessionevents.Event
+}
+
+// newCheckpointSkippedEmitter builds the checkpointer's SkippedEventFunc: on
+// the adapter's §4.4 line 255 workspace-size-probe rejection it publishes a
+// checkpoint.skipped{reason} session event on the gateway's session-event bus
+// so the client is aware. The pod adapter has no session-event channel, so the
+// gateway owns this emission alongside the lenny_checkpoint_size_exceeded_total
+// counter.
+// spec: §4.4 line 255.
+func newCheckpointSkippedEmitter(bus checkpointSkippedBus) func(context.Context, string, string, string) {
+	return func(_ context.Context, tenantID, sessionID, reason string) {
+		payload, err := json.Marshal(struct {
+			Reason string `json:"reason"`
+		}{Reason: reason})
+		if err != nil {
+			payload = []byte("{}")
+		}
+		bus.PublishForTenant(tenantID, sessionID, "checkpoint.skipped", string(payload), clockinject.Now())
+	}
 }

@@ -56,16 +56,19 @@ const (
 )
 
 // gwStore is a prefix-capable in-memory object store with an optional Stat
-// delay, implementing the driver's ObjectStat and PartialChunkDeleter seams.
+// delay, implementing the driver's ObjectStat, ChunkObjectStore, and
+// ChunkCatalogReleaser seams so an abort or supersede release can walk and
+// delete its chunk objects.
 type gwStore struct {
 	mu        sync.Mutex
 	sizes     map[string]int64
 	urls      map[string]blobstore.URI
+	uris      map[string]blobstore.URI
 	statDelay time.Duration
 }
 
 func newGWStore() *gwStore {
-	return &gwStore{sizes: map[string]int64{}, urls: map[string]blobstore.URI{}}
+	return &gwStore{sizes: map[string]int64{}, urls: map[string]blobstore.URI{}, uris: map[string]blobstore.URI{}}
 }
 
 func gwObjectPath(u blobstore.URI) string {
@@ -83,6 +86,7 @@ func (s *gwStore) putFromGrant(url string, size int64) {
 	defer s.mu.Unlock()
 	if u, ok := s.urls[url]; ok {
 		s.sizes[gwObjectPath(u)] = size
+		s.uris[gwObjectPath(u)] = u
 	}
 }
 
@@ -99,17 +103,35 @@ func (s *gwStore) Stat(u blobstore.URI) (blobstore.BlobInfo, error) {
 	return blobstore.BlobInfo{URI: u, Size: size}, nil
 }
 
-func (s *gwStore) DeleteByPrefix(_ context.Context, prefix string) (int, error) {
+// ListByPrefix implements checkpointer.ChunkObjectStore.
+func (s *gwStore) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n := 0
-	for k := range s.sizes {
-		if strings.HasPrefix(k, prefix) {
-			delete(s.sizes, k)
-			n++
+	prefix := gwObjectPath(u)
+	var out []blobstore.BlobInfo
+	for key, uri := range s.uris {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, blobstore.BlobInfo{URI: uri, Size: s.sizes[key]})
 		}
 	}
-	return n, nil
+	return out, nil
+}
+
+// HardDeleteObject implements checkpointer.ChunkObjectStore.
+func (s *gwStore) HardDeleteObject(u blobstore.URI) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := gwObjectPath(u)
+	delete(s.sizes, key)
+	delete(s.uris, key)
+	return nil
+}
+
+// SoftDeleteRow implements checkpointer.ChunkCatalogReleaser as a no-op: the
+// load test seeds no artifact_store rows, so the release only needs the object
+// walk. The method's presence lets gwStore serve as the ChunkCatalog seam.
+func (s *gwStore) SoftDeleteRow(_ context.Context, _ string, _ time.Duration) error {
+	return nil
 }
 
 // gwPresigner mints grant URLs and tracks the peak number of grants
@@ -229,7 +251,8 @@ func newGWHarnessCfg(t *testing.T, adapter adapterv1.AdapterServer, cfg gwHarnes
 		Presigner:       presigner,
 		ObjectStore:     store,
 		Cataloging:      recorder,
-		ChunkDeleter:    store,
+		ChunkCatalog:    store,
+		ChunkObjects:    store,
 		GrantWindow:     cfg.window,
 		PoolGrantWindow: cfg.poolReader,
 		Deadline:        deadline,

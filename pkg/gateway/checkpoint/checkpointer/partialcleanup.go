@@ -12,24 +12,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
-// PartialChunkDeleter is the §4.4 line 236 MinIO surface the cleanup
-// path uses to remove the chunk objects stored under a partial
-// manifest's `chunk_object_key_prefix`. The implementation walks
-// the prefix (`ListObjectsV2` semantics) and `DeleteObject`s each
-// key; MinIO's delete-on-absent semantics make repeated deletions on
-// the same key independently idempotent so a retry never errors on a
-// stale chunk.
-//
-// The signature is interface-narrow so unit tests can stub it without
-// pulling in a S3 client. The production wiring lives in
-// pkg/blobstore/{s3,miniostore}.
-type PartialChunkDeleter interface {
-	// DeleteByPrefix removes every object under the supplied prefix.
-	// Returns the count physically deleted and the first error
-	// encountered; missing keys are not an error.
-	DeleteByPrefix(ctx context.Context, prefix string) (count int, err error)
-}
-
 // PartialCleanupOutcome enumerates the §4.4 line 236 cleanup
 // outcomes; the value is the label of the
 // `lenny_partial_manifest_cleanup_total` counter.
@@ -58,27 +40,41 @@ type PartialCleanupMetrics interface {
 	IncPartialManifestCleanup(outcome string)
 }
 
-// CleanupPartialManifest performs the §4.4 line 236 cleanup of a
-// single partial-manifest row: (1) delete every chunk under the
-// row's `chunk_object_key_prefix` via per-key `DeleteObject`
-// calls; (2) soft-delete the Postgres row under the
-// `deleted_at IS NULL` predicate; (3) emit the
+// CleanupPartialManifest performs the §4.4 line 236 cleanup of a single
+// partial-manifest row a resume reassembled (or the §12.5 backstop dropped):
+// (1) discover the row's chunk objects by walking its
+// `chunk_object_key_prefix` and, for each, soft-delete the chunk's
+// `artifact_store` row through the cataloging decorator under the
+// `deleted_at IS NULL` guard — the §12.5 rule 4 Redis decrement that returns
+// the tenant's `storage_bytes_used` toward zero — before the per-key
+// `DeleteObject`; (2) soft-delete the Postgres manifest row once a final
+// prefix list returns empty; (3) emit the
 // `lenny_partial_manifest_cleanup_total` counter labeled by outcome.
 //
-// The cleanup is best-effort: a MinIO failure leaves the row active
-// so the §12.5 backstop sweep can retry on the next cycle. The
-// caller passes the source of the cleanup (a resume-path call versus
-// a GC-backstop call) via the `gcCollected` flag so the metric
-// label distinguishes the two cases.
+// Releasing the confirmed chunks through the decorator rather than around it
+// is what returns a resumed timeout checkpoint's confirmed bytes to the
+// tenant. A plain prefix delete would leave every confirmed chunk's
+// `artifact_store` row live and its bytes charged forever, and a Redis-recovery
+// rebuild would re-add them from the `SUM` over rows whose objects no longer
+// exist.
 //
-// spec: §4.4 line 236 — "Regardless of reassembly outcome, the
-// gateway MUST delete every chunk object listed under the manifest's
-// chunk_object_key_prefix via per-key DeleteObject calls, then
-// soft-delete the Postgres row".
+// The cleanup is best-effort: a MinIO or catalog failure leaves the row active
+// so the §12.5 backstop sweep can retry on the next cycle. The caller passes
+// the source of the cleanup (a resume-path call versus a GC-backstop call) via
+// the `gcCollected` flag so the metric label distinguishes the two cases. A
+// nil catalog or object store (dev-mode / test path with no durable backend)
+// skips the object release and only soft-deletes the row.
+//
+// spec: §4.4 line 236 — "Regardless of reassembly outcome, the gateway MUST
+// delete every chunk object listed under the manifest's chunk_object_key_prefix
+// via per-key DeleteObject calls, then soft-delete the Postgres row"; §12.5 GC
+// rule 4 (the Redis decrement gated on the Postgres soft-delete, exactly once).
 func CleanupPartialManifest(
 	ctx context.Context,
 	store partialmanifeststore.Store,
-	deleter PartialChunkDeleter,
+	catalog ChunkCatalogReleaser,
+	objects ChunkObjectStore,
+	retention time.Duration,
 	record partialmanifeststore.Record,
 	metrics PartialCleanupMetrics,
 	gcCollected bool,
@@ -92,14 +88,21 @@ func CleanupPartialManifest(
 	if record.ChunkObjectKeyPrefix == "" {
 		return errors.New("checkpointer: chunk_object_key_prefix is required")
 	}
-	if deleter != nil {
-		if _, err := deleter.DeleteByPrefix(ctx, record.ChunkObjectKeyPrefix); err != nil {
+	if catalog != nil && objects != nil {
+		prefix := chunkPrefixURI(record)
+		// Release the confirmed chunks through the cataloging decorator (the
+		// exactly-once Redis decrement) before the per-key object delete.
+		if err := releaseChunkObjectsUnderPrefix(ctx, catalog, objects, prefix,
+			record.ChunkObjectKeyPrefix, retention, nil); err != nil {
 			emitOutcome(metrics, PartialCleanupFailedDeleted)
-			return fmt.Errorf("checkpointer: delete chunks under %s: %w",
-				record.ChunkObjectKeyPrefix, err)
+			return err
 		}
-	}
-	if err := store.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
+		// Soft-delete the manifest row only after the prefix list is empty.
+		if err := finaliseReclaimedManifest(ctx, store, objects, prefix, record); err != nil {
+			emitOutcome(metrics, PartialCleanupFailedDeleted)
+			return err
+		}
+	} else if err := store.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
 		emitOutcome(metrics, PartialCleanupFailedDeleted)
 		return fmt.Errorf("checkpointer: soft-delete partial manifest row: %w", err)
 	}
@@ -377,27 +380,41 @@ func ReclaimAbandonedManifest(ctx context.Context, cfg BackstopReclaim, record p
 		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
 		return err
 	}
-	// (3) Confirm the prefix is empty before dropping the manifest row. A
-	// non-empty result means a still-outstanding grant landed a straggler after
-	// the first list; leaving the row active defers its delete to the next
-	// cycle rather than orphaning it under a soft-deleted manifest whose prefix
-	// ListReclaimable no longer selects.
-	remaining, err := cfg.Objects.ListByPrefix(ctx, prefix)
-	if err != nil {
+	// (3) Confirm the prefix is empty before dropping the manifest row, then
+	// soft-delete it. A straggler a still-outstanding grant landed after the
+	// first list leaves the row active for the next cycle rather than orphaning
+	// it under a soft-deleted manifest whose prefix ListReclaimable no longer
+	// selects.
+	if err := finaliseReclaimedManifest(ctx, cfg.Manifests, cfg.Objects, prefix, record); err != nil {
 		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
+		return err
+	}
+	emitOutcome(cfg.Metrics, PartialCleanupGCCollected)
+	return nil
+}
+
+// finaliseReclaimedManifest confirms a reclaimed checkpoint's chunk prefix is
+// empty, then soft-deletes its manifest row under the deleted_at IS NULL guard.
+// A straggler a still-outstanding presigned grant landed under the prefix after
+// the release loop's list leaves the row active, so a later reclaim cycle
+// deletes it rather than orphaning it under a soft-deleted manifest whose
+// prefix no deleted_at IS NULL reclaimer selects. The resume cleanup and the
+// §12.5 backstop both run it as their final step.
+//
+// spec: §4.4 line 236 (soft-delete the row after the objects are gone).
+func finaliseReclaimedManifest(ctx context.Context, manifests partialmanifeststore.Store, objects ChunkObjectStore, prefix blobstore.URI, record partialmanifeststore.Record) error {
+	remaining, err := objects.ListByPrefix(ctx, prefix)
+	if err != nil {
 		return fmt.Errorf("checkpointer: final list under %s: %w", record.ChunkObjectKeyPrefix, err)
 	}
 	if len(remaining) > 0 {
-		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
-		return fmt.Errorf("checkpointer: %d chunk object(s) remain under %s; deferring manifest soft-delete to the next backstop cycle",
+		return fmt.Errorf("checkpointer: %d chunk object(s) remain under %s; deferring manifest soft-delete to the next reclaim cycle",
 			len(remaining), record.ChunkObjectKeyPrefix)
 	}
-	if err := cfg.Manifests.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
-		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
+	if err := manifests.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
 		return fmt.Errorf("checkpointer: soft-delete manifest row %s/%s: %w",
 			record.TenantID, record.CheckpointID, err)
 	}
-	emitOutcome(cfg.Metrics, PartialCleanupGCCollected)
 	return nil
 }
 
@@ -447,10 +464,18 @@ func emitOutcome(metrics PartialCleanupMetrics, outcome PartialCleanupOutcome) {
 type PartialCleaner struct {
 	// Store is the partial-manifest store. Required.
 	Store partialmanifeststore.Store
-	// Deleter is the MinIO surface that removes chunk objects.
-	// Optional — when nil the cleaner skips MinIO deletion and only
-	// soft-deletes the row, matching dev-mode and test deployments.
-	Deleter PartialChunkDeleter
+	// Catalog soft-deletes each chunk's artifact_store row through the
+	// cataloging decorator, issuing the §12.5 rule 4 Redis decrement exactly
+	// once. Nil (with Objects) skips the object release and only soft-deletes
+	// the row, matching dev-mode and test deployments with no durable catalog.
+	Catalog ChunkCatalogReleaser
+	// Objects discovers the checkpoint's chunk objects under its
+	// chunk_object_key_prefix and hard-deletes each one per key. Nil (with
+	// Catalog) skips the object release.
+	Objects ChunkObjectStore
+	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// window stamped onto each soft-deleted chunk row's hard-prune deadline.
+	TombstoneRetention time.Duration
 	// Metrics, when set, receives the cleanup-outcome counter
 	// increments. Nil is permitted; the cleanup still runs.
 	Metrics PartialCleanupMetrics
@@ -472,5 +497,5 @@ func (c *PartialCleaner) CleanupAfterResume(ctx context.Context, tenantID, sessi
 		}
 		return fmt.Errorf("checkpointer: read latest active partial manifest: %w", err)
 	}
-	return CleanupPartialManifest(ctx, c.Store, c.Deleter, record, c.Metrics, false)
+	return CleanupPartialManifest(ctx, c.Store, c.Catalog, c.Objects, c.TombstoneRetention, record, c.Metrics, false)
 }

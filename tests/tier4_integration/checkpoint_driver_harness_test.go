@@ -188,18 +188,21 @@ func (a *cpChunkedAdapter) declareAndAwait(stream grpc.BidiStreamingServer[adapt
 	return grant, false, nil
 }
 
-// cpStore is a prefix-capable in-memory object store implementing the
-// driver's ObjectStat and PartialChunkDeleter seams. It records objects by
-// their canonical object path so a prefix sweep can enumerate and remove
-// them.
+// cpStore is a prefix-capable in-memory object store implementing the driver's
+// ObjectStat and ChunkObjectStore seams. It records objects by their canonical
+// object path so a prefix walk can enumerate and remove them, and records the
+// prefixes ListByPrefix walked so a test asserts the abort / supersede release
+// ran on the right prefix.
 type cpStore struct {
-	mu    sync.Mutex
-	sizes map[string]int64 // object path -> size
-	urls  map[string]blobstore.URI
+	mu     sync.Mutex
+	sizes  map[string]int64 // object path -> size
+	urls   map[string]blobstore.URI
+	uris   map[string]blobstore.URI // object path -> URI
+	listed []string                 // object-path prefixes ListByPrefix walked
 }
 
 func newCPStore() *cpStore {
-	return &cpStore{sizes: map[string]int64{}, urls: map[string]blobstore.URI{}}
+	return &cpStore{sizes: map[string]int64{}, urls: map[string]blobstore.URI{}, uris: map[string]blobstore.URI{}}
 }
 
 func objectPath(u blobstore.URI) string {
@@ -222,6 +225,7 @@ func (s *cpStore) putFromGrant(grant *adapterv1.CheckpointGrant, size int64) {
 		return
 	}
 	s.sizes[objectPath(u)] = size
+	s.uris[objectPath(u)] = u
 }
 
 // Stat implements checkpointer.ObjectStat.
@@ -248,39 +252,62 @@ func (s *cpStore) count(prefix string) int {
 	return n
 }
 
-// cpPrefixDeleter implements checkpointer.PartialChunkDeleter over cpStore
-// and records the prefixes swept.
-type cpPrefixDeleter struct {
-	store *cpStore
-	mu    sync.Mutex
-	swept []string
-}
-
-func (d *cpPrefixDeleter) DeleteByPrefix(_ context.Context, prefix string) (int, error) {
-	d.mu.Lock()
-	d.swept = append(d.swept, prefix)
-	d.mu.Unlock()
-	d.store.mu.Lock()
-	defer d.store.mu.Unlock()
-	n := 0
-	for key := range d.store.sizes {
+// ListByPrefix implements checkpointer.ChunkObjectStore: it records the walked
+// prefix and returns the objects under it. The prefix's object path (built from
+// a checkpoint URI whose PartID is {checkpoint_id}/) equals the
+// chunk_object_key_prefix the manifest row carries, so sweptPrefix can assert on
+// that string.
+func (s *cpStore) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := objectPath(u)
+	s.listed = append(s.listed, prefix)
+	var out []blobstore.BlobInfo
+	for key, uri := range s.uris {
 		if strings.HasPrefix(key, prefix) {
-			delete(d.store.sizes, key)
-			n++
+			out = append(out, blobstore.BlobInfo{URI: uri, Size: s.sizes[key]})
 		}
 	}
-	return n, nil
+	return out, nil
 }
 
-func (d *cpPrefixDeleter) sweptPrefix(prefix string) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, p := range d.swept {
+// HardDeleteObject implements checkpointer.ChunkObjectStore.
+func (s *cpStore) HardDeleteObject(u blobstore.URI) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := objectPath(u)
+	delete(s.sizes, key)
+	delete(s.uris, key)
+	return nil
+}
+
+func (s *cpStore) sweptPrefix(prefix string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.listed {
 		if p == prefix {
 			return true
 		}
 	}
 	return false
+}
+
+// cpCatalog is the checkpointer.ChunkCatalogReleaser seam: it records the chunk
+// artifact_store rows the abort / supersede release soft-deletes so a test can
+// assert the confirmed chunks are released through the cataloging decorator
+// rather than deleted around it.
+type cpCatalog struct {
+	mu      sync.Mutex
+	deleted map[string]bool
+}
+
+func newCPCatalog() *cpCatalog { return &cpCatalog{deleted: map[string]bool{}} }
+
+func (c *cpCatalog) SoftDeleteRow(_ context.Context, uri string, _ time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deleted[uri] = true
+	return nil
 }
 
 // cpPresigner mints grant URLs, records each URL's URI on the store, and,
@@ -306,7 +333,7 @@ type cpDriverHarness struct {
 	manifests *partialmanifeststore.MemoryStore
 	quota     *storagequota.Memory
 	store     *cpStore
-	deleter   *cpPrefixDeleter
+	catalog   *cpCatalog
 	sessions  sessionstore.Store
 }
 
@@ -333,7 +360,7 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 
 	manifests := partialmanifeststore.NewMemoryStore(nil)
 	quota := storagequota.NewMemory()
-	deleter := &cpPrefixDeleter{store: store}
+	catalog := newCPCatalog()
 	cp := &checkpointer.Checkpointer{
 		Sessions:      sessions,
 		Registry:      registry,
@@ -342,10 +369,11 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 		QuotaLimitFor: func(context.Context, string) (int64, error) { return 1 << 40, nil },
 		Presigner:     cpPresigner{store: store},
 		ObjectStore:   store,
-		ChunkDeleter:  deleter,
+		ChunkCatalog:  catalog,
+		ChunkObjects:  store,
 		Deadline:      5 * time.Second,
 	}
-	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, deleter: deleter, sessions: sessions}
+	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, catalog: catalog, sessions: sessions}
 }
 
 // latestManifest resolves the manifest row for the session's latest

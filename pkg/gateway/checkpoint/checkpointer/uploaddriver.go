@@ -433,8 +433,17 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 		_ = c.Quota.Adjust(d.ctx, prior.TenantID,
 			-(prior.ReservedBytes - prior.WorkspaceBytesUploaded))
 	}
-	if c.ChunkDeleter != nil && prior.ChunkObjectKeyPrefix != "" {
-		_, _ = c.ChunkDeleter.DeleteByPrefix(d.ctx, prior.ChunkObjectKeyPrefix)
+	// Release the superseded attempt's chunk objects through the cataloging
+	// decorator before Put soft-deletes its manifest row inside the successor's
+	// INSERT transaction: soft-delete each confirmed chunk's artifact_store row
+	// (the §12.5 rule 4 decrement, exactly once) before the per-key object
+	// delete, so a superseded attempt's confirmed bytes return to the tenant
+	// rather than staying charged forever. Best-effort; a failure leaves the
+	// objects for the §12.5 backstop.
+	// spec: §12.5 GC rule 4; §10.1 line 157.
+	if c.ChunkCatalog != nil && c.ChunkObjects != nil && prior.ChunkObjectKeyPrefix != "" {
+		_ = releaseChunkObjectsUnderPrefix(d.ctx, c.ChunkCatalog, c.ChunkObjects,
+			chunkPrefixURI(prior), prior.ChunkObjectKeyPrefix, c.tombstoneRetention(), nil)
 	}
 	if c.DriverMetrics != nil {
 		c.DriverMetrics.IncCheckpointPartialManifestsSuperseded(d.pool)
@@ -850,10 +859,18 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	}
 	d.reconcile(ctx, confirmed)
 	// A deadline-fire (timeout) row is retained for the resume path; every
-	// other abort arm's chunks are swept because no resume will consume
-	// them (spec: §10.1 line 157).
-	if reason != partialmanifeststore.ReasonTimeout && c.ChunkDeleter != nil && d.prefix != "" {
-		_, _ = c.ChunkDeleter.DeleteByPrefix(ctx, d.prefix)
+	// other abort arm's chunks are released because no resume will consume
+	// them (spec: §10.1 line 157). The release runs each confirmed chunk
+	// through the cataloging decorator — soft-delete its artifact_store row
+	// (the §12.5 rule 4 decrement, exactly once) before the per-key object
+	// delete — so an aborted checkpoint's confirmed bytes return to the tenant
+	// rather than staying charged forever (spec: §12.5 GC rule 4). Finalise
+	// left the manifest row active (partial = true), so a failed object delete
+	// is retried by the §12.5 backstop, which re-selects the row; no
+	// orphaned-object callback is needed here.
+	if reason != partialmanifeststore.ReasonTimeout && c.ChunkCatalog != nil && c.ChunkObjects != nil && d.prefix != "" {
+		_ = releaseChunkObjectsUnderPrefix(ctx, c.ChunkCatalog, c.ChunkObjects,
+			d.chunkPrefixURI(), d.prefix, c.tombstoneRetention(), nil)
 	}
 	return nil
 }
@@ -910,6 +927,20 @@ func (d *uploadDriver) chunkURI(index uint32) blobstore.URI {
 		SessionID:  d.sessionID,
 		PartID:     fmt.Sprintf("%s/chunk-%05d.%s", d.checkpointID, index, d.c.chunkEncoding()),
 		TTL:        d.c.capabilityTTL(),
+	}
+}
+
+// chunkPrefixURI builds the object-key prefix URI this attempt's chunk objects
+// live under, matching the §10.1 checkpoint chunk-object layout the release and
+// resume paths enumerate. The prefix is a checkpoint URI whose PartID is
+// `{checkpoint_id}/`, so a ListByPrefix walk scopes to exactly this attempt's
+// objects and out of the session's other checkpoints.
+func (d *uploadDriver) chunkPrefixURI() blobstore.URI {
+	return blobstore.URI{
+		TenantID:   d.tenantID,
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  d.sessionID,
+		PartID:     d.checkpointID + "/",
 	}
 }
 

@@ -148,7 +148,7 @@ func TestCheckpointStaleCoordinatorDoesNotOrphanNewerWriter(t *testing.T) {
 	if !newer.DeletedAt.IsZero() {
 		t.Errorf("newer writer's active row was soft-deleted by the stale coordinator, want left active")
 	}
-	if h.deleter.sweptPrefix(newerPrefix) {
+	if h.store.sweptPrefix(newerPrefix) {
 		t.Errorf("newer writer's chunk prefix was swept by the stale coordinator, want untouched")
 	}
 }

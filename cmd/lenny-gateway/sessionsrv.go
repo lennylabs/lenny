@@ -129,6 +129,23 @@ func (w *gatewayWiring) buildSessionServer(
 		}
 	}
 
+	// §4.4 line 236 / §12.5 GC rule 4 — the resume-path cleaner releases each
+	// confirmed chunk through the cataloging decorator (blobsCataloged) and
+	// deletes the object (minioStore). Assign only the non-nil concrete stores
+	// so a nil *cataloging.Store / *miniostore.Store is not wrapped in a
+	// non-nil interface, which the cleaner's nil guard then skips (dev-mode).
+	partialCleaner := &checkpointer.PartialCleaner{
+		Store:              w.partialManifests,
+		Metrics:            gwMetrics,
+		TombstoneRetention: time.Duration(*f.gcTombstoneRetentionSeconds) * time.Second,
+	}
+	if w.blobsCataloged != nil {
+		partialCleaner.Catalog = w.blobsCataloged
+	}
+	if w.minioStore != nil {
+		partialCleaner.Objects = w.minioStore
+	}
+
 	return sessionserver.New(w.sessions, sessionserver.Options{
 		// spec: §6.2 lines 273-300 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
@@ -231,14 +248,16 @@ func (w *gatewayWiring) buildSessionServer(
 		// fail closed on a no-role principal at the session RBAC gate.
 		MultiTenant: *multiTenant,
 		Sealer:      w.sessionSealer,
-		// §4.4 line 236 — the resume path delegates partial-manifest
-		// cleanup to this adapter. Deleter is nil for v1 (no chunk
-		// uploader yet); when the §10.1 writer ships the chunk
-		// deleter should be wired here.
-		PartialManifestCleaner: &checkpointer.PartialCleaner{
-			Store:   w.partialManifests,
-			Metrics: gwMetrics,
-		},
+		// §4.4 line 236 / §12.5 GC rule 4 — the resume path delegates
+		// partial-manifest cleanup to this adapter. It releases each
+		// confirmed chunk through the cataloging decorator (soft-delete
+		// its artifact_store row, the exactly-once Redis decrement) before
+		// the per-key object delete, so a resumed timeout checkpoint's
+		// confirmed bytes return to the tenant rather than staying charged
+		// forever. Catalog and Objects run only against the durable
+		// Postgres+MinIO backends; the in-memory dev gateway leaves them
+		// nil and the cleaner only soft-deletes the row.
+		PartialManifestCleaner: partialCleaner,
 		// spec: §10.1 partial-manifest path — classify a resume as
 		// partial_workspace when an active partial manifest exists.
 		PartialManifestLookup: w.partialManifests,

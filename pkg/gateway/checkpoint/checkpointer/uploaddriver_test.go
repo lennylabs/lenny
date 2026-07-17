@@ -168,36 +168,96 @@ func (p presignerFake) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore
 	return blobstore.Grant{URL: "https://obj.test/get"}, nil
 }
 
-// prefixDeleter records the prefixes swept so a test asserts the abort
-// sweep ran, and deletes objects under the prefix from the store.
-type prefixDeleter struct {
-	mu    sync.Mutex
-	swept []string
-	store *blobstore.MemoryStore
+// chunkReleaseSpy is the abort/supersede chunk-release seam pair
+// (ChunkCatalogReleaser + ChunkObjectStore). It records which checkpoint
+// prefixes the release walked so a test asserts the sweep ran on the right
+// prefix and skipped the wrong one, and it soft-deletes seeded catalog rows so
+// a test asserts an aborted or superseded checkpoint's confirmed bytes are
+// released rather than orphaned.
+type chunkReleaseSpy struct {
+	mu            sync.Mutex
+	listedPartIDs []string
+	deleted       []string
+	softDeleted   map[string]bool
+	freed         int64
+	objects       []blobstore.URI
+	rows          map[string]int64 // uri.String() -> live catalog row size
 }
 
-func (d *prefixDeleter) DeleteByPrefix(_ context.Context, prefix string) (int, error) {
-	d.mu.Lock()
-	d.swept = append(d.swept, prefix)
-	d.mu.Unlock()
-	return 0, nil
+func newChunkReleaseSpy() *chunkReleaseSpy {
+	return &chunkReleaseSpy{softDeleted: map[string]bool{}, rows: map[string]int64{}}
 }
 
-func (d *prefixDeleter) sweptCount() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return len(d.swept)
+// seedChunk registers a chunk object and its live catalog row so the release
+// path discovers it under the checkpoint's prefix and releases its bytes.
+func (s *chunkReleaseSpy) seedChunk(u blobstore.URI, size int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.objects = append(s.objects, u)
+	s.rows[u.String()] = size
 }
 
-func (d *prefixDeleter) sweptPrefix(prefix string) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, p := range d.swept {
-		if p == prefix {
+func (s *chunkReleaseSpy) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listedPartIDs = append(s.listedPartIDs, u.PartID)
+	var out []blobstore.BlobInfo
+	for _, o := range s.objects {
+		if o.TenantID == u.TenantID && o.SessionID == u.SessionID && strings.HasPrefix(o.PartID, u.PartID) {
+			out = append(out, blobstore.BlobInfo{URI: o})
+		}
+	}
+	return out, nil
+}
+
+func (s *chunkReleaseSpy) HardDeleteObject(u blobstore.URI) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleted = append(s.deleted, u.PartID)
+	kept := s.objects[:0]
+	for _, o := range s.objects {
+		if o.PartID != u.PartID {
+			kept = append(kept, o)
+		}
+	}
+	s.objects = kept
+	return nil
+}
+
+func (s *chunkReleaseSpy) SoftDeleteRow(_ context.Context, uri string, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.softDeleted[uri] {
+		return nil
+	}
+	if size, ok := s.rows[uri]; ok {
+		s.freed += size
+	}
+	s.softDeleted[uri] = true
+	return nil
+}
+
+func (s *chunkReleaseSpy) listedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.listedPartIDs)
+}
+
+func (s *chunkReleaseSpy) listedCheckpoint(checkpointID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.listedPartIDs {
+		if p == checkpointID+"/" {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *chunkReleaseSpy) freedBytes() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.freed
 }
 
 // driverHarness wires a Checkpointer with the full seam set over a
@@ -208,7 +268,7 @@ type driverHarness struct {
 	manifests *partialmanifeststore.MemoryStore
 	quota     *storagequota.Memory
 	store     *blobstore.MemoryStore
-	deleter   *prefixDeleter
+	release   *chunkReleaseSpy
 	sessions  sessionstore.Store
 }
 
@@ -224,7 +284,7 @@ func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driv
 
 	manifests := partialmanifeststore.NewMemoryStore(nil)
 	quota := storagequota.NewMemory()
-	deleter := &prefixDeleter{store: store}
+	release := newChunkReleaseSpy()
 	cp := &checkpointer.Checkpointer{
 		Sessions:      sessions,
 		Registry:      registry,
@@ -233,10 +293,11 @@ func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driv
 		QuotaLimitFor: func(context.Context, string) (int64, error) { return limit, nil },
 		Presigner:     presignerFake{},
 		ObjectStore:   store,
-		ChunkDeleter:  deleter,
+		ChunkCatalog:  release,
+		ChunkObjects:  release,
 		Deadline:      5 * time.Second,
 	}
-	return &driverHarness{cp: cp, manifests: manifests, quota: quota, store: store, deleter: deleter, sessions: sessions}, "s1"
+	return &driverHarness{cp: cp, manifests: manifests, quota: quota, store: store, release: release, sessions: sessions}, "s1"
 }
 
 // spec: §10.1 — a complete checkpoint whose every declared byte is
@@ -362,7 +423,7 @@ func TestDriverLeavesPartialTrueOnTruncatedStream_spec_10_1(t *testing.T) {
 	if !rec.Partial {
 		t.Errorf("manifest partial = false, want true after a truncated stream")
 	}
-	if h.deleter.sweptCount() == 0 {
+	if h.release.listedCount() == 0 {
 		t.Errorf("abort sweep did not run on a truncated stream")
 	}
 	// The reservation released the unconfirmed remainder: reserved 30,
@@ -772,7 +833,7 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 	if !rec.DeletedAt.IsZero() {
 		t.Errorf("higher-generation row soft-deleted, want left active")
 	}
-	if h.deleter.sweptPrefix(higherPrefix) {
+	if h.release.listedCheckpoint("cp-higher") {
 		t.Errorf("higher-generation row chunk prefix swept, want untouched")
 	}
 	if m.superseded != 0 {
@@ -825,6 +886,14 @@ func TestDriverSupersedeReleasesTargetSlotPriorRow_spec_10_1(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed other-slot active row: %v", err)
 	}
+	// Seed a confirmed chunk (object + live catalog row) under the target
+	// slot's prefix so the supersede release must run it through the cataloging
+	// decorator. Against a plain prefix delete the row stays live and its bytes
+	// stay charged; the fix soft-deletes the row and frees the bytes.
+	h.release.seedChunk(blobstore.URI{
+		TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID: sid, PartID: "cp-target/chunk-00000.tar",
+	}, 40)
 
 	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
 		t.Fatalf("Checkpoint: %v", err)
@@ -838,8 +907,11 @@ func TestDriverSupersedeReleasesTargetSlotPriorRow_spec_10_1(t *testing.T) {
 	if target.ReservationReleasedAt.IsZero() {
 		t.Errorf("target-slot prior row reservation not released; the supersede release missed it")
 	}
-	if !h.deleter.sweptPrefix(targetPrefix) {
+	if !h.release.listedCheckpoint("cp-target") {
 		t.Errorf("target-slot prior row chunk prefix not swept")
+	}
+	if h.release.freedBytes() != 40 {
+		t.Errorf("target-slot chunk bytes freed = %d, want 40 (the confirmed chunk released, not orphaned)", h.release.freedBytes())
 	}
 	if m.superseded != 1 {
 		t.Errorf("supersede counter fired %d times, want 1", m.superseded)
