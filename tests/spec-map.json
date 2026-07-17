@@ -3380,12 +3380,14 @@
         "tests/tier5_e2e_kind/diagnostics_fix_test.go",
         "tests/tier5_e2e_kind/diagnostics_cause_chain_test.go",
         "tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go",
-        "tests/tier9_security/diagnostics_fix_guardrails_test.go"
+        "tests/tier9_security/diagnostics_fix_guardrails_test.go",
+        "cmd/lenny-ops/deps_setup_test.go"
       ],
       "packages": [
         "pkg/ops/diagnostics",
         "pkg/ops/opsserver",
-        "pkg/ops/doctor"
+        "pkg/ops/doctor",
+        "cmd/lenny-ops"
       ],
       "chart_templates": [
         "charts/lenny/templates/ops-rbac.yaml"
