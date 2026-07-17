@@ -489,6 +489,24 @@ spec:
       ports:
         - port: {{ .Values.minio.tlsPort }}
           protocol: TCP
+    {{- if .Values.minio.deploy }}
+    # §13.2 NET-071 — admit agent-namespace checkpoint chunk PUT/GET on the
+    # MinIO TLS port, paired with the allow-pod-egress-objectstore in-cluster
+    # arm rendered under the same minio.deploy condition. Without this clause
+    # the lenny-system default-deny drops the agent-namespace egress on the
+    # MinIO side. Self-managed-profile-only: cloud-managed object storage has
+    # no MinIO pod and no ingress-side row.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+          podSelector:
+            matchLabels:
+              lenny.dev/managed: "true"
+      ports:
+        - port: {{ .Values.minio.tlsPort }}
+          protocol: TCP
+    {{- end }}
   egress:
     - to:
         - namespaceSelector:

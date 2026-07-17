@@ -65,6 +65,38 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --sa-token-audience=
 
+  # spec: §13.2 (NET-071) — when minio.tls.caBundle carries the object-store
+  # CA PEM, the agent-objectstore-ca ConfigMap renders and the controller
+  # names it via --objectstore-ca-configmap so it can project the CA into
+  # every agent pod. The flag and the ConfigMap render under the same
+  # condition; the flag without the ConfigMap would point the adapter at a
+  # ConfigMap that does not exist.
+  - it: passes --objectstore-ca-configmap when minio.tls.caBundle is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      minio:
+        endpoint: "minio.acme.example:9443"
+        tls:
+          caBundle: |
+            -----BEGIN CERTIFICATE-----
+            MIIBdummyObjectStoreCAcertificatePEMforagentpodTLStrust
+            -----END CERTIFICATE-----
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --objectstore-ca-configmap=lenny-objectstore-ca
+
+  - it: omits --objectstore-ca-configmap when minio.tls.caBundle is empty (chart default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --objectstore-ca-configmap=lenny-objectstore-ca
+
   # spec: §13.2 (K8S-033) — the controller points every agent pod's
   # resolver at the dedicated CoreDNS Service ClusterIP. F-13.2.4.
   - it: passes --dedicated-dns-cluster-ip when coredns.clusterIP is set

@@ -272,3 +272,114 @@ tests:
       - equal:
           path: spec.egress[0].to[0].podSelector.matchLabels["k8s-app"]
           value: kube-dns
+
+  # spec: §13.2 (NET-071) — allow-pod-egress-objectstore re-admits agent-pod
+  # egress to object storage for checkpoint chunk PUT/GET against
+  # gateway-minted presigned capabilities. A stock install resolves the
+  # in-memory blob store (provider=minio, empty endpoint, minio.deploy
+  # false), so no object-store egress policy renders and the baseline count
+  # stays 6.
+  - it: renders no object-store egress policy for the in-memory store
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    asserts:
+      - hasDocuments:
+          count: 6
+
+  # spec: §13.2 (NET-071) — the in-cluster arm renders when the chart
+  # deploys MinIO. The peer selects the MinIO pod by namespace and the
+  # canonical lenny.dev/component: minio label on the MinIO TLS port. This
+  # is the egress half paired with the allow-minio agent-namespace ingress
+  # clause; neither renders without the other under minio.deploy.
+  - it: renders the in-cluster arm when minio.deploy is true
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      minio:
+        deploy: true
+    asserts:
+      - hasDocuments:
+          count: 7
+      - documentIndex: 6
+        equal:
+          path: metadata.name
+          value: allow-pod-egress-objectstore
+      - documentIndex: 6
+        equal:
+          path: spec.podSelector.matchLabels["lenny.dev/managed"]
+          value: "true"
+      - documentIndex: 6
+        equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: minio
+      - documentIndex: 6
+        equal:
+          path: spec.egress[0].ports[0].port
+          value: 9443
+
+  # spec: §13.2 (NET-071) — the out-of-band arm renders an ipBlock peer from
+  # objectStorage.egressCIDRs on the MinIO TLS port for an external
+  # self-managed MinIO (endpoint set, minio.deploy false).
+  - it: renders the out-of-band arm as an ipBlock on the MinIO TLS port
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      minio:
+        endpoint: "minio.acme.example:9443"
+      objectStorage:
+        egressCIDRs:
+          - "10.20.0.0/24"
+    documentIndex: 6
+    asserts:
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-objectstore
+      - equal:
+          path: spec.egress[0].to[0].ipBlock.cidr
+          value: "10.20.0.0/24"
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 9443
+
+  # spec: §13.2 (NET-071, NET-002) — the cloud-managed arm renders an
+  # ipBlock peer from objectStorage.egressCIDRs on TCP 443 for an s3, gcs,
+  # or azure provider. There is no ingress-side clause; the cloud path rests
+  # entirely on this egress arm.
+  - it: renders the cloud-managed arm as an ipBlock on TCP 443
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      objectStorage:
+        provider: s3
+        egressCIDRs:
+          - "52.0.0.0/16"
+          - "52.1.0.0/16"
+    documentIndex: 6
+    asserts:
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-objectstore
+      - equal:
+          path: spec.egress[0].to[0].ipBlock.cidr
+          value: "52.0.0.0/16"
+      - equal:
+          path: spec.egress[0].to[1].ipBlock.cidr
+          value: "52.1.0.0/16"
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 443
+
+  # spec: §13.2 (NET-071) — an egress rule with no peers admits every
+  # destination, so a cloud-managed or out-of-band store with an empty
+  # objectStorage.egressCIDRs renders no policy (and fails preflight, §17.6)
+  # rather than a fail-open all-destinations rule.
+  - it: renders no object-store policy for a cloud provider with no egress CIDRs
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      objectStorage:
+        provider: s3
+    asserts:
+      - hasDocuments:
+          count: 6

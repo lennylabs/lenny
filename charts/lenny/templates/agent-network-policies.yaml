@@ -303,4 +303,78 @@ spec:
           port: 53
   policyTypes: [Egress]
 {{- end }}
+{{- /*
+allow-pod-egress-objectstore (§13.2 NET-071) re-admits agent-pod egress to
+object storage so the pod can PUT checkpoint chunks and GET them back on
+resume against gateway-minted presigned capabilities. It renders from the
+resolved object store, in one of three mutually exclusive arms:
+
+  - in-cluster: the chart deploys MinIO (minio.deploy). The peer selects
+    the MinIO pod by namespace + lenny.dev/component: minio on minio.tlsPort.
+    The paired allow-minio agent-namespace ingress clause (rendered under the
+    same minio.deploy condition) admits the reverse direction.
+  - out-of-band: an external self-managed MinIO (minio.endpoint set with
+    minio.deploy false). An ipBlock peer from objectStorage.egressCIDRs on
+    minio.tlsPort.
+  - cloud-managed: an s3, gcs, or azure provider. An ipBlock peer from
+    objectStorage.egressCIDRs on TCP 443; there is no ingress-side clause.
+
+Nothing renders for the in-memory or filesystem store (provider=minio with
+an empty endpoint and minio.deploy false), and nothing renders for an
+out-of-band or cloud-managed store with an empty objectStorage.egressCIDRs:
+an egress rule with no peers admits every destination, so the arm is
+omitted entirely and the deployment fails preflight (§17.6) instead.
+*/ -}}
+{{- $minio := $.Values.minio }}
+{{- $os := $.Values.objectStorage }}
+{{- $hasCIDRs := gt (len ($os.egressCIDRs | default list)) 0 }}
+{{- $inCluster := $minio.deploy | default false }}
+{{- $outOfBand := and (not ($minio.deploy | default false)) (ne ($minio.endpoint | default "") "") }}
+{{- $cloud := has ($os.provider | default "") (list "s3" "gcs" "azure") }}
+{{- if or $inCluster (and $outOfBand $hasCIDRs) (and $cloud $hasCIDRs) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-objectstore
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  egress:
+    {{- if $inCluster }}
+    - to: # In-cluster arm — self-managed MinIO the chart deploys.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: minio
+      ports:
+        - port: {{ $minio.tlsPort }}
+          protocol: TCP
+    {{- else if $outOfBand }}
+    - to: # Out-of-band arm — external self-managed MinIO CIDRs.
+        {{- range $os.egressCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: {{ $minio.tlsPort }}
+          protocol: TCP
+    {{- else }}
+    - to: # Cloud-managed arm — operator-enumerated object-store CIDRs (NET-002).
+        {{- range $os.egressCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+    {{- end }}
+  policyTypes: [Egress]
+{{- end }}
 {{- end }}

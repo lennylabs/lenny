@@ -634,6 +634,19 @@ objectStorage:
   # accountUrl is the Azure Blob storage account URL
   # (https://<account>.blob.core.windows.net) for provider=azure.
   accountUrl: ""
+  # egressCIDRs is the §13.2 NET-071 operator-supplied allow-list of
+  # object-store CIDRs the agent-pod checkpoint-egress policy
+  # (allow-pod-egress-objectstore) admits. It is the egress destination
+  # for the cloud-managed arm (a provider of s3, gcs, or azure, on TCP
+  # 443) and for the out-of-band self-managed MinIO arm (a non-empty
+  # minio.endpoint with minio.deploy=false, on minio.tlsPort). A
+  # PrivateLink, VPC-endpoint, or object-store service address goes here.
+  # This is distinct from the top-level egressCIDRs, which is the shared
+  # exclusion surface. Leave empty for the in-cluster MinIO arm
+  # (minio.deploy=true), which selects the MinIO pod by label instead. A
+  # cloud-managed or out-of-band deployment with an empty list renders no
+  # policy and fails preflight (§17.6). spec: §13.2 (NET-071), §13.2 (NET-002).
+  egressCIDRs: []
 
 # minio configures the MinIO object store (self-managed profile).
 minio:
@@ -677,6 +690,21 @@ minio:
     # trusts (a public CA, or a cert-manager CA injected into the node
     # trust store). Mirrors ops.tls.caBundleConfigMap.
     caBundleConfigMap: ""
+    # caBundle is the PEM of the CA that issued the MinIO serving
+    # certificate, materialized by agent-objectstore-ca.yaml into one
+    # ConfigMap (lenny-objectstore-ca, key ca.crt) per agent namespace and
+    # projected read-only into every agent pod. The adapter points
+    # --objectstore-ca-bundle at the mounted ca.crt so it trusts a
+    # self-managed object store's non-public CA during checkpoint chunk
+    # PUT/GET (§13.2 NET-071). caBundleConfigMap holds a ConfigMap name and
+    # is the release-namespace mount for the gateway and the bucket-lifecycle
+    # Job; the chart never sees its bytes, so it cannot copy it into an agent
+    # namespace. caBundle carries the PEM directly, mirroring mtls.previousCA.
+    # When set, the controller Deployment renders --objectstore-ca-configmap.
+    # Empty (a cloud-managed endpoint chaining to a public CA, or a MinIO CA
+    # already in the node trust store) renders no ConfigMap, no controller
+    # flag, no volume, no mount, and no adapter flag. spec: §13.2 (NET-071).
+    caBundle: ""
   # deploy gates the §17.9.5 in-cluster MinIO workload: a distributed,
   # erasure-coded StatefulSet (≥4 nodes auto-enables erasure coding per
   # §17.8), a headless Service for stable pod DNS, a ClusterIP API
