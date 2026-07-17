@@ -1278,32 +1278,6 @@ func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string
 // without credential pools.
 //
 // spec: §4.9 lines 1216-1218 (Pre-Claim check), 1326 (intersection).
-// intersectProviders returns the order-stable (a-ordered) set
-// intersection of two provider lists: an element of a is emitted at most
-// once, in a's order, when it also appears in b. It is the §8.3 inherit
-// constraint's set-∩, kept local to sessionserver so the delegation-path
-// lease.IntersectProviders primitive stays out of the llmproxy import
-// this package already carries. spec: §8.3 line 470.
-func intersectProviders(a, b []string) []string {
-	inB := make(map[string]struct{}, len(b))
-	for _, p := range b {
-		inB[p] = struct{}{}
-	}
-	seen := make(map[string]struct{}, len(a))
-	out := make([]string, 0, len(a))
-	for _, p := range a {
-		if _, ok := inB[p]; !ok {
-			continue
-		}
-		if _, dup := seen[p]; dup {
-			continue
-		}
-		seen[p] = struct{}{}
-		out = append(out, p)
-	}
-	return out
-}
-
 func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, []string, error) {
 	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
 		return nil, nil, nil
@@ -1437,6 +1411,32 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		}
 	}
 	return res.PoolAssignments, res.UserProviders, nil
+}
+
+// intersectProviders returns the order-stable (a-ordered) set
+// intersection of two provider lists: an element of a is emitted at most
+// once, in a's order, when it also appears in b. It is the §8.3 inherit
+// constraint's set-∩, kept local to sessionserver so the delegation-path
+// lease.IntersectProviders primitive stays out of the llmproxy import
+// this package already carries. spec: §8.3 line 470.
+func intersectProviders(a, b []string) []string {
+	inB := make(map[string]struct{}, len(b))
+	for _, p := range b {
+		inB[p] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(a))
+	out := make([]string, 0, len(a))
+	for _, p := range a {
+		if _, ok := inB[p]; !ok {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
 }
 
 // PoolProxyDialectError is the §4.9 line 1476 runtime↔pool proxy-dialect

@@ -252,7 +252,7 @@ func TestResolveCredentialPoolsEmptyOriginUnconstrained(t *testing.T) {
 }
 
 // spec: §8.3 line 472 (each hop re-checks the still-inherited origin pool
-// at delegation time), the CODE-5 fail-closed decision — an inherit child
+// at delegation time). An inherit child
 // whose origin session cannot be resolved fails closed: the constrained
 // intersection is emptied, so resolveCredentialPools returns
 // ErrNoCredentialAvailable (CREDENTIAL_POOL_EXHAUSTED at assignment)
@@ -280,7 +280,7 @@ func TestResolveCredentialPoolsInheritFailsClosedOnMissingOrigin(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 472, the CODE-5 fail-closed decision — an inherit child
+// spec: §8.3 line 472 — an inherit child
 // whose origin session resolves but whose origin runtime cannot be
 // resolved (the origin row references a runtime that no longer exists)
 // also fails closed rather than falling back to the child's own set.
