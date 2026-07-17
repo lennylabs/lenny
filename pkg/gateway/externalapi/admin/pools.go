@@ -462,6 +462,30 @@ func validatePoolForStore(p poolstore.Pool) error {
 	return poolstore.ValidateElicitationPolicy(p)
 }
 
+// validateCredentialDeliveryCombo runs the §4.9 layer-1 pool-registration
+// credential-delivery gate on a fully-resolved pool, reusing the shipped
+// direct_mode_isolation.Decide as the single canonical decision function so
+// the warm-pool admin path rejects exactly what the layer-2
+// ValidatingAdmissionWebhook rejects. EgressProfile is carried so the §13.2
+// NET-006 proxy + provider-direct combination is also rejected (in every
+// tenancy mode), keeping layer 1 a superset of the layer-2 gate rather than
+// admitting a pool the webhook would later reject on the reconciled
+// SandboxTemplate. The two multi-tenant combinations reject only when
+// tenancyMode is "multi" and devMode is false; the Request carries no opt-in
+// fields, so an opt-in bool cannot rescue a forbidden combination in
+// multi-tenant mode. spec: §4.9.
+func (r *Router) validateCredentialDeliveryCombo(pl poolstore.Pool) direct_mode_isolation.Decision {
+	return direct_mode_isolation.Decide(direct_mode_isolation.Request{
+		TenancyMode:      r.tenancyMode,
+		DevMode:          r.devMode,
+		Kind:             "pool",
+		DeliveryMode:     pl.DeliveryMode,
+		IsolationProfile: string(pl.IsolationProfile),
+		SpiffeBinding:    pl.SpiffeBinding,
+		EgressProfile:    string(pl.EgressProfile),
+	})
+}
+
 // WithPools wires the §15.1 pool CRUD handlers onto the Router.
 func (r *Router) WithPools(s poolstore.Store) *Router {
 	r.pools = s
@@ -625,6 +649,16 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
 	}
+	// spec: §4.9 — layer-1 pool-registration validation. Reject the two
+	// cross-tenant-risky credential-delivery combinations (direct + standard,
+	// proxy + spiffeBinding disabled) in multi-tenant mode, and the §13.2
+	// NET-006 proxy + provider-direct combination in every tenancy mode,
+	// before any store write, so no SandboxTemplate the layer-2 webhook would
+	// reject is ever reconciled. The decision reuses the canonical Decide.
+	if dec := r.validateCredentialDeliveryCombo(pl); !dec.Allowed {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", dec.Reason, nil)
+		return
+	}
 	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
 	// The remaining store-side validations (the checks Create would run)
 	// run here so the dry run is exhaustive; the preview carries the
@@ -670,6 +704,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		"executionMode":    string(stored.ExecutionMode),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, stored)
+	r.maybeEmitProxySpiffeDisabledWarning(req.Context(), principal, stored)
 	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, stored, runtimeMultiTurn)
 	r.dispatchPoolIsolationAudit(req.Context(), principal, stored.Name)
 	w.Header().Set("Content-Type", "application/json")
@@ -721,6 +756,39 @@ func (r *Router) maybeEmitWeakIsolation(ctx context.Context, p authmw.Principal,
 		"egressProfile":          string(pool.EgressProfile),
 		"severity":               "warning",
 		"reason":                 "pool admitted under standard (runc) isolation via explicit allowStandardIsolation opt-in (§5.3)",
+	})
+}
+
+// maybeEmitProxySpiffeDisabledWarning emits the §4.9.2
+// credential.proxy_mode_spiffe_binding_disabled audit event when an admitted
+// pool carries deliveryMode: proxy together with spiffeBinding: disabled. The
+// combination is rejected outright in multi-tenant mode (the layer-1 Decide
+// gate returns before this emitter runs), so the event fires only in
+// single-tenant or development mode where §4.9 permits the disablement via
+// the allowProxyModeSpiffeBindingDisabled opt-in; it lands on the credential
+// audit stream alongside the Kubernetes ProxyModeSpiffeBindingDisabled
+// warning so auditors see the disablement. A pool that is not proxy-mode, or
+// that keeps SPIFFE-binding enabled, emits nothing. spec: §4.9.2.
+func (r *Router) maybeEmitProxySpiffeDisabledWarning(ctx context.Context, p authmw.Principal, pool poolstore.Pool) {
+	if pool.DeliveryMode != direct_mode_isolation.DeliveryProxy || pool.SpiffeBinding != "disabled" {
+		return
+	}
+	// Defense in depth: in a multi-tenant-enforcing deployment the combination
+	// is a rejection, not a warning, so the event never fires there even if a
+	// caller reaches this emitter with an unadmitted pool.
+	if r.tenancyMode == direct_mode_isolation.TenancyMulti && !r.devMode {
+		return
+	}
+	mode := "single"
+	if r.devMode {
+		mode = "dev"
+	}
+	r.emit(ctx, p, "credential.proxy_mode_spiffe_binding_disabled", pool.Name, map[string]any{
+		"deliveryMode":  pool.DeliveryMode,
+		"spiffeBinding": pool.SpiffeBinding,
+		"tenancy_mode":  mode,
+		"severity":      "warning",
+		"reason":        "pool admitted with deliveryMode: proxy and spiffeBinding: disabled outside multi-tenant mode (§4.9)",
 	})
 }
 
@@ -1504,6 +1572,21 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 			"elicitationDepthPolicy is not a recognised §9.2 policy (allow_all, suppress_at_depth, block_all)", nil)
 		return false
 	}
+	// spec: §4.9 — layer-1 pool-registration validation on the update path.
+	// Evaluate the MERGED effective pool (the stored row with the partial
+	// PUT's non-nil fields applied) through the canonical Decide, so a partial
+	// PUT that sets only one half of a forbidden combination cannot bypass the
+	// gate and so the dry-run preview and the persisted write are covered from
+	// one seam. A missing pool is left to the persist/preview stage, which
+	// resolves the 404. spec: §4.9.
+	if current, gerr := r.pools.Get(req.Context(), name); gerr == nil {
+		merged := current
+		applyPoolUpdateMerge(&merged, body)
+		if dec := r.validateCredentialDeliveryCombo(merged); !dec.Allowed {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", dec.Reason, nil)
+			return false
+		}
+	}
 	// runtimeRef cross-check.
 	if body.RuntimeRef != nil && *body.RuntimeRef != "" && r.runtimes != nil {
 		if _, err := r.runtimes.Get(req.Context(), *body.RuntimeRef); err != nil {
@@ -1675,6 +1758,7 @@ func (r *Router) persistPoolUpdate(w http.ResponseWriter, req *http.Request, nam
 		"changedFields": changedPoolFields(body),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
+	r.maybeEmitProxySpiffeDisabledWarning(req.Context(), principal, updated)
 	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, updated,
 		r.poolRuntimeMultiTurn(req.Context(), updated))
 	r.dispatchPoolIsolationAudit(req.Context(), principal, updated.Name)

@@ -79,6 +79,18 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
+		// spec: §4.9 — the §17.6 bootstrap.pools seed list is the second
+		// gateway pool-admission write path, so it holds each seed entry to the
+		// same layer-1 credential-delivery gate as the POST /v1/admin/pools
+		// handler: a direct + standard, proxy + spiffeBinding disabled, or
+		// (in every tenancy mode) proxy + provider-direct combination is
+		// recorded as a per-entry seed validation error rather than stored,
+		// so it never reconciles into a SandboxTemplate the failurePolicy: Fail
+		// layer-2 webhook would reject, wedging the PoolScalingController.
+		if dec := r.validateCredentialDeliveryCombo(pl); !dec.Allowed {
+			out.add(i, p.Name, actionError, seedValidationCode, dec.Reason, nil)
+			continue
+		}
 		existing, err := r.pools.Get(req.Context(), p.Name)
 		if errors.Is(err, poolstore.ErrNotFound) {
 			if !opts.dryRun {
