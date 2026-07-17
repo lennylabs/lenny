@@ -3081,13 +3081,16 @@
       "title": "Server Discovery and Routing",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "pkg/ctlcli/session_ops_test.go::TestMCPManagementAutoDiscoversOpsURL",
+        "pkg/ctlcli/session_ops_test.go::TestMCPManagementFallsBackToGatewayWhenOpsURLAbsent",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlMCPManagementOpsRoutingE2E"
       ],
       "packages": [
         "cmd/lenny-ctl"
       ],
       "blocked_until_phase": "14",
-      "notes": "lenny-ctl server discovery and routing subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+      "notes": "lenny-ctl server discovery and routing subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands. The tier-4 test drives the real lenny-ctl binary against a live gateway and lenny-ops pair to cover the rule-2 auto-discovery and rule-3 gateway-host fallback end to end for the mcp-management group."
     },
     "24.17": {
       "title": "Session Operations",
@@ -3643,13 +3646,14 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "cmd/lenny-ctl/...",
-        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E"
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlMCPManagementOpsRoutingE2E"
       ],
       "packages": [
         "cmd/lenny-ctl"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.14 lenny-ctl Extensions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.14 lenny-ctl Extensions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. TestLennyCtlMCPManagementOpsRoutingE2E drives the real lenny-ctl binary against a live cmd/lenny-gateway and cmd/lenny-ops pair to cover the §24.16 opsServiceURL auto-discovery and gateway-host fallback for the mcp-management group specifically."
     },
     "25.15": {
       "title": "Failure Mode Analysis",
