@@ -3311,6 +3311,7 @@
         "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsFailedRestore",
         "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsRunningBackup",
         "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsVerifyingBackup",
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryOperationIDLookupIsUnambiguousForVerifyingBackup",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress"

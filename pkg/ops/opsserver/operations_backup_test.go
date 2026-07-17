@@ -139,3 +139,45 @@ func TestOperationsInventoryListsVerifyingBackup(t *testing.T) {
 		t.Errorf("status = %v, want %q", op["status"], operations.StatusInProgress)
 	}
 }
+
+// spec §25.4: the canonical `operationId` filter is a "Lookup by ID.
+// Returns a single-element list if found." (Filters table). A verifying
+// ops_backups row is projected under two Operation Kinds — "backup" and
+// "backup_verification" — that share the canonical operationId
+// "backup-<id>" (both use the "backup" prefix and the same ops_backups
+// natural key, per the canonical operationId format), so a bare
+// `?operationId=backup-<id>` lookup and GET /v1/admin/operations/{id}
+// cannot disambiguate the two kinds. The spec defines no disambiguation
+// rule, so this pins the single-result contract the filter promises.
+//
+// spec: §25.4 (Operations Inventory, Filters table + canonical operationId
+// format).
+func TestOperationsInventoryOperationIDLookupIsUnambiguousForVerifyingBackup(t *testing.T) {
+	t.Skip("§25.4 defines no disambiguation between the backup and backup_verification kinds that share operationId backup-<id> for a verifying backup; blocked on a spec change-proposal (open TEST-GAPS finding)")
+
+	now := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	store := backup.NewMemStore()
+	if err := store.InsertBackup(context.Background(), backup.Backup{
+		ID:        "bkp-ver01",
+		Type:      "full",
+		Status:    backup.StatusVerifying,
+		StartedAt: now,
+		StartedBy: "sa-admin",
+	}); err != nil {
+		t.Fatalf("insert backup: %v", err)
+	}
+	srv := backupOperationsServer(t, store)
+	p := platformAdmin("sa-admin")
+
+	// The operationId filter promises a single-element list. A verifying
+	// backup currently yields two entries (kind backup and kind
+	// backup_verification) sharing operationId backup-bkp-ver01.
+	rec, body := getAuthed(t, srv, "/v1/admin/operations?operationId=backup-bkp-ver01", &p)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("operationId lookup status = %d, want 200", rec.Code)
+	}
+	ops, _ := body["operations"].([]any)
+	if len(ops) != 1 {
+		t.Fatalf("operationId=backup-bkp-ver01 returned %d operations, want 1 (single-element list per §25.4)", len(ops))
+	}
+}
