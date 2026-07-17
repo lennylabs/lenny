@@ -997,6 +997,91 @@ func TestReclaimAbandonedManifestSurfacesManifestSoftDeleteError(t *testing.T) {
 	}
 }
 
+// spec: §12.5 partial-manifest backstop / §4.4 line 236 — the reclaim's
+// discovery prefix list (the first ListByPrefix) surfaces its store error
+// wrapped and named by the chunk_object_key_prefix, aborting the reclaim
+// before any catalog row is soft-deleted or object deleted. The row is left
+// active so ListReclaimable re-selects it on the next cycle.
+//
+// diagnosis: a failure here means the object-store discovery list error is
+// swallowed rather than surfaced, so a backstop sweep silently skips a row
+// whose chunks were never released and whose reservation leaks.
+func TestReclaimAbandonedManifestSurfacesDiscoveryListError(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedReclaimableManifest(t, store, "acme", "cp-x", "s1", "/acme/checkpoints/s1/cp-x/", 1000, 100)
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-x", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-x", 0))
+	objects.listErr = errors.New("minio unreachable")
+	quota := &fakeReservationCounter{}
+	metrics := &stubMetrics{}
+
+	err := checkpointer.ReclaimAbandonedManifest(context.Background(), checkpointer.BackstopReclaim{
+		Manifests: store, Catalog: catalog, Objects: objects, Quota: quota, Metrics: metrics,
+	}, rec)
+	if err == nil {
+		t.Fatal("expected an error when the discovery prefix list fails")
+	}
+	if !strings.Contains(err.Error(), rec.ChunkObjectKeyPrefix) {
+		t.Errorf("error %q does not name the chunk_object_key_prefix", err.Error())
+	}
+	// No catalog row was soft-deleted and no reservation released: the release
+	// aborted at the discovery list before touching either.
+	if got := catalog.softDeleted(); len(got) != 0 {
+		t.Errorf("soft-deleted rows = %v, want none (release aborted at the discovery list)", got)
+	}
+	if got := quota.total(); got != 0 {
+		t.Errorf("reservation adjust total = %d, want 0 (no release before the failed list)", got)
+	}
+	row, _ := store.Get(context.Background(), "acme", "cp-x")
+	if !row.DeletedAt.IsZero() {
+		t.Error("reclaim soft-deleted the manifest row despite the discovery-list failure")
+	}
+	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != string(checkpointer.PartialCleanupFailedDeleted) {
+		t.Errorf("metric outcomes = %v, want [failed_deleted]", metrics.outcomes)
+	}
+}
+
+// spec: §12.5 GC rule 4 / §4.4 line 236 — a catalog row soft-delete failure
+// inside the reclaim's per-chunk release loop surfaces the wrapped error named
+// by the chunk URI and aborts before the object hard-delete, so the §12.5 rule
+// 4 ordering (row soft-delete precedes the byte decrement and the object
+// delete) is never violated by a partial release.
+//
+// diagnosis: a swallowed soft-delete error would let the reclaim proceed to
+// hard-delete the object and release the reservation for a row whose catalog
+// byte-decrement never committed, double-counting the tenant's storage on the
+// next rebuild.
+func TestReclaimAbandonedManifestSurfacesChunkRowReleaseError(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedReclaimableManifest(t, store, "acme", "cp-x", "s1", "/acme/checkpoints/s1/cp-x/", 1000, 100)
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-x", 0, 100))
+	catalog.softErr = errors.New("postgres unreachable")
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-x", 0))
+	quota := &fakeReservationCounter{}
+	metrics := &stubMetrics{}
+
+	err := checkpointer.ReclaimAbandonedManifest(context.Background(), checkpointer.BackstopReclaim{
+		Manifests: store, Catalog: catalog, Objects: objects, Quota: quota, Metrics: metrics,
+	}, rec)
+	if err == nil {
+		t.Fatal("expected an error when a chunk-row soft-delete fails")
+	}
+	if !strings.Contains(err.Error(), "cp-x/chunk-00000.tar") {
+		t.Errorf("error %q does not name the chunk URI whose row release failed", err.Error())
+	}
+	// The object was not hard-deleted: the release aborts before the per-key
+	// delete when the row soft-delete fails.
+	if len(objects.deleted) != 0 {
+		t.Errorf("deleted objects = %v, want none (release aborted before the object delete)", objects.deleted)
+	}
+	if got := quota.total(); got != 0 {
+		t.Errorf("reservation adjust total = %d, want 0 (no release after the failed row soft-delete)", got)
+	}
+	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != string(checkpointer.PartialCleanupFailedDeleted) {
+		t.Errorf("metric outcomes = %v, want [failed_deleted]", metrics.outcomes)
+	}
+}
+
 // spec: §4.4 line 236 — the resume-path PartialCleaner reads the latest
 // active partial manifest for the session and runs the cleanup pipeline,
 // soft-deleting the row.

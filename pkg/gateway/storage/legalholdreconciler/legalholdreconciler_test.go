@@ -463,6 +463,48 @@ func TestTickPropagatesManifestLookupError(t *testing.T) {
 	}
 }
 
+// TestTickCountsRotatedCheckpointWithAbsentManifest pins the fail-toward-
+// detection branch: a rotated checkpoint chunk carrying a valid checkpoint_id
+// segment whose checkpoint_manifest row is absent (already hard-pruned) cannot
+// be confirmed as a partial attempt, so the reconciler counts it as a genuine
+// retained-checkpoint gap rather than silently excluding it. An absent
+// manifest returns ErrNotFound, which is distinct from the read-error path and
+// must not abort the sweep.
+//
+// spec: §12.8 line 739; §10.1 line 141.
+func TestTickCountsRotatedCheckpointWithAbsentManifest(t *testing.T) {
+	cat := &fakeCatalog{
+		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-orphan"}},
+		rows: map[string][]artifactcatalog.Record{
+			"acme|sess-orphan": {
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateLive, PartID: "cp-live/chunk-00000.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "cp-orphan/chunk-00000.tar"},
+			},
+		},
+	}
+	// No manifest row for cp-orphan: the fake returns ErrNotFound for it.
+	man := &fakeManifests{rows: map[string]partialmanifeststore.Record{}}
+	app := &fakeAppender{}
+	m := &fakeMetrics{}
+	r := legalholdreconciler.New(cat, app, m, man, legalholdreconciler.Options{})
+	emitted, err := r.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if emitted != 1 {
+		t.Errorf("emitted = %d, want 1 (a rotated checkpoint with no manifest counts toward detection)", emitted)
+	}
+	if len(app.rows) != 1 {
+		t.Fatalf("audit rows = %d, want 1", len(app.rows))
+	}
+	if !strings.Contains(app.rows[0].payload, `"rotated_checkpoints":1`) {
+		t.Errorf("payload rotated_checkpoints: %q", app.rows[0].payload)
+	}
+	if m.counts["acme"] != 1 {
+		t.Errorf("metric counts = %v, want acme=1", m.counts)
+	}
+}
+
 // TestDefaultSweepIntervalMatchesSpec11_3_231 pins the §11.3 line 231
 // `legalHoldCheckpointReconcilerInterval` value (900s, hard-coded in
 // v1). The reconciler is co-located with the §12.8 line 739 GC sweep

@@ -311,6 +311,40 @@ func TestDriverSkipsReservationForUnlimitedTenant_spec_11_2(t *testing.T) {
 	}
 }
 
+// spec: §11.2 — the pre-checkpoint reservation resolves the tenant's storage
+// limit through QuotaLimitFor before reserving; a resolver failure surfaces the
+// wrapped error and aborts the checkpoint before any intent row is written or
+// capability minted, so a transient quota-lookup failure never lets a
+// checkpoint proceed unmetered against the tenant's counter.
+//
+// diagnosis: a swallowed QuotaLimitFor error would drive the reservation with a
+// zero limit, silently disabling the cumulative cap for a tenant whose limit
+// the gateway simply failed to read, so the checkpoint would upload unbounded
+// against a counter it never reserved.
+func TestDriverAbortsWhenQuotaLimitLookupFails_spec_11_2(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		truncateAfter: -1,
+	}, 1<<30)
+	h.cp.QuotaLimitFor = func(context.Context, string) (int64, error) {
+		return 0, fmt.Errorf("redis storage-quota lookup timed out")
+	}
+	err := h.cp.Checkpoint(context.Background(), "acme", sid)
+	if err == nil {
+		t.Fatal("Checkpoint succeeded despite a storage-limit lookup failure, want abort")
+	}
+	if !strings.Contains(err.Error(), "resolve storage limit") {
+		t.Errorf("error = %v, want a resolve-storage-limit failure", err)
+	}
+	// The limit lookup runs on the probe before any reservation, so the tenant
+	// counter is untouched.
+	used, _ := h.quota.Used(context.Background(), "acme")
+	if used != 0 {
+		t.Errorf("storage counter = %d, want 0 (no reservation after a failed limit lookup)", used)
+	}
+}
+
 // spec: §10.1 line 157 — the intent row is partial = true from INSERT and
 // stays partial until every declared byte is confirmed. A stream that
 // truncates before the Summary leaves partial = true and the sweep removes

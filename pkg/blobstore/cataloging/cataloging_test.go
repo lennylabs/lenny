@@ -22,6 +22,11 @@ type fakeCatalog struct {
 	mu        sync.Mutex
 	rows      map[string]artifactcatalog.Record
 	insertErr error
+	// getErr and softDeleteErr, when set, fail Get and SoftDelete with a
+	// non-ErrNotFound store error so a test can drive the chunk-release path's
+	// error arms (a Postgres read or write failure the caller must surface).
+	getErr        error
+	softDeleteErr error
 }
 
 func newFakeCatalog() *fakeCatalog {
@@ -41,6 +46,9 @@ func (f *fakeCatalog) Insert(_ context.Context, r artifactcatalog.Record) error 
 func (f *fakeCatalog) Get(_ context.Context, uri string) (artifactcatalog.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return artifactcatalog.Record{}, f.getErr
+	}
 	r, ok := f.rows[uri]
 	if !ok {
 		return artifactcatalog.Record{}, artifactcatalog.ErrNotFound
@@ -63,6 +71,9 @@ func (f *fakeCatalog) SumLiveBytes(_ context.Context, tenantID string) (int64, e
 func (f *fakeCatalog) SoftDelete(_ context.Context, uri string, deadline time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.softDeleteErr != nil {
+		return f.softDeleteErr
+	}
 	r, ok := f.rows[uri]
 	if !ok {
 		return artifactcatalog.ErrNotFound
@@ -516,6 +527,83 @@ func TestSoftDeleteIdempotentOnMissingRow(t *testing.T) {
 	// No Put — the row is absent. SoftDelete must not error.
 	if err := store.SoftDelete(u, time.Hour); err != nil {
 		t.Errorf("SoftDelete on missing row: %v, want nil", err)
+	}
+}
+
+// spec: §12.5 rule 4 — SoftDeleteRow surfaces a non-ErrNotFound catalog read
+// error wrapped and named by the chunk URI rather than treating it as an
+// absent row. A store read failure is not the "no catalog row" idempotent
+// case, so it must abort the chunk release rather than let the caller proceed
+// to a per-key object delete under a row whose bytes were never released.
+//
+// diagnosis: a swallowed Get error would collapse a transient Postgres read
+// failure onto the absent-row no-op, releasing no bytes while the caller
+// deletes the object, leaking the tenant's storage counter upward.
+func TestSoftDeleteRowSurfacesCatalogReadError(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "s_1",
+		PartID:     "cp-1/chunk-00000.tar",
+		TTL:        time.Hour,
+	}
+	ref, err := store.Put(u, "application/x-tar", strings.NewReader("chunkbytes"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	cat.getErr = errors.New("postgres read timeout")
+	gotErr := store.SoftDeleteRow(context.Background(), ref, time.Hour)
+	if gotErr == nil {
+		t.Fatal("SoftDeleteRow succeeded despite a catalog read failure, want the wrapped error")
+	}
+	if !errors.Is(gotErr, cat.getErr) {
+		t.Errorf("error %v does not wrap the underlying catalog read error", gotErr)
+	}
+	if !strings.Contains(gotErr.Error(), ref) {
+		t.Errorf("error %q does not name the chunk URI", gotErr.Error())
+	}
+}
+
+// spec: §12.5 rule 4 — SoftDeleteRow surfaces a non-ErrNotFound catalog
+// soft-delete write error wrapped and named by the chunk URI. Only an
+// ErrNotFound (the row raced past live) is the idempotent no-decrement case;
+// any other write failure must abort so the §11 line 37 Redis decrement,
+// which follows the committed deleted_at, never fires against a row whose
+// transition failed.
+//
+// diagnosis: a swallowed SoftDelete error would leave the row live while the
+// caller deletes the object and the decrement fires, double-counting the
+// released bytes on the next reservation-aware rebuild.
+func TestSoftDeleteRowSurfacesCatalogWriteError(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "s_1",
+		PartID:     "cp-1/chunk-00001.tar",
+		TTL:        time.Hour,
+	}
+	ref, err := store.Put(u, "application/x-tar", strings.NewReader("chunkbytes"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	cat.softDeleteErr = errors.New("postgres write conflict")
+	gotErr := store.SoftDeleteRow(context.Background(), ref, time.Hour)
+	if gotErr == nil {
+		t.Fatal("SoftDeleteRow succeeded despite a catalog soft-delete failure, want the wrapped error")
+	}
+	if !errors.Is(gotErr, cat.softDeleteErr) {
+		t.Errorf("error %v does not wrap the underlying catalog soft-delete error", gotErr)
+	}
+	if !strings.Contains(gotErr.Error(), ref) {
+		t.Errorf("error %q does not name the chunk URI", gotErr.Error())
 	}
 }
 

@@ -1269,6 +1269,29 @@ func outstandingReservationSource(m partialmanifeststore.Store) storagequota.Liv
 	return m.SumOutstandingReservations
 }
 
+// tenantStorageQuotaResolver returns the §11.2 checkpointer QuotaLimitFor seam:
+// it resolves a tenant's configured storageQuotaBytes at reservation time so
+// the driver reserves the probed workspace size against the tenant's counter
+// before minting any grant. A tenant lookup failure is wrapped and named so a
+// checkpoint fails closed rather than reserving against a limit it could not
+// read; a tenant with no configured limit resolves to 0, which the driver
+// treats as unlimited and skips the reservation. Extracted from
+// buildPodLifecycle so the resolve-then-wrap path has a single canonical
+// implementation the tier-1 test pins rather than an inline closure only a live
+// cluster exercises.
+//
+// spec: §11.2 line 35 (reserve the probed size, fail closed on a limit-lookup
+// failure); §12.4 storageQuotaBytes.
+func tenantStorageQuotaResolver(tenants tenantstore.Store) func(ctx context.Context, tenantID string) (int64, error) {
+	return func(ctx context.Context, tenantID string) (int64, error) {
+		t, err := tenants.Get(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("resolve storage quota for tenant %s: %w", tenantID, err)
+		}
+		return t.StorageQuotaBytes, nil
+	}
+}
+
 func (w *gatewayWiring) buildRedisAndQuota() {
 	f := w.f
 	capacityTier := f.capacityTier
@@ -2118,14 +2141,8 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// the tenant's storageQuotaBytes at reservation time; a tenant
 			// with no configured limit is unlimited and the driver skips the
 			// reservation.
-			Quota: storageCounter,
-			QuotaLimitFor: func(ctx context.Context, tenantID string) (int64, error) {
-				t, err := tenants.Get(ctx, tenantID)
-				if err != nil {
-					return 0, fmt.Errorf("resolve storage quota for tenant %s: %w", tenantID, err)
-				}
-				return t.StorageQuotaBytes, nil
-			},
+			Quota:         storageCounter,
+			QuotaLimitFor: tenantStorageQuotaResolver(tenants),
 		}
 		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
 	}
