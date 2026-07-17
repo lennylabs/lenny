@@ -33,24 +33,34 @@ func (f fakeManifests) Get(_ context.Context, _, _ string) (partialmanifeststore
 }
 
 // fakeLister returns a fixed object list in the order supplied, so a test
-// can construct an out-of-order or gapped chunk set.
+// can construct an out-of-order or gapped chunk set. A non-nil err models a
+// store-side list failure (MinIO unreachable).
 type fakeLister struct {
 	objects []blobstore.BlobInfo
+	err     error
 }
 
 func (f fakeLister) ListByPrefix(_ context.Context, _ blobstore.URI) ([]blobstore.BlobInfo, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.objects, nil
 }
 
 // countingPresigner mints a deterministic URL per key and counts the mints
 // so a test can assert that a contiguity failure mints nothing (no body is
-// fetched before the check passes).
+// fetched before the check passes). A non-nil err models a signer failure on
+// the first mint.
 type countingPresigner struct {
 	mints []blobstore.URI
+	err   error
 }
 
 func (p *countingPresigner) PresignGet(u blobstore.URI, _ time.Duration) (blobstore.Grant, error) {
 	p.mints = append(p.mints, u)
+	if p.err != nil {
+		return blobstore.Grant{}, p.err
+	}
 	return blobstore.Grant{URL: "https://obj.test/" + u.PartID, ExpiresAt: time.Unix(1, 0)}, nil
 }
 
@@ -254,6 +264,118 @@ func TestResolveZeroChunkPartialFallsBackNotEmptyRestore(t *testing.T) {
 	}
 	if _, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint); !errors.Is(err, ErrBelowRecoveryThreshold) {
 		t.Fatalf("zero-chunk partial Resolve err = %v, want ErrBelowRecoveryThreshold", err)
+	}
+}
+
+// spec: §10.1 line 155 — a manifest read failure aborts the resolve and
+// surfaces the wrapped store error so the caller falls back to the last full
+// checkpoint rather than resuming from an unresolvable manifest.
+func TestResolveSurfacesManifestGetError(t *testing.T) {
+	sentinel := errors.New("postgres unreachable")
+	r := &Resolver{
+		Manifests: fakeManifests{err: sentinel},
+		Presigner: &countingPresigner{},
+		Lister:    fakeLister{},
+		TTL:       30 * time.Second,
+	}
+	_, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Resolve err = %v, want it to wrap the manifest read error", err)
+	}
+}
+
+// spec: §10.1 line 155 — when the manifest's chunk_encoding column is empty
+// the resolver falls back to the tar encoding for the object key, so a
+// legacy manifest with no recorded encoding still resolves to the canonical
+// tar chunk keys.
+func TestResolveDefaultsChunkEncodingWhenColumnEmpty(t *testing.T) {
+	objs := []blobstore.BlobInfo{
+		chunkObject(0, 16, partialmanifeststore.ChunkEncodingTar, false),
+		chunkObject(1, 16, partialmanifeststore.ChunkEncodingTar, false),
+	}
+	r, _ := newResolver(2, "", objs)
+
+	res, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(res.Grants) != 2 {
+		t.Fatalf("grants = %d, want 2", len(res.Grants))
+	}
+	wantKey := fmt.Sprintf("%s/chunk-%05d.tar", rcCheckpoint, 0)
+	if want := "https://obj.test/" + wantKey; res.Grants[0].URL != want {
+		t.Errorf("grant[0].URL = %q, want %q (default tar encoding)", res.Grants[0].URL, want)
+	}
+}
+
+// spec: §10.1 line 155 — a store-side list failure aborts the resolve and
+// surfaces the wrapped error before any capability is minted.
+func TestResolveSurfacesListError(t *testing.T) {
+	sentinel := errors.New("minio unreachable")
+	p := &countingPresigner{}
+	r := &Resolver{
+		Manifests: fakeManifests{rec: partialmanifeststore.Record{CheckpointID: rcCheckpoint, ChunkCount: 2, ChunkEncoding: partialmanifeststore.ChunkEncodingTar}},
+		Presigner: p,
+		Lister:    fakeLister{err: sentinel},
+		TTL:       30 * time.Second,
+	}
+	_, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Resolve err = %v, want it to wrap the list error", err)
+	}
+	if len(p.mints) != 0 {
+		t.Errorf("presign mints = %d, want 0 (list fails before any capability is minted)", len(p.mints))
+	}
+}
+
+// spec: §10.1 line 155 — a signer failure aborts the resolve and surfaces the
+// wrapped error so the caller falls back rather than resuming from a partial
+// grant set.
+func TestResolveSurfacesPresignError(t *testing.T) {
+	sentinel := errors.New("signer key rotated")
+	objs := []blobstore.BlobInfo{
+		chunkObject(0, 16, partialmanifeststore.ChunkEncodingTar, false),
+		chunkObject(1, 16, partialmanifeststore.ChunkEncodingTar, false),
+	}
+	r := &Resolver{
+		Manifests: fakeManifests{rec: partialmanifeststore.Record{CheckpointID: rcCheckpoint, ChunkCount: 2, ChunkEncoding: partialmanifeststore.ChunkEncodingTar}},
+		Presigner: &countingPresigner{err: sentinel},
+		Lister:    fakeLister{objects: objs},
+		TTL:       30 * time.Second,
+	}
+	_, err := r.Resolve(context.Background(), rcTenant, rcSession, rcCheckpoint)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Resolve err = %v, want it to wrap the presign error", err)
+	}
+}
+
+// spec: §10.1 line 155 — parseChunkIndex accepts only a chunk key under the
+// resolving checkpoint of the form "{checkpoint_id}/chunk-{n}.{enc}". A key
+// under a different checkpoint, one that is not a chunk object, one with no
+// encoding suffix, and one with a non-numeric index are all rejected so an
+// unrelated object under the prefix is treated as residue rather than parsed
+// into a bogus chunk index.
+func TestParseChunkIndexRejectsNonChunkKeys(t *testing.T) {
+	cases := []struct {
+		name    string
+		partID  string
+		wantIdx uint32
+		wantOK  bool
+	}{
+		{"canonical padded key", rcCheckpoint + "/chunk-00003.tar", 3, true},
+		{"non-padded stray key", rcCheckpoint + "/chunk-3.tar", 3, true},
+		{"different checkpoint", "other-cp/chunk-00003.tar", 0, false},
+		{"not a chunk object", rcCheckpoint + "/manifest.json", 0, false},
+		{"no encoding suffix", rcCheckpoint + "/chunk-00003", 0, false},
+		{"non-numeric index", rcCheckpoint + "/chunk-abc.tar", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, ok := parseChunkIndex(tc.partID, rcCheckpoint)
+			if ok != tc.wantOK || idx != tc.wantIdx {
+				t.Fatalf("parseChunkIndex(%q) = (%d, %v), want (%d, %v)", tc.partID, idx, ok, tc.wantIdx, tc.wantOK)
+			}
+		})
 	}
 }
 

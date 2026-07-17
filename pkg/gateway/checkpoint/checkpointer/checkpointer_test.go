@@ -603,6 +603,8 @@ type fakeRetention struct {
 	inserts      []retInsert
 	rotates      []retRotate
 	rotateReturn []checkpointretention.Record
+	insertErr    error
+	rotateErr    error
 }
 
 type retInsert struct {
@@ -620,11 +622,14 @@ type retRotate struct {
 
 func (f *fakeRetention) Insert(_ context.Context, r checkpointretention.Record) error {
 	f.inserts = append(f.inserts, retInsert{r.TenantID, r.SessionID, r.SlotID, r.Ref})
-	return nil
+	return f.insertErr
 }
 
 func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error) {
 	f.rotates = append(f.rotates, retRotate{tenantID, sessionID, slotID})
+	if f.rotateErr != nil {
+		return nil, f.rotateErr
+	}
 	return f.rotateReturn, nil
 }
 
@@ -867,5 +872,161 @@ func TestRotationWithoutReleaseSeamsDoesNotFail(t *testing.T) {
 	}
 	if len(ret.rotates) != 1 {
 		t.Fatalf("Rotate: want 1 call, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §4.4 line 234 — a catalog Insert failure skips Rotate so the latest-2
+// cap is not enforced against an unwritten row; the next successful checkpoint
+// rotates the catalog. The checkpoint itself still succeeds (the retention
+// write is best-effort).
+func TestRetentionInsertFailureSkipsRotation(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	ret := &fakeRetention{insertErr: errors.New("postgres unreachable")}
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Retention: ret}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.rotates) != 0 {
+		t.Errorf("Rotate: want 0 calls after a failed Insert, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §12.5 GC rule 5 — a Rotate failure aborts the release step so no chunk
+// release runs against an unresolved rotation set; the checkpoint still
+// succeeds and the next cycle re-rotates.
+func TestRetentionRotateFailureSkipsChunkRelease(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+	// Rotate errors, so the rows it would have reported as dropped never reach
+	// the release path.
+	ret := &fakeRetention{
+		rotateErr:    errors.New("postgres unreachable"),
+		rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}},
+	}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: partialmanifeststore.NewMemoryStore(nil), ChunkCatalog: catalog, ChunkObjects: objects,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if catalog.freed != 0 || len(objects.deleted) != 0 {
+		t.Errorf("chunk release ran after a Rotate failure: freed=%d deleted=%v", catalog.freed, objects.deleted)
+	}
+}
+
+// spec: §12.5 GC rule 5 — the rotation-side release resolves the dropped
+// checkpoint's manifest by its ref; a checkpoint whose manifest row is absent
+// (already reclaimed) is skipped silently rather than logged as an error.
+func TestReleaseRotatedCheckpointSkipsMissingManifest(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	catalog := newFakeChunkCatalog()
+	objects := newFakeObjectStore()
+	// The rotation reports cp-gone as dropped, but the manifest store holds no
+	// row for it, so Get returns ErrNotFound and the release is a no-op.
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-gone"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: partialmanifeststore.NewMemoryStore(nil), ChunkCatalog: catalog, ChunkObjects: objects,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(objects.deleted) != 0 {
+		t.Errorf("release deleted objects for a missing manifest: %v", objects.deleted)
+	}
+}
+
+// spec: §12.5 GC rule 5 — a non-not-found manifest read error on the rotation
+// release path is logged and the release is skipped; the checkpoint still
+// succeeds so a transient store failure does not fail the snapshot.
+func TestReleaseRotatedCheckpointToleratesManifestReadError(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := &errInjectStore{MemoryStore: partialmanifeststore.NewMemoryStore(nil), getErr: errors.New("postgres unreachable")}
+	catalog := newFakeChunkCatalog()
+	objects := newFakeObjectStore()
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: manifests, ChunkCatalog: catalog, ChunkObjects: objects,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(objects.deleted) != 0 {
+		t.Errorf("release proceeded despite a manifest read error: %v", objects.deleted)
+	}
+}
+
+// spec: §4.4 line 248 — a failed object delete on the rotation path with no
+// DriverMetrics wired skips the orphaned-object emission without panicking;
+// the manifest row still stays active for observability.
+func TestRotatedOutCheckpointOrphanWithoutMetricsIsSilent(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+	objects.deleteErr = errors.New("minio unreachable")
+
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: manifests, ChunkCatalog: catalog, ChunkObjects: objects,
+		// DriverMetrics deliberately unset.
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	row, err := manifests.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("release soft-deleted the manifest row despite the undeletable object")
+	}
+}
+
+// spec: §12.5 line 341 — the rotation-side release stamps each soft-deleted
+// chunk row with the configured gc.tombstoneRetentionSeconds window rather
+// than the default.
+func TestRotationReleaseUsesConfiguredTombstoneRetention(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", fakeCheckpointAdapter{})
+
+	manifests := partialmanifeststore.NewMemoryStore(nil)
+	seedCompleteManifest(t, manifests, "acme", "cp-old", "s1")
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+
+	const window = 42 * time.Hour
+	ret := &fakeRetention{rotateReturn: []checkpointretention.Record{{TenantID: "acme", SessionID: "s1", Ref: "cp-old"}}}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store, Registry: registry, Retention: ret,
+		Manifests: manifests, ChunkCatalog: catalog, ChunkObjects: objects,
+		TombstoneRetention: window,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if catalog.lastRetention != window {
+		t.Errorf("tombstone retention stamped = %s, want %s", catalog.lastRetention, window)
 	}
 }

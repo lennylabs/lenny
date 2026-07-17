@@ -22,20 +22,22 @@ import (
 // and no-oping on a replay; a URI with no seeded row (an uncounted straggler)
 // releases nothing.
 type fakeChunkCatalog struct {
-	mu      sync.Mutex
-	rows    []artifactcatalog.Record
-	deleted map[string]bool
-	freed   int64
-	softErr error
+	mu            sync.Mutex
+	rows          []artifactcatalog.Record
+	deleted       map[string]bool
+	freed         int64
+	softErr       error
+	lastRetention time.Duration
 }
 
 func newFakeChunkCatalog(rows ...artifactcatalog.Record) *fakeChunkCatalog {
 	return &fakeChunkCatalog{rows: rows, deleted: map[string]bool{}}
 }
 
-func (f *fakeChunkCatalog) SoftDeleteRow(_ context.Context, uri string, _ time.Duration) error {
+func (f *fakeChunkCatalog) SoftDeleteRow(_ context.Context, uri string, retention time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastRetention = retention
 	if f.softErr != nil {
 		return f.softErr
 	}
@@ -75,6 +77,12 @@ type fakeObjectStore struct {
 	deleted   []string
 	listErr   error
 	deleteErr error
+	// listErrOnCall, when > 0, fails ListByPrefix on that 1-indexed call only
+	// (call 1 is the release's discovery list, call 2 is the backstop's final
+	// empty-prefix confirmation). It models the store staying reachable for the
+	// first list and failing on a later one.
+	listErrOnCall int
+	listCalls     int
 	// pendingAdds is consumed one entry per ListByPrefix call, appended to the
 	// store after the call's result is built. It models a still-outstanding
 	// presigned grant landing a straggler chunk under the prefix between the
@@ -89,8 +97,12 @@ func newFakeObjectStore(objects ...blobstore.URI) *fakeObjectStore {
 func (f *fakeObjectStore) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listCalls++
 	if f.listErr != nil {
 		return nil, f.listErr
+	}
+	if f.listErrOnCall == f.listCalls {
+		return nil, errors.New("minio unreachable")
 	}
 	var out []blobstore.BlobInfo
 	for _, o := range f.objects {
@@ -148,6 +160,47 @@ func (c *fakeReservationCounter) total() int64 {
 		sum += d
 	}
 	return sum
+}
+
+// errInjectStore wraps a real MemoryStore and injects a store-side failure on
+// one operation at a time so a test can drive the release paths that abort on
+// a Postgres error (manifest soft-delete, reservation release, latest-active
+// read). The embedded store satisfies the rest of the partialmanifeststore.Store
+// surface with real behavior.
+type errInjectStore struct {
+	*partialmanifeststore.MemoryStore
+	softDeleteErr   error
+	releaseErr      error
+	getErr          error
+	latestActiveErr error
+}
+
+func (s *errInjectStore) SoftDelete(ctx context.Context, tenantID, checkpointID string) error {
+	if s.softDeleteErr != nil {
+		return s.softDeleteErr
+	}
+	return s.MemoryStore.SoftDelete(ctx, tenantID, checkpointID)
+}
+
+func (s *errInjectStore) ReleaseReservation(ctx context.Context, tenantID, checkpointID string) (int64, error) {
+	if s.releaseErr != nil {
+		return 0, s.releaseErr
+	}
+	return s.MemoryStore.ReleaseReservation(ctx, tenantID, checkpointID)
+}
+
+func (s *errInjectStore) Get(ctx context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error) {
+	if s.getErr != nil {
+		return partialmanifeststore.Record{}, s.getErr
+	}
+	return s.MemoryStore.Get(ctx, tenantID, checkpointID)
+}
+
+func (s *errInjectStore) LatestActive(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
+	if s.latestActiveErr != nil {
+		return partialmanifeststore.Record{}, s.latestActiveErr
+	}
+	return s.MemoryStore.LatestActive(ctx, tenantID, sessionID)
 }
 
 // seedReclaimableManifest seeds an abandoned active partial manifest row (the
@@ -790,5 +843,210 @@ func TestCleanupPartialManifestRejectsEmptyFields(t *testing.T) {
 		if err := checkpointer.CleanupPartialManifest(context.Background(), store, nil, r, nil, false); err == nil {
 			t.Errorf("cleanup accepted record with empty fields: %+v", r)
 		}
+	}
+}
+
+// spec: §12.5 GC rule 5 — a rotation release with every seam wired but an
+// incomplete record (missing session, checkpoint, or prefix) is rejected
+// before any store mutation, so a malformed retention ref cannot drive a
+// release against the wrong prefix.
+func TestReleaseCheckpointChunksRejectsIncompleteRecord(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	cfg := checkpointer.CheckpointChunkRelease{
+		Manifests: store,
+		Catalog:   newFakeChunkCatalog(),
+		Objects:   newFakeObjectStore(),
+	}
+	cases := []partialmanifeststore.Record{
+		{TenantID: "acme", SessionID: "s1", ChunkObjectKeyPrefix: "/x/"},    // no checkpoint id
+		{TenantID: "acme", CheckpointID: "cp", ChunkObjectKeyPrefix: "/x/"}, // no session id
+		{TenantID: "acme", SessionID: "s1", CheckpointID: "cp"},             // no prefix
+	}
+	for _, rec := range cases {
+		if err := checkpointer.ReleaseCheckpointChunks(context.Background(), cfg, rec); err == nil {
+			t.Errorf("release accepted an incomplete record: %+v", rec)
+		}
+	}
+}
+
+// spec: §12.5 GC rule 5 / §4.4 line 236 — a manifest soft-delete failure on
+// the release's final step surfaces the wrapped error and leaves the row
+// active so a retry re-runs the release rather than dropping the prefix from
+// every reclaimer's selector.
+func TestReleaseCheckpointChunksSurfacesManifestSoftDeleteError(t *testing.T) {
+	inner := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedCompleteManifest(t, inner, "acme", "cp-old", "s1")
+	store := &errInjectStore{MemoryStore: inner, softDeleteErr: errors.New("postgres unreachable")}
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-old", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-old", 0))
+
+	err := checkpointer.ReleaseCheckpointChunks(context.Background(), checkpointer.CheckpointChunkRelease{
+		Manifests: store,
+		Catalog:   catalog,
+		Objects:   objects,
+	}, rec)
+	if err == nil {
+		t.Fatal("expected an error when the manifest soft-delete fails")
+	}
+	row, err := inner.Get(context.Background(), "acme", "cp-old")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("manifest row was soft-deleted despite the store failure")
+	}
+}
+
+// spec: §12.5 partial-manifest backstop — the backstop reclaim rejects an
+// incomplete record before touching any store.
+func TestReclaimAbandonedManifestRejectsIncompleteRecord(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	cfg := checkpointer.BackstopReclaim{
+		Manifests: store,
+		Catalog:   newFakeChunkCatalog(),
+		Objects:   newFakeObjectStore(),
+	}
+	cases := []partialmanifeststore.Record{
+		{TenantID: "acme", SessionID: "s1", ChunkObjectKeyPrefix: "/x/"}, // no checkpoint id
+		{TenantID: "acme", SessionID: "s1", CheckpointID: "cp"},          // no prefix
+	}
+	for _, rec := range cases {
+		if err := checkpointer.ReclaimAbandonedManifest(context.Background(), cfg, rec); err == nil {
+			t.Errorf("reclaim accepted an incomplete record: %+v", rec)
+		}
+	}
+}
+
+// spec: §11.2 reservation release is exactly-once and guarded — a
+// ReleaseReservation store error aborts the backstop reclaim, leaves the row
+// active for the next cycle, and emits failed_deleted.
+func TestReclaimAbandonedManifestSurfacesReservationReleaseError(t *testing.T) {
+	inner := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedReclaimableManifest(t, inner, "acme", "cp-x", "s1", "/acme/checkpoints/s1/cp-x/", 1000, 100)
+	store := &errInjectStore{MemoryStore: inner, releaseErr: errors.New("postgres unreachable")}
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-x", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-x", 0))
+	metrics := &stubMetrics{}
+
+	if err := checkpointer.ReclaimAbandonedManifest(context.Background(), checkpointer.BackstopReclaim{
+		Manifests: store, Catalog: catalog, Objects: objects, Metrics: metrics,
+	}, rec); err == nil {
+		t.Fatal("expected an error when ReleaseReservation fails")
+	}
+	row, err := inner.Get(context.Background(), "acme", "cp-x")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("reclaim soft-deleted the manifest row despite the reservation-release failure")
+	}
+	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != string(checkpointer.PartialCleanupFailedDeleted) {
+		t.Errorf("metric outcomes = %v, want [failed_deleted]", metrics.outcomes)
+	}
+}
+
+// spec: §12.5 partial-manifest backstop — a failure on the backstop's final
+// empty-prefix confirmation list aborts the reclaim before the manifest
+// soft-delete and emits failed_deleted, so the next cycle re-confirms the
+// prefix rather than dropping a row whose prefix might still hold a straggler.
+func TestReclaimAbandonedManifestSurfacesFinalListError(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedReclaimableManifest(t, store, "acme", "cp-x", "s1", "/acme/checkpoints/s1/cp-x/", 1000, 100)
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-x", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-x", 0))
+	// The discovery list (call 1) succeeds; the final confirmation list (call 2)
+	// fails.
+	objects.listErrOnCall = 2
+	metrics := &stubMetrics{}
+
+	if err := checkpointer.ReclaimAbandonedManifest(context.Background(), checkpointer.BackstopReclaim{
+		Manifests: store, Catalog: catalog, Objects: objects, Metrics: metrics,
+	}, rec); err == nil {
+		t.Fatal("expected an error when the final prefix list fails")
+	}
+	row, err := store.Get(context.Background(), "acme", "cp-x")
+	if err != nil {
+		t.Fatalf("Get manifest: %v", err)
+	}
+	if !row.DeletedAt.IsZero() {
+		t.Error("reclaim soft-deleted the manifest row despite the final-list failure")
+	}
+	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != string(checkpointer.PartialCleanupFailedDeleted) {
+		t.Errorf("metric outcomes = %v, want [failed_deleted]", metrics.outcomes)
+	}
+}
+
+// spec: §12.5 partial-manifest backstop / §4.4 line 236 — a manifest
+// soft-delete failure on the reclaim's final step surfaces the wrapped error,
+// leaves the row active, and emits failed_deleted.
+func TestReclaimAbandonedManifestSurfacesManifestSoftDeleteError(t *testing.T) {
+	inner := partialmanifeststore.NewMemoryStore(nil)
+	rec := seedReclaimableManifest(t, inner, "acme", "cp-x", "s1", "/acme/checkpoints/s1/cp-x/", 1000, 100)
+	store := &errInjectStore{MemoryStore: inner, softDeleteErr: errors.New("postgres unreachable")}
+	catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-x", 0, 100))
+	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-x", 0))
+	metrics := &stubMetrics{}
+
+	if err := checkpointer.ReclaimAbandonedManifest(context.Background(), checkpointer.BackstopReclaim{
+		Manifests: store, Catalog: catalog, Objects: objects, Metrics: metrics,
+	}, rec); err == nil {
+		t.Fatal("expected an error when the final manifest soft-delete fails")
+	}
+	if len(metrics.outcomes) != 1 || metrics.outcomes[0] != string(checkpointer.PartialCleanupFailedDeleted) {
+		t.Errorf("metric outcomes = %v, want [failed_deleted]", metrics.outcomes)
+	}
+}
+
+// spec: §4.4 line 236 — the resume-path PartialCleaner reads the latest
+// active partial manifest for the session and runs the cleanup pipeline,
+// soft-deleting the row.
+func TestPartialCleanerCleanupAfterResumeCleansTheActiveRow(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	seedManifest(t, store, "acme", "cp-1", "s1", "/acme/checkpoints/s1/cp-1/")
+	deleter := &stubChunkDeleter{}
+	cleaner := &checkpointer.PartialCleaner{Store: store, Deleter: deleter}
+
+	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("CleanupAfterResume: %v", err)
+	}
+	if len(deleter.prefixes) != 1 {
+		t.Errorf("chunk deletion calls = %d, want 1", len(deleter.prefixes))
+	}
+	row, _ := store.Get(context.Background(), "acme", "cp-1")
+	if row.DeletedAt.IsZero() {
+		t.Error("CleanupAfterResume did not soft-delete the active manifest row")
+	}
+}
+
+// spec: §4.4 line 236 — a session with no active partial manifest is a no-op:
+// CleanupAfterResume returns nil rather than erroring on the not-found read.
+func TestPartialCleanerCleanupAfterResumeNoActiveManifestIsNoOp(t *testing.T) {
+	store := partialmanifeststore.NewMemoryStore(nil)
+	cleaner := &checkpointer.PartialCleaner{Store: store}
+	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+		t.Errorf("CleanupAfterResume with no active manifest = %v, want nil", err)
+	}
+}
+
+// spec: §4.4 line 236 — a non-not-found store error on the latest-active read
+// surfaces as a wrapped error so the resume path can retry rather than treat
+// an unreachable store as a clean session.
+func TestPartialCleanerCleanupAfterResumeSurfacesReadError(t *testing.T) {
+	inner := partialmanifeststore.NewMemoryStore(nil)
+	store := &errInjectStore{MemoryStore: inner, latestActiveErr: errors.New("postgres unreachable")}
+	cleaner := &checkpointer.PartialCleaner{Store: store}
+	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("expected an error when the latest-active read fails")
+	}
+}
+
+// A nil cleaner or a cleaner with no store is a no-op.
+func TestPartialCleanerCleanupAfterResumeNilIsNoOp(t *testing.T) {
+	var nilCleaner *checkpointer.PartialCleaner
+	if err := nilCleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+		t.Errorf("nil cleaner = %v, want nil", err)
+	}
+	if err := (&checkpointer.PartialCleaner{}).CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+		t.Errorf("cleaner with no store = %v, want nil", err)
 	}
 }
