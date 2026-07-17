@@ -62,7 +62,7 @@ Across 132 audited units: **1679 findings** — 504 High, 756 Medium, 269 Low, 1
 - [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 3L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
 - [§4.5 Artifact Store](#t-4.5) — 3H 7M 2L 2I — Tenant-prefix isolation, DeleteByTenant, and T4 SSE-KMS selection tested only against in-memory fakes, never real MinIO/S3
 - [§4.6 Pod Lifecycle Controllers](#t-4.6) — 4H 9M 4L 1I — 3 High gaps still open: ADR-007 leader-kill chaos, etcd-unavailable chaos, cross-controller SSA-conflict test
-- [§4.7 Runtime Adapter](#t-4.7) — 6H 7M 4L 2I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002)
+- [§4.7 Runtime Adapter](#t-4.7) — 6H 7M 5L 2I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002)
 - [§4.8 Gateway Policy Engine](#t-4.8) — 3H 9M 2L 1I — External gRPC interceptor path (and the protobuf contract, admission-gate ordering) still never exercised through a live gateway binary
 - [§4.9 Credential Leasing Service](#t-4.9) — 9H 12M 4L 1I — No proxy/SPIFFE/deny-list/fallback/lifecycle e2e coverage; pre-claim race now spans create->finalize (proposal 0007), still untested; three tier5 admission tests now fail closed against unrelated webhooks post-proposal-0035
 - [§5.1 Runtime](#t-5.1) — 2H 6M 2L 1I — publishedMetadata + MCP capability-inference contract tests still missing; integrationLevel/labels gaps closed
@@ -109,12 +109,12 @@ Across 132 audited units: **1679 findings** — 504 High, 756 Medium, 269 Low, 1
 - [§12.1 Design Principle](#t-12.1) — 2H 3M 1L 1I — SemanticCache erasure has no startup/per-job preflight and no tier4/tier5 test exercises real refuse-to-start or legal-hold paths.
 - [§12.2 Storage Roles](#t-12.2) — 1H 4M 1L 0I — EventStore chain-exclusion invariant (publish-state/retry-count never re-hash prev_hash) still has zero component test
 - [§12.3 Postgres HA Requirements](#t-12.3) — 3H 5M 3L 1I — Postgres HA failover (RPO=0/RTO&lt;30s), 503-on-outage, and transaction-mode pooler sentinel remain untested live
-- [§12.4 Redis HA and Failure Modes](#t-12.4) — 4H 6M 2L 1I — Bounded fail-open / cumulative financial-security control and plaintext-rejection probe still untested against a real Redis outage.
+- [§12.4 Redis HA and Failure Modes](#t-12.4) — 5H 6M 2L 1I — Bounded fail-open / cumulative financial-security control and plaintext-rejection probe still untested against a real Redis outage.
 - [§12.5 Artifact Store](#t-12.5) — 4H 6M 2L 1I — 3 High gaps open: MinIO-outage fallback, checkpoint-resume, and S3/GCS/Azure backends lack e2e coverage.
 - [§12.6 Interface Design](#t-12.6) — 1H 5M 2L 1I — EventBus publish-after-commit replay/retranscribe path still untested against a real Redis outage (tier8)
 - [§12.7 Extensibility](#t-12.7) — 0H 1M 1L 1I — TokenStore Vault/KMS migration bullet unproven: cloud_secret_store tier6 suite still planned for all providers
 - [§12.8 Compliance Interfaces](#t-12.8) — 6H 8M 2L 1I — Phase 3.5 legal-hold escrow now built+tested (was the headline gap); chaos scaffolds & erasure.requested sink propagation remain the open High gaps.
-- [§12.9 Data Classification](#t-12.9) — 4H 5M 2L 2I — spec-map.json still maps §12.9 to unrelated tier9 suites/nonexistent package; fail-closed T4 write path still never driven through the gateway.
+- [§12.9 Data Classification](#t-12.9) — 5H 6M 2L 2I — spec-map.json still maps §12.9 to unrelated tier9 suites/nonexistent package; fail-closed T4 write path still never driven through the gateway.
 - [§13.1 Pod Security](#t-13.1) — 2H 4M 2L 1I — Proposal 0002 deleted the only code stamping the spec-mandated ConcurrentWorkspaceCredentialSharing CRD condition; F-13.1.5's fix is now dead code, unimplemented and untested.
 - [§13.2 Network Isolation](#t-13.2) — 5H 8M 1L 2I — Agent-namespace live NetworkPolicy/DNS/IMDS enforcement is still untested end-to-end (5 High findings open).
 - [§13.3 Credential Flow](#t-13.3) — 5H 6M 1L 1I — Live cross-replica revocation race and Postgres-outage fail-closed 503 paths still lack tests above unit tier.
@@ -153,13 +153,13 @@ Across 132 audited units: **1679 findings** — 504 High, 756 Medium, 269 Low, 1
 - [§24.15-24.20 lenny-ctl: Agent-Ops, Discovery, Session Ops, Scaffolding, Local Stack, Wizard](#t-24.15-24.20) — 6H 8M 3L 1I — Agent-ops CLI (audit/upgrade/events) lacks live-gateway tests; lenny up boot now verified end to end.
 - [§25.1-25.2 Agent Operability: Design Philosophy and Architecture](#t-25.1-25.2) — 3H 8M 5L 2I — lenny-ops still lacks live integration/chaos/cloud tests; new gaps: recommendations degraded-envelope transition untested, and a systematic §25.x spec-map pkg/operability-vs-pkg/ops package mismatch
 - [§25.3 Gateway-Side Ops Endpoints](#t-25.3) — 3H 6M 3L 0I — Health endpoints still unauthenticated vs spec's admin-role mandate; 4 admin endpoints still have zero contract/integration coverage.
-- [§25.4 The lenny-ops Service](#t-25.4) — 6H 20M 6L 2I — lenny-ops split-brain lock reconciliation, RBAC/NetworkPolicy, and compose/cloud e2e coverage still absent; audit moved to gateway §25.9
+- [§25.4 The lenny-ops Service](#t-25.4) — 6H 20M 7L 2I — lenny-ops split-brain lock reconciliation, RBAC/NetworkPolicy, and compose/cloud e2e coverage still absent; audit moved to gateway §25.9
 - [§25.5 Operational Event Stream](#t-25.5) — 7H 8M 6L 1I — No tier3/4/5/6/8/9 test exercises the event stream; SSE/poll still lacks a Redis source (retention purge now resolved); read endpoints are platform-admin-only vs the tenant-scoped-caller rule, and UpdateSubscription filter patching is unasserted.
 - [§25.6 Diagnostic Endpoints](#t-25.6) — 5H 11M 6L 0I — Auto-remediation now implemented+unit-tested (was High); tier4/5 live-service, REST scope, degradation-matrix gaps remain High; new: /healthz-vs-health-summary probe, unimplemented pool K8s fallback + MetricSource wiring, stale audit-stub comments, and the metricsSource-field spec contradiction
 - [§25.7 Operational Runbooks Engine](#t-25.7) — 2H 4M 2L 1I — MCP runbook tools now drop all 5 Path A filters (openapi.json declares no query params); still no inventory/authz test
 - [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 10M 5L 3I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test; new gaps: status progress omits the §25.2 canonical envelope, version/full drops CRD/Helm sources, no compiled-in release-channel key, TESTING.md change-graph example dangling refs
 - [§25.9-25.10 Audit Log Query API and Config Drift Detection](#t-25.9-25.10) — 5H 9M 3L 1I — §25.9 audit query endpoints and drift reconcile/deferred-write reconciliation still lack real-Postgres/gateway integration tests
-- [§25.11 Backup and Restore API](#t-25.11) — 4H 8M 6L 2I — Backup/restore round-trip, tier3/4/5/6/8/9 gaps remain open; two findings downgraded by new component tests.
+- [§25.11 Backup and Restore API](#t-25.11) — 5H 9M 6L 2I — Backup/restore round-trip, tier3/4/5/6/8/9 gaps remain open; two findings downgraded by new component tests.
 - [§25.12 MCP Management Server](#t-25.12) — 7H 9M 3L 2I — Build-time openapi-to-mcp generator landed (T-25.12.1 resolved); gateway-proxy routing still absent so new admin tools can't dispatch
 - [§25.13-25.14 Bundled Alerting Rules and lenny-ctl Extensions](#t-25.13-25.14) — 2H 6M 3L 1I — lenny-ctl operability commands (runbooks/diagnose/escalations/backup/upgrade/drift) still lack tier4/5 coverage against a real lenny-ops.
 - [§25.15-25.17 Failure Mode Analysis, Topology Summary, End-to-End Operational Example](#t-25.15-25.17) — 4H 8M 5L 1I — Failure-mode, e2e-loop, and NetworkPolicy journeys remain untested; audit's gateway move adds a gap.
@@ -1028,6 +1028,13 @@ Counts: 6 High, 7 Medium, 3 Low, 1 Info.
 - **Gap:** The `lenny-test run --since` batch recorded `standard_test.go:80: delegation-echo failed Standard check`, but a clean re-run of `go test ./cmd/lenny-compliance/ -run TestStandardBatteryIsBasicPlusStandard` passes (45s, `ok`). The failure is non-deterministic and unrelated to the drift change under review. This is a conformance-battery reliability observation rather than a missing test.
 - **Dependencies:** Requires reproducing the intermittent Standard-check failure to determine whether the flake is in the harness, the `delegation-echo` runtime, or the batch runner's environment.
 - **Suggested test:** Exercise `TestStandardBatteryIsBasicPlusStandard` under repeated/parallel execution (for example `lenny-test stress`) to reproduce the intermittent `delegation-echo failed Standard check`, then eliminate the source of non-determinism so the Standard battery passes deterministically.
+
+### - [ ] T-4.7.21 — cmd/lenny-compliance Standard-battery tests fail because the delegation-echo test binary is missing from the build/test environment [Low] — OPEN
+- **Spec/Doc:** The `cmd/lenny-compliance` conformance harness runs the Basic/Standard/Full batteries (TESTING.md §12.10 conformance), building the `echo`/`streaming-echo`/`delegation-echo` runtime binaries the batteries exercise. Same conformance harness as T-4.7.19/T-4.7.20.
+- **Existing tests:** `cmd/lenny-compliance` `TestCheckConnectorMCPReachability`, `TestCheckMCPNonceHandshake`, `TestCheckPlatformMCPToolInvocation`, `TestCheckToolResultCorrelation`, `TestStandardBatteryIsBasicPlusStandard`, and `TestStandardBatteryReusesBasicChecks`.
+- **Gap:** `go test ./cmd/lenny-compliance/...` fails on all six tests above with "fork/exec /tmp/compliance-standard-test-.../delegation-echo: no such file or directory", indicating a missing build step for that fixture binary in the current environment. Discovered while closing T-25.5.22.
+- **Dependencies:** None — related to T-4.7.19's delegation-echo-under-parallel-execution flake but distinct: here the binary is absent entirely rather than racing to be built.
+- **Suggested test:** Ensure the `delegation-echo` (and `echo`) runtime binaries are built and present before the `cmd/lenny-compliance` Standard-battery tests run, and add a pre-flight check that fails loudly with a clear diagnostic rather than surfacing as a `fork/exec` error deep in each test.
 
 ## §4.8 Gateway Policy Engine <a id="t-4.8"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -5241,6 +5248,13 @@ Counts: 3 High, 6 Medium, 2 Low, 1 Info (across 12 findings, 2 resolved).
 - **Dependencies:** None — reproducible today with a real Postgres container via the existing tier2 component harness.
 - **Suggested test:** Re-run `TestReserveSlotUnderLock` in isolation against the current `pkg/gateway/storage/slotcounter` advisory-lock implementation to confirm the regression, then bisect the per-pod advisory-lock acquisition path (`SessionStore.GetActiveSlotsByPod` and its lock scope) for a change that lets two racers observe the same free slot.
 
+### - [ ] T-12.4.14 — Per-pod advisory lock does not serialize concurrent slot reservations, overrunning the admission bound (independent reproduction) [High] — OPEN
+- **Spec/Doc:** Same §12.4 failure-behavior row as T-12.4.12/T-12.4.13: the session-mode slot counter's Postgres fallback gates intra-pod session capacity under a per-pod advisory lock, spec sections 12.4/208.
+- **Existing tests:** `tests/tier2_component/stores::TestReserveSlotUnderLock/serializes_concurrent_admissions_under_the_per-pod_advisory_lock`.
+- **Gap:** The test failed with "admitted = 7, want at most 1" (and "admitted = 5" on a second run) — `reserve_slot_under_lock_test.go:112`. Discovered while closing T-25.5.22, independently of T-12.4.13's discovery (closing T-25.5.12). The two independent reproductions, with different overrun counts across separate runs, corroborate that the per-pod advisory-lock slot gate no longer reliably serializes concurrent admissions rather than this being a single-run flake.
+- **Dependencies:** None — reproducible today with a real Postgres container via the existing tier2 component harness. See T-12.4.13 for the suggested bisection approach.
+- **Suggested test:** Same as T-12.4.13: re-run `TestReserveSlotUnderLock` in isolation to confirm the regression, then bisect the per-pod advisory-lock acquisition path for a change that lets two racers observe the same free slot.
+
 ## §12.5 Artifact Store <a id="t-12.5"></a>
 **Spec file:** `spec/12_storage-architecture.md`
 **Reviewed:** 2026-07-06
@@ -5665,6 +5679,20 @@ Counts: 4 High, 5 Medium, 2 Low, 2 Info.
 - **Gap:** The image loaded on the running lenny-e2e cluster (`lenny-runtime-cred-shell-echo:e2e@sha256:541ad9011d32819ffd0304bb0adaf82f268717f001706b68f5fd14cd145ca302`) has none of those binaries: `kubectl exec -n lenny-agents cred-shell-echo-pool-mbl88 -c runtime -- /bin/sh` returns `stat /bin/sh: no such file or directory`, and ls/cat/stat fail identically. Because execContainer returns an error, both probes hit `t.Skipf` rather than asserting, so the credential-non-leakage guarantee passes vacuously on the live cluster. This may be a stale local cluster (image predating the current Dockerfile) rather than a code regression.
 - **Dependencies:** Requires a fresh install.sh build of the cred-shell-echo image loaded onto the cluster to confirm whether the defect reproduces before treating it as a code defect.
 - **Suggested test:** Rebuild the cred-shell-echo image from the current Dockerfile via install.sh, reload it onto the lenny-e2e cluster, and re-run TestCredentialLeakageEnvironment/TestCredentialLeakageFilesystem, asserting the probes execute rather than skip; add a pre-flight assertion that fails loudly when the probe binaries are absent instead of silently skipping the leakage check.
+
+### - [ ] T-12.9.14 — Audit events are dropped before reaching the audit ledger under sustained load, breaking sequence monotonicity [High] — OPEN
+- **Spec/Doc:** spec/12_storage-architecture.md §12.9.10 (audit_log sequence-monotonicity guarantee).
+- **Existing tests:** `tests/tier9_security::TestAuditSequenceMonotonicity`.
+- **Gap:** The test failed with "§12.9.10 violation: audit_log holds 0 rows for tenant t9-auditseq-tenant after 300 audit events; events were dropped before reaching the ledger" (`audit_integrity_test.go:195-200`). Discovered while closing T-25.5.22.
+- **Dependencies:** None — reproducible today with the existing tier9 security harness.
+- **Suggested test:** Re-run `TestAuditSequenceMonotonicity` to confirm the drop reproduces, then trace the audit-event pipeline under sustained load (300 events) to find where events are dropped before reaching the audit ledger.
+
+### - [ ] T-12.9.15 — Ephemeral-container attach rejection is not attributable to the ephemeral-container-cred-guard webhook [Medium] — OPEN
+- **Spec/Doc:** spec/12_storage-architecture.md §12.9.3.
+- **Existing tests:** `tests/tier9_security::TestAdmissionEphemeralContainerCredUIDForbidden`.
+- **Gap:** The test failed because the attach was rejected by pod-security admission (PodSecurity "restricted:latest" violations) rather than by `ephemeral-container-cred-guard.lenny.dev`, so the guard's own coverage of this attach path is unverified (`admission_ephemeral_test.go:91`). Discovered while closing T-25.5.22.
+- **Dependencies:** None — requires adjusting the test fixture (namespace pod-security level or container spec) so the attach reaches the guard webhook instead of being pre-empted by PodSecurity admission.
+- **Suggested test:** Adjust `TestAdmissionEphemeralContainerCredUIDForbidden`'s fixture so the attach reaches `ephemeral-container-cred-guard.lenny.dev` rather than PodSecurity admission, and assert the rejection reason names the guard webhook.
 
 ## §13.1 Pod Security <a id="t-13.1"></a>
 **Spec file:** `spec/13_security-model.md`
@@ -9193,6 +9221,13 @@ Counts: 6 High, 18 Medium, 3 Low, 1 Info.
 - **Dependencies:** None — a direct comment edit in both files.
 - **Suggested test:** No runtime test; add or extend a static citation-freshness check (as used for T-25.2.10) that verifies `// spec:` line-number comments in `pkg/ops/opsidem/writers.go` and `pkg/ops/coordination/service.go` still point at the quoted spec text.
 
+### - [ ] T-25.4.41 — ops-deployment.yaml's header comment claims lenny-ops's Postgres/Redis DSN is "wired from values," but no values path renders it anywhere in the template [Low] — OPEN
+- **Spec/Doc:** `charts/lenny/templates/ops-deployment.yaml:19-21` states connection settings are "wired from values via the LENNY_POSTGRES_DSN and LENNY_REDIS_URL environment variables the binary reads, left unset by default." The underlying degraded-by-default behavior is already reviewed and accepted as deliberate (BUILD-GAPS.md F-25.2.16).
+- **Existing tests:** None — `grep -n "LENNY_POSTGRES_DSN\|postgres-dsn" charts/lenny/templates/ops-deployment.yaml` finds only that comment and one unrelated readiness-probe comment referencing the same env var name.
+- **Gap:** The file's actual `env:` block (lines ~280-289) sets only `POD_NAME` and `POD_NAMESPACE`, and no `args` entry sets `--postgres-dsn` under any value, so the comment's claim of a working values-driven wiring mechanism does not match the rendered template. There is currently no supported way to opt a chart install into the "production" persistent mode the code and the readiness-probe gate (`ops.production`) otherwise assume is reachable. Discovered while closing T-25.11.10.
+- **Dependencies:** None — buildable today: either add the values-driven wiring the comment describes or correct the comment.
+- **Suggested test:** Add a helm-unittest that renders the chart with Postgres/Redis values set and asserts `LENNY_POSTGRES_DSN`/`LENNY_REDIS_URL` (or the equivalent `--postgres-dsn`/`--redis-url` args) actually appear in the rendered Deployment, or correct the comment to state that no values path wires the DSN today.
+
 ## §25.5 Operational Event Stream <a id="t-25.5"></a>
 **Spec file:** `spec/25_agent-operability.md`
 **Reviewed:** 2026-07-06
@@ -9864,6 +9899,20 @@ Counts: 4 High, 8 Medium, 3 Low, 2 Info.
 
 ### - [x] T-25.11.20 — pkg/ops/backup/restoretest (the §25.11 Test Restore result record and store) is unreferenced in tests/spec-map.json §25.11 [Low] — RESOLVED fc75dde2
 - **Resolution:** `pkg/ops/backup/restoretest` (the §25.11 Test Restore result record/store, `restoretest.go` and its Postgres-backed `pgstore.go`) and its existing test file `pkg/ops/backup/restoretest/restoretest_test.go` were present on disk but absent from §25.11's `packages[]`/`tests[]` in `tests/spec-map.json`, so `validate-maps` coverage accounting did not credit them. Added both entries to §25.11 in `tests/spec-map.json`; no change-graph.json edit was needed because the existing `"pkg/ops/backup": {"unit": ["pkg/ops/backup/..."]}` glob already covers the subpackage. `go test ./pkg/ops/backup/restoretest/...` passes (`TestMemoryLatestAndTotal_spec_25_11`, `TestResultDurationSeconds`) and `lenny-test validate-maps` now reports 15/15 checks passing.
+
+### - [ ] T-25.11.21 — restore-test-cronjob.yaml's pod template lacks the app: lenny-backup label the lenny-backup-job NetworkPolicy requires for egress, so the monthly test-restore CronJob has no network access on a NetworkPolicy-enforcing cluster [High] — OPEN
+- **Spec/Doc:** `charts/lenny/templates/ops-network-policies.yaml`'s `lenny-backup-job` NetworkPolicy `podSelector` is `matchLabels: {app: lenny-backup}` and is the only NetworkPolicy granting egress to Postgres/MinIO/the Kubernetes API/DNS for `lenny-backup-image` Jobs under the chart's namespace-wide default-deny-all (`charts/lenny/templates/system-network-policies.yaml`).
+- **Existing tests:** None cover the static chart templates directly. BUILD-GAPS.md's F-25.11.4 resolution confirms `pkg/ops/backup/k8slauncher` correctly sets this label for admin-API-triggered Jobs.
+- **Gap:** `charts/lenny/templates/restore-test-cronjob.yaml`'s Job pod template carries only `lenny.dev/component: restore-test` (`grep -n "app: lenny-backup" charts/lenny/templates/restore-test-cronjob.yaml` returns no matches), contrasting with the static `restore-test-cronjob.yaml` template (and `charts/lenny/templates/backup-job.yaml`'s on-demand Job, which has the identical omission). This does not surface on the tier5 Kind fixture because Kind's default kindnet CNI does not enforce NetworkPolicy at all (empirically confirmed live: a pod carrying only the template's actual labels reached the e2e MinIO over the network with no NetworkPolicy obstruction), so it is invisible to the current e2e suite; it is a cluster-agnostic label mismatch that would leave the monthly test-restore CronJob with zero egress on any Calico/Cilium-enforced production cluster. Discovered while closing T-25.11.10.
+- **Dependencies:** None — buildable today: add `app: lenny-backup` to both templates' pod labels.
+- **Suggested test:** Add a helm-unittest asserting `restore-test-cronjob.yaml`'s and `backup-job.yaml`'s Job pod templates carry `app: lenny-backup`, and add (or extend) a NetworkPolicy-enforcing e2e lane (Calico/Cilium, not kindnet) that runs the CronJob and asserts it reaches Postgres/MinIO/the Kubernetes API/DNS.
+
+### - [ ] T-25.11.22 — Neither backup-job.yaml nor restore-test-cronjob.yaml exposes a MinIO CA-bundle option for the lenny-backup image's own TLS client, unlike the chart's other MinIO consumers [Medium] — OPEN
+- **Spec/Doc:** `charts/lenny/templates/minio-bucket-lifecycle-job.yaml` and the gateway both support `minio.tls.caBundleConfigMap` (mounted and exposed via `SSL_CERT_DIR` or an equivalent flag) for a self-managed MinIO whose serving cert is issued by a private CA.
+- **Existing tests:** None — this finding's own test works around it with a `kubectl patch` scoped to the CronJob instance it creates, not the chart template.
+- **Gap:** `charts/lenny/templates/backup-job.yaml` and `restore-test-cronjob.yaml` have no equivalent value or mount. Empirically reproduced on the live e2e cluster: an unpatched `lenny-restore-test` Job run against the e2e MinIO (a self-managed MinIO with a cert-manager-issued private-CA cert, the same posture `minio.tls.caBundleConfigMap` exists to support) fails with "tls: failed to verify certificate: x509: certificate signed by unknown authority" downloading the seeded backup archive; adding the identical CA mount pattern used by `minio-bucket-lifecycle-job.yaml` made the run succeed. Discovered while closing T-25.11.10.
+- **Dependencies:** None — buildable today by mirroring `minio-bucket-lifecycle-job.yaml`'s CA-bundle mount pattern.
+- **Suggested test:** Add `minio.tls.caBundleConfigMap` support (mount plus `SSL_CERT_DIR` or equivalent flag) to `backup-job.yaml` and `restore-test-cronjob.yaml`, then add a helm-unittest and an e2e case running the restore-test CronJob against a private-CA MinIO without the ad hoc `kubectl patch`.
 
 ## §25.12 MCP Management Server <a id="t-25.12"></a>
 **Spec file:** `spec/25_agent-operability.md`
@@ -12344,3 +12393,31 @@ The five theme audits each proposed integrated testbeds (T-BED.1 through T-BED.1
 - **Gap:** `tests/change-graph.json` has no literal key for `pkg/ops/backup/restoretest` (only the parent `"pkg/ops/backup": {"unit": ["pkg/ops/backup/..."]}`), suggesting that when `--pkg` does not match a literal change-graph key exactly, the `--pkg` filter is silently dropped and the full unit tier runs instead of the glob-matched subset. This undermines the full-regression guidance elsewhere in the workflow that relies on `--pkg`/`--since` scoping to bound blast-radius runs to a reasonable subset. Discovered while closing T-25.11.20.
 - **Dependencies:** None — buildable today; likely a fix to the `--pkg` resolution logic so a non-literal key still glob-matches against `change-graph.json` (or falls back to package-path matching) instead of dropping the filter.
 - **Suggested test:** Add a `cmd/lenny-test` fixture that runs `--pkg <subpackage-of-a-mapped-parent> --tier unit --dry-run` and asserts the resolved package/test selection is scoped to the matched subset rather than the full unit tier.
+
+### - [ ] T-META.31 — golangci-lint errcheck/unused findings in pkg/ops/events test files are pre-existing and untouched by tier0 static (gated earlier by the gofumpt failure) [Low] — OPEN
+- **Spec/Doc:** The repo's static CI tier runs `golangci-lint run` as part of its checks, the same static-tier gate T-META.27/T-META.28/T-META.32/T-META.33 describe as blocked by pre-existing `gofumpt` drift.
+- **Existing tests:** `golangci-lint run ./pkg/ops/events/...` (part of the static tier once it is reached).
+- **Gap:** `golangci-lint run ./pkg/ops/events/...` reports: `pkg/ops/events/gapmetric_test.go:21,25,37` "Error return value of s.Publish is not checked (errcheck)", and `pkg/ops/events/service_test.go:306` "type pipeReader is unused (unused)". None of these lines are in files this finding's diff touches; the identical unchecked-`s.Publish(...)` pattern already appears at 20+ other call sites across `read_surface_test.go`, `degradation_test.go`, and `service_test.go` (pre-existing, unrelated to this change), suggesting golangci-lint's default max-same-issues cap (3) is hiding the full extent. Because the repo's static tier currently fails earlier on the T-META.27 gofumpt drift, this golangci-lint debt in `pkg/ops/events` is never actually reached by `lenny-test run`, so it is invisible until T-META.27 is resolved. Discovered while closing T-25.2.4.
+- **Dependencies:** Depends on T-META.27 (or T-META.32/T-META.33) being resolved first so the static tier reaches the golangci-lint step for `pkg/ops/events`.
+- **Suggested test:** Once the gofumpt drift is fixed, re-run `golangci-lint run ./pkg/ops/events/...` with the same-issues cap raised (or `--max-same-issues=0`) to see the full extent of the unchecked-`Publish` pattern, then either check the returns or add justified `nolint` annotations, and remove or use the unused `pipeReader` type.
+
+### - [ ] T-META.32 — Pre-existing gofumpt formatting drift blocks the static tier for a batch closing T-25.5.22, independent of that finding's diff [Medium] — OPEN
+- **Spec/Doc:** The repo's static CI tier runs `gofumpt -l .` as a formatting gate, the same gate T-META.27/T-META.28 describe.
+- **Existing tests:** `lenny-test run` static tier's `gofumpt -l .` check.
+- **Gap:** `lenny-test static` reports "gofumpt reports unformatted files: cmd/lenny-gateway/auditpipeline.go, pkg/ops/upgradeservice/upgradeservice.go, tests/tier2_component/auditstore/scatter_redis_cache_test.go, tests/tier2_component/opsaudit/diagnostics_rate_limit_test.go"; reproduced against startSha `70da8dd0e79911df7ba01735d1e441666575c8d2` via `git show <startSha>:cmd/lenny-gateway/auditpipeline.go | gofumpt -l -`, confirming it predates this batch. Discovered while closing T-25.5.22. Same underlying drift and same four files as T-META.27/T-META.28, independently reproduced at a third startSha while closing a third, unrelated finding.
+- **Dependencies:** None — buildable today with `gofumpt -w .`. Resolving T-META.27 resolves this finding too.
+- **Suggested test:** Same as T-META.27: run `gofumpt -w .` on the four affected files, commit the result, and confirm `gofumpt -l .` reports no files.
+
+### - [ ] T-META.33 — Pre-existing gofumpt formatting drift confirmed at a fourth startSha, now including a fifth affected file, blocking the static tier gate [Low] — OPEN
+- **Spec/Doc:** The repo's static CI tier runs `gofumpt -l .` as a formatting gate, the same gate T-META.27/T-META.28/T-META.32 describe.
+- **Existing tests:** `lenny-test run` static tier's `gofumpt -l .` check, and a plain `gofumpt -l` against the files at commit.
+- **Gap:** `lenny-test run -since d73f0d095591f3f1f30896c2111421a58fe38a7e` (and a plain `gofumpt -l` against the files at commit `d73f0d095591f3f1f30896c2111421a58fe38a7e` itself) both report unformatted files: `cmd/lenny-gateway/auditpipeline.go`, `pkg/ops/upgradeservice/upgradeservice.go`, `tests/tier2_component/auditstore/scatter_redis_cache_test.go`, `tests/tier2_component/opsaudit/diagnostics_rate_limit_test.go`, and `tests/tier4_integration/backup_binary_test.go`. This causes the static tier (and therefore any `--since`-scoped full regression run for any later finding in this batch) to report FAIL even when the finding's own diff is unrelated and correct. Discovered while closing T-25.12.12. This is the same underlying drift as T-META.27/T-META.28/T-META.32, with one additional file (`tests/tier4_integration/backup_binary_test.go`) beyond the four those findings name.
+- **Dependencies:** None — buildable today with `gofumpt -w .`. Resolving T-META.27 (extended to cover the fifth file) resolves this finding too.
+- **Suggested test:** Run `gofumpt -w .` on the five affected files (the four from T-META.27 plus `tests/tier4_integration/backup_binary_test.go`), commit the result, and confirm `gofumpt -l .` reports no files.
+
+### - [ ] T-META.34 — change-graph.json pkg/ops/backup glob omits tier4 backup_restore_test.go and backup_preview_test.go from --changed selection [Low] — OPEN
+- **Spec/Doc:** `tests/change-graph.json`'s glob-keyed package-to-tier mapping, the same mechanism T-META.30/T-25.4.39/T-25.11.19 describe.
+- **Existing tests:** `tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip` and `tests/tier4_integration/backup_preview_test.go`.
+- **Gap:** `tests/change-graph.json`'s `globs["pkg/ops/backup"].integration` lists only `["tests/tier4_integration/backup_degradation_test.go"]`; grepping every glob entry in change-graph.json for `backup_restore_test.go` or `backup_preview_test.go` returns no matches. A change to `pkg/ops/backup` or `pkg/ops/backup/runner` therefore does not select `tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip` or `tests/tier4_integration/backup_preview_test.go` via `lenny-test run --changed`, even though both are tier4 tests over that package. `lenny-test validate-maps` does not flag this because it only checks that listed paths resolve, not that every existing tier2+ test for a package is listed in change-graph.json. Discovered while closing T-25.11.18.
+- **Dependencies:** None — buildable today: add both files to `globs["pkg/ops/backup"].integration` in `tests/change-graph.json`.
+- **Suggested test:** Add `tests/tier4_integration/backup_restore_test.go` and `tests/tier4_integration/backup_preview_test.go` to `globs["pkg/ops/backup"].integration` in `tests/change-graph.json`, and add a tier0 guard (mirroring T-META.25/T-25.11.19's pattern) asserting every tier2+ test file under a package's owning directory is referenced by that package's change-graph entry.
