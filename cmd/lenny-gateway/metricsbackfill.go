@@ -225,6 +225,12 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	// here once the registry is live.
 	if w.checkpointSvc != nil {
 		w.checkpointSvc.Metrics = gwMetrics
+		// §4.4 lines 254, 262 / §10.1 supersede-on-write / §12.5 line 303 —
+		// the upload driver's gateway-side counters (retry-exhausted storage
+		// failures, partial-manifest supersedes and finalisations,
+		// KMS-unavailable, orphaned objects, and size-exceeded) share the same
+		// live registry as the duration histogram above.
+		w.checkpointSvc.DriverMetrics = gwMetrics
 	}
 
 	// §12.5 ll. 282/303 — wire the artifact store's fail-closed T4

@@ -271,6 +271,46 @@ func TestDriverFinalisesCompleteWhenEveryByteConfirmed_spec_10_1(t *testing.T) {
 	}
 }
 
+// spec: §11.2 — a tenant with no configured storage limit
+// (storageQuotaBytes <= 0) is unlimited, so the checkpoint driver reserves
+// nothing against its counter and enforces no cumulative cap, matching the
+// client-upload quota gate. This is the posture of a freshly bootstrapped
+// tenant, which carries StorageQuotaBytes == 0.
+//
+// diagnosis: before the reserve() unlimited-tenant guard, resolving a
+// limit of 0 drove Reserve(probed, 0), which rejects every non-empty
+// checkpoint with ErrQuotaExceeded — the seal-and-export of every
+// completed session on an unlimited tenant aborts, its pod never reaches
+// the §6.2 occupancy-zero recycle branch, and the workspace is never
+// checkpointed. This test drives a complete checkpoint against a limit of 0
+// and asserts it finalises complete with the counter untouched; it fails
+// against the pre-guard code, where Checkpoint returns the quota rejection.
+func TestDriverSkipsReservationForUnlimitedTenant_spec_11_2(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes:    30,
+		chunkLens:     []int64{10, 10, 10},
+		truncateAfter: -1,
+	}, 0) // StorageQuotaBytes == 0: an unlimited tenant.
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint on an unlimited tenant: %v", err)
+	}
+	rec := latestManifest(t, h, "acme", sid)
+	if rec.Partial {
+		t.Errorf("manifest partial = true, want false after a complete checkpoint")
+	}
+	if rec.ManifestReason != partialmanifeststore.ReasonComplete {
+		t.Errorf("manifest_reason = %q, want complete", rec.ManifestReason)
+	}
+	if rec.ChunkCount != 3 {
+		t.Errorf("chunk_count = %d, want 3", rec.ChunkCount)
+	}
+	// No reservation was taken and none was released: the counter stays 0.
+	used, _ := h.quota.Used(context.Background(), "acme")
+	if used != 0 {
+		t.Errorf("storage counter = %d, want 0 (an unlimited tenant reserves nothing)", used)
+	}
+}
+
 // spec: §10.1 line 157 — the intent row is partial = true from INSERT and
 // stays partial until every declared byte is confirmed. A stream that
 // truncates before the Summary leaves partial = true and the sweep removes

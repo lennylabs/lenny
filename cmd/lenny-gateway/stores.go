@@ -1075,14 +1075,13 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			log.Printf("lenny-gateway: session and metadata stores are in-memory (no --postgres-dsn or --sqlite-path)")
 		}
 	}
-	// §4.4 line 236 partial-manifest store: persists the recovery-aid
-	// row written when an eviction checkpoint exceeds the preStop
-	// tiered cap and the workspace upload is incomplete. The store is
-	// always initialized; the writer is dormant until the §10.1
-	// partial-upload pipeline is wired, but the resume-side cleanup
-	// path is plumbed unconditionally so a row written by a
-	// follow-on release is cleaned up correctly the first time a
-	// session resumes.
+	// §4.4 line 236 / §10.1 checkpoint_manifest store: persists the
+	// intent, per-chunk confirm, and terminal finalisation rows the §15.1
+	// checkpoint driver writes as it produces a workspace checkpoint, plus
+	// the partial recovery-aid row an eviction checkpoint leaves when it
+	// exceeds the preStop tiered cap. The store is always initialized; the
+	// pod-lifecycle checkpointer wires it as its writer, and the resume-side
+	// cleanup path reads the same rows.
 	var partialManifests partialmanifeststore.Store
 	if pgPool != nil {
 		partialManifests = partialmanifestpg.New(pgPool, nil)
@@ -1826,6 +1825,16 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	blobs := w.blobs
 	credAssign := w.credAssign
 	exec := w.exec
+	// §10.1 / §11.2 / §12.5 — the object-store, manifest, catalog, and
+	// storage-quota seams the checkpoint driver produces against. Recorded
+	// on the accumulator by buildStores/buildRedisAndQuota, they are read
+	// here into the §15.1 checkpointer construction below.
+	objectStore := w.objectStore
+	partialManifests := w.partialManifests
+	blobsCataloged := w.blobsCataloged
+	minioStore := w.minioStore
+	storageCounter := w.storageCounter
+	tenants := w.tenants
 
 	// §15.1 pod placement: with --agent-namespace the gateway claims a
 	// §5 warm pod for each started session and dispatches its messages
@@ -2044,6 +2053,28 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			log.Printf("lenny-gateway: §4.6.1 Postgres-backed pod-claim fallback enabled")
 		}
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
+		// §10.1 / §13.2 — the checkpoint driver mints one presigned PUT
+		// capability per chunk against the resolved object store. The §13.2
+		// startup assertion above already failed boot unless that store
+		// implements Presigner whenever --agent-namespace is set, so the
+		// assertion holds on this path.
+		checkpointPresigner, _ := objectStore.(blobstore.Presigner)
+		// §12.5 — the confirmed-chunk artifact_store catalog (RecordPut) and
+		// the rotation-side chunk release (SoftDeleteRow / ListByPrefix +
+		// HardDeleteObject) run only against the durable Postgres+MinIO
+		// backends. A pod deployment without them leaves each interface field
+		// nil rather than wrapping a nil concrete pointer, which the driver's
+		// nil guards then skip.
+		var checkpointChunkRecorder checkpointer.ChunkRecorder
+		var checkpointChunkCatalog checkpointer.ChunkCatalogReleaser
+		if blobsCataloged != nil {
+			checkpointChunkRecorder = blobsCataloged
+			checkpointChunkCatalog = blobsCataloged
+		}
+		var checkpointChunkObjects checkpointer.ChunkObjectStore
+		if minioStore != nil {
+			checkpointChunkObjects = minioStore
+		}
 		checkpointSvc = &checkpointer.Checkpointer{
 			Sessions:       sessions,
 			Registry:       podRegistry,
@@ -2067,6 +2098,34 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			GrantWindow:     *checkpointGrantWindow,
 			CapabilityTTL:   time.Duration(*checkpointCapabilityTTLSeconds) * time.Second,
 			PoolGrantWindow: sessionserver.NewPoolPolicyReader(pools),
+			// §10.1 lines 130-141 — the produce → store pipeline seams: the
+			// gateway writes the checkpoint_manifest intent/confirm/finalise
+			// rows, signs per-chunk presigned PUT capabilities, confirms each
+			// committed chunk's bytes-actually-written with a StatObject, and
+			// catalogs it. Without these the driver aborts every non-empty
+			// checkpoint at its first ChunkReady, so seal-and-export never
+			// completes and a completed session's pod never reaches the §6.2
+			// occupancy-zero recycle branch.
+			Manifests:    partialManifests,
+			Presigner:    checkpointPresigner,
+			ObjectStore:  objectStore,
+			Cataloging:   checkpointChunkRecorder,
+			ChunkCatalog: checkpointChunkCatalog,
+			ChunkObjects: checkpointChunkObjects,
+			// §11.2 — reserve the probed workspace size against the tenant's
+			// storage counter before any grant and reconcile it against the
+			// confirmed total on every terminal arm. QuotaLimitFor resolves
+			// the tenant's storageQuotaBytes at reservation time; a tenant
+			// with no configured limit is unlimited and the driver skips the
+			// reservation.
+			Quota: storageCounter,
+			QuotaLimitFor: func(ctx context.Context, tenantID string) (int64, error) {
+				t, err := tenants.Get(ctx, tenantID)
+				if err != nil {
+					return 0, fmt.Errorf("resolve storage quota for tenant %s: %w", tenantID, err)
+				}
+				return t.StorageQuotaBytes, nil
+			},
 		}
 		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
 	}

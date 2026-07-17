@@ -359,6 +359,16 @@ func (d *uploadDriver) reserve(probed int64) error {
 	if err != nil {
 		return fmt.Errorf("checkpointer: resolve storage limit: %w", err)
 	}
+	// spec: §11.2 — a tenant with no configured storage limit
+	// (storageQuotaBytes <= 0) is unlimited, so there is nothing to reserve
+	// against and no cap to enforce, matching the client-upload quota gate.
+	// Skipping leaves quotaCapSet false so mintGrant enforces no cumulative
+	// ceiling and no release arm decrements a reservation this attempt never
+	// took. Reserve(probed, 0) would instead reject every checkpoint for an
+	// unlimited tenant with ErrQuotaExceeded.
+	if limit <= 0 {
+		return nil
+	}
 	prior, err := c.Quota.Reserve(d.ctx, d.tenantID, probed, limit)
 	if err != nil {
 		return fmt.Errorf("checkpointer: reserve checkpoint quota: %w", err)
