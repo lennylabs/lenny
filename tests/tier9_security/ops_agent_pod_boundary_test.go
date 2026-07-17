@@ -240,6 +240,16 @@ func TestOpsUnreachableFromAgentPod_spec_25_1(t *testing.T) {
 // hardened, non-root, read-only-root, dropped-ALL profile the other probe
 // pods use, and is pinned to the node the curl image is loaded on so it
 // schedules offline with imagePullPolicy: Never.
+//
+// The pod carries lenny.dev/managed=true, the label every agent-egress
+// NetworkPolicy selects (default-deny-all admits nothing; the supplemental
+// allow-pod-egress-* policies re-open one destination each to managed pods).
+// A real agent pod is managed by the Sandbox reconciler and carries it; a
+// probe that omits it would sit under default-deny with no egress allow and
+// could never reach the object store, so the boundary the test asserts would
+// be unobservable. The lenny-label-immutability webhook permits any initial
+// value on CREATE (it guards only UPDATE mutations), so a probe may carry the
+// label from the start.
 func createAgentProbe(t *testing.T, c *kind.Cluster, name string) {
 	t.Helper()
 	manifest := fmt.Sprintf(`apiVersion: v1
@@ -248,6 +258,7 @@ metadata:
   name: %s
   namespace: %s
   labels:
+    lenny.dev/managed: "true"
     lenny.dev/test: ops-agent-boundary-probe
 spec:
   nodeName: %s

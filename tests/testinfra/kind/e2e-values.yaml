@@ -351,6 +351,14 @@ minio:
   secretKey: "lennyminio123"
   bucket: "lenny-artifacts"
   useSSL: true
+  # §13.2 NET-071 — the agent-pod checkpoint-egress policy
+  # (allow-pod-egress-objectstore) and the paired gateway egress open the
+  # MinIO TLS port from tlsPort. The chart default is 9443, but the e2e MinIO
+  # (datastores.yaml) serves https on its API port 9000, so the overlay pins
+  # tlsPort to the port the fixture actually listens on. This affects only the
+  # rendered NetworkPolicies (the gateway reaches MinIO through minio.endpoint,
+  # which carries its own :9000 port); production keeps the chart-default 9443.
+  tlsPort: 9000
   # §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
   # exception to backends: embedded only; all other backends enforce TLS. The
   # e2e MinIO is a real in-cluster (non-embedded) backend, so the chart's
@@ -365,6 +373,24 @@ minio:
   tls:
     enabled: true
     caBundleConfigMap: lenny-minio-ca
+
+# §13.2 NET-071 — the object-store artifact backend and its agent-pod
+# checkpoint-egress allow-list. The e2e MinIO is an out-of-band self-managed
+# store (minio.endpoint set, minio.deploy false), so the chart renders the
+# allow-pod-egress-objectstore out-of-band arm: an ipBlock egress peer from
+# objectStorage.egressCIDRs on minio.tlsPort. Because the store runs
+# in-cluster on the Kind pod subnet (10.245.0.0/16, tests/testinfra/kind/
+# cluster.yaml), the allow-list is that subnet, which covers the MinIO pod IP.
+# A production out-of-band or cloud-managed install lists the external store's
+# PrivateLink, VPC-endpoint, or object-store CIDR here instead. The paired
+# agent-namespace ingress on the MinIO side is re-admitted by
+# allow-e2e-datastores-ingress in datastores.yaml (the e2e analog of the
+# chart's self-managed MinIO ingress clause; the out-of-band arm ships no
+# in-cluster ingress clause because a production out-of-band store is external
+# to the cluster).
+objectStorage:
+  egressCIDRs:
+    - "10.245.0.0/16"
 
 # Enable the feature-gated admission webhooks so the tier-5
 # admission_featuregated tests can exercise their behavioural half:
