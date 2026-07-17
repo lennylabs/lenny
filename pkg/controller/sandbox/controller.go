@@ -135,6 +135,15 @@ type Reconciler struct {
 	// the first search domain in the dedicated-DNS dnsConfig so in-cluster
 	// Service short-names resolve. Empty omits the namespace search domain.
 	ReleaseNamespace string
+	// ObjectStoreCAConfigMap is the name of the §13.2 per-agent-namespace
+	// ConfigMap holding the object-store CA trust bundle (from the chart's
+	// --objectstore-ca-configmap flag). When set, the reconciler projects the
+	// ConfigMap read-only into every agent pod and points the adapter's
+	// --objectstore-ca-bundle at it so the adapter trusts a self-managed
+	// object store's non-public CA during checkpoint upload. Empty (a
+	// cloud-managed endpoint chaining to a public CA, or an unconfigured
+	// deployment) leaves the pod without the bundle. spec: §13.2.
+	ObjectStoreCAConfigMap string
 	// StatusDedup is the §4.6.1 statusUpdateDeduplicationWindow gate. When
 	// set, a Sandbox status write within the window of the previous write
 	// for the same Sandbox is deferred and the reconcile requeued so the
@@ -306,30 +315,28 @@ func podReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// resolveTerminationGrace best-effort resolves the §5.2 grace-period
-// settings for the Sandbox's pool: the deployer-set base
-// (terminationGracePeriodSeconds) and the hard ceiling
-// (maxTerminationGracePeriodSeconds). It walks Sandbox → SandboxWarmPool
-// (by PoolRef) → SandboxTemplate (by TemplateRef). Any missing resource
-// leaves both unset (nil), so a transient lookup miss falls back to the
-// §4.6.1 120s default rather than failing pod creation. spec: §5.2 line
-// 516, §4.6.1.
-func (r *Reconciler) resolveTerminationGrace(ctx context.Context, sb *lennyv1.Sandbox) (base, max *int64) {
+// resolveTemplate best-effort resolves the SandboxTemplate backing the
+// Sandbox's pool by walking Sandbox → SandboxWarmPool (by PoolRef) →
+// SandboxTemplate (by TemplateRef). It returns nil on any miss (no pool
+// reference, a lookup error, or an empty template reference) so a transient
+// miss falls back to the pod builder's defaults rather than failing pod
+// creation. spec: §5.2, §4.6.1.
+func (r *Reconciler) resolveTemplate(ctx context.Context, sb *lennyv1.Sandbox) *lennyv1.SandboxTemplate {
 	if sb.Spec.PoolRef == "" {
-		return nil, nil
+		return nil
 	}
 	var pool lennyv1.SandboxWarmPool
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: sb.Spec.PoolRef}, &pool); err != nil {
-		return nil, nil
+		return nil
 	}
 	if pool.Spec.TemplateRef == "" {
-		return nil, nil
+		return nil
 	}
 	var tmpl lennyv1.SandboxTemplate
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: pool.Spec.TemplateRef}, &tmpl); err != nil {
-		return nil, nil
+		return nil
 	}
-	return tmpl.Spec.TerminationGracePeriodSeconds, tmpl.Spec.MaxTerminationGracePeriodSeconds
+	return &tmpl
 }
 
 // resourceClassName returns the §5.2 resource-class name to resolve for the
@@ -383,7 +390,16 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// spec: §5.3 line 677 — dev mode falls back to `standard` (runc).
 		profile = string(isolation.DefaultForMode(r.DevMode))
 	}
-	graceBase, graceMax := r.resolveTerminationGrace(ctx, sb)
+	// spec: §5.2 line 516 / §4.4 line 254 — resolve the pool's SandboxTemplate
+	// once and read the grace-period settings and the workspace-size hard limit
+	// off it. A missing template leaves each nil, so the pod builder falls back
+	// to its §4.6.1 grace default and renders no --workspace-size-limit-bytes.
+	var graceBase, graceMax, workspaceSizeLimit *int64
+	if tmpl := r.resolveTemplate(ctx, sb); tmpl != nil {
+		graceBase = tmpl.Spec.TerminationGracePeriodSeconds
+		graceMax = tmpl.Spec.MaxTerminationGracePeriodSeconds
+		workspaceSizeLimit = tmpl.Spec.WorkspaceSizeLimitBytes
+	}
 	// spec: §6.4 line 409 — encode the Runtime's inline sharedAssets for the
 	// adapter's --shared-assets flag so it materializes them into the
 	// read-only /workspace/shared tree at warm time. F-6.4.3.
@@ -458,6 +474,15 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// pool opted out via the lenny.dev/dns-policy: cluster-default label.
 		DedicatedDNSClusterIP: r.DedicatedDNSClusterIP,
 		ReleaseNamespace:      r.ReleaseNamespace,
+		// spec: §4.4 line 254 — the pool's workspace-size hard limit. When set,
+		// the builder renders --workspace-size-limit-bytes so the adapter runs
+		// its pre-checkpoint size probe; nil leaves the probe disabled.
+		WorkspaceSizeLimitBytes: workspaceSizeLimit,
+		// spec: §13.2 — the per-agent-namespace object-store CA ConfigMap. When
+		// set, the builder projects it read-only and points the adapter's
+		// --objectstore-ca-bundle at it so the adapter trusts a self-managed
+		// object store's non-public CA during checkpoint upload.
+		ObjectStoreCAConfigMap: r.ObjectStoreCAConfigMap,
 		// spec: §5.2 / §6.4 line 413 — resolve the Sandbox's resource class
 		// to container CPU/memory requests and limits so the pod has a
 		// per-pod cgroup boundary that accounts for the memory-backed tmpfs

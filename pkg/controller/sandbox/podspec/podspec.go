@@ -207,6 +207,24 @@ const (
 	// the token before expiry; the gateway validates the audience claim on
 	// every pod→gateway request.
 	saTokenExpirationSeconds int64 = 900
+
+	// objectStoreCAVolumeName, objectStoreCAMountPath, and objectStoreCAFile
+	// name the §13.2 object-store CA trust bundle projected into the pod's
+	// gateway-facing container. A self-managed object store (MinIO) presenting
+	// a server certificate signed by a non-public CA requires the adapter to
+	// trust that CA before it can complete the TLS handshake during checkpoint
+	// upload. The controller resolves a per-agent-namespace ConfigMap holding
+	// the CA in the `ca.crt` key; the builder mounts it read-only at the mount
+	// path and points the adapter's --objectstore-ca-bundle at the mounted
+	// file. A cloud-managed endpoint chains to a public CA and needs no bundle,
+	// so the volume, the mount, and the flag are all omitted when no ConfigMap
+	// is configured. spec: §13.2.
+	objectStoreCAVolumeName = "objectstore-ca"
+	objectStoreCAMountPath  = "/etc/lenny/objectstore-ca"
+	objectStoreCAFile       = "ca.crt"
+	// objectStoreCABundlePath is the in-pod path the adapter reads the CA
+	// trust bundle from (the mounted ConfigMap's ca.crt key).
+	objectStoreCABundlePath = objectStoreCAMountPath + "/" + objectStoreCAFile
 )
 
 // DeploymentModel is the §4.7 agent-pod deployment model. It mirrors
@@ -355,6 +373,29 @@ type Inputs struct {
 	// write it (read-only mount), so the scrub-space-prevention guarantee
 	// holds with or without configured assets. spec: §6.4 line 409 — F-6.4.3.
 	SharedAssetsArg string
+
+	// WorkspaceSizeLimitBytes is the §4.4 line 254 per-pod workspace-size
+	// hard limit resolved from the pool's SandboxTemplate. When set, the
+	// builder renders --workspace-size-limit-bytes onto the adapter so the
+	// adapter runs its pre-checkpoint workspace-size probe (stat the workspace
+	// tree, abort the checkpoint without quiescing the runtime when the
+	// measured size exceeds the limit). A nil value renders no flag, which
+	// keeps the probe disabled exactly where the pool declares no limit; the
+	// size probe, the §10.1 storage reservation it feeds, and the
+	// permanent-error checkpoint arm are all inert without it. spec: §4.4 line
+	// 254.
+	WorkspaceSizeLimitBytes *int64
+
+	// ObjectStoreCAConfigMap is the name of the §13.2 per-agent-namespace
+	// ConfigMap holding the object-store CA trust bundle (key `ca.crt`). When
+	// non-empty, the builder projects the ConfigMap read-only into the pod's
+	// gateway-facing container and points the adapter's --objectstore-ca-bundle
+	// at the mounted file so the adapter trusts a self-managed object store's
+	// non-public CA during checkpoint upload. The controller resolves the name
+	// from its --objectstore-ca-configmap flag. An empty value (a cloud-managed
+	// endpoint chaining to a public CA, or an unconfigured deployment) omits
+	// the volume, the mount, and the flag. spec: §13.2.
+	ObjectStoreCAConfigMap string
 
 	// DedicatedDNSClusterIP is the ClusterIP of the lenny-agent-dns
 	// Service in lenny-system. spec: §13.2 lines 470-490 (K8S-033) — when
@@ -518,30 +559,36 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sharedVolumeName, MountPath: sharedMount, ReadOnly: true},
 	}
 
+	adapterArgs := []string{
+		fmt.Sprintf("--addr=:%d", adapterPort),
+		// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
+		// use the single `/workspace/current` cwd. The concurrent-workspace
+		// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
+		// in v1 (tracked under F-6.4.2); when it lands, the builder will
+		// select the workspace root from the resolved Runtime layout
+		// instead of hard-coding it here.
+		"--workspace-root=" + workspaceMount + "/current",
+		// §4.7: PrepareWorkspace stages uploads here before
+		// FinalizeWorkspace promotes them into /workspace/current.
+		"--staging-dir=" + stagingPath,
+		// §4.7/§13: enforce the SO_PEERCRED MCP peer check against
+		// the runtime container's runAsUser.
+		fmt.Sprintf("--runtime-uid=%d", in.agentUID()),
+		// §4.7 sidecar transport: the adapter binds the abstract
+		// runtime socket the runtime container dials.
+		"--runtime-socket=" + RuntimeSocketName,
+	}
+	adapterArgs = append(adapterArgs, sharedAssetsArgs(in)...)
+	adapterArgs = append(adapterArgs, platformMCPArgs(in)...)
+	adapterArgs = append(adapterArgs, nonceOnlyArgs(in)...)
+	adapterArgs = append(adapterArgs, checkpointProbeArgs(in)...)
+
 	pod := basePod(in, runtimeClass)
 	pod.Spec.Containers = []corev1.Container{
 		{
 			Name:  "adapter",
 			Image: in.AdapterImage,
-			Args: append([]string{
-				fmt.Sprintf("--addr=:%d", adapterPort),
-				// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
-				// use the single `/workspace/current` cwd. The concurrent-workspace
-				// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
-				// in v1 (tracked under F-6.4.2); when it lands, the builder will
-				// select the workspace root from the resolved Runtime layout
-				// instead of hard-coding it here.
-				"--workspace-root=" + workspaceMount + "/current",
-				// §4.7: PrepareWorkspace stages uploads here before
-				// FinalizeWorkspace promotes them into /workspace/current.
-				"--staging-dir=" + stagingPath,
-				// §4.7/§13: enforce the SO_PEERCRED MCP peer check against
-				// the runtime container's runAsUser.
-				fmt.Sprintf("--runtime-uid=%d", in.agentUID()),
-				// §4.7 sidecar transport: the adapter binds the abstract
-				// runtime socket the runtime container dials.
-				"--runtime-socket=" + RuntimeSocketName,
-			}, append(append(sharedAssetsArgs(in), platformMCPArgs(in)...), nonceOnlyArgs(in)...)...),
+			Args:  adapterArgs,
 			// spec: §4.7, §5.2 — the adapter reports each per-slot cleanup
 			// outcome (ReportSessionScrub) and the whole-pod scrub outcome
 			// (ReportPodScrub) keyed on the pod identity. It reads that
@@ -579,6 +626,9 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 	// spec: §10.3 — the adapter is the pod's gateway-facing process, so the
 	// projected token mounts on the adapter container.
 	injectSATokenVolume(in, pod, []int{0})
+	// spec: §13.2 — the adapter uploads checkpoints to the object store, so
+	// the CA trust bundle mounts on the adapter container.
+	injectObjectStoreCAVolume(in, pod, []int{0})
 	injectEgressCaptureSidecar(in, pod, []int{1})
 	return pod, nil
 }
@@ -610,24 +660,29 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sharedVolumeName, MountPath: sharedMount},
 	}
 
+	embeddedArgs := []string{
+		fmt.Sprintf("--addr=:%d", adapterPort),
+		// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
+		// use the single `/workspace/current` cwd. The concurrent-workspace
+		// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
+		// in v1 (tracked under F-6.4.2); when it lands, the builder will
+		// select the workspace root from the resolved Runtime layout
+		// instead of hard-coding it here.
+		"--workspace-root=" + workspaceMount + "/current",
+		// §4.7: the embedded runtime is the adapter, so it stages
+		// uploads the same way the sidecar adapter does.
+		"--staging-dir=" + stagingPath,
+	}
+	embeddedArgs = append(embeddedArgs, sharedAssetsArgs(in)...)
+	embeddedArgs = append(embeddedArgs, platformMCPArgs(in)...)
+	embeddedArgs = append(embeddedArgs, checkpointProbeArgs(in)...)
+
 	pod := basePod(in, runtimeClass)
 	pod.Spec.Containers = []corev1.Container{
 		{
 			Name:  "runtime",
 			Image: in.RuntimeImage,
-			Args: append([]string{
-				fmt.Sprintf("--addr=:%d", adapterPort),
-				// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
-				// use the single `/workspace/current` cwd. The concurrent-workspace
-				// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
-				// in v1 (tracked under F-6.4.2); when it lands, the builder will
-				// select the workspace root from the resolved Runtime layout
-				// instead of hard-coding it here.
-				"--workspace-root=" + workspaceMount + "/current",
-				// §4.7: the embedded runtime is the adapter, so it stages
-				// uploads the same way the sidecar adapter does.
-				"--staging-dir=" + stagingPath,
-			}, append(sharedAssetsArgs(in), platformMCPArgs(in)...)...),
+			Args:  embeddedArgs,
 			// spec: §4.7, §5.2 — the embedded runtime is the adapter and the
 			// pod's gateway-facing process, so it emits ReportSessionScrub and
 			// ReportPodScrub keyed on the pod identity it reads from this
@@ -652,6 +707,9 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 	// spec: §10.3 — the embedded runtime is the pod's gateway-facing
 	// process, so the projected token mounts on the runtime container.
 	injectSATokenVolume(in, pod, []int{0})
+	// spec: §13.2 — the embedded runtime is the adapter and uploads
+	// checkpoints, so the CA trust bundle mounts on the runtime container.
+	injectObjectStoreCAVolume(in, pod, []int{0})
 	injectEgressCaptureSidecar(in, pod, []int{0})
 	return pod, nil
 }
@@ -794,6 +852,55 @@ func nonceOnlyArgs(in Inputs) []string {
 		return []string{"--require-so-peercred=false"}
 	}
 	return nil
+}
+
+// checkpointProbeArgs returns the §4.4 / §13.2 adapter flags for the
+// checkpoint upload path. --workspace-size-limit-bytes carries the §4.4
+// line 254 per-pod workspace-size limit so the adapter runs its
+// pre-checkpoint size probe; it is omitted when the pool declares no limit,
+// leaving the probe disabled. --objectstore-ca-bundle points the adapter at
+// the mounted §13.2 object-store CA trust bundle so it can complete the TLS
+// handshake to a self-managed object store; it is omitted when no CA
+// ConfigMap is configured (a cloud-managed endpoint chaining to a public CA).
+// spec: §4.4 line 254, §13.2.
+func checkpointProbeArgs(in Inputs) []string {
+	var args []string
+	if in.WorkspaceSizeLimitBytes != nil {
+		args = append(args, fmt.Sprintf("--workspace-size-limit-bytes=%d", *in.WorkspaceSizeLimitBytes))
+	}
+	if in.ObjectStoreCAConfigMap != "" {
+		args = append(args, "--objectstore-ca-bundle="+objectStoreCABundlePath)
+	}
+	return args
+}
+
+// injectObjectStoreCAVolume projects the §13.2 per-agent-namespace
+// object-store CA ConfigMap read-only into the pod and mounts it on the
+// container indices named in mountOn (the pod's gateway-facing container: the
+// adapter in the sidecar model, the runtime in the embedded model). The
+// adapter reads the CA from the mounted ca.crt file (objectStoreCABundlePath)
+// so it trusts a self-managed object store's non-public CA during checkpoint
+// upload. The injection is a no-op when no ConfigMap is configured, so a
+// cloud-managed endpoint chaining to a public CA carries no volume, mount, or
+// flag. spec: §13.2.
+func injectObjectStoreCAVolume(in Inputs, pod *corev1.Pod, mountOn []int) {
+	if in.ObjectStoreCAConfigMap == "" {
+		return
+	}
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: objectStoreCAVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: in.ObjectStoreCAConfigMap},
+			},
+		},
+	})
+	mount := corev1.VolumeMount{Name: objectStoreCAVolumeName, MountPath: objectStoreCAMountPath, ReadOnly: true}
+	for _, idx := range mountOn {
+		if idx >= 0 && idx < len(pod.Spec.Containers) {
+			pod.Spec.Containers[idx].VolumeMounts = append(pod.Spec.Containers[idx].VolumeMounts, mount)
+		}
+	}
 }
 
 // podNameEnv returns the Downward API POD_NAME env var the adapter reads

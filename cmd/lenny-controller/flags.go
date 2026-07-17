@@ -50,6 +50,7 @@ type controllerFlags struct {
 	saTokenAudience         string
 	agentServiceAccount     string
 	dedicatedDNSClusterIP   string
+	objectStoreCAConfigMap  string
 	runtimeClassStandard    string
 	runtimeClassSandboxed   string
 	runtimeClassMicrovm     string
@@ -107,6 +108,8 @@ func registerServerFlags(f *controllerFlags) {
 		"§10.3 zero-RBAC ServiceAccount bound to agent pods. Empty uses the namespace default SA (which carries no RBAC bindings in agent namespaces).")
 	flag.StringVar(&f.dedicatedDNSClusterIP, "dedicated-dns-cluster-ip", os.Getenv("LENNY_DEDICATED_DNS_CLUSTER_IP"),
 		"§13.2 (K8S-033) ClusterIP of the lenny-agent-dns Service (chart coredns.clusterIP). When set, every agent pod is stamped with dnsPolicy:None and a dnsConfig targeting this address so DNS resolves through the dedicated CoreDNS instance; pools that opt out via dnsPolicy:cluster-default keep the Kubernetes default ClusterFirst behavior. Empty leaves the cluster default in force.")
+	flag.StringVar(&f.objectStoreCAConfigMap, "objectstore-ca-configmap", os.Getenv("LENNY_OBJECTSTORE_CA_CONFIGMAP"),
+		"§13.2 name of the per-agent-namespace ConfigMap holding the object-store CA trust bundle (key ca.crt). When set, every agent pod projects the ConfigMap read-only and points the adapter's --objectstore-ca-bundle at it so the adapter trusts a self-managed object store's non-public CA during checkpoint upload. Empty (cloud-managed endpoint chaining to a public CA, or unconfigured) leaves the pod without the bundle.")
 }
 
 // registerPodIdentityFlags binds the §17.5 RuntimeClass-name overrides, the
