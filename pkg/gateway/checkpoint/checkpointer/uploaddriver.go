@@ -819,8 +819,15 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// finalised: recovered = false (the write path never recovers), the
 	// manifest_reason that named the arm, and the trigger the attempt was
 	// started with. The success arm (onSummary, partial = false) emits
-	// nothing.
-	if c.DriverMetrics != nil {
+	// nothing. The counter fires once per finalised row, so it is gated on the
+	// intent row having been written: an attempt that latched an abort before
+	// onProbe committed the row (a first-frame stream error or a deadline fire
+	// during the workspace-size probe) reaches Finalise with intentWritten ==
+	// false, where it updates zero rows and no partial manifest exists to
+	// count. Emitting there would inflate the recovered = false denominator of
+	// the recovery-rate signal, mirroring the reconcile guard that no-ops when
+	// ReleaseReservation reports zero rows affected.
+	if c.DriverMetrics != nil && d.intentWritten {
 		c.DriverMetrics.IncCheckpointPartial(d.pool, false, reason, d.trigger)
 	}
 	d.reconcile(ctx, confirmed)

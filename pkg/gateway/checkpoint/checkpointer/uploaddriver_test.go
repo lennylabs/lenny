@@ -43,6 +43,11 @@ type chunkedAdapter struct {
 	// sizeReject makes the adapter reject at the probe with
 	// FailedPrecondition, standing in for the workspace-size limit.
 	sizeReject bool
+	// crashBeforeProbe makes the adapter close the stream with a transport
+	// error after consuming CheckpointStart but before sending a Probe,
+	// standing in for a pod crash during the workspace-size probe. The gateway
+	// reaches its terminal abort with no intent row written.
+	crashBeforeProbe bool
 	// failCode, when set, terminates the stream with a CheckpointFailed
 	// frame carrying this error code after chunk 0 commits.
 	failCode string
@@ -62,6 +67,9 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 	_ = start.GetStart()
 	if a.sizeReject {
 		return status.Error(codes.FailedPrecondition, "workspace size 999 exceeds limit 100")
+	}
+	if a.crashBeforeProbe {
+		return status.Error(codes.Unavailable, "adapter crashed before the probe")
 	}
 	if err := stream.Send(&adapterv1.CheckpointServerMessage{
 		Msg: &adapterv1.CheckpointServerMessage_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
@@ -327,6 +335,32 @@ func TestDriverEmitsPartialCounterOnAbortArm_spec_16_1(t *testing.T) {
 	}
 	if !got.trigger.IsValid() {
 		t.Errorf("trigger = %q is not a member of the closed checkpoint.Trigger enum", got.trigger)
+	}
+}
+
+// spec: §16.1 line 195 — the partial counter increments once per partial-
+// manifest row finalised. An attempt whose stream errors before onProbe
+// commits the intent row finalises zero rows, so no lenny_checkpoint_partial_
+// total is emitted.
+//
+// diagnosis: finaliseAbort emitted IncCheckpointPartial unconditionally after
+// Manifests.Finalise returned, ignoring that Finalise no-ops (zero rows) when
+// no intent row was ever written. A pod crash during the workspace-size probe
+// routes to onStreamError with intentWritten == false; the pre-fix code counted
+// a recovered=false partial-manifest write that never happened, deflating the
+// recovery-rate denominator. The fix gates the emission on d.intentWritten, so
+// this test observes zero emissions where the pre-fix code observed one.
+func TestDriverEmitsNoPartialCounterWhenNoIntentRowWritten_spec_16_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		crashBeforeProbe: true,
+	}, 1<<30)
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded on a stream that crashed before the probe, want failure")
+	}
+	if len(m.partial) != 0 {
+		t.Fatalf("partial counter emissions = %d, want 0 when no intent row was finalised", len(m.partial))
 	}
 }
 
