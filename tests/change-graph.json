@@ -429,6 +429,10 @@
       "component": ["cmd/lenny-ops/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"]
     },
+    "cmd/lenny-backup": {
+      "unit": ["cmd/lenny-backup/..."],
+      "integration": ["tests/tier4_integration/backup_binary_test.go"]
+    },
     "buf.yaml": {
       "static": ["tests/tier0_static/schemas_test.go"]
     },
