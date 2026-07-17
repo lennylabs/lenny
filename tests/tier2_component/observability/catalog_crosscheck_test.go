@@ -48,6 +48,12 @@ import (
 // not an uncatalogued metric.
 //
 // spec: §4.9 line 1671 (sweep worker); §16.1 (metric catalog).
+//
+// diagnosis: the expired-lease sweep worker's counter
+// lenny_gateway_credential_leases_swept_total is missing from the §16.1
+// metric catalog or is registered with the wrong type. The sweep's count of
+// removed expired lease rows is then not a catalogued observable surface.
+// Register the metric as an unlabeled cumulative counter in the catalog.
 func TestCredentialLeaseSweepCounterInCatalog(t *testing.T) {
 	const name = "lenny_gateway_credential_leases_swept_total"
 	spec, ok := metricscatalog.LookupMetric(name)

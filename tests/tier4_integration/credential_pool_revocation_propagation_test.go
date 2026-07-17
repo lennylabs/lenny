@@ -334,6 +334,13 @@ func TestPoolCredentialEmergencyRevocationPropagatesAcrossReplicas(t *testing.T)
 //
 // spec: §4.9 (CREDENTIAL_REVOKED reachable for a pool-backed lease under the
 // shared store).
+//
+// diagnosis: the §4.9 emergency revoke deleted the credential-lease row
+// instead of retaining it under the shared-Postgres topology. A post-revocation
+// proxy request then resolves no lease and degrades to 401
+// LEASE_TOKEN_INVALID, never reaching the deny-list check, so the
+// CREDENTIAL_REVOKED rejection is unreachable for a pool-backed lease. Revoke
+// must retain the lease and add the credential to the deny list.
 func TestPoolCredentialEmergencyRevocationDeniesRetainedLeaseSharedStore(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
