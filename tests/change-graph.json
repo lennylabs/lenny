@@ -234,8 +234,18 @@
     },
     "cmd/lenny-gateway": {
       "static": ["cmd/lenny-gateway/..."],
+      "unit": ["cmd/lenny-gateway/..."],
       "contract": ["tests/tier3_contract/rest_sessions/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
+    },
+    "pkg/gateway/operability/health": {
+      "unit": ["pkg/gateway/operability/health/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/health_auth_test.go"],
+      "integration": ["tests/tier4_integration/ops_endpoints_test.go"]
+    },
+    "pkg/gateway/operability/recommendations": {
+      "unit": ["pkg/gateway/operability/recommendations/..."],
+      "contract": ["tests/tier3_contract/gateway_ops/endpoints_test.go"]
     },
     "pkg/auth": {
       "unit": ["pkg/auth/..."],
@@ -555,6 +565,10 @@
       "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_fix_test.go"],
       "security": ["tests/tier9_security/diagnostics_fix_guardrails_test.go"]
     },
+    "pkg/drift": {
+      "unit": ["pkg/drift/...", "pkg/ops/configservice/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]
+    },
     "pkg/ops/driftservice": {
       "unit": ["pkg/ops/driftservice/..."],
       "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]
@@ -626,6 +640,9 @@
     },
     "pkg/ops/registryservice": {
       "unit": ["pkg/ops/registryservice/..."]
+    },
+    "pkg/blobstore/replication": {
+      "unit": ["pkg/blobstore/replication/..."]
     },
     "pkg/ops/upgradeservice": {
       "unit": ["pkg/ops/upgradeservice/..."],

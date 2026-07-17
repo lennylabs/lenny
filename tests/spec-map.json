@@ -2247,6 +2247,7 @@
         "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
         "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go",
         "tests/tier3_contract/rest_mcp_consistency/consistency_test.go",
+        "tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_test.go::TestEventSubscriptionRESTMCPParityContract",
         "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
         "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
         "tests/tier3_contract/multiprotocol_journey/journey_test.go",
@@ -3206,6 +3207,7 @@
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapPackagesIncludeEveryTestReferencedPackage",
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "tests/tier8_chaos/store_failure_test.go",
         "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview"
@@ -3244,11 +3246,14 @@
         "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesTriggeringComponent_spec_25_3",
         "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesRecoveredComponent_spec_25_3",
         "pkg/gateway/operability/health/service_test.go::TestOnTransitionCarriesComponentSnapshots",
-        "pkg/gateway/operability/health/service_test.go::TestTriggeringComponentsNamesChangedComponent"
+        "pkg/gateway/operability/health/service_test.go::TestTriggeringComponentsNamesChangedComponent",
+        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphGatewayOperabilityPackagesSelectUnitTier",
+        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphLennyGatewayBinarySelectsUnitTier"
       ],
       "packages": [
         "pkg/gateway/operability/health",
-        "pkg/gateway/operability/recommendations"
+        "pkg/gateway/operability/recommendations",
+        "pkg/events"
       ],
       "blocked_until_phase": "4.5"
     },
@@ -3323,7 +3328,13 @@
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress"
       ],
       "packages": [
-        "cmd/lenny-ops"
+        "cmd/lenny-ops",
+        "pkg/ops/opsserver",
+        "pkg/ops/conventions",
+        "pkg/ops/probe",
+        "pkg/ops/coordination/pgstore",
+        "pkg/ops/coordination/redisstore",
+        "pkg/ops/escalation/pgstore"
       ],
       "blocked_until_phase": "3.5"
     },
@@ -3339,6 +3350,7 @@
         "pkg/ops/opsserver/event_subscriptions_test.go",
         "pkg/ops/opsserver/event_subscriptions_redaction_test.go",
         "tests/tier3_contract/ops_endpoints/events_test.go",
+        "tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_test.go::TestEventSubscriptionRESTMCPParityContract",
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier2_component/eventstream/read_surface_tenant_rbac_test.go::TestOpsEventStreamReadSurfaceTenantScopedCallerIsolation",
@@ -3393,8 +3405,10 @@
       ],
       "packages": [
         "pkg/ops/diagnostics",
+        "pkg/ops/diagnostics/prodsource",
         "pkg/ops/opsserver",
         "pkg/ops/doctor",
+        "pkg/ops/auditrate",
         "cmd/lenny-ops"
       ],
       "chart_templates": [
@@ -3421,7 +3435,11 @@
         "tests/tier4_integration/runbook_discovery_test.go"
       ],
       "packages": [
-        "pkg/ops/runbooks"
+        "pkg/ops/runbooks",
+        "pkg/ops/opsserver",
+        "pkg/gateway/operability/health",
+        "pkg/gateway/externalapi/openapi",
+        "pkg/ops/mcp"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.7 Operational Runbooks. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
@@ -3459,6 +3477,7 @@
         "pkg/ops/versionsource",
         "pkg/ops/opsserver",
         "pkg/ops/registryservice",
+        "pkg/ops/opsinventory",
         "pkg/releasechannel"
       ],
       "blocked_until_phase": "14",
@@ -3492,6 +3511,8 @@
       "tests": [
         "pkg/drift/drift_test.go",
         "pkg/ops/driftservice/gatewayreader/gatewayreader_test.go",
+        "tests/tier0_static/change_graph_drift_selection_test.go::TestChangeGraphDriftPackageSelectsUnitTier",
+        "tests/tier0_static/change_graph_drift_selection_test.go::TestChangeGraphDriftEntryCoversConfigServiceConsumer",
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/drift_reconcile_test.go",
@@ -3529,6 +3550,7 @@
         "pkg/ops/backup/runner/restoreexec_test.go",
         "pkg/ops/backup/runner/restoretest_test.go",
         "pkg/ops/backup/runner/runner_test.go",
+        "pkg/ops/backup/restoretest/restoretest_test.go",
         "pkg/ops/opsserver/backup_test.go",
         "pkg/gateway/externalapi/admin/artifact_replication_test.go",
         "pkg/blobstore/replication/replication_test.go",
@@ -3549,9 +3571,12 @@
         "pkg/ops/backup",
         "pkg/ops/backup/runner",
         "pkg/ops/backup/pgstore",
+        "pkg/ops/backup/restoretest",
         "pkg/ops/backup/k8slauncher",
         "pkg/blobstore/replication",
-        "pkg/gateway/externalapi/admin"
+        "pkg/gateway/externalapi/admin",
+        "pkg/ops/opsserver",
+        "pkg/gateway/sessionserver"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status. §25.11 also covers the continuous ArtifactStore replication pipeline (pkg/blobstore/replication, its Postgres-backed lag/state store, and the pkg/gateway/externalapi/admin artifact-replication resume endpoint), wired into cmd/lenny-gateway."
@@ -3564,6 +3589,7 @@
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E",
+        "tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_test.go::TestEventSubscriptionRESTMCPParityContract",
         "tests/tier5_e2e_kind/mcp_management_e2e_test.go::TestMCPManagementServerOnDeployedOps",
         "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListExposesNoOptionalFilters_spec_25_12",
         "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListForwardsOptionalFilter_spec_25_12",
@@ -3582,7 +3608,9 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer"
       ],
       "packages": [
-        "pkg/ops/mcp"
+        "pkg/ops/mcp",
+        "pkg/ops/opsserver",
+        "pkg/gateway/externalapi/openapi"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.12 MCP Management Server. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
@@ -3600,7 +3628,9 @@
         "charts/lenny/tests/tier-presets_test.yaml",
         "tests/tier8_chaos/store_failure_test.go"
       ],
-      "packages": [],
+      "packages": [
+        "pkg/alerting/inproceval"
+      ],
       "blocked_until_phase": "14",
       "notes": "§25.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The complementary tier-4 firing test renders the shared catalog to a Prometheus rule file and runs `promtool test rules` (the Prometheus rule engine, in a prom/prometheus container) across simulated time, driving the triggering metric conditions of the Prometheus-only alerts that the in-process fallback declines (rate: RedisUnavailable, `unless on()` join: WarmPoolExhausted, time(): BackupOverdue, increase(): BackupFailed, histogram_quantile: CheckpointDurationHigh) past their For windows and asserting each fires with its rendered severity label and annotations, so a broken rendered expression that would silently fail to page is caught (§25.13 lines 4676-4682). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
     },
