@@ -3244,7 +3244,9 @@
         "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesTriggeringComponent_spec_25_3",
         "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesRecoveredComponent_spec_25_3",
         "pkg/gateway/operability/health/service_test.go::TestOnTransitionCarriesComponentSnapshots",
-        "pkg/gateway/operability/health/service_test.go::TestTriggeringComponentsNamesChangedComponent"
+        "pkg/gateway/operability/health/service_test.go::TestTriggeringComponentsNamesChangedComponent",
+        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphGatewayOperabilityPackagesSelectUnitTier",
+        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphLennyGatewayBinarySelectsUnitTier"
       ],
       "packages": [
         "pkg/gateway/operability/health",

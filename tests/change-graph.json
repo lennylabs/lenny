@@ -234,8 +234,18 @@
     },
     "cmd/lenny-gateway": {
       "static": ["cmd/lenny-gateway/..."],
+      "unit": ["cmd/lenny-gateway/..."],
       "contract": ["tests/tier3_contract/rest_sessions/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
+    },
+    "pkg/gateway/operability/health": {
+      "unit": ["pkg/gateway/operability/health/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/health_auth_test.go"],
+      "integration": ["tests/tier4_integration/ops_endpoints_test.go"]
+    },
+    "pkg/gateway/operability/recommendations": {
+      "unit": ["pkg/gateway/operability/recommendations/..."],
+      "contract": ["tests/tier3_contract/gateway_ops/endpoints_test.go"]
     },
     "pkg/auth": {
       "unit": ["pkg/auth/..."],
