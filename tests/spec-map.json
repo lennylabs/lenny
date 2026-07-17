@@ -3256,6 +3256,7 @@
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsEndpointsSuiteSelectsContractTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsPackagesWithSuiteSelectUnitTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsDedicatedSuitesSelectHigherTiers",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphLennyOpsBinarySelectsUnitTier",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",

@@ -411,6 +411,9 @@
       "unit": ["cmd/lenny-token-service/..."],
       "contract": ["tests/tier3_contract/oauth_token/..."]
     },
+    "cmd/lenny-ops": {
+      "unit": ["cmd/lenny-ops/..."]
+    },
     "buf.yaml": {
       "static": ["tests/tier0_static/schemas_test.go"]
     },
