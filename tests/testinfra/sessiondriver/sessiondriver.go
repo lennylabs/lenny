@@ -504,6 +504,36 @@ func (d *Driver) Terminate(ctx context.Context, tenantID, sessionID string) erro
 	return nil
 }
 
+// Resume issues POST /v1/sessions/{id}/resume. The handler restores a
+// session that lost its pod (state `awaiting_client_action`) onto a
+// fresh pod: it reassembles the workspace from the last durable
+// checkpoint, transitions the row back to running, and returns the
+// updated session. The §7.2 `session.resumed` SSE event carries the
+// resolved `resumeMode` / `workspaceLost`; a caller that needs those
+// streams the event bus alongside this call. A claim failure surfaces
+// as a 503 the caller may retry once pods are available.
+//
+// spec: §7.3 (resume onto a fresh pod), §4.4 (checkpoint store restore).
+func (d *Driver) Resume(ctx context.Context, tenantID, sessionID string) (*Session, error) {
+	path := "/v1/sessions/" + sessionID + "/resume"
+	res, err := d.doRequest(ctx, http.MethodPost, path,
+		tenantAdmin(tenantID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("resume session %q: %w", sessionID, err)
+	}
+	defer res.Body.Close()
+	rb, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("resume session %q: status %d, body %s",
+			sessionID, res.StatusCode, string(rb))
+	}
+	var s Session
+	if err := json.Unmarshal(rb, &s); err != nil {
+		return nil, fmt.Errorf("decode session response: %w; body %s", err, string(rb))
+	}
+	return &s, nil
+}
+
 // DeleteSession issues DELETE /v1/sessions/{id}. The handler removes
 // the session row. A 204 / 200 is success; a 404 is not an error
 // (the row was already absent).

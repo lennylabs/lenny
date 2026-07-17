@@ -221,7 +221,8 @@
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]
     },
     "pkg/gateway/core/subsystem": {
       "unit": ["pkg/gateway/core/subsystem/..."],
@@ -251,7 +252,17 @@
       "unit": ["pkg/checkpoint/..."],
       "integration": ["tests/tier4_integration/checkpoint_resume_test.go"],
       "chaos": ["tests/tier8_chaos/minio_outage_during_checkpoint_test.go"],
-      "load_kind": ["tests/tier7b_load_kind/scenarios/checkpoint_duration.go"]
+      "load_kind": ["tests/tier7b_load_kind/scenarios/checkpoint_duration.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"],
+      "docs": ["tests/tier11_docs/checkpoint_pipeline_consistency_test.go"]
+    },
+    "pkg/gateway/checkpoint": {
+      "unit": ["pkg/gateway/checkpoint/..."],
+      "docs": ["tests/tier11_docs/checkpoint_pipeline_consistency_test.go"]
+    },
+    "pkg/gateway/metrics/gatewaymetrics": {
+      "unit": ["pkg/gateway/metrics/gatewaymetrics/..."],
+      "docs": ["tests/tier11_docs/checkpoint_pipeline_consistency_test.go"]
     },
     "pkg/observability/correlation": {
       "unit": ["pkg/observability/correlation/..."],
@@ -419,6 +430,9 @@
         "tests/tier5_e2e_kind/bootstrap_first_install_test.go",
         "tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go",
         "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
+      ],
+      "security": [
+        "tests/tier9_security/ops_agent_pod_boundary_test.go"
       ]
     },
     "cmd/runtimes/echo/": {
