@@ -170,6 +170,58 @@ func TestTickEmitsOnRotatedCheckpoint(t *testing.T) {
 	}
 }
 
+// TestTickCountsChunkedCheckpointOnce pins the gap unit at one retained
+// checkpoint (one §12.5 retention-catalog row) under the chunked-object
+// model: a complete checkpoint is stored as many chunk rows keyed
+// "{checkpoint_id}/chunk-{n}", and all of them collapse onto the shared
+// checkpoint_id. A three-chunk rotated checkpoint and a two-chunk live
+// checkpoint must report rotated_checkpoints=1 and live_checkpoints=1,
+// not the chunk fan-out. Before the distinct-checkpoint fix the
+// reconciler incremented per chunk row and would have reported
+// rotated_checkpoints=3 / live_checkpoints=2.
+//
+// spec: §12.8 line 739; §10.1 line 141.
+func TestTickCountsChunkedCheckpointOnce(t *testing.T) {
+	cat := &fakeCatalog{
+		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-chunked"}},
+		rows: map[string][]artifactcatalog.Record{
+			"acme|sess-chunked": {
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateLive, PartID: "cp-live/chunk-00000.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateLive, PartID: "cp-live/chunk-00001.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "cp-done/chunk-00000.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateSoftDeleted, PartID: "cp-done/chunk-00001.tar"},
+				{ArtifactType: artifactcatalog.ArtifactTypeCheckpoint, State: artifactcatalog.StateTombstoned, PartID: "cp-done/chunk-00002.tar"},
+			},
+		},
+	}
+	man := &fakeManifests{rows: map[string]partialmanifeststore.Record{
+		"acme|cp-live": {TenantID: "acme", CheckpointID: "cp-live", Partial: false, ManifestReason: partialmanifeststore.ReasonComplete},
+		"acme|cp-done": {TenantID: "acme", CheckpointID: "cp-done", Partial: false, ManifestReason: partialmanifeststore.ReasonComplete},
+	}}
+	app := &fakeAppender{}
+	m := &fakeMetrics{}
+	r := legalholdreconciler.New(cat, app, m, man, legalholdreconciler.Options{})
+	emitted, err := r.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if emitted != 1 {
+		t.Errorf("emitted = %d, want 1", emitted)
+	}
+	if len(app.rows) != 1 {
+		t.Fatalf("audit rows = %d, want 1", len(app.rows))
+	}
+	if !strings.Contains(app.rows[0].payload, `"live_checkpoints":1`) {
+		t.Errorf("chunked live checkpoint must count once: %q", app.rows[0].payload)
+	}
+	if !strings.Contains(app.rows[0].payload, `"rotated_checkpoints":1`) {
+		t.Errorf("chunked rotated checkpoint must count once: %q", app.rows[0].payload)
+	}
+	if m.counts["acme"] != 1 {
+		t.Errorf("metric counts = %v, want acme=1", m.counts)
+	}
+}
+
 // TestTickSkipsSessionWithoutRotatedCheckpoint verifies the
 // reconciler does not emit when every checkpoint is still live.
 func TestTickSkipsSessionWithoutRotatedCheckpoint(t *testing.T) {

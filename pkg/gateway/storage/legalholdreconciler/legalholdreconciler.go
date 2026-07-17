@@ -176,12 +176,16 @@ func (r *Reconciler) Tick(ctx context.Context) (int, error) {
 
 // detectGap inspects the per-session catalog rows and reports whether
 // any retained checkpoint has been rotated (soft_deleted or
-// tombstoned). A rotated chunk row only counts when it belongs to a
-// complete checkpoint: chunk rows of a §10.1 checkpoint_manifest
-// finalised `partial = true` are excluded because cleaning up an
-// aborted, truncated, superseded, or quota-refused partial attempt
-// destroyed nothing under hold. The returned (live, rotated) counts feed
-// the audit payload so the compliance team can size the impact at a
+// tombstoned). The gap unit is one retained checkpoint (one §12.5
+// retention-catalog row), so the many chunk rows of a single chunked
+// checkpoint (all ArtifactType=checkpoint, part_id
+// "{checkpoint_id}/chunk-{n}") collapse onto their shared checkpoint_id
+// and count once. A rotated checkpoint only counts when it is complete:
+// chunk rows of a §10.1 checkpoint_manifest finalised `partial = true`
+// are excluded because cleaning up an aborted, truncated, superseded, or
+// quota-refused partial attempt destroyed nothing under hold. The
+// returned (live, rotated) counts are distinct-checkpoint counts that
+// feed the audit payload so the compliance team can size the impact at a
 // glance. A session with every checkpoint live and at least one entry is
 // gap-free.
 //
@@ -191,14 +195,16 @@ func (r *Reconciler) detectGap(ctx context.Context, ref artifactcatalog.SessionR
 	if err != nil {
 		return false, checkpointSummary{}, fmt.Errorf("legalholdreconciler: list session %s/%s: %w", ref.TenantID, ref.SessionID, err)
 	}
-	var s checkpointSummary
+	live := map[string]struct{}{}
+	rotated := map[string]struct{}{}
 	for _, row := range rows {
 		if row.ArtifactType != artifactcatalog.ArtifactTypeCheckpoint {
 			continue
 		}
+		key := checkpointGroupKey(row.PartID)
 		switch row.State {
 		case artifactcatalog.StateLive:
-			s.live++
+			live[key] = struct{}{}
 		case artifactcatalog.StateSoftDeleted, artifactcatalog.StateTombstoned:
 			partial, err := r.rowBelongsToPartialManifest(ctx, ref.TenantID, row)
 			if err != nil {
@@ -207,9 +213,10 @@ func (r *Reconciler) detectGap(ctx context.Context, ref artifactcatalog.SessionR
 			if partial {
 				continue
 			}
-			s.rotated++
+			rotated[key] = struct{}{}
 		}
 	}
+	s := checkpointSummary{live: len(live), rotated: len(rotated)}
 	return s.rotated > 0, s, nil
 }
 
@@ -246,6 +253,22 @@ func (r *Reconciler) rowBelongsToPartialManifest(ctx context.Context, tenantID s
 		return false, fmt.Errorf("legalholdreconciler: lookup manifest %s/%s: %w", tenantID, checkpointID, err)
 	}
 	return m.Partial, nil
+}
+
+// checkpointGroupKey returns the identity that a checkpoint's
+// artifact_store rows share for de-duplication. Chunk objects keyed
+// "{checkpoint_id}/chunk-{n}.{enc}" collapse onto their checkpoint_id, so
+// the many chunk rows of one checkpoint count as a single retained
+// checkpoint. A row that carries no checkpoint segment groups under its
+// full part_id so two distinct unlinkable checkpoints still count
+// separately rather than collapsing onto an empty key.
+//
+// spec: §10.1 line 141.
+func checkpointGroupKey(partID string) string {
+	if id := checkpointIDFromPartID(partID); id != "" {
+		return id
+	}
+	return partID
 }
 
 // checkpointIDFromPartID returns the §10.1 checkpoint_id segment of a

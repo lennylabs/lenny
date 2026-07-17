@@ -13,7 +13,9 @@ package legalholdreconciler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,13 +28,16 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// countingAppender records the audit rows the reconciler commits.
+// countingAppender records the audit rows the reconciler commits,
+// retaining each row's payload so tests can assert the reported gap size.
 type countingAppender struct {
-	rows []string
+	rows     []string
+	payloads []string
 }
 
-func (a *countingAppender) Append(_ context.Context, tenantID, eventType string, _ json.RawMessage, _ time.Time) (audit.Row, error) {
+func (a *countingAppender) Append(_ context.Context, tenantID, eventType string, payload json.RawMessage, _ time.Time) (audit.Row, error) {
 	a.rows = append(a.rows, tenantID+"|"+eventType)
+	a.payloads = append(a.payloads, string(payload))
 	return audit.Row{}, nil
 }
 
@@ -49,6 +54,7 @@ func (m *countingMetrics) IncLegalHoldCheckpointGap(tenantID string) {
 const (
 	cpPartial  = "11111111-1111-1111-1111-111111111111"
 	cpComplete = "22222222-2222-2222-2222-222222222222"
+	cpChunked  = "33333333-3333-3333-3333-333333333333"
 )
 
 func seedTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) {
@@ -91,12 +97,21 @@ func seedManifest(t *testing.T, ctx context.Context, store *manifestpg.Store, te
 // rotated row.
 func seedRotatedCheckpointRow(t *testing.T, ctx context.Context, cat *artifactcatalog.PgStore, tenant, session, checkpointID string) {
 	t.Helper()
-	uri := "lenny-blob://" + tenant + "/" + session + "/" + checkpointID + "/chunk-00000.tar"
+	seedRotatedCheckpointChunk(t, ctx, cat, tenant, session, checkpointID, 0)
+}
+
+// seedRotatedCheckpointChunk inserts one legal-held checkpoint chunk row
+// keyed "{checkpoint_id}/chunk-{n}" and soft-deletes it. A checkpoint is
+// stored as many such chunk rows sharing one checkpoint_id.
+func seedRotatedCheckpointChunk(t *testing.T, ctx context.Context, cat *artifactcatalog.PgStore, tenant, session, checkpointID string, chunkIdx int) {
+	t.Helper()
+	chunk := fmt.Sprintf("chunk-%05d.tar", chunkIdx)
+	uri := "lenny-blob://" + tenant + "/" + session + "/" + checkpointID + "/" + chunk
 	if err := cat.Insert(ctx, artifactcatalog.Record{
 		URI:          uri,
 		TenantID:     tenant,
 		SessionID:    session,
-		PartID:       checkpointID + "/chunk-00000.tar",
+		PartID:       checkpointID + "/" + chunk,
 		ArtifactType: artifactcatalog.ArtifactTypeCheckpoint,
 		LegalHold:    true,
 		SizeBytes:    1024,
@@ -175,6 +190,39 @@ func TestReconcilerExcludesPartialManifestRotation(t *testing.T) {
 		}
 		if m.counts["acme"] != 1 {
 			t.Errorf("metric counts = %v, want acme=1", m.counts)
+		}
+	})
+
+	t.Run("chunked checkpoint counts once", func(t *testing.T) {
+		// A complete checkpoint is stored as many chunk rows sharing one
+		// checkpoint_id. All chunks rotate together, so the gap is one
+		// retained checkpoint (one §12.5 retention-catalog row), not one
+		// per chunk. The reported rotated_checkpoints must be 1 even though
+		// three chunk rows rotated. Before the distinct-checkpoint fix the
+		// reconciler counted per chunk row and would have reported 3.
+		seedManifest(t, ctx, manifests, "acme", "sess-chunked", cpChunked, "slot-k", true)
+		seedRotatedCheckpointChunk(t, ctx, cat, "acme", "sess-chunked", cpChunked, 0)
+		seedRotatedCheckpointChunk(t, ctx, cat, "acme", "sess-chunked", cpChunked, 1)
+		seedRotatedCheckpointChunk(t, ctx, cat, "acme", "sess-chunked", cpChunked, 2)
+
+		app := &countingAppender{}
+		m := &countingMetrics{}
+		r := legalholdreconciler.New(cat, app, m, manifests, legalholdreconciler.Options{Clock: clock})
+		if _, err := r.Tick(ctx); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		var chunkedPayload string
+		for i, row := range app.rows {
+			if row == "acme|legal_hold.checkpoint_gap_detected" &&
+				strings.Contains(app.payloads[i], `"session_id":"sess-chunked"`) {
+				chunkedPayload = app.payloads[i]
+			}
+		}
+		if chunkedPayload == "" {
+			t.Fatalf("no gap event for sess-chunked; rows = %v", app.rows)
+		}
+		if !strings.Contains(chunkedPayload, `"rotated_checkpoints":1`) {
+			t.Errorf("three rotated chunks of one checkpoint must report rotated_checkpoints=1: %q", chunkedPayload)
 		}
 	})
 }
