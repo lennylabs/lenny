@@ -89,6 +89,38 @@ func readSpecMapPackages(t *testing.T) map[string][]string {
 	return out
 }
 
+// readSpecMapTests returns, per section id, the `tests` list recorded
+// in tests/spec-map.json, with any trailing `::TestName` selector
+// stripped so the result is a set of repo-relative file paths.
+func readSpecMapTests(t *testing.T) map[string][]string {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map.json"))
+	if err != nil {
+		t.Fatalf("read spec-map.json: %v", err)
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse spec-map.json: %v", err)
+	}
+	out := map[string][]string{}
+	for id, sec := range doc.Sections {
+		paths := make([]string, len(sec.Tests))
+		for i, entry := range sec.Tests {
+			if idx := strings.Index(entry, "::"); idx >= 0 {
+				entry = entry[:idx]
+			}
+			paths[i] = entry
+		}
+		out[id] = paths
+	}
+	return out
+}
+
 // spec: 25.2 (agent operability architecture overview; the operability
 //
 //	surface is implemented under pkg/ops, split between the gateway and
@@ -271,6 +303,91 @@ func TestSpecMapDriftPackagesIncludeDiffAndSnapshotStore(t *testing.T) {
 	for _, want := range []string{"pkg/drift", "pkg/ops/driftservice/pgstore"} {
 		if !contains(pkgs, want) {
 			t.Errorf("spec-map.json §25.10 packages %v does not include %s", pkgs, want)
+		}
+	}
+}
+
+// spec: 25.11 ("The backup pipeline has two surfaces: a Postgres/config
+//
+//	archive pipeline ... and a continuous ArtifactStore replication
+//	pipeline (MinIO workspace bucket replicated to an off-cluster
+//	destination — see ArtifactStore Backup below)." and "#### ArtifactStore
+//	Backup (MinIO workspace bucket replication)", spec/25_agent-
+//	operability.md); TESTING.md §5 ("tests/spec-map.json maps every spec
+//	section to the tests, packages, migrations, and chart templates that
+//	encode it")
+//
+// diagnosis: §25.11 names two surfaces: the Postgres/config archive
+//
+//	pipeline (implemented across pkg/ops/backup and its runner, pgstore,
+//	and k8slauncher subpackages — each subpackage is a distinct Go
+//	package, so coverage/impact tooling keyed on packages[] does not
+//	walk into a subdirectory unless it is listed explicitly) and the
+//	continuous ArtifactStore replication pipeline (implemented in
+//	pkg/blobstore/replication and the pkg/gateway/externalapi/admin
+//	artifact-replication resume endpoint). The §25.11 packages[] entry
+//	previously named only pkg/ops/backup, so an edit to the runner,
+//	pgstore, k8slauncher, replication, or admin packages could not be
+//	tied back to §25.11 by the coverage/impact tooling.
+func TestSpecMapBackupPackagesIncludeSubpackagesAndReplication(t *testing.T) {
+	t.Parallel()
+
+	pkgs := readSpecMapPackages(t)["25.11"]
+	for _, want := range []string{
+		"pkg/ops/backup",
+		"pkg/ops/backup/runner",
+		"pkg/ops/backup/pgstore",
+		"pkg/ops/backup/k8slauncher",
+		"pkg/blobstore/replication",
+		"pkg/gateway/externalapi/admin",
+	} {
+		if !contains(pkgs, want) {
+			t.Errorf("spec-map.json §25.11 packages %v does not include %s", pkgs, want)
+		}
+	}
+}
+
+// spec: 25.11 (Backup Execution, Restore Execution, Storage, and
+//
+//	ArtifactStore Backup subsections; spec/25_agent-operability.md);
+//	TESTING.md §5 (spec-map maps sections to the tests that encode them)
+//
+// diagnosis: The substantive §25.11 coverage lives outside the single
+//
+//	tests[] entry (pkg/ops/backup/backup_test.go) the spec-map
+//	previously recorded: the restore, post-restore, region-selection,
+//	and size-estimate paths (restore_test.go, postrestore_test.go,
+//	region_test.go, estimate_test.go), the Postgres-backed job store and
+//	the Kubernetes Job launcher (pgstore/pgstore_test.go,
+//	k8slauncher/k8slauncher_test.go), the lenny-backup runner's dump,
+//	upload, redaction, and restore-test logic (the runner/*_test.go
+//	files), the lenny-ops HTTP handlers (opsserver/backup_test.go), and
+//	the continuous ArtifactStore replication surface
+//	(artifact_replication_test.go, replication_test.go,
+//	replication_wiring_test.go). A reader or tool relying on tests[]
+//	alone was misled about what §25.11 coverage exists on disk.
+func TestSpecMapBackupTestsIncludeRestoreAndReplicationFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := readSpecMapTests(t)["25.11"]
+	for _, want := range []string{
+		"pkg/ops/backup/restore_test.go",
+		"pkg/ops/backup/postrestore_test.go",
+		"pkg/ops/backup/region_test.go",
+		"pkg/ops/backup/estimate_test.go",
+		"pkg/ops/backup/pgstore/pgstore_test.go",
+		"pkg/ops/backup/k8slauncher/k8slauncher_test.go",
+		"pkg/ops/backup/runner/exec_test.go",
+		"pkg/ops/backup/runner/export_test.go",
+		"pkg/ops/backup/runner/redact_exec_test.go",
+		"pkg/ops/backup/runner/restoretest_test.go",
+		"pkg/ops/opsserver/backup_test.go",
+		"pkg/gateway/externalapi/admin/artifact_replication_test.go",
+		"pkg/blobstore/replication/replication_test.go",
+		"cmd/lenny-gateway/replication_wiring_test.go",
+	} {
+		if !contains(tests, want) {
+			t.Errorf("spec-map.json §25.11 tests %v does not include %s", tests, want)
 		}
 	}
 }

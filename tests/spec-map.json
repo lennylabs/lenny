@@ -3506,6 +3506,26 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/backup/backup_test.go",
+        "pkg/ops/backup/restore_test.go",
+        "pkg/ops/backup/postrestore_test.go",
+        "pkg/ops/backup/region_test.go",
+        "pkg/ops/backup/estimate_test.go",
+        "pkg/ops/backup/pgstore/pgstore_test.go",
+        "pkg/ops/backup/k8slauncher/k8slauncher_test.go",
+        "pkg/ops/backup/runner/audit_test.go",
+        "pkg/ops/backup/runner/audit_verify_internal_test.go",
+        "pkg/ops/backup/runner/exec_test.go",
+        "pkg/ops/backup/runner/export_test.go",
+        "pkg/ops/backup/runner/opsevents_test.go",
+        "pkg/ops/backup/runner/redact_exec_test.go",
+        "pkg/ops/backup/runner/redact_internal_test.go",
+        "pkg/ops/backup/runner/restoreexec_test.go",
+        "pkg/ops/backup/runner/restoretest_test.go",
+        "pkg/ops/backup/runner/runner_test.go",
+        "pkg/ops/opsserver/backup_test.go",
+        "pkg/gateway/externalapi/admin/artifact_replication_test.go",
+        "pkg/blobstore/replication/replication_test.go",
+        "cmd/lenny-gateway/replication_wiring_test.go",
         "tests/tier2_component/stores/backup_minio_roundtrip_test.go::TestBackupMinIORoundTrip",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
         "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
@@ -3519,10 +3539,15 @@
         "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11"
       ],
       "packages": [
-        "pkg/ops/backup"
+        "pkg/ops/backup",
+        "pkg/ops/backup/runner",
+        "pkg/ops/backup/pgstore",
+        "pkg/ops/backup/k8slauncher",
+        "pkg/blobstore/replication",
+        "pkg/gateway/externalapi/admin"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status."
+      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status. §25.11 also covers the continuous ArtifactStore replication pipeline (pkg/blobstore/replication, its Postgres-backed lag/state store, and the pkg/gateway/externalapi/admin artifact-replication resume endpoint), wired into cmd/lenny-gateway."
     },
     "25.12": {
       "title": "MCP Management Server",
