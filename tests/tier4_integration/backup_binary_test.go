@@ -123,7 +123,8 @@ func TestBackupBinaryFullModeAgainstPostgresAndMinIO(t *testing.T) {
 
 	runCtx, runCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer runCancel()
-	cmd := exec.CommandContext(runCtx, bin,
+	cmd := exec.CommandContext(
+		runCtx, bin,
 		"--mode", "full",
 		"--backup-id", backupID,
 		"--postgres-shard", pg.DSN,
@@ -175,7 +176,8 @@ func TestBackupBinaryFullModeAgainstPostgresAndMinIO(t *testing.T) {
 	// completion update against the real --report-dsn Postgres, proving
 	// deps.go assembled a working reporter rather than a test double.
 	var status, checksum, storagePath string
-	if err := reportPool.QueryRow(ctx,
+	if err := reportPool.QueryRow(
+		ctx,
 		`SELECT status, checksum, storage_path FROM ops_backups WHERE id = $1`, backupID,
 	).Scan(&status, &checksum, &storagePath); err != nil {
 		t.Fatalf("query ops_backups row %s: %v", backupID, err)

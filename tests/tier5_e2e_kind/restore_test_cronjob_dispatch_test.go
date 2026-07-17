@@ -90,12 +90,14 @@ func TestRestoreTestCronJobDispatchWritesResult(t *testing.T) {
 			"('%s', 'full', 'completed', '%s', '', 't5-e2e', 't5-e2e-seed', 'e2e', 1, now()) "+
 			"ON CONFLICT (id) DO UPDATE SET status = 'completed', storage_path = EXCLUDED.storage_path, "+
 			"completed_at = now();",
-		restoreTestDispatchBackupID, restoreTestDispatchObjectKey))
+		restoreTestDispatchBackupID, restoreTestDispatchObjectKey,
+	))
 	t.Cleanup(func() {
 		t5RunPsqlExec(t, c, pgIP, "t5-restore-test-dispatch-cleanup", fmt.Sprintf(
 			"DELETE FROM ops_restore_test_results WHERE backup_id = '%s'; "+
 				"DELETE FROM ops_backups WHERE id = '%s';",
-			restoreTestDispatchBackupID, restoreTestDispatchBackupID))
+			restoreTestDispatchBackupID, restoreTestDispatchBackupID,
+		))
 	})
 
 	overlay := renderRestoreTestOverlay(t, c)
@@ -136,7 +138,8 @@ func TestRestoreTestCronJobDispatchWritesResult(t *testing.T) {
 		jobName, podName)
 
 	row := t5RunPsqlQuery(t, c, pgIP, "t5-restore-test-dispatch-result", fmt.Sprintf(
-		"SELECT success||'|'||backup_id FROM ops_restore_test_results WHERE id = '%s'", podName))
+		"SELECT success||'|'||backup_id FROM ops_restore_test_results WHERE id = '%s'", podName,
+	))
 	fields := strings.Split(strings.TrimSpace(row), "|")
 	if len(fields) != 2 || fields[0] != "true" || fields[1] != restoreTestDispatchBackupID {
 		t.Fatalf("§25.11: ops_restore_test_results has no successful row for restore-test pod %q "+
@@ -380,7 +383,8 @@ func TestRestoreTestResultReachesLennyOpsMetrics(t *testing.T) {
 		"INSERT INTO ops_backups (id, type, status, storage_path, checksum, started_by, job_id, "+
 			"platform_version, schema_version, completed_at) VALUES "+
 			"('%s', 'full', 'completed', '%s', '', 't5-e2e', 't5-e2e-seed', 'e2e', 1, now());",
-		restoreTestDispatchBackupID, restoreTestDispatchObjectKey))
+		restoreTestDispatchBackupID, restoreTestDispatchObjectKey,
+	))
 
 	overlay := renderRestoreTestOverlay(t, c)
 	if out, err := c.ApplyStdin(t, overlay); err != nil {
