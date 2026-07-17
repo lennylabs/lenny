@@ -420,6 +420,15 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **proposal scope:** Disambiguate the two backup kinds in the canonical operationId format (distinct prefix or key component) so the lookup is single-valued, and reconcile the §25.4 Filters "single-element list" contract.
 - **severity:** Low
 
+### C-40 — §8.3 credential-availability pre-check at delegation time (CREDENTIAL_POOL_EXHAUSTED pre-claim wastage guard) — §8.3
+- **status:** open
+- **assigned:** proposal-C
+- **findings:** T-8.3.1
+- **root spec gap:** §8.3 requires a general credential-availability pre-check before a delegation claims a pod: if no provider in the intersection has an available credential, reject with `CREDENTIAL_POOL_EXHAUSTED` before claiming (the pre-claim wastage guard), for all `inherit`/`independent` delegations, cross-env or not. This is absent from production code (per T-8.3.1) and only a skipped scaffold exists (`tests/tier4_integration/delegation_credential_pool_race_test.go`). It is DISTINCT from C-20's cross-environment provider-compatibility check (`CREDENTIAL_PROVIDER_MISMATCH`) but shares the same delegate-handler pre-claim insertion point.
+- **proposal scope:** Build the §8.3 delegation-time credential-availability pre-check (`CREDENTIAL_POOL_EXHAUSTED` before the pod-claiming Delegate call), reusing the pre-claim step C-20 adds; then un-skip `delegation_credential_pool_race_test.go`.
+- **severity:** High
+- **relates to:** C-20 (shares the delegate-handler pre-claim insertion point; assigned to the same worker, proposal-C, to keep both on one code path and avoid cross-worker conflict)
+
 ---
 
 ## Test-infra findings to de-escalate (hand back to closure runners)
@@ -460,3 +469,4 @@ with the action taken, keeping a short trail here.
 - [x] re-cluster 2026-07-17: folded T-25.4.38 into C-29 (recommendation aggregator, same root gap); added C-39 for T-25.4.33 (backup operationId disambiguation); de-escalated test-infra T-25.4.12 (orphaned-commit re-verify).
 - [x] re-cluster 2026-07-17: folded T-25.6.14→C-23 (gateway :8443 TLS/HTTP probe collision) and T-25.6.17→C-24 (§25.6 both-down 503 error code) — both match existing unassigned clusters.
 - [ ] pending fold-in to ASSIGNED cluster C-02 (§25.5 MCP-native subscription, proposal-A): T-25.5.14 — whether webhook-subscription CRUD should be MCP-exposed or REST-only is deliberate. Not applied now (C-02 assigned); fold in when C-02 reopens or before proposal-A starts it.
+- [x] from proposal-C (C-20): route the §8.3 credential-availability pre-check (CREDENTIAL_POOL_EXHAUSTED pre-claim guard) as its own cluster, distinct from C-20's compatibility check. → Done 2026-07-17: created C-40 (findings T-8.3.1), assigned to proposal-C since it shares C-20's insertion point.
