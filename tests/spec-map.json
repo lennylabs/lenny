@@ -3379,6 +3379,7 @@
         "tests/tier4_integration/diagnostics_test.go",
         "tests/tier5_e2e_kind/diagnostics_fix_test.go",
         "tests/tier5_e2e_kind/diagnostics_cause_chain_test.go",
+        "tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go",
         "tests/tier9_security/diagnostics_fix_guardrails_test.go"
       ],
       "packages": [
