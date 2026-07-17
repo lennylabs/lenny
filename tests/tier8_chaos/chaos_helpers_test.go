@@ -499,6 +499,25 @@ func parseHTTPProbe(out string) httpProbe {
 type healthReport struct {
 	Status     string            `json:"status"`
 	Components []healthComponent `json:"components"`
+
+	// Degradation is the §25.2 canonical response-level envelope the
+	// §25.3 aggregate health report carries. The chaos tests decode it so
+	// a store outage is asserted against the top-level envelope the agent
+	// reads (its level and thresholdSource), not only the per-component
+	// status. spec: §25.2 line 224 (thresholdSource is used for health
+	// responses); §25.3 line 529 (health Degradation); §25.13 line 4851.
+	Degradation *degradationEnvelope `json:"degradation"`
+}
+
+// degradationEnvelope is the subset of the §25.2 canonical degradation
+// object the chaos tests assert against. The gateway's in-process
+// aggregate view always evaluates the compiled-in thresholds, so the
+// §25.3 health report stamps thresholdSource=compiled-in-defaults; the
+// level tracks the worst component (healthy→healthy, degraded→degraded,
+// unhealthy→failed). spec: §25.2 line 224; §25.3 line 529; §25.13 line 4851.
+type degradationEnvelope struct {
+	Level           string `json:"level"`
+	ThresholdSource string `json:"thresholdSource"`
 }
 
 // healthComponent is one entry in the §25.3 health report.
