@@ -235,7 +235,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-20 — Cross-environment delegation credential compatibility check — §8.3
-- **status:** converging:0043 (revising in place per reviewer sign-off decisions — folding in the concrete inherit shared-pool credential ASSIGNMENT (spec/08:470 (b)): an admitted inherit delegation assigns the child a credential from the origin pool constrained to the origin∩child provider intersection, in addition to the compatibility gate; decisions 1/2 resolved as live re-resolution + stricter tenant-policy∩supportedProviders. §8.3:468 availability pre-check still out of scope — see inbox item)
+- **status:** in-review:0043 (credentialPropagation field + enum/validator, origin-pool threading, the cross-env inherit compatibility gate emitting CREDENTIAL_PROVIDER_MISMATCH, AND the concrete inherit shared-pool credential assignment at finalize (origin∩child intersection); minimal SPEC-1 omit-default clarification. §8.3:468 availability pre-check and deny-mode suppression out of scope — see inbox item)
 - **assigned:** proposal-C
 - **findings:** T-BED.8
 - **root spec gap:** The §8.3 `credentialPropagation: inherit` provider-compatibility check (intersect parent pool providers with child runtime supportedProviders, reject empty with `CREDENTIAL_PROVIDER_MISMATCH` before pod allocation) is fully specified but entirely absent — there is no `credentialPropagation` field on the schema or Request and no code produces the error.
