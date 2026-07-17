@@ -3081,13 +3081,16 @@
       "title": "Server Discovery and Routing",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "pkg/ctlcli/session_ops_test.go::TestMCPManagementAutoDiscoversOpsURL",
+        "pkg/ctlcli/session_ops_test.go::TestMCPManagementFallsBackToGatewayWhenOpsURLAbsent",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlMCPManagementOpsRoutingE2E"
       ],
       "packages": [
         "cmd/lenny-ctl"
       ],
       "blocked_until_phase": "14",
-      "notes": "lenny-ctl server discovery and routing subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+      "notes": "lenny-ctl server discovery and routing subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands. The tier-4 test drives the real lenny-ctl binary against a live gateway and lenny-ops pair to cover the rule-2 auto-discovery and rule-3 gateway-host fallback end to end for the mcp-management group."
     },
     "24.17": {
       "title": "Session Operations",
@@ -3210,13 +3213,15 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapPackagesIncludeEveryTestReferencedPackage",
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "tests/tier8_chaos/store_failure_test.go",
-        "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview"
+        "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview",
+        "pkg/ops/events/read_surface_test.go::TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261"
       ],
       "packages": [
-        "pkg/ops/conventions"
+        "pkg/ops/conventions",
+        "pkg/ops/events"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.2 Architecture Overview. The API conventions shared by every operability endpoint (the canonical degradation and error envelopes and pagination) are implemented in pkg/ops/conventions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.2 Architecture Overview. The API conventions shared by every operability endpoint (the canonical degradation and error envelopes and pagination) are implemented in pkg/ops/conventions. The §25.2 cursor-opaqueness and gap-detection rule (a cursor minted at one actualSource presented at another reports gapDetected/oldestAvailableCursor/suggestedAction) is exercised against the §25.5 read surface in pkg/ops/events. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
     },
     "25.3": {
       "title": "Gateway-Side Ops Endpoints",
@@ -3343,6 +3348,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/eventsubscription/pgstore/pgstore_test.go::TestPgStoreRoundTrip_spec_25_5",
+        "pkg/ops/eventsubscription/eventsubscription_test.go::TestServiceInvalidFilterType_spec_25_5",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
@@ -3557,11 +3563,14 @@
         "cmd/lenny-gateway/replication_wiring_test.go",
         "tests/tier2_component/stores/backup_minio_roundtrip_test.go::TestBackupMinIORoundTrip",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
+        "tests/tier4_integration/backup_binary_test.go::TestBackupBinaryFullModeAgainstPostgresAndMinIO",
         "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupJobCreationFailsWhenKubernetesAPIDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown",
         "tests/tier5_e2e_kind/backup_test.go::TestBackupImageProvidesPostgresClientTools",
+        "tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go::TestRestoreTestCronJobDispatchWritesResult",
+        "tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go::TestRestoreTestResultReachesLennyOpsMetrics",
         "tests/tier9_security/backup_isolation_test.go::TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11",
         "tests/tier9_security/backup_isolation_test.go::TestBackupJobEgressBoundToAllowlist_spec_25_11",
         "tests/tier6_e2e_cloud/artifact_replication_residency_test.go::TestCloudArtifactReplicationResidency",
@@ -3639,13 +3648,14 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "cmd/lenny-ctl/...",
-        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E"
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlMCPManagementOpsRoutingE2E"
       ],
       "packages": [
         "cmd/lenny-ctl"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.14 lenny-ctl Extensions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.14 lenny-ctl Extensions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. TestLennyCtlMCPManagementOpsRoutingE2E drives the real lenny-ctl binary against a live cmd/lenny-gateway and cmd/lenny-ops pair to cover the §24.16 opsServiceURL auto-discovery and gateway-host fallback for the mcp-management group specifically."
     },
     "25.15": {
       "title": "Failure Mode Analysis",

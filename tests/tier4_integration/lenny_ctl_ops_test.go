@@ -20,10 +20,12 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/ctlcli"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -206,5 +208,90 @@ func TestLennyCtlOperabilityCommandsE2E(t *testing.T) {
 	}
 	if _, ok := backups["hasMore"].(bool); !ok {
 		t.Errorf("lenny-ctl backup list: response has no hasMore field (the §25.11 BackupPage envelope): %v", backups)
+	}
+}
+
+// TestLennyCtlMCPManagementOpsRoutingE2E drives `lenny-ctl mcp-management
+// tools` with no `--ops-server` flag against a real cmd/lenny-gateway and
+// cmd/lenny-ops pair, proving the §24.16 rule-2 auto-discovery and rule-3
+// fallback both work end to end rather than against an httptest stub. The
+// pkg/ctlcli unit tests (TestMCPManagementAutoDiscoversOpsURL,
+// TestMCPManagementFallsBackToGatewayWhenOpsURLAbsent) fake both the
+// gateway and the ops server with httptest.NewServer; this test is the
+// tier-4 companion that exercises the real §24.16 lenny-ctl -> gateway ->
+// lenny-ops hop.
+//
+// spec: §24.16 "Otherwise, call GET /v1/admin/platform/version on the
+// gateway. Its response includes an opsServiceURL field; lenny-ctl caches
+// this for the duration of the command invocation and routes ops calls
+// there." (rule 2) and "If auto-discovery fails (gateway unreachable,
+// opsServiceURL absent because the cluster is mid-upgrade), lenny-ctl
+// falls back to the gateway host under the assumption that gateway-hosted
+// operability endpoints (§25.3) still work, and surfaces a warning for any
+// ops-exclusive command." (rule 3). §25.14 "lenny-ctl mcp-management tools
+// call <name> --args <json>" (the flag name matches --args, not --params).
+// diagnosis: a failure means the real gateway<->lenny-ops auto-discovery
+// hop diverged from §24.16 when driven through the actual lenny-ctl
+// binary path: either the gateway's advertised opsServiceURL did not
+// route the mcp-management call to the live ops process, or the rule-3
+// gateway-host fallback did not fire (or fired silently) when the
+// gateway advertised no opsServiceURL.
+func TestLennyCtlMCPManagementOpsRoutingE2E(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	opsprocess.SkipUnlessAvailable(t)
+
+	// ---- rule 2: auto-discovery routes to the real lenny-ops process ----
+	// The ops process is started first so its base URL can be advertised
+	// by the gateway's GET /v1/admin/platform/version response.
+	ops := opsprocess.StartWith(t)
+	gw := gateway.StartWith(t, "--dev-mode", "--ops-service-url="+ops.BaseURL())
+
+	runCtlAgainst := func(apiURL string, args ...string) (int, []byte, []byte) {
+		t.Helper()
+		full := append([]string{
+			"--api-url", apiURL,
+			"--dev-tenant", "acme",
+			"--dev-roles", "platform-admin",
+		}, args...)
+		var stdout, stderr bytes.Buffer
+		code := ctlcli.Run(full, &stdout, &stderr, "test")
+		return code, stdout.Bytes(), stderr.Bytes()
+	}
+
+	// No --ops-server is passed: the CLI must auto-discover the live ops
+	// URL from the gateway's version response and route the §25.12
+	// tools/list JSON-RPC call to it.
+	code, out, stderr := runCtlAgainst(gw.BaseURL(), "mcp-management", "tools")
+	if code != 0 {
+		t.Fatalf("lenny-ctl mcp-management tools (auto-discovery): exit %d, want 0; stdout %s; stderr %s", code, out, stderr)
+	}
+	var rpc struct {
+		Result struct {
+			Tools []any `json:"tools"`
+		} `json:"result"`
+		Error *json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(out, &rpc); err != nil {
+		t.Fatalf("lenny-ctl mcp-management tools: stdout is not a JSON-RPC response (%v): %s", err, out)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("lenny-ctl mcp-management tools: JSON-RPC error: %s", out)
+	}
+	if rpc.Result.Tools == nil {
+		t.Errorf("lenny-ctl mcp-management tools: result carried no tools array (auto-discovery did not reach the real /mcp/management server): %s", out)
+	}
+
+	// ---- rule 3: no opsServiceURL advertised -> gateway-host fallback,
+	// with a clear warning, rather than a silent failure ----
+	gwNoOps := gateway.StartWith(t, "--dev-mode")
+	code, _, stderr = runCtlAgainst(gwNoOps.BaseURL(), "mcp-management", "tools")
+	if code == 0 {
+		t.Fatalf("lenny-ctl mcp-management tools against a gateway with no opsServiceURL: exit 0, want non-zero (the gateway does not mount /mcp/management, so the rule-3 fallback target cannot serve the call)")
+	}
+	if !strings.Contains(string(stderr), "opsServiceURL") {
+		t.Errorf("lenny-ctl mcp-management tools against a gateway with no opsServiceURL: stderr carried no clear opsServiceURL diagnostic: %s", stderr)
+	}
+	if !strings.Contains(string(stderr), "falling back to the gateway host") {
+		t.Errorf("lenny-ctl mcp-management tools against a gateway with no opsServiceURL: stderr did not report the §24.16 rule-3 gateway-host fallback: %s", stderr)
 	}
 }

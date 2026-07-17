@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/events"
 )
 
 // Canonical §25.5 error codes for the subscription surface. The HTTP
@@ -679,14 +681,21 @@ func storeUnavailable() *Error {
 	return &Error{Code: ErrCodeNoDurableStore, Message: "subscription store unavailable"}
 }
 
-// normalizeTypes trims and sorts the filter types and rejects empty
-// entries with INVALID_EVENT_FILTER. spec: §25.5 line 2795.
+// normalizeTypes trims and sorts the filter types and rejects an empty
+// or unrecognized entry with INVALID_EVENT_FILTER. An entry is
+// recognized whether given as the bare §16.6 short name
+// (`alert_fired`) or the full CloudEvents type (`dev.lenny.alert_fired`).
+// spec: §25.5 line 2795 ("Unrecognized event type or severity in
+// filter"); §16.6 (event-type catalogue).
 func normalizeTypes(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	for _, t := range in {
 		t = strings.TrimSpace(t)
 		if t == "" {
 			return nil, &Error{Code: ErrCodeInvalidFilter, Message: "types entries must be non-empty"}
+		}
+		if err := events.ValidateFilterTokens(t, ""); err != nil {
+			return nil, &Error{Code: ErrCodeInvalidFilter, Message: fmt.Sprintf("unrecognized event type %q", t)}
 		}
 		out = append(out, t)
 	}

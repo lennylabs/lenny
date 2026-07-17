@@ -204,6 +204,48 @@ func TestPoll_MixedCursorKind_spec_25_5_2674(t *testing.T) {
 	}
 }
 
+// spec: §25.2 lines 261-271 — "Agents MUST NOT parse cursors. A cursor
+// produced by one `actualSource` may be invalid at a different source
+// — agents treat cursor incompatibility as a gap (see below) and
+// reset." and "When the provided cursor cannot be honored (evicted
+// from a ring buffer, invalidated by a source transition, or
+// otherwise lost), the response includes `"gapDetected": true` and a
+// suggested recovery cursor": `oldestAvailableCursor` and
+// `"suggestedAction": "resync"`.
+//
+// A cursor minted at the Redis stream (a foreign actualSource) is
+// presented to the poll surface while it is degraded to the gateway
+// buffer by a Redis outage. The buffer never recorded that eventKey,
+// so honoring the cursor requires a source transition the buffer
+// cannot make; the response must report the gap and its recovery hint
+// rather than silently resetting to a fresh connect.
+func TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261(t *testing.T) {
+	s := New(Options{
+		Capacity:     16,
+		Now:          ts,
+		SourceHealth: StaticSourceHealth{Redis: false, Gateway: true},
+	})
+	s.Publish(context.Background(), gwevents.OperationalEvent{Type: "alert_fired"})
+
+	// A cursor produced by the Redis stream, carrying an eventKey this
+	// buffer never held.
+	redisCursor := encodeCursor(SourceKindRedis, "redis-replica:1699999999999999999:1")
+	page := poll(t, s, "/v1/admin/events?cursor="+url.QueryEscape(redisCursor))
+
+	if page.Degradation == nil || page.Degradation.ActualSource != "gateway-buffer" {
+		t.Fatalf("expected the poll to be served from the gateway buffer during the Redis outage, got degradation=%+v", page.Degradation)
+	}
+	if !page.Pagination.GapDetected {
+		t.Fatal("expected gapDetected for a cursor minted at a different actualSource")
+	}
+	if page.Pagination.OldestAvailableCursor == "" {
+		t.Error("gap response must carry oldestAvailableCursor")
+	}
+	if page.Pagination.SuggestedAction != "resync" {
+		t.Errorf("suggestedAction = %q, want resync", page.Pagination.SuggestedAction)
+	}
+}
+
 // spec: §25.5 lines 2679-2680 — the SSE id: line carries the
 // CloudEvents id (eventKey), not the internal buffer sequence.
 func TestStream_IDLineIsEventKey_spec_25_5_2679(t *testing.T) {
