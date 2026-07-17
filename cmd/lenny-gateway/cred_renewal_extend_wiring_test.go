@@ -120,6 +120,7 @@ func (f *fakeExtendAssigner) Assign(_, _, _, _ string) (credential.Lease, error)
 func (f *fakeExtendAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
 	return nil, nil
 }
+
 func (f *fakeExtendAssigner) ProtoLeaseByID(string) (*adapterv1.CredentialLease, error) {
 	return nil, nil
 }
