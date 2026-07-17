@@ -43,6 +43,28 @@ open → assigned:<worker> → claimed:<worker>@<ts> → converging
 `in-review` matters because `change-proposal` has a human-approval gate. While
 a proposal waits on approval, its worker moves to its next assigned cluster.
 
+**Proposal-number collisions.** Proposal workers run in isolation and each mints
+the next free `proposals/00NN` number from its own branch's view, so two workers
+can independently create the same number. On integration, before merging a
+proposal branch, the integrator checks whether the incoming `proposals/00NN_*.md`
+collides with a number already on `impl/v1-initial` or already claimed by another
+in-flight proposal (grep the other proposal branches' `landed:`/`in-review:`
+lines). On a collision the integrator renames the incoming file to the next free
+number and updates every reference: the `landed:NNNN` line here, the `spec settled
+by proposal NNNN` / RESOLVED notes in `TEST-GAPS.md`, and any citation the branch
+added. The merge commit records the rename. (Proposal 0039 landed with no
+collision; this is the standing rule for the next ones.)
+
+**Feedback to the integrator.** A proposal worker or closure runner that needs
+the integrator to do something outside its own branch — correct a cluster's
+findings list, file a newly-discovered finding, reassign or split a cluster, flag
+a cross-cluster dependency — appends an item to the **Integrator inbox** section
+at the bottom of this file on its own branch, rather than relaying it out of band.
+Each item is a `- [ ] from <worker> (<proposal/branch>): <ask>` line. The
+integrator processes each item on integration, checks it off `- [x]` with the
+action taken, and keeps a short trail there. This is the durable feedback
+channel; do not rely on chat relay.
+
 **When a proposal lands**, update each finding it covered in `TEST-GAPS.md`:
 mark `[x] RESOLVED <sha>` if the proposal fully closes it (spec settled and
 test written), or set it back to plain `OPEN` with a note
@@ -197,7 +219,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-18 — Interceptor MODIFY immutable-field error envelope — §4.8/§15.1
 - **status:** landed:0039
 - **assigned:** proposal-C
-- **findings:** T-4.8.9
+- **findings:** T-4.8.9, T-4.8.16
 - **root spec gap:** The spec mandates HTTP 400 with top-level `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` and `details.violated_fields`, but the session-create surface returns HTTP 403 `INTERCEPTOR_REJECTED` (deliberately, pinned by two tier-1 tests), so the client-facing envelope diverges from the catalog.
 - **proposal scope:** Decide whether to align the route/session-create surface to the spec envelope (and thread `violated_fields` across the connector/llmproxy/mcptools surfaces) or amend §4.8/§15.1 to ratify the wrapped-403 behavior; either way a client-visible status change and a shared `interceptor.Result` change need sign-off.
 - **severity:** Medium
@@ -282,3 +304,15 @@ These 52-backlog findings are test-infrastructure or harness-state questions, no
 | T-BED.12 | Low | Already moot (air-gap test landed); re-verify the commit. |
 | T-BED.13 | Low | Test-scoping decision on auth axes; spec settled. |
 | T-BED.14 | Info | File-rename/unused-workload cleanup; no behavioral gap. |
+
+---
+
+## Integrator inbox
+
+Feedback items from proposal workers and closure runners for the integrator to
+action. Append a `- [ ] from <worker> (<proposal/branch>): <ask>` line on your
+own branch; the integrator processes it on integration and checks it off `- [x]`
+with the action taken, keeping a short trail here.
+
+- [x] from proposal-C (0039): list T-4.8.16 under C-18's `findings:` — it shares C-18's root gap and 0039 closed it. → Done 2026-07-16: added T-4.8.16 to C-18 findings (already RESOLVED by 0039 in TEST-GAPS.md).
+- [x] from proposal-C (0039 §5): file a new finding for the §8.7 export path mapping every `*ExportScanError` (incl. cataloged `EXPORT_FILE_SCAN_REJECTED`) to `INTERNAL_ERROR`/nil-details because it is not matched as a `*ToolError` — documented in 0039 §5, not yet a TEST-GAPS entry. → Done 2026-07-16: filed T-8.7.14 under §8.7.

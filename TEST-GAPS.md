@@ -49,7 +49,7 @@ This file was generated on 2026-06-03 (133 units: the 132 per-subsection, per-do
 
 ## Summary counts
 
-Across 132 audited units: **1715 findings** — 506 High, 770 Medium, 287 Low, 152 Info. 324 are resolved and 1391 remain open.
+Across 132 audited units: **1716 findings** — 506 High, 771 Medium, 287 Low, 152 Info. 324 are resolved and 1392 remain open.
 
 ## Table of contents
 
@@ -3010,6 +3010,13 @@ Counts: 4 High, 5 Medium, 2 Low, 1 Info.
 - **Gap:** The SEAM block on RunPreExportMaterialization at pkg/gateway/policy/interceptor/export.go lines ~335-348 states: "the §8.7 delegation file-export materialization path... is not yet built: delegation.Service.Delegate creates the child session but does not materialize exported files, and delegate_task carries no fileExport field." This is stale: delegation.Request now carries FileExport (`[]export.Spec`), delegation.Service.Delegate calls materializeExport (pkg/gateway/mcpfabric/delegation/service.go:1340), and pkg/gateway/mcpfabric/delegation/export/export.go:255 invokes interceptor.RunPreExportMaterialization from the wired Materializer. The comment describes a since-closed seam and misleads a future reader into thinking the export path is inert.
 - **Dependencies:** None — buildable today (the comment correction is standalone).
 - **Suggested test:** Correct or delete the stale SEAM comment so it reflects the wired export-materialization path (delegation.Request.FileExport → materializeExport → RunPreExportMaterialization). The behavioral coverage of that path is tracked by T-8.7.1 and T-8.7.2.
+
+### - [ ] T-8.7.14 — §8.7 export path maps every `*ExportScanError` (including the cataloged `EXPORT_FILE_SCAN_REJECTED`) to `INTERNAL_ERROR` with nil details because it is not matched as a `*ToolError` [Medium] — OPEN
+- **Spec/Doc:** §8.7 File Export Model: a rejected export-file content scan must surface the cataloged `EXPORT_FILE_SCAN_REJECTED` error with its details, not a generic `INTERNAL_ERROR`. Surfaced and documented in proposal 0039 §5 while resolving C-18 (the interceptor immutable-field envelope).
+- **Existing tests:** None. The error-classification mapping for export-scan rejections is unasserted at any tier.
+- **Gap:** The export error-classification path type-matches only `*ToolError`; a `*ExportScanError` (which carries the cataloged `EXPORT_FILE_SCAN_REJECTED` code and its violated details) falls through to the default `INTERNAL_ERROR`/nil-`details` branch, so a caller sees a 500-class `INTERNAL_ERROR` instead of the cataloged export-scan-rejected envelope. This is a distinct classification defect from C-18/0039 (which corrected the interceptor immutable-field envelope), found during that work; 0039 §5 documents it but did not fix it.
+- **Dependencies:** None — reproducible today by driving an export scan to rejection.
+- **Suggested test:** A contract or integration test that drives an export-file scan rejection and asserts the surfaced error is the cataloged `EXPORT_FILE_SCAN_REJECTED` envelope (code plus violated details), not `INTERNAL_ERROR` with nil details; paired with the code fix to classify `*ExportScanError` alongside `*ToolError` on the export path.
 
 ## §8.8 TaskRecord and TaskResult Schema <a id="t-8.8"></a>
 **Spec file:** `spec/08_recursive-delegation.md`
