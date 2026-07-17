@@ -521,6 +521,11 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		checkpointID: checkpointID,
 		prefix:       chunkPrefix(tenantID, sessionID, checkpointID),
 		trigger:      trigger,
+		// The session's own scheduled pool labels the gateway-side checkpoint
+		// counters and resolves the per-pool grant-window override, so a single
+		// Checkpointer serving sessions across pools stamps each series and sizes
+		// each window from the session that produced it.
+		pool: sc.pool,
 		// Resolve the effective grant window from the bound pool's per-pool
 		// override at attempt time (§5.2). It bounds the grants the driver
 		// keeps outstanding ahead of confirmation. The pool is the session's

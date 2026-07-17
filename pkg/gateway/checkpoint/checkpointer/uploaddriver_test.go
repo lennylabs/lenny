@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -200,6 +201,7 @@ type driverHarness struct {
 	quota     *storagequota.Memory
 	store     *blobstore.MemoryStore
 	deleter   *prefixDeleter
+	sessions  sessionstore.Store
 }
 
 func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driverHarness, string) {
@@ -226,7 +228,7 @@ func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driv
 		ChunkDeleter:  deleter,
 		Deadline:      5 * time.Second,
 	}
-	return &driverHarness{cp: cp, manifests: manifests, quota: quota, store: store, deleter: deleter}, "s1"
+	return &driverHarness{cp: cp, manifests: manifests, quota: quota, store: store, deleter: deleter, sessions: sessions}, "s1"
 }
 
 // spec: §10.1 — a complete checkpoint whose every declared byte is
@@ -402,6 +404,44 @@ func TestDriverSupersedesPriorAbortedAttempt_spec_10_1(t *testing.T) {
 	}
 	if m.superseded == 0 {
 		t.Errorf("IncCheckpointPartialManifestsSuperseded was not fired for the retained aborted row")
+	}
+}
+
+// spec: §16.1 — the gateway-side checkpoint counters are labeled by pool.
+// One Checkpointer serves sessions across multiple pools, so the label must
+// be the session's own bound pool resolved from its session-store row, not
+// the static Checkpointer.Pool (which production never sets).
+//
+// diagnosis: the supersede, storage-failure, and size-exceeded counters
+// stamped the static c.Pool, which is "" in production, so every series was
+// emitted with pool="" regardless of the session's pool. The driver now
+// carries the session's resolved pool. Against the pre-fix code
+// supersededPool reads "" and this assertion fails.
+func TestDriverCountersCarrySessionBoundPool_spec_16_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 30, chunkLens: []int64{10, 10, 10}, truncateAfter: 0,
+	}, 1<<30)
+	// The session is scheduled against a named pool; the Checkpointer's own
+	// static Pool label stays empty, as it is in production.
+	if _, err := h.sessions.Update(context.Background(), "acme", sid,
+		func(s *sessionstore.Session) error { s.PoolRef = "tier-1"; return nil }); err != nil {
+		t.Fatalf("set session pool: %v", err)
+	}
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	_ = h.cp.Checkpoint(context.Background(), "acme", sid)
+
+	second := &chunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1, store: h.store}
+	client := dialAdapter(t, second)
+	h.cp.Registry.Put(&podsession.BindResult{SessionID: sid, TenantID: "acme", Adapter: client})
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("second Checkpoint: %v", err)
+	}
+	if m.superseded == 0 {
+		t.Fatal("supersede counter did not fire")
+	}
+	if m.supersededPool != "tier-1" {
+		t.Errorf("supersede counter pool label = %q, want %q (the session's bound pool)", m.supersededPool, "tier-1")
 	}
 }
 
@@ -928,21 +968,34 @@ func TestDriverFencesChunkReadyWhenManifestsUnwired_spec_10_1(t *testing.T) {
 	}
 }
 
-// captureDriverMetrics records the driver's gateway-side counter fires.
+// captureDriverMetrics records the driver's gateway-side counter fires and
+// the pool label each pool-carrying counter was stamped with, so a test can
+// assert the counters carry the session's bound pool rather than the static
+// Checkpointer.Pool.
 type captureDriverMetrics struct {
-	sizeExceeded   int
-	storageFailure int
-	superseded     int
-	kmsUnavailable int
+	sizeExceeded       int
+	storageFailure     int
+	superseded         int
+	kmsUnavailable     int
+	sizeExceededPool   string
+	storageFailurePool string
+	supersededPool     string
 }
 
-func (m *captureDriverMetrics) IncCheckpointSizeExceeded(string, string) { m.sizeExceeded++ }
+func (m *captureDriverMetrics) IncCheckpointSizeExceeded(pool, _ string) {
+	m.sizeExceeded++
+	m.sizeExceededPool = pool
+}
 
-func (m *captureDriverMetrics) IncCheckpointStorageFailure(string, string, string) {
+func (m *captureDriverMetrics) IncCheckpointStorageFailure(pool, _, _ string) {
 	m.storageFailure++
+	m.storageFailurePool = pool
 }
 
-func (m *captureDriverMetrics) IncCheckpointPartialManifestsSuperseded(string) { m.superseded++ }
+func (m *captureDriverMetrics) IncCheckpointPartialManifestsSuperseded(pool string) {
+	m.superseded++
+	m.supersededPool = pool
+}
 
 func (m *captureDriverMetrics) IncCheckpointKMSUnavailable() { m.kmsUnavailable++ }
 

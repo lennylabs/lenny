@@ -183,7 +183,14 @@ type uploadDriver struct {
 	checkpointID string
 	prefix       string
 	trigger      checkpoint.Trigger
-	window       int // §5.2 effective grant window: max outstanding grants
+	// pool is the session's own scheduled pool, read from its session-store
+	// row at attempt time. The gateway-side checkpoint counters are labeled by
+	// it so a single Checkpointer serving sessions across multiple pools stamps
+	// each series with the pool whose session produced it, the same source the
+	// per-pool grant-window resolution reads.
+	// spec: §16.1 (checkpoint counters labeled by pool).
+	pool   string
+	window int // §5.2 effective grant window: max outstanding grants
 	// coordinationGen and recoveryGen are the session's fenced coordinator
 	// generation and recovery counter at attempt time. onProbe writes them
 	// into the §10.1 intent row so the supersede fence rejects a stale
@@ -407,7 +414,7 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 		_, _ = c.ChunkDeleter.DeleteByPrefix(d.ctx, prior.ChunkObjectKeyPrefix)
 	}
 	if c.DriverMetrics != nil {
-		c.DriverMetrics.IncCheckpointPartialManifestsSuperseded(c.Pool)
+		c.DriverMetrics.IncCheckpointPartialManifestsSuperseded(d.pool)
 	}
 	return nil
 }
@@ -549,8 +556,9 @@ func (d *uploadDriver) popPendingLocked() (pendingChunk, bool) {
 // onChunkCommitted confirms a committed chunk off the grant's critical
 // path: it Stats the object for the bytes actually written, records the
 // artifact_store catalog row, and advances the monotonic manifest
-// counter. Confirmation never gates the next grant (spec: §10.1 line 131,
-// §2 "confirmation does not gate the next grant"). A bytes-actually-written
+// counter. Confirmation never gates the next grant (spec: §10.1 line 131 —
+// the grant window is paced against acks, so a lagging confirm does not
+// stall the next capability). A bytes-actually-written
 // count larger than the signed Content-Length aborts the attempt and
 // reconciles the excess (spec: §11.2, the quota-cap-without-server-
 // enforcement path).
@@ -669,7 +677,7 @@ func (d *uploadDriver) onFailed(f *adapterv1.CheckpointFailed) (string, int64, e
 			f.GetIndex(), f.GetReason(), f.GetErrorCode(), blobstore.ErrClassificationControlViolation)
 	}
 	if c.DriverMetrics != nil {
-		c.DriverMetrics.IncCheckpointStorageFailure(c.Pool, c.levelLabel(), string(d.trigger))
+		c.DriverMetrics.IncCheckpointStorageFailure(d.pool, c.levelLabel(), string(d.trigger))
 	}
 	if err := d.finaliseAbort(partialmanifeststore.ReasonStreamTruncated); err != nil {
 		return "", 0, err
@@ -688,7 +696,7 @@ func (d *uploadDriver) onStreamError(err error) (string, int64, error) {
 	c := d.c
 	if isSizeLimitReject(err) {
 		if c.DriverMetrics != nil {
-			c.DriverMetrics.IncCheckpointSizeExceeded(c.Pool, c.levelLabel())
+			c.DriverMetrics.IncCheckpointSizeExceeded(d.pool, c.levelLabel())
 		}
 		if c.SkippedEventFunc != nil {
 			c.SkippedEventFunc(d.ctx, d.tenantID, d.sessionID, "workspace_size_limit")
@@ -795,7 +803,7 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	d.reconcile(ctx, confirmed)
 	// A deadline-fire (timeout) row is retained for the resume path; every
 	// other abort arm's chunks are swept because no resume will consume
-	// them (spec: §10.1 line 157 / §3 abort-arm sweep).
+	// them (spec: §10.1 line 157).
 	if reason != partialmanifeststore.ReasonTimeout && c.ChunkDeleter != nil && d.prefix != "" {
 		_, _ = c.ChunkDeleter.DeleteByPrefix(ctx, d.prefix)
 	}
