@@ -51,7 +51,8 @@ func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
 	}
 	seedCompleteManifest(t, mstore, tenant, sessID, ck, 3, 1536, enc)
 
-	grants, err := chunkResolver(store, mstore).Resolve(ctx, tenant, sessID, ck)
+	res, err := chunkResolver(store, mstore).Resolve(ctx, tenant, sessID, ck)
+	grants := res.Grants
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -109,7 +110,8 @@ func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
 	if full.CheckpointID != fullCk {
 		t.Fatalf("LatestFull = %q, want %q", full.CheckpointID, fullCk)
 	}
-	grants, gerr := chunkResolver(store, mstore).Resolve(ctx, tenant, sessID, full.CheckpointID)
+	res, gerr := chunkResolver(store, mstore).Resolve(ctx, tenant, sessID, full.CheckpointID)
+	grants := res.Grants
 	if gerr != nil {
 		t.Fatalf("fallback Resolve: %v", gerr)
 	}

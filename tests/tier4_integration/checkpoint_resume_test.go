@@ -56,7 +56,8 @@ func TestResumeReassemblesMultiChunkCheckpointFromPresignedGET(t *testing.T) {
 	// A resume mints one GET capability per chunk; fetching them in index
 	// order reproduces the archive.
 	fetchAll := func() []byte {
-		grants, err := resolver.Resolve(ctx, tenant, sessID, checkpoint)
+		res, err := resolver.Resolve(ctx, tenant, sessID, checkpoint)
+		grants := res.Grants
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -148,7 +149,8 @@ func TestResumePartialRecoveryHonoursThreshold(t *testing.T) {
 	// resolver reassembles it.
 	putChunk(t, store, tenant, sessID, aboveCk, 0, partialmanifeststore.ChunkEncodingTarGz, chunkBody(aboveCk, 0, 3000))
 	seedPartialManifest(t, mstore, tenant, sessID, aboveCk, 1, 3000, baseline, partialmanifeststore.ChunkEncodingTarGz)
-	grants, err := resolver.Resolve(ctx, tenant, sessID, aboveCk)
+	res, err := resolver.Resolve(ctx, tenant, sessID, aboveCk)
+	grants := res.Grants
 	if err != nil {
 		t.Fatalf("above-threshold Resolve: %v", err)
 	}

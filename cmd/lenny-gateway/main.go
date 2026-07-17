@@ -74,6 +74,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingcheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
@@ -1084,6 +1085,37 @@ func hardPrunePartialManifests(ctx context.Context, store partialmanifeststore.S
 		pruned++
 	}
 	return pruned, nil
+}
+
+// reclaimAbandonedManifests runs the §12.5 partial-manifest backstop sweep: it
+// selects every abandoned active row via ListReclaimable (the row whose gateway
+// died between Reserve and Finalise, or whose session was never resumed within
+// its resume window) and reclaims each one through the same three-step release
+// (guarded catalog soft-delete, per-key DeleteObject, guarded exactly-once
+// reservation decrement, manifest soft-delete after a final empty prefix list)
+// the abort and supersede arms run. The sweep is the sibling of the tombstone
+// hard-prune and runs on the same GC cycle. Per-row reclaim failures are logged
+// and skipped — ListReclaimable re-selects the row so the next cycle retries it;
+// a select failure returns the error with no rows reclaimed. Returns the number
+// of rows reclaimed.
+//
+// spec: §12.5 partial-manifest backstop and GC rule 6; §11.2 reservation
+// release is exactly-once and guarded.
+func reclaimAbandonedManifests(ctx context.Context, release checkpointer.BackstopReclaim, maxResumeWindow time.Duration) (int, error) {
+	rows, err := release.Manifests.ListReclaimable(ctx, maxResumeWindow)
+	if err != nil {
+		return 0, err
+	}
+	reclaimed := 0
+	for _, r := range rows {
+		if rerr := checkpointer.ReclaimAbandonedManifest(ctx, release, r); rerr != nil {
+			log.Printf("lenny-gateway: §12.5 partial-manifest backstop reclaim row %s/%s checkpoint=%s: %v",
+				r.TenantID, r.SessionID, r.CheckpointID, rerr)
+			continue
+		}
+		reclaimed++
+	}
+	return reclaimed, nil
 }
 
 // runStartupChainContinuityCheck implements the §12.3 line 101 startup

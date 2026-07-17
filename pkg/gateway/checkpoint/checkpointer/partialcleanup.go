@@ -212,47 +212,217 @@ func ReleaseCheckpointChunks(ctx context.Context, cfg CheckpointChunkRelease, re
 		return errors.New("checkpointer: chunk_object_key_prefix is required")
 	}
 	// Discover the checkpoint's chunk objects by walking its
-	// chunk_object_key_prefix. The prefix is the object key of a checkpoint
-	// URI whose PartID is `{checkpoint_id}/`, so the walk scopes to exactly
-	// this checkpoint's objects and out of the session's other checkpoints.
-	prefix := blobstore.URI{
-		TenantID:   record.TenantID,
-		ObjectType: blobstore.ObjectTypeCheckpoint,
-		SessionID:  record.SessionID,
-		PartID:     record.CheckpointID + "/",
-	}
-	objects, err := cfg.Objects.ListByPrefix(ctx, prefix)
-	if err != nil {
-		return fmt.Errorf("checkpointer: list chunk objects under %s: %w",
-			record.ChunkObjectKeyPrefix, err)
-	}
-	for _, obj := range objects {
-		uri := obj.URI.String()
-		// (1) Soft-delete the chunk's artifact_store row through the
-		// cataloging decorator: the §12.5 rule 4 Redis decrement fires here,
-		// exactly once for the live→soft_deleted transition. A straggler with
-		// no catalog row soft-deletes as a no-op and issues no decrement.
-		if err := cfg.Catalog.SoftDeleteRow(ctx, uri, cfg.TombstoneRetention); err != nil {
-			return fmt.Errorf("checkpointer: release chunk row %s: %w", uri, err)
-		}
-		// (2) Hard-delete the chunk object per key. On failure the object is
-		// orphaned: its artifact_store row is already soft-deleted (step 1),
-		// so the TTL sweep skips it, and no §12.5 backstop re-selects a
-		// completed checkpoint. Surface it on the orphaned-object counter so
-		// the leak is observable rather than silently attributed to a backstop
-		// that never runs for a partial = false checkpoint.
-		if err := cfg.Objects.HardDeleteObject(obj.URI); err != nil {
-			if cfg.OnOrphanedObject != nil {
-				cfg.OnOrphanedObject()
-			}
-			return fmt.Errorf("checkpointer: delete chunk object %s: %w", uri, err)
-		}
+	// chunk_object_key_prefix and release each one: soft-delete the chunk's
+	// artifact_store row (the §12.5 rule 4 decrement, exactly once) before the
+	// per-key hard-delete. On a hard-delete failure the object is orphaned —
+	// its catalog row is already soft-deleted so the TTL sweep skips it, and no
+	// §12.5 backstop re-selects a finalised (partial = false) checkpoint — so
+	// the OnOrphanedObject callback surfaces the leak.
+	if err := releaseChunkObjectsUnderPrefix(ctx, cfg.Catalog, cfg.Objects,
+		chunkPrefixURI(record), record.ChunkObjectKeyPrefix, cfg.TombstoneRetention,
+		cfg.OnOrphanedObject); err != nil {
+		return err
 	}
 	// (3) Soft-delete the finalised manifest row under its own
 	// deleted_at IS NULL guard.
 	if err := cfg.Manifests.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
 		return fmt.Errorf("checkpointer: soft-delete manifest row %s/%s: %w",
 			record.TenantID, record.CheckpointID, err)
+	}
+	return nil
+}
+
+// chunkPrefixURI builds the object-key prefix URI a checkpoint's chunk objects
+// live under. The prefix is a checkpoint URI whose PartID is
+// `{checkpoint_id}/`, so a ListByPrefix walk scopes to exactly this
+// checkpoint's objects and out of the session's other checkpoints.
+func chunkPrefixURI(record partialmanifeststore.Record) blobstore.URI {
+	return blobstore.URI{
+		TenantID:   record.TenantID,
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  record.SessionID,
+		PartID:     record.CheckpointID + "/",
+	}
+}
+
+// releaseChunkObjectsUnderPrefix runs the shared object-release loop the
+// rotation release (ReleaseCheckpointChunks) and the §12.5 backstop
+// (ReclaimAbandonedManifest) both drive: it lists the objects under prefix
+// and, for each, (1) soft-deletes the chunk's artifact_store row through the
+// cataloging decorator under the deleted_at IS NULL guard — the §12.5 rule 4
+// Redis decrement fires here exactly once for the live→soft_deleted
+// transition, and a straggler with no catalog row soft-deletes as a no-op —
+// then (2) hard-deletes the chunk object per key. onDeleteErr, when non-nil,
+// is invoked once for the object whose HardDeleteObject failed before the
+// wrapped error is returned; the rotation path passes its orphaned-object
+// counter here, and the backstop passes nil because it leaves the manifest row
+// active for the next cycle to retry rather than orphaning the object.
+//
+// spec: §12.5 GC rule 4 (Redis decrement gated on the Postgres soft-delete,
+// exactly once); §4.4 line 236 (per-key DeleteObject).
+func releaseChunkObjectsUnderPrefix(
+	ctx context.Context,
+	catalog ChunkCatalogReleaser,
+	objects ChunkObjectStore,
+	prefix blobstore.URI,
+	prefixKey string,
+	retention time.Duration,
+	onDeleteErr func(),
+) error {
+	list, err := objects.ListByPrefix(ctx, prefix)
+	if err != nil {
+		return fmt.Errorf("checkpointer: list chunk objects under %s: %w", prefixKey, err)
+	}
+	for _, obj := range list {
+		uri := obj.URI.String()
+		if err := catalog.SoftDeleteRow(ctx, uri, retention); err != nil {
+			return fmt.Errorf("checkpointer: release chunk row %s: %w", uri, err)
+		}
+		if err := objects.HardDeleteObject(obj.URI); err != nil {
+			if onDeleteErr != nil {
+				onDeleteErr()
+			}
+			return fmt.Errorf("checkpointer: delete chunk object %s: %w", uri, err)
+		}
+	}
+	return nil
+}
+
+// ReservationCounter releases a reclaimed manifest row's outstanding storage
+// reservation from the tenant's storage_bytes_used counter with a signed
+// relative Adjust. The backstop issues no absolute Set, so it never zeroes a
+// concurrently live reservation; the §11.2 reservation-aware rebuild folds
+// outstanding reservations back into the absolute counter on every recovery
+// edge, which makes the relative decrement rebuild-safe. storagequota.Counter
+// satisfies it.
+//
+// spec: §11.2 reservation release is exactly-once and guarded; §12.5 GC rule 4.
+type ReservationCounter interface {
+	Adjust(ctx context.Context, tenantID string, delta int64) error
+}
+
+// BackstopReclaim bundles the seams the §12.5 partial-manifest backstop runs
+// its reclaim against.
+type BackstopReclaim struct {
+	// Manifests supplies the guarded exactly-once ReleaseReservation and the
+	// final manifest SoftDelete. Required.
+	Manifests partialmanifeststore.Store
+	// Catalog soft-deletes each chunk's artifact_store row and issues the
+	// §12.5 rule 4 Redis decrement. Required.
+	Catalog ChunkCatalogReleaser
+	// Objects discovers the checkpoint's chunk objects under its
+	// chunk_object_key_prefix and hard-deletes each one per key. Required.
+	Objects ChunkObjectStore
+	// Quota releases the row's outstanding reservation headroom
+	// (reserved_bytes − workspace_bytes_uploaded) from the tenant counter.
+	// Nil (dev mode, no reservation taken) skips the decrement; the guarded
+	// ReleaseReservation UPDATE still runs so the row's reservation flag is
+	// cleared idempotently.
+	Quota ReservationCounter
+	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// window stamped as each soft-deleted chunk row's hard-prune deadline.
+	TombstoneRetention time.Duration
+	// Metrics, when set, receives the cleanup-outcome counter increment:
+	// gc_collected on a completed reclaim, failed_deleted on a mid-flight
+	// failure the next cycle will retry. Nil is permitted.
+	Metrics PartialCleanupMetrics
+}
+
+// ReclaimAbandonedManifest runs the §12.5 backstop three-step release for one
+// abandoned active partial-manifest row (a row ListReclaimable returned: the
+// gateway crashed between Reserve and Finalise, or a session was never resumed
+// within its resume window). Per the §12.5 backstop and §11.2 reservation
+// release it (1) lists the objects under the row's chunk_object_key_prefix and,
+// for each, soft-deletes the chunk's artifact_store row through the cataloging
+// decorator (the §12.5 rule 4 decrement, exactly once) before the per-key
+// hard-delete; (2) releases the row's outstanding reservation with the guarded
+// exactly-once relative decrement, gated on reservation_released_at IS NULL so
+// a retry decrements nothing twice, issuing no absolute Set; and (3)
+// soft-deletes the manifest row only after a final prefix list returns empty,
+// so an object a still-outstanding presigned grant lands under the prefix after
+// the first list is deleted on a later cycle rather than orphaned under a
+// soft-deleted manifest row that drops the prefix from ListReclaimable.
+//
+// The reclaim is idempotent and single-writer-safe: a concurrent second sweep
+// (or a stale-leader re-run) observes each catalog row already soft-deleted (no
+// second decrement), each object already absent (delete-on-absent no-op),
+// ReleaseReservation reporting rows_affected == 0 (no second reservation
+// decrement), and the manifest row already soft-deleted.
+//
+// spec: §12.5 partial-manifest backstop and GC rules 4, 6; §11.2 reservation
+// release is exactly-once and guarded; §4.4 line 236 (per-key DeleteObject then
+// soft-delete the row).
+func ReclaimAbandonedManifest(ctx context.Context, cfg BackstopReclaim, record partialmanifeststore.Record) error {
+	if cfg.Manifests == nil || cfg.Catalog == nil || cfg.Objects == nil {
+		return errors.New("checkpointer: backstop reclaim requires the manifest store, catalog, and object store")
+	}
+	if record.TenantID == "" || record.SessionID == "" || record.CheckpointID == "" {
+		return errors.New("checkpointer: tenant, session, and checkpoint ids are required")
+	}
+	if record.ChunkObjectKeyPrefix == "" {
+		return errors.New("checkpointer: chunk_object_key_prefix is required")
+	}
+	prefix := chunkPrefixURI(record)
+	// (1) Release the confirmed chunks' bytes and delete the objects. The
+	// backstop passes no orphaned-object callback: a failed object delete
+	// leaves the manifest row active (steps 2-3 are past the failure), so
+	// ListReclaimable re-selects it and the next cycle retries the delete.
+	if err := releaseChunkObjectsUnderPrefix(ctx, cfg.Catalog, cfg.Objects,
+		prefix, record.ChunkObjectKeyPrefix, cfg.TombstoneRetention, nil); err != nil {
+		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
+		return err
+	}
+	// (2) Release the row's outstanding reservation exactly once.
+	if err := releaseManifestReservation(ctx, cfg.Manifests, cfg.Quota, record); err != nil {
+		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
+		return err
+	}
+	// (3) Confirm the prefix is empty before dropping the manifest row. A
+	// non-empty result means a still-outstanding grant landed a straggler after
+	// the first list; leaving the row active defers its delete to the next
+	// cycle rather than orphaning it under a soft-deleted manifest whose prefix
+	// ListReclaimable no longer selects.
+	remaining, err := cfg.Objects.ListByPrefix(ctx, prefix)
+	if err != nil {
+		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
+		return fmt.Errorf("checkpointer: final list under %s: %w", record.ChunkObjectKeyPrefix, err)
+	}
+	if len(remaining) > 0 {
+		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
+		return fmt.Errorf("checkpointer: %d chunk object(s) remain under %s; deferring manifest soft-delete to the next backstop cycle",
+			len(remaining), record.ChunkObjectKeyPrefix)
+	}
+	if err := cfg.Manifests.SoftDelete(ctx, record.TenantID, record.CheckpointID); err != nil {
+		emitOutcome(cfg.Metrics, PartialCleanupFailedDeleted)
+		return fmt.Errorf("checkpointer: soft-delete manifest row %s/%s: %w",
+			record.TenantID, record.CheckpointID, err)
+	}
+	emitOutcome(cfg.Metrics, PartialCleanupGCCollected)
+	return nil
+}
+
+// releaseManifestReservation releases the row's outstanding reservation
+// headroom with the §11.2 guarded exactly-once relative decrement: the
+// ReleaseReservation UPDATE stamps reservation_released_at under the
+// reservation_released_at IS NULL guard and the counter Adjust fires only when
+// that UPDATE reports rows_affected == 1. A ReleaseReservation store error
+// aborts the reclaim (the row stays active for the next cycle); the counter
+// Adjust is best-effort like the in-process abort arm because a Redis-recovery
+// rebuild re-derives the counter absolutely from the now-released row's
+// exclusion, self-healing a lost decrement.
+//
+// spec: §11.2 reservation release is exactly-once and guarded.
+func releaseManifestReservation(ctx context.Context, manifests partialmanifeststore.Store, quota ReservationCounter, record partialmanifeststore.Record) error {
+	rows, err := manifests.ReleaseReservation(ctx, record.TenantID, record.CheckpointID)
+	if err != nil {
+		return fmt.Errorf("checkpointer: release reservation %s/%s: %w",
+			record.TenantID, record.CheckpointID, err)
+	}
+	if rows != 1 || quota == nil {
+		return nil
+	}
+	if delta := record.ReservedBytes - record.WorkspaceBytesUploaded; delta > 0 {
+		_ = quota.Adjust(ctx, record.TenantID, -delta)
 	}
 	return nil
 }
