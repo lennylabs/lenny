@@ -478,6 +478,7 @@ These 52-backlog findings are test-infrastructure or harness-state questions, no
 | T-BED.12 | Low | Already moot (air-gap test landed); re-verify the commit. |
 | T-BED.13 | Low | Test-scoping decision on auth axes; spec settled. |
 | T-BED.14 | Info | File-rename/unused-workload cleanup; no behavioral gap. |
+| T-25.1.6 | Info | Scope enforcement is pinned at unit/contract; the ask is a live-deployment (tier-5) enforcement test. Spec settled — a runner writes the tier-5 test with a §25.12-tight final assertion (the prior attempt's assertion was looser than §25.12 requires). |
 
 ---
 
