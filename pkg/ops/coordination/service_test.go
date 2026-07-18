@@ -430,7 +430,7 @@ func TestServiceReapEmitsExpiredAudit_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2209 — MemoryTierWarning surfaces the replica-local
+// spec: §25.4 line 2215 — MemoryTierWarning surfaces the replica-local
 // warning only under the "always" policy.
 func TestServiceMemoryTierWarning_spec_25_4(t *testing.T) {
 	always, _, _ := newWiredService(nil, nil, NewCoordinationGate(MemoryTierAlways, nil))
