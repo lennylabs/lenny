@@ -456,6 +456,15 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **proposal scope:** Reconcile the §25.4 canonical RBAC block with the deployed chart — either extend the spec block to include the three chart-granted rules (with the justification for each grant), or narrow the chart if a grant is not warranted. Self-contained spec-vs-chart reconciliation, no code beyond the chart/spec.
 - **severity:** Low
 
+### C-44 — §25.4 self-health event naming and replica-identity schema — §25.4
+- **status:** open
+- **assigned:** (unassigned)
+- **findings:** T-25.4.44, T-25.4.28
+- **root spec gap:** The §25.4 Self-Monitoring surface has two spec-vs-implementation divergences on the self-health event. (1) T-25.4.44: §25.4 names the same gateway-auth self-health signal two different ways in the same section — kebab-case `gateway-auth` in the "OIDC Token Lifecycle" subsection and snake_case elsewhere — while the code defines `CheckGatewayAuth = "gateway_auth"`; the spec self-contradicts on the canonical name. (2) T-25.4.28: §25.4 ("Multi-replica scope") says self-health events carry replica identity in a `source.replicaID` field, but `pkg/events.OperationalEvent.Source` is a plain CloudEvents URI string and the code emits the identity in `data.replicaId` with `Subject` `ops/<replicaID>`, so the documented `source.replicaID` field does not exist.
+- **proposal scope:** Reconcile both: settle the canonical gateway-auth self-health check name (pick kebab or snake and make §25.4 self-consistent, aligning the code's `CheckGatewayAuth` constant), and reconcile the replica-identity location (either define `source.replicaID` as a structured field on the event and emit it, or amend §25.4 to document the actual `data.replicaId` + `Subject` convention). Touches `spec/25`, `pkg/ops/opsservice/selfchecks.go`, `cmd/lenny-ops/servicebody.go`, and possibly `pkg/events.OperationalEvent`.
+- **severity:** Low
+- **relates to:** clear of the §25.4 aggregator cluster C-29 (health fan-out/recommendations) and C-39 (backup operationId) — this is the self-health event surface specifically. Unassigned; do not overlap with the section-25 closure machine's §25 test churn.
+
 ---
 
 ## Test-infra findings to de-escalate (hand back to closure runners)
@@ -479,6 +488,7 @@ These 52-backlog findings are test-infrastructure or harness-state questions, no
 | T-BED.13 | Low | Test-scoping decision on auth axes; spec settled. |
 | T-BED.14 | Info | File-rename/unused-workload cleanup; no behavioral gap. |
 | T-25.1.6 | Info | Scope enforcement is pinned at unit/contract; the ask is a live-deployment (tier-5) enforcement test. Spec settled — a runner writes the tier-5 test with a §25.12-tight final assertion (the prior attempt's assertion was looser than §25.12 requires). |
+| T-25.15.6 | Info | §25.15-25.17 are classified non-normative for coverage accounting; the ask is aggregate-journey (§25.17 loop) tracking. Prior route=moot attempt landed no commitSha (orphaned). A runner re-verifies/re-lands the aggregate-journey coverage; no spec change. |
 
 ---
 

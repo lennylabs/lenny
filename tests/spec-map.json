@@ -3417,7 +3417,8 @@
         "pkg/ops/probe",
         "pkg/ops/coordination/pgstore",
         "pkg/ops/coordination/redisstore",
-        "pkg/ops/escalation/pgstore"
+        "pkg/ops/escalation/pgstore",
+        "pkg/ops/opsservice"
       ],
       "chart_templates": [
         "charts/lenny/templates/ops-rbac.yaml"
