@@ -422,7 +422,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Low
 
 ### C-40 — §8.3 credential-availability pre-check at delegation time (CREDENTIAL_POOL_EXHAUSTED pre-claim wastage guard) — §8.3
-- **status:** open
+- **status:** claimed:proposal-C@2026-07-18T03:52:20Z
 - **assigned:** proposal-C
 - **findings:** T-8.3.1
 - **root spec gap:** §8.3 requires a general credential-availability pre-check before a delegation claims a pod: if no provider in the intersection has an available credential, reject with `CREDENTIAL_POOL_EXHAUSTED` before claiming (the pre-claim wastage guard), for all `inherit`/`independent` delegations, cross-env or not. This is absent from production code (per T-8.3.1) and only a skipped scaffold exists (`tests/tier4_integration/delegation_credential_pool_race_test.go`). It is DISTINCT from C-20's cross-environment provider-compatibility check (`CREDENTIAL_PROVIDER_MISMATCH`) but shares the same delegate-handler pre-claim insertion point.
