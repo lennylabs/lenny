@@ -1142,6 +1142,7 @@
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/...",
+        "tests/tier3_contract/checkpoint_stream/...",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
         "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
