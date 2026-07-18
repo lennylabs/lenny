@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/ops/me"
 )
@@ -85,5 +86,33 @@ func TestService_Authorized_ZeroPrincipal(t *testing.T) {
 	svc := me.NewService([]me.AuthorizedTool{{Tool: "admin.x", MinRole: auth.RolePlatformAdmin}})
 	if got := svc.Authorized(authmw.Principal{}); len(got) != 0 {
 		t.Errorf("Authorized(zero): %+v", got)
+	}
+}
+
+// spec: §25.1 line 96 — "`/v1/admin/me/authorized-tools` — pre-filters
+// the tool list to what the caller's scopes permit." A caller whose
+// role grants every tool in the catalog but whose scope claim narrows
+// the tool surface (§25.1 lines 77-90) must only see the tools its
+// scopes match, not the full role-eligible set.
+func TestService_Authorized_ScopeFilter(t *testing.T) {
+	catalog := []me.AuthorizedTool{
+		{Tool: "admin.me_read", Scope: "tools:me:read", MinRole: auth.RolePlatformAdmin},
+		{Tool: "admin.create_tenant", Scope: "tools:tenant:write", MinRole: auth.RolePlatformAdmin},
+		{Tool: "admin.list_tenants", Scope: "tools:tenant:read", MinRole: auth.RolePlatformAdmin},
+	}
+	svc := me.NewService(catalog)
+
+	scoped, err := scopes.Parse("tools:me:read")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	// The role ceiling alone would authorise every tool in the
+	// catalog (all three declare MinRole platform-admin); the scope
+	// claim must narrow that down to the single tools:me:read entry.
+	p := authmw.Principal{Roles: []auth.Role{auth.RolePlatformAdmin}, Scopes: scoped}
+
+	got := svc.Authorized(p)
+	if len(got) != 1 || got[0].Tool != "admin.me_read" {
+		t.Fatalf("scope-narrowed authorized-tools: got %+v, want only admin.me_read", got)
 	}
 }

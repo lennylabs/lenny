@@ -526,6 +526,85 @@ func TestRunbookStepsContract(t *testing.T) {
 	}
 }
 
+// TestRunbookStepsLennyCtlAndAPICommandKeySchemaContract confirms the
+// serialized command keys of the lenny-ctl and api access-path variants
+// against the §25.7 documented sample: a lenny-ctl path carries a
+// singular string "command" key (not a "commands" array), and an api
+// path carries no command or commands key at all.
+//
+// spec: 25.7 (GET /v1/admin/runbooks/{name}/steps — structured steps).
+// The documented sample (spec/25_agent-operability.md) serializes the
+// lenny-ctl path as {"access": "lenny-ctl", "command": "lenny-ctl
+// diagnose pool <pool-name>"} and the api path as {"access": "api",
+// "method": "GET", "path": "/v1/admin/diagnostics/pools/{name}"}, with
+// no command or commands field.
+//
+// This assertion is currently skipped: the live implementation
+// (pkg/ops/runbooks/steps.go) serializes every access form uniformly as
+// a "commands" array, and several real runbooks under docs/runbooks/
+// have multi-line lenny-ctl access blocks that a literal singular
+// "command" string cannot represent. Whether the wire schema should
+// adopt the sample's per-form heterogeneous keys or the sample should be
+// corrected to the uniform "commands" array is an open spec-vs-
+// implementation reconciliation, not a mechanical fix.
+func TestRunbookStepsLennyCtlAndAPICommandKeySchemaContract(t *testing.T) {
+	t.Skip("lenny-ctl/api access-path command key schema is pending spec-vs-implementation reconciliation via the proposal pipeline (see open TEST-GAPS.md finding for §25.7 /steps access-path serialization)")
+
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodGet, "/v1/admin/runbooks/warm-pool-exhaustion/steps", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	steps, ok := body["steps"].([]any)
+	if !ok || len(steps) == 0 {
+		t.Fatalf("steps = %v, want a non-empty step list", body["steps"])
+	}
+	step, _ := steps[0].(map[string]any)
+	paths, ok := step["paths"].([]any)
+	if !ok || len(paths) == 0 {
+		t.Fatalf("step paths = %v, want the access-path variants", step["paths"])
+	}
+	byAccess := map[string]map[string]any{}
+	for _, raw := range paths {
+		p, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("access path is not a JSON object: %v", raw)
+		}
+		access, ok := p["access"].(string)
+		if !ok || access == "" {
+			t.Fatalf("access path is missing the string access key: %v", p)
+		}
+		byAccess[access] = p
+	}
+
+	// The lenny-ctl path carries {access, command} with the documented
+	// casing: a single command string under the singular "command" key,
+	// not a "commands" array.
+	lennyCtl, ok := byAccess["lenny-ctl"]
+	if !ok {
+		t.Fatalf("steps response has no lenny-ctl access path; got access keys %v", accessKeys(byAccess))
+	}
+	if got, _ := lennyCtl["command"].(string); got == "" {
+		t.Errorf("lenny-ctl path is missing the documented singular \"command\" string key: %v", lennyCtl)
+	}
+	if _, ok := lennyCtl["commands"]; ok {
+		t.Errorf("lenny-ctl path has a \"commands\" key, want the documented singular \"command\" key: %v", lennyCtl)
+	}
+
+	// The api path carries no command or commands key per the
+	// documented sample: method and path fully describe the request.
+	api, ok := byAccess["api"]
+	if !ok {
+		t.Fatalf("steps response has no api access path; got access keys %v", accessKeys(byAccess))
+	}
+	if _, ok := api["command"]; ok {
+		t.Errorf("api path has a \"command\" key, want no command key per the documented sample: %v", api)
+	}
+	if _, ok := api["commands"]; ok {
+		t.Errorf("api path has a \"commands\" key, want no commands key per the documented sample: %v", api)
+	}
+}
+
 // accessKeys returns the sorted "access" keys present in an access-path
 // index, for a legible failure message when a documented path is absent.
 func accessKeys(byAccess map[string]map[string]any) []string {
