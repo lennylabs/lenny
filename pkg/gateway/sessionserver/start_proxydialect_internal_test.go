@@ -58,7 +58,7 @@ func proxyDialectFixture(t *testing.T, runtimeDialects []string, deliveryMode, p
 // runtime declares is accepted; the pool is assigned for its provider.
 func TestResolveCredentialPoolsProxyDialectMatch_spec_4_9_1476(t *testing.T) {
 	s := proxyDialectFixture(t, []string{"anthropic", "openai"}, "proxy", "anthropic")
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestResolveCredentialPoolsProxyDialectMatch_spec_4_9_1476(t *testing.T) {
 // verbatim INVALID_POOL_PROXY_DIALECT message.
 func TestResolveCredentialPoolsProxyDialectMismatch_spec_4_9_1476(t *testing.T) {
 	s := proxyDialectFixture(t, []string{"anthropic"}, "proxy", "openai")
-	_, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	_, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	var dialectErr *PoolProxyDialectError
 	if !errors.As(err, &dialectErr) {
 		t.Fatalf("resolveCredentialPools err = %v, want *PoolProxyDialectError", err)
@@ -90,7 +90,7 @@ func TestResolveCredentialPoolsProxyDialectMismatch_spec_4_9_1476(t *testing.T) 
 // block speaks no proxy dialect, so any proxy-mode pool is rejected.
 func TestResolveCredentialPoolsProxyDialectNoCapabilities_spec_4_9_1476(t *testing.T) {
 	s := proxyDialectFixture(t, nil, "proxy", "anthropic")
-	_, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	_, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	var dialectErr *PoolProxyDialectError
 	if !errors.As(err, &dialectErr) {
 		t.Fatalf("resolveCredentialPools err = %v, want *PoolProxyDialectError", err)
@@ -102,7 +102,7 @@ func TestResolveCredentialPoolsProxyDialectNoCapabilities_spec_4_9_1476(t *testi
 // the runtime declares no proxy dialect.
 func TestResolveCredentialPoolsDirectModeSkipsDialect_spec_4_9_1476(t *testing.T) {
 	s := proxyDialectFixture(t, nil, "direct", "")
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}

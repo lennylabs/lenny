@@ -124,7 +124,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-06 — Multi-tenant admission enforcement for delivery-mode/isolation combinations — §4.9
-- **status:** open
+- **status:** landed:0038
 - **assigned:** proposal-B
 - **findings:** T-4.9.6
 - **root spec gap:** The spec mandates admin-API pool-registration rejections (`DirectModeStandardIsolationMultiTenantRejected`, proxy+`spiffeBinding:disabled`) and a `lenny-preflight` CredentialPool scan in multi-tenant mode, but these enforcement points are unimplemented.

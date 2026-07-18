@@ -658,6 +658,8 @@ func main() {
 		"value of the playground.acknowledgeApiKeyMode chart flag (§27.2 line 42; §27.9)")
 	devMode := flag.Bool("dev-mode", false,
 		"value of the global.devMode chart flag; exempts the §12.9 volume-encryption check")
+	tenancyMode := flag.String("tenancy-mode", "single",
+		"value of the tenancy.mode chart flag (single | multi); the §4.9 credential-delivery scan enforces only when multi")
 	attestVolumeEncryption := flag.Bool("attest-volume-encryption", false,
 		"value of the preflight.attestVolumeEncryption chart flag; operator attestation that Postgres/Redis volumes are encrypted (§12.9 line 1050)")
 	certManagerEnabled := flag.Bool("certmanager-enabled", true,
@@ -791,6 +793,7 @@ func main() {
 		},
 		OpsAdminTLSProber:      opsAdminTLSProber(*opsAdminTLSEndpoint, *opsAdminTLSCaBundle, *opsAdminTLSInternalEnabled),
 		DevMode:                *devMode,
+		TenancyMode:            *tenancyMode,
 		AttestVolumeEncryption: *attestVolumeEncryption,
 		Playground: preflight.PlaygroundConfig{
 			Enabled:               *playgroundEnabled,

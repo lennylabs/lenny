@@ -4036,6 +4036,11 @@ spec:
             # (§8.6 does not fix it); default 5s. Proposal 0023.
             - --proxy-extension-wait-timeout=5s
             - --no-environment-policy=deny-all
+            # §4.9 — the platform tenancy.mode the gateway enforces the two
+            # cross-tenant credential-delivery rejections against. The same
+            # value drives the lenny-webhook binary and the lenny-preflight
+            # Job, so every enforcement point keys off one tenancy signal.
+            - --tenancy-mode=single
             # spec: §15.5 item 1; docs/api/index.md line 124 —
             # F-15.5.11. Empty omits the flag so the middleware stays
             # inert until the operator declares a sunset window.

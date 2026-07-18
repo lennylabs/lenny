@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -86,9 +88,20 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var slotFailed *podsession.SlotFailedError
 	var demotionUnsupported *podsession.SDKDemotionNotSupported
 	var proxyDialect *PoolProxyDialectError
+	var deliveryIso *CredentialDeliveryIsolationError
 	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
 	var archiveLimit *upload.ValidationError
 	switch {
+	case errors.As(err, &deliveryIso):
+		// spec: §4.9 — the session-start credential-delivery gate rejected a
+		// resolved CredentialPool whose effective deliveryMode pairs with the
+		// bound pod's isolationProfile/spiffeBinding in a cross-tenant-risky
+		// combination. Permanent for this (pool, pod) pairing in multi-tenant
+		// mode: a retry resolves the same forbidden combination, so the
+		// envelope is the dedicated 422 carrying the guard's rejection code and
+		// remediation message rather than the retryable atomic-unit fallback.
+		s.writeError(w, http.StatusUnprocessableEntity, deliveryIso.Code,
+			deliveryIso.Reason, nil)
 	case errors.As(err, &levelUnderperforms):
 		// spec: §5.1 line 42 — the runtime declares a higher integrationLevel
 		// than the adapter handshake observed it deliver. Permanent for this
@@ -725,6 +738,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		// single end-to-end startup observation spans pod claim through ready.
 		startCtx := &startContext{
 			CredPools:         outcome.CredPools,
+			PoolDeliveryModes: outcome.PoolDeliveryModes,
 			UserCredProviders: outcome.UserCredProviders,
 		}
 		if outcome.Claim != nil {
@@ -1278,25 +1292,25 @@ func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string
 // without credential pools.
 //
 // spec: §4.9 lines 1216-1218 (Pre-Claim check), 1326 (intersection).
-func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, []string, error) {
+func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, map[string]string, []string, error) {
 	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	tenant, err := s.tenants.Get(ctx, row.TenantID)
 	if err != nil {
 		// The §10.2 tenant-claim extractor already gated the request; an
 		// unresolvable tenant row here means no credentialPolicy applies.
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	policy := tenant.CredentialPolicy
 	if !policy.Configured() {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	rt, err := runtimestore.Resolve(ctx, s.runtimes, row.RuntimeRef)
 	if err != nil {
 		// Runtime-resolution failure is surfaced by the pool-resolution
 		// path; the §4.9 layer contributes no credentials.
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	intersection := credrouter.Intersection(rt.SupportedProviders, policy)
 
@@ -1330,7 +1344,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 
 	allPools, err := s.credPools.List(ctx, row.TenantID, credentialpoolstore.ListFilter{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("sessionserver: load credential pools for pre-claim: %w", err)
+		return nil, nil, nil, fmt.Errorf("sessionserver: load credential pools for pre-claim: %w", err)
 	}
 	byName := make(map[string]credentialpoolstore.CredentialPool, len(allPools))
 	for _, p := range allPools {
@@ -1370,7 +1384,22 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 
 	res, err := credrouter.PreClaim(ctx, s.credRouter, in)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+
+	// spec: §4.9 (per-provider deliveryMode is authoritatively a
+	// CredentialPool field) — surface each resolved provider pool's
+	// effective deliveryMode alongside the assignment map, keyed by pool
+	// name, so the session-start credential-delivery gate evaluates the
+	// delivery mode leasing actually uses against the bound pod's
+	// isolationProfile/spiffeBinding. The warm-pool/SandboxTemplate
+	// deliveryMode the registration and admission layers inspect is a
+	// denormalized copy that can diverge from this authoritative value.
+	poolDeliveryModes := make(map[string]string, len(res.PoolAssignments))
+	for _, poolName := range res.PoolAssignments {
+		if p, ok := byName[poolName]; ok {
+			poolDeliveryModes[poolName] = p.DeliveryMode
+		}
 	}
 
 	// spec: §4.9 line 1476 — the proxy-dialect admission boundary at the
@@ -1389,7 +1418,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 			continue
 		}
 		if !rt.CredentialCapabilities.AllowsProxyDialect(p.ProxyDialect) {
-			return nil, nil, &PoolProxyDialectError{Pool: poolName, Dialect: p.ProxyDialect}
+			return nil, nil, nil, &PoolProxyDialectError{Pool: poolName, Dialect: p.ProxyDialect}
 		}
 	}
 
@@ -1404,13 +1433,13 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 			// The userCredChecker only reports a provider available when it
 			// has a canonical dialect, so this is unreachable; treat a
 			// dialect-less provider defensively as not deliverable.
-			return nil, nil, &PoolProxyDialectError{Pool: "user:" + provider, Dialect: ""}
+			return nil, nil, nil, &PoolProxyDialectError{Pool: "user:" + provider, Dialect: ""}
 		}
 		if !rt.CredentialCapabilities.AllowsProxyDialect(string(dialect)) {
-			return nil, nil, &PoolProxyDialectError{Pool: "user:" + provider, Dialect: string(dialect)}
+			return nil, nil, nil, &PoolProxyDialectError{Pool: "user:" + provider, Dialect: string(dialect)}
 		}
 	}
-	return res.PoolAssignments, res.UserProviders, nil
+	return res.PoolAssignments, poolDeliveryModes, res.UserProviders, nil
 }
 
 // intersectProviders returns the order-stable (a-ordered) set
@@ -1455,6 +1484,75 @@ func (e *PoolProxyDialectError) Error() string {
 		"pool proxyDialect %s is not declared in runtime credentialCapabilities.proxyDialect",
 		e.Dialect,
 	)
+}
+
+// CredentialDeliveryIsolationError is the §4.9 session-start
+// credential-delivery rejection: a resolved CredentialPool's effective
+// deliveryMode paired with the bound pod's isolationProfile/spiffeBinding
+// is one of the two cross-tenant-risky combinations
+// direct_mode_isolation.Decide rejects in multi-tenant mode
+// (deliveryMode: direct + isolationProfile: standard, or deliveryMode:
+// proxy + spiffeBinding: disabled). Unlike the pool-registration and
+// admission-webhook layers, which inspect the warm-pool/SandboxTemplate
+// deliveryMode copy, this gate reads the CredentialPool deliveryMode
+// leasing actually uses, closing the case where the two diverge.
+// writePodClaimError maps it to 422 carrying the guard's rejection Code
+// and Decision.Reason. spec: §4.9.
+type CredentialDeliveryIsolationError struct {
+	// Code is the direct_mode_isolation guard's rejection code
+	// (DirectModeStandardIsolationMultiTenantRejected or
+	// ProxyModeSpiffeBindingDisabledMultiTenantRejected).
+	Code string
+	// Reason is the guard's Decision.Reason remediation message.
+	Reason string
+}
+
+func (e *CredentialDeliveryIsolationError) Error() string { return e.Reason }
+
+// checkCredentialDeliveryIsolation runs the §4.9 session-start
+// credential-delivery gate: for each resolved provider pool's effective
+// deliveryMode it builds a direct_mode_isolation.Request pairing that mode
+// with the bound pod's isolationProfile and spiffeBinding, keyed on the
+// gateway's tenancy mode, and calls the same canonical Decide the
+// registration and admission layers run. On the first rejection it returns
+// a CredentialDeliveryIsolationError carrying the guard's code and reason;
+// it returns nil when every resolved pool is permitted (including in
+// single-tenant or development mode, where Decide allows both combinations).
+//
+// EgressProfile is not carried here: the NET-006 proxy/provider-direct
+// mutual exclusivity is a pool-definition property the registration and
+// admission layers already reject, and the bound pod's egressProfile is not
+// in scope at the lease-mint seam. This gate closes the delivery-mode
+// divergence §4.9 identifies between the CredentialPool deliveryMode leasing
+// uses and the warm-pool/SandboxTemplate copy the earlier layers inspect.
+//
+// spec: §4.9.
+func (s *Server) checkCredentialDeliveryIsolation(match podsession.PoolMatch, poolDeliveryModes map[string]string) error {
+	for _, deliveryMode := range poolDeliveryModes {
+		decision := direct_mode_isolation.Decide(direct_mode_isolation.Request{
+			TenancyMode:      s.tenancyMode,
+			DevMode:          s.devMode,
+			Kind:             "CredentialPool",
+			DeliveryMode:     deliveryMode,
+			IsolationProfile: match.IsolationProfile,
+			SpiffeBinding:    match.SpiffeBinding,
+		})
+		if !decision.Allowed {
+			return &CredentialDeliveryIsolationError{Code: rejectionCode(decision.Reason), Reason: decision.Reason}
+		}
+	}
+	return nil
+}
+
+// rejectionCode extracts the leading guard rejection code from a
+// direct_mode_isolation Decision.Reason, which the guard formats as
+// "<Code>: <kind> <message>". It returns the reason unchanged when no
+// colon-delimited code prefix is present.
+func rejectionCode(reason string) string {
+	if i := strings.Index(reason, ":"); i > 0 {
+		return reason[:i]
+	}
+	return reason
 }
 
 // poolDescriptor maps a §4.9 credential pool to the router's pool
@@ -1504,6 +1602,12 @@ type claimOutcome struct {
 	// row because the resolution is not persisted across the create window.
 	CredPools         map[string]string
 	UserCredProviders []string
+	// PoolDeliveryModes maps each resolved provider pool's name to its
+	// §4.9 effective deliveryMode (the authoritative CredentialPool value).
+	// The combined one-call POST /v1/sessions/start path threads it into
+	// startOnPod so the session-start credential-delivery gate evaluates the
+	// delivery mode leasing actually uses without re-resolving. spec: §4.9.
+	PoolDeliveryModes map[string]string
 }
 
 // startContext carries the create-time resolution claimAtCreate produced
@@ -1519,6 +1623,11 @@ type startContext struct {
 	// them instead of calling resolveCredentialPools again.
 	CredPools         map[string]string
 	UserCredProviders []string
+	// PoolDeliveryModes maps each resolved provider pool's name to its
+	// §4.9 effective deliveryMode; startOnPod reuses it so the session-start
+	// credential-delivery gate does not re-resolve the CredentialPool
+	// records on the combined path. spec: §4.9.
+	PoolDeliveryModes map[string]string
 	// PodClaim is the create-time §6.3 pod_claim phase duration the same
 	// call measured at claimAtCreate. prepareAndLaunch threads it into the
 	// end-to-end lenny_session_startup_duration_seconds so the single
@@ -1585,7 +1694,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// before the client wastes an upload, regardless of the pool's session
 	// policy. Surfacing the gate at create rather than at /start is the §2
 	// fail-fast contract this proposal establishes.
-	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
+	credPools, poolDeliveryModes, userCredProviders, err := s.resolveCredentialPools(ctx, row)
 	if err != nil {
 		return nil, err
 	}
@@ -1594,7 +1703,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// no SandboxClaim and no workspace materialization. No pod is claimed at
 	// create; the row persists with execution_mode=service.
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
-		return &claimOutcome{Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
+		return &claimOutcome{Level: level, CredPools: credPools, PoolDeliveryModes: poolDeliveryModes, UserCredProviders: userCredProviders}, nil
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	// spec: §4.1, §5.2 (proposal) — a concurrent-workspace pool
@@ -1637,7 +1746,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 		// spec: §6.3 — record the pod_claim phase timing at /create, its new
 		// boundary in the decomposed lifecycle, for the concurrent path too.
 		s.recordStartupPhases(match, podsession.BindTimings{PodClaim: claim.PodClaim})
-		return &claimOutcome{Claim: claim, Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
+		return &claimOutcome{Claim: claim, Level: level, CredPools: credPools, PoolDeliveryModes: poolDeliveryModes, UserCredProviders: userCredProviders}, nil
 	}
 	// The Claim phase only needs the pool, session, and tenant; the plan and
 	// credential inputs are consumed by Prepare/Launch at /start. Build the
@@ -1672,7 +1781,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// the launch boundary (recordStartupDuration), not here, so a single
 	// logical start does not double-count the envelope.
 	s.recordStartupPhases(match, podsession.BindTimings{PodClaim: claim.PodClaim})
-	return &claimOutcome{Claim: claim, Level: level, CredPools: credPools, UserCredProviders: userCredProviders}, nil
+	return &claimOutcome{Claim: claim, Level: level, CredPools: credPools, PoolDeliveryModes: poolDeliveryModes, UserCredProviders: userCredProviders}, nil
 }
 
 // errCreateClaimExhausted marks a create-time pod-claim exhaustion so
@@ -1752,13 +1861,14 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// §4.1: the pre-check runs once, before the claim).
 	var (
 		credPools         map[string]string
+		poolDeliveryModes map[string]string
 		userCredProviders []string
 	)
 	if claimed != nil {
-		credPools, userCredProviders = claimed.CredPools, claimed.UserCredProviders
+		credPools, poolDeliveryModes, userCredProviders = claimed.CredPools, claimed.PoolDeliveryModes, claimed.UserCredProviders
 	} else {
 		var err error
-		credPools, userCredProviders, err = s.resolveCredentialPools(ctx, row)
+		credPools, poolDeliveryModes, userCredProviders, err = s.resolveCredentialPools(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -1790,6 +1900,19 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// dispatches to the stateless data plane rather than a bound pod.
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
 		return nil, nil
+	}
+	// spec: §4.9 — the session-start credential-delivery gate. Evaluate each
+	// resolved CredentialPool's effective deliveryMode against the bound
+	// pod's isolationProfile/spiffeBinding before any lease is minted, so a
+	// combination the pool-definition copy hid (the divergence §4.9 names) is
+	// rejected here in multi-tenant mode. This covers the combined one-call
+	// POST /v1/sessions/start path (claimed != nil, prepareAndLaunch below)
+	// and the resume / tree-recovery rebuild path (claimed == nil, the
+	// whole-sequence Bind below), plus the concurrent-slot mint. On rejection
+	// startOnPod's callers roll back the pre-bind claim exactly as they do for
+	// a ResolvePool failure.
+	if err := s.checkCredentialDeliveryIsolation(match, poolDeliveryModes); err != nil {
+		return nil, err
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	// spec: §5.2 — a session-mode pool with maxConcurrentSessions > 1 routes
@@ -1910,9 +2033,17 @@ func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan
 	// slot via BindReservedSlot; a row without one is a misuse (a two-step
 	// /start with no claimed pod), surfaced as the queue's exhaustion path.
 	if match.MaxConcurrentSessions > 1 {
-		credPools, userCredProviders, cerr := s.resolveCredentialPools(ctx, row)
+		credPools, poolDeliveryModes, userCredProviders, cerr := s.resolveCredentialPools(ctx, row)
 		if cerr != nil {
 			return nil, cerr
+		}
+		// spec: §4.9 — the concurrent-workspace two-step /start mints per-provider
+		// leases through BindReservedSlot, so run the credential-delivery gate on
+		// the resolved CredentialPool deliveryMode against the bound pod's
+		// isolationProfile/spiffeBinding before the slot bind. prepareAtFinalize
+		// skips concurrent pools, so this is the seam that covers them.
+		if derr := s.checkCredentialDeliveryIsolation(match, poolDeliveryModes); derr != nil {
+			return nil, derr
 		}
 		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
 		return s.bindConcurrentSlot(ctx, row, match, slotReq)

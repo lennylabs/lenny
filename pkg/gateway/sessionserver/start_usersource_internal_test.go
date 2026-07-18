@@ -62,7 +62,7 @@ func userSourceFixture(t *testing.T, preferred credential.PreferredSource, runti
 // canonical proxy dialect.
 func TestResolveUserSource_spec_4_9_1347(t *testing.T) {
 	s := userSourceFixture(t, credential.PreferredSourceUser, []string{"anthropic"}, "anthropic_direct")
-	pools, users, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	pools, _, users, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestResolveUserSourceDialectMismatch_spec_4_9_1476(t *testing.T) {
 	// Runtime speaks only "openai"; the anthropic_direct user credential
 	// needs the "anthropic" dialect.
 	s := userSourceFixture(t, credential.PreferredSourceUser, []string{"openai"}, "anthropic_direct")
-	_, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	_, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	var dialectErr *PoolProxyDialectError
 	if err == nil || !asPoolProxyDialectError(err, &dialectErr) {
 		t.Fatalf("err = %v, want *PoolProxyDialectError", err)
@@ -101,7 +101,7 @@ func TestResolveUserSourceFallsThroughToPool_spec_4_9_1372(t *testing.T) {
 		t, credential.PreferUserThenPool, []string{"anthropic"}, "none",
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 	)
-	pools, users, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	pools, _, users, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}

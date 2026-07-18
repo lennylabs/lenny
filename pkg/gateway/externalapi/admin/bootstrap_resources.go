@@ -79,6 +79,18 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
+		// spec: §4.9 — the §17.6 bootstrap.pools seed list is the second
+		// gateway pool-admission write path, so it holds each seed entry to the
+		// same layer-1 credential-delivery gate as the POST /v1/admin/pools
+		// handler: a direct + standard, proxy + spiffeBinding disabled, or
+		// (in every tenancy mode) proxy + provider-direct combination is
+		// recorded as a per-entry seed validation error rather than stored,
+		// so it never reconciles into a SandboxTemplate the failurePolicy: Fail
+		// layer-2 webhook would reject, wedging the PoolScalingController.
+		if dec := r.validateCredentialDeliveryCombo(pl); !dec.Allowed {
+			out.add(i, p.Name, actionError, seedValidationCode, dec.Reason, nil)
+			continue
+		}
 		existing, err := r.pools.Get(req.Context(), p.Name)
 		if errors.Is(err, poolstore.ErrNotFound) {
 			if !opts.dryRun {
@@ -131,6 +143,14 @@ func applyPoolSeed(stored *poolstore.Pool, desired poolstore.Pool) {
 	stored.WarmCount = desired.WarmCount
 	stored.MaxSessionAgeSeconds = desired.MaxSessionAgeSeconds
 	stored.AllowStandardIsolation = desired.AllowStandardIsolation
+	// spec: §4.9 — carry the pool-definition credential-delivery combination
+	// and its deployer opt-ins through the bootstrap force-update so a seed
+	// that changes the combination on an already-registered pool takes effect
+	// (one admin resource holds the whole combination across every write path).
+	stored.DeliveryMode = desired.DeliveryMode
+	stored.SpiffeBinding = desired.SpiffeBinding
+	stored.AllowDirectModeStandardIsolation = desired.AllowDirectModeStandardIsolation
+	stored.AllowProxyModeSpiffeBindingDisabled = desired.AllowProxyModeSpiffeBindingDisabled
 	stored.AcknowledgeNonceOnlyAuth = desired.AcknowledgeNonceOnlyAuth
 	stored.EgressProfile = desired.EgressProfile
 	stored.DNSPolicy = desired.DNSPolicy
@@ -154,6 +174,19 @@ func poolConflicts(existing poolstore.Pool, p PoolPayload) (conflicts, securityC
 	}
 	if p.ExecutionMode != "" && string(existing.ExecutionMode) != p.ExecutionMode {
 		conflicts = append(conflicts, "executionMode")
+	}
+	// spec: §4.9 — deliveryMode and spiffeBinding reconcile onto the
+	// SandboxTemplate, so a seed changing only one of them must register a
+	// conflict to be applied under force-update. They are ordinary (non
+	// security-critical) conflicts: the fail-closed multi-tenant Decide gate
+	// runs earlier in upsertPools, and marking them security-critical would
+	// block a legitimate single-tenant reconfiguration regardless of
+	// force-update.
+	if p.DeliveryMode != "" && existing.DeliveryMode != p.DeliveryMode {
+		conflicts = append(conflicts, "deliveryMode")
+	}
+	if p.SpiffeBinding != "" && existing.SpiffeBinding != p.SpiffeBinding {
+		conflicts = append(conflicts, "spiffeBinding")
 	}
 	if p.ResourceClass != "" && existing.ResourceClass != p.ResourceClass {
 		conflicts = append(conflicts, "resourceClass")

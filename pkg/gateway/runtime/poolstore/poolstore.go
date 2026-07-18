@@ -84,6 +84,35 @@ type Pool struct {
 	// per §5.3 security note.
 	AllowStandardIsolation bool
 
+	// DeliveryMode is the §4.9 pool-definition credential-delivery mode
+	// (`proxy`, `direct`) reconciled onto the SandboxTemplate CRD. It is
+	// the denormalized warm-pool copy the pool-registration and admission
+	// layers inspect against IsolationProfile/SpiffeBinding for the two
+	// cross-tenant-risky combinations. Empty inherits the runtime default.
+	// spec: §4.9.
+	DeliveryMode string
+
+	// SpiffeBinding is the §4.9 pool-definition SPIFFE-binding mode
+	// (`enabled`, `disabled`) reconciled onto the SandboxTemplate CRD. In
+	// multi-tenant mode `deliveryMode: proxy` + `spiffeBinding: disabled`
+	// is a forbidden combination the enforcement layers reject. Empty
+	// inherits the runtime default. spec: §4.9.
+	SpiffeBinding string
+
+	// AllowDirectModeStandardIsolation is the §4.9 deployer opt-in
+	// acknowledging `deliveryMode: direct` + `isolationProfile: standard`.
+	// It permits the combination in single-tenant or development mode; in
+	// multi-tenant mode the admission webhook rejects the combination
+	// regardless of this flag. spec: §4.9.
+	AllowDirectModeStandardIsolation bool
+
+	// AllowProxyModeSpiffeBindingDisabled is the §4.9 deployer opt-in
+	// acknowledging `deliveryMode: proxy` + `spiffeBinding: disabled`. It
+	// permits the combination in single-tenant or development mode; in
+	// multi-tenant mode the admission webhook rejects the combination
+	// regardless of this flag. spec: §4.9.
+	AllowProxyModeSpiffeBindingDisabled bool
+
 	// AcknowledgeNonceOnlyAuth is the §5.3 deployer opt-in, of the same
 	// class as AllowStandardIsolation, that acknowledges §4.7 nonce-only
 	// mode for the pool. A pool referencing a runtime with

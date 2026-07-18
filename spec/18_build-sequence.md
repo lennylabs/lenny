@@ -340,7 +340,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - SSE relay implementation for streaming responses.
 - Circuit breaker around the upstream LLM provider.
 - Lease-token validation on every proxy request.
-- `lenny-direct-mode-isolation` admission webhook per [§6.2](06_warm-pod-model.md#62-pod-state-machine), [§13.2](13_security-model.md#132-network-isolation), and [§4.9](04_system-components.md#49-credential-leasing-service): rejects (a) `deliveryMode: direct` combined with `isolationProfile: standard`, and (b) `deliveryMode: proxy` combined with `spiffeBinding: disabled` when `tenancy.mode: multi`, unless `allowProxyModeSpiffeBindingDisabled` is set.
+- `lenny-direct-mode-isolation` admission webhook per [§6.2](06_warm-pod-model.md#62-pod-state-machine), [§13.2](13_security-model.md#132-network-isolation), and [§4.9](04_system-components.md#49-credential-leasing-service): rejects (a) `deliveryMode: direct` combined with `isolationProfile: standard`, and (b) `deliveryMode: proxy` combined with `spiffeBinding: disabled` when `tenancy.mode: multi`. The `allowProxyModeSpiffeBindingDisabled` opt-in permits combination (b) only in single-tenant or development mode; it cannot be set in multi-tenant mode.
 - Helm feature flag `features.llmProxy` enabled (rendered as `true` for Phase 5.8+ deployments).
 - Phase-stamp ConfigMap entry recorded per [§17.2](17_deployment-topology.md#172-namespace-layout) downgrade-enforcement layer.
 

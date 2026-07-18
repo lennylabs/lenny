@@ -171,6 +171,16 @@ type Server struct {
 	// dev), the gate retains the historical fall-through.
 	// spec: §10.2 lines 256–264, F-10.2.4.
 	multiTenant bool
+	// tenancyMode is the §4.9 platform tenancy.mode ("multi" or "single"),
+	// wired from the --tenancy-mode flag (the same signal the layer-2
+	// admission webhook and the warm-pool layer-1 registration check key
+	// off). The session-start credential-delivery gate runs
+	// direct_mode_isolation.Decide against this value so a resolved
+	// CredentialPool whose effective deliveryMode pairs with the bound
+	// pod's isolationProfile/spiffeBinding in a forbidden combination is
+	// rejected before any lease is minted. Empty is treated as
+	// single-tenant (the gate never rejects). spec: §4.9.
+	tenancyMode string
 	podBinder   *podsession.Binder
 	podRegistry *podsession.Registry
 	// claimQueue is the §4.6.1 per-pool claim FIFO that backs
@@ -1086,6 +1096,14 @@ type Options struct {
 	// spec: §10.2 lines 256–264. F-10.2.4.
 	MultiTenant bool
 
+	// TenancyMode is the §4.9 platform tenancy.mode ("multi" or "single"),
+	// wired from the gateway --tenancy-mode flag (the same .Values.tenancy.mode
+	// the layer-2 admission webhook and the warm-pool layer-1 registration
+	// check read). The session-start credential-delivery gate enforces the
+	// two cross-tenant credential-delivery rejections only when this is
+	// "multi". Empty is treated as single-tenant. spec: §4.9.
+	TenancyMode string
+
 	// Users is the §10.2 user registry consulted to enforce §11.4 user
 	// invalidation on the session-creation path: a soft-disabled,
 	// hard-disabled, or fully-revoked user is denied new sessions.
@@ -1646,6 +1664,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		defaultIsoProf:             opts.DefaultIsolationProfile,
 		devMode:                    opts.DevMode,
 		multiTenant:                opts.MultiTenant,
+		tenancyMode:                opts.TenancyMode,
 		podBinder:                  opts.PodBinder,
 		podRegistry:                opts.PodRegistry,
 		fencer:                     opts.CoordinationFencer,

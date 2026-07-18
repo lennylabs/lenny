@@ -97,6 +97,7 @@ func (w *gatewayWiring) buildSessionServer(
 	defaultIsolationProfile := f.defaultIsolationProfile
 	devMode := f.devMode
 	multiTenant := f.multiTenant
+	tenancyMode := f.tenancyMode
 	persistDeriveFailureRows := f.persistDeriveFailureRows
 	sessionArtifactRetentionSeconds := f.sessionArtifactRetentionSeconds
 	workspaceSealMaxDurationSeconds := f.workspaceSealMaxDurationSeconds
@@ -209,6 +210,13 @@ func (w *gatewayWiring) buildSessionServer(
 		// spec: §10.2 lines 256–264. F-10.2.4. Multi-tenant deployments
 		// fail closed on a no-role principal at the session RBAC gate.
 		MultiTenant: *multiTenant,
+		// spec: §4.9 — the platform tenancy.mode the session-start
+		// credential-delivery gate enforces the two cross-tenant
+		// credential-delivery rejections against. Wired from the same
+		// --tenancy-mode flag the admin Router reads, so the gate keys off
+		// the identical signal the layer-1 registration check and the
+		// layer-2 admission webhook use.
+		TenancyMode: *tenancyMode,
 		Sealer:      w.sessionSealer,
 		// §4.4 line 236 — the resume path delegates partial-manifest
 		// cleanup to this adapter. Deleter is nil for v1 (no chunk

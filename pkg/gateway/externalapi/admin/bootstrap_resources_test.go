@@ -210,6 +210,101 @@ func TestBootstrapPoolSkipThenForceUpdate_spec_17_6_450(t *testing.T) {
 	}
 }
 
+// TestBootstrapPoolForceUpdateCarriesCredentialDelivery_spec_4_9 covers
+// the §4.9 credential-delivery combination through the bootstrap
+// force-update write path (the full-replace of an already-registered
+// seed pool). A seed that flips deliveryMode/spiffeBinding and the two
+// deployer opt-ins must land on the stored row so the persisted pool
+// reflects the seed's declared combination and the later admission
+// layers inspect the current value, matching the admin POST/PUT paths.
+//
+// diagnosis: the bootstrap force-update overwrote only the previously
+// enumerated scalars and dropped deliveryMode, spiffeBinding,
+// allowDirectModeStandardIsolation, and allowProxyModeSpiffeBindingDisabled,
+// so a seed changing the combination on an existing pool was silently
+// ignored and the stored row kept its stale value.
+// spec: 4.9, 17.6
+func TestBootstrapPoolForceUpdateCarriesCredentialDelivery_spec_4_9(t *testing.T) {
+	s := newFullBootstrapRouter(t, false)
+	_ = s.runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	_ = s.pools.Create(context.Background(), poolstore.Pool{
+		Name: "p1", RuntimeRef: "echo", IsolationProfile: "sandboxed", WarmCount: 2,
+		DeliveryMode: "proxy", SpiffeBinding: "enabled",
+	})
+
+	// The warmCount change makes the entry a force-update candidate; the
+	// same seed flips the credential-delivery combination and sets both
+	// deployer opt-ins.
+	_, resp := postBootstrap(t, s.router, admin.BootstrapRequest{
+		Pools: []admin.PoolPayload{{
+			Name: "p1", RuntimeRef: "echo", IsolationProfile: "sandboxed", WarmCount: 5,
+			DeliveryMode: "direct", SpiffeBinding: "disabled",
+			AllowDirectModeStandardIsolation:    true,
+			AllowProxyModeSpiffeBindingDisabled: true,
+		}},
+	}, "?forceUpdate=true")
+	if resp.Pools.UpdatedCount != 1 {
+		t.Fatalf("updatedCount = %d, want 1; resp=%+v", resp.Pools.UpdatedCount, resp.Pools)
+	}
+
+	row, _ := s.pools.Get(context.Background(), "p1")
+	if row.DeliveryMode != "direct" {
+		t.Errorf("deliveryMode must be direct after force-update, got %q", row.DeliveryMode)
+	}
+	if row.SpiffeBinding != "disabled" {
+		t.Errorf("spiffeBinding must be disabled after force-update, got %q", row.SpiffeBinding)
+	}
+	if !row.AllowDirectModeStandardIsolation {
+		t.Errorf("allowDirectModeStandardIsolation must be true after force-update, got %+v", row)
+	}
+	if !row.AllowProxyModeSpiffeBindingDisabled {
+		t.Errorf("allowProxyModeSpiffeBindingDisabled must be true after force-update, got %+v", row)
+	}
+}
+
+// TestBootstrapPoolForceUpdateDetectsCredentialDeliveryOnlyChange_spec_4_9
+// covers the §4.9 change-detection half of the bootstrap force-update
+// pair. A seed that re-registers an existing pool changing only
+// deliveryMode and spiffeBinding (every other field identical) must
+// register a conflict so resolveExisting returns doUpdate under
+// force-update, otherwise the stored row keeps its stale combination and
+// the reconciled SandboxTemplate diverges from the declared seed.
+//
+// diagnosis: poolConflicts compared only the pre-existing scalars and
+// omitted deliveryMode/spiffeBinding, so a seed changing only one of them
+// produced zero conflicts, resolveExisting returned doUpdate: false even
+// under force-update, and applyPoolSeed never ran.
+// spec: 4.9, 17.6
+func TestBootstrapPoolForceUpdateDetectsCredentialDeliveryOnlyChange_spec_4_9(t *testing.T) {
+	s := newFullBootstrapRouter(t, false)
+	_ = s.runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	_ = s.pools.Create(context.Background(), poolstore.Pool{
+		Name: "p1", RuntimeRef: "echo", IsolationProfile: "sandboxed", WarmCount: 2,
+		DeliveryMode: "proxy", SpiffeBinding: "enabled",
+	})
+
+	// Only deliveryMode and spiffeBinding change; every other field, including
+	// warmCount, is identical to the stored row, so the update is applied only
+	// if poolConflicts detects the credential-delivery change.
+	_, resp := postBootstrap(t, s.router, admin.BootstrapRequest{
+		Pools: []admin.PoolPayload{{
+			Name: "p1", RuntimeRef: "echo", IsolationProfile: "sandboxed", WarmCount: 2,
+			DeliveryMode: "direct", SpiffeBinding: "disabled",
+		}},
+	}, "?forceUpdate=true")
+	if resp.Pools.UpdatedCount != 1 {
+		t.Fatalf("updatedCount = %d, want 1; resp=%+v", resp.Pools.UpdatedCount, resp.Pools)
+	}
+
+	row, _ := s.pools.Get(context.Background(), "p1")
+	if row.DeliveryMode != "direct" {
+		t.Errorf("deliveryMode must be direct after force-update, got %q", row.DeliveryMode)
+	}
+	if row.SpiffeBinding != "disabled" {
+		t.Errorf("spiffeBinding must be disabled after force-update, got %q", row.SpiffeBinding)
+	}
+}
+
 // TestBootstrapPoolDryRunDoesNotPersist_spec_15_1_1140 covers the dry-run
 // query parameter: the pool is validated but not stored.
 func TestBootstrapPoolDryRunDoesNotPersist_spec_15_1_1140(t *testing.T) {

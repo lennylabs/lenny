@@ -243,7 +243,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	// ordering), so resolve the per-provider pool map here from the persisted
 	// row. The create-time pre-check already confirmed availability; this
 	// resolves the assignment inputs the prepare phase's AssignCredentials uses.
-	credPools, userCredProviders, err := s.resolveCredentialPools(ctx, row)
+	credPools, poolDeliveryModes, userCredProviders, err := s.resolveCredentialPools(ctx, row)
 	if err != nil {
 		// spec: §4.3 (proposal: finalize-failure reclaim) / §6.2 — the
 		// resolution ran before the binder engaged, so reclaim the create-time
@@ -258,6 +258,18 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 		// the lenny_credential_preclaim_mismatch_total counter records the same
 		// pre-check-passes-then-assignment-fails event, now observed at finalize.
 		return nil, mapFinalizeCredentialMismatch(err)
+	}
+	// spec: §4.9 — the session-start credential-delivery gate on the two-step
+	// finalize seam. Evaluate each resolved CredentialPool's effective
+	// deliveryMode against the bound pod's isolationProfile/spiffeBinding
+	// before the prepare barrier assigns the lease, so a forbidden combination
+	// the pool-definition copy hid is rejected in multi-tenant mode before any
+	// lease is minted. Reclaim the create-time pod first, matching the two
+	// existing pre-Prepare exits above, because the outer finalize handler does
+	// not reclaim on a pre-Prepare error.
+	if derr := s.checkCredentialDeliveryIsolation(match, poolDeliveryModes); derr != nil {
+		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
+		return nil, derr
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)

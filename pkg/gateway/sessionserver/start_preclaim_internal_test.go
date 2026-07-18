@@ -101,7 +101,7 @@ func TestResolveCredentialPoolsPoolSource(t *testing.T) {
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
 	)
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestResolveCredentialPoolsIntersectionNarrows(t *testing.T) {
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 		poolFixture("vertex-prod", "vertex_ai", credentialpoolstore.CredentialActive),
 	)
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestResolveCredentialPoolsFallbackOrder(t *testing.T) {
 		poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialRevoked), // all revoked
 		poolFixture("backup", "anthropic_direct", credentialpoolstore.CredentialActive),
 	)
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestResolveCredentialPoolsExhausted(t *testing.T) {
 		t, policy, []string{"anthropic_direct"},
 		poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialRevoked),
 	)
-	_, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	_, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 		t.Errorf("got %v, want ErrNoCredentialAvailable", err)
 	}
@@ -420,7 +420,7 @@ func TestResolveCredentialPoolsUserOnlyMiss(t *testing.T) {
 		t, policy, []string{"anthropic_direct"},
 		poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialActive),
 	)
-	_, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	_, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if !errors.Is(err, credrouter.ErrUserCredentialNotFound) {
 		t.Errorf("got %v, want ErrUserCredentialNotFound", err)
 	}
@@ -430,7 +430,7 @@ func TestResolveCredentialPoolsUserOnlyMiss(t *testing.T) {
 // pre-§4.9 behavior is preserved for deployments without pools.
 func TestResolveCredentialPoolsUnconfiguredPolicy(t *testing.T) {
 	s := preclaimFixture(t, credential.CredentialPolicy{}, []string{"anthropic_direct"})
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestResolveCredentialPoolsUnconfiguredPolicy(t *testing.T) {
 // With no registries wired the §4.9 layer is inert.
 func TestResolveCredentialPoolsNoRegistries(t *testing.T) {
 	s := &Server{credRouter: credrouter.NewDefault()}
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow())
 	if err != nil || got != nil {
 		t.Errorf("got (%v, %v), want (nil, nil) with no registries", got, err)
 	}

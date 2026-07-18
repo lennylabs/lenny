@@ -350,6 +350,14 @@ type Router struct {
 	// isolationProfile.
 	devMode bool
 
+	// tenancyMode mirrors Options.TenancyMode; the §4.9 warm-pool
+	// pool-registration layer-1 check enforces the cross-tenant
+	// credential-delivery rejections only when it is "multi" (with
+	// devMode false).
+	//
+	// spec: §4.9.
+	tenancyMode string
+
 	// maxFinalizingTimeoutSeconds is the gateway-side outer bound
 	// from §11.3 line 219. When > 0, runtime registration and bootstrap
 	// reject a runtime whose `setupPolicy.timeoutSeconds` exceeds it,
@@ -422,6 +430,16 @@ type Options struct {
 	// behalf. When false the default is the production `sandboxed`.
 	DevMode bool
 
+	// TenancyMode is the platform tenancy.mode setting ("multi" or
+	// "single"), sourced from the gateway --tenancy-mode flag. The
+	// warm-pool admin registration layer-1 check enforces the §4.9
+	// cross-tenant credential-delivery rejections only when it is "multi"
+	// (and DevMode is false), matching the direct_mode_isolation guard's
+	// enforced() predicate the layer-2 webhook shares.
+	//
+	// spec: §4.9.
+	TenancyMode string
+
 	// BillingAuditDDLPool is the CREATE-privileged DDL connection for the
 	// billing/audit instance where billing_events and audit_log live. The
 	// tenant-provisioning helper (S4) issues `CREATE SEQUENCE` for the
@@ -455,6 +473,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 		audit:               opts.Audit,
 		metrics:             opts.Metrics,
 		devMode:             opts.DevMode,
+		tenancyMode:         opts.TenancyMode,
 		billingAuditDDLPool: opts.BillingAuditDDLPool,
 		primaryDDLPool:      opts.PrimaryDDLPool,
 	}

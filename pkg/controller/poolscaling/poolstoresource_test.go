@@ -322,6 +322,67 @@ func TestPoolStoreSourceMirrorsNonceOnlyAck(t *testing.T) {
 	}
 }
 
+// TestPoolStoreSourceMirrorsDeliveryFields verifies the §4.9 pool-definition
+// deliveryMode and spiffeBinding flow from the poolstore source of truth onto
+// SandboxTemplate.spec so the lenny-direct-mode-isolation ValidatingAdmissionWebhook
+// and the preflight scan read live values rather than the empty strings the CRD
+// carried before the PoolScalingController populated them. Against the pre-fix
+// mapping (which copied IsolationProfile/EgressProfile but neither delivery
+// field) the CRD deliveryMode/spiffeBinding stayed empty and this assertion
+// fails. The two deployer opt-in acknowledgments are deliberately absent from
+// the CRD spec, which the SandboxTemplateSpec type enforces structurally: the
+// webhook rejects the forbidden combinations in multi-tenant mode regardless of
+// any opt-in value, so the CRD carries only the fields the admission gate reads.
+//
+// spec: §4.9.
+func TestPoolStoreSourceMirrorsDeliveryFields(t *testing.T) {
+	store := newMemoryStore(
+		t,
+		poolstore.Pool{
+			Name:                                "proxy-spiffe-disabled",
+			RuntimeRef:                          "claude-code",
+			IsolationProfile:                    isolation.ProfileStandard,
+			AllowStandardIsolation:              true,
+			ExecutionMode:                       runtimestore.ExecutionModeSession,
+			WarmCount:                           1,
+			DeliveryMode:                        "proxy",
+			SpiffeBinding:                       "disabled",
+			AllowProxyModeSpiffeBindingDisabled: true,
+			AllowDirectModeStandardIsolation:    true,
+		},
+		poolstore.Pool{
+			Name:             "default-delivery",
+			RuntimeRef:       "claude-code",
+			IsolationProfile: isolation.ProfileSandboxed,
+			ExecutionMode:    runtimestore.ExecutionModeSession,
+			WarmCount:        1,
+		},
+	)
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	byName := map[string]poolscaling.PoolConfig{}
+	for _, c := range configs {
+		byName[c.Name] = c
+	}
+	set := byName["proxy-spiffe-disabled"]
+	if set.Template.DeliveryMode != "proxy" {
+		t.Errorf("proxy-spiffe-disabled template deliveryMode = %q, want proxy", set.Template.DeliveryMode)
+	}
+	if set.Template.SpiffeBinding != "disabled" {
+		t.Errorf("proxy-spiffe-disabled template spiffeBinding = %q, want disabled", set.Template.SpiffeBinding)
+	}
+	def := byName["default-delivery"]
+	if def.Template.DeliveryMode != "" {
+		t.Errorf("default-delivery template deliveryMode = %q, want empty (runtime default)", def.Template.DeliveryMode)
+	}
+	if def.Template.SpiffeBinding != "" {
+		t.Errorf("default-delivery template spiffeBinding = %q, want empty (runtime default)", def.Template.SpiffeBinding)
+	}
+}
+
 // TestPoolStoreSourceMirrorsDNSPolicy verifies the §13.2 per-pool DNS
 // opt-out flows from the store row onto SandboxTemplate.spec.dnsPolicy so
 // the WarmPoolController stamps the lenny.dev/dns-policy: cluster-default
