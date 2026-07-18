@@ -547,6 +547,12 @@ func TestRunbookStepsContract(t *testing.T) {
 // adopt the sample's per-form heterogeneous keys or the sample should be
 // corrected to the uniform "commands" array is an open spec-vs-
 // implementation reconciliation, not a mechanical fix.
+//
+// diagnosis: the §25.7 /steps access-path command-key wire schema has
+// drifted from the documented sample — a lenny-ctl path is not
+// serializing the singular "command" key, or an api path is emitting a
+// command/commands key the sample forbids. (Currently skipped pending
+// the spec-vs-implementation reconciliation noted above.)
 func TestRunbookStepsLennyCtlAndAPICommandKeySchemaContract(t *testing.T) {
 	t.Skip("lenny-ctl/api access-path command key schema is pending spec-vs-implementation reconciliation via the proposal pipeline (see open TEST-GAPS.md finding for §25.7 /steps access-path serialization)")
 
