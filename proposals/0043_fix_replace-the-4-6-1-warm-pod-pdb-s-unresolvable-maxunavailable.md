@@ -209,13 +209,15 @@ Subsequent adversarial review rounds populate this section. The challenge-round 
 
 ## 9. Open decisions for review
 
-### Accepting the relaxed one-at-a-time cap — proposed: option (b)
+Both open decisions are resolved by the reviewer as staged:
 
-This proposal chooses option (b) (integer `minAvailable = minWarm - 1`), which caps warm-pod evictions at one only at steady state and may admit several concurrent evictions when the pool holds surplus idle pods above `minWarm`. Option (a) (a `/scale` subresource on `Sandbox`) would preserve the strict one-at-a-time cap regardless of pool size, at the cost of a semantically misleading scale endpoint on a single-pod resource plus a CRD change. Confirm the relaxed cap is acceptable given the selected pods are session-less idle pods; if strict simultaneity capping is required, switch to option (a).
+### Accepting the relaxed one-at-a-time cap — resolved: option (b)
 
-### minWarm == 1 handling — proposed: no PDB below minWarm 2
+The reviewer ratified option (b) (integer `minAvailable = minWarm - 1`). It caps warm-pod evictions at one at steady state and may admit several concurrent evictions when the pool holds surplus idle pods above `minWarm`; this is accepted because the selected pods are session-less idle warm pods, so a larger transient dip is healed by proactive replacement without disrupting any active session. Option (a) (a `/scale` subresource on `Sandbox`) would preserve a strict one-at-a-time cap regardless of pool size but adds a semantically misleading scale endpoint on a single-pod resource plus a CRD change, and is not adopted.
 
-This proposal tears down the PDB for pools with `minWarm` below 2, because a single warm pod cannot get one-at-a-time protection without deadlocking. Confirm that no protection for single-warm-pool pools is acceptable, versus creating a no-op `minAvailable: 0` PDB.
+### minWarm == 1 handling — resolved: no PDB below minWarm 2
+
+The reviewer ratified tearing the PDB down for pools with `minWarm` below 2. A single warm pod cannot get one-at-a-time protection from an integer `minAvailable` without either deadlocking (`minAvailable: 1`) or being a no-op (`minAvailable: 0`), so no PDB is created for it, matching the existing scaled-to-zero teardown; a no-op `minAvailable: 0` PDB is not adopted because it advertises protection it does not provide.
 
 ## 10. Files touched on application
 
@@ -225,5 +227,3 @@ This proposal tears down the PDB for pools with `minWarm` below 2, because a sin
 - `pkg/controller/warmpool/pdb_test.go`: TEST-1 (assert `minAvailable = minWarm - 1`, the `minWarm < 2` teardown, and the convergence clearing of `maxUnavailable`, `:34-84`).
 - `tests/tier8_chaos/warm_pod_eviction_test.go`: TEST-2 (un-skip and align the eviction test to the `minAvailable` mechanism and the steady-state precondition, `:134-235`).
 - `TEST-GAPS.md`: DOC-1 (mark T-4.6.5 and T-4.6.18 resolved, `:819`, `:896`).
-</content>
-</invoke>
