@@ -72,8 +72,10 @@ func (a *leaseCountingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 	a.mu.Lock()
 	a.assigns++
 	a.mu.Unlock()
-	return &adapterv1.CredentialLease{LeaseId: "cl-" + pool, Provider: pool,
-		Payload: []byte(`{"deliveryMode":"proxy","materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt"}}`)}, nil
+	return &adapterv1.CredentialLease{
+		LeaseId: "cl-" + pool, Provider: pool,
+		Payload: []byte(`{"deliveryMode":"proxy","materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt"}}`),
+	}, nil
 }
 func (a *leaseCountingAssigner) ReleaseSession(string) {}
 func (a *leaseCountingAssigner) count() int {

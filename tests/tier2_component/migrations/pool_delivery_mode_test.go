@@ -12,19 +12,19 @@ import (
 )
 
 // spec: §4.9 (cross-tenant credential-delivery combinations)
-// diagnosis: migration 0175 did not add the delivery_mode, spiffe_binding,
+// diagnosis: migration 0176 did not add the delivery_mode, spiffe_binding,
 // allow_direct_mode_standard_isolation, and
 // allow_proxy_mode_spiffe_binding_disabled columns to sandbox_warm_pools
 // with the correct NOT NULL/DEFAULT, or its .down.sql did not drop them.
 // The two text fields carry the pool-definition credential-delivery
 // combination the pool-registration and admission layers inspect and
-// default to '' (inherit the runtime default). The two opt-in booleans are
+// default to ” (inherit the runtime default). The two opt-in booleans are
 // deployer acknowledgments of the same class as allow_standard_isolation and
 // must default to false so a pool that never opts in acknowledges no
 // forbidden combination (fail closed): a true default would silently
 // acknowledge the direct+standard or proxy+disabled combination the deployer
 // never opted into.
-func TestProdMigration0175PoolDeliveryModeColumns(t *testing.T) {
+func TestProdMigration0176PoolDeliveryModeColumns(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
@@ -58,7 +58,7 @@ func TestProdMigration0175PoolDeliveryModeColumns(t *testing.T) {
 		}
 	}
 
-	// Rolling migration 0175 back drops all four columns.
+	// Rolling migration 0176 back drops all four columns.
 	pg.MigrateTo(t, dir, 174)
 	for _, col := range []string{
 		"delivery_mode", "spiffe_binding",

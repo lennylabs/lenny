@@ -196,7 +196,8 @@ func TestRun_CredentialDeliveryScanMissingCRDPasses_spec_4_9(t *testing.T) {
 			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 				if _, ok := list.(*lennyv1.SandboxTemplateList); ok {
 					return apierrors.NewNotFound(
-						schema.GroupResource{Group: "lenny.dev", Resource: "sandboxtemplates"}, "")
+						schema.GroupResource{Group: "lenny.dev", Resource: "sandboxtemplates"}, "",
+					)
 				}
 				return cl.List(ctx, list, opts...)
 			},
