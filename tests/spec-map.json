@@ -3478,7 +3478,8 @@
         "charts/lenny/tests/registry-digest-webhook_test.yaml",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesFixedPhaseDurations",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines",
-        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta"
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta",
+        "pkg/ops/upgradeservice/upgradeservice_test.go::TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA"
       ],
       "packages": [
         "pkg/upgrade",
@@ -3490,7 +3491,7 @@
         "pkg/releasechannel"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts."
+      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md)."
     },
     "25.9": {
       "title": "Audit Log Query API",
