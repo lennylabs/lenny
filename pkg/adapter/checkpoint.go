@@ -125,8 +125,8 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	if serr := checkpoint.WorkspaceSizePreCheck(wsBytes, s.WorkspaceSizeLimitBytes); serr != nil {
 		return status.Errorf(codes.FailedPrecondition, "%s", serr.Error())
 	}
-	if serr := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Probe{
+	if serr := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{
 			Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: wsBytes},
 		},
 	}); serr != nil {
@@ -218,8 +218,8 @@ func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_Chec
 		index++
 	}
 
-	return "", stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Summary{
+	return "", stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{
 			Summary: &adapterv1.CheckpointSummary{ChunkCount: index, TotalBytes: total},
 		},
 	})
@@ -233,8 +233,8 @@ func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_Chec
 // the checkpoint failed. A successful ChunkCommitted returns an empty reason
 // and nil error; a non-nil error is a gRPC-level failure of the stream.
 func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, index uint32, chunk *chunkBuffer, budget checkpoint.RetryBudget) (string, error) {
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_ChunkReady{
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_ChunkReady{
 			ChunkReady: &adapterv1.ChunkReady{Index: index, Length: chunk.len()},
 		},
 	}); err != nil {
@@ -261,8 +261,8 @@ func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_Check
 			return "", status.Errorf(codes.Internal, "checkpoint PUT chunk %d: %v", index, perr)
 		}
 		if httpStatus >= 200 && httpStatus < 300 {
-			return "", stream.Send(&adapterv1.CheckpointServerMessage{
-				Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{
+			return "", stream.Send(&adapterv1.CheckpointResponse{
+				Msg: &adapterv1.CheckpointResponse_ChunkCommitted{
 					ChunkCommitted: &adapterv1.ChunkCommitted{Index: index},
 				},
 			})
@@ -290,8 +290,8 @@ func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_Check
 		// spec: §4.4 — a retry that outlives the grant's expiry requests a
 		// fresh grant for the same index on the open stream.
 		if grantExpired(grant) {
-			if serr := stream.Send(&adapterv1.CheckpointServerMessage{
-				Msg: &adapterv1.CheckpointServerMessage_ChunkReady{
+			if serr := stream.Send(&adapterv1.CheckpointResponse{
+				Msg: &adapterv1.CheckpointResponse_ChunkReady{
 					ChunkReady: &adapterv1.ChunkReady{Index: index, Length: chunk.len()},
 				},
 			}); serr != nil {
@@ -366,8 +366,8 @@ func (s *Server) failChunk(stream adapterv1.Adapter_CheckpointServer, index uint
 
 // sendFailed terminates the stream with a CheckpointFailed frame.
 func (s *Server) sendFailed(stream adapterv1.Adapter_CheckpointServer, index uint32, reason string, httpStatus int, code string) error {
-	return stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Failed{
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Failed{
 			Failed: &adapterv1.CheckpointFailed{
 				Reason:     reason,
 				Index:      index,

@@ -208,6 +208,9 @@ func seedTerminalSession(t *testing.T, in *releaseInfra, tenant, sessionID strin
 // chunks' bytes are released by the guarded catalog soft-delete, the reservation
 // headroom by the guarded relative decrement, and the chunk objects are removed
 // from MinIO.
+// diagnosis: a release arm left storage_bytes_used above baseline, so
+// confirmed-chunk bytes, reservation headroom, or the MinIO objects leak
+// after the checkpoint is released.
 func TestCheckpointReleaseArmsReturnStorageToBaseline(t *testing.T) {
 	in := newReleaseInfra(t)
 	ctx := context.Background()
@@ -320,6 +323,9 @@ func TestCheckpointReleaseArmsReturnStorageToBaseline(t *testing.T) {
 // reservation and the chunk bytes exactly once: the guarded ReleaseReservation
 // and the guarded catalog soft-delete each admit a single writer, so the
 // counter lands on baseline rather than being driven below it.
+// diagnosis: two concurrent backstop sweeps of the same abandoned row
+// double-decremented the reservation or the chunk bytes, driving the
+// counter below baseline.
 func TestCheckpointBackstopConcurrentSweepDecrementsOnce(t *testing.T) {
 	in := newReleaseInfra(t)
 	ctx := context.Background()

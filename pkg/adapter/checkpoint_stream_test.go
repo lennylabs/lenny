@@ -104,25 +104,25 @@ func driveCheckpoint(t *testing.T, stream adapterv1.Adapter_CheckpointClient, si
 			t.Fatalf("stream.Recv: %v", err)
 		}
 		switch m := msg.GetMsg().(type) {
-		case *adapterv1.CheckpointServerMessage_Probe:
+		case *adapterv1.CheckpointResponse_Probe:
 			probe = m.Probe
-		case *adapterv1.CheckpointServerMessage_ChunkReady:
+		case *adapterv1.CheckpointResponse_ChunkReady:
 			grant := &adapterv1.CheckpointGrant{
 				Index:         m.ChunkReady.GetIndex(),
 				Url:           "https://objectstore.example/chunk",
 				ContentLength: m.ChunkReady.GetLength(),
 				Headers:       signedHeaders,
 			}
-			if err := stream.Send(&adapterv1.CheckpointClientMessage{
-				Msg: &adapterv1.CheckpointClientMessage_Grant{Grant: grant},
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Grant{Grant: grant},
 			}); err != nil {
 				t.Fatalf("send grant: %v", err)
 			}
-		case *adapterv1.CheckpointServerMessage_ChunkCommitted:
+		case *adapterv1.CheckpointResponse_ChunkCommitted:
 			// ack observed; continue
-		case *adapterv1.CheckpointServerMessage_Summary:
+		case *adapterv1.CheckpointResponse_Summary:
 			return m.Summary, nil, probe
-		case *adapterv1.CheckpointServerMessage_Failed:
+		case *adapterv1.CheckpointResponse_Failed:
 			return nil, m.Failed, probe
 		}
 	}
@@ -247,8 +247,8 @@ func TestCheckpointStreamFullLevelReportsFailedComplete_spec_4_4_241(t *testing.
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-full-fail",
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
@@ -294,8 +294,8 @@ func TestCheckpointStreamFullLevelReportsOkComplete_spec_4_4_241(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-full-ok",
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
@@ -356,8 +356,8 @@ func TestCheckpointStreamProbeBeforeQuiesce_spec_4_4_255(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-oversize",
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
@@ -385,8 +385,8 @@ func TestCheckpointStreamUploadsChunksAndSummarizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-1",
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
@@ -452,8 +452,8 @@ func TestCheckpointStreamRejectsOversizeWorkspace_spec_4_4_255(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-2",
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
@@ -484,8 +484,8 @@ func TestCheckpointStreamReportsObjectStoreRejection_spec_4_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-3",
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,

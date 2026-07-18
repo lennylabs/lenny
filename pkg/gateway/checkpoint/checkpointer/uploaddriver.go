@@ -255,7 +255,7 @@ type uploadDriver struct {
 }
 
 // send issues one gateway → adapter frame under sendMu.
-func (d *uploadDriver) send(msg *adapterv1.CheckpointClientMessage) error {
+func (d *uploadDriver) send(msg *adapterv1.CheckpointRequest) error {
 	d.sendMu.Lock()
 	defer d.sendMu.Unlock()
 	return d.stream.Send(msg)
@@ -577,8 +577,8 @@ func (d *uploadDriver) mintGrant(index uint32, length int64, reMint bool) {
 			fmt.Sprintf("sign chunk %d grant: %v", index, err))
 		return
 	}
-	send := &adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Grant{
+	send := &adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Grant{
 			Grant: &adapterv1.CheckpointGrant{
 				Index:         index,
 				Url:           grant.URL,
@@ -787,8 +787,8 @@ func (d *uploadDriver) abort(reason, detail string) {
 		d.abortDetail = detail
 	}
 	d.mu.Unlock()
-	_ = d.send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Abort{
+	_ = d.send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Abort{
 			Abort: &adapterv1.CheckpointAbort{Reason: reason},
 		},
 	})

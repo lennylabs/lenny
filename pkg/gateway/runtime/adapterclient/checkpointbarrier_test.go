@@ -68,8 +68,8 @@ func driveBarrierCheckpointStream(t *testing.T, cl *adapterclient.Client, ctx co
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   checkpointID,
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
@@ -83,9 +83,9 @@ func driveBarrierCheckpointStream(t *testing.T, cl *adapterclient.Client, ctx co
 			t.Fatalf("Checkpoint stream Recv: %v", err)
 		}
 		switch m := msg.GetMsg().(type) {
-		case *adapterv1.CheckpointServerMessage_ChunkReady:
-			if err := stream.Send(&adapterv1.CheckpointClientMessage{
-				Msg: &adapterv1.CheckpointClientMessage_Grant{Grant: &adapterv1.CheckpointGrant{
+		case *adapterv1.CheckpointResponse_ChunkReady:
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Grant{Grant: &adapterv1.CheckpointGrant{
 					Index:         m.ChunkReady.GetIndex(),
 					Url:           "https://objectstore.example/chunk",
 					ContentLength: m.ChunkReady.GetLength(),
@@ -93,9 +93,9 @@ func driveBarrierCheckpointStream(t *testing.T, cl *adapterclient.Client, ctx co
 			}); err != nil {
 				t.Fatalf("send CheckpointGrant: %v", err)
 			}
-		case *adapterv1.CheckpointServerMessage_Summary:
+		case *adapterv1.CheckpointResponse_Summary:
 			return
-		case *adapterv1.CheckpointServerMessage_Failed:
+		case *adapterv1.CheckpointResponse_Failed:
 			t.Fatalf("Checkpoint stream failed: %+v", m.Failed)
 		}
 	}

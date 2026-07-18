@@ -90,12 +90,12 @@ func (a *cpChunkedAdapter) grantLengths(index uint32) []int64 {
 	return append([]int64(nil), a.grantLens[index]...)
 }
 
-func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	if _, err := stream.Recv(); err != nil {
 		return err
 	}
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
 	}); err != nil {
 		return err
 	}
@@ -128,8 +128,8 @@ func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.
 		}
 		a.store.putFromGrant(grant, wrote)
 		total += wrote
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: idx}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: idx}},
 		}); err != nil {
 			return err
 		}
@@ -143,15 +143,15 @@ func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.
 			return nil
 		}
 		if a.failAfter >= 0 && i == a.failAfter {
-			return stream.Send(&adapterv1.CheckpointServerMessage{
-				Msg: &adapterv1.CheckpointServerMessage_Failed{Failed: &adapterv1.CheckpointFailed{
+			return stream.Send(&adapterv1.CheckpointResponse{
+				Msg: &adapterv1.CheckpointResponse_Failed{Failed: &adapterv1.CheckpointFailed{
 					Reason: "retry_exhausted", Index: idx, HttpStatus: 503, ErrorCode: a.failCode,
 				}},
 			})
 		}
 	}
-	return stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Summary{Summary: &adapterv1.CheckpointSummary{
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{
 			ChunkCount: uint32(len(a.chunkLens)), TotalBytes: total,
 		}},
 	})
@@ -159,9 +159,9 @@ func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.
 
 // declareAndAwait sends a ChunkReady and reads the gateway's response: the
 // grant, or aborted when the gateway sent a CheckpointAbort.
-func (a *cpChunkedAdapter) declareAndAwait(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage], index uint32, length int64) (*adapterv1.CheckpointGrant, bool, error) {
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: index, Length: length}},
+func (a *cpChunkedAdapter) declareAndAwait(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse], index uint32, length int64) (*adapterv1.CheckpointGrant, bool, error) {
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: index, Length: length}},
 	}); err != nil {
 		return nil, false, err
 	}
@@ -298,7 +298,7 @@ type cpDriverMetrics struct {
 	orphanedTrigger string
 }
 
-func (m *cpDriverMetrics) IncCheckpointSizeExceeded(string, string)          {}
+func (m *cpDriverMetrics) IncCheckpointSizeExceeded(string, string)           {}
 func (m *cpDriverMetrics) IncCheckpointStorageFailure(string, string, string) {}
 func (m *cpDriverMetrics) IncCheckpointPartialManifestsSuperseded(string)     {}
 func (m *cpDriverMetrics) IncCheckpointPartial(string, bool, string, checkpoint.Trigger) {

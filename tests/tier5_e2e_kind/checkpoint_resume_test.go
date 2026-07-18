@@ -260,7 +260,8 @@ func waitForCompletedCheckpoint(ctx context.Context, t *testing.T, c *kind.Clust
 			"SELECT chunk_count, workspace_bytes_uploaded FROM checkpoint_manifest "+
 			"WHERE tenant_id = '%s' AND session_id = '%s' AND partial = FALSE AND deleted_at IS NULL "+
 			"ORDER BY coordination_generation DESC LIMIT 1;",
-		tenant, tenant, sessionID)
+		tenant, tenant, sessionID,
+	)
 	deadline := time.Now().Add(timeout)
 	for {
 		out := t5RunPsqlQuery(t, c, pgIP, "checkpoint-manifest-probe", query)

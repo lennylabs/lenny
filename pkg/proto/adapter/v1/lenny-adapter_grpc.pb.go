@@ -148,7 +148,7 @@ type AdapterClient interface {
 	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
-	Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointClientMessage, CheckpointServerMessage], error)
+	Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse], error)
 	// SignalDeadline warns the running session's runtime that the session is
 	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
@@ -360,18 +360,18 @@ func (c *adapterClient) Interrupt(ctx context.Context, in *InterruptRequest, opt
 	return out, nil
 }
 
-func (c *adapterClient) Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointClientMessage, CheckpointServerMessage], error) {
+func (c *adapterClient) Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[2], Adapter_Checkpoint_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[CheckpointClientMessage, CheckpointServerMessage]{ClientStream: stream}
+	x := &grpc.GenericClientStream[CheckpointRequest, CheckpointResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_CheckpointClient = grpc.BidiStreamingClient[CheckpointClientMessage, CheckpointServerMessage]
+type Adapter_CheckpointClient = grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse]
 
 func (c *adapterClient) SignalDeadline(ctx context.Context, in *SignalDeadlineRequest, opts ...grpc.CallOption) (*SignalDeadlineResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -574,7 +574,7 @@ type AdapterServer interface {
 	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
-	Checkpoint(grpc.BidiStreamingServer[CheckpointClientMessage, CheckpointServerMessage]) error
+	Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error
 	// SignalDeadline warns the running session's runtime that the session is
 	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
@@ -702,7 +702,7 @@ func (UnimplementedAdapterServer) RevokeCredentials(context.Context, *RevokeCred
 func (UnimplementedAdapterServer) Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Interrupt not implemented")
 }
-func (UnimplementedAdapterServer) Checkpoint(grpc.BidiStreamingServer[CheckpointClientMessage, CheckpointServerMessage]) error {
+func (UnimplementedAdapterServer) Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error {
 	return status.Error(codes.Unimplemented, "method Checkpoint not implemented")
 }
 func (UnimplementedAdapterServer) SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error) {
@@ -935,11 +935,11 @@ func _Adapter_Interrupt_Handler(srv interface{}, ctx context.Context, dec func(i
 }
 
 func _Adapter_Checkpoint_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AdapterServer).Checkpoint(&grpc.GenericServerStream[CheckpointClientMessage, CheckpointServerMessage]{ServerStream: stream})
+	return srv.(AdapterServer).Checkpoint(&grpc.GenericServerStream[CheckpointRequest, CheckpointResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_CheckpointServer = grpc.BidiStreamingServer[CheckpointClientMessage, CheckpointServerMessage]
+type Adapter_CheckpointServer = grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]
 
 func _Adapter_SignalDeadline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SignalDeadlineRequest)

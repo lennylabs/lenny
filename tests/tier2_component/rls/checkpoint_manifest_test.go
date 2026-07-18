@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -236,4 +237,3 @@ func TestCheckpointManifestIntentRowDefaults(t *testing.T) {
 		t.Errorf("intent-row partial = %v, want true", partial)
 	}
 }
-

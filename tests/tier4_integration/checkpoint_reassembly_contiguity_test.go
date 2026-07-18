@@ -28,6 +28,9 @@ import (
 // spec: §10.1 line 155 — an extra object at index N with chunk_count = N is
 // expected residue; reassembly consumes exactly the contiguous prefix
 // [0, N) and ignores the residue.
+// diagnosis: reassembly consumed residue beyond chunk_count or rejected a
+// valid checkpoint, so an expected extra object corrupts or blocks a
+// resume.
 func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
 	const (
 		tenant = "acme"
@@ -128,6 +131,9 @@ func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
 // same way as a gap, before any chunk body is fetched. A stray
 // non-zero-padded chunk-1 sorts after chunk-00002 in lexicographic list
 // order, reintroducing index 1 out of ascending order below chunk_count.
+// diagnosis: an out-of-order index below chunk_count was reassembled
+// instead of failing closed to a full checkpoint, so a resume could splice
+// chunks in the wrong order.
 func TestReassemblyFailsOnOutOfOrderIndex(t *testing.T) {
 	const (
 		tenant = "acme"

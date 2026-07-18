@@ -41,7 +41,6 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
-
 const (
 	testNS   = "lenny-agents"
 	testPool = "claude-worker"

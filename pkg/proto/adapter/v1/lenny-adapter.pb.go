@@ -3686,36 +3686,36 @@ func (x *InterruptResponse) GetStatus() InterruptResponse_Status {
 	return InterruptResponse_STATUS_UNSPECIFIED
 }
 
-// CheckpointClientMessage is a gateway → adapter frame on the Checkpoint
+// CheckpointRequest is a gateway → adapter frame on the Checkpoint
 // stream. The gateway (the gRPC client) drives the exchange: it starts
 // the stream, mints per-chunk upload capabilities in response to the
 // adapter's chunk declarations, and can abort the attempt.
-type CheckpointClientMessage struct {
+type CheckpointRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Msg:
 	//
-	//	*CheckpointClientMessage_Start
-	//	*CheckpointClientMessage_Grant
-	//	*CheckpointClientMessage_Abort
-	Msg           isCheckpointClientMessage_Msg `protobuf_oneof:"msg"`
+	//	*CheckpointRequest_Start
+	//	*CheckpointRequest_Grant
+	//	*CheckpointRequest_Abort
+	Msg           isCheckpointRequest_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *CheckpointClientMessage) Reset() {
-	*x = CheckpointClientMessage{}
+func (x *CheckpointRequest) Reset() {
+	*x = CheckpointRequest{}
 	mi := &file_lenny_adapter_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *CheckpointClientMessage) String() string {
+func (x *CheckpointRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*CheckpointClientMessage) ProtoMessage() {}
+func (*CheckpointRequest) ProtoMessage() {}
 
-func (x *CheckpointClientMessage) ProtoReflect() protoreflect.Message {
+func (x *CheckpointRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3727,66 +3727,66 @@ func (x *CheckpointClientMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use CheckpointClientMessage.ProtoReflect.Descriptor instead.
-func (*CheckpointClientMessage) Descriptor() ([]byte, []int) {
+// Deprecated: Use CheckpointRequest.ProtoReflect.Descriptor instead.
+func (*CheckpointRequest) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{49}
 }
 
-func (x *CheckpointClientMessage) GetMsg() isCheckpointClientMessage_Msg {
+func (x *CheckpointRequest) GetMsg() isCheckpointRequest_Msg {
 	if x != nil {
 		return x.Msg
 	}
 	return nil
 }
 
-func (x *CheckpointClientMessage) GetStart() *CheckpointStart {
+func (x *CheckpointRequest) GetStart() *CheckpointStart {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointClientMessage_Start); ok {
+		if x, ok := x.Msg.(*CheckpointRequest_Start); ok {
 			return x.Start
 		}
 	}
 	return nil
 }
 
-func (x *CheckpointClientMessage) GetGrant() *CheckpointGrant {
+func (x *CheckpointRequest) GetGrant() *CheckpointGrant {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointClientMessage_Grant); ok {
+		if x, ok := x.Msg.(*CheckpointRequest_Grant); ok {
 			return x.Grant
 		}
 	}
 	return nil
 }
 
-func (x *CheckpointClientMessage) GetAbort() *CheckpointAbort {
+func (x *CheckpointRequest) GetAbort() *CheckpointAbort {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointClientMessage_Abort); ok {
+		if x, ok := x.Msg.(*CheckpointRequest_Abort); ok {
 			return x.Abort
 		}
 	}
 	return nil
 }
 
-type isCheckpointClientMessage_Msg interface {
-	isCheckpointClientMessage_Msg()
+type isCheckpointRequest_Msg interface {
+	isCheckpointRequest_Msg()
 }
 
-type CheckpointClientMessage_Start struct {
+type CheckpointRequest_Start struct {
 	Start *CheckpointStart `protobuf:"bytes,1,opt,name=start,proto3,oneof"`
 }
 
-type CheckpointClientMessage_Grant struct {
+type CheckpointRequest_Grant struct {
 	Grant *CheckpointGrant `protobuf:"bytes,2,opt,name=grant,proto3,oneof"`
 }
 
-type CheckpointClientMessage_Abort struct {
+type CheckpointRequest_Abort struct {
 	Abort *CheckpointAbort `protobuf:"bytes,3,opt,name=abort,proto3,oneof"`
 }
 
-func (*CheckpointClientMessage_Start) isCheckpointClientMessage_Msg() {}
+func (*CheckpointRequest_Start) isCheckpointRequest_Msg() {}
 
-func (*CheckpointClientMessage_Grant) isCheckpointClientMessage_Msg() {}
+func (*CheckpointRequest_Grant) isCheckpointRequest_Msg() {}
 
-func (*CheckpointClientMessage_Abort) isCheckpointClientMessage_Msg() {}
+func (*CheckpointRequest_Abort) isCheckpointRequest_Msg() {}
 
 // CheckpointStart opens the stream. It carries the gateway-minted
 // `checkpoint_id` (§10.1 line 130 — the adapter never mints one), the
@@ -4011,36 +4011,36 @@ func (x *CheckpointAbort) GetReason() string {
 	return ""
 }
 
-// CheckpointServerMessage is an adapter → gateway frame on the Checkpoint
+// CheckpointResponse is an adapter → gateway frame on the Checkpoint
 // stream.
-type CheckpointServerMessage struct {
+type CheckpointResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Msg:
 	//
-	//	*CheckpointServerMessage_Probe
-	//	*CheckpointServerMessage_ChunkReady
-	//	*CheckpointServerMessage_ChunkCommitted
-	//	*CheckpointServerMessage_Summary
-	//	*CheckpointServerMessage_Failed
-	Msg           isCheckpointServerMessage_Msg `protobuf_oneof:"msg"`
+	//	*CheckpointResponse_Probe
+	//	*CheckpointResponse_ChunkReady
+	//	*CheckpointResponse_ChunkCommitted
+	//	*CheckpointResponse_Summary
+	//	*CheckpointResponse_Failed
+	Msg           isCheckpointResponse_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *CheckpointServerMessage) Reset() {
-	*x = CheckpointServerMessage{}
+func (x *CheckpointResponse) Reset() {
+	*x = CheckpointResponse{}
 	mi := &file_lenny_adapter_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *CheckpointServerMessage) String() string {
+func (x *CheckpointResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*CheckpointServerMessage) ProtoMessage() {}
+func (*CheckpointResponse) ProtoMessage() {}
 
-func (x *CheckpointServerMessage) ProtoReflect() protoreflect.Message {
+func (x *CheckpointResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4052,96 +4052,96 @@ func (x *CheckpointServerMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use CheckpointServerMessage.ProtoReflect.Descriptor instead.
-func (*CheckpointServerMessage) Descriptor() ([]byte, []int) {
+// Deprecated: Use CheckpointResponse.ProtoReflect.Descriptor instead.
+func (*CheckpointResponse) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{53}
 }
 
-func (x *CheckpointServerMessage) GetMsg() isCheckpointServerMessage_Msg {
+func (x *CheckpointResponse) GetMsg() isCheckpointResponse_Msg {
 	if x != nil {
 		return x.Msg
 	}
 	return nil
 }
 
-func (x *CheckpointServerMessage) GetProbe() *CheckpointProbe {
+func (x *CheckpointResponse) GetProbe() *CheckpointProbe {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointServerMessage_Probe); ok {
+		if x, ok := x.Msg.(*CheckpointResponse_Probe); ok {
 			return x.Probe
 		}
 	}
 	return nil
 }
 
-func (x *CheckpointServerMessage) GetChunkReady() *ChunkReady {
+func (x *CheckpointResponse) GetChunkReady() *ChunkReady {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointServerMessage_ChunkReady); ok {
+		if x, ok := x.Msg.(*CheckpointResponse_ChunkReady); ok {
 			return x.ChunkReady
 		}
 	}
 	return nil
 }
 
-func (x *CheckpointServerMessage) GetChunkCommitted() *ChunkCommitted {
+func (x *CheckpointResponse) GetChunkCommitted() *ChunkCommitted {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointServerMessage_ChunkCommitted); ok {
+		if x, ok := x.Msg.(*CheckpointResponse_ChunkCommitted); ok {
 			return x.ChunkCommitted
 		}
 	}
 	return nil
 }
 
-func (x *CheckpointServerMessage) GetSummary() *CheckpointSummary {
+func (x *CheckpointResponse) GetSummary() *CheckpointSummary {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointServerMessage_Summary); ok {
+		if x, ok := x.Msg.(*CheckpointResponse_Summary); ok {
 			return x.Summary
 		}
 	}
 	return nil
 }
 
-func (x *CheckpointServerMessage) GetFailed() *CheckpointFailed {
+func (x *CheckpointResponse) GetFailed() *CheckpointFailed {
 	if x != nil {
-		if x, ok := x.Msg.(*CheckpointServerMessage_Failed); ok {
+		if x, ok := x.Msg.(*CheckpointResponse_Failed); ok {
 			return x.Failed
 		}
 	}
 	return nil
 }
 
-type isCheckpointServerMessage_Msg interface {
-	isCheckpointServerMessage_Msg()
+type isCheckpointResponse_Msg interface {
+	isCheckpointResponse_Msg()
 }
 
-type CheckpointServerMessage_Probe struct {
+type CheckpointResponse_Probe struct {
 	Probe *CheckpointProbe `protobuf:"bytes,1,opt,name=probe,proto3,oneof"`
 }
 
-type CheckpointServerMessage_ChunkReady struct {
+type CheckpointResponse_ChunkReady struct {
 	ChunkReady *ChunkReady `protobuf:"bytes,2,opt,name=chunk_ready,json=chunkReady,proto3,oneof"`
 }
 
-type CheckpointServerMessage_ChunkCommitted struct {
+type CheckpointResponse_ChunkCommitted struct {
 	ChunkCommitted *ChunkCommitted `protobuf:"bytes,3,opt,name=chunk_committed,json=chunkCommitted,proto3,oneof"`
 }
 
-type CheckpointServerMessage_Summary struct {
+type CheckpointResponse_Summary struct {
 	Summary *CheckpointSummary `protobuf:"bytes,4,opt,name=summary,proto3,oneof"`
 }
 
-type CheckpointServerMessage_Failed struct {
+type CheckpointResponse_Failed struct {
 	Failed *CheckpointFailed `protobuf:"bytes,5,opt,name=failed,proto3,oneof"`
 }
 
-func (*CheckpointServerMessage_Probe) isCheckpointServerMessage_Msg() {}
+func (*CheckpointResponse_Probe) isCheckpointResponse_Msg() {}
 
-func (*CheckpointServerMessage_ChunkReady) isCheckpointServerMessage_Msg() {}
+func (*CheckpointResponse_ChunkReady) isCheckpointResponse_Msg() {}
 
-func (*CheckpointServerMessage_ChunkCommitted) isCheckpointServerMessage_Msg() {}
+func (*CheckpointResponse_ChunkCommitted) isCheckpointResponse_Msg() {}
 
-func (*CheckpointServerMessage_Summary) isCheckpointServerMessage_Msg() {}
+func (*CheckpointResponse_Summary) isCheckpointResponse_Msg() {}
 
-func (*CheckpointServerMessage_Failed) isCheckpointServerMessage_Msg() {}
+func (*CheckpointResponse_Failed) isCheckpointResponse_Msg() {}
 
 // CheckpointProbe is the first frame the adapter sends: the on-disk
 // workspace byte count the gateway reserves storage quota against before
@@ -6567,8 +6567,8 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13STATUS_ACKNOWLEDGED\x10\x01\x12\x1c\n" +
 	"\x18STATUS_INTERRUPT_TIMEOUT\x10\x02\x12\x0f\n" +
-	"\vSTATUS_BUSY\x10\x03\"\xd1\x01\n" +
-	"\x17CheckpointClientMessage\x129\n" +
+	"\vSTATUS_BUSY\x10\x03\"\xcb\x01\n" +
+	"\x11CheckpointRequest\x129\n" +
 	"\x05start\x18\x01 \x01(\v2!.lenny.adapter.v1.CheckpointStartH\x00R\x05start\x129\n" +
 	"\x05grant\x18\x02 \x01(\v2!.lenny.adapter.v1.CheckpointGrantH\x00R\x05grant\x129\n" +
 	"\x05abort\x18\x03 \x01(\v2!.lenny.adapter.v1.CheckpointAbortH\x00R\x05abortB\x05\n" +
@@ -6591,8 +6591,8 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\")\n" +
 	"\x0fCheckpointAbort\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xe8\x02\n" +
-	"\x17CheckpointServerMessage\x129\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xe3\x02\n" +
+	"\x12CheckpointResponse\x129\n" +
 	"\x05probe\x18\x01 \x01(\v2!.lenny.adapter.v1.CheckpointProbeH\x00R\x05probe\x12?\n" +
 	"\vchunk_ready\x18\x02 \x01(\v2\x1c.lenny.adapter.v1.ChunkReadyH\x00R\n" +
 	"chunkReady\x12K\n" +
@@ -6768,7 +6768,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x1eCHECKPOINT_TRIGGER_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bCHECKPOINT_TRIGGER_PERIODIC\x10\x01\x12%\n" +
 	"!CHECKPOINT_TRIGGER_PRE_SCALE_DOWN\x10\x02\x12\x1f\n" +
-	"\x1bCHECKPOINT_TRIGGER_EVICTION\x10\x032\xbd\x12\n" +
+	"\x1bCHECKPOINT_TRIGGER_EVICTION\x10\x032\xb2\x12\n" +
 	"\aAdapter\x12m\n" +
 	"\x10PrepareWorkspace\x12).lenny.adapter.v1.PrepareWorkspaceRequest\x1a*.lenny.adapter.v1.PrepareWorkspaceResponse\"\x00(\x01\x12n\n" +
 	"\x11FinalizeWorkspace\x12*.lenny.adapter.v1.FinalizeWorkspaceRequest\x1a+.lenny.adapter.v1.FinalizeWorkspaceResponse\"\x00\x12S\n" +
@@ -6780,9 +6780,9 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x11AssignCredentials\x12*.lenny.adapter.v1.AssignCredentialsRequest\x1a+.lenny.adapter.v1.AssignCredentialsResponse\"\x00\x12n\n" +
 	"\x11RotateCredentials\x12*.lenny.adapter.v1.RotateCredentialsRequest\x1a+.lenny.adapter.v1.RotateCredentialsResponse\"\x00\x12n\n" +
 	"\x11RevokeCredentials\x12*.lenny.adapter.v1.RevokeCredentialsRequest\x1a+.lenny.adapter.v1.RevokeCredentialsResponse\"\x00\x12V\n" +
-	"\tInterrupt\x12\".lenny.adapter.v1.InterruptRequest\x1a#.lenny.adapter.v1.InterruptResponse\"\x00\x12h\n" +
+	"\tInterrupt\x12\".lenny.adapter.v1.InterruptRequest\x1a#.lenny.adapter.v1.InterruptResponse\"\x00\x12]\n" +
 	"\n" +
-	"Checkpoint\x12).lenny.adapter.v1.CheckpointClientMessage\x1a).lenny.adapter.v1.CheckpointServerMessage\"\x00(\x010\x01\x12e\n" +
+	"Checkpoint\x12#.lenny.adapter.v1.CheckpointRequest\x1a$.lenny.adapter.v1.CheckpointResponse\"\x00(\x010\x01\x12e\n" +
 	"\x0eSignalDeadline\x12'.lenny.adapter.v1.SignalDeadlineRequest\x1a(.lenny.adapter.v1.SignalDeadlineResponse\"\x00\x12M\n" +
 	"\x06Resume\x12\x1f.lenny.adapter.v1.ResumeRequest\x1a .lenny.adapter.v1.ResumeResponse\"\x00\x12k\n" +
 	"\x10CoordinatorFence\x12).lenny.adapter.v1.CoordinatorFenceRequest\x1a*.lenny.adapter.v1.CoordinatorFenceResponse\"\x00\x12n\n" +
@@ -6874,11 +6874,11 @@ var file_lenny_adapter_proto_goTypes = []any{
 	(*CredentialLease)(nil),                     // 53: lenny.adapter.v1.CredentialLease
 	(*InterruptRequest)(nil),                    // 54: lenny.adapter.v1.InterruptRequest
 	(*InterruptResponse)(nil),                   // 55: lenny.adapter.v1.InterruptResponse
-	(*CheckpointClientMessage)(nil),             // 56: lenny.adapter.v1.CheckpointClientMessage
+	(*CheckpointRequest)(nil),                   // 56: lenny.adapter.v1.CheckpointRequest
 	(*CheckpointStart)(nil),                     // 57: lenny.adapter.v1.CheckpointStart
 	(*CheckpointGrant)(nil),                     // 58: lenny.adapter.v1.CheckpointGrant
 	(*CheckpointAbort)(nil),                     // 59: lenny.adapter.v1.CheckpointAbort
-	(*CheckpointServerMessage)(nil),             // 60: lenny.adapter.v1.CheckpointServerMessage
+	(*CheckpointResponse)(nil),                  // 60: lenny.adapter.v1.CheckpointResponse
 	(*CheckpointProbe)(nil),                     // 61: lenny.adapter.v1.CheckpointProbe
 	(*ChunkReady)(nil),                          // 62: lenny.adapter.v1.ChunkReady
 	(*ChunkCommitted)(nil),                      // 63: lenny.adapter.v1.ChunkCommitted
@@ -6972,17 +6972,17 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	24,  // 46: lenny.adapter.v1.InterruptRequest.session_id:type_name -> lenny.adapter.v1.SessionId
 	5,   // 47: lenny.adapter.v1.InterruptRequest.mode:type_name -> lenny.adapter.v1.InterruptRequest.Mode
 	6,   // 48: lenny.adapter.v1.InterruptResponse.status:type_name -> lenny.adapter.v1.InterruptResponse.Status
-	57,  // 49: lenny.adapter.v1.CheckpointClientMessage.start:type_name -> lenny.adapter.v1.CheckpointStart
-	58,  // 50: lenny.adapter.v1.CheckpointClientMessage.grant:type_name -> lenny.adapter.v1.CheckpointGrant
-	59,  // 51: lenny.adapter.v1.CheckpointClientMessage.abort:type_name -> lenny.adapter.v1.CheckpointAbort
+	57,  // 49: lenny.adapter.v1.CheckpointRequest.start:type_name -> lenny.adapter.v1.CheckpointStart
+	58,  // 50: lenny.adapter.v1.CheckpointRequest.grant:type_name -> lenny.adapter.v1.CheckpointGrant
+	59,  // 51: lenny.adapter.v1.CheckpointRequest.abort:type_name -> lenny.adapter.v1.CheckpointAbort
 	2,   // 52: lenny.adapter.v1.CheckpointStart.trigger:type_name -> lenny.adapter.v1.CheckpointTrigger
 	98,  // 53: lenny.adapter.v1.CheckpointGrant.headers:type_name -> lenny.adapter.v1.CheckpointGrant.HeadersEntry
 	102, // 54: lenny.adapter.v1.CheckpointGrant.expires_at:type_name -> google.protobuf.Timestamp
-	61,  // 55: lenny.adapter.v1.CheckpointServerMessage.probe:type_name -> lenny.adapter.v1.CheckpointProbe
-	62,  // 56: lenny.adapter.v1.CheckpointServerMessage.chunk_ready:type_name -> lenny.adapter.v1.ChunkReady
-	63,  // 57: lenny.adapter.v1.CheckpointServerMessage.chunk_committed:type_name -> lenny.adapter.v1.ChunkCommitted
-	64,  // 58: lenny.adapter.v1.CheckpointServerMessage.summary:type_name -> lenny.adapter.v1.CheckpointSummary
-	65,  // 59: lenny.adapter.v1.CheckpointServerMessage.failed:type_name -> lenny.adapter.v1.CheckpointFailed
+	61,  // 55: lenny.adapter.v1.CheckpointResponse.probe:type_name -> lenny.adapter.v1.CheckpointProbe
+	62,  // 56: lenny.adapter.v1.CheckpointResponse.chunk_ready:type_name -> lenny.adapter.v1.ChunkReady
+	63,  // 57: lenny.adapter.v1.CheckpointResponse.chunk_committed:type_name -> lenny.adapter.v1.ChunkCommitted
+	64,  // 58: lenny.adapter.v1.CheckpointResponse.summary:type_name -> lenny.adapter.v1.CheckpointSummary
+	65,  // 59: lenny.adapter.v1.CheckpointResponse.failed:type_name -> lenny.adapter.v1.CheckpointFailed
 	24,  // 60: lenny.adapter.v1.SignalDeadlineRequest.session_id:type_name -> lenny.adapter.v1.SessionId
 	24,  // 61: lenny.adapter.v1.ResumeRequest.session_id:type_name -> lenny.adapter.v1.SessionId
 	30,  // 62: lenny.adapter.v1.ResumeRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
@@ -7015,7 +7015,7 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	49,  // 89: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
 	51,  // 90: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
 	54,  // 91: lenny.adapter.v1.Adapter.Interrupt:input_type -> lenny.adapter.v1.InterruptRequest
-	56,  // 92: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointClientMessage
+	56,  // 92: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointRequest
 	66,  // 93: lenny.adapter.v1.Adapter.SignalDeadline:input_type -> lenny.adapter.v1.SignalDeadlineRequest
 	68,  // 94: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
 	71,  // 95: lenny.adapter.v1.Adapter.CoordinatorFence:input_type -> lenny.adapter.v1.CoordinatorFenceRequest
@@ -7045,7 +7045,7 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	50,  // 119: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
 	52,  // 120: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse
 	55,  // 121: lenny.adapter.v1.Adapter.Interrupt:output_type -> lenny.adapter.v1.InterruptResponse
-	60,  // 122: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointServerMessage
+	60,  // 122: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointResponse
 	67,  // 123: lenny.adapter.v1.Adapter.SignalDeadline:output_type -> lenny.adapter.v1.SignalDeadlineResponse
 	70,  // 124: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
 	72,  // 125: lenny.adapter.v1.Adapter.CoordinatorFence:output_type -> lenny.adapter.v1.CoordinatorFenceResponse
@@ -7077,16 +7077,16 @@ func file_lenny_adapter_proto_init() {
 		return
 	}
 	file_lenny_adapter_proto_msgTypes[49].OneofWrappers = []any{
-		(*CheckpointClientMessage_Start)(nil),
-		(*CheckpointClientMessage_Grant)(nil),
-		(*CheckpointClientMessage_Abort)(nil),
+		(*CheckpointRequest_Start)(nil),
+		(*CheckpointRequest_Grant)(nil),
+		(*CheckpointRequest_Abort)(nil),
 	}
 	file_lenny_adapter_proto_msgTypes[53].OneofWrappers = []any{
-		(*CheckpointServerMessage_Probe)(nil),
-		(*CheckpointServerMessage_ChunkReady)(nil),
-		(*CheckpointServerMessage_ChunkCommitted)(nil),
-		(*CheckpointServerMessage_Summary)(nil),
-		(*CheckpointServerMessage_Failed)(nil),
+		(*CheckpointResponse_Probe)(nil),
+		(*CheckpointResponse_ChunkReady)(nil),
+		(*CheckpointResponse_ChunkCommitted)(nil),
+		(*CheckpointResponse_Summary)(nil),
+		(*CheckpointResponse_Failed)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

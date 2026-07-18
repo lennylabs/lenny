@@ -25,6 +25,9 @@ import (
 // index on the open stream; the gateway re-signs the identical key and
 // Content-Length without a second reservation or grant-window advance, and
 // the chunk confirms exactly once.
+// diagnosis: grant re-mint on the open stream double-reserved, advanced
+// the grant window, or confirmed the chunk more than once, so an
+// expired-grant retry corrupts the reservation accounting.
 func TestCheckpointReMintsGrantForSameIndexWithoutSecondReservation(t *testing.T) {
 	adapter := &cpChunkedAdapter{
 		probeBytes:    20,

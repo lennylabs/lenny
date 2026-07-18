@@ -43,7 +43,7 @@ type fakeCheckpointAdapter struct {
 	failed *adapterv1.CheckpointFailed
 }
 
-func (f fakeCheckpointAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (f fakeCheckpointAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	// Consume the gateway's CheckpointStart so its Send completes before
 	// the stream terminates.
 	if _, err := stream.Recv(); err != nil {
@@ -53,12 +53,12 @@ func (f fakeCheckpointAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapte
 		return status.Error(codes.Internal, "artifact store down")
 	}
 	if f.failed != nil {
-		return stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_Failed{Failed: f.failed},
+		return stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_Failed{Failed: f.failed},
 		})
 	}
-	return stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Summary{
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{
 			Summary: &adapterv1.CheckpointSummary{TotalBytes: f.bytes},
 		},
 	})

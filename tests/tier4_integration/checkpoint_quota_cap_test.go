@@ -30,6 +30,9 @@ import (
 // Content-Length against a non-enforcing store is observed by the Stat
 // confirm, aborts the attempt, reconciles the excess into the counter, and
 // mints no further grant.
+// diagnosis: an oversize chunk against a non-enforcing store was not
+// caught by the Stat confirm, so a pod exceeds its signed Content-Length
+// without the reservation counter reconciling the excess.
 func TestCheckpointQuotaCapObservesOverSizeAgainstNonEnforcingStore(t *testing.T) {
 	adapter := &cpChunkedAdapter{
 		probeBytes:    20,
@@ -108,6 +111,10 @@ func TestCheckpointRefusesToSignPastReservation(t *testing.T) {
 // exceeds the gateway-chosen chunk_size_bytes gets no capability, so the
 // overage a compromised pod can write is bounded by the grant window times
 // the gateway's own chunk size rather than by a pod self-report.
+// diagnosis: a ChunkReady declaring more than the gateway's
+// chunk_size_bytes still received a capability, so a compromised pod's
+// self-reported length rather than the gateway's own chunk size bounds
+// what it can write.
 func TestCheckpointRejectsOverChunkSizeDeclaration(t *testing.T) {
 	adapter := &cpChunkedAdapter{
 		probeBytes:    100,

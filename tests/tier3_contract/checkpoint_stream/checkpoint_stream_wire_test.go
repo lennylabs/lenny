@@ -116,14 +116,14 @@ func assertFields(t *testing.T, md protoreflect.MessageDescriptor, want []wantFi
 // breaks the gateway/adapter frame exchange. Re-edit
 // schemas/lenny-adapter.proto and run `make generate-proto`.
 func TestCheckpointStreamMessageContract(t *testing.T) {
-	client := (&adapterv1.CheckpointClientMessage{}).ProtoReflect().Descriptor()
+	client := (&adapterv1.CheckpointRequest{}).ProtoReflect().Descriptor()
 	assertOneof(t, client, "msg", []wantField{
 		{name: "start", number: 1},
 		{name: "grant", number: 2},
 		{name: "abort", number: 3},
 	})
 
-	server := (&adapterv1.CheckpointServerMessage{}).ProtoReflect().Descriptor()
+	server := (&adapterv1.CheckpointResponse{}).ProtoReflect().Descriptor()
 	assertOneof(t, server, "msg", []wantField{
 		{name: "probe", number: 1},
 		{name: "chunk_ready", number: 2},
@@ -301,8 +301,8 @@ func TestCheckpointStreamFrameOrderAndHeaderReplay(t *testing.T) {
 	}
 	// The gateway opens with a non-default trigger so the wire path carries
 	// a typed trigger the adapter decodes.
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-order",
 			Trigger:        checkpoint.TriggerPreScaleDown.Proto(),
 			ChunkSizeBytes: 1 << 20,
@@ -325,10 +325,10 @@ loop:
 			t.Fatalf("received a %T frame after the Summary; Summary must be the terminal frame", msg.GetMsg())
 		}
 		switch m := msg.GetMsg().(type) {
-		case *adapterv1.CheckpointServerMessage_Probe:
+		case *adapterv1.CheckpointResponse_Probe:
 			order = append(order, "probe")
 			sawProbe = true
-		case *adapterv1.CheckpointServerMessage_ChunkReady:
+		case *adapterv1.CheckpointResponse_ChunkReady:
 			order = append(order, "chunk_ready")
 			if !sawProbe {
 				t.Fatal("ChunkReady arrived before the Probe; the workspace-size probe is the first frame")
@@ -340,8 +340,8 @@ loop:
 				t.Fatalf("the adapter PUT a chunk before receiving any grant (%d puts); no capability is used before the gateway signs it", transport.putCount())
 			}
 			readyCount++
-			if err := stream.Send(&adapterv1.CheckpointClientMessage{
-				Msg: &adapterv1.CheckpointClientMessage_Grant{Grant: &adapterv1.CheckpointGrant{
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Grant{Grant: &adapterv1.CheckpointGrant{
 					Index:         m.ChunkReady.GetIndex(),
 					Url:           "https://objectstore.example/chunk",
 					ContentLength: m.ChunkReady.GetLength(),
@@ -350,13 +350,13 @@ loop:
 			}); err != nil {
 				t.Fatalf("send grant: %v", err)
 			}
-		case *adapterv1.CheckpointServerMessage_ChunkCommitted:
+		case *adapterv1.CheckpointResponse_ChunkCommitted:
 			order = append(order, "chunk_committed")
-		case *adapterv1.CheckpointServerMessage_Summary:
+		case *adapterv1.CheckpointResponse_Summary:
 			order = append(order, "summary")
 			sawSummary = true
 			break loop
-		case *adapterv1.CheckpointServerMessage_Failed:
+		case *adapterv1.CheckpointResponse_Failed:
 			t.Fatalf("unexpected Failed frame: %+v", m.Failed)
 		}
 	}
@@ -407,8 +407,8 @@ func TestCheckpointStreamDroppedSignedHeaderFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open Checkpoint stream: %v", err)
 	}
-	if err := stream.Send(&adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{Start: &adapterv1.CheckpointStart{
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-drophdr",
 			Trigger:        checkpoint.TriggerPeriodic.Proto(),
 			ChunkSizeBytes: 1 << 20,
@@ -424,10 +424,10 @@ func TestCheckpointStreamDroppedSignedHeaderFails(t *testing.T) {
 			t.Fatalf("stream.Recv: %v", rerr)
 		}
 		switch m := msg.GetMsg().(type) {
-		case *adapterv1.CheckpointServerMessage_ChunkReady:
+		case *adapterv1.CheckpointResponse_ChunkReady:
 			// Sign a grant that drops the required SigV4 headers entirely.
-			if err := stream.Send(&adapterv1.CheckpointClientMessage{
-				Msg: &adapterv1.CheckpointClientMessage_Grant{Grant: &adapterv1.CheckpointGrant{
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Grant{Grant: &adapterv1.CheckpointGrant{
 					Index:         m.ChunkReady.GetIndex(),
 					Url:           "https://objectstore.example/chunk",
 					ContentLength: m.ChunkReady.GetLength(),
@@ -436,9 +436,9 @@ func TestCheckpointStreamDroppedSignedHeaderFails(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("send grant: %v", err)
 			}
-		case *adapterv1.CheckpointServerMessage_Summary:
+		case *adapterv1.CheckpointResponse_Summary:
 			t.Fatal("stream summarised despite the store rejecting the header-stripped PUT")
-		case *adapterv1.CheckpointServerMessage_Failed:
+		case *adapterv1.CheckpointResponse_Failed:
 			failed = m.Failed
 		}
 	}
@@ -495,7 +495,7 @@ func (a *scriptedAdapter) mintedCheckpointID() string {
 	return a.checkpointID
 }
 
-func (a *scriptedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *scriptedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	first, err := stream.Recv()
 	if err != nil {
 		return err
@@ -503,15 +503,15 @@ func (a *scriptedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.C
 	a.mu.Lock()
 	a.checkpointID = first.GetStart().GetCheckpointId()
 	a.mu.Unlock()
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
 	}); err != nil {
 		return err
 	}
 	var total int64
 	for i, ch := range a.chunks {
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: ch.declaredLen}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: ch.declaredLen}},
 		}); err != nil {
 			return err
 		}
@@ -532,8 +532,8 @@ func (a *scriptedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.C
 		}
 		a.putObject(grant, wrote)
 		total += wrote
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: uint32(i)}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: uint32(i)}},
 		}); err != nil {
 			return err
 		}
@@ -545,8 +545,8 @@ func (a *scriptedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.C
 		_, _ = stream.Recv()
 		return nil
 	}
-	return stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Summary{Summary: &adapterv1.CheckpointSummary{
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{
 			ChunkCount: uint32(len(a.chunks)), TotalBytes: total,
 		}},
 	})

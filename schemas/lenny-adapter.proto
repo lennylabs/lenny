@@ -118,7 +118,7 @@ service Adapter {
   // sends in CheckpointStart is authoritative (§10.1 line 130). Used for
   // eviction, drain, periodic, and pre-scale-down checkpoints — this is
   // the single upload path for every trigger.
-  rpc Checkpoint(stream CheckpointClientMessage) returns (stream CheckpointServerMessage) {}
+  rpc Checkpoint(stream CheckpointRequest) returns (stream CheckpointResponse) {}
 
   // SignalDeadline warns the running session's runtime that the session is
   // approaching its §11.3 line 240 deadline so the agent can checkpoint and
@@ -1057,11 +1057,11 @@ enum CheckpointTrigger {
   CHECKPOINT_TRIGGER_EVICTION = 3;
 }
 
-// CheckpointClientMessage is a gateway → adapter frame on the Checkpoint
+// CheckpointRequest is a gateway → adapter frame on the Checkpoint
 // stream. The gateway (the gRPC client) drives the exchange: it starts
 // the stream, mints per-chunk upload capabilities in response to the
 // adapter's chunk declarations, and can abort the attempt.
-message CheckpointClientMessage {
+message CheckpointRequest {
   oneof msg {
     CheckpointStart start = 1;
     CheckpointGrant grant = 2;
@@ -1116,9 +1116,9 @@ message CheckpointAbort {
   string reason = 1;
 }
 
-// CheckpointServerMessage is an adapter → gateway frame on the Checkpoint
+// CheckpointResponse is an adapter → gateway frame on the Checkpoint
 // stream.
-message CheckpointServerMessage {
+message CheckpointResponse {
   oneof msg {
     CheckpointProbe probe = 1;
     ChunkReady chunk_ready = 2;

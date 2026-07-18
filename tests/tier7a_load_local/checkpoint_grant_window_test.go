@@ -287,12 +287,12 @@ type scriptAdapter struct {
 	presigner *gwPresigner
 }
 
-func (a *scriptAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *scriptAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	if _, err := stream.Recv(); err != nil {
 		return err
 	}
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
 	}); err != nil {
 		return err
 	}
@@ -310,10 +310,10 @@ func (a *scriptAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Che
 // uploaded, and committed. It captures the gateway's grant count at the first
 // commit so a test can assert the (window+1)th grant was withheld until an
 // ack freed a slot.
-func (a *scriptAdapter) runPipelineAhead(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *scriptAdapter) runPipelineAhead(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	for i := 0; i < a.chunkCount; i++ {
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: a.chunkLen}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: a.chunkLen}},
 		}); err != nil {
 			return err
 		}
@@ -342,15 +342,15 @@ func (a *scriptAdapter) runPipelineAhead(stream grpc.BidiStreamingServer[adapter
 			a.mintedAtFirstCommit.Store(a.presigner.minted.Load())
 		}
 		a.presigner.ackedOne()
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: uint32(committed)}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: uint32(committed)}},
 		}); err != nil {
 			return err
 		}
 		committed++
 	}
-	return stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Summary{Summary: &adapterv1.CheckpointSummary{
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{
 			ChunkCount: uint32(a.chunkCount), TotalBytes: a.chunkLen * int64(a.chunkCount),
 		}},
 	})
@@ -362,10 +362,10 @@ func (a *scriptAdapter) runPipelineAhead(stream grpc.BidiStreamingServer[adapter
 // set it collects every grant first, then acks the chunks in that order to
 // exercise out-of-order confirmation (the caller sizes the window to cover
 // the chunk count).
-func (a *scriptAdapter) runOrdered(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *scriptAdapter) runOrdered(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	declare := func(i int) error {
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: a.chunkLen}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: a.chunkLen}},
 		}); err != nil {
 			return err
 		}
@@ -382,8 +382,8 @@ func (a *scriptAdapter) runOrdered(stream grpc.BidiStreamingServer[adapterv1.Che
 	}
 	commit := func(idx uint32) error {
 		a.presigner.ackedOne()
-		return stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: idx}},
+		return stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: idx}},
 		})
 	}
 	if a.commitOrder == nil {
@@ -407,8 +407,8 @@ func (a *scriptAdapter) runOrdered(stream grpc.BidiStreamingServer[adapterv1.Che
 			}
 		}
 	}
-	return stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Summary{Summary: &adapterv1.CheckpointSummary{
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{
 			ChunkCount: uint32(a.chunkCount), TotalBytes: a.chunkLen * int64(a.chunkCount),
 		}},
 	})
@@ -522,6 +522,8 @@ func TestResolvedPoolWindowOverridesDeploymentDefault(t *testing.T) {
 // spec: §10.1 line 131 — a lagging Stat confirm never blocks the next
 // grant: the serial producer completes within the deadline even though
 // every confirm sleeps, because the ack (not the Stat) releases the window.
+// diagnosis: a slow Stat confirm blocked the next grant, so the serial
+// producer stalls past its deadline when confirms lag behind the acks.
 func TestLaggingStatDoesNotBlockNextGrant(t *testing.T) {
 	adapter := &scriptAdapter{probeBytes: 50, chunkCount: 5, chunkLen: 10}
 	h := newGWHarness(t, adapter, 2, 40*time.Millisecond)
@@ -546,6 +548,9 @@ func TestLaggingStatDoesNotBlockNextGrant(t *testing.T) {
 // spec: §10.1 line 131 — out-of-order chunk acknowledgements confirm each
 // chunk exactly once under the monotonic counter and the per-key catalog
 // insert.
+// diagnosis: out-of-order acknowledgements confirmed a chunk more than
+// once or dropped one, breaking the monotonic counter or the per-key
+// catalog insert.
 func TestOutOfOrderAcksConfirmExactlyOnce(t *testing.T) {
 	adapter := &scriptAdapter{probeBytes: 40, chunkCount: 4, chunkLen: 10, commitOrder: []uint32{3, 1, 0, 2}}
 	h := newGWHarness(t, adapter, 4, 0)
@@ -566,6 +571,9 @@ func TestOutOfOrderAcksConfirmExactlyOnce(t *testing.T) {
 // seal of one (session, slot) serialise on the single-flight lock; under
 // the race detector neither corrupts the other's manifest writes and both
 // complete.
+// diagnosis: a periodic checkpoint and a concurrent seal on the same
+// (session, slot) did not serialise on the single-flight lock, so one
+// corrupts the other's manifest writes under the race detector.
 func TestPeriodicVsSealSerialiseOnSingleFlight(t *testing.T) {
 	adapter := &scriptAdapter{probeBytes: 30, chunkCount: 3, chunkLen: 10}
 	h := newGWHarness(t, adapter, 4, 0)

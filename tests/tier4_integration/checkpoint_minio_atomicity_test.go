@@ -45,6 +45,8 @@ import (
 // spec: §10.1 — the intent row is partial = true from INSERT and flips to
 // partial = false / complete only after every declared byte is
 // Stat-confirmed.
+// diagnosis: the manifest flipped to complete before every declared byte
+// was Stat-confirmed, so a resume could read a torn checkpoint.
 func TestCheckpointFinalisesCompleteOnlyAfterEveryByteConfirmed(t *testing.T) {
 	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: -1}
 	h := newCPDriverHarness(t, adapter)
@@ -72,6 +74,9 @@ func TestCheckpointFinalisesCompleteOnlyAfterEveryByteConfirmed(t *testing.T) {
 // spec: §4.4 / §10.1 line 157 — a PUT that fails past the retry budget
 // leaves partial = true and the DeleteObject sweep removes the chunks the
 // aborted attempt confirmed before the failure.
+// diagnosis: a PUT that exhausted its retry budget either finalised the
+// manifest or left orphaned chunks in the store, so the abort path leaks
+// storage or exposes an incomplete checkpoint.
 func TestCheckpointLeavesPartialAndSweepsChunksOnPutFailure(t *testing.T) {
 	// Chunk 0 commits; chunk 1's PUT is reported as a retry-exhausted
 	// object-store failure (a CheckpointFailed frame), so the stream
@@ -145,6 +150,9 @@ func TestCheckpointDeadlineFireRetainsChunksForResume(t *testing.T) {
 // spec: §10.1 — a stream that truncates before the Summary leaves
 // partial = true; the confirmed chunks are swept because no resume will
 // consume a stream_truncated attempt.
+// diagnosis: a stream that truncated before the Summary was treated as
+// complete or its confirmed chunks were not swept, leaking objects or
+// admitting a resume over a truncated attempt.
 func TestCheckpointLeavesPartialOnTruncatedStream(t *testing.T) {
 	adapter := &cpChunkedAdapter{probeBytes: 30, chunkLens: []int64{10, 10, 10}, failAfter: -1, truncateAfter: 0}
 	h := newCPDriverHarness(t, adapter)

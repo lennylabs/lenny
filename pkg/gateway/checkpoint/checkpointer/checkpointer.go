@@ -524,8 +524,8 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		return "", 0, fmt.Errorf("open checkpoint stream: %w", err)
 	}
 	checkpointID := uuid.NewString()
-	start := &adapterv1.CheckpointClientMessage{
-		Msg: &adapterv1.CheckpointClientMessage_Start{
+	start := &adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{
 			Start: &adapterv1.CheckpointStart{
 				CheckpointId:   checkpointID,
 				Trigger:        trigger.Proto(),

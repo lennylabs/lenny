@@ -59,7 +59,7 @@ type chunkedAdapter struct {
 	store *blobstore.MemoryStore
 }
 
-func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	start, err := stream.Recv()
 	if err != nil {
 		return err
@@ -71,15 +71,15 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 	if a.crashBeforeProbe {
 		return status.Error(codes.Unavailable, "adapter crashed before the probe")
 	}
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
 	}); err != nil {
 		return err
 	}
 	var total int64
 	for i, ln := range a.chunkLens {
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: ln}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: ln}},
 		}); err != nil {
 			return err
 		}
@@ -103,8 +103,8 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 		}
 		a.putObject(grant, wrote)
 		total += wrote
-		if err := stream.Send(&adapterv1.CheckpointServerMessage{
-			Msg: &adapterv1.CheckpointServerMessage_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: uint32(i)}},
+		if err := stream.Send(&adapterv1.CheckpointResponse{
+			Msg: &adapterv1.CheckpointResponse_ChunkCommitted{ChunkCommitted: &adapterv1.ChunkCommitted{Index: uint32(i)}},
 		}); err != nil {
 			return err
 		}
@@ -113,15 +113,15 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 			return nil
 		}
 		if a.failCode != "" && i == 0 {
-			return stream.Send(&adapterv1.CheckpointServerMessage{
-				Msg: &adapterv1.CheckpointServerMessage_Failed{Failed: &adapterv1.CheckpointFailed{
+			return stream.Send(&adapterv1.CheckpointResponse{
+				Msg: &adapterv1.CheckpointResponse_Failed{Failed: &adapterv1.CheckpointFailed{
 					Reason: "chunk rejected", Index: uint32(i), HttpStatus: 503, ErrorCode: a.failCode,
 				}},
 			})
 		}
 	}
-	return stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Summary{Summary: &adapterv1.CheckpointSummary{
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{
 			ChunkCount: uint32(len(a.chunkLens)), TotalBytes: total,
 		}},
 	})
@@ -1240,12 +1240,12 @@ type preProbeChunkAdapter struct {
 	reply chan string
 }
 
-func (a *preProbeChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *preProbeChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	if _, err := stream.Recv(); err != nil { // consume CheckpointStart
 		return err
 	}
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: 0, Length: 10}},
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: 0, Length: 10}},
 	}); err != nil {
 		return err
 	}
@@ -1325,17 +1325,17 @@ type probeThenChunkAdapter struct {
 	reply chan string
 }
 
-func (a *probeThenChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointClientMessage, adapterv1.CheckpointServerMessage]) error {
+func (a *probeThenChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
 	if _, err := stream.Recv(); err != nil { // consume CheckpointStart
 		return err
 	}
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: 4096}},
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: 4096}},
 	}); err != nil {
 		return err
 	}
-	if err := stream.Send(&adapterv1.CheckpointServerMessage{
-		Msg: &adapterv1.CheckpointServerMessage_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: 0, Length: 10}},
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: 0, Length: 10}},
 	}); err != nil {
 		return err
 	}

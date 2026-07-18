@@ -57,6 +57,12 @@ func seedSessionInState(t *testing.T, ctx context.Context, sess *sessionpg.Store
 	return id
 }
 
+// spec: §10.1 (checkpoint_manifest column set and store methods), §11.2
+// (reservation accounting), §12.5 (GC rules)
+// diagnosis: the partial-manifest store's put/get, supersede-on-write,
+// confirm, finalise, reservation-release, and reclaim contract regressed,
+// so the checkpoint manifest persistence layer no longer matches the
+// column set and GC rules it backs.
 func TestCheckpointManifestStoreContract(t *testing.T) {
 	t.Parallel()
 	sessStore, pg := startStore(t)

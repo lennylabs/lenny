@@ -35,6 +35,9 @@ import (
 
 // spec: §15.1 line 671 / §10.1 line 155 — the workspace download returns
 // the concatenation of the manifest row's chunks in index order.
+// diagnosis: the workspace download did not return the manifest chunks
+// concatenated in index order, so a derived workspace is corrupt or
+// misordered.
 func TestWorkspaceDownloadStreamsConcatenatedChunks(t *testing.T) {
 	const (
 		tenant = "acme"
