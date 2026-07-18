@@ -8,6 +8,8 @@ import (
 
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -29,8 +31,9 @@ func getPDB(t *testing.T, c client.Client, name string) (policyv1.PodDisruptionB
 }
 
 // spec: §4.6.1 "Disruption protection for agent pods" — the controller
-// owns a per-pool PDB for warm pods with maxUnavailable: 1 selecting
-// idle pods, never minAvailable: minWarm.
+// owns a per-pool PDB for warm pods with an integer minAvailable of
+// minWarm-1 selecting idle pods, never maxUnavailable: 1 (which would
+// deadlock at disruptionsAllowed: 0 with no scale subresource).
 func TestReconcileCreatesWarmPodPDB(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 10))
@@ -41,11 +44,11 @@ func TestReconcileCreatesWarmPodPDB(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a per-pool PDB to be created")
 	}
-	if pdb.Spec.MaxUnavailable == nil || pdb.Spec.MaxUnavailable.IntValue() != 1 {
-		t.Errorf("PDB maxUnavailable = %v, want 1", pdb.Spec.MaxUnavailable)
+	if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntValue() != 2 {
+		t.Errorf("PDB minAvailable = %v, want 2 (minWarm-1)", pdb.Spec.MinAvailable)
 	}
-	if pdb.Spec.MinAvailable != nil {
-		t.Errorf("PDB sets minAvailable = %v, want unset (spec forbids minAvailable: minWarm)", pdb.Spec.MinAvailable)
+	if pdb.Spec.MaxUnavailable != nil {
+		t.Errorf("PDB sets maxUnavailable = %v, want unset (spec mandates integer minAvailable)", pdb.Spec.MaxUnavailable)
 	}
 	sel := pdb.Spec.Selector.MatchLabels
 	if sel[warmpool.LabelPool] != testPool || sel[state.LabelState] != string(state.Idle) {
@@ -56,6 +59,60 @@ func TestReconcileCreatesWarmPodPDB(t *testing.T) {
 	}
 }
 
+// spec: §4.6.1 — a pool with minWarm below 2 gets no PDB, because a
+// single warm pod cannot be given one-at-a-time protection by an integer
+// minAvailable without deadlocking.
+func TestReconcileCreatesNoPDBBelowMinWarmTwo(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, template(), pool(1, 10))
+
+	reconcile(t, c, s)
+
+	if _, ok := getPDB(t, c, testPool+"-warm"); ok {
+		t.Errorf("PDB created for a pool with minWarm=1, want no PDB below minWarm 2")
+	}
+}
+
+// spec: §4.6.1 — a PDB spec carries exactly one of minAvailable and
+// maxUnavailable, so the convergence path must clear a maxUnavailable
+// that a previously reconciled object still carries. Seeding the pre-fix
+// object and reconciling asserts the update replaces maxUnavailable: 1
+// with the integer minAvailable of minWarm-1.
+func TestReconcileConvergesMaxUnavailableToMinAvailable(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, template(), pool(3, 10))
+
+	maxUnavailable := intstr.FromInt(1)
+	existing := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Name: testPool + "-warm", Namespace: testNS},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MaxUnavailable: &maxUnavailable,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					warmpool.LabelPool: testPool,
+					state.LabelState:   string(state.Idle),
+				},
+			},
+		},
+	}
+	if err := c.Create(context.Background(), existing); err != nil {
+		t.Fatalf("seed pre-fix PDB: %v", err)
+	}
+
+	reconcile(t, c, s)
+
+	pdb, ok := getPDB(t, c, testPool+"-warm")
+	if !ok {
+		t.Fatalf("expected the seeded PDB to survive reconciliation")
+	}
+	if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntValue() != 2 {
+		t.Errorf("converged PDB minAvailable = %v, want 2 (minWarm-1)", pdb.Spec.MinAvailable)
+	}
+	if pdb.Spec.MaxUnavailable != nil {
+		t.Errorf("converged PDB still sets maxUnavailable = %v, want nil", pdb.Spec.MaxUnavailable)
+	}
+}
+
 // spec: §4.6.1 — a pool scaled to zero imposes no disruption budget, so
 // the PDB is torn down.
 func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
@@ -63,8 +120,12 @@ func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
 	c := newClient(t, s, template(), pool(2, 10))
 
 	reconcile(t, c, s)
-	if _, ok := getPDB(t, c, testPool+"-warm"); !ok {
+	pdb, ok := getPDB(t, c, testPool+"-warm")
+	if !ok {
 		t.Fatalf("expected a PDB for the positive-minWarm pool")
+	}
+	if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntValue() != 1 {
+		t.Errorf("PDB minAvailable = %v, want 1 (minWarm-1 for minWarm=2)", pdb.Spec.MinAvailable)
 	}
 
 	// Scale the pool to zero and reconcile again.

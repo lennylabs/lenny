@@ -22,17 +22,22 @@ import (
 func pdbName(pool string) string { return pool + "-warm" }
 
 // reconcilePDB maintains the §4.6.1 per-pool PodDisruptionBudget for
-// warm (idle) pods. For a pool with a positive minWarm it owns a PDB
-// with maxUnavailable: 1 selecting that pool's idle pods, so a node
-// drain evicts warm pods one at a time rather than all at once. The
-// spec forbids minAvailable: minWarm because it deadlocks node drains at
-// steady state. When minWarm is zero the PDB is torn down so a
-// scaled-to-zero pool imposes no disruption budget. spec: §4.6.1
+// warm (idle) pods. For a pool with minWarm >= 2 it owns a PDB with an
+// integer minAvailable of minWarm-1 selecting that pool's idle pods. An
+// integer minAvailable is evaluated directly from the count of selected
+// healthy pods, so it needs no /scale subresource; the selected warm
+// pods are owned by a status-only Sandbox CR that has none, and a
+// maxUnavailable budget would deadlock at disruptionsAllowed: 0. At the
+// steady state of exactly minWarm idle pods, minWarm-1 admits one
+// eviction and blocks a concurrent second, giving one-at-a-time
+// voluntary disruption. A pool with minWarm below 2 gets no PDB, because
+// a single warm pod cannot be given one-at-a-time protection without
+// deadlocking, so the PDB is torn down in that case. spec: §4.6.1
 // "Disruption protection for agent pods".
 func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.SandboxWarmPool) error {
 	key := client.ObjectKey{Namespace: pool.Namespace, Name: pdbName(pool.Name)}
 
-	if pool.Spec.MinWarm <= 0 {
+	if pool.Spec.MinWarm < 2 {
 		var existing policyv1.PodDisruptionBudget
 		if err := r.Client.Get(ctx, key, &existing); err != nil {
 			return client.IgnoreNotFound(err)
@@ -43,7 +48,7 @@ func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.SandboxWarm
 		return nil
 	}
 
-	maxUnavailable := intstr.FromInt(1)
+	minAvailable := intstr.FromInt(int(pool.Spec.MinWarm) - 1)
 	pdb := &policyv1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      key.Name,
@@ -54,10 +59,14 @@ func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.SandboxWarm
 			},
 		},
 		Spec: policyv1.PodDisruptionBudgetSpec{
-			// spec: §4.6.1 — "The PDB MUST use maxUnavailable: 1 rather
-			// than minAvailable: minWarm." minAvailable: minWarm deadlocks
-			// node drains when exactly minWarm idle pods exist.
-			MaxUnavailable: &maxUnavailable,
+			// spec: §4.6.1 — an integer minAvailable of minWarm-1. A
+			// maxUnavailable budget cannot resolve expectedPods because the
+			// selected warm pods are owned by a status-only Sandbox CR with no
+			// /scale subresource; an integer minAvailable is evaluated from the
+			// selected healthy-pod count. minWarm-1 admits exactly one eviction
+			// at steady state (minWarm idle pods) and avoids the minAvailable:
+			// minWarm deadlock.
+			MinAvailable: &minAvailable,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					LabelPool:        pool.Name,
@@ -81,9 +90,12 @@ func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.SandboxWarm
 	if err != nil {
 		return fmt.Errorf("get pdb for pool %s: %w", pool.Name, err)
 	}
-	// Converge the spec in case minWarm/selector drifted; the selector and
-	// maxUnavailable are the only fields the controller owns.
-	existing.Spec.MaxUnavailable = &maxUnavailable
+	// Converge the spec in case minWarm/selector drifted; the selector,
+	// minAvailable, and the cleared maxUnavailable are the fields the
+	// controller owns. maxUnavailable is set to nil so an object previously
+	// reconciled with maxUnavailable: 1 passes the exactly-one-of validation.
+	existing.Spec.MinAvailable = &minAvailable
+	existing.Spec.MaxUnavailable = nil
 	existing.Spec.Selector = pdb.Spec.Selector
 	if err := r.Client.Update(ctx, &existing); err != nil && !apierrors.IsConflict(err) {
 		return fmt.Errorf("update pdb for pool %s: %w", pool.Name, err)
