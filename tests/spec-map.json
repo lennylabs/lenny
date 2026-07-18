@@ -1938,7 +1938,8 @@
         "tests/tier6_e2e_cloud/managed_azuredb_test.go",
         "tests/tier6_e2e_cloud/managed_azurecache_test.go",
         "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodReachesObjectStoreButNoOtherLennySystemPort_spec_13_2",
-        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodTrustsObjectStoreCA_spec_13_2"
+        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodTrustsObjectStoreCA_spec_13_2",
+        "tests/tier6_e2e_cloud/agent_objectstore_egress_test.go::TestAgentPodObjectStoreEgressIsPortScoped_spec_13_2"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
