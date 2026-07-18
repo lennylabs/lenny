@@ -3341,7 +3341,8 @@
         "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryOperationIDLookupIsUnambiguousForVerifyingBackup",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
-        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress"
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress",
+        "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock"
       ],
       "packages": [
         "cmd/lenny-ops",
@@ -3351,6 +3352,9 @@
         "pkg/ops/coordination/pgstore",
         "pkg/ops/coordination/redisstore",
         "pkg/ops/escalation/pgstore"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/ops-rbac.yaml"
       ]
     },
     "25.5": {

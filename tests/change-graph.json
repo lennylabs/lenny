@@ -442,7 +442,8 @@
         "charts/lenny/tests/...",
         "tests/tier0_static/helm_lint_test.go",
         "tests/tier0_static/airgap_registry_render_test.go",
-        "tests/tier0_static/upgrade_channel_key_render_test.go"
+        "tests/tier0_static/upgrade_channel_key_render_test.go",
+        "tests/tier0_static/ops_rbac_spec_sync_test.go"
       ],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
