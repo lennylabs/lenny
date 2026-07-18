@@ -430,6 +430,15 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 - **relates to:** C-20 (shares the delegate-handler pre-claim insertion point; assigned to the same worker, proposal-C, to keep both on one code path and avoid cross-worker conflict)
 
+### C-41 — §8.3 credentialPropagation deny-mode suppression + full assignment-matrix — §8.3
+- **status:** open
+- **assigned:** proposal-C
+- **findings:** T-8.3.1
+- **root spec gap:** Two pieces of the T-8.3.1 umbrella remain after C-20 (0043: field/enum/validator + cross-env compatibility + inherit shared-pool assignment) and C-40 (availability pre-check): (1) deny-mode credential suppression, which needs a persisted `credentialPropagation` mode column that 0043 deliberately omitted, and (2) the full inherit→independent→deny assignment-matrix behavior. T-8.3.1 is the shared umbrella finding across C-20, C-40, and C-41 — it resolves only when all three land plus the matrix test.
+- **proposal scope:** Add the persisted `credentialPropagation` mode column and the deny-mode credential-suppression behavior, and the full inherit→independent→deny assignment-matrix tier-4 test (T-8.3.1's suggested `delegation_credential_propagation_test.go`). Sequence after C-40 (shares the §8.3 delegate-handler path).
+- **severity:** High
+- **relates to:** C-20 (landed 0043), C-40 (availability) — all share the §8.3 credentialPropagation code; kept single-worker (proposal-C).
+
 ---
 
 ## Test-infra findings to de-escalate (hand back to closure runners)
@@ -471,3 +480,4 @@ with the action taken, keeping a short trail here.
 - [x] re-cluster 2026-07-17: folded T-25.6.14→C-23 (gateway :8443 TLS/HTTP probe collision) and T-25.6.17→C-24 (§25.6 both-down 503 error code) — both match existing unassigned clusters.
 - [ ] pending fold-in to ASSIGNED cluster C-02 (§25.5 MCP-native subscription, proposal-A): T-25.5.14 — whether webhook-subscription CRUD should be MCP-exposed or REST-only is deliberate. Not applied now (C-02 assigned); fold in when C-02 reopens or before proposal-A starts it.
 - [x] from proposal-C (C-20): route the §8.3 credential-availability pre-check (CREDENTIAL_POOL_EXHAUSTED pre-claim guard) as its own cluster, distinct from C-20's compatibility check. → Done 2026-07-17: created C-40 (findings T-8.3.1), assigned to proposal-C since it shares C-20's insertion point.
+- [x] from proposal-C (C-40): T-8.3.1 is broader than C-40 — deny-mode suppression (needs persisted mode column, omitted by 0043) and the full assignment-matrix test remain. → Done 2026-07-18: split into new cluster C-41 (proposal-C), keeping C-40 scoped to the availability pre-check. T-8.3.1 is the umbrella across C-20/C-40/C-41 and stays OPEN until all land; leave it OPEN with a note when C-40 lands, as you planned.
