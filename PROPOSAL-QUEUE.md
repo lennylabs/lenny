@@ -142,7 +142,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-08 — Platform-upgrade orchestrator architecture — §25.8
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.8.4, T-25.8.20, T-25.15.8
+- **findings:** T-25.8.4, T-25.8.20, T-25.15.8, T-25.8.15, T-25.8.23, T-25.8.24
 - **root spec gap:** §25.8 describes lenny-ops itself watching the new pod for ImagePull/CrashLoop failures over a 60s window and running serial multi-shard schema migration with failed-shard pause/resume, but the implementation is an operator-paced orchestrator with the PodObserver seam left nil.
 - **proposal scope:** Resolve whether to build the in-process lenny-ops PodObserver and multi-shard migration runner or ratify the operator-paced model with a narrower operator-reported failed-shard tracking surface, so the stuck-upgrade chaos and shard pause/resume tests have a product surface.
 - **severity:** High
@@ -312,7 +312,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-26 — §25.7 Path B runbook link resolution — §25.7
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.7.11
+- **findings:** T-25.7.11, T-25.7.10
 - **root spec gap:** The gateway health service links runbook slug `siem-delivery-failure` for AUDIT_SIEM_DELIVERY_DEGRADED, but no such runbook is bundled, so Path B returns RUNBOOK_NOT_FOUND; the spec permits three resolutions and mandates none.
 - **proposal scope:** Choose one: author the runbook, drop the mapping entry, or repoint to the existing audit-pipeline-degraded runbook; then enforce the whole-map convention test.
 - **severity:** High
@@ -481,3 +481,4 @@ with the action taken, keeping a short trail here.
 - [ ] pending fold-in to ASSIGNED cluster C-02 (§25.5 MCP-native subscription, proposal-A): T-25.5.14 — whether webhook-subscription CRUD should be MCP-exposed or REST-only is deliberate. Not applied now (C-02 assigned); fold in when C-02 reopens or before proposal-A starts it.
 - [x] from proposal-C (C-20): route the §8.3 credential-availability pre-check (CREDENTIAL_POOL_EXHAUSTED pre-claim guard) as its own cluster, distinct from C-20's compatibility check. → Done 2026-07-17: created C-40 (findings T-8.3.1), assigned to proposal-C since it shares C-20's insertion point.
 - [x] from proposal-C (C-40): T-8.3.1 is broader than C-40 — deny-mode suppression (needs persisted mode column, omitted by 0043) and the full assignment-matrix test remain. → Done 2026-07-18: split into new cluster C-41 (proposal-C), keeping C-40 scoped to the availability pre-check. T-8.3.1 is the umbrella across C-20/C-40/C-41 and stays OPEN until all land; leave it OPEN with a note when C-40 lands, as you planned.
+- [x] re-cluster 2026-07-18: folded §25.8 upgrade findings T-25.8.15/.23/.24 → C-08, and §25.7 stale-runbook-count T-25.7.10 → C-26 (all existing unassigned clusters).
