@@ -448,6 +448,121 @@ func TestResolveCredentialPoolsNoRegistries(t *testing.T) {
 	}
 }
 
+// spec: §8.3 line 470 — CheckDelegationCredentialAvailability is the thin
+// §8.3 delegation-time wrapper over the §4.9 engine. It builds a synthetic
+// child row from the DelegationCredentialQuery (ChildRuntimeRef→RuntimeRef;
+// TenantID, UserID, and CredentialOriginSessionID verbatim), runs
+// resolveCredentialPools, and maps the engine's two typed pre-claim
+// outcomes to package sentinels while admitting on success. The intersection,
+// inherit-origin, and nil-registries semantics are pinned exhaustively
+// through the identical resolveCredentialPools path above, so this test pins
+// only the field mapping, the two-sentinel translation, and nil propagation.
+func TestCheckDelegationCredentialAvailabilityWrapper(t *testing.T) {
+	activePolicy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "primary"},
+		},
+	}
+	userOnlyPolicy := credential.CredentialPolicy{
+		PreferredSource:        credential.PreferredSourceUser,
+		UserCredentialsEnabled: true,
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "primary"},
+		},
+	}
+	inheritPolicy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+			"aws_bedrock":      {DefaultPool: "bedrock-prod"},
+		},
+	}
+
+	cases := []struct {
+		name    string
+		server  func(t *testing.T) *Server
+		query   DelegationCredentialQuery
+		wantErr error
+	}{
+		{
+			// An assignable pool admits: nil propagates through the wrapper.
+			// TenantID and ChildRuntimeRef→RuntimeRef must both map for the
+			// engine to resolve the tenant policy and the child runtime.
+			name: "available admits",
+			server: func(t *testing.T) *Server {
+				return preclaimFixture(t, activePolicy, []string{"anthropic_direct"},
+					poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialActive))
+			},
+			query:   DelegationCredentialQuery{TenantID: "acme", UserID: "alice@acme.com", ChildRuntimeRef: "claude-code"},
+			wantErr: nil,
+		},
+		{
+			// An exhausted pool maps ErrNoCredentialAvailable to the exhaustion
+			// sentinel. A dropped TenantID or ChildRuntimeRef would make the
+			// engine resolve nothing and admit, so the sentinel also proves
+			// those two fields map.
+			name: "exhausted maps to unavailable sentinel",
+			server: func(t *testing.T) *Server {
+				return preclaimFixture(t, activePolicy, []string{"anthropic_direct"},
+					poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialRevoked))
+			},
+			query:   DelegationCredentialQuery{TenantID: "acme", UserID: "alice@acme.com", ChildRuntimeRef: "claude-code"},
+			wantErr: ErrDelegationCredentialUnavailable,
+		},
+		{
+			// A user-only policy with no registered credential maps
+			// ErrUserCredentialNotFound to the distinct user-credential sentinel.
+			name: "user-only miss maps to user-credential sentinel",
+			server: func(t *testing.T) *Server {
+				return preclaimFixture(t, userOnlyPolicy, []string{"anthropic_direct"},
+					poolFixture("primary", "anthropic_direct", credentialpoolstore.CredentialActive))
+			},
+			query:   DelegationCredentialQuery{TenantID: "acme", UserID: "alice@acme.com", ChildRuntimeRef: "claude-code"},
+			wantErr: ErrDelegationUserCredentialNotFound,
+		},
+		{
+			// CredentialOriginSessionID maps verbatim and triggers the
+			// origin-constrained branch: the origin runtime is disjoint from the
+			// child runtime, so the constrained intersection is empty and the
+			// wrapper returns the exhaustion sentinel. The companion empty-origin
+			// case below admits over the same fixture, isolating the origin field
+			// as the cause.
+			name: "inherit origin field constrains to exhaustion",
+			server: func(t *testing.T) *Server {
+				return preclaimInheritFixture(t, inheritPolicy,
+					[]string{"aws_bedrock"}, []string{"anthropic_direct"},
+					poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+					poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive))
+			},
+			query:   DelegationCredentialQuery{TenantID: "acme", UserID: "alice@acme.com", ChildRuntimeRef: "claude-code", CredentialOriginSessionID: "origin-1"},
+			wantErr: ErrDelegationCredentialUnavailable,
+		},
+		{
+			// Empty origin (independent hop) over the same disjoint fixture:
+			// unconstrained, so the child's own aws_bedrock pool admits. This
+			// pins that the exhaustion above is caused by the mapped origin
+			// field, not the child runtime alone.
+			name: "empty origin admits over same fixture",
+			server: func(t *testing.T) *Server {
+				return preclaimInheritFixture(t, inheritPolicy,
+					[]string{"aws_bedrock"}, []string{"anthropic_direct"},
+					poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+					poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive))
+			},
+			query:   DelegationCredentialQuery{TenantID: "acme", UserID: "alice@acme.com", ChildRuntimeRef: "claude-code"},
+			wantErr: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := tc.server(t)
+			err := s.CheckDelegationCredentialAvailability(context.Background(), tc.query)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("CheckDelegationCredentialAvailability = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // claimAtCreateScheme builds the scheme the fake binder client needs to
 // hold the §5 warm-pool CRDs claimAtCreate resolves a pool from.
 func claimAtCreateScheme(t *testing.T) *runtime.Scheme {

@@ -231,7 +231,12 @@ func (w *gatewayWiring) buildMCPSurface(
 		// spec: §15.2 lines 1284-1306 — route the overlapping client-facing
 		// lifecycle/read tools through the same shared service layer so the
 		// MCP surface runs the identical REST routes and validation. F-15.2.3.
-		SessionService:             sessionSrv,
+		SessionService: sessionSrv,
+		// spec: §8.3 line 470 — run the delegation-time pre-claim credential
+		// availability check through the same session server that owns the
+		// §4.9 engine, so lenny/delegate_task rejects an exhausted pool with
+		// CREDENTIAL_POOL_EXHAUSTED before allocating a warm pod.
+		CredAvailability:           sessionSrv,
 		Executor:                   w.exec,
 		DeadlockTracker:            deadlockTracker,
 		Deadlocks:                  deadlockManager,

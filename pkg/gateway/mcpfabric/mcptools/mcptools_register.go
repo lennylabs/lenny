@@ -2048,6 +2048,67 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, toolErr
 			}
 		}
+		// §8.3 line 470: run the pre-claim credential-availability
+		// check for an inherit or independent delegation before the
+		// child row is created, so an exhausted credential pool rejects
+		// with CREDENTIAL_POOL_EXHAUSTED before any warm pod is claimed.
+		// The check is skipped only for a deny hop (which needs no
+		// credential) and when no checker is wired (the minimal
+		// in-process gateway), mirroring crossEnvInheritMismatch's
+		// nil-registry fall-through. Store availability does not gate the
+		// check: an independent hop evaluates the child runtime
+		// supportedProviders against the tenant providerPools with no
+		// origin, so it runs even when the parent cannot be read. The
+		// check claims no pod: it rejects before Delegate commits the
+		// child.
+		mode := lease.CredentialPropagation(in.CredentialPropagation)
+		if deps.CredAvailability != nil &&
+			(mode == lease.CredentialPropagationInherit ||
+				mode == lease.CredentialPropagationIndependent ||
+				mode == "" /* §8.3 line 445: omitted defaults to independent */) {
+			callerUserID, originID, err := resolveDelegationCredentialQuery(ctx, deps, tenant, in.ParentSessionID, mode)
+			if err != nil {
+				// Fail closed on an inherit hop whose parent origin cannot
+				// be resolved: an unresolvable origin must not silently
+				// downgrade to an unconstrained (independent-equivalent)
+				// availability check. Credential handling denies on doubt
+				// (code-best-practices). An independent or omitted hop
+				// never reaches this branch, so a store read cannot block
+				// it. spec: §8.3 line 470.
+				return mcp.ToolResult{}, err
+			}
+			q := sessionserver.DelegationCredentialQuery{
+				TenantID:                  tenant,
+				UserID:                    callerUserID,
+				ChildRuntimeRef:           targetRef,
+				CredentialOriginSessionID: originID,
+			}
+			if err := deps.CredAvailability.CheckDelegationCredentialAvailability(ctx, q); err != nil {
+				switch {
+				case errors.Is(err, sessionserver.ErrDelegationCredentialUnavailable):
+					// spec: §15.2.1 — surface the canonical lenny code via
+					// *mcp.ToolError so the REST and MCP envelopes share the
+					// same POLICY / 503 (category, retryable) pair registered
+					// at errorclassify.go.
+					return mcp.ToolResult{}, mcp.NewToolError("CREDENTIAL_POOL_EXHAUSTED",
+						"credential pool exhausted: no assignable credential for the delegated child at delegation time",
+						map[string]any{"childRuntime": targetRef, "credentialPropagation": string(mode)})
+				case errors.Is(err, sessionserver.ErrDelegationUserCredentialNotFound):
+					// spec: §15.2.1, §4.9 line 1364 — the same user-only-policy
+					// condition session start surfaces as USER_CREDENTIAL_NOT_FOUND
+					// (PERMANENT / 404, registered at errorclassify.go). Return
+					// the classified *mcp.ToolError so the delegate path emits
+					// the same actionable code rather than the INTERNAL_ERROR
+					// fallback a bare error would produce at the dispatch.
+					return mcp.ToolResult{}, mcp.NewToolError("USER_CREDENTIAL_NOT_FOUND",
+						"no pre-registered credential found for the delegated child's user and provider; "+
+							"register one via POST /v1/credentials or configure pool fallback",
+						map[string]any{"childRuntime": targetRef, "credentialPropagation": string(mode)})
+				default:
+					return mcp.ToolResult{}, err
+				}
+			}
+		}
 		// §4 PreDelegation: run the interceptor chain over the
 		// TaskSpec.input before the gateway processes the delegation.
 		// A REJECT blocks the delegation; a MODIFY rewrites the input

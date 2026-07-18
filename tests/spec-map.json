@@ -872,14 +872,14 @@
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
         "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility",
         "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058",
-        "tests/tier4_integration/delegation_credential_pool_race_test.go::TestDelegateTaskConcurrentCredentialPoolExhaustionRace"
+        "tests/tier4_integration/delegation_credential_pool_race_test.go::TestDelegateTaskCredentialPoolExhaustionPreCheck"
       ],
       "packages": [
         "pkg/delegation/lease",
         "pkg/delegation/policy"
       ],
       "blocked_until_phase": "9",
-      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2. The concurrent credential-pool point-in-time-check race (adversarial case) has a spec-derived test at tests/tier4_integration/delegation_credential_pool_race_test.go, kept t.Skip'd because credentialPropagation has no production implementation to race against yet."
+      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2. The delegation-time credential-availability pre-check (§8.3 line 470) has a deterministic spec-derived test at tests/tier4_integration/delegation_credential_pool_race_test.go: an inherit or independent delegate_task whose origin credential pool is exhausted is rejected with CREDENTIAL_POOL_EXHAUSTED before a child row is created. The post-pod-claim assignment race, pod release, and one-winner/N-1 clauses depend on a delegate-path pod-claim step that is not yet built."
     },
     "8.4": {
       "title": "Approval Modes",
