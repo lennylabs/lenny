@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,9 +34,10 @@ import (
 
 // Process represents a running lenny-ops subprocess.
 type Process struct {
-	cmd     *exec.Cmd
-	baseURL string
-	stderr  *os.File
+	cmd      *exec.Cmd
+	baseURL  string
+	stderr   *os.File
+	stopOnce sync.Once
 }
 
 // SkipUnlessAvailable t.Skips when the Go toolchain needed to build
@@ -111,27 +113,7 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	}
 	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile}
 
-	t.Cleanup(func() {
-		defer func() { _ = stderrFile.Close() }()
-
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-
-		_ = cmd.Process.Signal(os.Interrupt)
-
-		select {
-		case <-done:
-			return
-		case <-time.After(3 * time.Second):
-		}
-
-		_ = cmd.Process.Kill()
-		select {
-		case <-done:
-		case <-time.After(cmd.WaitDelay + time.Second):
-			t.Logf("lenny-ops subprocess did not exit after SIGKILL; goroutine leaked")
-		}
-	})
+	t.Cleanup(func() { p.stop(t) })
 
 	if err := p.waitReady(15 * time.Second); err != nil {
 		b, _ := os.ReadFile(stderrPath)
@@ -142,6 +124,48 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 
 // BaseURL returns the http://host:port the lenny-ops surface listens on.
 func (p *Process) BaseURL() string { return p.baseURL }
+
+// Stop terminates the lenny-ops subprocess mid-test so a caller can inject a
+// genuine outage of this installation: the SSE connection an agent holds
+// against it drops, and subsequent requests fail to connect rather than
+// returning stale success. It is the subprocess analogue of the
+// tests/testinfra/containers Postgres.Stop/Redis.Stop mid-test injection,
+// used by the §25.17 multi-installation watchdog tests that take one
+// installation down while asserting the loop against a surviving one is
+// unaffected. The t.Cleanup registered by StartWith tolerates a prior Stop.
+func (p *Process) Stop(t testing.TB) {
+	t.Helper()
+	p.stop(t)
+}
+
+// stop signals SIGINT, escalates to SIGKILL if the process has not exited
+// within 3 seconds, and waits for it to exit. Guarded by sync.Once so it is
+// safe to call from both an explicit Stop(t) and the t.Cleanup registered at
+// startup; the second call is a no-op.
+func (p *Process) stop(t testing.TB) {
+	t.Helper()
+	p.stopOnce.Do(func() {
+		defer func() { _ = p.stderr.Close() }()
+
+		done := make(chan error, 1)
+		go func() { done <- p.cmd.Wait() }()
+
+		_ = p.cmd.Process.Signal(os.Interrupt)
+
+		select {
+		case <-done:
+			return
+		case <-time.After(3 * time.Second):
+		}
+
+		_ = p.cmd.Process.Kill()
+		select {
+		case <-done:
+		case <-time.After(p.cmd.WaitDelay + time.Second):
+			t.Logf("lenny-ops subprocess did not exit after SIGKILL; goroutine leaked")
+		}
+	})
+}
 
 // waitReady polls /healthz until the process responds (or the deadline
 // expires). Any HTTP response means the listener is up; only a connection
