@@ -89,6 +89,31 @@ func readSpecMapPackages(t *testing.T) map[string][]string {
 	return out
 }
 
+// readSpecMapBlockedUntilPhase returns, per section id, the
+// `blocked_until_phase` value recorded in tests/spec-map.json, or the
+// empty string when the section carries none.
+func readSpecMapBlockedUntilPhase(t *testing.T) map[string]string {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map.json"))
+	if err != nil {
+		t.Fatalf("read spec-map.json: %v", err)
+	}
+	var doc struct {
+		Sections map[string]struct {
+			BlockedUntilPhase string `json:"blocked_until_phase"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse spec-map.json: %v", err)
+	}
+	out := map[string]string{}
+	for id, sec := range doc.Sections {
+		out[id] = sec.BlockedUntilPhase
+	}
+	return out
+}
+
 // readSpecMapTests returns, per section id, the `tests` list recorded
 // in tests/spec-map.json, with any trailing `::TestName` selector
 // stripped so the result is a set of repo-relative file paths.
@@ -485,5 +510,57 @@ func TestSpecMapPackagesIncludeEveryTestReferencedPackage(t *testing.T) {
 			t.Errorf("spec-map.json §%s packages %v is missing implementation package(s) its own tests[] already references: %s",
 				id, pkgs, strings.Join(missing, ", "))
 		}
+	}
+}
+
+// spec: TESTING.md §5 ("`blocked_until_phase` records when the section
+//
+//	is testable. Earlier phases skip its tests with a
+//	`not-yet-applicable` reason rather than failing.")
+//
+// diagnosis: §25.4 (The lenny-ops Service), §25.6 (Diagnostic
+//
+//	Endpoints), §25.7 (Operational Runbooks), §25.8 (Platform Lifecycle
+//	Management), §25.11 (Backup and Restore API), §25.12 (MCP
+//	Management Server), and §25.13 (Bundled Alerting Rules) each carry
+//	a `blocked_until_phase` even though every one is already testable:
+//	each section's implementation package (pkg/ops/opsserver,
+//	pkg/ops/diagnostics, pkg/ops/runbooks, pkg/ops/upgradeservice +
+//	pkg/ops/configservice, pkg/ops/backup, pkg/ops/mcp, and
+//	pkg/alerting/inproceval respectively) is wired into a real binary
+//	(cmd/lenny-ops or cmd/lenny-gateway) and none of its tests is a
+//	`not-yet-applicable`/`phase-gated` scaffold. Each section's own
+//	tests[] array already carries a tier5_e2e_kind, tier6_e2e_cloud, or
+//	tier8_chaos entry driving the feature against a deployed binary or
+//	real dependency-down scenario (for example
+//	tests/tier5_e2e_kind/diagnostics_fix_test.go for §25.6,
+//	tests/tier5_e2e_kind/runbook_index_test.go for §25.7,
+//	tests/tier9_security/release_channel_signature_test.go and
+//	tests/tier10_conformance/release_channel_manifest_test.go for
+//	§25.8, tests/tier5_e2e_kind/backup_test.go for §25.11,
+//	tests/tier5_e2e_kind/mcp_management_e2e_test.go for §25.12, and
+//	tests/tier4_integration/alerting_rules_prometheus_firing_test.go for
+//	§25.13), so a `blocked_until_phase` on any of these sections
+//	misrepresents the section as not-yet-testable to a reader or to the
+//	coverage tooling, mirroring the T-25.9/§25.10 precedent
+//	(TestSpecMapAuditQueryPackagesIncludeAdminImplementation /
+//	TestSpecMapDriftPackagesIncludeDiffAndSnapshotStore) that dropped the
+//	same stale field once each section's packages[] was backfilled.
+func TestSpecMapShippedOperabilitySectionsCarryNoBlockedUntilPhase(t *testing.T) {
+	t.Parallel()
+
+	shipped := []string{"25.4", "25.6", "25.7", "25.8", "25.11", "25.12", "25.13"}
+	phases := readSpecMapBlockedUntilPhase(t)
+	stale := []string{}
+	for _, id := range shipped {
+		if phase := phases[id]; phase != "" {
+			stale = append(stale, id+" → \""+phase+"\"")
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Errorf("spec-map.json carries a stale blocked_until_phase for §25 sections whose "+
+			"implementation is already shipped and reachable through a deployed binary: %s",
+			strings.Join(stale, "; "))
 	}
 }

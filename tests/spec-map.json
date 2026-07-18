@@ -3212,6 +3212,7 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapPackagesIncludeEveryTestReferencedPackage",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapShippedOperabilitySectionsCarryNoBlockedUntilPhase",
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "tests/tier8_chaos/store_failure_test.go",
         "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview",
@@ -3342,8 +3343,7 @@
         "pkg/ops/coordination/pgstore",
         "pkg/ops/coordination/redisstore",
         "pkg/ops/escalation/pgstore"
-      ],
-      "blocked_until_phase": "3.5"
+      ]
     },
     "25.5": {
       "title": "Operational Event Stream",
@@ -3422,8 +3422,7 @@
       "chart_templates": [
         "charts/lenny/templates/ops-rbac.yaml"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.6 Diagnostic Endpoints. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.6 Diagnostic Endpoints. pkg/ops/diagnostics and pkg/ops/diagnostics/prodsource implement the endpoints; pkg/ops/opsserver serves them. See TESTING.md §25 for the test plan."
     },
     "25.7": {
       "title": "Operational Runbooks",
@@ -3451,8 +3450,7 @@
         "pkg/gateway/externalapi/openapi",
         "pkg/ops/mcp"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.7 Operational Runbooks. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.7 Operational Runbooks. pkg/ops/runbooks implements the runbook index; pkg/ops/opsserver serves it over REST and pkg/ops/mcp over the MCP tool inventory. See TESTING.md §25 for the test plan."
     },
     "25.8": {
       "title": "Platform Lifecycle Management",
@@ -3505,8 +3503,7 @@
         "pkg/releasechannel",
         "pkg/ops/configservice"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md). TestUpgradeChannelKeyDisablesReleaseChannelURL is currently skipped pending a spec-vs-chart naming reconciliation between the spec's platform.upgradeChannel disable key and the chart's platform.releaseChannel.url (see TEST-GAPS.md)."
+      "notes": "§25.8 Platform Lifecycle Management. pkg/ops/upgradeservice and pkg/ops/configservice implement the upgrade and config-diff/apply surfaces; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md). TestUpgradeChannelKeyDisablesReleaseChannelURL is currently skipped pending a spec-vs-chart naming reconciliation between the spec's platform.upgradeChannel disable key and the chart's platform.releaseChannel.url (see TEST-GAPS.md)."
     },
     "25.9": {
       "title": "Audit Log Query API",
@@ -3608,8 +3605,7 @@
         "pkg/ops/opsserver",
         "pkg/gateway/sessionserver"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status. §25.11 also covers the continuous ArtifactStore replication pipeline (pkg/blobstore/replication, its Postgres-backed lag/state store, and the pkg/gateway/externalapi/admin artifact-replication resume endpoint), wired into cmd/lenny-gateway."
+      "notes": "§25.11 Backup and Restore API. pkg/ops/backup and its runner/pgstore/k8slauncher subpackages implement the archive pipeline; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status. §25.11 also covers the continuous ArtifactStore replication pipeline (pkg/blobstore/replication, its Postgres-backed lag/state store, and the pkg/gateway/externalapi/admin artifact-replication resume endpoint), wired into cmd/lenny-gateway."
     },
     "25.12": {
       "title": "MCP Management Server",
@@ -3644,8 +3640,7 @@
         "pkg/ops/opsserver",
         "pkg/gateway/externalapi/openapi"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.12 MCP Management Server. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.12 MCP Management Server. pkg/ops/mcp implements the ManagementMCPAdapter; pkg/ops/opsserver wires it into lenny-ops at /mcp/management. See TESTING.md §25 for the test plan."
     },
     "25.13": {
       "title": "Bundled Alerting Rules",
@@ -3663,8 +3658,7 @@
       "packages": [
         "pkg/alerting/inproceval"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The complementary tier-4 firing test renders the shared catalog to a Prometheus rule file and runs `promtool test rules` (the Prometheus rule engine, in a prom/prometheus container) across simulated time, driving the triggering metric conditions of the Prometheus-only alerts that the in-process fallback declines (rate: RedisUnavailable, `unless on()` join: WarmPoolExhausted, time(): BackupOverdue, increase(): BackupFailed, histogram_quantile: CheckpointDurationHigh) past their For windows and asserting each fires with its rendered severity label and annotations, so a broken rendered expression that would silently fail to page is caught (§25.13 lines 4676-4682). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
+      "notes": "§25.13 Bundled Alerting Rules. pkg/alerting/inproceval implements the in-process alert-state tracker over the shared rules.Catalog(). See TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The complementary tier-4 firing test renders the shared catalog to a Prometheus rule file and runs `promtool test rules` (the Prometheus rule engine, in a prom/prometheus container) across simulated time, driving the triggering metric conditions of the Prometheus-only alerts that the in-process fallback declines (rate: RedisUnavailable, `unless on()` join: WarmPoolExhausted, time(): BackupOverdue, increase(): BackupFailed, histogram_quantile: CheckpointDurationHigh) past their For windows and asserting each fires with its rendered severity label and annotations, so a broken rendered expression that would silently fail to page is caught (§25.13 lines 4676-4682). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
     },
     "25.14": {
       "title": "lenny-ctl Extensions",
