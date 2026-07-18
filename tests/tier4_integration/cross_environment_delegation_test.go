@@ -255,10 +255,10 @@ func TestCrossEnvironmentDelegationCredentialCompatibility(t *testing.T) {
 	// strictly downstream of a committed running child. The gate firing
 	// before the child row commits (childrenOf == 0) therefore proves it
 	// fires before pod allocation: no committed child means no session that
-	// could ever reach finalize and claim a pod. The warm-pool counters the
-	// proposal names as the second signal live on the finalize path, so at
-	// the delegate-time tier the pre-commit session-store check is the
-	// observable signal for the pre-claim ordering.
+	// could ever reach finalize and claim a pod. Warm-pool counters only
+	// move at the finalize barrier, so at the delegate-time tier the
+	// pre-commit session-store check (childrenOf == 0) is the observable
+	// pre-claim signal.
 	t.Run("reject_disjoint_provider_intersection", func(t *testing.T) {
 		fx := newCrossEnvFixture(t)
 		resp := crossEnvCall(t, fx.srv, crossEnvCallerTeamA, "sess_parent", "isolated-tool", "inherit")
