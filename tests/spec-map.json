@@ -483,7 +483,8 @@
         "tests/tier9_security/lease_spiffe_replay_test.go",
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
         "tests/tier8_chaos/token_service_unavailability_guard_test.go",
-        "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go"
+        "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
+        "tests/tier9_security/credential_delivery_gate_test.go"
       ],
       "packages": [
         "pkg/credential",
