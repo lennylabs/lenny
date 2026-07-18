@@ -3460,6 +3460,16 @@
         "pkg/ops/upgradeservice/upgradeservice_test.go",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_InSync_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_Changes_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_GatewayUnavailable_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ValidationFailed_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_DryRun_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_Confirm_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ConfirmRestartRequired_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_GatewayApplyError_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_LowerMinimumWarning_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestNew_NilGatewayPanics_spec_25_8",
         "tests/tier2_component/observability/version_aggregation_test.go",
         "tests/tier2_component/observability/version_drift_metric_test.go",
         "tests/tier2_component/observability/upgrade_check_cron_test.go",
@@ -3489,7 +3499,8 @@
         "pkg/ops/opsserver",
         "pkg/ops/registryservice",
         "pkg/ops/opsinventory",
-        "pkg/releasechannel"
+        "pkg/releasechannel",
+        "pkg/ops/configservice"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md). TestUpgradeChannelKeyDisablesReleaseChannelURL is currently skipped pending a spec-vs-chart naming reconciliation between the spec's platform.upgradeChannel disable key and the chart's platform.releaseChannel.url (see TEST-GAPS.md)."
