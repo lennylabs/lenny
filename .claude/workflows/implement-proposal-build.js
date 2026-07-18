@@ -60,6 +60,12 @@ const coverageFloor = input.coverageFloor || 80;
 const replanEvery = input.replanEvery || 4;
 const maxReplans = input.maxReplans || 6;
 const replanStruggleAttempts = input.replanStruggleAttempts || 4;
+// skipBuild: the change is already implemented and committed on the branch — skip
+// the Plan and Build phases and run only the whole-change Verify and Review
+// against HEAD. Used to resume a fully-built proposal at the verify/review point
+// without re-walking (or re-planning) the build steps. baseRef is still computed
+// at the top of the Build phase and the build loop simply iterates zero steps.
+const skipBuild = !!input.skipBuild;
 
 // A schema'd agent occasionally completes without calling StructuredOutput
 // (returns prose after the nudge); the runtime throws and, uncaught, that one
@@ -234,7 +240,7 @@ const SHA = {
 
 phase("Plan");
 log("Planning the blast radius and build sequence for " + proposal);
-let plan = await agentTry(
+let plan = skipBuild ? { steps: [] } : await agentTry(
   "Plan the code implementation of an applied spec proposal.\n\n" +
     "You are a read-only planner; do not edit any file. Work in " +
     repo +
@@ -251,7 +257,7 @@ let plan = await agentTry(
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
-for (let round = 1; round < maxPlanRounds; round++) {
+for (let round = 1; !skipBuild && round < maxPlanRounds; round++) {
   const critique = await agentTry(
     "Adversarially check whether a build plan covers the entire blast radius of an applied spec proposal.\n\n" +
       "You are a read-only critic; do not edit any file. Work in " +
