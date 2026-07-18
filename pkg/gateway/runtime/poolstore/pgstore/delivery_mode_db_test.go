@@ -39,11 +39,11 @@ var warmPoolMigrations = []string{
 	"0167_runtime_definitions_execution_mode_service.up.sql",
 	"0170_sandbox_warm_pools_acknowledge_nonce_only_auth.up.sql",
 	"0171_sandbox_warm_pools_dns_policy.up.sql",
-	"0176_sandbox_warm_pools_delivery_mode.up.sql",
+	"0177_sandbox_warm_pools_delivery_mode.up.sql",
 }
 
 // TestDeliveryModeFieldsPgRoundTrip_spec_4_9 brings up an embedded Postgres,
-// applies the sandbox_warm_pools migration chain through 0176, and proves the
+// applies the sandbox_warm_pools migration chain through 0177, and proves the
 // §4.9 credential-delivery combination fields (delivery_mode, spiffe_binding,
 // and the two deployer opt-in acknowledgments) round-trip through the
 // Postgres-backed store's INSERT, SELECT, and UPDATE paths, including the
