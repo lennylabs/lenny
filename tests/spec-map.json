@@ -3614,6 +3614,8 @@
         "pkg/ops/mcp/correlation_test.go::TestToolInputOperationIDWinsOverMeta_spec_25_12",
         "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
+        "pkg/ops/mcp/server_test.go::TestToolsCallDryRunMapsToMetaFlag",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go::TestMCPToolsCallDryRunMapping",
         "pkg/ops/mcp/naming_test.go::TestToolNamesFollowLennyDomainActionPattern_spec_25_12",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphMCPPackageSelectsContractAndSecurityTiers",
         "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",
