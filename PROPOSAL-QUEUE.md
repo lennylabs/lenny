@@ -312,7 +312,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-26 — §25.7 Path B runbook link resolution — §25.7
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.7.11, T-25.7.10, T-25.7.12
+- **findings:** T-25.7.11, T-25.7.10, T-25.7.12, T-25.7.8
 - **root spec gap:** The gateway health service links runbook slug `siem-delivery-failure` for AUDIT_SIEM_DELIVERY_DEGRADED, but no such runbook is bundled, so Path B returns RUNBOOK_NOT_FOUND; the spec permits three resolutions and mandates none.
 - **proposal scope:** Choose one: author the runbook, drop the mapping entry, or repoint to the existing audit-pipeline-degraded runbook; then enforce the whole-map convention test.
 - **severity:** High
