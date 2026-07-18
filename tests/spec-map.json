@@ -3516,6 +3516,7 @@
       "packages": [
         "pkg/upgrade",
         "pkg/ops/upgradeservice",
+        "pkg/ops/upgradeservice/pgstore",
         "pkg/ops/versionsource",
         "pkg/ops/opsserver",
         "pkg/ops/registryservice",
