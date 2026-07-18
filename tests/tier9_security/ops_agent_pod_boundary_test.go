@@ -145,6 +145,145 @@ func assertAgentEgressDropped(t *testing.T, name, target string, res curlResult)
 		"the object store only)", name, target)
 }
 
+// objectStoreCAConfigMap is the per-agent-namespace ConfigMap the chart
+// materializes (agent-objectstore-ca.yaml) from minio.tls.caBundle. The sandbox
+// controller projects it read-only into every agent pod and points the
+// adapter's --objectstore-ca-bundle at the mounted ca.crt so the adapter trusts
+// a self-managed object store's non-public CA during checkpoint chunk PUT/GET.
+const (
+	objectStoreCAConfigMap = "lenny-objectstore-ca"
+	objectStoreCAKey       = "ca.crt"
+	objectStoreDNSName     = "lenny-minio.lenny-system.svc"
+)
+
+// spec: §13.2 (NET-071 — a self-managed object store serving TLS under a
+// non-public CA requires agent pods to trust that CA to complete the checkpoint
+// chunk PUT/GET handshake; the chart projects minio.tls.caBundle into each
+// agent namespace and the controller mounts it into the adapter)
+// diagnosis: a failure means the object-store CA is not trusted inside agent
+// pods, so every checkpoint upload fails the TLS handshake, the seal-and-export
+// path returns CheckpointFailed, the session is marked failed, and §6.2 recycle
+// never runs. The test projects the object-store CA ConfigMap into a
+// §13.1-compliant probe pod in the agent namespace and requires a TLS-verified
+// request (no -k) to the object store's DNS name — routed through its Service
+// ClusterIP, the address the gateway-minted presigned URL resolves to — to
+// return HTTP 200 (curl exit 0). It first asserts the CA ConfigMap exists in the
+// agent namespace: without minio.tls.caBundle carrying the PEM the chart renders
+// no ConfigMap, the adapter has no trust anchor, and the handshake fails closed.
+// Unlike the port-boundary probe, which tolerates a TLS error as long as the TCP
+// connection is admitted, this probe fails unless the certificate itself
+// validates, so it pins the trust wiring the checkpoint upload depends on.
+func TestAgentPodTrustsObjectStoreCA_spec_13_2(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	minioClusterIP := serviceClusterIP(t, c, "lenny-minio")
+	if minioClusterIP == "" {
+		t.Fatalf("the lenny-minio Service has no ClusterIP; cannot probe the §13.2 object-store CA trust boundary")
+	}
+
+	// The chart materializes the object-store CA ConfigMap in the agent
+	// namespace only when minio.tls.caBundle carries the PEM. Its absence is the
+	// pre-fix state: the checkpoint upload has no trust anchor and fails closed.
+	if _, err := c.KubectlOut(t, "-n", agentNamespace, "get", "configmap", objectStoreCAConfigMap); err != nil {
+		t.Fatalf("the %s ConfigMap is missing from %s: %v. The e2e install must pass the self-managed MinIO CA "+
+			"as minio.tls.caBundle so the chart projects it into agent pods; without it the adapter cannot "+
+			"trust the object store during checkpoint chunk PUT/GET and every upload fails the TLS handshake.",
+			objectStoreCAConfigMap, agentNamespace, err)
+	}
+
+	createAgentProbeWithObjectStoreCA(t, c, "objstore-ca-agent")
+
+	// Verified handshake: --cacert points at the projected CA and --resolve pins
+	// the object store's DNS name (which carries the serving cert's SAN) to its
+	// Service ClusterIP, the address the presigned checkpoint URL resolves to.
+	// curl performs full certificate validation (no -k), so a 200 proves the
+	// adapter's trust store admits the object store's CA on the real upload path.
+	script := fmt.Sprintf(
+		"curl -sS -m 8 -o /dev/null -w 'http=%%{http_code}' "+
+			"--cacert /etc/lenny/objectstore-ca/%s --resolve %s:%d:%s https://%s:%d/minio/health/live 2>&1; "+
+			"echo \" exit=$?\"",
+		objectStoreCAKey, objectStoreDNSName, objectStoreTLSPort, minioClusterIP,
+		objectStoreDNSName, objectStoreTLSPort,
+	)
+	out, _ := c.KubectlOut(t, "-n", agentNamespace, "exec", "objstore-ca-agent", "--", "sh", "-c", script)
+	if code := parseCurlExit(out); code != 0 {
+		t.Fatalf("§13.2 violation: an agent pod could not complete a TLS-verified request to the object store "+
+			"at https://%s:%d (curl exit %d, not 0). The adapter must trust the self-managed MinIO CA projected "+
+			"from minio.tls.caBundle, or the checkpoint upload fails the handshake and the session is marked "+
+			"failed.\noutput:\n%s", objectStoreDNSName, objectStoreTLSPort, code, out)
+	}
+	if !strings.Contains(out, "http=200") {
+		t.Fatalf("§13.2 boundary: the TLS-verified object-store probe from an agent pod did not return HTTP 200 "+
+			"(the MinIO health endpoint). The handshake completed but the health check did not succeed.\noutput:\n%s",
+			out)
+	}
+	t.Logf("agent pod completed a TLS-verified request to the object store at https://%s:%d trusting the "+
+		"projected CA (http=200) — the checkpoint upload trust anchor is wired", objectStoreDNSName, objectStoreTLSPort)
+}
+
+// createAgentProbeWithObjectStoreCA schedules the same §13.1-compliant probe
+// pod as createAgentProbe and additionally projects the object-store CA
+// ConfigMap read-only at /etc/lenny/objectstore-ca, mirroring the mount the
+// sandbox controller adds to a real agent pod's adapter container. The mount
+// makes the pod's readiness depend on the ConfigMap existing, so a pre-fix
+// install (no projected CA) leaves the pod unschedulable and the test fails
+// on the explicit ConfigMap precheck above before this runs.
+func createAgentProbeWithObjectStoreCA(t *testing.T, c *kind.Cluster, name string) {
+	t.Helper()
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    lenny.dev/managed: "true"
+    lenny.dev/test: ops-agent-boundary-probe
+spec:
+  nodeName: %s
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    fsGroup: 65534
+    supplementalGroups: [65534]
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    - name: objectstore-ca
+      configMap:
+        name: %s
+  containers:
+    - name: probe
+      image: %s
+      imagePullPolicy: Never
+      command: ["sleep", "600"]
+      volumeMounts:
+        - name: objectstore-ca
+          mountPath: /etc/lenny/objectstore-ca
+          readOnly: true
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: %d
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: ["ALL"]
+`, name, agentNamespace, probeNode, objectStoreCAConfigMap, probeImage, probeRunAsUser)
+
+	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
+	if out, err := c.ApplyStdin(t, manifest); err != nil {
+		t.Fatalf("failed to create agent probe pod %q in %s: %v\n%s", name, agentNamespace, err, out)
+	}
+	out, err := c.KubectlOut(t, "-n", agentNamespace, "wait", "--for=condition=Ready", "pod/"+name, "--timeout=90s")
+	if err != nil {
+		desc, _ := c.KubectlOut(t, "-n", agentNamespace, "describe", "pod", name)
+		t.Fatalf("agent probe pod %q in %s did not become Ready: %v\n%s\n--- describe ---\n%s",
+			name, agentNamespace, err, out, desc)
+	}
+}
+
 // ingressControllerNS is the namespace the Ingress controller runs in on
 // the e2e Kind install (chart ingressControllerNamespace default). It is
 // the single namespace lenny-ops-allow-ingress-from-ingress-controller

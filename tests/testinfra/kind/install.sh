@@ -522,6 +522,19 @@ kc -n lenny-system create configmap lenny-minio-ca \
   --from-literal=ca.crt="${MINIO_CA_CRT}" \
   --dry-run=client -o yaml | kc apply -f -
 
+# §13.2 NET-071 — agent pods trust the same MinIO CA during the checkpoint
+# chunk PUT/GET. The gateway and the bucket-lifecycle Job read the CA from the
+# lenny-system ConfigMap named by minio.tls.caBundleConfigMap, but the chart
+# cannot copy a ConfigMap's bytes into an agent namespace from a name alone, so
+# the agent-pod path is gated on minio.tls.caBundle carrying the PEM directly
+# (charts/lenny/templates/agent-objectstore-ca.yaml materializes it per agent
+# namespace and controller-deployment.yaml renders --objectstore-ca-configmap
+# under the same condition). Write the issued CA to a file and pass it to helm
+# as minio.tls.caBundle; without it the adapter cannot complete the TLS
+# handshake to the self-managed MinIO and every checkpoint upload fails closed.
+MINIO_CA_FILE="${REPO_ROOT}/tests/testinfra/kind/minio-ca.gen.crt"
+printf '%s\n' "${MINIO_CA_CRT}" >"${MINIO_CA_FILE}"
+
 log "waiting for the data-store deployments to become Available"
 for deploy in lenny-postgres lenny-redis lenny-minio; do
   kc -n lenny-system wait --for=condition=Available "deploy/${deploy}" --timeout=240s
@@ -875,6 +888,7 @@ if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; t
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
     -f "${BOOTSTRAP_OVERLAY}" \
+    --set-file minio.tls.caBundle="${MINIO_CA_FILE}" \
     --server-side=false \
     --timeout 420s
 else
@@ -884,6 +898,7 @@ else
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
     -f "${BOOTSTRAP_OVERLAY}" \
+    --set-file minio.tls.caBundle="${MINIO_CA_FILE}" \
     --server-side=false \
     --timeout 420s
 fi

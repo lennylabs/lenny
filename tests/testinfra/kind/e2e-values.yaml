@@ -378,16 +378,20 @@ minio:
 # checkpoint-egress allow-list. The e2e MinIO is an out-of-band self-managed
 # store (minio.endpoint set, minio.deploy false), so the chart renders the
 # allow-pod-egress-objectstore out-of-band arm: an ipBlock egress peer from
-# objectStorage.egressCIDRs on minio.tlsPort. Because the store runs
-# in-cluster on the Kind pod subnet (10.245.0.0/16, tests/testinfra/kind/
-# cluster.yaml), the allow-list is that subnet, which covers the MinIO pod IP.
-# A production out-of-band or cloud-managed install lists the external store's
-# PrivateLink, VPC-endpoint, or object-store CIDR here instead. The paired
-# agent-namespace ingress on the MinIO side is re-admitted by
-# allow-e2e-datastores-ingress in datastores.yaml (the e2e analog of the
-# chart's self-managed MinIO ingress clause; the out-of-band arm ships no
-# in-cluster ingress clause because a production out-of-band store is external
-# to the cluster).
+# objectStorage.egressCIDRs on minio.tlsPort. The agent pod reaches the store
+# through the gateway-minted presigned PUT/GET, whose host is minio.endpoint
+# (lenny-minio.lenny-system.svc:9000). kindnet evaluates the egress policy
+# against the post-DNAT destination, so a connection to the MinIO Service
+# ClusterIP is admitted by the pod-subnet peer once kube-proxy DNATs it to the
+# backing MinIO pod IP. Because the store runs in-cluster on the Kind pod subnet
+# (10.245.0.0/16, tests/testinfra/kind/cluster.yaml), the allow-list is that
+# subnet, which covers the MinIO pod IP. A production out-of-band or
+# cloud-managed install lists the external store's PrivateLink, VPC-endpoint, or
+# object-store CIDR here instead. The paired agent-namespace ingress on the
+# MinIO side is re-admitted by allow-e2e-datastores-ingress in datastores.yaml
+# (the e2e analog of the chart's self-managed MinIO ingress clause; the
+# out-of-band arm ships no in-cluster ingress clause because a production
+# out-of-band store is external to the cluster).
 objectStorage:
   egressCIDRs:
     - "10.245.0.0/16"
