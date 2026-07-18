@@ -24,8 +24,9 @@ writer of this file); clusters are grouped so each worker stays within a coheren
 spec area, keeping two workers off the same spec sections and code and minimizing
 integration conflicts. Current split: proposal-A holds the checkpoint and §25
 clusters (C-01–C-03), proposal-B holds the §4.9 credential-leasing clusters
-(C-04–C-06) and the eviction-trigger cluster C-22 (which depends on proposal-A's
-C-01, so B works C-04–C-06 first), and proposal-C holds the two spec areas no
+(C-04–C-06) and the eviction-trigger cluster C-22 (depends on proposal-A's C-01) plus the
+warm-pod PDB cluster C-16 (§4.6.1, unblocked) as unblocked runway while C-22
+waits on C-01 — all §4.6 kept with proposal-B, and proposal-C holds the two spec areas no
 other worker or the §25 closure machine touches: the interceptor error-envelope
 cluster C-18 (§4.8/§15.1) and the OpenSLO-export cluster C-19 (§16.10), both now
 landed (0039, 0041); C-18/C-19/C-38 landed (0039/0041/0042); its next isolated cluster is C-20 (§8.3 cross-environment delegation credential compatibility — clear of the section-25 machine's §25 churn, proposal-A's checkpoint/pod, and in a different package from proposal-B's §4.9 credential leasing). The
@@ -204,7 +205,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 
 ### C-16 — Warm-pod PDB disruption mechanism — §4.6.1
 - **status:** open
-- **assigned:** (unassigned)
+- **assigned:** proposal-B
 - **findings:** T-4.6.5
 - **root spec gap:** A `maxUnavailable: 1` PDB requires the owning controller to expose a `/scale` subresource to resolve expectedPods, but Sandbox has only a status subresource, so every warm-pod PDB sits at `disruptionsAllowed: 0` and deadlocks node drains.
 - **proposal scope:** Choose the fix — add a `/scale` subresource to Sandbox/SandboxWarmPool, replace `maxUnavailable: 1` with an integer `minAvailable` (currently forbidden by the spec), or another mechanism — and amend §4.6.1 accordingly.
