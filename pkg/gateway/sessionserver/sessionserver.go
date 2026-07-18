@@ -647,7 +647,7 @@ type Sealer interface {
 // cleanup after the resume path completes, regardless of whether the
 // reassembly succeeded or failed. An implementation walks the latest
 // active partial manifest for (tenant, session), deletes the chunks
-// under its `partial_object_key_prefix`, and soft-deletes the row.
+// under its `chunk_object_key_prefix`, and soft-deletes the row.
 // Best-effort: a failure leaves the row active for the §12.5
 // backstop sweep to clean up on the next cycle.
 type PartialManifestCleaner interface {
