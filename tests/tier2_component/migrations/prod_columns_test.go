@@ -561,6 +561,13 @@ var prodMigrationSchema = []struct {
 	// `credentialPropagation: inherit` hop forwards the same origin
 	// credential pool through contiguous inherit hops.
 	{migration: "0176", table: "sessions", columns: []string{"credential_origin_session_id"}},
+	// 0179 persists the §8.3 credential_deny marker on sessions so the
+	// finalize-time §4.9 engine fails a `credentialPropagation: deny` child
+	// closed at credential assignment. A deny child is self-origin, identical
+	// to an independent child, so credential_origin_session_id cannot express
+	// the deny bit; this BOOLEAN NOT NULL DEFAULT false column adds only it.
+	// spec: §8.3 (deny marker persistence).
+	{migration: "0179", table: "sessions", columns: []string{"credential_deny"}},
 }
 
 // spec: 12.2, 18.5

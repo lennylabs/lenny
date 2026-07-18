@@ -454,7 +454,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **relates to:** C-20 (shares the delegate-handler pre-claim insertion point; assigned to the same worker, proposal-C, to keep both on one code path and avoid cross-worker conflict)
 
 ### C-41 — §8.3 credentialPropagation deny-mode suppression + full assignment-matrix — §8.3
-- **status:** open
+- **status:** landed:0049 (persisted boolean CredentialDeny marker on sessionstore.Session + migration 0179 + pgstore/memstore round-trip; stamp on the delegated child row; fail-closed suppression in resolveCredentialPools for a deny row AND an inherit hop whose origin is a deny session; SPEC-1 §8.3 origin-chain clarification that a deny hop terminates the inherit chain with no origin pool; tier-4 inherit/independent/deny assignment-matrix + deny→inherit terminator test, tier-9 zero-lease-delivery leakage test, tier-1/tier-2 coverage. Green, reviewClean, 100% changed-line coverage. Both open decisions resolved at sign-off: boolean marker (not full enum); keep SPEC-1. Closes the T-8.3.1 umbrella — RESOLVED across 0043/0044/0049.)
 - **assigned:** proposal-C
 - **findings:** T-8.3.1
 - **root spec gap:** Two pieces of the T-8.3.1 umbrella remain after C-20 (0043: field/enum/validator + cross-env compatibility + inherit shared-pool assignment) and C-40 (availability pre-check): (1) deny-mode credential suppression, which needs a persisted `credentialPropagation` mode column that 0043 deliberately omitted, and (2) the full inherit→independent→deny assignment-matrix behavior. T-8.3.1 is the shared umbrella finding across C-20, C-40, and C-41 — it resolves only when all three land plus the matrix test.

@@ -1433,8 +1433,17 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		// break or the root); an `independent`, `deny`, or omitted-mode
 		// child, like a root or top-level session, is its own origin. The
 		// §8.3 cross-environment compatibility check and the finalize-time
-		// assignment read this in O(1) rather than re-walking lineage.
+		// assignment read this in O(1) rather than re-walking lineage. A
+		// `deny` child is stamped both self-origin here and with the
+		// CredentialDeny marker below, so finalize suppresses credential
+		// assignment for the child while the origin id stays well-formed.
 		CredentialOriginSessionID: credentialOriginID(req.CredentialPropagation, parent, childID),
+		// §8.3 line 443 — a `deny` hop grants the child no LLM credentials
+		// (for runtimes that need no LLM access, such as pure
+		// file-processing tools). The marker is persisted on the child row
+		// so finalize suppresses credential assignment without re-reading
+		// the originating lease.
+		CredentialDeny: req.CredentialPropagation == lease.CredentialPropagationDeny,
 		// §10.7 lines 868, 905 — the child's delegation depth is the
 		// parent's depth + 1, fixed at admission. Recording it here lets
 		// the built-in eval endpoint populate EvalResult.delegation_depth

@@ -1721,8 +1721,15 @@ func TestDelegateAcceptsCredentialPropagationEnum_spec_8_3(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Delegate(credentialPropagation=%q) = %v, want admitted", mode, err)
 			}
-			if _, err := store.Get(context.Background(), "acme", "sess_child"); err != nil {
+			child, err := store.Get(context.Background(), "acme", "sess_child")
+			if err != nil {
 				t.Fatalf("credentialPropagation=%q must commit a child session: %v", mode, err)
+			}
+			// §8.3 line 443: a `deny` hop stamps the child row so finalize
+			// grants it no LLM credentials; every other mode leaves the
+			// marker clear.
+			if got, want := child.CredentialDeny, mode == lease.CredentialPropagationDeny; got != want {
+				t.Errorf("credentialPropagation=%q: child.CredentialDeny = %v, want %v", mode, got, want)
 			}
 		})
 	}

@@ -172,6 +172,20 @@ type Session struct {
 	// establishes a new origin); line 474.
 	CredentialOriginSessionID string
 
+	// CredentialDeny is true iff the delegate_task hop that created this
+	// child set credentialPropagation: deny, meaning the child receives no
+	// LLM credentials (§8.3 line 443: "Child receives no LLM credentials").
+	// inherit versus independent is already carried by
+	// CredentialOriginSessionID (an inherit child copies its parent's
+	// origin; an independent child is its own origin), so this field records
+	// only the deny case. The finalize-time §4.9 engine reads it to fail a
+	// deny child closed at credential assignment, and reads it on an origin
+	// row so an inherit hop whose origin traces to a deny session also fails
+	// closed. The delegation Service stamps it at child-row creation; the
+	// value is invariant once the row is created.
+	// spec: §8.3 line 443.
+	CredentialDeny bool
+
 	// DelegationDepth is the session's depth in its delegation tree: 0
 	// for a root (standalone) session, parent.DelegationDepth+1 for a
 	// delegated child. The §8.2 delegation Service stamps it on every

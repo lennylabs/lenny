@@ -749,6 +749,10 @@ func TestCredentialOriginSessionIDRoundTrips(t *testing.T) {
 	if err := s.Create(ctx, sessionstore.Session{
 		ID: "child_1", TenantID: "acme", State: session.StateCreated,
 		CredentialOriginSessionID: "origin_1",
+		// spec: 8.3 (deny marker persistence) — a deny child carries no LLM
+		// credentials, so the persisted marker must survive the round-trip
+		// and snapshot cycle to keep the finalize-time engine failing it closed.
+		CredentialDeny: true,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -758,6 +762,9 @@ func TestCredentialOriginSessionIDRoundTrips(t *testing.T) {
 	}
 	if got.CredentialOriginSessionID != "origin_1" {
 		t.Errorf("CredentialOriginSessionID = %q, want origin_1", got.CredentialOriginSessionID)
+	}
+	if !got.CredentialDeny {
+		t.Errorf("CredentialDeny = false, want true after Create/Get")
 	}
 
 	// A self-origin session (independent/deny/root/top-level) carries no
@@ -790,5 +797,8 @@ func TestCredentialOriginSessionIDRoundTrips(t *testing.T) {
 	}
 	if got.CredentialOriginSessionID != "origin_1" {
 		t.Errorf("restored CredentialOriginSessionID = %q, want origin_1", got.CredentialOriginSessionID)
+	}
+	if !got.CredentialDeny {
+		t.Errorf("restored CredentialDeny = false, want true after snapshot cycle")
 	}
 }
